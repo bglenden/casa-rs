@@ -242,6 +242,9 @@ struct LeftDockView: View {
         case .files:
             filesDock
 
+        case .notebooks:
+            notebooksDock
+
         case .history:
             if store.state.history.isEmpty {
                 EmptyDockState(
@@ -282,6 +285,102 @@ struct LeftDockView: View {
         }
     }
 
+    @ViewBuilder
+    private var notebooksDock: some View {
+        if let notebook = store.state.prototypeNotebook {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Project notebooks")
+                        .workbenchFont(.caption, weight: .semibold)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(notebook.notebooks.count)")
+                        .workbenchFont(.caption, design: .monospaced)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+
+                List(selection: Binding(
+                    get: { Optional(notebook.activeNotebookID) },
+                    set: { notebookID in
+                        if let notebookID {
+                            store.selectPrototypeNotebook(notebookID)
+                            store.openDefaultTab(kind: .notebook)
+                        }
+                    }
+                )) {
+                    ForEach(notebook.notebooks) { summary in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: "doc.richtext")
+                                .foregroundStyle(summary.id == notebook.activeNotebookID ? Color.accentColor : .secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(summary.title)
+                                    .workbenchFont(.subheadline, weight: .semibold)
+                                    .lineLimit(1)
+                                Text(summary.filename)
+                                    .workbenchFont(.caption, design: .monospaced)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 4)
+                            if summary.id == notebook.activeNotebookID, notebook.isDirty {
+                                Circle()
+                                    .fill(.orange)
+                                    .frame(width: 7, height: 7)
+                                    .accessibilityLabel("Unsaved changes")
+                            }
+                        }
+                        .padding(.vertical, 3)
+                        .tag(Optional(summary.id))
+                        .accessibilityIdentifier("notebook.selector.\(summary.id)")
+                    }
+                }
+                .listStyle(.sidebar)
+                .accessibilityIdentifier("dock.notebooks")
+
+                Divider()
+
+                HStack {
+                    Label("Markdown files", systemImage: "text.document")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        store.openDefaultTab(kind: .notebook)
+                    } label: {
+                        Image(systemName: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Open selected notebook")
+                    .accessibilityIdentifier("notebook.selector.open")
+                }
+                .padding(10)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("No notebooks yet")
+                    .workbenchFont(.headline)
+                Text("Notebooks will appear here when the project contains Markdown notes.")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    if let url = ProjectOpenPanel.chooseDirectory() {
+                        store.openProject(path: url.path)
+                    }
+                } label: {
+                    Label("Open Project", systemImage: "folder")
+                }
+                .accessibilityIdentifier("dock.empty.primary")
+                Spacer()
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("dock.empty")
+        }
+    }
+
     private func datasetRow(_ dataset: DatasetSummary) -> some View {
         DatasetRow(
             dataset: dataset,
@@ -316,7 +415,10 @@ struct LeftDockView: View {
     }
 
     private var projectSourceLabel: String {
-        switch store.state.project.source {
+        if store.state.isNotebookPrototype {
+            return "Notebook prototype"
+        }
+        return switch store.state.project.source {
         case .none: "No project"
         case .fixture: "Demo project"
         case .probed: "Real project"
@@ -434,7 +536,28 @@ struct LeftDockView: View {
 
     @ViewBuilder
     private var filesDock: some View {
-        if store.state.isDemoProject {
+        if let notebook = store.state.prototypeNotebook {
+            List {
+                Section("notebooks") {
+                    ForEach(notebook.notebooks) { summary in
+                        Button {
+                            store.selectPrototypeNotebook(summary.id)
+                            store.openDefaultTab(kind: .notebook)
+                        } label: {
+                            Label(summary.filename, systemImage: "doc.text")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("prototypeFile.\(summary.id)")
+                    }
+                }
+                Section("fixture data") {
+                    Label("twhya_calibrated.ms", systemImage: "externaldrive")
+                    Label("products", systemImage: "folder")
+                }
+            }
+            .listStyle(.sidebar)
+            .accessibilityIdentifier("dock.files.prototype")
+        } else if store.state.isDemoProject {
             VStack(alignment: .leading, spacing: 12) {
                 Label("data", systemImage: "folder")
                 Label("calibration", systemImage: "folder")
@@ -910,7 +1033,10 @@ struct InspectorView: View {
     }
 
     private var inspectorSourceLabel: String {
-        switch store.state.project.source {
+        if store.state.isNotebookPrototype {
+            return "Prototype metadata"
+        }
+        return switch store.state.project.source {
         case .none: "No project"
         case .fixture: "Demo metadata"
         case .probed: "Real probe metadata"

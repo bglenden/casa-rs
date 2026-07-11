@@ -1,8 +1,8 @@
 # casars-mac
 
 Truth class: current descriptive
-Last reality check: 2026-05-09
-Verification: swift test; swift run casars-mac --dump-debug-state --simulate-main-flow; ./script/build_and_run.sh --verify
+Last reality check: 2026-07-10
+Verification: swift test; swift run casars-mac --dump-debug-state --simulate-main-flow; swift run casars-mac --dump-debug-state --show-prototype notebook; ./script/build_and_run.sh --verify
 
 `casars-mac` is the SwiftUI prototype for the native macOS `casa-rs`
 workbench. The app keeps a synthetic demo fixture for layout and dry-run
@@ -20,13 +20,16 @@ swift build
 swift run casars-mac --dump-debug-state --simulate-main-flow
 swift run casars-mac --dump-debug-state --open-tutorial-pack /path/to/tutorial.pack
 swift run casars-mac --dump-debug-state --open-imager-ms /path/to/input.ms
+swift run casars-mac --dump-debug-state --show-prototype notebook --prototype-state happy-path
 swift run casars-mac --capture-gui-evidence --capture-kind imager-progress-mockup --output /tmp/imager-progress.png
+swift run casars-mac --capture-gui-evidence --capture-kind notebook-prototype --prototype-state external-conflict --output /tmp/notebook-conflict.png
 ./script/build_and_run.sh
 ./script/build_and_run.sh --verify
 ./script/install-local-gui.sh --force
 ./script/build_and_run.sh --project /path/to/project
 ./script/build_and_run.sh --imager-ms /path/to/input.ms --run-active-task
 ./script/build_and_run.sh --tutorial-pack /path/to/tutorial.pack
+./script/build_and_run.sh --show-prototype notebook --prototype-state happy-path
 ./script/build_and_run.sh --empty
 ```
 
@@ -59,6 +62,11 @@ imager launch overrides such as `--image-size`, `--cell-arcsec`,
 start without opening a project. Tutorial packs open on the Tutorial tab
 with input staging status, section checkpoints, learner docs, and an action
 that applies each section's GUI parameters to the task panel.
+Pass `--show-prototype notebook` to open the Wave 1 scientific-notebook
+prototype without staging a project. `--prototype-state happy-path` selects the
+normal fixture-only task-recording and annotation flow; `external-conflict` shows the
+third-party-edit conflict state. The same state selector works with
+`--capture-kind notebook-prototype` for deterministic GUI evidence.
 `swift run casars-mac` is reserved for non-interactive debug-state commands and
 low-level executable diagnosis.
 

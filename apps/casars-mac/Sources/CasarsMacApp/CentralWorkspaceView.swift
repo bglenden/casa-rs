@@ -65,6 +65,11 @@ struct CentralWorkspaceView: View {
                 Button("Tasks") {
                     store.openDefaultTab(kind: .task)
                 }
+                Button("Notebook") {
+                    store.openDefaultTab(kind: .notebook)
+                }
+                .disabled(store.state.prototypeNotebook == nil)
+                .accessibilityIdentifier("central.tab.openNotebook")
                 Button("Tutorial") {
                     store.openDefaultTab(kind: .tutorial)
                 }
@@ -118,8 +123,15 @@ struct CentralWorkspaceView: View {
             case .tutorial:
                 TutorialPackPanel(store: store)
             case .task:
-                TaskPanel(store: store, tab: tab)
-                    .id(tab.id)
+                if tab.prototypeReceiptID != nil {
+                    PrototypeNotebookTaskView(store: store, tab: tab)
+                        .id(tab.id)
+                } else {
+                    TaskPanel(store: store, tab: tab)
+                        .id(tab.id)
+                }
+            case .notebook:
+                ScientificNotebookView(store: store)
             case .plotSamples:
                 PlotSamplesPanel(store: store)
             case .aiChat:
@@ -140,6 +152,7 @@ struct CentralWorkspaceView: View {
         case .tableBrowser: "tablecells"
         case .tutorial: "book"
         case .task: "slider.horizontal.3"
+        case .notebook: "book.pages"
         case .plotSamples: "chart.xyaxis.line"
         case .aiChat: "sparkles"
         case .python: "terminal"
@@ -169,6 +182,7 @@ struct EmptyWorkbenchPanel: View {
                     Label("Open Project Directory", systemImage: "folder")
                 }
                 .accessibilityIdentifier("empty.openProject")
+                .disabled(store.isNotebookPrototypeRuntime)
 
                 Button {
                     if let url = TutorialPackOpenPanel.choosePack() {
@@ -178,6 +192,7 @@ struct EmptyWorkbenchPanel: View {
                     Label("Open Tutorial Pack", systemImage: "book")
                 }
                 .accessibilityIdentifier("empty.openTutorialPack")
+                .disabled(store.isNotebookPrototypeRuntime)
 
                 Button {
                     store.openFixtureProject()
@@ -185,6 +200,7 @@ struct EmptyWorkbenchPanel: View {
                     Label("Open Demo Project", systemImage: "shippingbox")
                 }
                 .accessibilityIdentifier("empty.openDemoProject")
+                .disabled(store.isNotebookPrototypeRuntime)
             }
 
             if !store.state.lastErrors.isEmpty {

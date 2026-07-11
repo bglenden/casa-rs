@@ -78,16 +78,35 @@ Recognized v1 cell kinds are `task`, `python`, `tutorial`, `assistant-pin`, and
 `output`. Notes need no typed wrapper. Unknown comments, fences, Markdown, and
 future cell kinds are preserved without interpretation.
 
-The rich editor uses native TextKit over a bounded CommonMark subset and always
-offers raw Markdown mode. Unsupported syntax remains intact. Raw HTML is not
-executed in rich rendering. External modifications are detected; conflicting
-dirty edits pause saving and require reconciliation rather than being
-overwritten.
+The rich editor provides bounded WYSIWYG editing for prose throughout the
+complete document, including text before, between, and after typed cells, and
+always offers raw Markdown mode over that same complete source. Unsupported
+syntax remains intact. Raw HTML is not executed in rich rendering. External
+modifications are detected; conflicting dirty edits pause saving and require
+reconciliation rather than being overwritten.
 
-Task cells contain sparse ADR-0006 TOML. **Load Parameters** displays a typed
-diff and, after confirmation, replaces the target task form. Rerunning a cell
-creates a new immutable execution revision. The latest is shown by default,
-with previous revisions available from history.
+Task cells contain sparse ADR-0006 TOML. Selecting or double-clicking the
+parameter block opens a normal task tab populated from that intent. A new task
+tab loads directly; replacing an already edited task tab first displays a typed
+diff and requires confirmation. Rerunning a cell creates a new immutable
+execution revision. The latest is shown by default, with previous revisions
+available from history.
+
+### Native workbench interaction
+
+Notebooks use the existing project dock instead of introducing another
+horizontal navigation pane. A **Notebooks** selector sits beside Datasets,
+Files, and History at the bottom of the left dock; choosing a named notebook
+opens it in the central tab area.
+
+The central notebook is a continuous, notes-first document. Task parameter
+blocks are interspersed with the prose at their Markdown positions and render
+like ordinary neutral Markdown code blocks. Execution history is deliberately
+quiet: the latest outcome is a small colored status dot and revision label
+attached to its parameter block. That affordance expands in place for a compact
+result, while double-clicking it opens the associated task tab for full
+parameters, products, logs, diagnostics, and revision history. The generic
+right inspector is not required for ordinary notebook reading.
 
 ## Execution receipts and automatic recording
 
@@ -247,9 +266,11 @@ started ahead of this review.
 
 ### Wave 1: notebooks and receipts
 
-Prototype: rich/raw Markdown, named notebooks, task cells, parameter-diff
-loading, simulated running/succeeded/failed/cancelled receipts, revision
-history, and external-edit conflicts.
+Prototype: rich/raw Markdown, named-notebook selection in the existing project
+dock, whole-document rich/raw editing, notes-first task cells whose parameter
+blocks open fixture task tabs, tiny expandable execution indicators, simulated
+running/succeeded/failed/cancelled receipts, retry/restart revision history, and
+external-edit conflicts.
 
 Production: `casa-notebook`, versioned Markdown/receipt contracts, atomic
 writes, project locking, cross-surface recording, exports, GUI notebook list and

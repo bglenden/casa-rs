@@ -2,6 +2,7 @@ import Foundation
 
 public enum DockMode: String, CaseIterable, Codable, Equatable, Identifiable {
     case datasets
+    case notebooks
     case files
     case history
 
@@ -10,6 +11,7 @@ public enum DockMode: String, CaseIterable, Codable, Equatable, Identifiable {
     public var title: String {
         switch self {
         case .datasets: "Datasets"
+        case .notebooks: "Notebooks"
         case .files: "Files"
         case .history: "History"
         }
@@ -18,6 +20,7 @@ public enum DockMode: String, CaseIterable, Codable, Equatable, Identifiable {
     public var systemImage: String {
         switch self {
         case .datasets: "externaldrive"
+        case .notebooks: "book.pages"
         case .files: "folder"
         case .history: "clock.arrow.circlepath"
         }
@@ -226,6 +229,7 @@ public enum WorkbenchTabKind: String, Codable, Equatable {
     case tableBrowser
     case tutorial
     case task
+    case notebook
     case plotSamples
     case aiChat
     case python
@@ -238,13 +242,22 @@ public struct WorkbenchTab: Identifiable, Codable, Equatable {
     public var kind: WorkbenchTabKind
     public var datasetID: String?
     public var taskID: String?
+    /// Package-only fixture receipt rendered in a task-shaped prototype tab.
+    package var prototypeReceiptID: String?
 
-    public init(id: String, title: String, kind: WorkbenchTabKind, datasetID: String? = nil, taskID: String? = nil) {
+    public init(
+        id: String,
+        title: String,
+        kind: WorkbenchTabKind,
+        datasetID: String? = nil,
+        taskID: String? = nil
+    ) {
         self.id = id
         self.title = title
         self.kind = kind
         self.datasetID = datasetID
         self.taskID = taskID
+        prototypeReceiptID = nil
     }
 }
 
@@ -2695,6 +2708,8 @@ public struct WorkbenchState: Codable, Equatable {
     public var taskCatalog: [TaskCatalogEntry]
     public var taskExecutionMatrixRows: [TaskExecutionMatrixRow]
     public var tutorialPack: TutorialPackContext?
+    /// Ephemeral fixture projection present only for the notebook interaction prototype.
+    package var prototypeNotebook: PrototypeScientificNotebookProjection?
     public var activeTaskID: String
     public var taskUISchemas: [String: TaskUISchema]
     public var parameterSessions: [String: SurfaceParameterSession]
@@ -2762,6 +2777,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.taskCatalog = taskCatalog
         self.taskExecutionMatrixRows = taskExecutionMatrixRows
         self.tutorialPack = tutorialPack
+        prototypeNotebook = nil
         self.activeTaskID = activeTaskID
         self.taskUISchemas = taskUISchemas
         self.parameterSessions = parameterSessions
@@ -2824,8 +2840,12 @@ public struct WorkbenchState: Codable, Equatable {
         project.source != .none
     }
 
+    package var isNotebookPrototype: Bool {
+        prototypeNotebook != nil
+    }
+
     public var isDemoProject: Bool {
-        project.source.isDemo
+        project.source.isDemo && !isNotebookPrototype
     }
 }
 
@@ -2876,6 +2896,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var activeProjectRoot: String
     public var activeProjectSource: ProjectSource
     public var tutorialPack: DebugTutorialPackSnapshot?
+    package var prototypeNotebook: DebugPrototypeScientificNotebookSnapshot?
     public var discoveredDatasets: [String]
     public var probeDiagnostics: [String]
     public var inspectorCollapsed: Bool
@@ -2911,6 +2932,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         activeProjectRoot = state.project.rootPath
         activeProjectSource = state.project.source
         tutorialPack = state.tutorialPack.map(DebugTutorialPackSnapshot.init(context:))
+        prototypeNotebook = state.prototypeNotebook.map(DebugPrototypeScientificNotebookSnapshot.init(state:))
         activeLeftDockMode = state.dockMode
         leftDockCollapsed = state.leftDockCollapsed
         selectedDataset = state.selectedDataset?.name
@@ -2962,6 +2984,44 @@ public struct DebugStateSnapshot: Codable, Equatable {
         commandQuery = state.commandQuery
         lastErrors = state.lastErrors
         interfaceFontSize = state.interfaceFontSize
+    }
+}
+
+package struct DebugPrototypeScientificNotebookSnapshot: Codable, Equatable {
+    package var prototypeKind: WorkbenchPrototypeKind
+    package var scenario: NotebookPrototypeScenario
+    package var activeNotebookID: String
+    package var notebookIDs: [String]
+    package var notebookFilenames: [String]
+    package var title: String
+    package var filename: String
+    package var displayPath: String
+    package var viewMode: PrototypeNotebookViewMode
+    package var isDirty: Bool
+    package var hasExternalConflict: Bool
+    package var receiptIDs: [String]
+    package var receiptStatuses: [String: PrototypeNotebookReceiptStatus]
+    package var selectedReceiptID: String?
+
+    package init(state: PrototypeScientificNotebookProjection) {
+        prototypeKind = state.prototypeKind
+        scenario = state.scenario
+        activeNotebookID = state.activeNotebookID
+        notebookIDs = state.notebooks.map(\.id)
+        notebookFilenames = state.notebooks.map(\.filename)
+        title = state.title
+        filename = state.filename
+        displayPath = state.displayPath
+        viewMode = state.viewMode
+        isDirty = state.isDirty
+        hasExternalConflict = state.hasExternalConflict
+        receiptIDs = state.receipts.map(\.id)
+        receiptStatuses = Dictionary(
+            uniqueKeysWithValues: state.receipts.compactMap { receipt in
+                receipt.latestRevision.map { (receipt.id, $0.status) }
+            }
+        )
+        selectedReceiptID = state.selectedReceiptID
     }
 }
 

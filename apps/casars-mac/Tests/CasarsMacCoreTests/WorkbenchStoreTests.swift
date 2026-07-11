@@ -52,6 +52,200 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.activeTab, "")
     }
 
+    func testScientificNotebookPrototypeOpensExpectedDocumentAndReceipts() throws {
+        let store = WorkbenchStore.notebookPrototype(scenario: .primary)
+
+        let notebook = try XCTUnwrap(store.state.prototypeNotebook)
+        let snapshot = try XCTUnwrap(store.debugSnapshot().prototypeNotebook)
+        XCTAssertEqual(store.state.project.source, .fixture)
+        XCTAssertEqual(store.state.dockMode, .notebooks)
+        XCTAssertEqual(store.state.activeTabID, "tab-scientific-notebook")
+        XCTAssertEqual(notebook.filename, "Analysis.md")
+        XCTAssertEqual(notebook.notebooks.map(\.filename), ["Analysis.md", "Observation Log.md"])
+        XCTAssertEqual(notebook.receipts.count, 3)
+        XCTAssertEqual(notebook.receipts.compactMap(\.latestRevision?.status), [.succeeded, .failed, .cancelled])
+        let markdown = notebook.draftMarkdown
+        let firstCell = try XCTUnwrap(markdown.range(of: "id=receipt-imager-mfs"))
+        let betweenNote = try XCTUnwrap(markdown.range(of: "Correct the reference image"))
+        let secondCell = try XCTUnwrap(markdown.range(of: "id=receipt-impbcor-failed"))
+        XCTAssertLessThan(firstCell.lowerBound, betweenNote.lowerBound)
+        XCTAssertLessThan(betweenNote.lowerBound, secondCell.lowerBound)
+        XCTAssertTrue(markdown.contains("```toml"))
+        XCTAssertEqual(snapshot.prototypeKind, .notebook)
+        XCTAssertEqual(snapshot.scenario, .primary)
+        XCTAssertEqual(snapshot.activeNotebookID, "notebook-twhya-analysis")
+        XCTAssertEqual(snapshot.notebookFilenames, ["Analysis.md", "Observation Log.md"])
+        XCTAssertEqual(snapshot.receiptIDs, notebook.receipts.map(\.id))
+        XCTAssertFalse(snapshot.isDirty)
+        XCTAssertFalse(snapshot.hasExternalConflict)
+    }
+
+    func testNotebookPrototypeFactoryUsesFixtureBootstrapContracts() {
+        let store = WorkbenchStore.notebookPrototype(scenario: .primary)
+
+        XCTAssertTrue(store.state.taskCatalog.isEmpty)
+        XCTAssertTrue(store.state.taskExecutionMatrixRows.isEmpty)
+        XCTAssertTrue(store.state.lastErrors.isEmpty)
+        XCTAssertTrue(store.state.isNotebookPrototype)
+    }
+
+    func testScientificNotebookPrototypeSelectsNamedNotebooksAndPreservesDraftsInMemory() throws {
+        let store = WorkbenchStore.notebookPrototype(scenario: .primary)
+        let original = try XCTUnwrap(store.state.prototypeNotebook?.draftMarkdown)
+
+        store.setPrototypeNotebookDraft(original + "\n\nA user note.")
+        XCTAssertEqual(store.debugSnapshot().prototypeNotebook?.isDirty, true)
+        store.selectPrototypeNotebook("notebook-twhya-observation-log")
+        XCTAssertEqual(store.state.prototypeNotebook?.filename, "Observation Log.md")
+        XCTAssertEqual(store.state.prototypeNotebook?.receipts.map(\.taskID), ["listobs"])
+        store.setPrototypeNotebookDraft("Updated observation log")
+        store.selectPrototypeNotebook("notebook-twhya-analysis")
+        XCTAssertEqual(store.state.prototypeNotebook?.draftMarkdown, original + "\n\nA user note.")
+        store.savePrototypeNotebookDraft()
+        XCTAssertEqual(store.debugSnapshot().prototypeNotebook?.isDirty, false)
+
+        store.openScientificNotebookPrototype(scenario: .externalConflict)
+        XCTAssertEqual(store.debugSnapshot().prototypeNotebook?.hasExternalConflict, true)
+        XCTAssertEqual(store.debugSnapshot().prototypeNotebook?.isDirty, true)
+        store.savePrototypeNotebookDraft()
+        XCTAssertEqual(store.debugSnapshot().prototypeNotebook?.hasExternalConflict, true)
+        XCTAssertEqual(store.debugSnapshot().prototypeNotebook?.isDirty, true)
+
+        store.resolvePrototypeNotebookConflict(keepingDraft: false)
+        XCTAssertEqual(store.debugSnapshot().prototypeNotebook?.hasExternalConflict, false)
+        XCTAssertEqual(store.debugSnapshot().prototypeNotebook?.isDirty, false)
+
+        store.openScientificNotebookPrototype(scenario: .externalConflict)
+        let localDraft = try XCTUnwrap(store.state.prototypeNotebook?.draftMarkdown)
+        store.resolvePrototypeNotebookConflict(keepingDraft: true)
+        XCTAssertEqual(store.state.prototypeNotebook?.draftMarkdown, localDraft)
+        XCTAssertEqual(store.debugSnapshot().prototypeNotebook?.hasExternalConflict, false)
+        XCTAssertEqual(store.debugSnapshot().prototypeNotebook?.isDirty, true)
+        store.savePrototypeNotebookDraft()
+        XCTAssertEqual(store.debugSnapshot().prototypeNotebook?.isDirty, false)
+    }
+
+    func testPrototypeNotebookTaskTabUsesOnlyFixtureProjectionParameters() throws {
+        let taskClient = StubGenericTaskClient()
+        let parameterClient = RecordingSurfaceParameterClient()
+        let store = WorkbenchStore.notebookPrototype(
+            dependencies: notebookPrototypeDependencies(
+                genericTaskClient: taskClient,
+                surfaceParameterClient: parameterClient
+            )
+        )
+        store.openPrototypeNotebookTask(receiptID: "receipt-imager-mfs")
+
+        let taskTab = try XCTUnwrap(store.state.tabs.first { $0.prototypeReceiptID != nil })
+        XCTAssertEqual(taskTab.taskID, "imager")
+        XCTAssertEqual(taskTab.prototypeReceiptID, "receipt-imager-mfs")
+        XCTAssertNil(taskTab.datasetID)
+        let task = try XCTUnwrap(store.state.prototypeNotebook?.task(receiptID: "receipt-imager-mfs"))
+        XCTAssertEqual(task.parameterRows.first { $0.parameterID == "niter" }?.value, "1000")
+        XCTAssertEqual(task.parameterRows.first { $0.parameterID == "vis" }?.value, "data/twhya_calibrated.ms")
+        XCTAssertFalse(task.annotation.isEmpty)
+        XCTAssertTrue(store.state.parameterSessions.isEmpty)
+        XCTAssertTrue(taskClient.requests.isEmpty)
+        XCTAssertEqual(parameterClient.invocationCount, 0)
+
+        store.openDefaultTab(kind: .task)
+        XCTAssertEqual(store.state.tabs.filter { $0.prototypeReceiptID != nil }.count, 1)
+        XCTAssertEqual(store.state.activeTabID, taskTab.id)
+        XCTAssertTrue(taskClient.requests.isEmpty)
+        XCTAssertEqual(parameterClient.invocationCount, 0)
+    }
+
+    func testPrototypeRawTaskCellEditsDriveRichProjectionAndTaskTab() throws {
+        let taskClient = StubGenericTaskClient()
+        let parameterClient = RecordingSurfaceParameterClient()
+        let store = WorkbenchStore.notebookPrototype(
+            dependencies: notebookPrototypeDependencies(
+                genericTaskClient: taskClient,
+                surfaceParameterClient: parameterClient
+            )
+        )
+        let markdown = try XCTUnwrap(store.state.prototypeNotebook?.draftMarkdown)
+            .replacingOccurrences(of: "niter = 1000", with: "niter = 2000")
+
+        store.setPrototypeNotebookDraft(markdown)
+        store.openPrototypeNotebookTask(receiptID: "receipt-imager-mfs")
+
+        let task = try XCTUnwrap(store.state.prototypeNotebook?.task(receiptID: "receipt-imager-mfs"))
+        XCTAssertEqual(task.parameterRows.first { $0.parameterID == "niter" }?.value, "2000")
+        XCTAssertTrue(task.sparseProfileTOML.contains("niter = 2000"))
+        XCTAssertEqual(
+            store.state.tabs.first { $0.prototypeReceiptID == "receipt-imager-mfs" }?.taskID,
+            "imager"
+        )
+        XCTAssertTrue(taskClient.requests.isEmpty)
+        XCTAssertEqual(parameterClient.invocationCount, 0)
+    }
+
+    func testPrototypeNotebookRestartPreservesRevisionsWithoutProductionAdapters() throws {
+        let taskClient = StubGenericTaskClient()
+        let parameterClient = RecordingSurfaceParameterClient()
+        let store = WorkbenchStore.notebookPrototype(
+            dependencies: notebookPrototypeDependencies(
+                genericTaskClient: taskClient,
+                surfaceParameterClient: parameterClient
+            )
+        )
+        let receiptID = "receipt-imager-mfs"
+        let initialRevisions = try XCTUnwrap(
+            store.state.prototypeNotebook?.task(receiptID: receiptID)?.revisions
+        )
+
+        XCTAssertEqual(try XCTUnwrap(store.restartPrototypeNotebookTask(receiptID: receiptID)), receiptID)
+        var revisions = try XCTUnwrap(store.state.prototypeNotebook?.task(receiptID: receiptID)?.revisions)
+        XCTAssertEqual(Array(revisions.prefix(initialRevisions.count)), initialRevisions)
+        XCTAssertEqual(revisions.count, initialRevisions.count + 1)
+        XCTAssertEqual(revisions.last?.status, .running)
+        XCTAssertNil(store.restartPrototypeNotebookTask(receiptID: receiptID))
+        XCTAssertEqual(revisions.filter { $0.status == .running }.count, 1)
+        store.cancelPrototypeNotebookTaskRun(receiptID: receiptID)
+        XCTAssertEqual(store.state.prototypeNotebook?.task(receiptID: receiptID)?.latestRevision?.status, .cancelled)
+
+        XCTAssertEqual(try XCTUnwrap(store.restartPrototypeNotebookTask(receiptID: receiptID)), receiptID)
+        store.completePrototypeNotebookTaskRun(receiptID: receiptID)
+        revisions = try XCTUnwrap(store.state.prototypeNotebook?.task(receiptID: receiptID)?.revisions)
+        XCTAssertEqual(Array(revisions.prefix(initialRevisions.count)), initialRevisions)
+        XCTAssertEqual(revisions.count, initialRevisions.count + 2)
+        XCTAssertEqual(revisions.last?.status, .succeeded)
+        XCTAssertFalse(revisions.last?.products.isEmpty ?? true)
+        XCTAssertTrue(taskClient.requests.isEmpty)
+        XCTAssertEqual(parameterClient.invocationCount, 0)
+    }
+
+    func testPrototypeGuardsRejectProductionExplorersAndTaskExecution() throws {
+        let taskClient = StubGenericTaskClient()
+        let parameterClient = RecordingSurfaceParameterClient()
+        let store = WorkbenchStore.notebookPrototype(
+            dependencies: notebookPrototypeDependencies(
+                genericTaskClient: taskClient,
+                surfaceParameterClient: parameterClient
+            )
+        )
+        let originalTabs = store.state.tabs
+
+        store.openSelectedDatasetExplorer()
+        store.openDatasetExplorer("prototype-twhya-ms")
+        store.openDatasetTableBrowser("prototype-twhya-ms")
+        store.openImageExplorerPath("/PrototypeProjects/never-open.image")
+        store.openTableBrowserPath("/PrototypeProjects/never-open.table")
+        store.openImagerTaskForSelectedDataset()
+        store.openTab(WorkbenchTab(id: "forbidden-task", title: "Forbidden", kind: .task))
+        store.runTask()
+
+        XCTAssertEqual(store.state.tabs, originalTabs)
+        XCTAssertFalse(store.state.tabs.contains { $0.kind == .datasetExplorer || $0.kind == .tableBrowser || $0.kind == .task })
+        XCTAssertTrue(store.state.imageExplorers.isEmpty)
+        XCTAssertTrue(store.state.tableBrowsers.isEmpty)
+        XCTAssertTrue(store.state.parameterSessions.isEmpty)
+        XCTAssertTrue(taskClient.requests.isEmpty)
+        XCTAssertEqual(parameterClient.invocationCount, 0)
+        XCTAssertTrue(store.state.lastErrors.contains { $0.contains("in-memory notebook prototype") })
+    }
+
     func testTutorialPackContextLoadsTemplateAndInputStatus() throws {
         let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["twhya_cont.image"])
         defer { removeTemporaryTutorialPack(packURL) }
@@ -2614,7 +2808,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.aiProposalStates["proposal-spw"], .pending)
         XCTAssertEqual(
             DockMode.allCases.map(\.rawValue),
-            ["datasets", "files", "history"]
+            ["datasets", "notebooks", "files", "history"]
         )
     }
 
@@ -2719,6 +2913,15 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertFalse(store.state.leftDockCollapsed)
         XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.kind, .history)
         XCTAssertEqual(store.debugSnapshot().commandQuery, "show timeline")
+    }
+
+    func testCommandQueryDoesNotTreatNoteSubstringAsNotebookCommand() {
+        let store = WorkbenchStore.fixture()
+
+        store.setCommandQuery("denote the selected source")
+        store.runCommandQuery()
+
+        XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.kind, .aiChat)
     }
 
     func testFixturePlotSamplesAreInspectable() throws {
@@ -6168,22 +6371,29 @@ private final class RecordingSurfaceParameterClient: SurfaceParameterClient {
 
     private let base = UniFFISurfaceParameterClient()
     private(set) var writes: [Write] = []
+    private(set) var invocations: [String] = []
     var resolveFailure: ((SurfaceParameterPatch, SurfaceParameterPatch) -> Error?)?
 
+    var invocationCount: Int { invocations.count }
+
     func loadBundle(surfaceID: String) throws -> SurfaceParameterBundle {
-        try base.loadBundle(surfaceID: surfaceID)
+        invocations.append("loadBundle")
+        return try base.loadBundle(surfaceID: surfaceID)
     }
 
     func defaults(surfaceID: String) throws -> SurfaceParameterSnapshot {
-        try base.defaults(surfaceID: surfaceID)
+        invocations.append("defaults")
+        return try base.defaults(surfaceID: surfaceID)
     }
 
     func last(surfaceID _: String, workspace _: String, successful _: Bool) throws -> SurfaceParameterSnapshot? {
-        nil
+        invocations.append("last")
+        return nil
     }
 
     func load(surfaceID: String, profileTOML: String, sourcePath: String) throws -> SurfaceParameterSnapshot {
-        try base.load(surfaceID: surfaceID, profileTOML: profileTOML, sourcePath: sourcePath)
+        invocations.append("load")
+        return try base.load(surfaceID: surfaceID, profileTOML: profileTOML, sourcePath: sourcePath)
     }
 
     func resolve(
@@ -6194,6 +6404,7 @@ private final class RecordingSurfaceParameterClient: SurfaceParameterClient {
         context: SurfaceParameterPatch,
         override: SurfaceParameterPatch
     ) throws -> SurfaceParameterSnapshot {
+        invocations.append("resolve")
         if let error = resolveFailure?(context, override) {
             throw error
         }
@@ -6212,7 +6423,8 @@ private final class RecordingSurfaceParameterClient: SurfaceParameterClient {
         values: [String: SurfaceParameterValue],
         destinationPath: String
     ) throws -> SurfaceParameterWriteResult {
-        try base.save(surfaceID: surfaceID, values: values, destinationPath: destinationPath)
+        invocations.append("save")
+        return try base.save(surfaceID: surfaceID, values: values, destinationPath: destinationPath)
     }
 
     func writeLast(
@@ -6221,6 +6433,7 @@ private final class RecordingSurfaceParameterClient: SurfaceParameterClient {
         values: [String: SurfaceParameterValue],
         successful: Bool
     ) throws -> SurfaceParameterWriteResult {
+        invocations.append("writeLast")
         writes.append(Write(
             surfaceID: surfaceID,
             workspace: workspace,
@@ -6275,6 +6488,23 @@ private func makeSimobserveGenericTaskRequest(rootURL: URL) throws -> GenericTas
             stdin: #"{"kind":"family","request":{"model":"model.image","output_ms":"products/family.ms"}}"#
         ),
         workingDirectoryPath: rootURL.path
+    )
+}
+
+private func notebookPrototypeDependencies(
+    genericTaskClient: GenericTaskClient,
+    surfaceParameterClient: SurfaceParameterClient
+) -> NotebookPrototypeRuntimeDependencies {
+    let denied = NotebookPrototypeRuntimeDependencies.denied
+    return NotebookPrototypeRuntimeDependencies(
+        probeClient: denied.probeClient,
+        demoProjectClient: denied.demoProjectClient,
+        plotClient: denied.plotClient,
+        imageExplorerClient: denied.imageExplorerClient,
+        tableBrowserClient: denied.tableBrowserClient,
+        genericTaskClient: genericTaskClient,
+        taskUISchemaClient: denied.taskUISchemaClient,
+        surfaceParameterClient: surfaceParameterClient
     )
 }
 

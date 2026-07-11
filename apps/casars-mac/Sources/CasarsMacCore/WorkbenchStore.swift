@@ -71,6 +71,203 @@ public struct UniFFITaskExecutionMatrixClient: TaskExecutionMatrixClient {
     }
 }
 
+/// Bootstrap adapters used before the notebook prototype is visible. They
+/// deliberately expose no production catalog or execution metadata.
+private struct PrototypeTaskCatalogClient: TaskCatalogClient {
+    func loadTaskCatalog() throws -> [TaskCatalogEntry] { [] }
+}
+
+private struct PrototypeTaskExecutionMatrixClient: TaskExecutionMatrixClient {
+    func loadTaskExecutionMatrix() throws -> TaskExecutionMatrixEnvelope {
+        TaskExecutionMatrixEnvelope(
+            schemaVersion: 1,
+            generatedFor: "notebook-prototype",
+            scopeNote: "fixture-only",
+            rows: []
+        )
+    }
+}
+
+private struct NotebookPrototypeBoundaryViolation: Error, CustomStringConvertible {
+    let boundary: String
+
+    var description: String {
+        "The notebook prototype runtime denied the \(boundary) boundary."
+    }
+}
+
+/// Fail-closed production adapters installed only in the immutable notebook
+/// prototype runtime. A store guard should reject every route before one of
+/// these methods is reached; throwing here is the final containment layer.
+private struct NotebookPrototypeDeniedProductionClient:
+    ProjectProbeClient,
+    DemoProjectClient,
+    MeasurementSetPlotClient,
+    ImageExplorerClient,
+    TableBrowserClient,
+    GenericTaskClient,
+    TaskUISchemaClient,
+    SurfaceParameterClient
+{
+    private func denied<T>(_ boundary: String) throws -> T {
+        throw NotebookPrototypeBoundaryViolation(boundary: boundary)
+    }
+
+    func probeProject(path: String) throws -> ProjectFixtureProbe {
+        try denied("project probe")
+    }
+
+    func probePath(path: String) throws -> DatasetSummary? {
+        try denied("dataset probe")
+    }
+
+    func createDemoProject() throws -> ProjectFixtureProbe {
+        try denied("demo project")
+    }
+
+    func cleanupDemoProject(rootPath: String) {
+        // A prototype runtime never creates a demo root, so cleanup has
+        // nothing to do and intentionally performs no filesystem operation.
+    }
+
+    func buildPlot(request: MeasurementSetPlotBuildRequest) throws -> MeasurementSetPlotResultSummary {
+        try denied("MeasurementSet plot")
+    }
+
+    func buildSnapshot(request: ImageExplorerSnapshotRequest) throws -> ImageExplorerSnapshot {
+        try denied("image explorer")
+    }
+
+    func buildSnapshot(request: TableBrowserSnapshotRequest) throws -> TableBrowserSnapshot {
+        try denied("table browser")
+    }
+
+    func buildCellWindow(request: TableBrowserCellWindowRequest) throws -> TableBrowserCellWindowSnapshot {
+        try denied("table cell window")
+    }
+
+    func buildCellValue(request: TableBrowserCellValueRequest) throws -> String {
+        try denied("table cell value")
+    }
+
+    func startTask(
+        request: GenericTaskRequest,
+        eventHandler: @escaping (GenericTaskEvent) -> Void
+    ) throws -> TaskExecution {
+        try denied("task process")
+    }
+
+    func loadTaskUISchema(taskID: String) throws -> TaskUISchema {
+        try denied("task schema")
+    }
+
+    func loadBundle(surfaceID: String) throws -> SurfaceParameterBundle {
+        try denied("parameter bundle")
+    }
+
+    func defaults(surfaceID: String) throws -> SurfaceParameterSnapshot {
+        try denied("parameter defaults")
+    }
+
+    func last(surfaceID: String, workspace: String, successful: Bool) throws -> SurfaceParameterSnapshot? {
+        try denied("parameter history")
+    }
+
+    func load(surfaceID: String, profileTOML: String, sourcePath: String) throws -> SurfaceParameterSnapshot {
+        try denied("parameter profile")
+    }
+
+    func resolve(
+        surfaceID: String,
+        baseSource: SurfaceParameterBaseSource,
+        profileTOML: String?,
+        profilePath: String?,
+        context: SurfaceParameterPatch,
+        override: SurfaceParameterPatch
+    ) throws -> SurfaceParameterSnapshot {
+        try denied("parameter resolution")
+    }
+
+    func save(
+        surfaceID: String,
+        values: [String: SurfaceParameterValue],
+        destinationPath: String
+    ) throws -> SurfaceParameterWriteResult {
+        try denied("parameter save")
+    }
+
+    func writeLast(
+        surfaceID: String,
+        workspace: String,
+        values: [String: SurfaceParameterValue],
+        successful: Bool
+    ) throws -> SurfaceParameterWriteResult {
+        try denied("parameter history write")
+    }
+
+    func runSafety(
+        surfaceID: String,
+        values: [String: SurfaceParameterValue]
+    ) throws -> SurfaceRunSafety {
+        try denied("parameter run safety")
+    }
+
+    func providerInvocation(
+        surfaceID: String,
+        values: [String: SurfaceParameterValue]
+    ) throws -> SurfaceProviderInvocation {
+        try denied("provider invocation")
+    }
+}
+
+/// Package-only injection point for containment tests. Production app code
+/// uses `denied`; none of these fixture-runtime dependencies become a public
+/// or persisted contract.
+package struct NotebookPrototypeRuntimeDependencies {
+    let probeClient: ProjectProbeClient
+    let demoProjectClient: DemoProjectClient
+    let plotClient: MeasurementSetPlotClient
+    let imageExplorerClient: ImageExplorerClient
+    let tableBrowserClient: TableBrowserClient
+    let genericTaskClient: GenericTaskClient
+    let taskUISchemaClient: TaskUISchemaClient
+    let surfaceParameterClient: SurfaceParameterClient
+
+    package init(
+        probeClient: ProjectProbeClient,
+        demoProjectClient: DemoProjectClient,
+        plotClient: MeasurementSetPlotClient,
+        imageExplorerClient: ImageExplorerClient,
+        tableBrowserClient: TableBrowserClient,
+        genericTaskClient: GenericTaskClient,
+        taskUISchemaClient: TaskUISchemaClient,
+        surfaceParameterClient: SurfaceParameterClient
+    ) {
+        self.probeClient = probeClient
+        self.demoProjectClient = demoProjectClient
+        self.plotClient = plotClient
+        self.imageExplorerClient = imageExplorerClient
+        self.tableBrowserClient = tableBrowserClient
+        self.genericTaskClient = genericTaskClient
+        self.taskUISchemaClient = taskUISchemaClient
+        self.surfaceParameterClient = surfaceParameterClient
+    }
+
+    package static var denied: Self {
+        let client = NotebookPrototypeDeniedProductionClient()
+        return Self(
+            probeClient: client,
+            demoProjectClient: client,
+            plotClient: client,
+            imageExplorerClient: client,
+            tableBrowserClient: client,
+            genericTaskClient: client,
+            taskUISchemaClient: client,
+            surfaceParameterClient: client
+        )
+    }
+}
+
 public protocol TaskContextOptionsClient {
     func loadTaskContextOptions(datasetPath: String) throws -> TaskContextOptionsEnvelope
 }
@@ -578,8 +775,14 @@ private struct SessionLastDestination: Hashable {
     }
 }
 
+private enum WorkbenchRuntimeKind {
+    case production
+    case notebookPrototype
+}
+
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
+    private let runtimeKind: WorkbenchRuntimeKind
     private let probeClient: ProjectProbeClient
     private let demoProjectClient: DemoProjectClient
     private let plotClient: MeasurementSetPlotClient
@@ -635,6 +838,7 @@ public final class WorkbenchStore: ObservableObject {
             }
         }
         self.state = initialState
+        runtimeKind = initialState.isNotebookPrototype ? .notebookPrototype : .production
         self.probeClient = probeClient
         self.demoProjectClient = demoProjectClient
         self.plotClient = plotClient
@@ -648,6 +852,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     deinit {
+        guard runtimeKind == .production else { return }
         sessionLastWrites.values.forEach { $0.cancel() }
         for sessionKey in acceptedSessionParameterValues.keys {
             persistSessionLastIfChanged(sessionKey: sessionKey)
@@ -663,7 +868,72 @@ public final class WorkbenchStore: ObservableObject {
         WorkbenchStore(state: FixtureWorkbench.makeState())
     }
 
+    package static func notebookPrototype(
+        scenario: NotebookPrototypeScenario = .primary,
+        dependencies: NotebookPrototypeRuntimeDependencies = .denied
+    ) -> WorkbenchStore {
+        WorkbenchStore(
+            state: notebookPrototypeState(scenario: scenario),
+            probeClient: dependencies.probeClient,
+            demoProjectClient: dependencies.demoProjectClient,
+            plotClient: dependencies.plotClient,
+            imageExplorerClient: dependencies.imageExplorerClient,
+            tableBrowserClient: dependencies.tableBrowserClient,
+            genericTaskClient: dependencies.genericTaskClient,
+            taskCatalogClient: PrototypeTaskCatalogClient(),
+            taskUISchemaClient: dependencies.taskUISchemaClient,
+            surfaceParameterClient: dependencies.surfaceParameterClient,
+            taskExecutionMatrixClient: PrototypeTaskExecutionMatrixClient(),
+            imagerProgressSource: EmptyImagerProgressSource()
+        )
+    }
+
+    package var isNotebookPrototypeRuntime: Bool {
+        runtimeKind == .notebookPrototype
+    }
+
+    private static func notebookPrototypeState(
+        scenario: NotebookPrototypeScenario,
+        interfaceFontSize: Double = WorkbenchState.defaultInterfaceFontSize
+    ) -> WorkbenchState {
+        var state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+        state.project = ProjectFixture(
+            name: "TW Hya Reduction",
+            rootPath: "/PrototypeProjects/tw-hya-reduction",
+            datasets: [
+                DatasetSummary(
+                    id: "prototype-twhya-ms",
+                    name: "twhya_calibrated.ms",
+                    path: "data/twhya_calibrated.ms",
+                    kind: .measurementSet,
+                    size: "2.1 GB fixture",
+                    units: "Jy, Hz, seconds",
+                    fields: ["TW Hya"],
+                    spectralWindows: ["spw 0: continuum", "spw 1: line"],
+                    dataColumns: ["DATA", "CORRECTED_DATA"],
+                    notes: "Deterministic notebook prototype metadata; no data are opened."
+                )
+            ],
+            source: .fixture
+        )
+        state.selectedDatasetID = "prototype-twhya-ms"
+        state.prototypeNotebook = PrototypeScientificNotebookFixtureAdapter.make(scenario: scenario)
+        state.dockMode = .notebooks
+        state.leftDockCollapsed = false
+        state.inspectorCollapsed = true
+        state.tabs = [
+            WorkbenchTab(
+                id: "tab-scientific-notebook",
+                title: state.prototypeNotebook?.filename ?? "Notebook",
+                kind: .notebook
+            )
+        ]
+        state.activeTabID = "tab-scientific-notebook"
+        return state
+    }
+
     public func openFixtureProject() {
+        guard !rejectPrototypeProductionAction("Demo projects") else { return }
         let interfaceFontSize = state.interfaceFontSize
         let taskCatalog = state.taskCatalog
         cleanupTemporaryDemoProject()
@@ -701,6 +971,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func openProject(path: String) {
+        guard !rejectPrototypeProductionAction("Project opening") else { return }
         let interfaceFontSize = state.interfaceFontSize
         let taskCatalog = state.taskCatalog
         cleanupTemporaryDemoProject()
@@ -734,6 +1005,7 @@ public final class WorkbenchStore: ObservableObject {
 
 
     public func openExternalMeasurementSetForImaging(path: String) {
+        guard !rejectPrototypeProductionAction("External MeasurementSet opening") else { return }
         let interfaceFontSize = state.interfaceFontSize
         let taskCatalog = state.taskCatalog
         cleanupTemporaryDemoProject()
@@ -799,6 +1071,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func openTutorialPack(path: String) {
+        guard !rejectPrototypeProductionAction("Tutorial packs") else { return }
         let interfaceFontSize = state.interfaceFontSize
         let taskCatalog = state.taskCatalog
         cleanupTemporaryDemoProject()
@@ -842,6 +1115,9 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func refreshProjectFromDiskIfNeeded(now: Date = Date()) {
+        // The UI timer keeps firing in prototype review sessions. Ignore it
+        // silently so it cannot touch disk or flood the fixture error log.
+        guard runtimeKind == .production else { return }
         guard state.hasProject, !state.project.rootPath.isEmpty else {
             return
         }
@@ -856,6 +1132,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func refreshProjectFromDisk() {
+        guard !rejectPrototypeProductionAction("Project refresh") else { return }
         guard state.hasProject, !state.project.rootPath.isEmpty else {
             return
         }
@@ -1176,6 +1453,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func selectTutorialSection(_ sectionID: String) {
+        guard !rejectPrototypeProductionAction("Tutorial navigation") else { return }
         guard var context = state.tutorialPack else {
             state.lastErrors.append("No tutorial pack is open")
             return
@@ -1205,6 +1483,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func openTutorialSectionTask(_ sectionID: String) {
+        guard !rejectPrototypeProductionAction("Tutorial task navigation") else { return }
         selectTutorialSection(sectionID)
         guard let context = state.tutorialPack,
               let section = context.selectedSection
@@ -1270,6 +1549,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func cleanupTemporaryDemoProject() {
+        guard runtimeKind == .production else { return }
         guard let temporaryDemoProjectRoot else { return }
         demoProjectClient.cleanupDemoProject(rootPath: temporaryDemoProjectRoot)
         self.temporaryDemoProjectRoot = nil
@@ -1300,6 +1580,10 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func selectDockMode(_ mode: DockMode) {
+        if mode == .history,
+           rejectPrototypeProductionAction("Processing history") {
+            return
+        }
         state.dockMode = mode
         state.leftDockCollapsed = false
     }
@@ -1331,6 +1615,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func openSelectedDatasetExplorer() {
+        guard !rejectPrototypeProductionAction("Dataset explorers") else { return }
         guard let dataset = state.selectedDataset else {
             state.lastErrors.append("No selected dataset to explore")
             return
@@ -1340,6 +1625,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func openDatasetExplorer(_ datasetID: String) {
+        guard !rejectPrototypeProductionAction("Dataset explorers") else { return }
         guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
             state.lastErrors.append("Unknown dataset \(datasetID)")
             return
@@ -1350,6 +1636,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func openDatasetTableBrowser(_ datasetID: String) {
+        guard !rejectPrototypeProductionAction("Table browsers") else { return }
         guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
             state.lastErrors.append("Unknown dataset \(datasetID)")
             return
@@ -1379,6 +1666,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func openTableBrowserPath(_ path: String, sourceDatasetID: String? = nil) {
+        guard !rejectPrototypeProductionAction("Table browsers") else { return }
         let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
         if !state.project.datasets.contains(where: { $0.id == normalizedPath }) {
             let sourceName = sourceDatasetID
@@ -1399,6 +1687,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func openImageExplorerPath(_ path: String, sourceDatasetID: String? = nil) {
+        guard !rejectPrototypeProductionAction("Image explorers") else { return }
         let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
         if !state.project.datasets.contains(where: { $0.id == normalizedPath }) {
             if let probed = try? probeClient.probePath(path: normalizedPath), probed.kind == .imageCube {
@@ -1423,6 +1712,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func openRunProduct(runID: String, productID: String) {
+        guard !rejectPrototypeProductionAction("Run products") else { return }
         guard let group = state.runProductGroups.first(where: { $0.runID == runID }) else {
             state.lastErrors.append("Unknown run \(runID)")
             return
@@ -1618,6 +1908,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func runMeasurementSetPlot(datasetID: String) {
+        guard !rejectPrototypeProductionAction("MeasurementSet plots") else { return }
         guard !state.isDemoProject else {
             state.lastErrors.append("Real MeasurementSet plots are not available in the demo project")
             return
@@ -1781,8 +2072,11 @@ public final class WorkbenchStore: ObservableObject {
         }
 
         let normalized = query.lowercased()
+        let terms = Set(normalized.split { !$0.isLetter && !$0.isNumber }.map(String.init))
         if normalized.contains("plot") || normalized.contains("chart") {
             openDefaultTab(kind: .plotSamples)
+        } else if normalized.contains("notebook") || terms.contains("note") || terms.contains("notes") {
+            openDefaultTab(kind: .notebook)
         } else if normalized.contains("python") {
             openDefaultTab(kind: .python)
         } else if normalized.contains("history") || normalized.contains("timeline") {
@@ -1803,7 +2097,21 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
+    /// Keep the deterministic prototype from crossing into any production
+    /// explorer, task, schema, parameter, or process adapter.
+    @discardableResult
+    private func rejectPrototypeProductionAction(_ action: String) -> Bool {
+        guard runtimeKind == .notebookPrototype else { return false }
+        state.lastErrors.append("\(action) are unavailable in the in-memory notebook prototype")
+        return true
+    }
+
     public func openTab(_ tab: WorkbenchTab) {
+        if runtimeKind == .notebookPrototype,
+           tab.kind != .notebook && !(tab.kind == .task && tab.prototypeReceiptID != nil) {
+            _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
+            return
+        }
         if !state.tabs.contains(where: { $0.id == tab.id }) {
             state.tabs.append(tab)
         }
@@ -1865,48 +2173,283 @@ public final class WorkbenchStore: ObservableObject {
     public func openDefaultTab(kind: WorkbenchTabKind) {
         switch kind {
         case .datasetExplorer:
+            guard !rejectPrototypeProductionAction("Dataset explorers") else { return }
             openSelectedDatasetExplorer()
         case .tableBrowser:
+            guard !rejectPrototypeProductionAction("Table browsers") else { return }
             guard let dataset = state.selectedDataset else {
                 state.lastErrors.append("No selected dataset to browse")
                 return
             }
             openDatasetTableBrowser(dataset.id)
         case .tutorial:
+            guard !rejectPrototypeProductionAction("Tutorial tabs") else { return }
             guard state.tutorialPack != nil else {
                 state.lastErrors.append("No tutorial pack is open")
                 return
             }
             openTab(WorkbenchTab(id: "tab-tutorial-pack", title: "Tutorial", kind: .tutorial))
         case .task:
+            if state.isNotebookPrototype {
+                guard let receiptID = state.prototypeNotebook?.selectedReceiptID else {
+                    state.lastErrors.append("No prototype notebook task is selected")
+                    return
+                }
+                openPrototypeNotebookTask(receiptID: receiptID)
+                return
+            }
             if state.isDemoProject {
                 openTab(WorkbenchTab(id: "tab-task", title: "Calibrate", kind: .task, datasetID: state.selectedDatasetID))
             } else {
                 openTab(WorkbenchTab(id: nextTaskTabID(), title: "Tasks", kind: .task, datasetID: state.selectedDatasetID))
             }
+        case .notebook:
+            guard let notebook = state.prototypeNotebook else {
+                state.lastErrors.append("No notebook is open")
+                return
+            }
+            openTab(WorkbenchTab(id: "tab-scientific-notebook", title: notebook.filename, kind: .notebook))
         case .plotSamples:
+            guard !rejectPrototypeProductionAction("Production plot tabs") else { return }
             if state.plotDocuments.isEmpty {
                 state.plotDocuments = WorkbenchPlotSamples.all()
             }
             openTab(WorkbenchTab(id: "tab-plot-samples", title: "Plot Samples", kind: .plotSamples))
         case .aiChat:
+            guard !rejectPrototypeProductionAction("AI chat") else { return }
             guard state.isDemoProject else {
                 state.lastErrors.append("AI chat is not connected yet")
                 return
             }
             openTab(WorkbenchTab(id: "tab-ai", title: "AI Chat", kind: .aiChat))
         case .python:
+            guard !rejectPrototypeProductionAction("Python") else { return }
             guard state.isDemoProject else {
                 state.lastErrors.append("Python is not connected yet")
                 return
             }
             openTab(WorkbenchTab(id: "tab-python", title: "Python", kind: .python))
         case .history:
+            guard !rejectPrototypeProductionAction("Processing history") else { return }
             openTab(WorkbenchTab(id: "tab-history", title: "History", kind: .history))
         }
     }
 
+    /// Rebuild the fixture projection only inside an already-isolated
+    /// prototype runtime. A production store can never transition into this
+    /// runtime; callers must relaunch through the dedicated CLI/dev factory.
+    package func openScientificNotebookPrototype(scenario: NotebookPrototypeScenario = .primary) {
+        guard runtimeKind == .notebookPrototype else {
+            state.lastErrors.append(
+                "The notebook prototype requires a fresh dedicated CLI/dev launch; the production runtime was not changed."
+            )
+            return
+        }
+        state = Self.notebookPrototypeState(
+            scenario: scenario,
+            interfaceFontSize: state.interfaceFontSize
+        )
+    }
+
+    package func selectPrototypeNotebook(_ notebookID: String) {
+        guard runtimeKind == .notebookPrototype else { return }
+        guard var projection = state.prototypeNotebook,
+              projection.documents.contains(where: { $0.id == notebookID })
+        else { return }
+        projection.activeNotebookID = notebookID
+        state.prototypeNotebook = projection
+        if let tabIndex = state.tabs.firstIndex(where: { $0.kind == .notebook }) {
+            state.tabs[tabIndex].title = projection.filename
+            state.activeTabID = state.tabs[tabIndex].id
+        } else {
+            openDefaultTab(kind: .notebook)
+        }
+    }
+
+    package func setPrototypeNotebookDraft(_ markdown: String) {
+        guard runtimeKind == .notebookPrototype else { return }
+        updateActivePrototypeNotebook { document in
+            document.draftMarkdown = markdown
+            PrototypeScientificNotebookFixtureAdapter.synchronizeTaskCells(in: &document)
+        }
+    }
+
+    package func setPrototypeNotebookViewMode(_ viewMode: PrototypeNotebookViewMode) {
+        guard runtimeKind == .notebookPrototype else { return }
+        updateActivePrototypeNotebook { $0.viewMode = viewMode }
+    }
+
+    package func savePrototypeNotebookDraft() {
+        guard runtimeKind == .notebookPrototype else { return }
+        guard state.prototypeNotebook?.hasExternalConflict == false else {
+            state.lastErrors.append("Resolve the simulated external notebook conflict before saving")
+            return
+        }
+        updateActivePrototypeNotebook { $0.savedMarkdown = $0.draftMarkdown }
+    }
+
+    package func resolvePrototypeNotebookConflict(keepingDraft: Bool) {
+        guard runtimeKind == .notebookPrototype else { return }
+        updateActivePrototypeNotebook { document in
+            if !keepingDraft {
+                document.draftMarkdown = document.savedMarkdown
+            }
+            PrototypeScientificNotebookFixtureAdapter.synchronizeTaskCells(in: &document)
+            document.hasExternalConflict = false
+        }
+    }
+
+    package func selectPrototypeNotebookReceipt(_ receiptID: String) {
+        guard runtimeKind == .notebookPrototype else { return }
+        updateActivePrototypeNotebook { document in
+            guard document.tasks.contains(where: { $0.id == receiptID }) else { return }
+            document.selectedReceiptID = receiptID
+        }
+    }
+
+    /// Opens an interactive task-shaped tab using only the fixture projection.
+    /// No provider schema, parameter, dataset, or task adapter is consulted.
+    package func openPrototypeNotebookTask(receiptID: String) {
+        guard runtimeKind == .notebookPrototype,
+              let receipt = state.prototypeNotebook?.receipts.first(where: { $0.id == receiptID })
+        else {
+            state.lastErrors.append("Unknown prototype notebook task \(receiptID)")
+            return
+        }
+        selectPrototypeNotebookReceipt(receiptID)
+        var tab = WorkbenchTab(
+            id: "tab-prototype-task-\(receipt.id)",
+            title: receipt.title,
+            kind: .task,
+            taskID: receipt.taskID
+        )
+        tab.prototypeReceiptID = receipt.id
+        openTab(tab)
+    }
+
+    /// Appends a deterministic revision to the selected fixture receipt.
+    @discardableResult
+    package func restartPrototypeNotebookTask(receiptID: String) -> String? {
+        guard runtimeKind == .notebookPrototype,
+              var projection = state.prototypeNotebook,
+              let documentIndex = projection.documents.firstIndex(where: {
+                  $0.tasks.contains(where: { $0.id == receiptID })
+              }),
+              let receiptIndex = projection.documents[documentIndex].tasks.firstIndex(where: {
+                  $0.id == receiptID
+              }),
+              !projection.documents[documentIndex].tasks[receiptIndex].revisions.contains(where: {
+                  $0.status == .running
+              })
+        else { return nil }
+        let fixtureSequence = projection.nextSimulatedRunSequence
+        projection.nextSimulatedRunSequence += 1
+        let revisionSequence =
+            (projection.documents[documentIndex].tasks[receiptIndex].revisions.map(\.sequence).max() ?? 0) + 1
+        let revisionID = "execution-simulated-\(fixtureSequence)"
+        projection.documents[documentIndex].tasks[receiptIndex].revisions.append(
+            PrototypeNotebookExecutionRevision(
+                id: revisionID,
+                sequence: revisionSequence,
+                timestamp: "2026-07-10 prototype \(fixtureSequence)",
+                status: .running,
+                summary: "Deterministic fixture rerun is in progress.",
+                diagnostics: ["Prototype only: no task or project write was started."],
+                logLines: ["Validated fixture request.", "Started simulated work."]
+            )
+        )
+        projection.documents[documentIndex].selectedReceiptID = receiptID
+        state.prototypeNotebook = projection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            self?.completePrototypeNotebookTaskRevision(
+                receiptID: receiptID,
+                revisionID: revisionID
+            )
+        }
+        return receiptID
+    }
+
+    package func completePrototypeNotebookTaskRun(receiptID: String) {
+        guard let revisionID = runningPrototypeRevisionID(receiptID: receiptID) else { return }
+        updatePrototypeNotebookRun(receiptID: receiptID, revisionID: revisionID, status: .succeeded)
+    }
+
+    /// Deterministic fixture-only completion hook. Delayed callbacks must name
+    /// the exact revision they started so an obsolete callback can never
+    /// complete a newer retry for the same receipt.
+    package func completePrototypeNotebookTaskRevision(
+        receiptID: String,
+        revisionID: String
+    ) {
+        guard runtimeKind == .notebookPrototype else { return }
+        updatePrototypeNotebookRun(
+            receiptID: receiptID,
+            revisionID: revisionID,
+            status: .succeeded
+        )
+    }
+
+    package func cancelPrototypeNotebookTaskRun(receiptID: String) {
+        guard let revisionID = runningPrototypeRevisionID(receiptID: receiptID) else { return }
+        updatePrototypeNotebookRun(receiptID: receiptID, revisionID: revisionID, status: .cancelled)
+    }
+
+    package func runningPrototypeRevisionID(receiptID: String) -> String? {
+        guard runtimeKind == .notebookPrototype else { return nil }
+        return state.prototypeNotebook?.task(receiptID: receiptID)?.revisions
+            .last(where: { $0.status == .running })?.id
+    }
+
+    private func updateActivePrototypeNotebook(
+        _ update: (inout PrototypeNotebookDocumentProjection) -> Void
+    ) {
+        guard var projection = state.prototypeNotebook,
+              let index = projection.documents.firstIndex(where: { $0.id == projection.activeNotebookID })
+        else { return }
+        update(&projection.documents[index])
+        state.prototypeNotebook = projection
+    }
+
+    private func updatePrototypeNotebookRun(
+        receiptID: String,
+        revisionID: String,
+        status: PrototypeNotebookReceiptStatus
+    ) {
+        guard var projection = state.prototypeNotebook,
+              let documentIndex = projection.documents.firstIndex(where: {
+                  $0.tasks.contains(where: { $0.id == receiptID })
+              }),
+              let receiptIndex = projection.documents[documentIndex].tasks.firstIndex(where: {
+                  $0.id == receiptID
+              }),
+              let revisionIndex = projection.documents[documentIndex].tasks[receiptIndex].revisions.firstIndex(where: {
+                  $0.id == revisionID
+              }),
+              projection.documents[documentIndex].tasks[receiptIndex].revisions[revisionIndex].status == .running
+        else { return }
+        var revision = projection.documents[documentIndex].tasks[receiptIndex].revisions[revisionIndex]
+        revision.status = status
+        switch status {
+        case .succeeded:
+            revision.summary = "Fixture run completed and registered two simulated products."
+            revision.products = [
+                "products/\(receiptID)-revision-\(revision.sequence).image",
+                "products/\(receiptID)-revision-\(revision.sequence).weight",
+            ]
+            revision.logLines.append("Completed simulated work without executing a task.")
+        case .cancelled:
+            revision.summary = "User cancelled the fixture run; no products were registered."
+            revision.products = []
+            revision.logLines.append("Cancellation acknowledged by the fixture adapter.")
+        case .running, .failed:
+            break
+        }
+        projection.documents[documentIndex].tasks[receiptIndex].revisions[revisionIndex] = revision
+        state.prototypeNotebook = projection
+    }
+
     public func openImagerProgressMockup() {
+        guard !rejectPrototypeProductionAction("Imager progress mockups") else { return }
         if !state.hasProject {
             openFixtureProject()
         }
@@ -1954,6 +2497,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func openImagerTaskForSelectedDataset() {
+        guard !rejectPrototypeProductionAction("Production task tabs") else { return }
         guard state.selectedDataset != nil else {
             state.lastErrors.append("Open a project with a dataset before opening an imaging task")
             return
@@ -2033,6 +2577,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func refreshImageExplorer(datasetID: String) {
+        guard !rejectPrototypeProductionAction("Image explorers") else { return }
         guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
             state.lastErrors.append("Unknown dataset \(datasetID)")
             return
@@ -2126,6 +2671,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func refreshTableBrowser(datasetID: String) {
+        guard !rejectPrototypeProductionAction("Table browsers") else { return }
         guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
             state.lastErrors.append("Unknown dataset \(datasetID)")
             return
@@ -2645,6 +3191,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func loadImageExplorerRegionFile(path: String, datasetID: String) {
+        guard !rejectPrototypeProductionAction("Region file loading") else { return }
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.regionCommands = [.loadRegionFile(path: path)]
         explorerState.activeRegionFilePath = Self.normalizedRegionFilePath(path)
@@ -2655,6 +3202,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func appendImageExplorerRegionFile(path: String, datasetID: String) {
+        guard !rejectPrototypeProductionAction("Region file loading") else { return }
         var explorerState = imageExplorerState(datasetID: datasetID)
         let normalizedPath = Self.normalizedRegionFilePath(path)
         if explorerState.activeRegionFilePath == normalizedPath {
@@ -2682,6 +3230,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func exportImageExplorerRegionFile(datasetID: String, path: String? = nil) {
+        guard !rejectPrototypeProductionAction("Region file export") else { return }
         guard let imageDataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
             state.lastErrors.append("Unknown dataset \(datasetID)")
             return
@@ -2909,6 +3458,7 @@ public final class WorkbenchStore: ObservableObject {
         columnLimit: Int,
         datasetID: String
     ) {
+        guard !rejectPrototypeProductionAction("Table cell windows") else { return }
         guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
             state.lastErrors.append("Unknown dataset \(datasetID)")
             return
@@ -2965,6 +3515,10 @@ public final class WorkbenchStore: ObservableObject {
         datasetID: String,
         completion: @escaping (Result<String, Error>) -> Void
     ) {
+        guard !rejectPrototypeProductionAction("Table cell values") else {
+            completion(.failure(NotebookPrototypeBoundaryViolation(boundary: "table cell value")))
+            return
+        }
         guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
             let error = NSError(
                 domain: "CasarsMacCore.WorkbenchStore",
@@ -3035,6 +3589,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func selectTask(_ taskID: String, tabID: String? = nil) {
+        guard !rejectPrototypeProductionAction("Task selection") else { return }
         guard state.taskCatalog.contains(where: { $0.id == taskID }) else {
             state.lastErrors.append("Unknown task \(taskID)")
             return
@@ -3068,6 +3623,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func loadTaskUISchemaIfNeeded(_ taskID: String? = nil, instanceID: String? = nil) {
+        guard !rejectPrototypeProductionAction("Task schemas") else { return }
         let resolvedTaskID = taskID ?? state.activeTaskID
         guard !resolvedTaskID.isEmpty else {
             return
@@ -3101,6 +3657,7 @@ public final class WorkbenchStore: ObservableObject {
         argumentID: String,
         value: String
     ) {
+        guard !rejectPrototypeProductionAction("Task parameters") else { return }
         let resolvedTaskID = taskID ?? state.activeTaskID
         loadParameterSessionIfNeeded(resolvedTaskID, instanceID: instanceID)
         let sessionKey = parameterSessionKey(surfaceID: resolvedTaskID, instanceID: instanceID)
@@ -3127,6 +3684,7 @@ public final class WorkbenchStore: ObservableObject {
         argumentID: String,
         value: Bool
     ) {
+        guard !rejectPrototypeProductionAction("Task parameters") else { return }
         let resolvedTaskID = taskID ?? state.activeTaskID
         loadParameterSessionIfNeeded(resolvedTaskID, instanceID: instanceID)
         let sessionKey = parameterSessionKey(surfaceID: resolvedTaskID, instanceID: instanceID)
@@ -3155,6 +3713,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func resetParameter(surfaceID: String? = nil, instanceID: String? = nil, name: String) {
+        guard !rejectPrototypeProductionAction("Parameter reset") else { return }
         let resolvedSurfaceID = surfaceID ?? state.activeTaskID
         let sessionKey = parameterSessionKey(surfaceID: resolvedSurfaceID, instanceID: instanceID)
         guard var session = state.parameterSessions[sessionKey] else { return }
@@ -3167,6 +3726,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func revertParameters(surfaceID: String? = nil, instanceID: String? = nil) {
+        guard !rejectPrototypeProductionAction("Parameter revert") else { return }
         let resolvedSurfaceID = surfaceID ?? state.activeTaskID
         let sessionKey = parameterSessionKey(surfaceID: resolvedSurfaceID, instanceID: instanceID)
         guard var session = state.parameterSessions[sessionKey] else { return }
@@ -3194,6 +3754,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func applySurfaceParameterProfile(surfaceID: String, datasetID: String, instanceID: String? = nil) {
+        guard !rejectPrototypeProductionAction("Parameter profiles") else { return }
         guard parameterSession(surfaceID: surfaceID, instanceID: instanceID) != nil else { return }
         switch surfaceID {
         case "msexplore":
@@ -3221,6 +3782,7 @@ public final class WorkbenchStore: ObservableObject {
         profilePath: String? = nil,
         discardEdits: Bool = false
     ) {
+        guard !rejectPrototypeProductionAction("Parameter profile loading") else { return }
         let resolvedSurfaceID = surfaceID ?? state.activeTaskID
         let sessionKey = parameterSessionKey(surfaceID: resolvedSurfaceID, instanceID: instanceID)
         if state.parameterSessions[sessionKey]?.snapshot.dirty == true, !discardEdits {
@@ -3285,6 +3847,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func saveParameterProfile(surfaceID: String? = nil, instanceID: String? = nil, to path: String) {
+        guard !rejectPrototypeProductionAction("Parameter profile saving") else { return }
         let resolvedSurfaceID = surfaceID ?? state.activeTaskID
         guard let session = parameterSession(surfaceID: resolvedSurfaceID, instanceID: instanceID) else {
             state.lastErrors.append("Parameter session for \(resolvedSurfaceID) is unavailable")
@@ -3321,6 +3884,7 @@ public final class WorkbenchStore: ObservableObject {
         taskID: String? = nil,
         instanceID: String? = nil
     ) -> SurfaceRunSafety? {
+        guard !rejectPrototypeProductionAction("Task run safety") else { return nil }
         let surfaceID = taskID ?? state.activeTaskID
         loadParameterSessionIfNeeded(surfaceID, instanceID: instanceID)
         guard let session = parameterSession(surfaceID: surfaceID, instanceID: instanceID),
@@ -3341,6 +3905,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func runTask() {
+        guard !rejectPrototypeProductionAction("Task execution") else { return }
         if state.isDemoProject {
             state.taskRun = TaskRun(
                 state: .completed,
@@ -3517,6 +4082,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func stopTask() {
+        guard !rejectPrototypeProductionAction("Task cancellation") else { return }
         if state.isDemoProject {
             state.taskRun.state = .stopped
             state.taskRun.logLines.append("Stopped fixture task.")
@@ -3626,6 +4192,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func cancelJob(_ jobID: String) {
+        guard !rejectPrototypeProductionAction("Job cancellation") else { return }
         cancelJob(jobID, recordError: true)
     }
 
@@ -3747,6 +4314,7 @@ public final class WorkbenchStore: ObservableObject {
         dataset: DatasetSummary,
         request: TableBrowserCellWindowRequest
     ) {
+        guard runtimeKind == .production else { return }
         let generation = (tableBrowserCellWindowGenerations[datasetID] ?? 0) + 1
         tableBrowserCellWindowGenerations[datasetID] = generation
         tableBrowserQueue.async { [tableBrowserClient] in
@@ -4001,6 +4569,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func loadParameterSessionIfNeeded(_ surfaceID: String, instanceID: String? = nil) {
+        guard runtimeKind == .production else { return }
         let sessionKey = parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)
         guard !surfaceID.isEmpty, state.parameterSessions[sessionKey] == nil else { return }
         do {
@@ -4046,6 +4615,7 @@ public final class WorkbenchStore: ObservableObject {
         _ session: inout SurfaceParameterSession,
         editedParameters: Set<String> = []
     ) -> Bool {
+        guard runtimeKind == .production else { return false }
         do {
             session.snapshot = try surfaceParameterClient.resolve(
                 surfaceID: session.bundle.surface.id,
@@ -4217,6 +4787,7 @@ public final class WorkbenchStore: ObservableObject {
         value: SurfaceParameterValue,
         persistImmediately: Bool = false
     ) {
+        guard runtimeKind == .production else { return }
         loadParameterSessionIfNeeded(surfaceID, instanceID: instanceID)
         let sessionKey = parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)
         guard var session = state.parameterSessions[sessionKey] else { return }
@@ -4267,6 +4838,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func persistSessionLastIfChanged(sessionKey: String) {
+        guard runtimeKind == .production else { return }
         guard let session = state.parameterSessions[sessionKey] else { return }
         let surfaceID = session.snapshot.surfaceID
         let destination = SessionLastDestination(surfaceID: surfaceID, workspace: session.workspace)
@@ -4490,6 +5062,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func saveActiveParameterProfile(to path: String) {
+        guard !rejectPrototypeProductionAction("Parameter profile saving") else { return }
         saveParameterProfile(
             surfaceID: state.activeTaskID,
             instanceID: parameterInstanceID(surfaceID: state.activeTaskID),
@@ -4498,6 +5071,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func loadActiveParameterProfile(from path: String, discardEdits: Bool = false) {
+        guard !rejectPrototypeProductionAction("Parameter profile loading") else { return }
         selectParameterSource(
             .file,
             surfaceID: state.activeTaskID,
@@ -4512,6 +5086,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func saveActiveTaskOutput(to path: String) {
+        guard !rejectPrototypeProductionAction("Task output saving") else { return }
         guard let output = activeTaskOutput(), let data = output.data(using: .utf8) else {
             state.lastErrors.append("No task output is available to save.")
             return
@@ -5615,6 +6190,7 @@ public final class WorkbenchStore: ObservableObject {
         _ plotState: MeasurementSetExplorerPlotState,
         datasetID: String
     ) {
+        guard runtimeKind == .production else { return }
         let instanceID = parameterInstanceID(surfaceID: "msexplore", datasetID: datasetID)
         loadParameterSessionIfNeeded("msexplore", instanceID: instanceID)
         let sessionKey = parameterSessionKey(surfaceID: "msexplore", instanceID: instanceID)
