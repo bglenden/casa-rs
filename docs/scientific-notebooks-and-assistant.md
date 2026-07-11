@@ -293,9 +293,18 @@ filename or stable ID explicitly; otherwise recording routes to `default.md`.
 
 ### Wave 2: Python and plots
 
-Prototype: live editor, Run/Stop/Restart/Run All, ordered output, errors,
-deterministic matplotlib-style PNG/SVG figures, regeneration, and notebook
-insertion.
+Prototype: a full-width continuous notes-first notebook with inline expandable
+Python cells, live editor, Run/Stop/Restart/Run All, ordered stdout/stderr/error
+output, deterministic matplotlib-style PNG/SVG figures, regeneration, notebook
+insertion, and exact-source approval for AI-proposed code. Deterministic
+`happy-path`, `failure`, and `nonresponsive` fixture states exercise retry,
+interrupt, forced restart, immutable revisions, and approval invalidation.
+
+Current reality: Wave 2 Phase A is implemented on issue #227 as a fixture-only
+`casars-mac` prototype with core tests, XCUITests, accessibility audit, debug
+JSON, and visual evidence. It has no Python process, project persistence,
+matplotlib runtime, task/provider call, or network access. Phase B production
+integration remains blocked until explicit interaction approval is recorded.
 
 Production: project environment, persistent per-notebook user kernel,
 CASA-RS bindings, receipts, plot capture, and the restricted AI-worker boundary.

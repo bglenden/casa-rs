@@ -418,6 +418,7 @@ final class CasarsMacUITests: XCTestCase {
             "--open-project", project.path,
         ]
         app.launch()
+        app.activate()
         XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
         let notebookDock = app.buttons["dock.mode.notebooks"]
         XCTAssertTrue(notebookDock.waitForExistence(timeout: 5), app.debugDescription)
@@ -478,6 +479,7 @@ final class CasarsMacUITests: XCTestCase {
             "--prototype-state", scenario,
         ]
         app.launch()
+        app.activate()
         XCTAssertTrue(
             app.windows["casa-rs Workbench"].waitForExistence(timeout: 10),
             app.debugDescription
@@ -493,6 +495,7 @@ final class CasarsMacUITests: XCTestCase {
             "--prototype-state", scenario,
         ]
         app.launch()
+        app.activate()
         XCTAssertTrue(
             app.windows["casa-rs Workbench"].waitForExistence(timeout: 10),
             app.debugDescription

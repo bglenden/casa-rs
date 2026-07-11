@@ -202,8 +202,7 @@ package enum PrototypePythonFixtureAdapter {
                 ax.set_title("TW Hya · calibrated visibilities")
                 """,
                 owner: .user,
-                behavior: .plot,
-                revisions: [completedPlotRevision(sequence: 1)]
+                behavior: .plot
             ),
             PrototypePythonCell(
                 id: "python-cell-repair",
@@ -238,6 +237,10 @@ package enum PrototypePythonFixtureAdapter {
                 behavior: .nonresponsive
             ),
         ]
+        cells[1].revisions = [completedPlotRevision(
+            sequence: 1,
+            sourceDigest: cells[1].sourceDigest
+        )]
 
         let selectedCellID: String
         let kernelState: PrototypePythonKernelState
@@ -248,11 +251,17 @@ package enum PrototypePythonFixtureAdapter {
         case .failure:
             selectedCellID = "python-cell-repair"
             kernelState = .ready
-            cells[2].revisions = [failedRevision(sequence: 2)]
+            cells[2].revisions = [failedRevision(
+                sequence: 2,
+                sourceDigest: cells[2].sourceDigest
+            )]
         case .nonresponsive:
             selectedCellID = "python-cell-nonresponsive"
             kernelState = .running
-            cells[4].revisions = [runningRevision(sequence: 2)]
+            cells[4].revisions = [runningRevision(
+                sequence: 2,
+                sourceDigest: cells[4].sourceDigest
+            )]
         }
 
         return PrototypePythonNotebookProjection(
@@ -266,12 +275,15 @@ package enum PrototypePythonFixtureAdapter {
         )
     }
 
-    private static func completedPlotRevision(sequence: Int) -> PrototypePythonExecutionRevision {
+    private static func completedPlotRevision(
+        sequence: Int,
+        sourceDigest: String
+    ) -> PrototypePythonExecutionRevision {
         PrototypePythonExecutionRevision(
             id: "python-execution-\(sequence)",
             sequence: sequence,
             status: .succeeded,
-            sourceDigest: "fixture-source",
+            sourceDigest: sourceDigest,
             outputs: [
                 PrototypePythonOutputEvent(
                     id: "python-output-\(sequence)-1",
@@ -296,12 +308,15 @@ package enum PrototypePythonFixtureAdapter {
         )
     }
 
-    private static func failedRevision(sequence: Int) -> PrototypePythonExecutionRevision {
+    private static func failedRevision(
+        sequence: Int,
+        sourceDigest: String
+    ) -> PrototypePythonExecutionRevision {
         PrototypePythonExecutionRevision(
             id: "python-execution-\(sequence)",
             sequence: sequence,
             status: .failed,
-            sourceDigest: "fixture-failure",
+            sourceDigest: sourceDigest,
             outputs: [
                 PrototypePythonOutputEvent(
                     id: "python-output-\(sequence)-1",
@@ -319,12 +334,15 @@ package enum PrototypePythonFixtureAdapter {
         )
     }
 
-    private static func runningRevision(sequence: Int) -> PrototypePythonExecutionRevision {
+    private static func runningRevision(
+        sequence: Int,
+        sourceDigest: String
+    ) -> PrototypePythonExecutionRevision {
         PrototypePythonExecutionRevision(
             id: "python-execution-\(sequence)",
             sequence: sequence,
             status: .running,
-            sourceDigest: "fixture-nonresponsive",
+            sourceDigest: sourceDigest,
             outputs: [
                 PrototypePythonOutputEvent(
                     id: "python-output-\(sequence)-1",

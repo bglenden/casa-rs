@@ -63,7 +63,10 @@ Verification: just verify
   `cargo test -p casars-frontend-services`,
   `cargo test -p casars-imager dirty_imaging_json_request_accepts_gui_selection_fields`,
   `scripts/test-frontend-services-python.sh`, `swift test` from
-  `apps/casars-mac`, and
+  `apps/casars-mac`,
+  `swift run casars-mac --dump-debug-state --show-prototype python
+  --prototype-state happy-path` for the fixture-only Wave 2 Python projection,
+  and
   `CASARS_IMAGER_BIN=target/debug/casars-imager swift run casars-mac
   --dump-debug-state --simulate-main-flow --open-project <fixture-or-project>`
   for the headless debug-state smoke path that includes the dirty-imaging task
@@ -141,6 +144,12 @@ For each wave:
   boundaries, GUI/TUI/CLI/Python recording and one-run bypasses, production
   debug state, authored task cells without receipts, clean/dirty task-tab
   parameter replacement, and launched-app persistence/task-tab interaction
+- Wave 2 Phase A XCUITests cover plot regeneration and insertion, observable
+  running state, ordered failure output and retry, a nonresponsive cell's
+  interrupt/restart path, exact-source AI approval invalidation after editing,
+  accessibility audit, and zero production-boundary calls. Core tests cover
+  the same fixture state transitions and exact source digests. These tests do
+  not claim that Python, project persistence, or matplotlib integration exists.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review

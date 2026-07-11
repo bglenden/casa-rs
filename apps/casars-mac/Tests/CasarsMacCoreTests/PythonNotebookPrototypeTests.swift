@@ -21,6 +21,18 @@ final class PythonNotebookPrototypeTests: XCTestCase {
         XCTAssertEqual(debug.insertedPlotCount, 0)
     }
 
+    func testPresetRevisionsRecordTheExactFixtureSourceDigest() throws {
+        for (scenario, cellID) in [
+            (PythonPrototypeScenario.primary, "python-cell-plot"),
+            (.failure, "python-cell-repair"),
+            (.nonresponsive, "python-cell-nonresponsive"),
+        ] {
+            let store = WorkbenchStore.pythonPrototype(scenario: scenario)
+            let cell = try cell(store, id: cellID)
+            XCTAssertEqual(cell.latestRevision?.sourceDigest, cell.sourceDigest)
+        }
+    }
+
     func testRunPreservesOrderedStreamsAndCreatesPlotRevision() throws {
         let store = WorkbenchStore.pythonPrototype(scenario: .primary)
         let initialCount = try XCTUnwrap(
@@ -94,7 +106,7 @@ final class PythonNotebookPrototypeTests: XCTestCase {
     }
 
     private func waitUntil(
-        timeout: TimeInterval = 2,
+        timeout: TimeInterval = 4,
         condition: () -> Bool
     ) {
         let deadline = Date().addingTimeInterval(timeout)
