@@ -89,7 +89,7 @@ struct PersistentScientificNotebookView: View {
 
             Text(document.isDirty ? "Edited" : "Saved")
                 .workbenchFont(.caption, weight: .semibold)
-                .foregroundStyle(document.isDirty ? .orange : .secondary)
+                .foregroundStyle(document.isDirty ? Color.orange : Color(nsColor: .labelColor))
                 .accessibilityIdentifier("notebook.dirtyState")
                 .accessibilityValue(document.isDirty ? "dirty" : "saved")
         }

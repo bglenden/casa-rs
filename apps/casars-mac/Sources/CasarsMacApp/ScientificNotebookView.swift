@@ -137,7 +137,7 @@ struct ScientificNotebookView: View {
 
             Text(notebook.isDirty ? "Edited" : "Saved")
                 .workbenchFont(.caption, weight: .semibold)
-                .foregroundStyle(notebook.isDirty ? .orange : .secondary)
+                .foregroundStyle(notebook.isDirty ? Color.orange : Color(nsColor: .labelColor))
                 .accessibilityIdentifier("notebook.dirtyState")
                 .accessibilityValue(notebook.isDirty ? "dirty" : "saved")
         }

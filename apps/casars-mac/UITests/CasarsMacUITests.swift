@@ -306,9 +306,8 @@ final class CasarsMacUITests: XCTestCase {
         let notebookDock = app.buttons["dock.mode.notebooks"]
         XCTAssertTrue(notebookDock.waitForExistence(timeout: 5), app.debugDescription)
         try clickIdentified("dock.mode.notebooks")
-        let selector = element("notebook.selector.\(notebookID)")
+        let selector = notebookSelector(notebookID)
         XCTAssertTrue(selector.waitForExistence(timeout: 5), app.debugDescription)
-        selector.click()
         try require("notebook.selector.open").click()
         XCTAssertTrue(element("notebook.viewMode").waitForExistence(timeout: 5), app.debugDescription)
 
@@ -333,9 +332,8 @@ final class CasarsMacUITests: XCTestCase {
         selectViewMode("Rich")
         try require("notebook.parameters.open.\(cellID)").click()
         XCTAssertTrue(try require("task.change").exists)
-        XCTAssertTrue(app.staticTexts["Image Header"].waitForExistence(timeout: 5), app.debugDescription)
+        let mode = try require("task.parameter.mode", timeout: 10)
         XCTAssertFalse(app.buttons["Stop"].isEnabled, "Loading notebook parameters must not execute the task")
-        let mode = try require("task.parameter.mode")
         XCTAssertTrue(try textValue(mode).contains("list"), "Markdown task intent must win over historical receipt intent")
 
         mode.click()

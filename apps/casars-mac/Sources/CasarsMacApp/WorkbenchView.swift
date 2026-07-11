@@ -124,8 +124,8 @@ struct LeftDockView: View {
                     .lineLimit(1)
 
                 Text(projectSourceLabel)
-                    .workbenchFont(.caption2)
-                    .foregroundStyle(.primary)
+                    .workbenchFont(.caption2, weight: .semibold)
+                    .foregroundStyle(Color(nsColor: .labelColor))
 
                 if store.isNotebookPrototypeRuntime {
                     Text("Production boundary calls: \(store.prototypeProductionBoundaryInvocationCount)")
@@ -350,8 +350,8 @@ struct LeftDockView: View {
 
                 HStack {
                     Label("Markdown files", systemImage: "text.document")
-                        .workbenchFont(.caption)
-                        .foregroundStyle(.primary)
+                        .workbenchFont(.caption, weight: .semibold)
+                        .foregroundStyle(Color(nsColor: .labelColor))
                     Spacer()
                     Button {
                         store.openDefaultTab(kind: .notebook)
