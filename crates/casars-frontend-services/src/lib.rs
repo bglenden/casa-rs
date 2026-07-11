@@ -15,9 +15,10 @@ use casa_ms::plot::{
 };
 use casa_ms::{
     MeasurementSet, MeasurementSetPlotPayload, MeasurementSetSummary,
-    MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotPayload,
-    MsPlotPreset, MsPlotSpec, MsScatterGridPayload, MsScatterPagePayload, MsScatterPlotPayload,
-    MsScatterSeries, MsSelectionSpec, VisibilityDataColumn, build_msexplore_payload_from_spec,
+    MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotData,
+    MsPlotDataPanel, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsScatterGridPayload,
+    MsScatterPagePayload, MsScatterPlotPayload, MsScatterSeries, MsSelectionSpec,
+    VisibilityDataColumn, build_msexplore_payload_from_spec,
 };
 use casa_notebook::{
     AttemptHandle, ConflictResolution, ExecutionReceipt, ExportMode, NotebookDocument,
@@ -3288,6 +3289,13 @@ fn scatter_plot_document(
     metadata: &PayloadMetadata,
     preset: MeasurementSetPlotPreset,
 ) -> PlotDocumentPayload {
+    if payload.secondary_y_axis.is_none() {
+        return shared_scatter_plot_document(
+            &MsPlotPayload::Scatter(payload.clone()),
+            metadata,
+            preset,
+        );
+    }
     let axes = scatter_axes(
         "x",
         &payload.x_label,
@@ -3373,40 +3381,10 @@ fn scatter_grid_plot_document(
     metadata: &PayloadMetadata,
     preset: MeasurementSetPlotPreset,
 ) -> PlotDocumentPayload {
-    let panels = payload
-        .panels
-        .iter()
-        .enumerate()
-        .map(|(index, panel)| {
-            let axes = scatter_axes(
-                "x",
-                &payload.x_label,
-                "y",
-                &payload.y_label,
-                payload.fixed_x_bounds,
-                payload.fixed_y_bounds,
-                panel
-                    .series
-                    .iter()
-                    .flat_map(|series| series.points.iter().copied()),
-            );
-            PlotDocumentPanel {
-                id: format!("panel-{index}"),
-                title: panel.label.clone(),
-                axes,
-                layers: scatter_layers(&panel.series, "x", "y", payload.symbol_size_px),
-                annotations: Vec::new(),
-            }
-        })
-        .collect();
-    base_document(
-        preset,
+    shared_scatter_plot_document(
+        &MsPlotPayload::ScatterGrid(payload.clone()),
         metadata,
-        payload.header_lines.clone(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        panels,
+        preset,
     )
 }
 
@@ -3415,40 +3393,104 @@ fn scatter_page_plot_document(
     metadata: &PayloadMetadata,
     preset: MeasurementSetPlotPreset,
 ) -> PlotDocumentPayload {
-    let panels = payload
-        .items
+    shared_scatter_plot_document(
+        &MsPlotPayload::ScatterPage(payload.clone()),
+        metadata,
+        preset,
+    )
+}
+
+fn shared_scatter_plot_document(
+    payload: &MsPlotPayload,
+    metadata: &PayloadMetadata,
+    preset: MeasurementSetPlotPreset,
+) -> PlotDocumentPayload {
+    let shared = MsPlotData::from_payload(payload)
+        .expect("scatter payloads always project into the shared plot-data contract");
+    let mut panels = shared
+        .panels
         .iter()
-        .map(|item| {
-            let axes = scatter_axes(
-                "x",
-                &item.plot.x_label,
-                "y",
-                &item.plot.y_label,
-                item.plot.fixed_x_bounds,
-                item.plot.fixed_y_bounds,
-                item.plot
-                    .series
-                    .iter()
-                    .flat_map(|series| series.points.iter().copied()),
-            );
-            PlotDocumentPanel {
-                id: format!("plot-{}", item.plotindex),
-                title: item.plot.title.clone(),
-                axes,
-                layers: scatter_layers(&item.plot.series, "x", "y", item.plot.symbol_size_px),
-                annotations: Vec::new(),
-            }
-        })
-        .collect();
+        .map(shared_plot_panel)
+        .collect::<Vec<_>>();
+    if matches!(payload, MsPlotPayload::Scatter(_)) {
+        let panel = panels.remove(0);
+        return base_document(
+            preset,
+            metadata,
+            shared.header_lines,
+            panel.axes,
+            panel.layers,
+            panel.annotations,
+            Vec::new(),
+        );
+    }
     base_document(
         preset,
         metadata,
-        payload.header_lines.clone(),
+        shared.header_lines,
         Vec::new(),
         Vec::new(),
         Vec::new(),
         panels,
     )
+}
+
+fn shared_plot_panel(panel: &MsPlotDataPanel) -> PlotDocumentPanel {
+    PlotDocumentPanel {
+        id: panel.id.clone(),
+        title: panel.title.clone(),
+        axes: panel
+            .axes
+            .iter()
+            .map(|axis| {
+                document_axis(
+                    &axis.id,
+                    &axis.label,
+                    &axis.unit,
+                    axis.lower,
+                    axis.upper,
+                    PlotAxisScale::Linear,
+                )
+            })
+            .collect(),
+        layers: panel
+            .series
+            .iter()
+            .enumerate()
+            .map(|(index, series)| {
+                point_layer(PointLayerSpec {
+                    id: format!("series-{index}"),
+                    title: series.label.clone(),
+                    x_axis_id: "x",
+                    y_axis_id: &series.y_axis_id,
+                    x_values: series.x.clone(),
+                    y_values: series.y.clone(),
+                    point_labels: Vec::new(),
+                    point_symbol_sizes: Vec::new(),
+                    provenance: if series.x.len() <= FRONTEND_POINT_PROVENANCE_LIMIT {
+                        series
+                            .provenance
+                            .iter()
+                            .map(|point| PlotPointProvenance {
+                                row: point.row as u64,
+                                corr: point.corr as u64,
+                                chan_start: point.chan_start as u64,
+                                chan_end: point.chan_end as u64,
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    },
+                    color_group: series.color_group.clone(),
+                    symbol_size: panel.symbol_size,
+                    line_width: 1.0,
+                    provenance_summary: "Visibility samples from shared casa-ms plot data"
+                        .to_owned(),
+                })
+            })
+            .collect(),
+        annotations: Vec::new(),
+    }
 }
 
 fn base_document(

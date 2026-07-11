@@ -945,6 +945,7 @@ version = "0.24.1"
 dependencies = [
  "casa-coordinates",
  "casa-images",
+ "casa-ms",
  "casa-provider-contracts",
  "casa-tables",
  "casa-task-runtime",

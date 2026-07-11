@@ -16,6 +16,7 @@ except PackageNotFoundError:  # pragma: no cover - editable local builds
 
 __all__ = [
     "Image",
+    "imexplore",
     "SessionParameters",
     "SurfaceParameters",
     "Table",
@@ -31,6 +32,8 @@ __all__ = [
 def __getattr__(name: str) -> Any:
     """Load the data surface lazily so task wrappers work without `_core`."""
 
+    if name == "imexplore":
+        return import_module(".imexplore", __name__)
     if name in {"data", "Image", "Table"}:
         data_module = import_module(".data", __name__)
 

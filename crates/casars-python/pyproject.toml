@@ -32,6 +32,10 @@ Repository = "https://github.com/bglenden/casa-rs"
 Issues = "https://github.com/bglenden/casa-rs/issues"
 
 [project.optional-dependencies]
+plot = [
+  "astropy>=6,<8",
+  "matplotlib>=3.9,<4",
+]
 docs = [
   "mkdocs>=1.6,<2",
   "mkdocs-material>=9.5,<10",
