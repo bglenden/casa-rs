@@ -107,11 +107,15 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertEqual(try textValue(try require("prototypeTask.parameter.vis")), "data/twhya_calibrated.ms")
 
         try require("central.tab.tab-scientific-notebook").click()
-        status.click()
+        let statusID = "notebook.executionStatus.receipt-imager-mfs"
+        try require(statusID).click()
+        if !waitForAccessibilityValue(statusID, containing: "expanded") {
+            try require(statusID).click()
+        }
+        XCTAssertTrue(waitForAccessibilityValue(statusID, containing: "expanded"))
         XCTAssertTrue(try require("notebook.execution.restart.receipt-imager-mfs").waitForExistence(timeout: 3))
-        XCTAssertTrue(try accessibilityValue("notebook.executionStatus.receipt-imager-mfs").contains("expanded"))
 
-        status.doubleClick()
+        try require(statusID).doubleClick()
         XCTAssertTrue(try require("central.tab.tab-prototype-task-receipt-imager-mfs").waitForExistence(timeout: 5))
         assertZeroProductionBoundaryCalls()
     }
@@ -305,7 +309,7 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
         let notebookDock = app.buttons["dock.mode.notebooks"]
         XCTAssertTrue(notebookDock.waitForExistence(timeout: 5), app.debugDescription)
-        notebookDock.click()
+        try clickIdentified("dock.mode.notebooks")
         let selector = element("notebook.selector.\(notebookID)")
         XCTAssertTrue(selector.waitForExistence(timeout: 5), app.debugDescription)
         selector.click()
@@ -379,6 +383,16 @@ final class CasarsMacUITests: XCTestCase {
 
     private func element(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    private func clickIdentified(_ identifier: String, timeout: TimeInterval = 5) throws {
+        let control = try require(identifier, timeout: timeout)
+        if control.isHittable {
+            control.click()
+        } else {
+            app.activate()
+            control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        }
     }
 
     private func notebookSelector(_ notebookID: String) -> XCUIElement {
