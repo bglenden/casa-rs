@@ -134,6 +134,12 @@ For each wave:
   and state contract; deterministic fixture adapters remain available for
   regression tests and may not be treated as evidence that persistence,
   execution, download, Python, retrieval, or model integration works
+- Wave 1 notebook contract tests use disposable absolute project roots and
+  cover byte-preserving Markdown/future cells, atomic default/named saves,
+  explicit external-edit reconciliation, concurrent immutable revisions,
+  active-attempt leases and interrupted recovery, replay drift, export
+  boundaries, GUI/TUI/CLI/Python recording and one-run bypasses, production
+  debug state, and launched-app persistence/task-tab interaction
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review

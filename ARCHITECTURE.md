@@ -111,7 +111,12 @@ conflict, and export contracts shared by GUI, TUI, CLI, and Python. App surfaces
 record through this crate on an explicitly selected project root; recorder
 failure is a warning and never changes the scientific operation result. Swift
 uses DTO projections from `casars-frontend-services` and does not own the
-persisted schema. Direct provider binaries remain outside implicit project
+persisted schema. Each pending attempt holds an advisory per-run lease for its
+process lifetime, so projection refreshes and other processes cannot classify
+a live run as interrupted; recovery claims only a released lease. Parameter
+replay always opens a fresh canonical task tab, so it never overwrites a dirty
+task draft, and reports current contract/default drift without claiming exact
+reproduction. Direct provider binaries remain outside implicit project
 recording; project-mediated execution enters through `casars run` or another
 app surface with an explicit workspace.
 

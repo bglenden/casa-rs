@@ -2904,6 +2904,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var activeProjectSource: ProjectSource
     public var tutorialPack: DebugTutorialPackSnapshot?
     package var prototypeNotebook: DebugPrototypeScientificNotebookSnapshot?
+    public var scientificNotebook: DebugScientificNotebookSnapshot?
     public var discoveredDatasets: [String]
     public var probeDiagnostics: [String]
     public var inspectorCollapsed: Bool
@@ -2940,6 +2941,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         activeProjectSource = state.project.source
         tutorialPack = state.tutorialPack.map(DebugTutorialPackSnapshot.init(context:))
         prototypeNotebook = state.prototypeNotebook.map(DebugPrototypeScientificNotebookSnapshot.init(state:))
+        scientificNotebook = state.scientificNotebooks.map(DebugScientificNotebookSnapshot.init(state:))
         activeLeftDockMode = state.dockMode
         leftDockCollapsed = state.leftDockCollapsed
         selectedDataset = state.selectedDataset?.name
@@ -2991,6 +2993,31 @@ public struct DebugStateSnapshot: Codable, Equatable {
         commandQuery = state.commandQuery
         lastErrors = state.lastErrors
         interfaceFontSize = state.interfaceFontSize
+    }
+}
+
+public struct DebugScientificNotebookSnapshot: Codable, Equatable {
+    public var schemaVersion: UInt32
+    public var projectRoot: String
+    public var activeNotebookID: String?
+    public var notebookIDs: [String]
+    public var notebookFilenames: [String]
+    public var dirtyNotebookIDs: [String]
+    public var conflictNotebookIDs: [String]
+    public var receiptIDs: [String]
+    public var receiptStatuses: [String: String]
+
+    package init(state: ScientificNotebookProjectState) {
+        schemaVersion = state.schemaVersion
+        projectRoot = state.projectRoot
+        activeNotebookID = state.activeNotebookID
+        notebookIDs = state.notebooks.map(\.id)
+        notebookFilenames = state.notebooks.map(\.filename)
+        dirtyNotebookIDs = state.notebooks.filter(\.isDirty).map(\.id)
+        conflictNotebookIDs = state.notebooks.filter { $0.conflict != nil }.map(\.id)
+        let receipts = state.notebooks.flatMap(\.receipts)
+        receiptIDs = receipts.map(\.id)
+        receiptStatuses = Dictionary(uniqueKeysWithValues: receipts.map { ($0.id, $0.status) })
     }
 }
 

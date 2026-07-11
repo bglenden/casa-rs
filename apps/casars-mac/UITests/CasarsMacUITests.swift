@@ -224,19 +224,76 @@ final class CasarsMacUITests: XCTestCase {
     }
 
     func testProductionNotebookPersistsCompleteMarkdownAndReconcilesExternalEdit() throws {
+        let notebookID = "019f0000-0000-7000-8000-000000000001"
+        let cellID = "019f0000-0000-7000-8000-000000000002"
+        let runID = "019f0000-0000-7000-8000-000000000003"
         let project = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-mac-ui-notebook-\(UUID().uuidString)", isDirectory: true)
         let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
         try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
         let notebookFile = notebooks.appendingPathComponent("default.md")
         let initial = """
-        <!-- casa-rs-notebook:v1 id=019f0000-0000-7000-8000-000000000001 -->
+        <!-- casa-rs-notebook:v1 id=\(notebookID) -->
 
         # UI production notebook
 
         Initial note.
+
+        <!-- casa-rs-cell:v1 id=\(cellID) kind=task -->
+        ```toml
+        [casars]
+        format = 1
+        surface = "imhead"
+        kind = "task"
+        contract = 1
+
+        [parameters]
+        imagename = "input.image"
+        mode = "summary"
+        ```
+        <!-- /casa-rs-cell -->
         """ + "\n"
         try initial.write(to: notebookFile, atomically: true, encoding: .utf8)
+        let runDirectory = project
+            .appendingPathComponent(".casa-rs/notebook-runs", isDirectory: true)
+            .appendingPathComponent(runID, isDirectory: true)
+        try FileManager.default.createDirectory(at: runDirectory, withIntermediateDirectories: true)
+        let receipt = """
+        {
+          "schema_version": 1,
+          "run_id": "\(runID)",
+          "revision": 1,
+          "notebook_id": "\(notebookID)",
+          "cell_id": "\(cellID)",
+          "initiating_surface": "cli",
+          "operation_id": "imhead",
+          "started_at": 1,
+          "finished_at": 2,
+          "status": "succeeded",
+          "sparse_intent": {
+            "format": 1,
+            "surface": "imhead",
+            "kind": "task",
+            "contract": 1,
+            "parameters": {"imagename": "input.image", "mode": "summary"}
+          },
+          "resolved_parameters": {"imagename": ["input.image"], "mode": "summary"},
+          "provider_contract_version": 1,
+          "run_safety": {"classification": "read_only", "affected_paths": []},
+          "approvals": [],
+          "affected_paths": [],
+          "products": [],
+          "artifacts": [],
+          "logs": {},
+          "diagnostics": [],
+          "replay_claim": "historical resolved values"
+        }
+        """ + "\n"
+        try receipt.write(
+            to: runDirectory.appendingPathComponent("receipt.json"),
+            atomically: true,
+            encoding: .utf8
+        )
         productionProjectURL = project
 
         app = XCUIApplication()
@@ -249,7 +306,7 @@ final class CasarsMacUITests: XCTestCase {
         let notebookDock = app.buttons["dock.mode.notebooks"]
         XCTAssertTrue(notebookDock.waitForExistence(timeout: 5), app.debugDescription)
         notebookDock.click()
-        let selector = element("notebook.selector.019f0000-0000-7000-8000-000000000001")
+        let selector = element("notebook.selector.\(notebookID)")
         XCTAssertTrue(selector.waitForExistence(timeout: 5), app.debugDescription)
         selector.click()
         try require("notebook.selector.open").click()
@@ -272,6 +329,12 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(waitForValue("notebook.editor.raw", containing: "External third-party edit."))
         XCTAssertFalse(try textValue(try require("notebook.editor.raw")).contains("Local dirty edit."))
         XCTAssertEqual(try accessibilityValue("notebook.dirtyState"), "saved")
+
+        selectViewMode("Rich")
+        try require("notebook.parameters.open.\(cellID)").click()
+        XCTAssertTrue(try require("task.change").exists)
+        XCTAssertTrue(app.staticTexts["Image Header"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.buttons["Stop"].isEnabled, "Loading notebook parameters must not execute the task")
     }
 
     private func launchPrototype(scenario: String = "happy-path") {

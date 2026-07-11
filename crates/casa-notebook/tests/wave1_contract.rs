@@ -130,6 +130,9 @@ fn default_and_named_notebooks_save_reopen_and_reconcile_external_edits() {
         .expect("record to lazy default");
     assert!(root.path().join("notebooks/default.md").is_file());
     assert_eq!(handle.revision, 1);
+    store
+        .finalize_attempt(&handle, terminal(ExecutionStatus::Succeeded))
+        .expect("finalize lazy-default recording");
 }
 
 #[test]
@@ -172,17 +175,21 @@ fn concurrent_runs_reserve_distinct_revisions_and_finalize_immutably() {
 }
 
 #[test]
-fn interrupted_attempts_recover_and_replay_reports_contract_and_default_drift() {
+fn live_attempts_are_not_recovered_and_interrupted_receipts_report_replay_drift() {
     let (_root, store) = project();
     let handle = store
         .begin_attempt(request(None, None))
         .expect("begin attempt");
     let recovered = store.recover_interrupted().expect("recover attempt");
-    assert_eq!(recovered.len(), 1);
-    assert_eq!(recovered[0].run_id, handle.run_id);
-    assert_eq!(recovered[0].status, ExecutionStatus::Interrupted);
+    assert!(
+        recovered.is_empty(),
+        "a live attempt lease must not be recovered"
+    );
+    let interrupted = store
+        .finalize_attempt(&handle, terminal(ExecutionStatus::Interrupted))
+        .expect("finalize interrupted attempt");
 
-    let assessment = recovered[0].assess_replay(
+    let assessment = interrupted.assess_replay(
         4,
         &BTreeMap::from([("niter".into(), serde_json::json!(2000))]),
     );

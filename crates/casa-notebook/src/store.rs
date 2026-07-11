@@ -5,6 +5,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Component, Path, PathBuf},
+    sync::{Mutex, MutexGuard, OnceLock},
 };
 
 use fs2::FileExt;
@@ -14,15 +15,18 @@ use tempfile::{NamedTempFile, TempDir};
 use thiserror::Error;
 
 use crate::{
-    AttemptEvent, AttemptEventKind, CellId, CellKind, ExecutionReceipt, ExecutionStatus,
-    LogReferences, NotebookDocument, NotebookId, NotebookParseError, ReceiptFinalization,
-    RecordingRequest, RunId, Timestamp, receipt::RECEIPT_SCHEMA_VERSION,
+    CellId, CellKind, ExecutionReceipt, ExecutionStatus, LogReferences, NotebookDocument,
+    NotebookId, NotebookParseError, ReceiptFinalization, RecordingRequest, RunId, Timestamp,
+    receipt::{AttemptEvent, AttemptEventKind, RECEIPT_SCHEMA_VERSION},
 };
 
 const DEFAULT_NOTEBOOK: &str = "default.md";
 const PENDING_ATTEMPT: &str = "attempt.json";
 const RECEIPT_FILE: &str = "receipt.json";
 const EVENTS_FILE: &str = "events.jsonl";
+const ACTIVE_ATTEMPT_LOCK: &str = "active.lock";
+
+static ACTIVE_ATTEMPTS: OnceLock<Mutex<BTreeMap<RunId, File>>> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotebookEntry {
@@ -62,12 +66,6 @@ pub enum SaveResult {
 pub enum RecordingPolicy {
     Record,
     BypassOnce,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecordingWarning {
-    pub operation_id: String,
-    pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,11 +115,6 @@ impl NotebookStore {
         Ok(Self {
             project_root: project_root.to_owned(),
         })
-    }
-
-    #[must_use]
-    pub fn project_root(&self) -> &Path {
-        &self.project_root
     }
 
     pub fn list_notebooks(&self) -> Result<Vec<NotebookEntry>, StoreError> {
@@ -182,7 +175,7 @@ impl NotebookStore {
         self.read_snapshot_path(&self.notebooks_dir().join(filename))
     }
 
-    pub fn open_notebook_id(&self, id: NotebookId) -> Result<NotebookSnapshot, StoreError> {
+    fn open_notebook_id(&self, id: NotebookId) -> Result<NotebookSnapshot, StoreError> {
         self.list_notebooks()?
             .into_iter()
             .find(|entry| entry.id == id)
@@ -280,6 +273,7 @@ impl NotebookStore {
         };
         atomic_json(&run_dir.join(PENDING_ATTEMPT), &pending)?;
         self.append_event_locked(&AttemptEvent::started(handle.run_id))?;
+        register_attempt_lease(&run_dir, handle.run_id)?;
         Ok(handle)
     }
 
@@ -287,26 +281,14 @@ impl NotebookStore {
         &self,
         policy: RecordingPolicy,
         request: RecordingRequest,
-    ) -> (Option<AttemptHandle>, Option<RecordingWarning>) {
+    ) -> (Option<AttemptHandle>, Option<String>) {
         if policy == RecordingPolicy::BypassOnce {
             return (None, None);
         }
-        let operation_id = request.operation_id.clone();
         match self.begin_attempt(request) {
             Ok(handle) => (Some(handle), None),
-            Err(error) => (
-                None,
-                Some(RecordingWarning {
-                    operation_id,
-                    message: error.to_string(),
-                }),
-            ),
+            Err(error) => (None, Some(error.to_string())),
         }
-    }
-
-    pub fn append_event(&self, event: &AttemptEvent) -> Result<(), StoreError> {
-        let _lock = self.lock_project()?;
-        self.append_event_locked(event)
     }
 
     pub fn finalize_attempt(
@@ -386,6 +368,7 @@ impl NotebookStore {
             path: run_dir.join(PENDING_ATTEMPT),
             source,
         })?;
+        release_attempt_lease(handle.run_id)?;
         Ok(receipt)
     }
 
@@ -393,13 +376,10 @@ impl NotebookStore {
         &self,
         handle: &AttemptHandle,
         finalization: ReceiptFinalization,
-    ) -> Option<RecordingWarning> {
+    ) -> Option<String> {
         self.finalize_attempt(handle, finalization)
             .err()
-            .map(|error| RecordingWarning {
-                operation_id: handle.run_id.to_string(),
-                message: error.to_string(),
-            })
+            .map(|error| error.to_string())
     }
 
     pub fn recover_interrupted(&self) -> Result<Vec<ExecutionReceipt>, StoreError> {
@@ -423,7 +403,10 @@ impl NotebookStore {
                 source,
             })?;
             let run_dir = entry.path();
-            if run_dir.join(PENDING_ATTEMPT).is_file() && !run_dir.join(RECEIPT_FILE).exists() {
+            if run_dir.join(PENDING_ATTEMPT).is_file()
+                && !run_dir.join(RECEIPT_FILE).exists()
+                && claim_released_attempt_lease(&run_dir)?
+            {
                 let pending: PendingAttempt = read_json(&run_dir.join(PENDING_ATTEMPT))?;
                 recovered.push(self.finalize_attempt(
                     &pending.handle,
@@ -456,7 +439,7 @@ impl NotebookStore {
         Ok(receipts)
     }
 
-    pub fn all_receipts(&self) -> Result<Vec<ExecutionReceipt>, StoreError> {
+    fn all_receipts(&self) -> Result<Vec<ExecutionReceipt>, StoreError> {
         let runs = self.runs_dir();
         let directory = match fs::read_dir(&runs) {
             Ok(directory) => directory,
@@ -653,6 +636,7 @@ impl NotebookStore {
         let path = managed.join("notebook.lock");
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&path)
@@ -708,6 +692,8 @@ pub enum StoreError {
     ReceiptAlreadyFinalized { run_id: RunId },
     #[error("attempt state does not match handle {run_id}")]
     AttemptIdentityMismatch { run_id: RunId },
+    #[error("active notebook-attempt lease registry is unavailable")]
+    AttemptLeaseRegistryUnavailable,
     #[error("export destination already exists: {path}", path = .path.display())]
     ExportDestinationExists { path: PathBuf },
     #[error("unsafe project-relative path: {path}", path = .path.display())]
@@ -734,6 +720,75 @@ pub enum StoreError {
         #[source]
         source: tempfile::PersistError,
     },
+}
+
+fn attempt_leases() -> &'static Mutex<BTreeMap<RunId, File>> {
+    ACTIVE_ATTEMPTS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn attempt_lease_guard() -> Result<MutexGuard<'static, BTreeMap<RunId, File>>, StoreError> {
+    attempt_leases()
+        .lock()
+        .map_err(|_| StoreError::AttemptLeaseRegistryUnavailable)
+}
+
+fn open_attempt_lease(run_dir: &Path) -> Result<File, StoreError> {
+    let path = run_dir.join(ACTIVE_ATTEMPT_LOCK);
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|source| StoreError::Io {
+            action: "open active notebook-attempt lease",
+            path,
+            source,
+        })
+}
+
+fn register_attempt_lease(run_dir: &Path, run_id: RunId) -> Result<(), StoreError> {
+    let lease = open_attempt_lease(run_dir)?;
+    lease
+        .try_lock_exclusive()
+        .map_err(|source| StoreError::Io {
+            action: "lock active notebook-attempt lease",
+            path: run_dir.join(ACTIVE_ATTEMPT_LOCK),
+            source,
+        })?;
+    attempt_lease_guard()?.insert(run_id, lease);
+    Ok(())
+}
+
+fn claim_released_attempt_lease(run_dir: &Path) -> Result<bool, StoreError> {
+    let run_id = run_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .and_then(|value| value.parse::<RunId>().ok())
+        .ok_or_else(|| StoreError::UnsafePath {
+            path: run_dir.to_owned(),
+        })?;
+    if attempt_lease_guard()?.contains_key(&run_id) {
+        return Ok(false);
+    }
+    let lease = open_attempt_lease(run_dir)?;
+    match lease.try_lock_exclusive() {
+        Ok(()) => {
+            attempt_lease_guard()?.insert(run_id, lease);
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(false),
+        Err(source) => Err(StoreError::Io {
+            action: "claim released notebook-attempt lease",
+            path: run_dir.join(ACTIVE_ATTEMPT_LOCK),
+            source,
+        }),
+    }
+}
+
+fn release_attempt_lease(run_id: RunId) -> Result<(), StoreError> {
+    attempt_lease_guard()?.remove(&run_id);
+    Ok(())
 }
 
 fn validate_notebook_filename(filename: &str) -> Result<(), StoreError> {
@@ -911,4 +966,56 @@ fn copy_tree_regular(source: &Path, destination: &Path) -> Result<(), StoreError
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{RunSafetyRecord, TaskCellIntent};
+
+    #[test]
+    fn released_attempt_lease_is_recovered_as_interrupted() {
+        let root = TempDir::new().expect("temporary project");
+        let store = NotebookStore::open(root.path().canonicalize().expect("canonical project"))
+            .expect("open store");
+        let handle = store
+            .begin_attempt(RecordingRequest {
+                initiating_surface: "test".into(),
+                operation_id: "imstat".into(),
+                notebook_id: None,
+                cell_id: None,
+                task_intent: Some(TaskCellIntent {
+                    format: 1,
+                    surface: "imstat".into(),
+                    kind: "task".into(),
+                    contract: 1,
+                    parameters: BTreeMap::new(),
+                }),
+                provider_contract_version: 1,
+                resolved_parameters: BTreeMap::new(),
+                run_safety: RunSafetyRecord {
+                    classification: "read_only".into(),
+                    affected_paths: Vec::new(),
+                },
+                approvals: Vec::new(),
+            })
+            .expect("begin attempt");
+
+        let held_lease = attempt_lease_guard()
+            .expect("lease registry")
+            .remove(&handle.run_id)
+            .expect("active lease");
+        assert!(
+            !claim_released_attempt_lease(&store.run_dir(handle.run_id)).expect("probe held lease"),
+            "an independently opened descriptor must observe the active advisory lease"
+        );
+        drop(held_lease);
+
+        let recovered = store
+            .recover_interrupted()
+            .expect("recover released attempt");
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].run_id, handle.run_id);
+        assert_eq!(recovered[0].status, ExecutionStatus::Interrupted);
+    }
 }

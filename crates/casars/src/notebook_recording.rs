@@ -61,7 +61,7 @@ impl NotebookRecording {
         Self {
             store: Some(store),
             handle,
-            warning: warning.map(|warning| warning.message),
+            warning,
             expected_paths,
         }
     }
@@ -85,29 +85,27 @@ impl NotebookRecording {
         affected_paths.extend(self.expected_paths.clone());
         affected_paths.sort();
         affected_paths.dedup();
-        store
-            .try_finalize_attempt(
-                &handle,
-                ReceiptFinalization {
-                    status,
-                    finished_at: Timestamp::now(),
-                    affected_paths: affected_paths.clone(),
-                    products: affected_paths
-                        .into_iter()
-                        .map(|path| ArtifactReference {
-                            role: "task_output".into(),
-                            path,
-                            media_type: None,
-                        })
-                        .collect(),
-                    artifacts: Vec::new(),
-                    diagnostics,
-                    stdout: stdout.into_bytes(),
-                    stderr: stderr.into_bytes(),
-                    casa_log: None,
-                },
-            )
-            .map(|warning| warning.message)
+        store.try_finalize_attempt(
+            &handle,
+            ReceiptFinalization {
+                status,
+                finished_at: Timestamp::now(),
+                affected_paths: affected_paths.clone(),
+                products: affected_paths
+                    .into_iter()
+                    .map(|path| ArtifactReference {
+                        role: "task_output".into(),
+                        path,
+                        media_type: None,
+                    })
+                    .collect(),
+                artifacts: Vec::new(),
+                diagnostics,
+                stdout: stdout.into_bytes(),
+                stderr: stderr.into_bytes(),
+                casa_log: None,
+            },
+        )
     }
 }
 

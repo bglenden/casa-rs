@@ -276,6 +276,15 @@ Production: `casa-notebook`, versioned Markdown/receipt contracts, atomic
 writes, project locking, cross-surface recording, exports, GUI notebook list and
 editor, and task parameter replay.
 
+Wave 1 production uses one Rust-owned store across GUI, TUI, `casars run`, and
+the generated Python task wrappers. Pending attempts retain per-run advisory
+leases so a live operation is not recovered as interrupted; a released lease
+is recovered on the next project load. Notebook replay opens a fresh canonical
+schema-driven task tab and shows provider/default drift warnings without
+executing or asserting exact replay. Direct provider binaries do not infer a
+project or record implicitly; project-aware direct use is routed through an app
+surface with explicit workspace context.
+
 ### Wave 2: Python and plots
 
 Prototype: live editor, Run/Stop/Restart/Run All, ordered output, errors,

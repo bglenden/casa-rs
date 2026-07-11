@@ -733,6 +733,8 @@ pub(crate) struct AppState {
     pending_live_parameter_rollback: Option<ParameterSession>,
     parameter_edit_errors: BTreeMap<String, String>,
     parameter_workspace: PathBuf,
+    #[cfg(test)]
+    _test_parameter_workspace: tempfile::TempDir,
     save_last: bool,
     session_last_state: Option<SessionLastState>,
     parameter_profile_path_entry: Option<ParameterProfilePathEntryState>,
@@ -2323,6 +2325,11 @@ impl AppState {
         } else {
             app.ready_status_line().to_string()
         };
+        #[cfg(test)]
+        let test_parameter_workspace = tempfile::tempdir().expect("isolated TUI test workspace");
+        #[cfg(test)]
+        let parameter_workspace = test_parameter_workspace.path().to_owned();
+        #[cfg(not(test))]
         let parameter_workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let (parameter_session, parameter_warning) =
             load_interactive_parameter_session(&app.id, &parameter_workspace);
@@ -2359,6 +2366,8 @@ impl AppState {
             pending_live_parameter_rollback: None,
             parameter_edit_errors: BTreeMap::new(),
             parameter_workspace: parameter_workspace.clone(),
+            #[cfg(test)]
+            _test_parameter_workspace: test_parameter_workspace,
             save_last: automatic_save_enabled,
             session_last_state,
             parameter_profile_path_entry: None,
@@ -2433,6 +2442,12 @@ impl AppState {
         error: String,
         config_store: ConfigStore,
     ) -> Self {
+        #[cfg(test)]
+        let test_parameter_workspace = tempfile::tempdir().expect("isolated TUI test workspace");
+        #[cfg(test)]
+        let parameter_workspace = test_parameter_workspace.path().to_owned();
+        #[cfg(not(test))]
+        let parameter_workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
             app,
             config_store,
@@ -2442,7 +2457,9 @@ impl AppState {
             parameter_session: None,
             pending_live_parameter_rollback: None,
             parameter_edit_errors: BTreeMap::new(),
-            parameter_workspace: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            parameter_workspace,
+            #[cfg(test)]
+            _test_parameter_workspace: test_parameter_workspace,
             save_last: true,
             session_last_state: None,
             parameter_profile_path_entry: None,

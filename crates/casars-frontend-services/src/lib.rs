@@ -903,11 +903,8 @@ pub fn notebook_begin_recording_json(request_json: String) -> FrontendResult<Str
     let store = NotebookStore::open(PathBuf::from(&request.project_root))
         .map_err(|error| notebook_error("open notebook project", error))?;
     let (handle, warning) = store.try_begin_attempt(request.policy.into(), request.request);
-    serde_json::to_string(&NotebookBeginRecordingProjection {
-        handle,
-        warning: warning.map(|warning| warning.message),
-    })
-    .map_err(|error| notebook_error("serialize notebook recording start", error))
+    serde_json::to_string(&NotebookBeginRecordingProjection { handle, warning })
+        .map_err(|error| notebook_error("serialize notebook recording start", error))
 }
 
 /// Finalize exactly one immutable receipt revision.

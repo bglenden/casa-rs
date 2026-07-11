@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{CellId, NotebookId, RunId, TaskCellIntent};
 
-pub const RECEIPT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const RECEIPT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -174,7 +174,7 @@ impl ExecutionReceipt {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AttemptEventKind {
+pub(crate) enum AttemptEventKind {
     Started,
     Progress,
     Approval,
@@ -186,7 +186,7 @@ pub enum AttemptEventKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AttemptEvent {
+pub(crate) struct AttemptEvent {
     pub schema_version: u32,
     pub run_id: RunId,
     pub timestamp: Timestamp,
@@ -199,7 +199,7 @@ pub struct AttemptEvent {
 
 impl AttemptEvent {
     #[must_use]
-    pub fn started(run_id: RunId) -> Self {
+    pub(crate) fn started(run_id: RunId) -> Self {
         Self {
             schema_version: RECEIPT_SCHEMA_VERSION,
             run_id,

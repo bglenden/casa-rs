@@ -15,11 +15,10 @@ mod store;
 pub use ids::{CellId, NotebookId, RunId};
 pub use markdown::{CellKind, NotebookCell, NotebookDocument, NotebookParseError, TaskCellIntent};
 pub use receipt::{
-    ApprovalRecord, ArtifactReference, AttemptEvent, AttemptEventKind, ExecutionReceipt,
-    ExecutionStatus, LogReferences, ReceiptFinalization, RecordingRequest, ReplayAssessment,
-    RunSafetyRecord, Timestamp,
+    ApprovalRecord, ArtifactReference, ExecutionReceipt, ExecutionStatus, LogReferences,
+    ReceiptFinalization, RecordingRequest, ReplayAssessment, RunSafetyRecord, Timestamp,
 };
 pub use store::{
     AttemptHandle, ConflictResolution, ExportMode, NotebookConflict, NotebookEntry,
-    NotebookSnapshot, NotebookStore, RecordingPolicy, RecordingWarning, SaveResult, StoreError,
+    NotebookSnapshot, NotebookStore, RecordingPolicy, SaveResult, StoreError,
 };

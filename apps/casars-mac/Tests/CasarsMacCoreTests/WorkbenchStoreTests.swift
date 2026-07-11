@@ -1431,6 +1431,9 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(notebookClient.beginRequests.first?.request.initiatingSurface, "gui")
         XCTAssertEqual(notebookClient.beginRequests.first?.request.operationId, "imhead")
         XCTAssertEqual(notebookClient.beginRequests.first?.policy, "record")
+        let notebookDebug = try XCTUnwrap(store.debugSnapshot().scientificNotebook)
+        XCTAssertEqual(notebookDebug.notebookFilenames, ["default.md"])
+        XCTAssertEqual(notebookDebug.receiptStatuses.values.sorted(), ["succeeded"])
 
         store.runTask()
         store.stopTask()
