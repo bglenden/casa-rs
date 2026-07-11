@@ -100,7 +100,7 @@ struct ScientificNotebookView: View {
                     .workbenchFont(.title3, weight: .semibold)
                 Text(notebook.displayPath)
                     .workbenchFont(.caption, design: .monospaced)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
             }
 
             Spacer()
@@ -354,18 +354,6 @@ struct ScientificNotebookView: View {
 
     private func expandedExecution(_ receipt: PrototypeNotebookTaskProjection) -> some View {
         VStack(alignment: .leading, spacing: 9) {
-            if let revision = receipt.latestRevision {
-                Text(revision.timestamp)
-                    .workbenchFont(.caption, design: .monospaced)
-                    .foregroundStyle(.secondary)
-
-                if !revision.products.isEmpty {
-                    Label(revision.products.joined(separator: " · "), systemImage: "shippingbox")
-                        .workbenchFont(.caption, design: .monospaced)
-                        .textSelection(.enabled)
-                }
-            }
-
             HStack(spacing: 8) {
                 Button("Restart Fixture") {
                     store.restartPrototypeNotebookTask(receiptID: receipt.id)
@@ -390,6 +378,18 @@ struct ScientificNotebookView: View {
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("notebook.execution.revisionCount.\(receipt.id)")
+            }
+
+            if let revision = receipt.latestRevision {
+                Text(revision.timestamp)
+                    .workbenchFont(.caption, design: .monospaced)
+                    .foregroundStyle(.secondary)
+
+                if !revision.products.isEmpty {
+                    Label(revision.products.joined(separator: " · "), systemImage: "shippingbox")
+                        .workbenchFont(.caption, design: .monospaced)
+                        .textSelection(.enabled)
+                }
             }
         }
     }
