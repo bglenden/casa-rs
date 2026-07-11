@@ -4,6 +4,8 @@ import SwiftUI
 struct PythonNotebookPrototypeView: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var store: WorkbenchStore
+    @State private var expandedExecutionHistory: Set<String> = []
+    @State private var expandedVisualizationHistory: Set<String> = []
 
     private var projection: PrototypePythonNotebookProjection? {
         store.state.prototypePython
@@ -15,12 +17,13 @@ struct PythonNotebookPrototypeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            prototypeToolbar
+            if projection?.activeExplorer == nil { prototypeToolbar } else { explorerToolbar }
             Divider()
             prototypeDisclosure
             Divider()
-            continuousNotebookDocument
+            if projection?.activeExplorer == nil { continuousNotebookDocument } else { explorerSurface }
         }
+        .sheet(isPresented: enlargedVisualizationBinding) { visualizationLightbox }
     }
 
     private var continuousNotebookDocument: some View {
@@ -32,6 +35,8 @@ struct PythonNotebookPrototypeView: View {
                     Text("Use Python to inspect the calibrated MeasurementSet, preserve ordered output, and keep every plot revision reproducible beside the surrounding scientific notes.")
                         .foregroundStyle(.secondary)
                 }
+
+                savedVisualizations
 
                 ForEach(Array((projection?.cells ?? []).enumerated()), id: \.element.id) { index, cell in
                     if index == 1 {
@@ -62,6 +67,74 @@ struct PythonNotebookPrototypeView: View {
             .frame(maxWidth: .infinity)
         }
         .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    private var savedVisualizations: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Saved figures").workbenchFont(.headline)
+                Spacer()
+                Text("\(projection?.savedVisualizations.count ?? 0) explicit snapshots · not live explorer views")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("pythonPrototype.savedVisualizationCount")
+                    .accessibilityValue("\(projection?.savedVisualizations.count ?? 0)")
+            }
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                ForEach(projection?.savedVisualizations ?? []) { visualization in
+                    visualizationCard(visualization)
+                }
+            }
+        }
+    }
+
+    private func visualizationCard(_ visualization: PrototypeNotebookVisualization) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let revision = visualization.latestRevision {
+                Button {
+                    store.setPrototypeEnlargedVisualization(visualization.id)
+                } label: {
+                    visualizationPreview(revision).frame(height: 145).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("notebookVisualization.preview.\(visualization.id)")
+                .accessibilityLabel("Enlarge \(revision.title)")
+
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(revision.title).workbenchFont(.subheadline, weight: .semibold).lineLimit(1)
+                        Text("Saved from \(revision.sourceSurface) · revision \(revision.sequence)")
+                            .workbenchFont(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("notebookVisualization.revisionCount.\(visualization.id)")
+                            .accessibilityValue("\(visualization.revisions.count)")
+                    }
+                    Spacer()
+                    Button("Open in Explorer") { store.openPrototypeExplorer(visualizationID: visualization.id) }
+                        .accessibilityIdentifier("notebookVisualization.openExplorer.\(visualization.id)")
+                }
+
+                if visualization.revisions.count > 1 {
+                    DisclosureGroup(
+                        "Previous revisions (\(visualization.revisions.count - 1))",
+                        isExpanded: historyBinding(visualization.id, in: $expandedVisualizationHistory)
+                    ) {
+                        ForEach(visualization.revisions.sorted(by: { $0.sequence > $1.sequence }).dropFirst()) { prior in
+                            Text("Revision \(prior.sequence) · \(prior.assetPath)")
+                                .workbenchFont(.caption2, design: .monospaced)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 4)
+                        }
+                    }
+                    .workbenchFont(.caption, weight: .semibold)
+                    .accessibilityIdentifier("notebookVisualization.previousRevisions.\(visualization.id)")
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.035))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.16)))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func notebookNote(_ text: String) -> some View {
@@ -273,7 +346,7 @@ struct PythonNotebookPrototypeView: View {
     private func outputHistory(_ cell: PrototypePythonCell) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Execution revisions")
+                Text("Latest execution")
                     .workbenchFont(.headline)
                 Spacer()
                 Text("\(cell.revisions.count)")
@@ -285,12 +358,44 @@ struct PythonNotebookPrototypeView: View {
                 Text("Not run yet. Code and outputs remain separate immutable revisions after execution.")
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 8)
-            } else {
-                ForEach(Array(cell.revisions.sorted(by: { $0.sequence > $1.sequence }).prefix(3))) { revision in
-                    revisionCard(cell: cell, revision: revision)
+            } else if let latest = cell.latestRevision {
+                revisionCard(cell: cell, revision: latest)
+                let previous = cell.revisions.filter { $0.id != latest.id }.sorted { $0.sequence > $1.sequence }
+                if !previous.isEmpty {
+                    DisclosureGroup(
+                        "Previous revisions (\(previous.count))",
+                        isExpanded: historyBinding(cell.id, in: $expandedExecutionHistory)
+                    ) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(previous) { compactRevisionRow($0) }
+                        }
+                        .padding(.top, 6)
+                    }
+                    .workbenchFont(.caption, weight: .semibold)
+                    .accessibilityIdentifier("pythonPrototype.previousRevisions.\(cell.id)")
                 }
             }
         }
+    }
+
+    private func compactRevisionRow(_ revision: PrototypePythonExecutionRevision) -> some View {
+        HStack(spacing: 7) {
+            statusDot(revision.status)
+            Text("Revision \(revision.sequence)").workbenchFont(.caption, weight: .semibold)
+            Text(revision.status.rawValue.capitalized).workbenchFont(.caption).foregroundStyle(.secondary)
+            Spacer()
+            if revision.plot != nil { Image(systemName: "chart.xyaxis.line").foregroundStyle(.secondary) }
+            Text(revision.sourceDigest)
+                .workbenchFont(.caption2, design: .monospaced)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(Color.secondary.opacity(0.035))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("pythonPrototype.revision.\(revision.sequence)")
+        .accessibilityValue(revision.status.rawValue)
     }
 
     private func revisionCard(cell: PrototypePythonCell, revision: PrototypePythonExecutionRevision) -> some View {
@@ -371,6 +476,163 @@ struct PythonNotebookPrototypeView: View {
         .clipShape(RoundedRectangle(cornerRadius: 5))
         .accessibilityIdentifier(identifier)
         .accessibilityValue(path)
+    }
+
+    private var explorerToolbar: some View {
+        HStack(spacing: 12) {
+            Button { store.closePrototypeExplorer() } label: {
+                Label("Back to Notebook", systemImage: "chevron.left")
+            }
+            .accessibilityIdentifier("explorerSnapshot.back")
+            Divider().frame(height: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(explorerSurfaceTitle).workbenchFont(.title3, weight: .semibold)
+                Text("Fixture explorer · restored from saved figure")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Label("Save to Notebook", systemImage: "square.and.arrow.down")
+                .workbenchFont(.caption, weight: .semibold)
+                .accessibilityIdentifier("explorerSnapshot.save")
+            Button("New plot") { store.saveNewPrototypeExplorerVisualization() }
+                .accessibilityIdentifier("explorerSnapshot.saveNew")
+            Button("Update") { store.updatePrototypeExplorerVisualization() }
+                .disabled(projection?.activeExplorer?.targetVisualizationID == nil)
+                .accessibilityIdentifier("explorerSnapshot.update")
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 11)
+    }
+
+    private var explorerSurface: some View {
+        HSplitView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("View parameters").workbenchFont(.headline)
+                    Text("These values were restored from the saved figure. Changes remain private to this explorer until you explicitly save a new plot or update the saved figure.")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 11) {
+                        ForEach(projection?.activeExplorer?.parameters ?? []) { parameter in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(parameter.label).workbenchFont(.caption, weight: .semibold)
+                                TextField(parameter.label, text: Binding(
+                                    get: {
+                                        projection?.activeExplorer?.parameters
+                                            .first(where: { $0.id == parameter.id })?.value ?? ""
+                                    },
+                                    set: { store.setPrototypeExplorerParameter(id: parameter.id, value: $0) }
+                                ))
+                                .accessibilityIdentifier("explorerSnapshot.parameter.\(parameter.id)")
+                            }
+                        }
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("explorerSnapshot.parameters")
+                }
+                .padding(18)
+            }
+            .frame(minWidth: 250, idealWidth: 300, maxWidth: 360)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(projection?.activeExplorer?.title ?? "Explorer preview")
+                            .workbenchFont(.title2, weight: .semibold)
+                        Text("Unsaved explorer preview")
+                            .workbenchFont(.caption, weight: .semibold)
+                            .foregroundStyle(.orange)
+                    }
+                    Spacer()
+                    Label("Notebook unchanged", systemImage: "lock.doc")
+                        .workbenchFont(.caption, weight: .semibold)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("explorerSnapshot.targetRevisionCount")
+                        .accessibilityValue("\(activeExplorerTargetRevisionCount)")
+                }
+                if let session = projection?.activeExplorer {
+                    visualizationPreview(PrototypeNotebookVisualizationRevision(
+                        id: "active-explorer-preview",
+                        sequence: 0,
+                        title: session.title,
+                        kind: session.kind,
+                        sourceSurface: explorerSurfaceTitle,
+                        parameters: session.parameters,
+                        assetPath: "fixture://unsaved"
+                    ))
+                    .accessibilityIdentifier("explorerSnapshot.preview")
+                }
+                Text("Edit the controls to generate a new preview. Nothing in the notebook changes until Save to Notebook is used.")
+                    .foregroundStyle(.secondary)
+            }
+            .padding(24)
+            .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(nsColor: .textBackgroundColor))
+        }
+    }
+
+    private var explorerSurfaceTitle: String {
+        projection?.activeExplorer?.kind == .imageView ? "Image Explorer" : "MeasurementSet Explorer"
+    }
+
+    private var activeExplorerTargetRevisionCount: Int {
+        guard let targetID = projection?.activeExplorer?.targetVisualizationID else { return 0 }
+        return projection?.savedVisualizations.first { $0.id == targetID }?.revisions.count ?? 0
+    }
+
+    @ViewBuilder
+    private func visualizationPreview(_ revision: PrototypeNotebookVisualizationRevision) -> some View {
+        switch revision.kind {
+        case .measurementSetPlot: DeterministicScientificPlot(title: revision.title)
+        case .imageView: DeterministicScientificImage(title: revision.title)
+        }
+    }
+
+    private var enlargedVisualizationBinding: Binding<Bool> {
+        Binding(
+            get: { projection?.enlargedVisualizationID != nil },
+            set: { if !$0 { store.setPrototypeEnlargedVisualization(nil) } }
+        )
+    }
+
+    @ViewBuilder
+    private var visualizationLightbox: some View {
+        if let visualization = projection?.enlargedVisualization,
+           let revision = visualization.latestRevision
+        {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(revision.title).workbenchFont(.title2, weight: .semibold)
+                        Text("Saved snapshot · revision \(revision.sequence) · \(revision.assetPath)")
+                            .workbenchFont(.caption, design: .monospaced)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Open in Explorer") {
+                        store.setPrototypeEnlargedVisualization(nil)
+                        store.openPrototypeExplorer(visualizationID: visualization.id)
+                    }
+                    .accessibilityIdentifier("notebookVisualization.lightboxOpenExplorer")
+                    Button("Done") { store.setPrototypeEnlargedVisualization(nil) }
+                        .accessibilityIdentifier("notebookVisualization.lightboxDone")
+                }
+                visualizationPreview(revision)
+                    .frame(minWidth: 760, minHeight: 480)
+                    .accessibilityIdentifier("notebookVisualization.lightbox.\(visualization.id)")
+            }
+            .padding(24)
+        }
+    }
+
+    private func historyBinding(_ id: String, in values: Binding<Set<String>>) -> Binding<Bool> {
+        Binding(
+            get: { values.wrappedValue.contains(id) },
+            set: { isExpanded in
+                if isExpanded { values.wrappedValue.insert(id) } else { values.wrappedValue.remove(id) }
+            }
+        )
     }
 
     private func statusDot(_ status: PrototypePythonCellStatus) -> some View {
@@ -472,6 +734,46 @@ private struct DeterministicScientificPlot: View {
             }
             .workbenchFont(.caption2)
             .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.24)))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct DeterministicScientificImage: View {
+    let title: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).workbenchFont(.subheadline, weight: .semibold)
+            Canvas { context, size in
+                let center = CGPoint(x: size.width * 0.5, y: size.height * 0.52)
+                let maximum = min(size.width, size.height) * 0.42
+                for index in stride(from: 18, through: 1, by: -1) {
+                    let fraction = CGFloat(index) / 18
+                    let radius = maximum * fraction
+                    let ellipse = Path(ellipseIn: CGRect(
+                        x: center.x - radius * 1.35,
+                        y: center.y - radius * 0.72,
+                        width: radius * 2.7,
+                        height: radius * 1.44
+                    ))
+                    context.fill(ellipse, with: .color(.orange.opacity(0.05 + Double(1 - fraction) * 0.12)))
+                }
+                let beam = Path(ellipseIn: CGRect(x: 15, y: size.height - 28, width: 18, height: 10))
+                context.stroke(beam, with: .color(.white.opacity(0.8)), lineWidth: 1)
+            }
+            .background(LinearGradient(
+                colors: [.black, Color(red: 0.12, green: 0.02, blue: 0.18)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            HStack { Text("Right ascension"); Spacer(); Text("Declination") }
+                .workbenchFont(.caption2)
+                .foregroundStyle(.secondary)
         }
         .padding(10)
         .background(Color(nsColor: .controlBackgroundColor))

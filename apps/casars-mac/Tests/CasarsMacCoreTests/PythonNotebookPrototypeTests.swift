@@ -19,6 +19,8 @@ final class PythonNotebookPrototypeTests: XCTestCase {
         XCTAssertEqual(debug.scenario, .primary)
         XCTAssertEqual(debug.kernelState, .ready)
         XCTAssertEqual(debug.insertedPlotCount, 0)
+        XCTAssertEqual(debug.savedVisualizationCount, 2)
+        XCTAssertEqual(debug.visualizationRevisionCounts["saved-visibility-plot"], 1)
     }
 
     func testPresetRevisionsRecordTheExactFixtureSourceDigest() throws {
@@ -99,6 +101,52 @@ final class PythonNotebookPrototypeTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(cell(store, id: cellID).revisions.first?.plot).insertedInNotebook)
         XCTAssertTrue(try XCTUnwrap(cell(store, id: cellID).latestRevision?.plot).insertedInNotebook)
         XCTAssertEqual(store.state.prototypePython?.insertedPlotCount, 1)
+    }
+
+    func testExplorerRestoresParametersWithoutLiveNotebookMutation() throws {
+        let store = WorkbenchStore.pythonPrototype(scenario: .primary)
+        let visualizationID = "saved-visibility-plot"
+        let original = try XCTUnwrap(
+            store.state.prototypePython?.savedVisualizations.first { $0.id == visualizationID }
+        )
+
+        store.openPrototypeExplorer(visualizationID: visualizationID)
+        XCTAssertEqual(store.state.prototypePython?.activeExplorer?.targetVisualizationID, visualizationID)
+        XCTAssertEqual(
+            store.state.prototypePython?.activeExplorer?.parameters.first { $0.id == "field" }?.value,
+            "TW Hya"
+        )
+        store.setPrototypeExplorerParameter(id: "field", value: "TW Hya offset")
+        XCTAssertEqual(
+            store.state.prototypePython?.savedVisualizations.first { $0.id == visualizationID },
+            original
+        )
+        XCTAssertEqual(store.prototypeProductionBoundaryInvocationCount, 0)
+    }
+
+    func testExplorerUpdateAppendsRevisionAndNewPlotCreatesIdentity() throws {
+        let store = WorkbenchStore.pythonPrototype(scenario: .primary)
+        let visualizationID = "saved-visibility-plot"
+        let originalRevision = try XCTUnwrap(
+            store.state.prototypePython?.savedVisualizations
+                .first { $0.id == visualizationID }?.latestRevision
+        )
+
+        store.openPrototypeExplorer(visualizationID: visualizationID)
+        store.setPrototypeExplorerParameter(id: "averaging", value: "16")
+        store.updatePrototypeExplorerVisualization()
+        let updated = try XCTUnwrap(
+            store.state.prototypePython?.savedVisualizations.first { $0.id == visualizationID }
+        )
+        XCTAssertEqual(updated.revisions.count, 2)
+        XCTAssertEqual(updated.revisions.first, originalRevision)
+        XCTAssertEqual(updated.latestRevision?.parameters.first { $0.id == "averaging" }?.value, "16")
+
+        store.setPrototypeExplorerParameter(id: "field", value: "Companion")
+        store.saveNewPrototypeExplorerVisualization()
+        XCTAssertEqual(store.state.prototypePython?.savedVisualizations.count, 3)
+        XCTAssertEqual(store.state.prototypePython?.activeExplorer?.targetVisualizationID, "saved-explorer-3")
+        XCTAssertEqual(store.prototypeProductionBoundaryInvocationCount, 0)
     }
 
     private func cell(_ store: WorkbenchStore, id: String) throws -> PrototypePythonCell {

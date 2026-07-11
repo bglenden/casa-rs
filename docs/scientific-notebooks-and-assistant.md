@@ -78,6 +78,28 @@ Recognized v1 cell kinds are `task`, `python`, `tutorial`, `assistant-pin`, and
 `output`. Notes need no typed wrapper. Unknown comments, fences, Markdown, and
 future cell kinds are preserved without interpretation.
 
+Execution cells render only their latest revision at normal prominence.
+Earlier immutable revisions remain available under a collapsed **Previous
+revisions** disclosure; they do not repeat full-width output in the normal
+reading flow.
+
+## Explorer visualization snapshots
+
+Explorer inputs and control panels are not notebook content. MeasurementSet
+plots and image views enter a notebook only when the user selects **Save to
+Notebook** beside the rendered visualization. The notebook stores a stable
+image/plot asset plus the source explorer kind and the parameters required to
+recreate the view; it does not embed the explorer's input form.
+
+Selecting a saved visualization enlarges the stable snapshot. **Open in
+Explorer** restores its generating parameters into the corresponding explorer,
+where the user can make a new preview. Explorer edits never update the notebook
+implicitly. **New plot** creates a new notebook visualization, while **Update**
+appends an immutable revision to the selected visualization. The prior
+revisions remain available through a collapsed disclosure. Table-browser input
+forms are never recorded automatically; a separately shaped table excerpt or
+other rendered artifact may use this same explicit snapshot boundary later.
+
 The rich editor provides bounded WYSIWYG editing for prose throughout the
 complete document, including text before, between, and after typed cells, and
 always offers raw Markdown mode over that same complete source. Unsupported
@@ -295,12 +317,15 @@ filename or stable ID explicitly; otherwise recording routes to `default.md`.
 
 Prototype: a full-width continuous notes-first notebook with inline expandable
 Python cells, live editor, Run/Stop/Restart/Run All, ordered stdout/stderr/error
-output, deterministic matplotlib-style PNG/SVG figures, regeneration, notebook
-insertion, and exact-source approval for AI-proposed code. Deterministic
+output, latest-first execution history with collapsed prior revisions,
+deterministic matplotlib-style PNG/SVG figures, regeneration, notebook
+insertion, explicit MeasurementSet/Image Explorer visualization snapshots,
+enlargement, parameter restoration, New plot/immutable Update actions, and
+exact-source approval for AI-proposed code. Deterministic
 `happy-path`, `failure`, and `nonresponsive` fixture states exercise retry,
 interrupt, forced restart, immutable revisions, and approval invalidation.
 
-Current reality: Wave 2 Phase A is implemented on issue #227 as a fixture-only
+Current reality: Wave 2 Phase A is implemented on issues #227 and #370 as a fixture-only
 `casars-mac` prototype with core tests, XCUITests, accessibility audit, debug
 JSON, and visual evidence. It has no Python process, project persistence,
 matplotlib runtime, task/provider call, or network access. Phase B production

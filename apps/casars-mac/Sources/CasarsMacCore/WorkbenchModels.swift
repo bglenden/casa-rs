@@ -3105,6 +3105,9 @@ package struct DebugPrototypePythonNotebookSnapshot: Codable, Equatable {
     package var kernelState: PrototypePythonKernelState
     package var runningCellID: String?
     package var insertedPlotCount: Int
+    package var savedVisualizationCount: Int
+    package var activeExplorerTargetID: String?
+    package var visualizationRevisionCounts: [String: Int]
     package var cells: [DebugPrototypePythonCellSnapshot]
 
     package init(state: PrototypePythonNotebookProjection) {
@@ -3115,6 +3118,11 @@ package struct DebugPrototypePythonNotebookSnapshot: Codable, Equatable {
         kernelState = state.kernelState
         runningCellID = state.runningCellID
         insertedPlotCount = state.insertedPlotCount
+        savedVisualizationCount = state.savedVisualizations.count
+        activeExplorerTargetID = state.activeExplorer?.targetVisualizationID
+        visualizationRevisionCounts = Dictionary(
+            uniqueKeysWithValues: state.savedVisualizations.map { ($0.id, $0.revisions.count) }
+        )
         cells = state.cells.map(DebugPrototypePythonCellSnapshot.init(cell:))
     }
 }

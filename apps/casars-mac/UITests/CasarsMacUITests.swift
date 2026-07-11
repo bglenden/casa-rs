@@ -238,6 +238,10 @@ final class CasarsMacUITests: XCTestCase {
 
         try require("pythonPrototype.regenerate").click()
         XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.revisionCount", containing: "2"))
+        let previous = try require("pythonPrototype.previousRevisions.python-cell-plot")
+        XCTAssertFalse(element("pythonPrototype.revision.1").exists)
+        previous.click()
+        XCTAssertTrue(element("pythonPrototype.revision.1").waitForExistence(timeout: 3))
         try require("pythonPrototype.insert").click()
         XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.insertedPlotCount", containing: "1"))
 
@@ -245,6 +249,36 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.kernelState", containing: "running"))
         XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.kernelState", containing: "ready"))
         XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.revisionCount", containing: "3"))
+        assertZeroPythonProductionBoundaryCalls()
+    }
+
+    func testPythonPrototypeExplorerSnapshotsAreExplicitAndVersioned() throws {
+        launchPythonPrototype()
+
+        XCTAssertEqual(try accessibilityValue("pythonPrototype.savedVisualizationCount"), "2")
+        try require("notebookVisualization.preview.saved-visibility-plot").click()
+        XCTAssertTrue(try require("notebookVisualization.lightbox.saved-visibility-plot").exists)
+        try require("notebookVisualization.lightboxDone").click()
+
+        try require("notebookVisualization.openExplorer.saved-visibility-plot").click()
+        XCTAssertTrue(try require("explorerSnapshot.parameters").exists)
+        XCTAssertEqual(try textValue(try require("explorerSnapshot.parameter.field")), "TW Hya")
+        replaceText("explorerSnapshot.parameter.field", with: "TW Hya offset")
+        XCTAssertEqual(try accessibilityValue("explorerSnapshot.targetRevisionCount"), "1")
+        try require("explorerSnapshot.update").click()
+        try require("explorerSnapshot.back").click()
+
+        XCTAssertEqual(
+            try accessibilityValue("notebookVisualization.revisionCount.saved-visibility-plot"),
+            "2"
+        )
+        XCTAssertTrue(try require("notebookVisualization.previousRevisions.saved-visibility-plot").exists)
+
+        try require("notebookVisualization.openExplorer.saved-visibility-plot").click()
+        replaceText("explorerSnapshot.parameter.field", with: "Companion")
+        try require("explorerSnapshot.saveNew").click()
+        try require("explorerSnapshot.back").click()
+        XCTAssertEqual(try accessibilityValue("pythonPrototype.savedVisualizationCount"), "3")
         assertZeroPythonProductionBoundaryCalls()
     }
 

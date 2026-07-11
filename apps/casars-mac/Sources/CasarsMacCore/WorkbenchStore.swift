@@ -4970,6 +4970,89 @@ public final class WorkbenchStore: ObservableObject {
         state.prototypePython?.cells[cellIndex].revisions[revisionIndex].plot?.insertedInNotebook = true
     }
 
+    package func openPrototypeExplorer(visualizationID: String) {
+        guard runtimeKind == .pythonPrototype,
+              let visualization = state.prototypePython?.savedVisualizations.first(where: { $0.id == visualizationID }),
+              let revision = visualization.latestRevision
+        else { return }
+        state.prototypePython?.activeExplorer = PrototypeExplorerSession(
+            kind: revision.kind,
+            title: revision.title,
+            parameters: revision.parameters,
+            targetVisualizationID: visualizationID
+        )
+    }
+
+    package func closePrototypeExplorer() {
+        guard runtimeKind == .pythonPrototype else { return }
+        state.prototypePython?.activeExplorer = nil
+    }
+
+    package func setPrototypeExplorerParameter(id: String, value: String) {
+        guard runtimeKind == .pythonPrototype,
+              let index = state.prototypePython?.activeExplorer?.parameters.firstIndex(where: { $0.id == id })
+        else { return }
+        state.prototypePython?.activeExplorer?.parameters[index].value = value
+    }
+
+    package func saveNewPrototypeExplorerVisualization() {
+        guard runtimeKind == .pythonPrototype,
+              let session = state.prototypePython?.activeExplorer
+        else { return }
+        let sequence = state.prototypePython?.nextVisualizationSequence ?? 1
+        state.prototypePython?.nextVisualizationSequence = sequence + 1
+        let visualizationID = "saved-explorer-\(sequence)"
+        state.prototypePython?.savedVisualizations.append(PrototypeNotebookVisualization(
+            id: visualizationID,
+            revisions: [prototypeVisualizationRevision(
+                visualizationID: visualizationID,
+                sequence: 1,
+                session: session
+            )]
+        ))
+        state.prototypePython?.activeExplorer?.targetVisualizationID = visualizationID
+    }
+
+    package func updatePrototypeExplorerVisualization() {
+        guard runtimeKind == .pythonPrototype,
+              let session = state.prototypePython?.activeExplorer,
+              let visualizationID = session.targetVisualizationID,
+              let visualizationIndex = state.prototypePython?.savedVisualizations.firstIndex(where: {
+                  $0.id == visualizationID
+              })
+        else { return }
+        let sequence = (state.prototypePython?.savedVisualizations[visualizationIndex]
+            .latestRevision?.sequence ?? 0) + 1
+        state.prototypePython?.savedVisualizations[visualizationIndex].revisions.append(
+            prototypeVisualizationRevision(
+                visualizationID: visualizationID,
+                sequence: sequence,
+                session: session
+            )
+        )
+    }
+
+    package func setPrototypeEnlargedVisualization(_ visualizationID: String?) {
+        guard runtimeKind == .pythonPrototype else { return }
+        state.prototypePython?.enlargedVisualizationID = visualizationID
+    }
+
+    private func prototypeVisualizationRevision(
+        visualizationID: String,
+        sequence: Int,
+        session: PrototypeExplorerSession
+    ) -> PrototypeNotebookVisualizationRevision {
+        PrototypeNotebookVisualizationRevision(
+            id: "\(visualizationID)-r\(sequence)",
+            sequence: sequence,
+            title: session.title,
+            kind: session.kind,
+            sourceSurface: session.kind == .measurementSetPlot ? "MeasurementSet Explorer" : "Image Explorer",
+            parameters: session.parameters,
+            assetPath: "notebooks/assets/explorers/\(visualizationID)/r\(sequence).png"
+        )
+    }
+
     private func completePrototypePythonCell(cellID: String, sequence: Int) {
         guard runtimeKind == .pythonPrototype,
               state.prototypePython?.kernelState == .running,

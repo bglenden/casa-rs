@@ -135,6 +135,61 @@ package struct PrototypePythonCell: Identifiable, Codable, Equatable {
     }
 }
 
+package enum PrototypeVisualizationKind: String, Codable, Equatable {
+    case measurementSetPlot = "measurement-set-plot"
+    case imageView = "image-view"
+}
+
+package struct PrototypeExplorerParameter: Identifiable, Codable, Equatable {
+    package let id: String
+    package var label: String
+    package var value: String
+}
+
+package struct PrototypeNotebookVisualizationRevision: Identifiable, Codable, Equatable {
+    package let id: String
+    package var sequence: Int
+    package var title: String
+    package var kind: PrototypeVisualizationKind
+    package var sourceSurface: String
+    package var parameters: [PrototypeExplorerParameter]
+    package var assetPath: String
+
+    package init(
+        id: String,
+        sequence: Int,
+        title: String,
+        kind: PrototypeVisualizationKind,
+        sourceSurface: String,
+        parameters: [PrototypeExplorerParameter],
+        assetPath: String
+    ) {
+        self.id = id
+        self.sequence = sequence
+        self.title = title
+        self.kind = kind
+        self.sourceSurface = sourceSurface
+        self.parameters = parameters
+        self.assetPath = assetPath
+    }
+}
+
+package struct PrototypeNotebookVisualization: Identifiable, Codable, Equatable {
+    package let id: String
+    package var revisions: [PrototypeNotebookVisualizationRevision]
+
+    package var latestRevision: PrototypeNotebookVisualizationRevision? {
+        revisions.max { $0.sequence < $1.sequence }
+    }
+}
+
+package struct PrototypeExplorerSession: Codable, Equatable {
+    package var kind: PrototypeVisualizationKind
+    package var title: String
+    package var parameters: [PrototypeExplorerParameter]
+    package var targetVisualizationID: String?
+}
+
 /// Mutable, in-memory-only Wave 2 interaction projection.
 package struct PrototypePythonNotebookProjection: Codable, Equatable {
     package var prototypeKind: WorkbenchPrototypeKind
@@ -145,6 +200,10 @@ package struct PrototypePythonNotebookProjection: Codable, Equatable {
     package var kernelState: PrototypePythonKernelState
     package var runningCellID: String?
     package var nextExecutionSequence: Int
+    package var savedVisualizations: [PrototypeNotebookVisualization]
+    package var activeExplorer: PrototypeExplorerSession?
+    package var enlargedVisualizationID: String?
+    package var nextVisualizationSequence: Int
 
     package init(
         prototypeKind: WorkbenchPrototypeKind = .python,
@@ -154,7 +213,11 @@ package struct PrototypePythonNotebookProjection: Codable, Equatable {
         selectedCellID: String,
         kernelState: PrototypePythonKernelState = .ready,
         runningCellID: String? = nil,
-        nextExecutionSequence: Int = 1
+        nextExecutionSequence: Int = 1,
+        savedVisualizations: [PrototypeNotebookVisualization] = [],
+        activeExplorer: PrototypeExplorerSession? = nil,
+        enlargedVisualizationID: String? = nil,
+        nextVisualizationSequence: Int = 1
     ) {
         self.prototypeKind = prototypeKind
         self.scenario = scenario
@@ -164,6 +227,10 @@ package struct PrototypePythonNotebookProjection: Codable, Equatable {
         self.kernelState = kernelState
         self.runningCellID = runningCellID
         self.nextExecutionSequence = nextExecutionSequence
+        self.savedVisualizations = savedVisualizations
+        self.activeExplorer = activeExplorer
+        self.enlargedVisualizationID = enlargedVisualizationID
+        self.nextVisualizationSequence = nextVisualizationSequence
     }
 
     package var selectedCell: PrototypePythonCell? {
@@ -172,6 +239,10 @@ package struct PrototypePythonNotebookProjection: Codable, Equatable {
 
     package var insertedPlotCount: Int {
         cells.flatMap(\.revisions).compactMap(\.plot).filter(\.insertedInNotebook).count
+    }
+
+    package var enlargedVisualization: PrototypeNotebookVisualization? {
+        savedVisualizations.first { $0.id == enlargedVisualizationID }
     }
 }
 
@@ -271,8 +342,48 @@ package enum PrototypePythonFixtureAdapter {
             selectedCellID: selectedCellID,
             kernelState: kernelState,
             runningCellID: scenario == .nonresponsive ? "python-cell-nonresponsive" : nil,
-            nextExecutionSequence: 3
+            nextExecutionSequence: 3,
+            savedVisualizations: savedVisualizationFixtures(),
+            nextVisualizationSequence: 3
         )
+    }
+
+    private static func savedVisualizationFixtures() -> [PrototypeNotebookVisualization] {
+        [
+            PrototypeNotebookVisualization(
+                id: "saved-visibility-plot",
+                revisions: [PrototypeNotebookVisualizationRevision(
+                    id: "saved-visibility-plot-r1",
+                    sequence: 1,
+                    title: "TW Hya · amplitude vs UV distance",
+                    kind: .measurementSetPlot,
+                    sourceSurface: "MeasurementSet Explorer",
+                    parameters: [
+                        PrototypeExplorerParameter(id: "x-axis", label: "X axis", value: "UV distance"),
+                        PrototypeExplorerParameter(id: "y-axis", label: "Y axis", value: "Amplitude"),
+                        PrototypeExplorerParameter(id: "field", label: "Field", value: "TW Hya"),
+                        PrototypeExplorerParameter(id: "averaging", label: "Channel averaging", value: "8"),
+                    ],
+                    assetPath: "notebooks/assets/explorers/saved-visibility-plot/r1.png"
+                )]
+            ),
+            PrototypeNotebookVisualization(
+                id: "saved-continuum-image",
+                revisions: [PrototypeNotebookVisualizationRevision(
+                    id: "saved-continuum-image-r1",
+                    sequence: 1,
+                    title: "TW Hya · continuum image",
+                    kind: .imageView,
+                    sourceSurface: "Image Explorer",
+                    parameters: [
+                        PrototypeExplorerParameter(id: "plane", label: "Plane", value: "0"),
+                        PrototypeExplorerParameter(id: "stretch", label: "Stretch", value: "Asinh"),
+                        PrototypeExplorerParameter(id: "color-map", label: "Color map", value: "Inferno"),
+                    ],
+                    assetPath: "notebooks/assets/explorers/saved-continuum-image/r1.png"
+                )]
+            ),
+        ]
     }
 
     private static func completedPlotRevision(

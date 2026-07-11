@@ -110,8 +110,10 @@ third-party-edit conflict state. The same state selector works with
 Pass `--show-prototype python` for the Wave 2 fixture-only Python notebook.
 Its continuous notes-first document supports inline cell expansion, editing,
 Run/Run All/Stop/Restart, ordered output, failure and retry, deterministic
-PNG/SVG-style plot revisions, regeneration, notebook insertion, and exact-code
-approval for AI-proposed cells. The `happy-path`, `failure`, and
+PNG/SVG-style plot revisions, latest-first output with collapsed history,
+regeneration, notebook insertion, explicit saved MeasurementSet/Image Explorer
+snapshots, enlargement, parameter restoration, New plot/immutable Update
+actions, and exact-code approval for AI-proposed cells. The `happy-path`, `failure`, and
 `nonresponsive` states are also accepted by `--capture-kind python-prototype`.
 No Python process, project file, task, provider, or network is touched; the
 Wave 2 production adapters remain blocked until explicit interaction approval.

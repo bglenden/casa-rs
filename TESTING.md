@@ -144,12 +144,15 @@ For each wave:
   boundaries, GUI/TUI/CLI/Python recording and one-run bypasses, production
   debug state, authored task cells without receipts, clean/dirty task-tab
   parameter replacement, and launched-app persistence/task-tab interaction
-- Wave 2 Phase A XCUITests cover plot regeneration and insertion, observable
-  running state, ordered failure output and retry, a nonresponsive cell's
-  interrupt/restart path, exact-source AI approval invalidation after editing,
-  accessibility audit, and zero production-boundary calls. Core tests cover
-  the same fixture state transitions and exact source digests. These tests do
-  not claim that Python, project persistence, or matplotlib integration exists.
+- Wave 2 Phase A XCUITests cover plot regeneration and insertion, latest-first
+  execution output with collapsed prior revisions, explicit explorer snapshot
+  enlargement and parameter restoration, no live notebook mutation, New plot
+  and immutable Update actions, observable running state, ordered failure
+  output and retry, a nonresponsive cell's interrupt/restart path, exact-source
+  AI approval invalidation after editing, accessibility audit, and zero
+  production-boundary calls. Core tests cover the same fixture state
+  transitions and exact source digests. These tests do not claim that Python,
+  project persistence, matplotlib, or production explorer integration exists.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review
