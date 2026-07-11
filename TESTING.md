@@ -11,6 +11,10 @@ Verification: just verify
 - Interoperability tests: Rust/C++/CASA read/write matrices when on-disk bytes or metadata matter
 - Packaging/runtime tests: editable Python package checks, wheel-install smoke checks, installer validation, demos, and suite layout checks
 - Performance tests: smoke benchmarks and parity timing when performance is part of the requirement
+- Native GUI interaction tests: application-hosted XCTest/XCUIAutomation flows
+  that launch `casars-mac`, address controls through stable accessibility
+  identifiers, and verify critical user workflows against deterministic fixture
+  adapters
 
 ## Required discipline
 
@@ -72,6 +76,32 @@ Verification: just verify
 - Do not trade meaningful behavioral tests for raw numeric coverage.
 - Do not run `scripts/run-coverage.sh --ci-like` for routine branch merges unless the user explicitly asks for release/tag-level validation or direct reproduction of the heavy coverage gate.
 
+## Native macOS executable GUI testing
+
+XCTest/XCUIAutomation is the canonical end-to-end test layer for user-visible
+`casars-mac` behavior. Issue #368 introduces a thin Xcode app host around the
+existing Swift package sources, a macOS UI Testing Bundle, and the stable
+`just gui-test` command. Until #368 lands, it is an active Wave 1 blocker rather
+than a justification for a manual-test exclusion.
+
+The executable GUI layer follows these rules:
+
+- Launch deterministic fixture states with `XCUIApplication.launchArguments`;
+  do not open user projects, contact providers or networks, run scientific
+  tasks, or write durable project/notebook data.
+- Select normal controls through stable accessibility identifiers. Coordinate-
+  only automation is not an acceptable default path.
+- Cover the smallest critical set of complete user workflows: editing and
+  focus, view-mode changes, disclosure/gesture routing, tab navigation,
+  conflict decisions, cancellation/retry, and isolation from production routes.
+- Attach screenshots and useful accessibility diagnostics on failure, but do
+  not use screenshot review as the only assertion that an interaction works.
+- Keep Core/store tests as the broad, fast base of the pyramid. UI tests prove
+  only behavior that requires the launched application boundary.
+- Run the same `just gui-test` command locally and in the supported macOS CI
+  job. If the runner cannot support UI automation, stop and record evidence
+  rather than replacing the gate with manual or computer-use testing.
+
 ## Wave expectations
 
 For each wave:
@@ -81,6 +111,9 @@ For each wave:
   states; meaningful controls have accessibility IDs; debug JSON and visual
   evidence are recorded; and explicit interaction approval precedes real
   adapter integration
+- user-visible native macOS GUI changes identify critical XCUITest workflows
+  during shaping and record a green `just gui-test` result before Review; for
+  Wave 1, #368 must land before Phase B begins
 - after prototype approval, real adapters must match the accepted interaction
   and state contract; deterministic fixture adapters remain available for
   regression tests and may not be treated as evidence that persistence,
@@ -104,6 +137,8 @@ A wave is not done until:
 
 - `just verify` passes or any intentional exclusion is called out explicitly
 - tests cover the claimed behavior
+- native macOS GUI waves pass `just gui-test` for changed critical interactions
+  once the #368 test target is present
 - code-wave refactor evidence is recorded, or a no-code not-applicable
   rationale exists
 - reviewers checked for shallow or tautological tests on medium/high-risk work

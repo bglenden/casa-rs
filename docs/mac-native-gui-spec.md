@@ -617,7 +617,13 @@ Required from the beginning:
   dock mode buttons, central tabs, tab `+`, inspector collapse, task `Run` /
   `Stop`, AI chat input, Python ownership state, selected dataset, and history
   rows.
-- Add UI tests for the main flows once a runnable app shell exists.
+- Use a macOS XCTest/XCUIAutomation UI Testing Bundle for the main launched-app
+  flows. The thin Xcode test host must reuse the existing `casars-mac` sources
+  and `CasarsMacCore` package product rather than forking product logic. Launch
+  deterministic fixtures through explicit arguments, address controls through
+  stable accessibility identifiers, and retain screenshots as failure/polish
+  evidence rather than the sole interaction assertion. Issue #368 establishes
+  this target and the stable `just gui-test` entrypoint.
 - Use screenshots for visual polish review, not as the only way to understand
   behavior.
 

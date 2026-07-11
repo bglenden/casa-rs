@@ -128,6 +128,19 @@ Use `Closes #N` only for issues that should auto-close on merge.
   Fixture schemas and dummy adapters must not become public or persisted
   contracts. A material interaction change returns the wave to this prototype
   gate.
+- Native macOS GUI behavior uses XCTest/XCUIAutomation as the executable
+  end-to-end interaction layer. Issue #368 establishes the thin Xcode app host,
+  macOS UI Testing Bundle, and stable `just gui-test` entrypoint for the current
+  notebook wave; it must land before Wave 1 production integration begins.
+  Thereafter, every user-visible `casars-mac` wave must identify its critical
+  workflows during shaping, add or update stable accessibility identifiers and
+  XCUITest coverage during implementation, and record a green `just gui-test`
+  result before Review. Core/store tests, debug JSON, accessibility inspection,
+  screenshots, and manual/computer-use sessions remain complementary evidence;
+  they do not substitute for executable UI tests when claimed interaction
+  behavior changes. If the UI-test target or supported macOS runner is
+  unavailable, stop and record the blocker instead of silently waiving the
+  gate.
 - Before implementing behavior that exists in CASA/casacore C++, inspect the
   relevant upstream task/tool/library path first and preserve its semantics
   unless there is an explicit reason to diverge.
