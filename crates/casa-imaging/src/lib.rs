@@ -34614,6 +34614,7 @@ mod tests {
             .with_direct_metal_scratch_bytes(scratch_bytes.max(1))
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn accelerated_f32_execution_config() -> ImagingExecutionConfig {
         #[cfg(all(target_os = "macos", not(coverage)))]
         let backend = if standard_mfs_metal_device_available() {
