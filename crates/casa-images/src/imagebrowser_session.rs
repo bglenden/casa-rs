@@ -3951,7 +3951,9 @@ mod tests {
             .handle_command(ImageBrowserCommand::SetSelectedNonDisplayAxis { axis: 99 })
             .expect_err("an invalid profile axis must not be accepted");
         assert!(error.to_string().contains("not a non-display axis"));
-        assert_eq!(session.snapshot().unwrap(), before_rejected_axis);
+        let mut after_rejected_axis = session.snapshot().unwrap();
+        after_rejected_axis.backend_timing = before_rejected_axis.backend_timing.clone();
+        assert_eq!(after_rejected_axis, before_rejected_axis);
     }
 
     #[test]

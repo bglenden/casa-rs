@@ -11,6 +11,9 @@ nav:
   - Task Parameters:
       - Guide: task-parameters.md
       - Generated Reference: reference/task-parameters.md
+  - Scientific Workbench:
+      - Notebooks, Tutorials, Python, and AI: scientific-notebooks-and-assistant.md
+      - Native macOS Product Spec: mac-native-gui-spec.md
   - Rust API: rust-api.md
   - Python:
       - Overview: python/index.md

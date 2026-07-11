@@ -70,18 +70,19 @@ struct CommandSearchField: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
             TextField("Search or run command...", text: Binding(
                 get: { store.state.commandQuery },
                 set: { store.setCommandQuery($0) }
             ))
             .textFieldStyle(.plain)
+            .accessibilityLabel("Search or run command")
             .onSubmit {
                 store.runCommandQuery()
             }
             Text("⌘K")
                 .workbenchFont(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -119,12 +120,20 @@ struct LeftDockView: View {
 
                 Text(store.state.project.rootPath)
                     .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 Text(projectSourceLabel)
-                    .workbenchFont(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .workbenchFont(.caption2, weight: .semibold)
+                    .foregroundStyle(Color(nsColor: .labelColor))
+
+                if store.isNotebookPrototypeRuntime {
+                    Text("Production boundary calls: \(store.prototypeProductionBoundaryInvocationCount)")
+                        .workbenchFont(.caption, weight: .semibold, design: .monospaced)
+                        .foregroundStyle(.primary)
+                        .accessibilityIdentifier("notebook.boundaryAudit")
+                        .accessibilityValue("\(store.prototypeProductionBoundaryInvocationCount)")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
@@ -242,6 +251,9 @@ struct LeftDockView: View {
         case .files:
             filesDock
 
+        case .notebooks:
+            notebooksDock
+
         case .history:
             if store.state.history.isEmpty {
                 EmptyDockState(
@@ -282,6 +294,160 @@ struct LeftDockView: View {
         }
     }
 
+    @ViewBuilder
+    private var notebooksDock: some View {
+        if let notebook = store.state.prototypeNotebook {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Project notebooks")
+                        .workbenchFont(.caption, weight: .semibold)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+
+                List(selection: Binding(
+                    get: { Optional(notebook.activeNotebookID) },
+                    set: { notebookID in
+                        if let notebookID {
+                            store.selectPrototypeNotebook(notebookID)
+                            store.openDefaultTab(kind: .notebook)
+                        }
+                    }
+                )) {
+                    ForEach(notebook.notebooks) { summary in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: "doc.richtext")
+                                .foregroundStyle(summary.id == notebook.activeNotebookID ? Color.accentColor : .secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(summary.title)
+                                    .workbenchFont(.subheadline, weight: .semibold)
+                                    .foregroundStyle(Color(nsColor: .labelColor))
+                                    .lineLimit(1)
+                                Text(summary.filename)
+                                    .workbenchFont(.caption, design: .monospaced)
+                                    .foregroundStyle(Color(nsColor: .labelColor))
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 4)
+                            if summary.id == notebook.activeNotebookID, notebook.isDirty {
+                                Circle()
+                                    .fill(.orange)
+                                    .frame(width: 7, height: 7)
+                                    .accessibilityLabel("Unsaved changes")
+                            }
+                        }
+                        .padding(.vertical, 3)
+                        .tag(Optional(summary.id))
+                        .accessibilityIdentifier("notebook.selector.\(summary.id)")
+                    }
+                }
+                .listStyle(.sidebar)
+                .accessibilityIdentifier("dock.notebooks")
+
+                Divider()
+
+                HStack {
+                    Label("Markdown files", systemImage: "text.document")
+                        .workbenchFont(.caption, weight: .semibold)
+                        .foregroundStyle(Color(nsColor: .labelColor))
+                    Spacer()
+                    Button {
+                        store.openDefaultTab(kind: .notebook)
+                    } label: {
+                        Image(systemName: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Open selected notebook")
+                    .help("Open selected notebook")
+                    .accessibilityIdentifier("notebook.selector.open")
+                }
+                .padding(10)
+            }
+        } else if let notebooks = store.state.scientificNotebooks {
+            VStack(spacing: 0) {
+                List(selection: Binding(
+                    get: { notebooks.activeNotebookID },
+                    set: { notebookID in
+                        if let notebookID {
+                            store.selectScientificNotebook(notebookID)
+                            store.openDefaultTab(kind: .notebook)
+                        }
+                    }
+                )) {
+                    ForEach(notebooks.notebooks) { document in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: "doc.richtext")
+                                .foregroundStyle(document.id == notebooks.activeNotebookID ? Color.accentColor : .secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(document.title)
+                                    .workbenchFont(.subheadline, weight: .semibold)
+                                    .lineLimit(1)
+                                Text(document.filename)
+                                    .workbenchFont(.caption, design: .monospaced)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 4)
+                            if document.isDirty {
+                                Circle().fill(.orange).frame(width: 7, height: 7)
+                            }
+                        }
+                        .padding(.vertical, 3)
+                        .tag(Optional(document.id))
+                        .accessibilityIdentifier("notebook.selector.\(document.id)")
+                    }
+                }
+                .listStyle(.sidebar)
+                .accessibilityIdentifier("dock.notebooks")
+                Divider()
+                Button {
+                    store.openDefaultTab(kind: .notebook)
+                } label: {
+                    Label("Open selected notebook", systemImage: "arrow.up.forward.app")
+                }
+                .buttonStyle(.borderless)
+                .padding(10)
+                .accessibilityIdentifier("notebook.selector.open")
+                Button {
+                    if notebooks.notebooks.isEmpty {
+                        store.createScientificNotebook()
+                    } else {
+                        store.createNextNamedScientificNotebook()
+                    }
+                } label: {
+                    Label(notebooks.notebooks.isEmpty ? "Create default notebook" : "New notebook", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .padding(.bottom, 10)
+                .accessibilityIdentifier("notebook.selector.new")
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("No notebooks yet")
+                    .workbenchFont(.headline)
+                Text("Notebooks will appear here when the project contains Markdown notes.")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    if store.state.hasProject {
+                        store.createScientificNotebook()
+                    } else if let url = ProjectOpenPanel.chooseDirectory() {
+                        store.openProject(path: url.path)
+                    }
+                } label: {
+                    Label(store.state.hasProject ? "Create Notebook" : "Open Project", systemImage: store.state.hasProject ? "plus" : "folder")
+                }
+                .accessibilityIdentifier("dock.empty.primary")
+                Spacer()
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("dock.empty")
+        }
+    }
+
     private func datasetRow(_ dataset: DatasetSummary) -> some View {
         DatasetRow(
             dataset: dataset,
@@ -316,7 +482,10 @@ struct LeftDockView: View {
     }
 
     private var projectSourceLabel: String {
-        switch store.state.project.source {
+        if store.state.isNotebookPrototype {
+            return "Notebook prototype"
+        }
+        return switch store.state.project.source {
         case .none: "No project"
         case .fixture: "Demo project"
         case .probed: "Real project"
@@ -434,7 +603,28 @@ struct LeftDockView: View {
 
     @ViewBuilder
     private var filesDock: some View {
-        if store.state.isDemoProject {
+        if let notebook = store.state.prototypeNotebook {
+            List {
+                Section("notebooks") {
+                    ForEach(notebook.notebooks) { summary in
+                        Button {
+                            store.selectPrototypeNotebook(summary.id)
+                            store.openDefaultTab(kind: .notebook)
+                        } label: {
+                            Label(summary.filename, systemImage: "doc.text")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("prototypeFile.\(summary.id)")
+                    }
+                }
+                Section("fixture data") {
+                    Label("twhya_calibrated.ms", systemImage: "externaldrive")
+                    Label("products", systemImage: "folder")
+                }
+            }
+            .listStyle(.sidebar)
+            .accessibilityIdentifier("dock.files.prototype")
+        } else if store.state.isDemoProject {
             VStack(alignment: .leading, spacing: 12) {
                 Label("data", systemImage: "folder")
                 Label("calibration", systemImage: "folder")
@@ -910,7 +1100,10 @@ struct InspectorView: View {
     }
 
     private var inspectorSourceLabel: String {
-        switch store.state.project.source {
+        if store.state.isNotebookPrototype {
+            return "Prototype metadata"
+        }
+        return switch store.state.project.source {
         case .none: "No project"
         case .fixture: "Demo metadata"
         case .probed: "Real probe metadata"

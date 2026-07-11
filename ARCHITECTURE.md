@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-07-09
+Last reality check: 2026-07-11
 Verification: just docs-check
 
 ## System purpose
@@ -20,6 +20,7 @@ coordinates, measures, and related workflows.
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | Versioned provider bundles, parameter catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
 | parameter runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, typed parameter sessions, and managed Last storage | boundary contracts and `casa-types`; must not implement provider science behavior |
+| notebook runtime (`casa-notebook`) | Source-preserving Markdown/cell parsing, stable notebook/cell/run identity, atomic project persistence, immutable execution receipts, conflict handling, and portable/advanced exports | parameter value serialization and general-purpose ecosystem crates; must not own provider execution or frontend state |
 | apps and runtimes (`casars`, `casars-imager`, `casars-importvla`, `casars-python`, `casars-frontend-services`, `ratatui-graphics`, `apps/casars-mac`) | Terminal shells, orchestration binaries, Python bindings/package, frontend service bindings, rendering/runtime support, and the native macOS GUI prototype | boundary contracts, domain libraries, foundation crates; lightweight frontend services may expose read-only domain-library probes through UniFFI |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers, and performance guards | any workspace crates needed for testing only |
 
@@ -27,7 +28,7 @@ coordinates, measures, and related workflows.
 
 Preferred direction is:
 
-`core codecs -> foundations -> persistent storage / domain libraries -> boundary contracts -> parameter runtime -> apps/runtimes`
+`core codecs -> foundations -> persistent storage / domain libraries -> boundary contracts -> parameter runtime / notebook runtime -> apps/runtimes`
 
 with `casa-test-support` outside the product dependency chain.
 
@@ -55,8 +56,9 @@ Additional constraints:
   `casars-frontend-services`, whose Rust API is exposed to Swift and Python
   with UniFFI.
 - `casars-frontend-services` is an apps/runtime boundary crate. It may compose
-  domain-library reads into GUI-appropriate summaries, but it must not become a
-  second implementation of persistence, task semantics, or provider contracts.
+  domain-library reads and `casa-notebook` operations into GUI-appropriate
+  projections, but it must not become a second implementation of persistence,
+  task semantics, or provider contracts.
 
 ## Runtime model
 
@@ -96,6 +98,43 @@ MeasurementSet, CASA image, and table probes are routed into typed Swift
 explorer tabs, and dirty-imaging artifacts are grouped under their originating
 in-memory run state so generated products can be reopened without adding a
 project-history persistence format or background service.
+
+Issue #368 adds a checked-in Xcode app host and macOS UI Testing Bundle around
+that same SwiftPM package. The host compiles the existing SwiftUI app sources
+and links the local `CasarsMacCore` product solely to provide an application
+boundary for XCTest/XCUIAutomation. It is test infrastructure, not another app
+family, state owner, fixture schema, runtime, or distribution path.
+
+ADR-0007 defines the runtime boundary for the scientific-notebook program.
+`casa-notebook` now owns the Wave 1 Markdown/cell, execution-receipt, locking,
+conflict, and export contracts shared by GUI, TUI, CLI, and Python. App surfaces
+record through this crate on an explicitly selected project root; recorder
+failure is a warning and never changes the scientific operation result. Swift
+uses DTO projections from `casars-frontend-services` and does not own the
+persisted schema. Each pending attempt holds an advisory per-run lease for its
+process lifetime, so projection refreshes and other processes cannot classify
+a live run as interrupted; recovery claims only a released lease. Parameter
+replay opens a fresh canonical task tab when no unambiguous target exists,
+replaces a clean matching target, and requires a typed diff confirmation before
+replacing a dirty target. It reports current contract/default drift without
+claiming exact reproduction. GUI and TUI image-region and mask writes use the
+same operation-receipt path as tasks. Direct provider binaries remain outside
+implicit project recording; project-mediated execution enters through `casars
+run` or another app surface with an explicit workspace, and CLI/Python callers
+may route to an existing named notebook explicitly.
+
+The planned later-wave tutorial-manifest support and `casars-assistant`
+TypeScript sidecar are isolated behind a
+CASA-RS-owned JSONL/stdio protocol and may use Pi as a replaceable model/auth
+adapter. Swift remains the native interaction layer, and
+`casars-frontend-services` remains a projection layer rather than a persistence
+implementation. The assistant and later-wave tutorial/kernel modules remain
+accepted architecture but do not exist until their implementation waves land.
+
+Every notebook-program wave starts with a launchable deterministic GUI
+prototype and an explicit approval gate before real adapters are connected.
+The prototype state belongs in `CasarsMacCore`; it may not establish persisted
+or provider semantics that bypass the Rust-owned contracts.
 
 ### Imaging execution
 
@@ -221,6 +260,10 @@ compatibility block facade or normal-path host full-grid upload is retained.
 - measures runtime data in a CASA-compatible table tree rooted at `~/.casa/data` (override `CASA_RS_MEASURESPATH`)
 - local casacore C++ installations via Homebrew for parity tests and demos when available
 - GitHub Actions as the canonical CI environment, with `scripts/ci-local.sh` as local reproduction support
+- accepted future notebook state from ADR-0007: visible Markdown and assets
+  under `notebooks/`, copied project documents under `documents/`, and versioned
+  managed receipts, transcripts, tutorial locks, Python environments, and local
+  corpus indexes under `.casa-rs/`
 
 ## Public interfaces
 
@@ -268,3 +311,4 @@ compatibility block facade or normal-path host full-grid upload is retained.
 | 0004 | Tiered verification and heavy parity gates | accepted |
 | 0005 | Native macOS GUI prototype boundary | accepted |
 | 0006 | Unified parameter catalog and sparse profiles | accepted |
+| 0007 | Scientific notebooks and assistant boundary | accepted |

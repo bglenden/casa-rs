@@ -22,6 +22,9 @@ This directory holds stable project documentation.
 - [`task-parameters.md`](task-parameters.md)
   - accepted sparse TOML profile, Last-state, and cross-surface parameter
     contract
+- [`scientific-notebooks-and-assistant.md`](scientific-notebooks-and-assistant.md)
+  - accepted Markdown notebook, execution receipt, tutorial, Python, local
+    corpus, assistant, and prototype-first wave design
 - [`reference/task-parameters.md`](reference/task-parameters.md)
   - generated catalog of every task and session parameter surface
 - [`provider-contracts.md`](provider-contracts.md)

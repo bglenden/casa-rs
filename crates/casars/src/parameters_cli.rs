@@ -4,10 +4,9 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
+use casa_notebook::ExecutionStatus;
 use casa_provider_contracts::{
     ParameterConcept, ParameterType, ParameterValue, ProviderInvocation,
     ProviderInvocationAdaptation, SurfaceContractBundle, SurfaceKind, builtin_surface_bundle,
@@ -20,6 +19,8 @@ use casa_task_runtime::{
     resolve_profile, write_parameter_profile_atomic,
 };
 
+use crate::execution::{ExecutionPlan, run_process_blocking};
+use crate::notebook_recording::NotebookRecording;
 use crate::registry::resolve_app;
 use crate::startup::{StartupLaunch, StartupPrefill, StartupValue};
 
@@ -143,30 +144,60 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
         eprintln!("Warning: could not save Last for {surface_id}: {warning}");
     }
 
-    let app = resolve_app(Some(&surface_id))?;
-    let mut command = app.resolve_command()?.command();
-    command.current_dir(&options.workspace);
-    command.args(&invocation.args);
-    let status = if let Some(stdin) = invocation.stdin {
-        command.stdin(Stdio::piped());
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("start {surface_id}: {error}"))?;
-        child
-            .stdin
-            .take()
-            .ok_or_else(|| format!("open {surface_id} provider stdin"))?
-            .write_all(stdin.as_bytes())
-            .map_err(|error| format!("write {surface_id} provider request: {error}"))?;
-        child
-            .wait()
-            .map_err(|error| format!("wait for {surface_id}: {error}"))?
-    } else {
-        command
-            .status()
-            .map_err(|error| format!("start {surface_id}: {error}"))?
+    let mut recording = NotebookRecording::begin(
+        options.workspace.clone(),
+        &options.initiating_surface,
+        &surface_id,
+        &session,
+        options.notebook.as_deref(),
+        options.no_notebook_recording,
+        options.confirm_overwrite || options.confirm_mutation,
+    );
+    if let Some(warning) = recording.take_warning() {
+        eprintln!("Warning: notebook recording unavailable for {surface_id}: {warning}");
+    }
+
+    let execution = (|| {
+        let app = resolve_app(Some(&surface_id))?;
+        let plan = ExecutionPlan {
+            command: app.resolve_command()?,
+            arguments: invocation.args.iter().map(OsString::from).collect(),
+            stdin: invocation.stdin,
+            working_directory: options.workspace.clone(),
+            renderer: None,
+            file_output_path: None,
+        };
+        run_process_blocking(&plan).map_err(|error| format!("run {surface_id}: {error}"))
+    })();
+    let execution = match execution {
+        Ok(execution) => execution,
+        Err(error) => {
+            if let Some(warning) = recording.finalize(
+                ExecutionStatus::Failed,
+                String::new(),
+                String::new(),
+                Vec::new(),
+                vec![error.clone()],
+            ) {
+                eprintln!("Warning: notebook receipt finalization failed: {warning}");
+            }
+            return Err(error);
+        }
     };
-    let successful = status.success();
+    let successful = execution.exit.success;
+    if let Some(warning) = recording.finalize(
+        if successful {
+            ExecutionStatus::Succeeded
+        } else {
+            ExecutionStatus::Failed
+        },
+        execution.stdout,
+        execution.stderr,
+        Vec::new(),
+        Vec::new(),
+    ) {
+        eprintln!("Warning: notebook receipt finalization failed: {warning}");
+    }
     let completed = last.after_completion(successful);
     if let Some(warning) = completed.warning {
         eprintln!("Warning: could not save Last Successful for {surface_id}: {warning}");
@@ -174,7 +205,13 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
     if successful {
         Ok(())
     } else {
-        Err(format!("{surface_id} exited with {status}"))
+        Err(format!(
+            "{surface_id} exited with code {}",
+            execution
+                .exit
+                .code
+                .map_or_else(|| "unknown".to_owned(), |code| code.to_string())
+        ))
     }
 }
 
@@ -240,10 +277,13 @@ enum SourceChoice {
 struct SurfaceOptions {
     source: SourceChoice,
     workspace: PathBuf,
+    notebook: Option<String>,
+    initiating_surface: String,
     context: ResolutionPatch,
     overrides: ResolutionPatch,
     save_params: Option<PathBuf>,
     no_save_last: bool,
+    no_notebook_recording: bool,
     confirm_overwrite: bool,
     confirm_mutation: bool,
 }
@@ -255,10 +295,13 @@ fn parse_surface_options(
 ) -> Result<SurfaceOptions, String> {
     let mut source = None;
     let mut workspace = None;
+    let mut notebook = None;
+    let mut initiating_surface = "cli".to_string();
     let mut overrides = ResolutionPatch::default();
     let context = ResolutionPatch::default();
     let mut save_params = None;
     let mut no_save_last = false;
+    let mut no_notebook_recording = false;
     let mut confirm_overwrite = false;
     let mut confirm_mutation = false;
     let positional = bundle
@@ -295,6 +338,15 @@ fn parse_surface_options(
         } else if raw == "--workspace" {
             index += 1;
             workspace = Some(required_path(args.get(index), "--workspace directory")?);
+        } else if raw == "--notebook" && allow_runtime_controls {
+            index += 1;
+            notebook = Some(required_utf8(args.get(index), "--notebook filename or ID")?);
+        } else if raw == "--initiating-surface" && allow_runtime_controls {
+            index += 1;
+            initiating_surface = required_utf8(args.get(index), "--initiating-surface value")?;
+            if !matches!(initiating_surface.as_str(), "cli" | "python") {
+                return Err("--initiating-surface must be cli or python".to_string());
+            }
         } else if raw == "--unset" {
             index += 1;
             let name = required_utf8(args.get(index), "--unset parameter")?;
@@ -306,6 +358,8 @@ fn parse_surface_options(
             save_params = Some(required_path(args.get(index), "--save-params file")?);
         } else if raw == "--no-save-last" {
             no_save_last = true;
+        } else if raw == "--no-notebook-recording" && allow_runtime_controls {
+            no_notebook_recording = true;
         } else if raw == "--confirm-overwrite" && allow_runtime_controls {
             confirm_overwrite = true;
         } else if raw == "--confirm-mutation" && allow_runtime_controls {
@@ -367,10 +421,13 @@ fn parse_surface_options(
     Ok(SurfaceOptions {
         source: source.unwrap_or(SourceChoice::Defaults),
         workspace,
+        notebook,
+        initiating_surface,
         context,
         overrides,
         save_params,
         no_save_last,
+        no_notebook_recording,
         confirm_overwrite,
         confirm_mutation,
     })
@@ -811,11 +868,11 @@ Usage:\n\
   casars params save SURFACE FILE [SOURCE] [OVERRIDES]\n\
   casars params template SURFACE\n\
   casars params describe NAME\n\
-  casars run TASK [SOURCE] [OVERRIDES] [--workspace DIR] [--save-params FILE]\n\
+  casars run TASK [SOURCE] [OVERRIDES] [--workspace DIR] [--notebook FILE_OR_ID] [--save-params FILE]\n\
   casars open SESSION [SOURCE] [OVERRIDES] [--workspace DIR] [--save-params FILE]\n\n\
 SOURCE is exactly one of --defaults, --last, --last-successful (tasks), or --params FILE.\n\
 Overrides use CASA names such as --vis, --imsize, --cell, or --unset NAME.\n\
-Runtime-only controls: --no-save-last, --confirm-overwrite, --confirm-mutation.\n"
+Runtime-only controls: --notebook FILE_OR_ID, --initiating-surface cli|python, --no-save-last, --no-notebook-recording (one run), --confirm-overwrite, --confirm-mutation.\n"
         .to_string()
 }
 
@@ -891,6 +948,26 @@ mod tests {
         );
         assert_eq!(expected["values"]["niter"], 7);
         assert_eq!(session.values()["niter"], ParameterValue::Integer(7));
+    }
+
+    #[test]
+    fn task_runtime_controls_select_named_notebook_and_python_surface() {
+        let bundle = builtin_surface_bundle("imstat").unwrap();
+        let options = parse_surface_options(
+            &bundle,
+            &[
+                "--imagename".into(),
+                "input.image".into(),
+                "--notebook".into(),
+                "Analysis.md".into(),
+                "--initiating-surface".into(),
+                "python".into(),
+            ],
+            true,
+        )
+        .unwrap();
+        assert_eq!(options.notebook.as_deref(), Some("Analysis.md"));
+        assert_eq!(options.initiating_surface, "python");
     }
 
     #[test]

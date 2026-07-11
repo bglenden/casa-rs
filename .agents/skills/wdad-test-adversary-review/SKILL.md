@@ -26,8 +26,14 @@ Read-only/planning mode.
 2. Look for happy-path-only tests.
 3. Look for tautological or over-mocked tests.
 4. Identify missing regression, integration, or edge-case coverage.
-5. Treat acceptance checks moved to follow-up, deferral, non-goal, or out-of-scope language without explicit user signoff as not covered.
-6. Recommend the smallest meaningful additions.
+5. For user-visible native macOS GUI behavior, require executable
+   XCTest/XCUIAutomation evidence for critical launched-app workflows. Verify
+   that tests use stable accessibility identifiers, deterministic fixture
+   launch arguments, meaningful state/gesture assertions, and production-route
+   isolation. Screenshots, accessibility-tree inspection, debug JSON, and
+   manual/computer-use sessions are complementary evidence, not substitutes.
+6. Treat acceptance checks moved to follow-up, deferral, non-goal, or out-of-scope language without explicit user signoff as not covered.
+7. Recommend the smallest meaningful additions.
 
 ## Output
 

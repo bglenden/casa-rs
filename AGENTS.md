@@ -120,6 +120,28 @@ Use `Closes #N` only for issues that should auto-close on merge.
 
 ## Project Rules
 
+- For the scientific-notebook program governed by ADR-0007, every wave begins
+  with a launchable, fully interactive `casars-mac` prototype backed only by
+  deterministic fixture adapters. Record live-app, accessibility, debug-state,
+  and visual evidence and obtain explicit interaction approval before wiring
+  real persistence, tasks, Python, downloads, retrieval, or model providers.
+  Fixture schemas and dummy adapters must not become public or persisted
+  contracts. A material interaction change returns the wave to this prototype
+  gate.
+- Native macOS GUI behavior uses XCTest/XCUIAutomation as the executable
+  end-to-end interaction layer. Issue #368 establishes the thin Xcode app host,
+  macOS UI Testing Bundle, and stable `just gui-test` entrypoint for the current
+  notebook wave; it must be implemented and green before Wave 1 production
+  integration begins, and lands with the completed wave PR.
+  Thereafter, every user-visible `casars-mac` wave must identify its critical
+  workflows during shaping, add or update stable accessibility identifiers and
+  XCUITest coverage during implementation, and record a green `just gui-test`
+  result before Review. Core/store tests, debug JSON, accessibility inspection,
+  screenshots, and manual/computer-use sessions remain complementary evidence;
+  they do not substitute for executable UI tests when claimed interaction
+  behavior changes. If the UI-test target or supported macOS runner is
+  unavailable, stop and record the blocker instead of silently waiving the
+  gate.
 - Before implementing behavior that exists in CASA/casacore C++, inspect the
   relevant upstream task/tool/library path first and preserve its semantics
   unless there is an explicit reason to diverge.

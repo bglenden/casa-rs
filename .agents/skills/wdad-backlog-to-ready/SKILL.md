@@ -27,15 +27,20 @@ Planning/read-only mode. Do not edit code.
 3. Ask how the work might extend in future so the wave does not lock the implementation into an obviously brittle direction.
 4. Ask about architecture consistency: expected boundaries, persisted formats, public contracts, dependency constraints, and any repo conventions that must stay intact.
 5. Ask about preferred UI outcomes when the work is user-visible: workflows, layout priorities, tone, and what would count as a good interaction outcome.
-6. If UI direction is still ambiguous and rough visual exploration would help, offer a few lightweight alternatives using an image-generation skill as preview-only mockups rather than implementation specs.
-7. Decide whether this should be one issue or a wave-lead issue over a few related issues.
-8. Check wave suitability: one review boundary, one verification path, one main area, no unresolved architecture split.
-9. Write falsifiable acceptance checks.
-10. Identify architecture/test impact and stop conditions.
-11. Identify the verification path: `quick`, `verify` before `In Progress -> Review`, and any release-only checks.
-12. Draft closeout expectations and follow-up hooks for adjacent work. Do not use follow-up hooks to weaken the approved outcome or acceptance checks.
-13. State that once approved, outcome, included issues, and acceptance checks cannot be deferred or descoped without explicit user signoff.
-14. State that code waves must record a bounded refactor pass before review, or a not-applicable rationale when the wave has no code surface.
+6. For native macOS GUI work, identify the critical launched-app workflows that
+   require XCTest/XCUIAutomation, the deterministic fixture launch states, and
+   the stable accessibility identifiers needed to test them. Do not treat
+   screenshots, debug state, or manual/computer-use review as a substitute for
+   the executable UI-test plan.
+7. If UI direction is still ambiguous and rough visual exploration would help, offer a few lightweight alternatives using an image-generation skill as preview-only mockups rather than implementation specs.
+8. Decide whether this should be one issue or a wave-lead issue over a few related issues.
+9. Check wave suitability: one review boundary, one verification path, one main area, no unresolved architecture split.
+10. Write falsifiable acceptance checks.
+11. Identify architecture/test impact and stop conditions.
+12. Identify the verification path: `quick`, `verify` before `In Progress -> Review`, `gui-test` for user-visible native macOS GUI changes once #368 lands, and any release-only checks.
+13. Draft closeout expectations and follow-up hooks for adjacent work. Do not use follow-up hooks to weaken the approved outcome or acceptance checks.
+14. State that once approved, outcome, included issues, and acceptance checks cannot be deferred or descoped without explicit user signoff.
+15. State that code waves must record a bounded refactor pass before review, or a not-applicable rationale when the wave has no code surface.
 
 ## Output
 

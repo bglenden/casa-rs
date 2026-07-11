@@ -4,6 +4,12 @@ Truth class: proposed product spec
 Last reality check: 2026-05-03
 Verification: not implemented
 
+> **Accepted follow-on design:** The notebook, tutorial, Python, corpus, and AI
+> architecture is now governed by
+> [`scientific-notebooks-and-assistant.md`](scientific-notebooks-and-assistant.md)
+> and ADR-0007. This document remains the product and shell-layout reference;
+> where the two conflict, the accepted follow-on design wins.
+
 ## Product Thesis
 
 The mac-native `casa-rs` GUI should be an AI-enhanced desktop workbench for
@@ -611,7 +617,16 @@ Required from the beginning:
   dock mode buttons, central tabs, tab `+`, inspector collapse, task `Run` /
   `Stop`, AI chat input, Python ownership state, selected dataset, and history
   rows.
-- Add UI tests for the main flows once a runnable app shell exists.
+- Use a macOS XCTest/XCUIAutomation UI Testing Bundle for the main launched-app
+  flows. The thin Xcode test host must reuse the existing `casars-mac` sources
+  and `CasarsMacCore` package product rather than forking product logic. Launch
+  deterministic fixtures through explicit arguments, address controls through
+  stable accessibility identifiers, and retain screenshots as failure/polish
+  evidence rather than the sole interaction assertion. Issue #368 establishes
+  this target and the stable `just gui-test` entrypoint; its disposable
+  DerivedData and retained failure `.xcresult` live under
+  `apps/casars-mac/.gui-test/`, and pull-request CI runs the same command on the
+  supported macOS runner.
 - Use screenshots for visual polish review, not as the only way to understand
   behavior.
 

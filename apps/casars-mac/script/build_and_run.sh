@@ -7,6 +7,9 @@ OPEN_PROJECT=""
 OPEN_IMAGER_MS=""
 OPEN_TUTORIAL_PACK=""
 OPEN_TUTORIAL_SECTION=""
+SHOW_PROTOTYPE=""
+PROTOTYPE_STATE="happy-path"
+PROTOTYPE_STATE_SET="0"
 SHOW_IMAGER_PROGRESS_MOCKUP="0"
 RUN_ACTIVE_TASK="0"
 USE_TEMP_REAL_PROJECT="1"
@@ -51,6 +54,8 @@ while [[ $# -gt 0 ]]; do
       OPEN_PROJECT="$2"
       OPEN_IMAGER_MS=""
       OPEN_TUTORIAL_PACK=""
+      OPEN_TUTORIAL_SECTION=""
+      SHOW_PROTOTYPE=""
       USE_TEMP_REAL_PROJECT="0"
       shift 2
       ;;
@@ -62,6 +67,8 @@ while [[ $# -gt 0 ]]; do
       OPEN_IMAGER_MS="$2"
       OPEN_PROJECT=""
       OPEN_TUTORIAL_PACK=""
+      OPEN_TUTORIAL_SECTION=""
+      SHOW_PROTOTYPE=""
       USE_TEMP_REAL_PROJECT="0"
       shift 2
       ;;
@@ -73,6 +80,7 @@ while [[ $# -gt 0 ]]; do
       OPEN_TUTORIAL_PACK="$2"
       OPEN_IMAGER_MS=""
       OPEN_PROJECT=""
+      SHOW_PROTOTYPE=""
       USE_TEMP_REAL_PROJECT="0"
       shift 2
       ;;
@@ -88,8 +96,40 @@ while [[ $# -gt 0 ]]; do
       OPEN_PROJECT=""
       OPEN_IMAGER_MS=""
       OPEN_TUTORIAL_PACK=""
+      OPEN_TUTORIAL_SECTION=""
+      SHOW_PROTOTYPE=""
       USE_TEMP_REAL_PROJECT="0"
       shift
+      ;;
+    --show-prototype)
+      if [[ $# -lt 2 || "$2" != "notebook" ]]; then
+        echo "--show-prototype requires: notebook" >&2
+        exit 2
+      fi
+      SHOW_PROTOTYPE="$2"
+      OPEN_PROJECT=""
+      OPEN_IMAGER_MS=""
+      OPEN_TUTORIAL_PACK=""
+      OPEN_TUTORIAL_SECTION=""
+      USE_TEMP_REAL_PROJECT="0"
+      shift 2
+      ;;
+    --prototype-state)
+      PROTOTYPE_STATE_SET="1"
+      if [[ $# -lt 2 ]]; then
+        echo "missing state after $1" >&2
+        exit 2
+      fi
+      case "$2" in
+        happy-path|external-conflict)
+          PROTOTYPE_STATE="$2"
+          ;;
+        *)
+          echo "--prototype-state requires: happy-path or external-conflict" >&2
+          exit 2
+          ;;
+      esac
+      shift 2
       ;;
     --show-imager-progress-mockup)
       SHOW_IMAGER_PROGRESS_MOCKUP="1"
@@ -108,7 +148,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     *)
-      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH [--tutorial-section ID]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
+      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH [--tutorial-section ID]|--show-prototype notebook [--prototype-state happy-path|external-conflict]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
       exit 2
       ;;
   esac
@@ -116,6 +156,26 @@ done
 
 if [[ -n "$OPEN_TUTORIAL_SECTION" && -z "$OPEN_TUTORIAL_PACK" ]]; then
   echo "--tutorial-section requires --tutorial-pack" >&2
+  exit 2
+fi
+
+if [[ "$PROTOTYPE_STATE_SET" == "1" && -z "$SHOW_PROTOTYPE" ]]; then
+  echo "--prototype-state requires --show-prototype notebook" >&2
+  exit 2
+fi
+
+if [[ -n "$SHOW_PROTOTYPE" && "$RUN_ACTIVE_TASK" == "1" ]]; then
+  echo "--show-prototype notebook cannot be combined with --run-active-task" >&2
+  exit 2
+fi
+
+if [[ -n "$SHOW_PROTOTYPE" && "$SHOW_IMAGER_PROGRESS_MOCKUP" == "1" ]]; then
+  echo "--show-prototype notebook cannot be combined with --show-imager-progress-mockup" >&2
+  exit 2
+fi
+
+if [[ -n "$SHOW_PROTOTYPE" && "${#EXTRA_APP_ARGS[@]}" -gt 0 ]]; then
+  echo "--show-prototype notebook cannot be combined with imager launch overrides" >&2
   exit 2
 fi
 
@@ -191,7 +251,7 @@ stage_temp_real_project
 "$REPO_ROOT/scripts/generate-frontend-bindings.sh" "$REPO_ROOT/target/frontend-bindings"
 cargo build --release -p casars-frontend-services --lib
 TASK_HELPER_SPECS=()
-if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" ]]; then
+if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" && -z "$SHOW_PROTOTYPE" ]]; then
   while IFS= read -r spec; do
     TASK_HELPER_SPECS+=("$spec")
   done < <(
@@ -214,7 +274,7 @@ for task in catalog["tasks"]:
 PY
   )
 fi
-if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" ]]; then
+if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" && -z "$SHOW_PROTOTYPE" ]]; then
   for spec in "${TASK_HELPER_SPECS[@]}"; do
     package="${spec%%:*}"
     binary="${spec#*:}"
@@ -233,7 +293,7 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_FRAMEWORKS" "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 cp "$FRONTEND_DYLIB" "$APP_FRAMEWORKS/$FRONTEND_DYLIB_NAME"
-if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" ]]; then
+if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" && -z "$SHOW_PROTOTYPE" ]]; then
   for spec in "${TASK_HELPER_SPECS[@]}"; do
     binary="${spec#*:}"
     cp "$RUST_PROFILE_DIR/$binary" "$APP_MACOS/$binary"
@@ -241,7 +301,7 @@ if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" ]]; then
 fi
 cp "$APP_ICON_SOURCE" "$APP_RESOURCES/$APP_ICON_NAME"
 chmod +x "$APP_BINARY"
-if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" ]]; then
+if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" && -z "$SHOW_PROTOTYPE" ]]; then
   for spec in "${TASK_HELPER_SPECS[@]}"; do
     binary="${spec#*:}"
     chmod +x "$APP_MACOS/$binary"
@@ -282,7 +342,7 @@ cat >"$INFO_PLIST" <<PLIST
 PLIST
 
 codesign --force --sign - "$APP_FRAMEWORKS/$FRONTEND_DYLIB_NAME" >/dev/null
-if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" ]]; then
+if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" && -z "$SHOW_PROTOTYPE" ]]; then
   for spec in "${TASK_HELPER_SPECS[@]}"; do
     binary="${spec#*:}"
     codesign --force --sign - "$APP_MACOS/$binary" >/dev/null
@@ -308,6 +368,9 @@ open_app() {
     app_args+=(--open-imager-ms "$OPEN_IMAGER_MS")
   elif [[ -n "$OPEN_PROJECT" ]]; then
     app_args+=(--open-project "$OPEN_PROJECT")
+  fi
+  if [[ -n "$SHOW_PROTOTYPE" ]]; then
+    app_args+=(--show-prototype "$SHOW_PROTOTYPE" --prototype-state "$PROTOTYPE_STATE")
   fi
   if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" == "1" ]]; then
     app_args+=(--show-imager-progress-mockup)
@@ -335,6 +398,9 @@ debug_app() {
     app_args+=(--open-imager-ms "$OPEN_IMAGER_MS")
   elif [[ -n "$OPEN_PROJECT" ]]; then
     app_args+=(--open-project "$OPEN_PROJECT")
+  fi
+  if [[ -n "$SHOW_PROTOTYPE" ]]; then
+    app_args+=(--show-prototype "$SHOW_PROTOTYPE" --prototype-state "$PROTOTYPE_STATE")
   fi
   if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" == "1" ]]; then
     app_args+=(--show-imager-progress-mockup)
@@ -389,7 +455,7 @@ case "$MODE" in
     echo "==> Staged $APP_BUNDLE"
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
+    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH|--show-prototype notebook [--prototype-state happy-path|external-conflict]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
     exit 2
     ;;
 esac

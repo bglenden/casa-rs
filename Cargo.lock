@@ -699,6 +699,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-notebook"
+version = "0.24.1"
+dependencies = [
+ "fs2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml 0.8.23",
+ "uuid",
+]
+
+[[package]]
 name = "casa-provider-contracts"
 version = "0.24.1"
 dependencies = [
@@ -821,6 +835,7 @@ dependencies = [
  "casa-imaging",
  "casa-logging",
  "casa-ms",
+ "casa-notebook",
  "casa-provider-contracts",
  "casa-tables",
  "casa-task-runtime",
@@ -859,6 +874,7 @@ dependencies = [
  "casa-coordinates",
  "casa-images",
  "casa-ms",
+ "casa-notebook",
  "casa-provider-contracts",
  "casa-tables",
  "casa-task-runtime",
@@ -5138,6 +5154,7 @@ dependencies = [
  "atomic",
  "getrandom 0.4.2",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
 

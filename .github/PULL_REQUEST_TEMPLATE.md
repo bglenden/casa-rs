@@ -22,6 +22,7 @@ Review status on the WDAD board assumes this PR exists and carries the current v
 ## Verification
 
 - `just quick`:
+- Native macOS UI gate (`just gui-test` or not applicable):
 - `just verify`:
 - Release/scheduled checks:
 

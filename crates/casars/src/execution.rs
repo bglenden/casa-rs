@@ -39,6 +39,13 @@ pub(crate) struct RunningProcess {
     child: Arc<Mutex<Child>>,
 }
 
+#[derive(Debug)]
+pub(crate) struct BlockingExecution {
+    pub exit: ExecutionExit,
+    pub stdout: String,
+    pub stderr: String,
+}
+
 impl RunningProcess {
     pub(crate) fn try_recv(&self) -> Result<ExecutionEvent, mpsc::TryRecvError> {
         self.receiver.try_recv()
@@ -122,6 +129,41 @@ pub(crate) fn spawn_process(plan: &ExecutionPlan) -> Result<RunningProcess, Stri
         receiver: rx,
         child,
     })
+}
+
+pub(crate) fn run_process_blocking(plan: &ExecutionPlan) -> Result<BlockingExecution, String> {
+    let process = spawn_process(plan)?;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    loop {
+        match process
+            .receiver
+            .recv()
+            .map_err(|error| format!("receive subprocess output: {error}"))?
+        {
+            ExecutionEvent::Stdout(chunk) => {
+                print!("{chunk}");
+                std::io::stdout()
+                    .flush()
+                    .map_err(|error| format!("flush subprocess stdout: {error}"))?;
+                stdout.push_str(&chunk);
+            }
+            ExecutionEvent::Stderr(chunk) => {
+                eprint!("{chunk}");
+                std::io::stderr()
+                    .flush()
+                    .map_err(|error| format!("flush subprocess stderr: {error}"))?;
+                stderr.push_str(&chunk);
+            }
+            ExecutionEvent::Exited(exit) => {
+                return Ok(BlockingExecution {
+                    exit,
+                    stdout,
+                    stderr,
+                });
+            }
+        }
+    }
 }
 
 fn wait_for_child_exit(child: &Arc<Mutex<Child>>) -> Result<ExitStatus, String> {

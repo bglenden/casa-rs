@@ -19,6 +19,11 @@ use casa_ms::{
     MsPlotPreset, MsPlotSpec, MsScatterGridPayload, MsScatterPagePayload, MsScatterPlotPayload,
     MsScatterSeries, MsSelectionSpec, VisibilityDataColumn, build_msexplore_payload_from_spec,
 };
+use casa_notebook::{
+    AttemptHandle, ConflictResolution, ExecutionReceipt, ExportMode, NotebookDocument,
+    NotebookStore, ReceiptFinalization, RecordingPolicy, RecordingRequest, SaveResult,
+    TaskCellIntent,
+};
 use casa_provider_contracts::{
     ParameterValue, ProviderInvocationAdaptation, RunSafetyClass, SurfaceContractBundle,
     SurfaceKind, builtin_surface_bundle, builtin_surface_catalog,
@@ -663,9 +668,301 @@ pub enum FrontendServiceError {
     TableExplorer { reason: String },
     #[error("parameter service failed: {reason}")]
     Parameters { reason: String },
+    #[error("notebook service failed: {reason}")]
+    Notebook { reason: String },
 }
 
 type FrontendResult<T> = Result<T, FrontendServiceError>;
+
+#[derive(Debug, Deserialize)]
+struct NotebookSaveRequest {
+    project_root: String,
+    filename: String,
+    base_hash: String,
+    source: String,
+    resolution: NotebookConflictResolution,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NotebookConflictResolution {
+    Reject,
+    KeepLocal,
+    ReloadExternal,
+}
+
+impl From<NotebookConflictResolution> for ConflictResolution {
+    fn from(value: NotebookConflictResolution) -> Self {
+        match value {
+            NotebookConflictResolution::Reject => Self::Reject,
+            NotebookConflictResolution::KeepLocal => Self::KeepLocal,
+            NotebookConflictResolution::ReloadExternal => Self::ReloadExternal,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct NotebookProjectProjection {
+    schema_version: u32,
+    project_root: String,
+    notebooks: Vec<NotebookProjection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NotebookCreateRequest {
+    project_root: String,
+    filename: Option<String>,
+    title: String,
+}
+
+#[derive(Debug, Serialize)]
+struct NotebookProjection {
+    id: String,
+    filename: String,
+    source: String,
+    content_hash: String,
+    cells: Vec<NotebookCellProjection>,
+    receipts: Vec<ExecutionReceipt>,
+}
+
+#[derive(Debug, Serialize)]
+struct NotebookCellProjection {
+    id: String,
+    kind: String,
+    task_intent: Option<TaskCellIntent>,
+}
+
+fn notebook_cell_projections(document: &NotebookDocument) -> Vec<NotebookCellProjection> {
+    document
+        .cells()
+        .iter()
+        .map(|cell| NotebookCellProjection {
+            id: cell.id.to_string(),
+            kind: cell.kind.as_str().to_owned(),
+            task_intent: cell.task.clone(),
+        })
+        .collect()
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+enum NotebookSaveProjection {
+    Saved {
+        notebook: NotebookProjection,
+    },
+    Reloaded {
+        notebook: NotebookProjection,
+    },
+    Conflict {
+        base_hash: String,
+        external: NotebookProjection,
+        proposed_source: String,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+struct NotebookBeginRecordingRequest {
+    project_root: String,
+    policy: NotebookRecordingPolicy,
+    request: RecordingRequest,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NotebookRecordingPolicy {
+    Record,
+    BypassOnce,
+}
+
+impl From<NotebookRecordingPolicy> for RecordingPolicy {
+    fn from(value: NotebookRecordingPolicy) -> Self {
+        match value {
+            NotebookRecordingPolicy::Record => Self::Record,
+            NotebookRecordingPolicy::BypassOnce => Self::BypassOnce,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct NotebookBeginRecordingProjection {
+    handle: Option<AttemptHandle>,
+    warning: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NotebookFinalizeRecordingRequest {
+    project_root: String,
+    handle: AttemptHandle,
+    finalization: ReceiptFinalization,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NotebookExportMode {
+    Portable,
+    AdvancedWithReceipts,
+}
+
+impl From<NotebookExportMode> for ExportMode {
+    fn from(value: NotebookExportMode) -> Self {
+        match value {
+            NotebookExportMode::Portable => Self::Portable,
+            NotebookExportMode::AdvancedWithReceipts => Self::AdvancedWithReceipts,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct NotebookExportRequest {
+    project_root: String,
+    destination: String,
+    mode: NotebookExportMode,
+}
+
+fn notebook_error(action: &str, error: impl std::fmt::Display) -> FrontendServiceError {
+    FrontendServiceError::Notebook {
+        reason: format!("{action}: {error}"),
+    }
+}
+
+fn notebook_projection(
+    store: &NotebookStore,
+    filename: &str,
+) -> FrontendResult<NotebookProjection> {
+    let snapshot = store
+        .open_notebook(filename)
+        .map_err(|error| notebook_error("open notebook", error))?;
+    let receipts = store
+        .receipts_for_notebook(snapshot.entry.id)
+        .map_err(|error| notebook_error("load notebook receipts", error))?;
+    Ok(NotebookProjection {
+        id: snapshot.entry.id.to_string(),
+        filename: snapshot.entry.filename,
+        source: snapshot.document.source().to_owned(),
+        content_hash: snapshot.content_hash,
+        cells: notebook_cell_projections(&snapshot.document),
+        receipts,
+    })
+}
+
+/// Parse one complete in-memory Markdown draft through the Rust-owned cell contract.
+#[uniffi::export]
+pub fn notebook_cells_json(source: String) -> FrontendResult<String> {
+    let document = NotebookDocument::parse(source)
+        .map_err(|error| notebook_error("parse notebook draft cells", error))?;
+    serde_json::to_string(&notebook_cell_projections(&document))
+        .map_err(|error| notebook_error("serialize notebook draft cells", error))
+}
+
+/// Project notebook list, complete Markdown sources, conflict tokens, and receipts.
+#[uniffi::export]
+pub fn notebook_project_json(project_root: String) -> FrontendResult<String> {
+    let store = NotebookStore::open(PathBuf::from(&project_root))
+        .map_err(|error| notebook_error("open notebook project", error))?;
+    store
+        .recover_interrupted()
+        .map_err(|error| notebook_error("recover interrupted notebook attempts", error))?;
+    let notebooks = store
+        .list_notebooks()
+        .map_err(|error| notebook_error("list notebooks", error))?
+        .into_iter()
+        .map(|entry| notebook_projection(&store, &entry.filename))
+        .collect::<FrontendResult<Vec<_>>>()?;
+    serde_json::to_string(&NotebookProjectProjection {
+        schema_version: 1,
+        project_root,
+        notebooks,
+    })
+    .map_err(|error| notebook_error("serialize notebook project", error))
+}
+
+/// Lazily create the default notebook or create a named Markdown notebook.
+#[uniffi::export]
+pub fn notebook_create_json(request_json: String) -> FrontendResult<String> {
+    let request: NotebookCreateRequest = serde_json::from_str(&request_json)
+        .map_err(|error| notebook_error("parse notebook create request", error))?;
+    let store = NotebookStore::open(PathBuf::from(&request.project_root))
+        .map_err(|error| notebook_error("open notebook project", error))?;
+    let snapshot = match request.filename {
+        Some(filename) => store
+            .create_named(&filename, &request.title)
+            .map_err(|error| notebook_error("create named notebook", error))?,
+        None => store
+            .ensure_default_notebook()
+            .map_err(|error| notebook_error("create default notebook", error))?,
+    };
+    serde_json::to_string(&notebook_projection(&store, &snapshot.entry.filename)?)
+        .map_err(|error| notebook_error("serialize created notebook", error))
+}
+
+/// Atomically save one complete Markdown source with explicit conflict handling.
+#[uniffi::export]
+pub fn notebook_save_json(request_json: String) -> FrontendResult<String> {
+    let request: NotebookSaveRequest = serde_json::from_str(&request_json)
+        .map_err(|error| notebook_error("parse notebook save request", error))?;
+    let store = NotebookStore::open(PathBuf::from(&request.project_root))
+        .map_err(|error| notebook_error("open notebook project", error))?;
+    let mut base = store
+        .open_notebook(&request.filename)
+        .map_err(|error| notebook_error("open notebook save base", error))?;
+    base.content_hash = request.base_hash;
+    let projection = match store
+        .save_notebook(&base, &request.source, request.resolution.into())
+        .map_err(|error| notebook_error("save notebook", error))?
+    {
+        SaveResult::Saved(snapshot) => NotebookSaveProjection::Saved {
+            notebook: notebook_projection(&store, &snapshot.entry.filename)?,
+        },
+        SaveResult::Reloaded(snapshot) => NotebookSaveProjection::Reloaded {
+            notebook: notebook_projection(&store, &snapshot.entry.filename)?,
+        },
+        SaveResult::Conflict(conflict) => NotebookSaveProjection::Conflict {
+            base_hash: conflict.base_hash,
+            external: notebook_projection(&store, &conflict.external.entry.filename)?,
+            proposed_source: conflict.proposed_source,
+        },
+    };
+    serde_json::to_string(&projection)
+        .map_err(|error| notebook_error("serialize notebook save result", error))
+}
+
+/// Begin best-effort project recording or apply the visible one-run bypass.
+#[uniffi::export]
+pub fn notebook_begin_recording_json(request_json: String) -> FrontendResult<String> {
+    let request: NotebookBeginRecordingRequest = serde_json::from_str(&request_json)
+        .map_err(|error| notebook_error("parse notebook recording request", error))?;
+    let store = NotebookStore::open(PathBuf::from(&request.project_root))
+        .map_err(|error| notebook_error("open notebook project", error))?;
+    let (handle, warning) = store.try_begin_attempt(request.policy.into(), request.request);
+    serde_json::to_string(&NotebookBeginRecordingProjection { handle, warning })
+        .map_err(|error| notebook_error("serialize notebook recording start", error))
+}
+
+/// Finalize exactly one immutable receipt revision.
+#[uniffi::export]
+pub fn notebook_finalize_recording_json(request_json: String) -> FrontendResult<String> {
+    let request: NotebookFinalizeRecordingRequest = serde_json::from_str(&request_json)
+        .map_err(|error| notebook_error("parse notebook finalization request", error))?;
+    let store = NotebookStore::open(PathBuf::from(&request.project_root))
+        .map_err(|error| notebook_error("open notebook project", error))?;
+    let receipt = store
+        .finalize_attempt(&request.handle, request.finalization)
+        .map_err(|error| notebook_error("finalize notebook receipt", error))?;
+    serde_json::to_string(&receipt)
+        .map_err(|error| notebook_error("serialize notebook receipt", error))
+}
+
+/// Export portable Markdown/assets or explicitly include managed receipts.
+#[uniffi::export]
+pub fn notebook_export(request_json: String) -> FrontendResult<()> {
+    let request: NotebookExportRequest = serde_json::from_str(&request_json)
+        .map_err(|error| notebook_error("parse notebook export request", error))?;
+    let store = NotebookStore::open(PathBuf::from(request.project_root))
+        .map_err(|error| notebook_error("open notebook project", error))?;
+    store
+        .export(Path::new(&request.destination), request.mode.into())
+        .map_err(|error| notebook_error("export notebooks", error))
+}
 
 #[uniffi::export]
 pub fn task_catalog_json() -> FrontendResult<String> {
@@ -5976,6 +6273,133 @@ mod tests {
             build_table_browser_cell_value_json(copy_request).expect("table browser cell value");
         let copy_value: String = serde_json::from_str(&copy_json).expect("cell value json");
         assert_eq!(copy_value, "[1.0000, 2.0000, 3.0000, 4.0000]");
+    }
+
+    #[test]
+    fn notebook_json_bridge_creates_saves_and_finalizes_a_receipt() {
+        let project = tempfile::tempdir().expect("project");
+        let project_root = project.path().canonicalize().expect("canonical project");
+        let created_json = notebook_create_json(
+            serde_json::json!({
+                "project_root": project_root,
+                "filename": "Analysis.md",
+                "title": "Analysis"
+            })
+            .to_string(),
+        )
+        .expect("create notebook");
+        let created: serde_json::Value = serde_json::from_str(&created_json).unwrap();
+        let notebook_id = created["id"].as_str().expect("notebook id");
+        let begin_json = notebook_begin_recording_json(
+            serde_json::json!({
+                "project_root": project_root,
+                "policy": "record",
+                "request": {
+                    "initiating_surface": "gui",
+                    "operation_id": "imager",
+                    "notebook_id": notebook_id,
+                    "task_intent": {
+                        "format": 1,
+                        "surface": "imager",
+                        "kind": "task",
+                        "contract": 1,
+                        "parameters": {"niter": 4}
+                    },
+                    "provider_contract_version": 1,
+                    "resolved_parameters": {"niter": 4},
+                    "run_safety": {
+                        "classification": "product_write",
+                        "affected_paths": ["products/test.image"]
+                    },
+                    "approvals": []
+                }
+            })
+            .to_string(),
+        )
+        .expect("begin recording");
+        let begin: serde_json::Value = serde_json::from_str(&begin_json).unwrap();
+        let handle = begin["handle"].clone();
+        assert!(handle.is_object());
+        let receipt_json = notebook_finalize_recording_json(
+            serde_json::json!({
+                "project_root": project_root,
+                "handle": handle,
+                "finalization": {
+                    "status": "succeeded",
+                    "finished_at": 2,
+                    "affected_paths": ["products/test.image"],
+                    "products": [{
+                        "role": "image",
+                        "path": "products/test.image"
+                    }],
+                    "artifacts": [],
+                    "diagnostics": [],
+                    "stdout": [111, 107],
+                    "stderr": []
+                }
+            })
+            .to_string(),
+        )
+        .expect("finalize recording");
+        let receipt: serde_json::Value = serde_json::from_str(&receipt_json).unwrap();
+        assert_eq!(receipt["status"], "succeeded");
+        assert_eq!(receipt["sparse_intent"]["parameters"]["niter"], 4);
+
+        let project_json = notebook_project_json(project_root.display().to_string())
+            .expect("reload notebook project");
+        let projection: serde_json::Value = serde_json::from_str(&project_json).unwrap();
+        assert_eq!(
+            projection["notebooks"][0]["receipts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn notebook_projection_includes_authored_task_cells_without_receipts() {
+        let project = tempfile::tempdir().expect("project");
+        let project_root = project.path().canonicalize().expect("canonical project");
+        let created_json = notebook_create_json(
+            serde_json::json!({
+                "project_root": project_root,
+                "filename": "Authored.md",
+                "title": "Authored"
+            })
+            .to_string(),
+        )
+        .expect("create notebook");
+        let created: serde_json::Value = serde_json::from_str(&created_json).unwrap();
+        let cell_id = casa_notebook::CellId::new();
+        let source = format!(
+            "{}\n<!-- casa-rs-cell:v1 id={cell_id} kind=task -->\n```toml\n[casars]\nformat = 1\nsurface = \"imhead\"\nkind = \"task\"\ncontract = 1\n\n[parameters]\nmode = \"summary\"\n```\n<!-- /casa-rs-cell -->\n",
+            created["source"].as_str().expect("source")
+        );
+        notebook_save_json(
+            serde_json::json!({
+                "project_root": project_root,
+                "filename": "Authored.md",
+                "base_hash": created["content_hash"],
+                "source": source,
+                "resolution": "reject"
+            })
+            .to_string(),
+        )
+        .expect("save authored task cell");
+
+        let project_json = notebook_project_json(project_root.display().to_string())
+            .expect("reload notebook project");
+        let projection: serde_json::Value = serde_json::from_str(&project_json).unwrap();
+        let notebook = &projection["notebooks"][0];
+        assert_eq!(notebook["receipts"].as_array().unwrap().len(), 0);
+        assert_eq!(notebook["cells"][0]["id"], cell_id.to_string());
+        assert_eq!(notebook["cells"][0]["kind"], "task");
+        assert_eq!(notebook["cells"][0]["task_intent"]["surface"], "imhead");
+        assert_eq!(
+            notebook["cells"][0]["task_intent"]["parameters"]["mode"],
+            "summary"
+        );
     }
 
     #[test]

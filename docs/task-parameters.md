@@ -118,12 +118,13 @@ Automatic Last updates never overwrite it.
 The accepted noninteractive shape is:
 
 ```text
-casars run <task> [--workspace DIR]
+casars run <task> [--workspace DIR] [--notebook FILE_OR_ID]
   [--defaults | --last | --last-successful | --params FILE]
   [task overrides]
   [--unset NAME]
   [--save-params FILE]
   [--no-save-last]
+  [--no-notebook-recording]
 
 casars open <session> [--workspace DIR]
   [--defaults | --last | --params FILE]
@@ -147,6 +148,10 @@ casars params describe <parameter-or-surface>
 commented defaults are not active overrides. Direct provider binaries continue
 to expose their idiomatic execution transports; source selection and profile
 lifecycle are owned by the top-level `casars` runner and interactive shells.
+`--notebook` routes one project-aware task attempt to an existing named
+notebook. Without it, the explicit workspace's `default.md` is used.
+`--no-notebook-recording` is a visible one-run bypass and is never persisted in
+a profile.
 
 The TUI launcher remains `casars` (or its existing short surface-launch form).
 `casars open <session>` launches a browser session from a resolved profile.

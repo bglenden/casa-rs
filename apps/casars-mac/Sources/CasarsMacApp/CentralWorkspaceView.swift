@@ -35,6 +35,8 @@ struct CentralWorkspaceView: View {
                         }
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Open \(tab.title) tab")
+                    .accessibilityIdentifier("central.tab.\(tab.id)")
 
                     Button {
                         store.closeTab(tab.id)
@@ -54,7 +56,6 @@ struct CentralWorkspaceView: View {
                 .padding(.vertical, 7)
                 .background(isActive ? Color.accentColor.opacity(0.14) : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityIdentifier("central.tab.\(tab.id)")
             }
 
             Menu {
@@ -65,6 +66,14 @@ struct CentralWorkspaceView: View {
                 Button("Tasks") {
                     store.openDefaultTab(kind: .task)
                 }
+                Button("Notebook") {
+                    store.openDefaultTab(kind: .notebook)
+                }
+                .disabled(
+                    store.state.prototypeNotebook == nil
+                        && store.state.scientificNotebooks?.activeNotebook == nil
+                )
+                .accessibilityIdentifier("central.tab.openNotebook")
                 Button("Tutorial") {
                     store.openDefaultTab(kind: .tutorial)
                 }
@@ -118,8 +127,15 @@ struct CentralWorkspaceView: View {
             case .tutorial:
                 TutorialPackPanel(store: store)
             case .task:
-                TaskPanel(store: store, tab: tab)
-                    .id(tab.id)
+                if tab.prototypeReceiptID != nil {
+                    PrototypeNotebookTaskView(store: store, tab: tab)
+                        .id(tab.id)
+                } else {
+                    TaskPanel(store: store, tab: tab)
+                        .id(tab.id)
+                }
+            case .notebook:
+                ScientificNotebookView(store: store)
             case .plotSamples:
                 PlotSamplesPanel(store: store)
             case .aiChat:
@@ -140,6 +156,7 @@ struct CentralWorkspaceView: View {
         case .tableBrowser: "tablecells"
         case .tutorial: "book"
         case .task: "slider.horizontal.3"
+        case .notebook: "book.pages"
         case .plotSamples: "chart.xyaxis.line"
         case .aiChat: "sparkles"
         case .python: "terminal"
@@ -169,6 +186,7 @@ struct EmptyWorkbenchPanel: View {
                     Label("Open Project Directory", systemImage: "folder")
                 }
                 .accessibilityIdentifier("empty.openProject")
+                .disabled(store.isNotebookPrototypeRuntime)
 
                 Button {
                     if let url = TutorialPackOpenPanel.choosePack() {
@@ -178,6 +196,7 @@ struct EmptyWorkbenchPanel: View {
                     Label("Open Tutorial Pack", systemImage: "book")
                 }
                 .accessibilityIdentifier("empty.openTutorialPack")
+                .disabled(store.isNotebookPrototypeRuntime)
 
                 Button {
                     store.openFixtureProject()
@@ -185,6 +204,7 @@ struct EmptyWorkbenchPanel: View {
                     Label("Open Demo Project", systemImage: "shippingbox")
                 }
                 .accessibilityIdentifier("empty.openDemoProject")
+                .disabled(store.isNotebookPrototypeRuntime)
             }
 
             if !store.state.lastErrors.isEmpty {
@@ -1418,6 +1438,17 @@ private struct ImageExplorerControlsView: View {
                             store.runImageExplorerCommandOnce(.deleteMask(name: name), datasetID: datasetID)
                         }
                     }
+                }
+
+                if let tabID = store.state.project.datasets.first(where: { $0.id == datasetID })?.explorerTabID {
+                    Toggle("Skip notebook once", isOn: Binding(
+                        get: { store.notebookRecordingBypassOnce(tabID: tabID) },
+                        set: { store.setNotebookRecordingBypassOnce(tabID: tabID, enabled: $0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .help("Do not record the next region or mask write in the project notebook.")
+                    .accessibilityIdentifier("imageExplorer.notebook.bypassOnce")
                 }
             }
             Text(activeRegionSummary)
@@ -8408,6 +8439,13 @@ struct GenericTaskPanel: View {
                     ))
                     .toggleStyle(.switch)
                     .help("Disable managed Last and Last Successful writes for this tab.")
+                    Toggle("Skip notebook once", isOn: Binding(
+                        get: { store.notebookRecordingBypassOnce(tabID: tabID) },
+                        set: { store.setNotebookRecordingBypassOnce(tabID: tabID, enabled: $0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .help("Do not add this one task attempt to the project notebook. The bypass clears when Run is pressed.")
+                    .accessibilityIdentifier("task.notebook.bypassOnce")
                 }
                 if !session.snapshot.diagnostics.isEmpty {
                     ForEach(session.snapshot.diagnostics) { diagnostic in
@@ -8514,6 +8552,7 @@ struct GenericTaskPanel: View {
             VStack(alignment: .leading, spacing: 3) {
                 Toggle(label, isOn: toggle)
                     .help(argument.help)
+                    .accessibilityIdentifier("task.parameter.\(argument.id)")
                 parameterOriginRow(argument.id)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -8541,6 +8580,7 @@ struct GenericTaskPanel: View {
                         syncSelectedRegion: false,
                         onAction: nil
                     )
+                    .accessibilityIdentifier("task.parameter.\(argument.id)")
                 } else if isPathArgument(argument) {
                     DatasetPathInputControl(
                         store: store,
@@ -8556,6 +8596,7 @@ struct GenericTaskPanel: View {
                         syncSelectedRegion: false,
                         onAction: nil
                     )
+                    .accessibilityIdentifier("task.parameter.\(argument.id)")
                 } else if !selectableChoices.isEmpty {
                     Picker(label, selection: value) {
                         ForEach(selectableChoices, id: \.self) { choice in
@@ -8564,12 +8605,15 @@ struct GenericTaskPanel: View {
                     }
                     .labelsHidden()
                     .help(argument.help)
+                    .accessibilityIdentifier("task.parameter.\(argument.id)")
                 } else if isChannelSelectionArgument(argument) {
                     genericChannelSelectionControl(label: label, value: value, argument: argument)
+                        .accessibilityIdentifier("task.parameter.\(argument.id)")
                 } else {
                     TextField(prompt(for: argument), text: value)
                         .textFieldStyle(.roundedBorder)
                         .help(helpText(for: argument))
+                        .accessibilityIdentifier("task.parameter.\(argument.id)")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -10,7 +10,7 @@ struct CasarsMacApp: App {
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @AppStorage(Self.interfaceFontSizeKey) private var interfaceFontSize = WorkbenchState.defaultInterfaceFontSize
-    @StateObject private var store = WorkbenchStore.empty()
+    @StateObject private var store: WorkbenchStore
     @State private var didOpenStartupProject = false
     private let startupProjectPath: String?
     private let startupImagerMeasurementSetPath: String?
@@ -19,12 +19,27 @@ struct CasarsMacApp: App {
     private let startupOpenSelectedDatasetExplorer: Bool
     private let startupImageRegionBoxes: [(Int, Int, Int, Int)]
     private let startupImageRegionExportPath: String?
+    private let startupNotebookPrototypeScenario: NotebookPrototypeScenario?
     private let startupShowImagerProgressMockup: Bool
     private let startupOpenImagerTask: Bool
     private let startupRunActiveTask: Bool
 
     init() {
         let arguments = CommandLine.arguments
+        if let error = Self.prototypeLaunchValidationError(arguments: arguments) {
+            fputs("invalid prototype launch: \(error)\n", stderr)
+            exit(2)
+        }
+        let initialPrototypeScenario = Self.notebookPrototypeScenario(arguments: arguments)
+            ?? (Self.argumentValue(after: "--capture-kind", in: arguments) == "notebook-prototype"
+                ? (Self.argumentValue(after: "--prototype-state", in: arguments) == "external-conflict"
+                    ? .externalConflict
+                    : .primary)
+                : nil)
+        _store = StateObject(
+            wrappedValue: initialPrototypeScenario.map { WorkbenchStore.notebookPrototype(scenario: $0) }
+                ?? WorkbenchStore.empty()
+        )
         if arguments.contains("--capture-gui-evidence") {
             Self.captureGUIEvidence(arguments: arguments)
             exit(0)
@@ -44,6 +59,7 @@ struct CasarsMacApp: App {
                 openSelectedDatasetExplorer: arguments.contains("--open-selected-dataset-explorer"),
                 imageRegionBoxes: Self.regionBoxes(after: "--image-region-box", in: arguments),
                 imageRegionExportPath: Self.argumentValue(after: "--export-image-region-file", in: arguments),
+                notebookPrototypeScenario: Self.notebookPrototypeScenario(arguments: arguments),
                 showImagerProgressMockup: arguments.contains("--show-imager-progress-mockup"),
                 imagerMeasurementSetPath: Self.argumentValue(after: "--open-imager-ms", in: arguments),
                 projectPath: Self.argumentValue(after: "--probe-project", in: arguments)
@@ -60,6 +76,7 @@ struct CasarsMacApp: App {
         startupOpenSelectedDatasetExplorer = arguments.contains("--open-selected-dataset-explorer")
         startupImageRegionBoxes = Self.regionBoxes(after: "--image-region-box", in: arguments)
         startupImageRegionExportPath = Self.argumentValue(after: "--export-image-region-file", in: arguments)
+        startupNotebookPrototypeScenario = Self.notebookPrototypeScenario(arguments: arguments)
         startupShowImagerProgressMockup = arguments.contains("--show-imager-progress-mockup")
         startupOpenImagerTask = arguments.contains("--open-imager-task")
         startupRunActiveTask = arguments.contains("--run-active-task")
@@ -69,7 +86,7 @@ struct CasarsMacApp: App {
     var body: some Scene {
         WindowGroup("casa-rs Workbench") {
             WorkbenchView(store: store)
-                .frame(minWidth: 1120, minHeight: 720)
+                .frame(minWidth: 960, minHeight: 640)
                 .environment(\.workbenchFontSize, store.state.interfaceFontSize)
                 .background(WindowConfigurationView())
                 .onAppear {
@@ -91,6 +108,7 @@ struct CasarsMacApp: App {
                     }
                 }
                 .keyboardShortcut("o", modifiers: [.command])
+                .disabled(store.isNotebookPrototypeRuntime)
 
                 Button("Open Tutorial Pack...") {
                     if let url = TutorialPackOpenPanel.choosePack() {
@@ -98,16 +116,19 @@ struct CasarsMacApp: App {
                     }
                 }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(store.isNotebookPrototypeRuntime)
 
                 Button("Open Demo Project") {
                     store.openFixtureProject()
                 }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
+                .disabled(store.isNotebookPrototypeRuntime)
 
                 Button("Open AI Chat") {
                     store.openDefaultTab(kind: .aiChat)
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+                .disabled(store.isNotebookPrototypeRuntime)
 
                 Button("Close Active Tab") {
                     store.closeActiveTab()
@@ -438,13 +459,15 @@ struct CasarsMacApp: App {
         openSelectedDatasetExplorer: Bool,
         imageRegionBoxes: [(Int, Int, Int, Int)],
         imageRegionExportPath: String?,
+        notebookPrototypeScenario: NotebookPrototypeScenario?,
         showImagerProgressMockup: Bool,
         imagerMeasurementSetPath: String?,
         projectPath: String?
     ) {
-        let store = WorkbenchStore.empty()
+        let store = notebookPrototypeScenario.map { WorkbenchStore.notebookPrototype(scenario: $0) }
+            ?? WorkbenchStore.empty()
         store.setInterfaceFontSize(storedInterfaceFontSize())
-        if let tutorialPackPath {
+        if notebookPrototypeScenario == nil, let tutorialPackPath {
             store.openTutorialPack(path: tutorialPackPath)
             if let tutorialSectionID {
                 store.openTutorialSectionTask(tutorialSectionID)
@@ -529,6 +552,107 @@ struct CasarsMacApp: App {
             return nil
         }
         return arguments[index + 1]
+    }
+
+    static func prototypeLaunchValidationError(
+        arguments: [String],
+        forceNotebookPrototype: Bool = false
+    ) -> String? {
+        if arguments.contains("--show-prototype") {
+            guard argumentValue(after: "--show-prototype", in: arguments) == "notebook" else {
+                return "--show-prototype requires: notebook"
+            }
+        }
+
+        if arguments.contains("--prototype-state") {
+            switch argumentValue(after: "--prototype-state", in: arguments) {
+            case "happy-path", "external-conflict":
+                break
+            default:
+                return "--prototype-state requires: happy-path or external-conflict"
+            }
+        }
+
+        let notebookPrototypeRequested = forceNotebookPrototype
+            || argumentValue(after: "--show-prototype", in: arguments) == "notebook"
+            || argumentValue(after: "--capture-kind", in: arguments) == "notebook-prototype"
+        if arguments.contains("--prototype-state"), !notebookPrototypeRequested {
+            return "--prototype-state requires --show-prototype notebook or notebook-prototype capture"
+        }
+        guard notebookPrototypeRequested else {
+            return nil
+        }
+        let prototypeLaunchLabel = argumentValue(after: "--show-prototype", in: arguments) == "notebook"
+            ? "--show-prototype notebook"
+            : "--capture-kind notebook-prototype"
+
+        if arguments.contains("--capture-gui-evidence"),
+           let captureKind = argumentValue(after: "--capture-kind", in: arguments),
+           captureKind != "notebook-prototype" {
+            return "the notebook prototype cannot be combined with --capture-kind \(captureKind)"
+        }
+
+        let incompatibleFlags = [
+            "--run-active-task",
+            "--open-selected-dataset-explorer",
+            "--open-imager-task",
+            "--open-imager-ms",
+            "--open-project",
+            "--probe-project",
+            "--open-tutorial-pack",
+            "--open-tutorial-section",
+            "--image-region-box",
+            "--export-image-region-file",
+            "--set-task-value",
+            "--set-task-toggle",
+            "--simulate-main-flow",
+            "--show-imager-progress-mockup",
+            "--dump-imager-progress-samples",
+            "--imagename",
+            "--output-prefix",
+            "--image-size",
+            "--imsize",
+            "--image-width",
+            "--image-height",
+            "--cell-arcsec",
+            "--spectral-mode",
+            "--specmode",
+            "--channel-start",
+            "--channel-count",
+            "--niter",
+            "--threshold-jy",
+            "--dirty-only",
+            "--deconvolver",
+            "--weighting",
+            "--gridder",
+            "--standard-mfs-acceleration",
+            "--interpolation",
+            "--cube-interp",
+            "--perchanweightdensity",
+            "--per-channel-density",
+            "--no-perchanweightdensity",
+            "--write-pb",
+            "--pbcor",
+            "--no-preview-pngs"
+        ]
+        if let flag = incompatibleFlags.first(where: arguments.contains) {
+            return "\(prototypeLaunchLabel) cannot be combined with \(flag)"
+        }
+        return nil
+    }
+
+    fileprivate static func notebookPrototypeScenario(arguments: [String]) -> NotebookPrototypeScenario? {
+        guard argumentValue(after: "--show-prototype", in: arguments) == "notebook" else {
+            return nil
+        }
+        switch argumentValue(after: "--prototype-state", in: arguments) {
+        case "external-conflict":
+            return .externalConflict
+        case nil, "happy-path":
+            return .primary
+        default:
+            return nil
+        }
     }
 
     fileprivate static func applyImagerSchemaOverrides(arguments: [String], store: WorkbenchStore) {
@@ -732,7 +856,12 @@ struct CasarsMacApp: App {
     private func openStartupProjectIfNeeded() {
         guard !didOpenStartupProject else { return }
         didOpenStartupProject = true
-        if let startupTutorialPackPath {
+        if startupNotebookPrototypeScenario != nil {
+            // The dedicated CLI launch already constructed a fresh immutable
+            // prototype runtime. Never transition or reset a production store
+            // from the normal startup flow.
+            return
+        } else if let startupTutorialPackPath {
             store.openTutorialPack(path: startupTutorialPackPath)
             if let startupTutorialSectionID {
                 store.selectTutorialSection(startupTutorialSectionID)
@@ -855,9 +984,12 @@ final class WorkbenchFallbackWindowController {
             return
         }
 
-        let store = WorkbenchStore.empty()
+        let notebookPrototypeScenario = CasarsMacApp.notebookPrototypeScenario(arguments: arguments)
+        let store = notebookPrototypeScenario.map { WorkbenchStore.notebookPrototype(scenario: $0) }
+            ?? WorkbenchStore.empty()
         store.setInterfaceFontSize(Self.storedInterfaceFontSize())
-        if let tutorialPackPath = Self.argumentValue(after: "--open-tutorial-pack", in: arguments) {
+        if notebookPrototypeScenario == nil,
+           let tutorialPackPath = Self.argumentValue(after: "--open-tutorial-pack", in: arguments) {
             store.openTutorialPack(path: tutorialPackPath)
             if let tutorialSectionID = Self.argumentValue(after: "--open-tutorial-section", in: arguments) {
                 store.selectTutorialSection(tutorialSectionID)
@@ -869,17 +1001,19 @@ final class WorkbenchFallbackWindowController {
             ?? Self.argumentValue(after: "--probe-project", in: arguments) {
             store.openProject(path: projectPath)
         }
-        if arguments.contains("--show-imager-progress-mockup") {
-            store.openImagerProgressMockup()
-        }
-        if arguments.contains("--run-active-task") {
-            store.selectTask("imager")
-            store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
-            store.runTask()
+        if notebookPrototypeScenario == nil {
+            if arguments.contains("--show-imager-progress-mockup") {
+                store.openImagerProgressMockup()
+            }
+            if arguments.contains("--run-active-task") {
+                store.selectTask("imager")
+                store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
+                store.runTask()
+            }
         }
 
         let rootView = WorkbenchView(store: store)
-            .frame(minWidth: 1120, minHeight: 720)
+            .frame(minWidth: 960, minHeight: 640)
             .environment(\.workbenchFontSize, store.state.interfaceFontSize)
         let window = NSWindow(
             contentRect: NSRect(x: 140, y: 120, width: 1280, height: 860),
@@ -917,7 +1051,7 @@ final class WorkbenchFallbackWindowController {
 }
 
 enum WorkbenchWindowPlacement {
-    private static let minimumSize = NSSize(width: 1120, height: 720)
+    private static let minimumSize = NSSize(width: 960, height: 640)
     private static let preferredSize = NSSize(width: 1280, height: 860)
 
     static func apply(to window: NSWindow, forcePreferredFrame: Bool = false) {
