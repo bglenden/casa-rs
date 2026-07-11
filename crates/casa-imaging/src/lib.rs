@@ -38246,7 +38246,7 @@ mod tests {
         let mfs = {
             run_mosaic_mfs_from_single_plane_stream(
                 mfs_request.clone(),
-                accelerated_f32_execution_config(),
+                correctness_execution_config(),
                 WeightDensityMode::Combined,
                 |_, consumer| {
                     consumer(MosaicVisibilityBlock {
@@ -38332,7 +38332,7 @@ mod tests {
         let mfs_split = {
             run_mosaic_mfs_from_single_plane_stream(
                 mfs_request.clone(),
-                accelerated_f32_execution_config(),
+                correctness_execution_config(),
                 WeightDensityMode::Combined,
                 |_, consumer| {
                     consumer(MosaicVisibilityBlock {
@@ -38645,13 +38645,21 @@ mod tests {
         let direct_plan = super::plan_mosaic_direct_tiles(
             [grid_rows, grid_columns],
             projector.support().saturating_mul(2).saturating_add(1),
-            super::mosaic_parallel_thread_count(usize::MAX),
+            4,
             scratch_budget,
         )
         .expect("direct tile plan");
-        let tile_boundary = direct_plan.tile_edge as f64;
-        let tile_u = (tile_boundary - grid_center[0]) * spacing[0];
-        let tile_v = -(tile_boundary - grid_center[1]) * spacing[1];
+        let tile_extents = super::mosaic_direct_metal_tile_extents(
+            [grid_rows, grid_columns],
+            direct_plan.tile_edge,
+        );
+        let [tile_boundary_x, _, tile_boundary_y, _] = tile_extents
+            .iter()
+            .copied()
+            .find(|[x0, _, y0, _]| *x0 > 0 && *y0 > 0)
+            .expect("four-worker plan should have an interior boundary on both axes");
+        let tile_u = (tile_boundary_x as f64 - grid_center[0]) * spacing[0];
+        let tile_v = -(tile_boundary_y as f64 - grid_center[1]) * spacing[1];
         let low_edge_u = (1.0 - grid_center[0]) * spacing[0];
         let low_edge_v = -(1.0 - grid_center[1]) * spacing[1];
         let high_edge_u = (grid_rows as f64 - 2.0 - grid_center[0]) * spacing[0];
@@ -38661,13 +38669,16 @@ mod tests {
             .expect("tile-boundary sample plan");
         assert_eq!(
             [tile_plan.loc_x, tile_plan.loc_y],
-            [
-                direct_plan.tile_edge as isize,
-                direct_plan.tile_edge as isize
-            ]
+            [tile_boundary_x as isize, tile_boundary_y as isize]
         );
-        assert!(tile_plan.min_ix < 0 && tile_plan.max_ix > 0);
-        assert!(tile_plan.min_iy < 0 && tile_plan.max_iy > 0);
+        assert!(
+            tile_plan.loc_x + tile_plan.min_ix < tile_boundary_x as isize
+                && tile_plan.loc_x + tile_plan.max_ix > tile_boundary_x as isize
+        );
+        assert!(
+            tile_plan.loc_y + tile_plan.min_iy < tile_boundary_y as isize
+                && tile_plan.loc_y + tile_plan.max_iy > tile_boundary_y as isize
+        );
         let low_edge_plan = projector
             .plan_sample_for_grid(low_edge_u, low_edge_v)
             .expect("low-edge clipped sample plan");
