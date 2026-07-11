@@ -102,11 +102,19 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --show-prototype)
-      if [[ $# -lt 2 || "$2" != "notebook" ]]; then
-        echo "--show-prototype requires: notebook" >&2
+      if [[ $# -lt 2 ]]; then
+        echo "--show-prototype requires: notebook or python" >&2
         exit 2
       fi
-      SHOW_PROTOTYPE="$2"
+      case "$2" in
+        notebook|python)
+          SHOW_PROTOTYPE="$2"
+          ;;
+        *)
+          echo "--show-prototype requires: notebook or python" >&2
+          exit 2
+          ;;
+      esac
       OPEN_PROJECT=""
       OPEN_IMAGER_MS=""
       OPEN_TUTORIAL_PACK=""
@@ -121,11 +129,11 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       case "$2" in
-        happy-path|external-conflict)
+        happy-path|external-conflict|failure|nonresponsive)
           PROTOTYPE_STATE="$2"
           ;;
         *)
-          echo "--prototype-state requires: happy-path or external-conflict" >&2
+          echo "--prototype-state requires: happy-path, external-conflict, failure, or nonresponsive" >&2
           exit 2
           ;;
       esac
@@ -148,7 +156,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     *)
-      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH [--tutorial-section ID]|--show-prototype notebook [--prototype-state happy-path|external-conflict]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
+      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH [--tutorial-section ID]|--show-prototype notebook|python [--prototype-state STATE]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
       exit 2
       ;;
   esac
@@ -160,22 +168,31 @@ if [[ -n "$OPEN_TUTORIAL_SECTION" && -z "$OPEN_TUTORIAL_PACK" ]]; then
 fi
 
 if [[ "$PROTOTYPE_STATE_SET" == "1" && -z "$SHOW_PROTOTYPE" ]]; then
-  echo "--prototype-state requires --show-prototype notebook" >&2
+  echo "--prototype-state requires --show-prototype" >&2
   exit 2
 fi
 
+case "$SHOW_PROTOTYPE:$PROTOTYPE_STATE" in
+  :happy-path|notebook:happy-path|notebook:external-conflict|python:happy-path|python:failure|python:nonresponsive)
+    ;;
+  *)
+    echo "prototype state '$PROTOTYPE_STATE' is not valid for '$SHOW_PROTOTYPE'" >&2
+    exit 2
+    ;;
+esac
+
 if [[ -n "$SHOW_PROTOTYPE" && "$RUN_ACTIVE_TASK" == "1" ]]; then
-  echo "--show-prototype notebook cannot be combined with --run-active-task" >&2
+  echo "--show-prototype cannot be combined with --run-active-task" >&2
   exit 2
 fi
 
 if [[ -n "$SHOW_PROTOTYPE" && "$SHOW_IMAGER_PROGRESS_MOCKUP" == "1" ]]; then
-  echo "--show-prototype notebook cannot be combined with --show-imager-progress-mockup" >&2
+  echo "--show-prototype cannot be combined with --show-imager-progress-mockup" >&2
   exit 2
 fi
 
 if [[ -n "$SHOW_PROTOTYPE" && "${#EXTRA_APP_ARGS[@]}" -gt 0 ]]; then
-  echo "--show-prototype notebook cannot be combined with imager launch overrides" >&2
+  echo "--show-prototype cannot be combined with imager launch overrides" >&2
   exit 2
 fi
 
@@ -455,7 +472,7 @@ case "$MODE" in
     echo "==> Staged $APP_BUNDLE"
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH|--show-prototype notebook [--prototype-state happy-path|external-conflict]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
+    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH|--show-prototype notebook|python [--prototype-state STATE]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
     exit 2
     ;;
 esac
