@@ -170,6 +170,7 @@ final class CasarsMacUITests: XCTestCase {
 
     func testWaveOneAccessibilityAudit() throws {
         launchPrototype()
+        var unacceptedIssues: [String] = []
         try app.performAccessibilityAudit { issue in
             if issue.auditType.contains(.elementDetection),
                issue.compactDescription == "Parent/Child mismatch"
@@ -194,12 +195,26 @@ final class CasarsMacUITests: XCTestCase {
             {
                 return true
             }
-            guard issue.auditType.contains(.contrast),
-                  let identifier = issue.element?.identifier
-            else { return false }
-            return identifier == "notebook.boundaryAudit"
-                || identifier.hasPrefix("notebook.selector.")
+            if issue.auditType.contains(.contrast),
+               let identifier = issue.element?.identifier,
+               identifier == "notebook.boundaryAudit"
+                   || identifier.hasPrefix("notebook.selector.")
+            {
+                return true
+            }
+
+            let element = issue.element
+            unacceptedIssues.append(
+                "\(issue.compactDescription)"
+                    + " [type=\(issue.auditType), identifier=\(element?.identifier ?? "<none>"),"
+                    + " label=\(element?.label ?? "<none>")]"
+            )
+            return true
         }
+        XCTAssertTrue(
+            unacceptedIssues.isEmpty,
+            "Unaccepted accessibility audit issues:\n\(unacceptedIssues.joined(separator: "\n"))"
+        )
         assertZeroProductionBoundaryCalls()
     }
 

@@ -192,7 +192,7 @@ struct ScientificNotebookView: View {
                 HStack {
                     Label("Rich editing", systemImage: "pencil")
                         .workbenchFont(.caption, weight: .semibold)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.primary)
                     Spacer()
                     if notebook.isDirty {
                         Text("Edited")
