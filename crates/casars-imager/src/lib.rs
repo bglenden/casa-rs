@@ -33344,12 +33344,13 @@ fn full_source_reuse_active_plane_capacity(
     let maximum_active_planes = maximum_active_planes.max(1);
     let memory_plane_capacity = if one_plane_active_bytes > memory_target_bytes {
         0
-    } else if per_additional_plane_bytes == 0 {
-        maximum_active_planes
     } else {
-        1usize.saturating_add(
-            memory_target_bytes.saturating_sub(one_plane_active_bytes) / per_additional_plane_bytes,
-        )
+        memory_target_bytes
+            .saturating_sub(one_plane_active_bytes)
+            .checked_div(per_additional_plane_bytes)
+            .map_or(maximum_active_planes, |additional_planes| {
+                1usize.saturating_add(additional_planes)
+            })
     };
     let active_planes = memory_plane_capacity.min(maximum_active_planes);
     if active_planes >= minimum_active_planes {
@@ -51302,6 +51303,10 @@ mod tests {
         assert_eq!(
             full_source_reuse_active_plane_capacity(1_000, 200, 100, 2, 3),
             Ok(3)
+        );
+        assert_eq!(
+            full_source_reuse_active_plane_capacity(1_000, 200, 0, 2, 8),
+            Ok(8)
         );
         assert!(
             full_source_reuse_active_plane_capacity(250, 200, 100, 2, 8)
