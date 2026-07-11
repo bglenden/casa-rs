@@ -11,6 +11,10 @@
       
       
       
+        <link rel="prev" href="../scientific-notebooks-and-assistant/">
+      
+      
+        <link rel="next" href="../rust-api/">
       
       
         
@@ -21,7 +25,7 @@
     
     
       
-        <title>Mac-Native GUI Product Spec - casa-rs</title>
+        <title>Native macOS Product Spec - casa-rs</title>
       
     
     
@@ -100,7 +104,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Mac-Native GUI Product Spec
+              Native macOS Product Spec
             
           </span>
         </div>
@@ -357,6 +361,474 @@
       
   
   
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#product-thesis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Product Thesis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#target-user" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Target User
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relationship-to-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship To CASA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#product-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Product Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals-for-the-first-product-slice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Goals For The First Product Slice
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workbench-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workbench Model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workbench Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#workbench-job-runtime" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workbench Job Runtime
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-panels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Panels
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Panels">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#project-explorer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Project Explorer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inspector-versus-explorer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspector Versus Explorer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dataset-explorers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset Explorers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#processing-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Processing History
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-panels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task Panels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python-and-matplotlib-panel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python And Matplotlib Panel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#radio-astronomy-oracle-panel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Radio Astronomy Oracle Panel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ai-assistant-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AI Assistant Surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#safety-and-trust-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Safety And Trust Model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architecture-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture Direction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#technology-stack-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Technology Stack Decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testability-and-debuggability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testability And Debuggability
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#protocol-expansion-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Protocol Expansion Requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#macos-native-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        macOS Native Shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ui-first-implementation-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UI-First Implementation Strategy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context Index
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#first-product-slice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First Product Slice
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-product-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Product Questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Gates
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
   
   
     <li class="md-nav__item">
@@ -395,10 +867,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
             
   
   
@@ -416,8 +888,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -930,6 +1402,13 @@
 <p>Truth class: proposed product spec
 Last reality check: 2026-05-03
 Verification: not implemented</p>
+<blockquote>
+<p><strong>Accepted follow-on design:</strong> The notebook, tutorial, Python, corpus, and AI
+architecture is now governed by
+<a href="../scientific-notebooks-and-assistant/"><code>scientific-notebooks-and-assistant.md</code></a>
+and ADR-0007. This document remains the product and shell-layout reference;
+where the two conflict, the accepted follow-on design wins.</p>
+</blockquote>
 <h2 id="product-thesis">Product Thesis<a class="headerlink" href="#product-thesis" title="Permanent link">&para;</a></h2>
 <p>The mac-native <code>casa-rs</code> GUI should be an AI-enhanced desktop workbench for
 radio astronomy data processing.</p>
@@ -1473,7 +1952,16 @@ work unless separately approved.</p>
   dock mode buttons, central tabs, tab <code>+</code>, inspector collapse, task <code>Run</code> /
   <code>Stop</code>, AI chat input, Python ownership state, selected dataset, and history
   rows.</li>
-<li>Add UI tests for the main flows once a runnable app shell exists.</li>
+<li>Use a macOS XCTest/XCUIAutomation UI Testing Bundle for the main launched-app
+  flows. The thin Xcode test host must reuse the existing <code>casars-mac</code> sources
+  and <code>CasarsMacCore</code> package product rather than forking product logic. Launch
+  deterministic fixtures through explicit arguments, address controls through
+  stable accessibility identifiers, and retain screenshots as failure/polish
+  evidence rather than the sole interaction assertion. Issue #368 establishes
+  this target and the stable <code>just gui-test</code> entrypoint; its disposable
+  DerivedData and retained failure <code>.xcresult</code> live under
+  <code>apps/casars-mac/.gui-test/</code>, and pull-request CI runs the same command on the
+  supported macOS runner.</li>
 <li>Use screenshots for visual polish review, not as the only way to understand
   behavior.</li>
 </ul>

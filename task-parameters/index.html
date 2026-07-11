@@ -489,6 +489,116 @@
   
   
   
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../rust-api/" class="md-nav__link">
         
@@ -525,10 +635,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
             
   
   
@@ -546,8 +656,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -917,12 +1027,13 @@ the state location, not the workspace used for relative task paths.</p>
 Automatic Last updates never overwrite it.</p>
 <h2 id="cli-contract">CLI contract<a class="headerlink" href="#cli-contract" title="Permanent link">&para;</a></h2>
 <p>The accepted noninteractive shape is:</p>
-<div class="codehilite"><pre><span></span><code>casars run &lt;task&gt; [--workspace DIR]
+<div class="codehilite"><pre><span></span><code>casars run &lt;task&gt; [--workspace DIR] [--notebook FILE_OR_ID]
   [--defaults | --last | --last-successful | --params FILE]
   [task overrides]
   [--unset NAME]
   [--save-params FILE]
   [--no-save-last]
+  [--no-notebook-recording]
 
 casars open &lt;session&gt; [--workspace DIR]
   [--defaults | --last | --params FILE]
@@ -943,7 +1054,11 @@ casars params describe &lt;parameter-or-surface&gt;
 <p><code>template</code> writes a documented example with defaults and units in comments;
 commented defaults are not active overrides. Direct provider binaries continue
 to expose their idiomatic execution transports; source selection and profile
-lifecycle are owned by the top-level <code>casars</code> runner and interactive shells.</p>
+lifecycle are owned by the top-level <code>casars</code> runner and interactive shells.
+<code>--notebook</code> routes one project-aware task attempt to an existing named
+notebook. Without it, the explicit workspace's <code>default.md</code> is used.
+<code>--no-notebook-recording</code> is a visible one-run bypass and is never persisted in
+a profile.</p>
 <p>The TUI launcher remains <code>casars</code> (or its existing short surface-launch form).
 <code>casars open &lt;session&gt;</code> launches a browser session from a resolved profile.
 Open, Save As, Revert, Reset to Default, and source selection are
