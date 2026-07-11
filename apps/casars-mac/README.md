@@ -67,8 +67,9 @@ The retained result bundle is
 an app screenshot and accessibility hierarchy there. Delete `.gui-test/` to
 force a clean Xcode build. The gate was established locally with Xcode 26.2
 (17C52) on macOS 26.5.2 arm64. Pull-request CI runs the same command on the
-supported `macos-14` runner and uploads the result bundle whether the job passes
-or fails.
+supported `macos-15` runner, selects Xcode 26.2 explicitly so its compiler
+matches the established local gate, and uploads the result bundle whether the
+job passes or fails.
 
 The app shell keeps left dock collapse/restore, inspector restore,
 command/search routing, dock mode selection, Python ownership, and task/AI

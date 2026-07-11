@@ -104,6 +104,8 @@ The executable GUI layer follows these rules:
 - Run the same `just gui-test` command locally and in the supported macOS CI
   job. If the runner cannot support UI automation, stop and record evidence
   rather than replacing the gate with manual or computer-use testing.
+- Pin the CI job's Xcode selection explicitly; the current gate uses the
+  `macos-15` image with Xcode 26.2, matching the locally established compiler.
 - Run locally from a logged-in GUI session with Xcode automation permission and
   no active system-authentication prompt. Diagnose failures from
   `apps/casars-mac/.gui-test/CasarsMacUITests.xcresult`, which retains the
