@@ -304,8 +304,8 @@ struct LeftDockView: View {
                         .foregroundStyle(.primary)
                     Spacer()
                     Text("\(notebook.notebooks.count)")
-                        .workbenchFont(.caption, design: .monospaced)
-                        .foregroundStyle(.primary)
+                        .workbenchFont(.caption, weight: .semibold, design: .monospaced)
+                        .foregroundStyle(Color(nsColor: .labelColor))
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
