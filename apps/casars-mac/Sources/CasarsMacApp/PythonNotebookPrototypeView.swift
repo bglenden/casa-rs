@@ -67,6 +67,7 @@ struct PythonNotebookPrototypeView: View {
             .frame(maxWidth: .infinity)
         }
         .background(Color(nsColor: .textBackgroundColor))
+        .accessibilityIdentifier("pythonPrototype.documentScroll")
     }
 
     private var savedVisualizations: some View {
@@ -76,7 +77,7 @@ struct PythonNotebookPrototypeView: View {
                 Spacer()
                 Text("\(projection?.savedVisualizations.count ?? 0) explicit snapshots · not live explorer views")
                     .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
+                    .prototypeSecondaryForeground()
                     .accessibilityIdentifier("pythonPrototype.savedVisualizationCount")
                     .accessibilityValue("\(projection?.savedVisualizations.count ?? 0)")
             }
@@ -108,7 +109,7 @@ struct PythonNotebookPrototypeView: View {
                         Text(revision.title).workbenchFont(.subheadline, weight: .semibold).lineLimit(1)
                         Text("Saved from \(revision.kind.sourceSurfaceTitle) · revision \(revision.sequence)")
                             .workbenchFont(.caption2)
-                            .foregroundStyle(.secondary)
+                            .prototypeSecondaryForeground()
                             .accessibilityIdentifier("notebookVisualization.revisionCount.\(visualization.id)")
                             .accessibilityValue("\(visualization.revisions.count)")
                     }
@@ -125,7 +126,7 @@ struct PythonNotebookPrototypeView: View {
                         ForEach(visualization.revisions.sorted(by: { $0.sequence > $1.sequence }).dropFirst()) { prior in
                             Text("Revision \(prior.sequence) · \(prior.assetPath)")
                                 .workbenchFont(.caption2, design: .monospaced)
-                                .foregroundStyle(.secondary)
+                                .prototypeSecondaryForeground()
                                 .padding(.top, 4)
                         }
                     }
@@ -160,7 +161,11 @@ struct PythonNotebookPrototypeView: View {
                                 .workbenchFont(.headline)
                             Text(cell.owner == .ai ? "AI-proposed code · exact-source approval required" : "User code · normal user authority")
                                 .workbenchFont(.caption)
-                                .foregroundStyle(cell.owner == .ai ? .purple : .secondary)
+                                .foregroundStyle(
+                                    cell.owner == .ai
+                                        ? Color.purple
+                                        : Color(nsColor: .labelColor).opacity(0.82)
+                                )
                                 .accessibilityIdentifier(
                                     cell.id == projection?.selectedCellID
                                         ? "pythonPrototype.ownerDisclosure"
@@ -179,7 +184,7 @@ struct PythonNotebookPrototypeView: View {
                     statusDot(cell.latestRevision?.status ?? .idle)
                     Text(cellStatusLabel(cell))
                         .workbenchFont(.caption, weight: .semibold)
-                        .foregroundStyle(.secondary)
+                        .prototypeSecondaryForeground()
                 }
 
                 if cell.id == projection?.selectedCellID {
@@ -203,7 +208,7 @@ struct PythonNotebookPrototypeView: View {
             } else {
                 Text(cell.source.split(separator: "\n").prefix(3).joined(separator: "\n"))
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .prototypeSecondaryForeground()
                     .lineLimit(3)
                     .padding(.horizontal, 11)
                     .padding(.vertical, 9)
@@ -228,7 +233,7 @@ struct PythonNotebookPrototypeView: View {
                     .workbenchFont(.title3, weight: .semibold)
                 Text("Persistent per-notebook kernel · interaction prototype")
                     .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
+                    .prototypeSecondaryForeground()
             }
             Spacer()
             kernelState
@@ -308,7 +313,7 @@ struct PythonNotebookPrototypeView: View {
             }
             Text("Approval binds only to source hash \(cell.sourceDigest). Any edit invalidates it.")
                 .workbenchFont(.caption, design: .monospaced)
-                .foregroundStyle(.secondary)
+                .prototypeSecondaryForeground()
             Button("Approve exact code") {
                 store.approvePrototypePythonSource(cellID: cell.id)
             }
@@ -326,10 +331,11 @@ struct PythonNotebookPrototypeView: View {
             HStack {
                 Text("Code")
                     .workbenchFont(.headline)
+                    .foregroundStyle(Color(nsColor: .labelColor))
                 Spacer()
                 Text(cell.sourceDigest)
                     .workbenchFont(.caption2, design: .monospaced)
-                    .foregroundStyle(.secondary)
+                    .prototypeSecondaryForeground()
             }
             TextEditor(text: Binding(
                 get: { selectedCell?.source ?? "" },
@@ -359,7 +365,7 @@ struct PythonNotebookPrototypeView: View {
             }
             if cell.revisions.isEmpty {
                 Text("Not run yet. Code and outputs remain separate immutable revisions after execution.")
-                    .foregroundStyle(.secondary)
+                    .prototypeSecondaryForeground()
                     .padding(.vertical, 8)
             } else if let latest = cell.latestRevision {
                 revisionCard(cell: cell, revision: latest)
@@ -401,12 +407,14 @@ struct PythonNotebookPrototypeView: View {
             statusDot(revision.status)
             Text("Revision \(revision.sequence)")
                 .workbenchFont(.caption, weight: .semibold)
-            Text(revision.status.rawValue.capitalized).workbenchFont(.caption).foregroundStyle(.secondary)
+            Text(revision.status.rawValue.capitalized)
+                .workbenchFont(.caption)
+                .prototypeSecondaryForeground()
             Spacer()
             if revision.plot != nil { Image(systemName: "chart.xyaxis.line").foregroundStyle(.secondary) }
             Text(revision.sourceDigest)
                 .workbenchFont(.caption2, design: .monospaced)
-                .foregroundStyle(.tertiary)
+                .prototypeSecondaryForeground()
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
@@ -427,7 +435,7 @@ struct PythonNotebookPrototypeView: View {
                 Spacer()
                 Text(revision.sourceDigest)
                     .workbenchFont(.caption2, design: .monospaced)
-                    .foregroundStyle(.secondary)
+                    .prototypeSecondaryForeground()
             }
             .accessibilityIdentifier("pythonPrototype.revision.\(revision.sequence)")
             .accessibilityValue(revision.status.rawValue)
@@ -488,7 +496,7 @@ struct PythonNotebookPrototypeView: View {
             Text(path)
                 .workbenchFont(.caption2, design: .monospaced)
                 .lineLimit(1)
-                .foregroundStyle(.secondary)
+                .prototypeSecondaryForeground()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
@@ -509,7 +517,7 @@ struct PythonNotebookPrototypeView: View {
                 Text(explorerSurfaceTitle).workbenchFont(.title3, weight: .semibold)
                 Text("Fixture explorer · restored from saved figure")
                     .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
+                    .prototypeSecondaryForeground()
             }
             Spacer()
             Label("Save to Notebook", systemImage: "square.and.arrow.down")
@@ -532,7 +540,7 @@ struct PythonNotebookPrototypeView: View {
                     Text("View parameters").workbenchFont(.headline)
                     Text("These values were restored from the saved figure. Changes remain private to this explorer until you explicitly save a new plot or update the saved figure.")
                         .workbenchFont(.caption)
-                        .foregroundStyle(.secondary)
+                        .prototypeSecondaryForeground()
                     VStack(alignment: .leading, spacing: 11) {
                         ForEach(projection?.activeExplorer?.parameters ?? []) { parameter in
                             VStack(alignment: .leading, spacing: 4) {
@@ -567,7 +575,7 @@ struct PythonNotebookPrototypeView: View {
                     Spacer()
                     Label("Notebook unchanged", systemImage: "lock.doc")
                         .workbenchFont(.caption, weight: .semibold)
-                        .foregroundStyle(.secondary)
+                        .prototypeSecondaryForeground()
                         .accessibilityIdentifier("explorerSnapshot.targetRevisionCount")
                         .accessibilityValue("\(activeExplorerTargetRevisionCount)")
                 }
@@ -583,7 +591,7 @@ struct PythonNotebookPrototypeView: View {
                     .accessibilityIdentifier("explorerSnapshot.preview")
                 }
                 Text("Edit the controls to generate a new preview. Nothing in the notebook changes until Save to Notebook is used.")
-                    .foregroundStyle(.secondary)
+                    .prototypeSecondaryForeground()
             }
             .padding(24)
             .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -626,7 +634,7 @@ struct PythonNotebookPrototypeView: View {
                         Text(revision.title).workbenchFont(.title2, weight: .semibold)
                         Text("Saved snapshot · revision \(revision.sequence) · \(revision.assetPath)")
                             .workbenchFont(.caption, design: .monospaced)
-                            .foregroundStyle(.secondary)
+                            .prototypeSecondaryForeground()
                     }
                     Spacer()
                     Button("Open in Explorer") {
@@ -712,6 +720,7 @@ private struct DeterministicScientificPlot: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .workbenchFont(.subheadline, weight: .semibold)
+                .foregroundStyle(Color(nsColor: .labelColor))
             Canvas { context, size in
                 let inset: CGFloat = 28
                 let frame = CGRect(
@@ -752,7 +761,7 @@ private struct DeterministicScientificPlot: View {
                 Text("Amplitude (Jy)")
             }
             .workbenchFont(.caption2)
-            .foregroundStyle(.secondary)
+            .prototypeSecondaryForeground()
         }
         .padding(10)
         .background(Color(nsColor: .controlBackgroundColor))
@@ -766,7 +775,9 @@ private struct DeterministicScientificImage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).workbenchFont(.subheadline, weight: .semibold)
+            Text(title)
+                .workbenchFont(.subheadline, weight: .semibold)
+                .foregroundStyle(Color(nsColor: .labelColor))
             Canvas { context, size in
                 let center = CGPoint(x: size.width * 0.5, y: size.height * 0.52)
                 let maximum = min(size.width, size.height) * 0.42
@@ -792,11 +803,19 @@ private struct DeterministicScientificImage: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             HStack { Text("Right ascension"); Spacer(); Text("Declination") }
                 .workbenchFont(.caption2)
-                .foregroundStyle(.secondary)
+                .prototypeSecondaryForeground()
         }
         .padding(10)
         .background(Color(nsColor: .controlBackgroundColor))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.24)))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private extension View {
+    /// Keeps secondary prototype copy quiet while meeting normal-text contrast
+    /// on both macOS light and dark control backgrounds.
+    func prototypeSecondaryForeground() -> some View {
+        foregroundStyle(Color(nsColor: .labelColor).opacity(0.82))
     }
 }

@@ -297,8 +297,8 @@ final class CasarsMacUITests: XCTestCase {
         print("checking continuum selection", flush=True)
         print("continuum selection repaired")
         """
-        let documentScroll = app.scrollViews.firstMatch
-        XCTAssertTrue(documentScroll.exists)
+        let documentScroll = app.scrollViews["pythonPrototype.documentScroll"]
+        XCTAssertTrue(documentScroll.waitForExistence(timeout: 5))
         documentScroll.scroll(byDeltaX: 0, deltaY: -1_100)
         replaceText("pythonPrototype.editor", with: repaired)
         try require("pythonPrototype.run").click()
@@ -326,12 +326,12 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertEqual(try accessibilityValue("pythonPrototype.approvalState"), "required")
         XCTAssertFalse(try require("pythonPrototype.run").isEnabled)
         try require("pythonPrototype.approve").click()
-        XCTAssertEqual(try accessibilityValue("pythonPrototype.approvalState"), "approved")
+        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.approvalState", containing: "approved"))
         XCTAssertTrue(try require("pythonPrototype.run").isEnabled)
 
         let edited = try textValue(try require("pythonPrototype.editor")) + "\n# user edit invalidates approval"
         replaceText("pythonPrototype.editor", with: edited)
-        XCTAssertEqual(try accessibilityValue("pythonPrototype.approvalState"), "required")
+        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.approvalState", containing: "required"))
         XCTAssertFalse(try require("pythonPrototype.run").isEnabled)
         assertZeroPythonProductionBoundaryCalls()
     }
