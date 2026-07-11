@@ -391,7 +391,11 @@ final class CasarsMacUITests: XCTestCase {
             control.click()
         } else {
             app.activate()
-            control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+            // The hosted macOS runner is narrower than the workbench minimum
+            // size, leaving the dock button's center below the visible screen.
+            // Its upper edge remains visible and still exercises the identified
+            // production control.
+            control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).click()
         }
     }
 
