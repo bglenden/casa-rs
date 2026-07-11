@@ -96,6 +96,26 @@ private struct NotebookPrototypeBoundaryViolation: Error, CustomStringConvertibl
     }
 }
 
+/// Process-local evidence for the fixture runtime's fail-closed production
+/// adapters. This is package-scoped test support, never persisted or exposed as
+/// a provider contract.
+package enum NotebookPrototypeBoundaryAudit {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var invocations: [String] = []
+
+    package static func reset() {
+        lock.withLock { invocations.removeAll(keepingCapacity: true) }
+    }
+
+    package static func record(_ boundary: String) {
+        lock.withLock { invocations.append(boundary) }
+    }
+
+    package static var count: Int {
+        lock.withLock { invocations.count }
+    }
+}
+
 /// Fail-closed production adapters installed only in the immutable notebook
 /// prototype runtime. A store guard should reject every route before one of
 /// these methods is reached; throwing here is the final containment layer.
@@ -110,6 +130,7 @@ private struct NotebookPrototypeDeniedProductionClient:
     SurfaceParameterClient
 {
     private func denied<T>(_ boundary: String) throws -> T {
+        NotebookPrototypeBoundaryAudit.record(boundary)
         throw NotebookPrototypeBoundaryViolation(boundary: boundary)
     }
 
@@ -872,7 +893,8 @@ public final class WorkbenchStore: ObservableObject {
         scenario: NotebookPrototypeScenario = .primary,
         dependencies: NotebookPrototypeRuntimeDependencies = .denied
     ) -> WorkbenchStore {
-        WorkbenchStore(
+        NotebookPrototypeBoundaryAudit.reset()
+        return WorkbenchStore(
             state: notebookPrototypeState(scenario: scenario),
             probeClient: dependencies.probeClient,
             demoProjectClient: dependencies.demoProjectClient,
@@ -890,6 +912,10 @@ public final class WorkbenchStore: ObservableObject {
 
     package var isNotebookPrototypeRuntime: Bool {
         runtimeKind == .notebookPrototype
+    }
+
+    package var prototypeProductionBoundaryInvocationCount: Int {
+        runtimeKind == .notebookPrototype ? NotebookPrototypeBoundaryAudit.count : 0
     }
 
     private static func notebookPrototypeState(

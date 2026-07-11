@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-07-04
+Last reality check: 2026-07-10
 Verification: just verify
 
 ## Test categories
@@ -67,6 +67,9 @@ Verification: just verify
   --dump-debug-state --simulate-main-flow --open-project <fixture-or-project>`
   for the headless debug-state smoke path that includes the dirty-imaging task
   run.
+- Native macOS launched-app interaction gate: `just gui-test` from the
+  repository root. Its disposable DerivedData and retained `.xcresult` bundle
+  live under `apps/casars-mac/.gui-test/`.
 
 ## Coverage / confidence policy
 
@@ -79,10 +82,10 @@ Verification: just verify
 ## Native macOS executable GUI testing
 
 XCTest/XCUIAutomation is the canonical end-to-end test layer for user-visible
-`casars-mac` behavior. Issue #368 introduces a thin Xcode app host around the
+`casars-mac` behavior. Issue #368 establishes a thin Xcode app host around the
 existing Swift package sources, a macOS UI Testing Bundle, and the stable
-`just gui-test` command. Until #368 lands, it is an active Wave 1 blocker rather
-than a justification for a manual-test exclusion.
+`just gui-test` command. This gate must land before Wave 1 production adapters
+are connected and remains required for later user-visible GUI waves.
 
 The executable GUI layer follows these rules:
 
@@ -101,6 +104,13 @@ The executable GUI layer follows these rules:
 - Run the same `just gui-test` command locally and in the supported macOS CI
   job. If the runner cannot support UI automation, stop and record evidence
   rather than replacing the gate with manual or computer-use testing.
+- Run locally from a logged-in GUI session with Xcode automation permission and
+  no active system-authentication prompt. Diagnose failures from
+  `apps/casars-mac/.gui-test/CasarsMacUITests.xcresult`, which retains the
+  screenshot and accessibility hierarchy attached by the failing workflow.
+- Accessibility-audit exclusions must identify a specific framework/OS
+  artifact or a verified false positive. They may not blanket-exclude an audit
+  category or newly introduced actionable controls.
 
 ## Wave expectations
 

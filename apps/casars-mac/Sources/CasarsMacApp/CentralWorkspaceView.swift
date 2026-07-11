@@ -35,6 +35,8 @@ struct CentralWorkspaceView: View {
                         }
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Open \(tab.title) tab")
+                    .accessibilityIdentifier("central.tab.\(tab.id)")
 
                     Button {
                         store.closeTab(tab.id)
@@ -54,7 +56,6 @@ struct CentralWorkspaceView: View {
                 .padding(.vertical, 7)
                 .background(isActive ? Color.accentColor.opacity(0.14) : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityIdentifier("central.tab.\(tab.id)")
             }
 
             Menu {

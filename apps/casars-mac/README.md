@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-07-10
-Verification: swift test; swift run casars-mac --dump-debug-state --simulate-main-flow; swift run casars-mac --dump-debug-state --show-prototype notebook; ./script/build_and_run.sh --verify
+Verification: swift test; just gui-test; swift run casars-mac --dump-debug-state --simulate-main-flow; swift run casars-mac --dump-debug-state --show-prototype notebook; ./script/build_and_run.sh --verify
 
 `casars-mac` is the SwiftUI prototype for the native macOS `casa-rs`
 workbench. The app keeps a synthetic demo fixture for layout and dry-run
@@ -35,6 +35,40 @@ swift run casars-mac --capture-gui-evidence --capture-kind notebook-prototype --
 
 The `--dump-debug-state` path is intentionally non-interactive so local
 automation can inspect the workbench model without screenshots.
+
+## Executable GUI tests
+
+From the repository root, run:
+
+```bash
+just gui-test
+```
+
+The command builds the Rust frontend dylib with incremental compilation
+disabled, then uses the checked-in `CasarsMac.xcodeproj` and `CasarsMacGUI`
+scheme to launch the existing app sources under the `CasarsMacUITests` macOS UI
+Testing Bundle. The host is test infrastructure only: it reuses
+`Sources/CasarsMacApp`, the local `CasarsMacCore` Swift package product, and the
+same fixture launch arguments as the app. It owns no second UI, state model, or
+persisted contract.
+
+Run the gate from a logged-in macOS GUI session with Xcode installed. The first
+local run may require macOS permission for Xcode's test runner to control the
+app; clear any active system-authentication prompt before retrying. The tests
+use the system pasteboard plus keyboard events for complete-document edits, so
+the runner needs normal GUI focus and pasteboard access. No user project,
+dataset, provider, task process, network service, or notebook file is opened or
+written: every test launches `--show-prototype notebook` with deterministic
+fixture state and asserts that the production-boundary audit remains zero.
+
+Disposable build and test output lives under `apps/casars-mac/.gui-test/`.
+The retained result bundle is
+`apps/casars-mac/.gui-test/CasarsMacUITests.xcresult`; failing workflows attach
+an app screenshot and accessibility hierarchy there. Delete `.gui-test/` to
+force a clean Xcode build. The gate was established locally with Xcode 26.2
+(17C52) on macOS 26.5.2 arm64. Pull-request CI runs the same command on the
+supported `macos-14` runner and uploads the result bundle whether the job passes
+or fails.
 
 The app shell keeps left dock collapse/restore, inspector restore,
 command/search routing, dock mode selection, Python ownership, and task/AI

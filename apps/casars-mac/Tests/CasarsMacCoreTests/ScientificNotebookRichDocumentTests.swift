@@ -169,6 +169,30 @@ final class ScientificNotebookRichDocumentTests: XCTestCase {
         XCTAssertEqual(document.markdown, "First note")
     }
 
+    func testPlainRichEditsCannotConsumeAdjacentTaskCellBoundaries() throws {
+        let firstCell = taskCell(id: "first", trailingNewline: true)
+        let secondCell = taskCell(id: "second", trailingNewline: true)
+        let source = "Before.\n\n" + firstCell + "\nBetween.\n\n" + secondCell + "\nAfter."
+        var document = PrototypeNotebookRichDocument(markdown: source)
+
+        for (needle, replacement) in [
+            ("Before.", "Before revised."),
+            ("Between.", "Between revised."),
+            ("After.", "After revised."),
+        ] {
+            let elementID = try XCTUnwrap(document.elements.first {
+                $0.editableSource?.contains(needle) == true
+            }?.id)
+            XCTAssertTrue(document.replaceEditableSource(elementID: elementID, with: replacement))
+        }
+
+        let reloaded = PrototypeNotebookRichDocument(markdown: document.markdown)
+        XCTAssertEqual(reloaded.elements.compactMap(\.taskID), ["first", "second"])
+        XCTAssertTrue(document.markdown.contains("Before revised.\n\n<!-- casa-rs-cell:v1 id=first"))
+        XCTAssertTrue(document.markdown.contains("<!-- /casa-rs-cell -->\n\nBetween revised."))
+        XCTAssertTrue(document.markdown.hasSuffix("<!-- /casa-rs-cell -->\n\nAfter revised."))
+    }
+
     private func taskCell(id: String, trailingNewline: Bool) -> String {
         "<!-- casa-rs-cell:v1 id=\(id) kind=task -->\n"
             + "```toml\n"

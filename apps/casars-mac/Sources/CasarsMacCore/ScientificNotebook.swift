@@ -372,7 +372,7 @@ package struct PrototypeNotebookRichElement: Identifiable, Equatable {
         return base + leadingBoundary + editable + trailingBoundary
     }
 
-    private static func leadingLineBreakCount(_ source: String) -> Int {
+    fileprivate static func leadingLineBreakCount(_ source: String) -> Int {
         var count = 0
         let scalars = source.unicodeScalars
         var index = scalars.startIndex
@@ -398,7 +398,7 @@ package struct PrototypeNotebookRichElement: Identifiable, Equatable {
         return count
     }
 
-    private static func trailingLineBreakCount(_ source: String) -> Int {
+    fileprivate static func trailingLineBreakCount(_ source: String) -> Int {
         var count = 0
         let scalars = source.unicodeScalars
         var index = scalars.endIndex
@@ -461,7 +461,38 @@ package struct PrototypeNotebookRichDocument: Equatable {
         guard let index = elements.firstIndex(where: { $0.id == elementID }) else {
             return false
         }
-        return elements[index].replaceEditableSource(with: source)
+        let leftTaskSource = index > elements.startIndex && elements[index - 1].taskID != nil
+            ? elements[index - 1].source
+            : nil
+        let rightTaskSource = index < elements.index(before: elements.endIndex)
+            && elements[index + 1].taskID != nil
+            ? elements[index + 1].source
+            : nil
+        let boundedSource = Self.sourcePreservingTaskBoundaries(
+            source,
+            leftTaskSource: leftTaskSource,
+            rightTaskSource: rightTaskSource
+        )
+        return elements[index].replaceEditableSource(with: boundedSource)
+    }
+
+    private static func sourcePreservingTaskBoundaries(
+        _ source: String,
+        leftTaskSource: String?,
+        rightTaskSource: String?
+    ) -> String {
+        let newline = preferredNewline(in: source)
+        let leadingBreaks = leftTaskSource.map {
+            PrototypeNotebookRichElement.trailingLineBreakCount($0)
+                + PrototypeNotebookRichElement.leadingLineBreakCount(source)
+        } ?? 2
+        let trailingBreaks = rightTaskSource.map {
+            PrototypeNotebookRichElement.trailingLineBreakCount(source)
+                + PrototypeNotebookRichElement.leadingLineBreakCount($0)
+        } ?? 2
+        return String(repeating: newline, count: max(0, 2 - leadingBreaks))
+            + source
+            + String(repeating: newline, count: max(0, 2 - trailingBreaks))
     }
 
     private static func parse(_ markdown: String) -> [PrototypeNotebookRichElement] {

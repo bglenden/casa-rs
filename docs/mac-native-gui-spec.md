@@ -623,7 +623,10 @@ Required from the beginning:
   deterministic fixtures through explicit arguments, address controls through
   stable accessibility identifiers, and retain screenshots as failure/polish
   evidence rather than the sole interaction assertion. Issue #368 establishes
-  this target and the stable `just gui-test` entrypoint.
+  this target and the stable `just gui-test` entrypoint; its disposable
+  DerivedData and retained failure `.xcresult` live under
+  `apps/casars-mac/.gui-test/`, and pull-request CI runs the same command on the
+  supported macOS runner.
 - Use screenshots for visual polish review, not as the only way to understand
   behavior.
 

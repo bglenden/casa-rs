@@ -16,7 +16,6 @@ struct ScientificNotebookView: View {
                 unavailableNotebook
             }
         }
-        .accessibilityIdentifier("panel.scientificNotebook")
     }
 
     private var unavailableNotebook: some View {
@@ -67,9 +66,15 @@ struct ScientificNotebookView: View {
             loadRichDocument(notebook)
         }
         .onChange(of: notebook.notebookID) { _ in
-            loadRichDocument(notebook)
+            if let projection = store.state.prototypeNotebook {
+                loadRichDocument(projection)
+            }
         }
-        .accessibilityIdentifier("notebook.workspace")
+        .onChange(of: notebook.viewMode) { mode in
+            if mode == .rich, let projection = store.state.prototypeNotebook {
+                loadRichDocument(projection)
+            }
+        }
     }
 
     private var prototypeDisclosure: some View {
@@ -86,7 +91,6 @@ struct ScientificNotebookView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
         .background(Color.orange.opacity(0.09))
-        .accessibilityIdentifier("notebook.prototypeDisclosure")
     }
 
     private func notebookToolbar(_ notebook: PrototypeScientificNotebookProjection) -> some View {
@@ -105,13 +109,14 @@ struct ScientificNotebookView: View {
                 get: { notebook.viewMode },
                 set: { mode in
                     store.setPrototypeNotebookViewMode(mode)
-                    if mode == .rich, let projection = store.state.prototypeNotebook {
-                        loadRichDocument(projection)
-                    }
                 }
             )) {
-                Label("Rich", systemImage: "doc.richtext").tag(PrototypeNotebookViewMode.rich)
-                Label("Raw", systemImage: "chevron.left.forwardslash.chevron.right").tag(PrototypeNotebookViewMode.raw)
+                Label("Rich", systemImage: "doc.richtext")
+                    .accessibilityIdentifier("notebook.viewMode.rich")
+                    .tag(PrototypeNotebookViewMode.rich)
+                Label("Raw", systemImage: "chevron.left.forwardslash.chevron.right")
+                    .accessibilityIdentifier("notebook.viewMode.raw")
+                    .tag(PrototypeNotebookViewMode.raw)
             }
             .labelsHidden()
             .pickerStyle(.segmented)
@@ -127,6 +132,12 @@ struct ScientificNotebookView: View {
             .keyboardShortcut("s", modifiers: [.command])
             .help("Save the in-memory prototype draft")
             .accessibilityIdentifier("notebook.save")
+
+            Text(notebook.isDirty ? "Edited" : "Saved")
+                .workbenchFont(.caption, weight: .semibold)
+                .foregroundStyle(notebook.isDirty ? .orange : .secondary)
+                .accessibilityIdentifier("notebook.dirtyState")
+                .accessibilityValue(notebook.isDirty ? "dirty" : "saved")
         }
     }
 
@@ -158,7 +169,6 @@ struct ScientificNotebookView: View {
         .background(Color.orange.opacity(0.12))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.55)))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .accessibilityIdentifier("notebook.externalConflict")
     }
 
     @ViewBuilder
@@ -213,7 +223,6 @@ struct ScientificNotebookView: View {
                     }
                 }
             }
-            .accessibilityIdentifier("notebook.editor.rich")
         }
     }
 
@@ -260,7 +269,6 @@ struct ScientificNotebookView: View {
             executionStrip(receipt)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("notebook.taskBlock.\(receipt.id)")
     }
 
     private func parameterBlockLabel(_ receipt: PrototypeNotebookTaskProjection) -> some View {
@@ -334,6 +342,7 @@ struct ScientificNotebookView: View {
             )
             .help("Click for the result; double-click to open the task tab")
             .accessibilityIdentifier("notebook.executionStatus.\(receipt.id)")
+            .accessibilityValue("\(status?.notebookLabel ?? "Not run"), revision \(revision?.sequence ?? 0), \(expanded ? "expanded" : "collapsed")")
 
             if expanded {
                 expandedExecution(receipt)
@@ -380,6 +389,7 @@ struct ScientificNotebookView: View {
                 Text("\(receipt.revisions.count) revision\(receipt.revisions.count == 1 ? "" : "s")")
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("notebook.execution.revisionCount.\(receipt.id)")
             }
         }
     }
@@ -412,7 +422,6 @@ struct PrototypeNotebookTaskView: View {
                 .padding(28)
             }
         }
-        .accessibilityIdentifier("panel.prototypeNotebookTask")
     }
 
     private var taskProjection: PrototypeNotebookTaskProjection? {
@@ -432,6 +441,7 @@ struct PrototypeNotebookTaskView: View {
                         title: task.title,
                         subtitle: "\(task.taskID) · parameters loaded from the notebook block"
                     )
+                    .accessibilityIdentifier("prototypeTask.identity.\(task.id)")
                     Spacer()
                     Button {
                         store.restartPrototypeNotebookTask(receiptID: task.id)
@@ -527,6 +537,7 @@ struct PrototypeNotebookTaskView: View {
                 .padding(12)
                 .background(revision.status.notebookColor.opacity(0.055))
                 .clipShape(RoundedRectangle(cornerRadius: 7))
+                .accessibilityIdentifier("prototypeTask.revision.\(revision.sequence).\(revision.status.rawValue)")
             }
         }
         .notebookCard()
@@ -584,8 +595,8 @@ private struct RichMarkdownBlockEditor: View {
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: editorHeight)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(accessibilityID)
             }
-            .accessibilityIdentifier(accessibilityID)
         }
     }
 

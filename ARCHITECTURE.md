@@ -97,6 +97,12 @@ explorer tabs, and dirty-imaging artifacts are grouped under their originating
 in-memory run state so generated products can be reopened without adding a
 project-history persistence format or background service.
 
+Issue #368 adds a checked-in Xcode app host and macOS UI Testing Bundle around
+that same SwiftPM package. The host compiles the existing SwiftUI app sources
+and links the local `CasarsMacCore` product solely to provide an application
+boundary for XCTest/XCUIAutomation. It is test infrastructure, not another app
+family, state owner, fixture schema, runtime, or distribution path.
+
 ADR-0007 accepts the next runtime boundary for the scientific-notebook program.
 The planned `casa-notebook` Rust crate owns Markdown/cell, execution-receipt,
 export, and tutorial-manifest contracts shared by GUI, TUI, CLI, and Python.

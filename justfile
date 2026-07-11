@@ -48,6 +48,9 @@ arch-check:
 docs-check:
     bash scripts/docs-check.sh
 
+gui-test:
+    bash apps/casars-mac/script/test_gui.sh
+
 graph:
     bash scripts/generate-graphs.sh
 

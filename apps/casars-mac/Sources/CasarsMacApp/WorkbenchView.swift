@@ -70,18 +70,19 @@ struct CommandSearchField: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
             TextField("Search or run command...", text: Binding(
                 get: { store.state.commandQuery },
                 set: { store.setCommandQuery($0) }
             ))
             .textFieldStyle(.plain)
+            .accessibilityLabel("Search or run command")
             .onSubmit {
                 store.runCommandQuery()
             }
             Text("⌘K")
                 .workbenchFont(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -119,12 +120,20 @@ struct LeftDockView: View {
 
                 Text(store.state.project.rootPath)
                     .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 Text(projectSourceLabel)
                     .workbenchFont(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.primary)
+
+                if store.isNotebookPrototypeRuntime {
+                    Text("Production boundary calls: \(store.prototypeProductionBoundaryInvocationCount)")
+                        .workbenchFont(.caption, weight: .semibold, design: .monospaced)
+                        .foregroundStyle(.primary)
+                        .accessibilityIdentifier("notebook.boundaryAudit")
+                        .accessibilityValue("\(store.prototypeProductionBoundaryInvocationCount)")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
@@ -292,11 +301,11 @@ struct LeftDockView: View {
                 HStack {
                     Text("Project notebooks")
                         .workbenchFont(.caption, weight: .semibold)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.primary)
                     Spacer()
                     Text("\(notebook.notebooks.count)")
                         .workbenchFont(.caption, design: .monospaced)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.primary)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
@@ -317,10 +326,11 @@ struct LeftDockView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(summary.title)
                                     .workbenchFont(.subheadline, weight: .semibold)
+                                    .foregroundStyle(Color(nsColor: .labelColor))
                                     .lineLimit(1)
                                 Text(summary.filename)
                                     .workbenchFont(.caption, design: .monospaced)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(Color(nsColor: .labelColor))
                                     .lineLimit(1)
                             }
                             Spacer(minLength: 4)
@@ -344,7 +354,7 @@ struct LeftDockView: View {
                 HStack {
                     Label("Markdown files", systemImage: "text.document")
                         .workbenchFont(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.primary)
                     Spacer()
                     Button {
                         store.openDefaultTab(kind: .notebook)
@@ -352,6 +362,7 @@ struct LeftDockView: View {
                         Image(systemName: "arrow.up.forward.app")
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Open selected notebook")
                     .help("Open selected notebook")
                     .accessibilityIdentifier("notebook.selector.open")
                 }

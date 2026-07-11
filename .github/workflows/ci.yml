@@ -53,6 +53,30 @@ jobs:
       - name: Test Python package
         run: scripts/test-python-package.sh
 
+  native_gui:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Run native GUI interaction gate
+        run: just gui-test
+
+      - name: Retain GUI test result bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: casars-mac-ui-tests-${{ github.run_id }}
+          path: apps/casars-mac/.gui-test/CasarsMacUITests.xcresult
+          if-no-files-found: warn
+
   smoke:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest

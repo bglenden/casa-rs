@@ -1,4 +1,5 @@
 .build/
+.gui-test/
 .swiftpm/
 DerivedData/
 dist/
