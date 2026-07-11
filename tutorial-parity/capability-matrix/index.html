@@ -663,7 +663,7 @@
 
 <h1 id="casa-tutorial-capability-matrix">CASA Tutorial Capability Matrix<a class="headerlink" href="#casa-tutorial-capability-matrix" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-05-05
+Last reality check: 2026-07-09
 Verification: just docs-check</p>
 <p>Wave issue: #137
 Child issue: #116</p>
@@ -685,7 +685,11 @@ and oracle map; it does not add public APIs.</p>
 <li><code>casa-ms</code>: MeasurementSet summaries, selectors, plotting, derived MS support.</li>
 <li><code>casa-calibration</code>: summary/stats/apply/gain/bandpass/fluxscale workflows.</li>
 <li><code>casa-imaging</code> and <code>casars-imager</code>: MFS/cube imaging task surface and CASA
-  <code>tclean</code> parity harnesses for existing deterministic cases.</li>
+  <code>tclean</code> parity harnesses for existing deterministic cases, including the
+  first bounded single-MS mosaic MT-MFS slice (<code>nterms &lt;= 2</code>, no W term).</li>
+<li><code>casars-imager</code> task protocol v3: local <code>parallel</code>/<code>chanchunks</code>, shared
+  source-stream memory/row-block/worker/read-ahead controls, dirty-product FFT
+  precision/backend policy, and diagnostic memory/I/O/worker/backend telemetry.</li>
 <li><code>casa-images</code>, <code>casa-lattices</code>, <code>casa-coordinates</code>: image/lattice/coordinate
   storage and analysis substrate.</li>
 <li><code>casa-vla</code> and <code>casars-importvla</code>: VLA archive import surface.</li>
@@ -741,21 +745,21 @@ and oracle map; it does not add public APIs.</p>
 <td><code>tclean</code> MFS</td>
 <td>partial/available</td>
 <td><code>casa-imaging</code>, <code>casars-imager</code></td>
-<td><code>casars-imager</code>; Python projection includes automask, <code>savemodel=modelcolumn</code>, single-plane <code>startmodel</code>, and supported MFS/Hogbom/multiscale <code>outlierfile</code> controls including CASA pixel-circle outlier masks</td>
-<td>tutorial parameter mapping, VLA imaging guide regular/multiscale/MTMFS/w-projection and primary-beam product coverage, plus wider outlier variants such as mask images and cubes</td>
-<td>CASA <code>tclean</code> image products plus MODEL_DATA comparisons for <code>savemodel=modelcolumn</code>, startmodel seeded model parity, #220 outlierfile dirty plus niter&gt;0 products on <code>refim_twopoints_twochan.ms</code>, and #175 VLA imaging products on <code>SNR_G55_10s.calib.ms</code></td>
-<td>imager parity scripts and tutorial timings</td>
-<td>#117, #127, #167, #175, #196, #219, #220</td>
+<td><code>casars-imager</code>; Python projection includes automask, <code>savemodel=modelcolumn</code>, single-plane <code>startmodel</code>, supported MFS/Hogbom/multiscale <code>outlierfile</code> controls, and protocol-v3 local execution controls</td>
+<td>broader tutorial parameter mapping; mosaic MT-MFS beyond one MS, <code>nterms &lt;= 2</code>, no W term, user masks, and natural/uniform/Briggs weighting; wider outlier variants such as mask images and cubes</td>
+<td>CASA <code>tclean</code> image products plus MODEL_DATA comparisons; first-slice mosaic MT-MFS compares Taylor-term image/residual/PSF/model/sumwt/PB/pbcor/alpha products</td>
+<td>existing GLENDENNING medium/large workload manifests, performance ledger, imager parity scripts, and tutorial timings</td>
+<td>#117, #127, #167, #175, #196, #219, #220, #262, #343, #352</td>
 </tr>
 <tr>
 <td><code>tclean</code> cube / spectral</td>
 <td>partial</td>
 <td><code>casa-imaging</code>, <code>casars-imager</code></td>
-<td><code>casars-imager</code>; Python projection includes automask controls</td>
-<td>cube seam coverage, spectral transform integration, large-cube controls, mosaic cube gridding for Antennae Band 7 line products</td>
-<td>CASA <code>tclean</code> cube outputs</td>
-<td>cube parity scripts and tutorial timings</td>
-<td>#74, #76, #119, #123, #161, #167</td>
+<td><code>casars-imager</code>; Python projection includes automask plus protocol-v3 <code>parallel</code>, <code>chanchunks</code>, and shared source read-ahead controls</td>
+<td>cube seam coverage, spectral transform integration, and full-scale mosaic cube gridding for Antennae Band 7 line products</td>
+<td>CASA <code>tclean</code> cube outputs plus read-ahead/serial-vs-parallel product equivalence</td>
+<td>GLENDENNING medium/large cube/cubedata/mosaic workloads with source-read, overlap, bandwidth, and wall-time telemetry</td>
+<td>#56, #74, #76, #119, #123, #161, #167, #343</td>
 </tr>
 <tr>
 <td>legacy <code>clean</code></td>
@@ -1159,7 +1163,7 @@ families are either implemented or deliberately split:</p>
   solve/apply/diagnostics.</li>
 <li>Imaging controls: cube spectral mode, automasking, pbcor, startmodel,
   outlier fields, mosaics, polarization, usepointing, large-cube runtime
-  controls.</li>
+  controls, and mosaic MT-MFS outside the supported first slice.</li>
 <li>Image analysis selectors: region, mask, channel/stokes slicing, spectral
   coordinate metadata, output coordinate systems.</li>
 <li>Simulation controls: model image scaling, antenna/configuration files,
@@ -1185,6 +1189,14 @@ families are either implemented or deliberately split:</p>
 <li><code>scripts/bench-msexplore-vs-casa.sh</code></li>
 <li>Add tutorial-specific timing scripts only in the wave that implements the
   relevant functionality.</li>
+<li>For imaging-performance waves, reuse the checked-in GLENDENNING medium/large
+  workload manifests and record accepted, guarded, neutral, and rejected runs
+  in <code>tools/perf/imager/imaging_performance_ledger.json</code> rather than promoting
+  one-off timings.</li>
+<li>Treat protocol-v3 source telemetry (<code>source_bytes</code>, read/route/consumer time,
+  producer/consumer blocked time, overlap, live-block high water, and effective
+  bandwidth) and backend telemetry as part of the performance oracle. A GPU
+  kernel-only win does not establish an end-to-end no-slowdown result.</li>
 <li>Severe regressions block a wave; non-severe gaps become shaped follow-ups
   unless the wave's acceptance says match/exceed is required.</li>
 </ul>

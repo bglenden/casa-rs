@@ -630,7 +630,7 @@
 
 <h1 id="imaging-public-api-consolidation-inventory">Imaging Public API Consolidation Inventory<a class="headerlink" href="#imaging-public-api-consolidation-inventory" title="Permanent link">&para;</a></h1>
 <p>Truth class: implementation inventory
-Last reality check: 2026-07-03
+Last reality check: 2026-07-10
 Verification: targeted <code>rg</code> call-site searches; <code>python3 -m py_compile tools/perf/imager/imaging_interface_metrics.py</code>; <code>python3 tools/perf/imager/imaging_interface_metrics.py --base origin/main --format markdown</code>; <code>cargo fmt --all -- --check</code>; <code>cargo check -p casa-imaging -p casa-ms -p casars-imager</code>; focused <code>casa-imaging</code>, <code>casa-ms</code>, and <code>casars-imager</code> regression tests for source views, auto-multithresh, PB products, coordinate systems, density translation, product-plane helpers, cube-Briggs formulas, clean-cycle/Hogbom helpers, and standard-MFS/mosaic/PB app routes; <code>just quick</code>; <code>just docs-check</code>; <code>just verify</code>; <code>tools/perf/imager/run_workload.py --artifact-root target/imperformance-interface-consolidation-final-r3/artifacts --repeats 3 --run-label imaging-interface-consolidation-final-r3 --storage-label local-testdata --output-dir target/imperformance-interface-consolidation-final-r3/smoke wave1-standard-mfs-dirty-smoke</code>; same three-repeat workload at <code>origin/main</code> commit <code>e5df883d1b465f87661322fec875dacd05e5fc0f</code> in <code>/private/tmp/casa-rs-origin-imaging-interface-20260702</code></p>
 <h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
 <p>This inventory records the standard-MFS imaging execution surface after issue</p>
@@ -644,8 +644,10 @@ Verification: targeted <code>rg</code> call-site searches; <code>python3 -m py_c
 <li><code>crates/casa-ms/src/visibility_buffer.rs</code></li>
 <li><code>crates/casa-ms/src/spectral_selection.rs</code></li>
 </ul>
-<p>Provider contracts, persisted image/MS formats, CLI flags, task JSON, output
-product names, and numerical algorithms are unchanged.</p>
+<p>Persisted image/MS formats and output product names are unchanged. The current
+imaging-performance wave extends the canonical task JSON/CLI surface through
+protocol v3 controls and telemetry, and adds a bounded mosaic MT-MFS concept
+entrypoint to the core API; those changes are inventoried below.</p>
 <h2 id="audit-method">Audit Method<a class="headerlink" href="#audit-method" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Enumerated public and crate-visible items with:
@@ -771,6 +773,27 @@ preweighting denominator formulas are also library helpers now. Worker-count
 planning and single-plane execution/product/capability planning have moved to
 <code>casa-imaging</code>; the app maps CLI flags and runtime facts into those contracts.
 App code keeps the MS/source grouping and streaming orchestration.</p>
+<p>The imaging-performance wave also consolidated source overlap behind one
+app-private bounded producer/consumer primitive. Standard MFS, mosaic MFS and
+MT-MFS replay, standard/mosaic cube, cubedata, and trace preparation use the
+same read-ahead ownership rule: the public <code>imaging_read_ahead_blocks</code> control
+names the maximum live row blocks, while the private queue capacity is
+<code>max_live_row_blocks - 2</code>. The implementation currently caps the value at two,
+accounting for one producer-owned and one consumer-owned block; it does not
+expose a queue or source-thread implementation type as library API.</p>
+<p>The first mosaic MT-MFS slice adds
+<code>run_mosaic_mtmfs_from_single_plane_stream</code> and
+<code>MosaicMtmfsVisibilityBlock</code>. It reuses <code>SinglePlaneStreamPass</code> and the
+mosaic-specific <code>GroupedVisibilityMetadataBatch</code> contract, while carrying an
+optional raw-UVW density sidecar separately from the projected visibility
+batch so Briggs/uniform weighting can preserve CASA density-cell semantics.
+The approved performance-wave API consolidation removed the generic
+<code>SinglePlaneVisibilityBlock</code> and <code>SinglePlaneGridderMetadata</code> facade without a
+compatibility layer: standard, cube, and cubedata paths use their existing
+mode-specific boundaries, while mosaic MFS and MT-MFS use
+<code>MosaicVisibilityBlock</code> and <code>MosaicMtmfsVisibilityBlock</code>. The task edge limits
+the MT-MFS entrypoint to the supported single-MS, MFS, <code>nterms &lt;= 2</code>, no-W-term
+mosaic slice; the core validates the same projection and weighting constraints.</p>
 <h2 id="current-public-surface-snapshot">Current Public Surface Snapshot<a class="headerlink" href="#current-public-surface-snapshot" title="Permanent link">&para;</a></h2>
 <h3 id="casa-imaging"><code>casa-imaging</code><a class="headerlink" href="#casa-imaging" title="Permanent link">&para;</a></h3>
 <table>
@@ -981,25 +1004,46 @@ App code keeps the MS/source grouping and streaming orchestration.</p>
 <td>Standard-MFS density row math is library computation; app still owns MS streaming and worker scheduling until the neutral source boundary moves farther down.</td>
 </tr>
 <tr>
-<td><code>SinglePlaneVisibilityBlock</code>, <code>SinglePlaneStreamPass</code>, <code>SinglePlaneGridderMetadata</code></td>
-<td style="text-align: right;">Public</td>
-<td><code>casars-imager</code> mosaic/cube paths</td>
-<td>Keep public</td>
-<td>User-meaningful stream boundary for single-plane imaging.</td>
+<td><code>SinglePlaneVisibilityBlock</code>, <code>SinglePlaneGridderMetadata</code></td>
+<td style="text-align: right;">Removed</td>
+<td>mosaic callers</td>
+<td>Remove generic facade; migrate mosaic callers directly</td>
+<td>Replace <code>SinglePlaneVisibilityBlock</code> with <code>MosaicVisibilityBlock</code> and replace <code>SinglePlaneGridderMetadata::Mosaic(metadata)</code> with <code>gridder_metadata: metadata</code>. Standard imaging uses its existing standard-mode boundaries and has no replacement generic block. No compatibility layer is retained.</td>
 </tr>
 <tr>
-<td><code>run_mosaic_mfs_from_single_plane_stream</code></td>
+<td><code>SinglePlaneStreamPass</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> replay paths</td>
+<td>Keep public</td>
+<td>Shared semantic pass identity without exposing a generic block payload.</td>
+</tr>
+<tr>
+<td><code>run_mosaic_mfs_from_single_plane_stream</code> / <code>MosaicVisibilityBlock</code></td>
 <td style="text-align: right;">Public</td>
 <td><code>casars-imager</code> mosaic path</td>
 <td>Keep public</td>
-<td>Current concept API for mosaic MFS streaming.</td>
+<td>Current mosaic-specific streaming API; the optional raw-UVW density sidecar remains separate from projected gridding metadata.</td>
 </tr>
 <tr>
 <td><code>run_mtmfs</code></td>
 <td style="text-align: right;">Public</td>
-<td><code>casars-imager</code> MT-MFS path</td>
+<td><code>casars-imager</code> standard-gridder MT-MFS path</td>
 <td>Keep public</td>
-<td>Current concept API for MT-MFS.</td>
+<td>Current concept API for standard-gridder MT-MFS.</td>
+</tr>
+<tr>
+<td><code>run_mosaic_mtmfs_from_single_plane_stream</code> / <code>MosaicMtmfsVisibilityBlock</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> supported mosaic MT-MFS path</td>
+<td>Keep public</td>
+<td>Replayable first-slice mosaic MT-MFS boundary; shares <code>SinglePlaneStreamPass</code> and carries sample frequencies, projected mosaic metadata, and optional raw-UVW density input per block.</td>
+</tr>
+<tr>
+<td><code>plan_mosaic_mtmfs_direct_scratch</code> / <code>MosaicMtmfsDirectScratchPlan</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> memory planner and <code>casa-imaging</code> executor</td>
+<td>Keep public</td>
+<td>One shape/plane/worker-count formula prevents frontend and executor residency estimates from drifting; no dataset identity enters the estimate.</td>
 </tr>
 <tr>
 <td><code>standard_mfs_metal_device_available</code></td>
@@ -1011,13 +1055,20 @@ App code keeps the MS/source grouping and streaming orchestration.</p>
 </tbody>
 </table>
 <h3 id="casars-imager"><code>casars-imager</code><a class="headerlink" href="#casars-imager" title="Permanent link">&para;</a></h3>
-<p><code>casars-imager</code> still exports user-facing config, task contract, oracle,
-managed-output, and run-summary types. It no longer calls the old
+<p><code>casars-imager</code> still exports user-facing config, protocol-v3 task contract,
+oracle, managed-output, and run-summary types. It no longer calls the old
 route-specific standard-MFS public functions. It still owns substantial
 essentials/routed source shaping, density planning, routed visibility grouping,
 product assembly, and writer-policy code; physical MAIN-row selection now lives
 in <code>casa-ms</code>, and single-plane execution/product planning now lives in
 <code>casa-imaging</code>.</p>
+<p>Protocol v3 exposes <code>parallel</code>, <code>chanchunks</code>, shared imaging memory/prepare/
+row-block/read-ahead controls, and dirty-product FFT precision/backend policy.
+Diagnostic progress telemetry reports memory-ledger categories, source read
+bytes and bandwidth, producer/consumer overlap and blocking, worker/queue state,
+stage timing, and backend selection/fallback data. These are task/runtime
+contracts; the producer channel, FFT policy guard, and Apple resident-product
+implementation remain private.</p>
 <table>
 <thead>
 <tr>
@@ -1156,101 +1207,95 @@ phase-1 file list.</p>
 <tbody>
 <tr>
 <td>Public symbol-like items in expanded imaging scope</td>
-<td style="text-align: right;">397</td>
-<td style="text-align: right;">529</td>
-<td style="text-align: right;">+132</td>
+<td style="text-align: right;">623</td>
+<td style="text-align: right;">626</td>
+<td style="text-align: right;">+3</td>
 </tr>
 <tr>
 <td>Public fields in expanded imaging scope</td>
-<td style="text-align: right;">1,066</td>
-<td style="text-align: right;">1,108</td>
-<td style="text-align: right;">+42</td>
+<td style="text-align: right;">1,418</td>
+<td style="text-align: right;">1,429</td>
+<td style="text-align: right;">+11</td>
 </tr>
 <tr>
 <td><code>pub(crate)</code> symbol-like items in expanded imaging scope</td>
-<td style="text-align: right;">391</td>
-<td style="text-align: right;">403</td>
-<td style="text-align: right;">+12</td>
+<td style="text-align: right;">427</td>
+<td style="text-align: right;">467</td>
+<td style="text-align: right;">+40</td>
 </tr>
 <tr>
 <td>Private/internal symbol-like items in expanded imaging scope</td>
-<td style="text-align: right;">3,644</td>
-<td style="text-align: right;">3,643</td>
-<td style="text-align: right;">-1</td>
+<td style="text-align: right;">4,081</td>
+<td style="text-align: right;">4,310</td>
+<td style="text-align: right;">+229</td>
 </tr>
 <tr>
 <td>App-private functions in <code>casars-imager</code></td>
-<td style="text-align: right;">620</td>
-<td style="text-align: right;">556</td>
-<td style="text-align: right;">-64</td>
+<td style="text-align: right;">681</td>
+<td style="text-align: right;">713</td>
+<td style="text-align: right;">+32</td>
 </tr>
 <tr>
 <td>App standard-MFS density row helpers</td>
-<td style="text-align: right;">4</td>
 <td style="text-align: right;">2</td>
-<td style="text-align: right;">-2</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>App product-plane helpers</td>
-<td style="text-align: right;">5</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">-5</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>App cube-Briggs formula helpers</td>
-<td style="text-align: right;">7</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">-7</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>Legacy app <code>get_ms_values_into_*</code> helpers</td>
-<td style="text-align: right;">2</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">-2</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>Legacy app <code>VisibilitySourceBlock*</code> concrete types</td>
-<td style="text-align: right;">3</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">-3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>Old route-specific public standard-MFS runners/free functions</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">1</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">-5</td>
 </tr>
 <tr>
 <td>Public <code>StandardMfs*</code> backend payload subset</td>
-<td style="text-align: right;">17</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">10</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">-17</td>
 </tr>
 <tr>
 <td>Public <code>StandardMfsPlannedWeightedSample</code> fields</td>
-<td style="text-align: right;">13</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">-13</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>Rust code lines in expanded imaging scope</td>
-<td style="text-align: right;">128,748</td>
-<td style="text-align: right;">129,394</td>
-<td style="text-align: right;">+646</td>
+<td style="text-align: right;">145,410</td>
+<td style="text-align: right;">157,474</td>
+<td style="text-align: right;">+12,064</td>
 </tr>
 </tbody>
 </table>
-<p>The largest useful reduction is not raw SLOC; it is removing the old public
-function matrix as a crate boundary and deleting second app-local visibility
-row-block, row-selection, worker-plan, and single-plane planning
-representations. Raw public symbol/field counts are up because explicit domain contracts replaced
-private app logic: MS row/read plans, worker plans, single-plane
-execution/product/capability plans, PB product helpers, coordinate metadata,
-standard-MFS density row translation, product-plane helpers, cube-Briggs formula
-helpers, typed Hogbom outcomes, clean-control helpers, image-product set
-metadata, and the standard-MFS scalar/row/block/cache source facade. The old
-public backend payload subset is now fully demoted: the app no longer constructs
-or observes planned/routed/Metal backend IR directly.</p>
+<p>The current wave adds two public domain symbols while removing the generic
+single-plane mosaic block facade without replacement. Most growth is private or
+<code>pub(crate)</code> implementation for bounded replay, planner telemetry, exact-plan
+compaction, and Metal tile execution. The app still does not construct or
+observe planned/routed/Metal backend IR directly.</p>
 <h2 id="performance-smoke-snapshot">Performance Smoke Snapshot<a class="headerlink" href="#performance-smoke-snapshot" title="Permanent link">&para;</a></h2>
 <p>The current worktree and <code>origin/main</code> were run through the same
 <code>wave1-standard-mfs-dirty-smoke</code> CASA-vs-Rust workload with three repeats and

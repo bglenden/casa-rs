@@ -740,7 +740,7 @@
 
 <h1 id="imaging-dataflow-comparison">Imaging Dataflow Comparison<a class="headerlink" href="#imaging-dataflow-comparison" title="Permanent link">&para;</a></h1>
 <p>Truth class: exploratory descriptive
-Last reality check: 2026-05-14
+Last reality check: 2026-07-09
 Verification:
 - source inspection only for external CASA C++ and LibRA trees
 - <code>just docs-check</code></p>
@@ -807,14 +807,14 @@ Most near-term collapse pressure is therefore in the adapter/orchestration
 layer, not in the pure core boundary.</p>
 <div class="codehilite"><pre><span></span><code><span class="nt">flowchart</span><span class="w"> </span><span class="nt">TB</span>
 <span class="w">    </span><span class="nt">surface</span><span class="cp">[</span><span class="s2">&quot;Task/API surfaces&lt;br/&gt;Python mfs(), CLI/JSON, GUI task tab&quot;</span><span class="cp">]</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">runconfig</span><span class="cp">[</span><span class="s2">&quot;Canonical request validation and mode dispatch&lt;br/&gt;casars-imager::run_from_request()&quot;</span><span class="cp">]</span>
-<span class="w">    </span><span class="nt">runconfig</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">readms</span><span class="cp">[</span><span class="s2">&quot;Bounded MS source stream&lt;br/&gt;read_visibility_source_columns()&lt;br/&gt;DATA, FLAG, WEIGHT, WEIGHT_SPECTRUM, UVW&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">runconfig</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">readms</span><span class="cp">[</span><span class="s2">&quot;Bounded MS source stream&lt;br/&gt;shared read-ahead, at most two live blocks&lt;br/&gt;DATA, FLAG, WEIGHT, WEIGHT_SPECTRUM, UVW&quot;</span><span class="cp">]</span>
 <span class="w">    </span><span class="nt">readms</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">prep</span><span class="cp">[</span><span class="s2">&quot;Bounded visibility blocks&lt;br/&gt;MFS or cube adapters&lt;br/&gt;uvw, frequency, Stokes, PB metadata&quot;</span><span class="cp">]</span>
 <span class="w">    </span><span class="nt">prep</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">dispatch</span><span class="cp">[</span><span class="s2">&quot;Processing-mode dispatch&lt;br/&gt;adapter-owned control-flow split&quot;</span><span class="cp">]</span>
 
 <span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mfs</span><span class="cp">[</span><span class="s2">&quot;MFS imaging operations&lt;br/&gt;run_imaging()&lt;br/&gt;standard/W-term path and mosaic branch&quot;</span><span class="cp">]</span>
-<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mtmfs</span><span class="cp">[</span><span class="s2">&quot;MTMFS Taylor-term operations&lt;br/&gt;run_mtmfs()&lt;br/&gt;separate core entrypoint, standard gridder only&quot;</span><span class="cp">]</span>
-<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">cube</span><span class="cp">[</span><span class="s2">&quot;Standard cube consumers&lt;br/&gt;bounded one-plane stream adapters&lt;br/&gt;unsupported retained routes reject before MS reads&quot;</span><span class="cp">]</span>
-<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mcube</span><span class="cp">[</span><span class="s2">&quot;Mosaic cube consumers&lt;br/&gt;bounded one-plane stream adapters&lt;br/&gt;unsupported retained routes reject before MS reads&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mtmfs</span><span class="cp">[</span><span class="s2">&quot;MTMFS Taylor-term operations&lt;br/&gt;run_mtmfs() plus bounded mosaic stream&lt;br/&gt;standard and first-slice mosaic gridders&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">cube</span><span class="cp">[</span><span class="s2">&quot;Standard cube/cubedata consumers&lt;br/&gt;bounded row-block and slab adapters&lt;br/&gt;unsupported retained routes reject before MS reads&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mcube</span><span class="cp">[</span><span class="s2">&quot;Mosaic cube consumers&lt;br/&gt;bounded row-block and slab adapters&lt;br/&gt;unsupported retained routes reject before MS reads&quot;</span><span class="cp">]</span>
 
 <span class="w">    </span><span class="nt">cube</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mfs</span>
 <span class="w">    </span><span class="nt">mcube</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mfs</span>
@@ -822,7 +822,7 @@ layer, not in the pure core boundary.</p>
 <span class="w">    </span><span class="nt">mtmfs</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">weighting</span>
 <span class="w">    </span><span class="nt">weighting</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">stdproj</span><span class="cp">[</span><span class="s2">&quot;Standard/W projection gridding&lt;br/&gt;StandardGridder + WTermMode&lt;br/&gt;none, direct, wproject&quot;</span><span class="cp">]</span>
 <span class="w">    </span><span class="nt">weighting</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mosaicproj</span><span class="cp">[</span><span class="s2">&quot;Mosaic PB projection gridding&lt;br/&gt;MosaicGridderConfig + ScreenProjector&lt;br/&gt;homogeneous PB, beam buckets, pblimit&quot;</span><span class="cp">]</span>
-<span class="w">    </span><span class="nt">stdproj</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">fft</span><span class="cp">[</span><span class="s2">&quot;FFT and gridded image transforms&lt;br/&gt;centered_fft2 / centered_ifft2&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">stdproj</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">fft</span><span class="cp">[</span><span class="s2">&quot;FFT and gridded image transforms&lt;br/&gt;CPU backends or guarded Apple GPU resident finish&quot;</span><span class="cp">]</span>
 <span class="w">    </span><span class="nt">mosaicproj</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">fft</span>
 <span class="w">    </span><span class="nt">fft</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">normalize</span><span class="cp">[</span><span class="s2">&quot;Normalization and image products&lt;br/&gt;sumwt, PSF, residual, model, restored image&quot;</span><span class="cp">]</span>
 <span class="w">    </span><span class="nt">normalize</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">deconv</span><span class="cp">[</span><span class="s2">&quot;Deconvolution controller&lt;br/&gt;Cotton-Schwab major/minor loop&lt;br/&gt;Hogbom, Clark, Multiscale&quot;</span><span class="cp">]</span>
@@ -850,10 +850,59 @@ layer, not in the pure core boundary.</p>
   construction, masks, product writing, and bounded model-column writeback.
   That is a large adapter surface even though the pure core boundary is clean.</li>
 <li>The old retained full-visibility preparation route has been removed from
-  production dispatch. Standard MFS, W-projection, mosaic MFS, and supported
-  one-plane cube consumers must read through the bounded source stream; modes
-  without a stream consumer fail during planning before large visibility-column
-  reads.</li>
+  production dispatch. Standard MFS, W-projection, mosaic MFS, supported
+  standard/mosaic MT-MFS, and supported cube/cubedata/mosaic-cube consumers
+  must read through the bounded source stream; modes without a stream consumer
+  fail during planning before large visibility-column reads.</li>
+<li>Shared source read-ahead overlaps MS reads with downstream preparation for
+  standard MFS, mosaic MFS and MT-MFS replays, cube/cubedata, and mosaic cube.
+  The live-block control is currently capped at two and counts the block being
+  filled by the producer plus the block owned by the consumer. Its channel has
+  capacity <code>max_live_row_blocks - 2</code>, so the two-block case is a rendezvous and
+  cannot retain an additional queued block. Consumer failure cancels the
+  producer after any current bounded read, wakes a blocked send by dropping the
+  receiver, and preserves the original error. Full-slab spectral routes
+  default to one block and disable requested read-ahead when it would reduce
+  modeled plane residency or row locality.</li>
+<li>W-projection replay sends cached and newly read blocks through that same
+  bounded stream and one shared Metal dispatcher. Every chunk uses the
+  update-density and Metal-headroom partial-grid formula, then deterministic
+  host f64 cross-chunk reduction; there is no second streaming GPU kernel path
+  or dataset-selected accumulation policy.</li>
+<li>Cube shared-source concurrency is selected from the planned slab geometry,
+  exact source-cache bytes, per-plane working state, hardware capacity, and the
+  run-level memory target. Any selected multi-slab shape can use bounded source
+  reuse when that formula fits; the route is not tied to dataset identity or a
+  particular <code>chanchunks</code> value. Plans whose planes all fit use the ordinary
+  one-slab route.</li>
+<li>The supported mosaic MT-MFS slice is a replayable, single-MS MFS path with
+  <code>nterms &lt;= 2</code>, <code>gridder='mosaic'</code>, no W term, natural/uniform/Briggs
+  weighting, clean or dirty products, and optional PB/PB-corrected output.
+  Weight-density replay carries raw UVW separately from mosaic-projected UVW;
+  unsupported higher-term, W/AW, pointing, start-model, outlier, and multi-MS
+  combinations reject before visibility materialization.</li>
+<li>On Apple platforms, f32 standard and single-term mosaic dirty products can
+  keep FFT, correction, normalization, and peak reduction on the GPU. Mosaic
+  MT-MFS keeps its multi-plane input resident through the batched inverse FFT,
+  then performs Taylor correction and PB normalization on CPU. Explicit Metal
+  requests use the resident MPSGraph path when supported and fail closed on
+  backend errors; <code>auto</code> uses exact shape/batch/precision/placement input-boundary
+  movement, keeping host grids on CPU and Metal-shared grids on Metal. F64 work,
+  unsupported shapes, unavailable devices, or resident command failures use the
+  CPU fallback only under <code>auto</code>. MT-MFS normally accumulates into Metal-shared
+  grids on the direct path; bounded replay into host grids is an <code>auto</code> recovery
+  route, not an MT-MFS storage restriction.</li>
+<li>Large mosaic MFS and MT-MFS can accumulate directly into the Metal-shared FFT
+  input through disjoint output-owned tiles. Standard MFS currently retains its
+  established 256-pixel tiles; MT-MFS derives tile edge and count from grid
+  geometry, kernel support, Taylor terms, requested workers, and available
+  scratch memory. MT-MFS keeps f64/Complex64 Taylor moments per complete plan
+  key and grids all PSF/residual planes in one projector traversal, narrowing
+  only in the bounded f32 tile. Its compaction and routing are group/chunk
+  bounded; the chunk limit comes from exact worker-tile storage, compact record
+  layout, and a geometry-derived route-copy bound rather than a dataset
+  threshold. PB correction and normalization remain image-domain operations
+  after the FFT; there is no normal-path host full-grid pack/upload path.</li>
 <li>Gridder terminology is split across Python task input (<code>standard</code>,
   <code>wproject</code>, <code>mosaic</code>, <code>awproject</code>, <code>awp2</code>, <code>awphpg</code>) and the Rust core
   (<code>GridderMode::Standard</code>, <code>GridderMode::Mosaic</code>, plus <code>WTermMode</code>). That split
@@ -1005,10 +1054,10 @@ threaded resamplers.</p>
 </tr>
 <tr>
 <td>MS selection and column I/O</td>
-<td><code>casars-imager</code> bounded source stream readers</td>
+<td><code>casars-imager</code> bounded source stream plus shared producer/consumer read-ahead</td>
 <td><code>SynthesisImager::selectData</code>, <code>VisibilityIterator</code>, helpers</td>
 <td><code>ReadMSAlgorithm</code>, per-job MS staging</td>
-<td>I/O overlap work belongs here, before gridder optimization.</td>
+<td>Read/prepare overlap is implemented with an exact two-live-block ceiling and mode-specific planner guards.</td>
 </tr>
 <tr>
 <td>Sample shape</td>
@@ -1040,17 +1089,17 @@ threaded resamplers.</p>
 </tr>
 <tr>
 <td>MTMFS path</td>
-<td><code>run_mtmfs()</code> with standard gridder only</td>
+<td><code>run_mtmfs()</code> for standard gridding; <code>run_mosaic_mtmfs_from_single_plane_stream()</code> for the supported <code>nterms &lt;= 2</code> mosaic slice</td>
 <td><code>MultiTermFT</code>, multi-term image stores, deconvolver/normalizer helpers</td>
 <td>wide-band and multi-term transform/sky-model classes</td>
-<td>Rust currently has a narrow mode; expansion should avoid duplicating product-writing branches.</td>
+<td>The mosaic path reuses the bounded single-plane stream and shared product writer rather than adding retained visibility state.</td>
 </tr>
 <tr>
 <td>Cube path</td>
-<td>bounded one-plane stream consumers where implemented; unsupported retained routes reject before visibility reads</td>
+<td>bounded row-block/slab consumers for supported cube, cubedata, and mosaic-cube modes; unsupported retained routes reject before visibility reads</td>
 <td>parallel cube helper and cube C++ algorithms</td>
 <td>SPW partitioning and image-solver workflow</td>
-<td>Multi-channel cube still needs a stream-native runner rather than a retained full-materialization fallback.</td>
+<td>Shared read-ahead and spectral residency guards now apply here; remaining work is unsupported mode breadth, not a retained full-materialization fallback.</td>
 </tr>
 <tr>
 <td>Mosaic/A/AW path</td>
@@ -1082,10 +1131,10 @@ threaded resamplers.</p>
 </tr>
 <tr>
 <td>Parallel/resource model</td>
-<td>mostly in-process today</td>
+<td>protocol-v3 local controls, bounded read-ahead, CPU workers, and guarded Apple Metal product finishing</td>
 <td>serial and parallel helper variants, MPI release path</td>
 <td>local, Slurm, HTCondor, GPU/no-GPU job modes</td>
-<td>LibRA is the better contrast for resource scheduling than CASA C++.</td>
+<td>Diagnostics report live-block, overlap, bandwidth, queue/worker, memory, and backend/fallback facts; distributed execution is still outside the current Rust runtime.</td>
 </tr>
 </tbody>
 </table>
@@ -1126,22 +1175,26 @@ hypothesis is:</p>
 <h2 id="optimization-map">Optimization Map<a class="headerlink" href="#optimization-map" title="Permanent link">&para;</a></h2>
 <p>Once the shape is stable, this same diagram can be annotated with timings and
 resource ownership.</p>
-<p>Likely <code>casa-rs</code> measurement points:</p>
+<p>Current <code>casa-rs</code> measurement points include:</p>
 <ul>
-<li>MS column loads in the bounded source stream readers</li>
+<li>MS column loads, source bytes, effective bandwidth, producer/consumer
+  blocking, and read/prepare overlap in the bounded source stream readers</li>
 <li>weighting density construction</li>
 <li>standard gridder and W/screen projector sample loops</li>
-<li>FFT and normalization</li>
+<li>CPU or Apple GPU-resident FFT, correction, normalization, transfer, device,
+  and fallback timings</li>
 <li>residual refresh/degrid during major cycles</li>
 <li>CASA image-table product writes and preview generation</li>
 <li>optional <code>MODEL_DATA</code> writes</li>
 </ul>
-<p>Likely optimization experiments:</p>
+<p>Current and next optimization experiments:</p>
 <ul>
 <li>streaming or chunked prepared batches to reduce peak memory</li>
-<li>overlap MS column reads with weighting or gridding</li>
+<li>tune shared bounded read-ahead only where overlap exceeds its residency and
+  locality cost</li>
 <li>Rayon or scoped-worker parallelism behind gridder/projector traits</li>
-<li>GPU kernels behind a projection-plan boundary, not inside task routing</li>
+<li>extend the guarded Apple GPU resident-product boundary only after medium and
+  large product-equivalence and no-slowdown evidence</li>
 <li>separate product emission workers after core results are available</li>
 <li>reuse of LibRA-style resampler/worklet ideas for grid/degrid hot loops</li>
 </ul>
@@ -1149,8 +1202,8 @@ resource ownership.</p>
 <p>The diagrams were checked against local source snapshots rather than inferred
 only from package names. For circulation, the relevant repo anchors are:</p>
 <ul>
-<li><code>casa-rs</code>: <a href="https://github.com/bglenden/casa-rs.git">https://github.com/bglenden/casa-rs.git</a> at
-  <code>93ae5633c5533a2de65598bc64ba4c9bfa1fd308</code></li>
+<li><code>casa-rs</code>: <a href="https://github.com/bglenden/casa-rs.git">https://github.com/bglenden/casa-rs.git</a>, PR #361 wave branch;
+  exact implementation and evidence commits are recorded in the PR closeout</li>
 <li>CASA C++/CASA6: <a href="https://open-bitbucket.nrao.edu/scm/casa/casa6.git">https://open-bitbucket.nrao.edu/scm/casa/casa6.git</a> at
   <code>61020062cee290f5466cffed5ec5032e0c7a3434</code></li>
 <li>LibRA fork: <a href="https://github.com/bglenden/libRA">https://github.com/bglenden/libRA</a> at

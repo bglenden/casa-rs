@@ -1627,9 +1627,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 375</li>
+<li>Concepts: 379</li>
 <li>Surfaces: 42 (40 task, 2 session)</li>
-<li>Surface bindings: 745</li>
+<li>Surface bindings: 749</li>
 </ul>
 <table>
 <thead>
@@ -1670,9 +1670,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
 <td>task</td>
-<td style="text-align: right;">2</td>
+<td style="text-align: right;">3</td>
 <td><code>imager</code></td>
-<td style="text-align: right;">63</td>
+<td style="text-align: right;">67</td>
 <td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
 </tr>
 <tr>
@@ -3102,7 +3102,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>2</code></li>
+<li>Contract version: <code>3</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
@@ -3622,6 +3622,38 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"auto"</code>; optional</td>
 <td>Stages</td>
 <td>Backend policy for standard/MFS-compatible gridding stages</td>
+</tr>
+<tr>
+<td><code>parallel</code></td>
+<td><code>parameter.parallel@r1</code></td>
+<td><code>optional&lt;bool&gt; (states: none)</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Stages</td>
+<td>Permit planned local parallel or accelerated execution; false forces the serial CPU comparison surface</td>
+</tr>
+<tr>
+<td><code>imaging_read_ahead_blocks</code></td>
+<td><code>parameter.imaging_read_ahead_blocks@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: none)</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Stages</td>
+<td>Maximum number of live source row blocks used for bounded read and prepare overlap<br><em>Surface:</em> The runtime rejects zero; Auto defaults are selected from mode and memory geometry.</td>
+</tr>
+<tr>
+<td><code>imaging_fft_backend</code></td>
+<td><code>parameter.imaging_fft_backend@r1</code></td>
+<td><code>choice (4 values)</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Stages</td>
+<td>Backend policy for dirty and residual product FFT transforms</td>
+</tr>
+<tr>
+<td><code>chanchunks</code></td>
+<td><code>parameter.chanchunks@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: none)</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Stages</td>
+<td>Requested number of top-level spectral channel chunks; the memory planner may select a larger active plane group when it fits<br><em>Surface:</em> Applies to cube and cubedata imaging; the runtime rejects zero and MFS use.</td>
 </tr>
 </tbody>
 </table>

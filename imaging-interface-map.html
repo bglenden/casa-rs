@@ -319,7 +319,7 @@
       CASA semantics or performance.
     </p>
     <p class="stamp">
-      Snapshot date: 2026-07-02. Evidence paths are relative to the casa-rs
+      Snapshot date: 2026-07-09. Evidence paths are relative to the casa-rs
       repository root.
     </p>
   </header>
@@ -407,6 +407,17 @@
       imaging executes the hottest shared work, and app assembles persisted
       products."
     </p>
+    <div class="note">
+      The current performance path now shares one bounded source read-ahead
+      primitive across standard MFS, mosaic MFS and MT-MFS replay, cube,
+      cubedata, and mosaic cube. The public control is an exact live-block
+      ceiling, currently capped at two: one producer-owned block plus one
+      consumer-owned block. Queue capacity is <code>max_live - 2</code>, so the
+      two-block path uses a rendezvous channel and cannot retain a third block.
+      Protocol v3 exposes that control together with local parallel/chanchunks,
+      source-memory planning, FFT policy, and diagnostic memory/I/O/worker/GPU
+      telemetry.
+    </div>
 
     <div class="diagram" aria-label="Current detailed architecture flow">
       <svg viewBox="0 0 1120 500" role="img">
@@ -1368,8 +1379,9 @@
               <code>GridderMode</code>, <code>WTermMode</code>,
               <code>Deconvolver</code>, <code>run_imaging</code>,
               <code>run_mosaic_mfs_from_single_plane_stream</code>,
-              <code>run_mtmfs</code>, and several standard-MFS streaming
-              variants.
+              <code>run_mtmfs</code>,
+              <code>run_mosaic_mtmfs_from_single_plane_stream</code>, and the
+              plan/session-based standard-MFS facade.
             </td>
             <td>
               Mostly correct: fixed-tile planning, CPU/Metal executors,
@@ -1556,11 +1568,12 @@
           <tr>
             <td>Standard-MFS streaming variants</td>
             <td>
-              Public APIs expose weighted streaming, planned run blocks,
-              planned source blocks, routed visibility runs, dirty accumulator,
-              and Metal-cache-specific entrypoints.
+              Route-specific weighted, planned-block, routed-run, dirty, and
+              Metal-cache implementations are private behind
+              <code>StandardMfsPlan</code>, <code>StandardMfsDirtyPlan</code>,
+              and <code>StandardMfsCleanSession</code>.
             </td>
-            <td><span class="tag move">medium-high</span></td>
+            <td><span class="tag keep">reduced</span></td>
             <td>
               Public bounded <code>VisibilitySource</code> plus private
               <code>StandardMfs*</code> backend IR.
@@ -1597,8 +1610,12 @@
           <tr>
             <td>CPU worker and Metal execution</td>
             <td>
-              Core execution internals are mostly private, but app policy and
-              cache-oriented public entrypoints still leak backend details.
+              Core execution internals and grouped-input caches are private.
+              Protocol-v3 policy selects CPU workers or Apple Metal, while
+              eligible f32 standard/mosaic dirty products may stay resident
+              through FFT, correction, normalization, and peak reduction.
+              Auto keeps host grids on CPU and Metal-shared grids on Metal;
+              resident failures use the shared CPU product finisher.
             </td>
             <td><span class="tag move">medium</span></td>
             <td><code>ExecutionPlan</code> plus public capability query</td>
@@ -2695,7 +2712,8 @@
         <a href="../crates/casa-imaging/src/lib.rs"><code>StandardMfsCleanSession</code></a>,
         <a href="../crates/casa-imaging/src/lib.rs"><code>run_imaging</code></a>,
         <a href="../crates/casa-imaging/src/lib.rs"><code>run_mosaic_mfs_from_single_plane_stream</code></a>,
-        <a href="../crates/casa-imaging/src/lib.rs"><code>run_mtmfs</code></a>.
+        <a href="../crates/casa-imaging/src/lib.rs"><code>run_mtmfs</code></a>,
+        <a href="../crates/casa-imaging/src/lib.rs"><code>run_mosaic_mtmfs_from_single_plane_stream</code></a>.
       </li>
       <li>
         MS visibility and spectral APIs:

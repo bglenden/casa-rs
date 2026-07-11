@@ -634,6 +634,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#runtime-effects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime Effects
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#theory-tutorial-cross-checks" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -674,8 +685,9 @@
 
 <h1 id="imaging-effects-inventory">Imaging Effects Inventory<a class="headerlink" href="#imaging-effects-inventory" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-05-02
+Last reality check: 2026-07-09
 Verification:
+- <code>just docs-check</code>
 - <code>cargo test -p casa-imaging mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule</code>
 - <code>cargo test -p casa-imaging mosaic_clean_reduces_residual_peak_and_tracks_pb_weight_image</code>
 - <code>cargo test -p casars-imager pbcor_products_apply_primary_beam_cutoff</code>
@@ -745,6 +757,24 @@ pinned datasets such as <code>refim_alma_mosaic.ms</code>, <code>papersky_mosaic
 <td>spectral cube imaging with frequency-dependent PB and common beams</td>
 <td><code>casars-imager</code> cube preparation plus <code>casa-imaging</code> mosaic dirty path</td>
 <td>implemented for the #163 two-channel M100 dirty probe; full 70-channel scale-up remains issue scope</td>
+</tr>
+<tr>
+<td>CASA <code>MultiTermFT</code> over mosaic/PB projection</td>
+<td>Taylor-term density, PSF, residual, model, restoration, PB correction, and alpha products</td>
+<td><code>run_mosaic_mtmfs_from_single_plane_stream</code> with raw-UVW density sidecars and mosaic metadata replay</td>
+<td>first supported slice implemented for one MS, MFS, <code>nterms &lt;= 2</code>, no W term, natural/uniform/Briggs weighting, user masks, and clean or dirty execution; higher terms and W/AW/pointing/startmodel/outlier/multi-MS combinations reject during planning</td>
+</tr>
+<tr>
+<td>Visibility source traversal</td>
+<td>overlap source reads with row preparation without changing sample order or residency bounds</td>
+<td>shared <code>stream_imaging_source_read_ahead_blocks</code> producer/consumer path</td>
+<td>standard MFS, mosaic MFS/MT-MFS replay, cube/cubedata, and mosaic cube share the path; the current maximum is two live blocks (one producer plus one consumer), with a zero-capacity rendezvous queue, cooperative producer cancellation after consumer failure, and slab guards when read-ahead would reduce residency/locality</td>
+</tr>
+<tr>
+<td>Dirty-product gridding, FFT, and normalization</td>
+<td>accumulate, transform, and normalize PSF/residual/weight grids without changing product semantics</td>
+<td>CPU finishers plus guarded Apple MPSGraph resident standard/mosaic finishers and direct disjoint-tile mosaic MFS/MT-MFS accumulation</td>
+<td>eligible standard and single-term mosaic f32 products may remain Metal-shared through correction, normalization, and peak reduction; MT-MFS retains its input through the batched inverse FFT, then corrects and normalizes on CPU. Exact-plan MT-MFS grouping keeps f64/Complex64 moments until the f32 tile and bounds compaction/routing scratch with an image-shape and plane-count formula. Auto compares exact input-boundary movement: host-resident products remain on CPU while Metal-shared products avoid host materialization; unsupported resident work returns to the host path, explicit Metal fails closed, and f64 remains CPU</td>
 </tr>
 <tr>
 <td>CASA <code>pbcor</code> products</td>
@@ -830,6 +860,14 @@ pinned datasets such as <code>refim_alma_mosaic.ms</code>, <code>papersky_mosaic
 <td>first ALMA #161 proof generated; VLA #169 proof uses the same panel harness</td>
 </tr>
 <tr>
+<td>Mosaic MT-MFS first slice</td>
+<td>mosaic phase/PB metadata plus separate raw-UVW density coordinates are replayed from bounded row blocks</td>
+<td>homogeneous mosaic projector with natural/uniform/Briggs weighting and CASA-compatible f32 density/Taylor arithmetic</td>
+<td>MT-MFS dirty and clean paths for <code>nterms &lt;= 2</code>; unsupported wider projection/control combinations reject before retained visibility materialization</td>
+<td>Taylor-term <code>.psf</code>, <code>.residual</code>, <code>.model</code>, <code>.image</code>, <code>.sumwt</code>, PB/PB-corrected products, and alpha/alpha-error products where requested</td>
+<td>CASA oracle products are the correctness gate for #262; large ALMA mosaic MT-MFS is the bounded-memory/performance sentinel</td>
+</tr>
+<tr>
 <td>Mosaic cube</td>
 <td>phase/PB are channel aware in the dirty multi-MS route</td>
 <td>ALMA/ACA HetArray screen sizing and PB normalization now match the #163 CASA probe below 1% max image error</td>
@@ -847,6 +885,32 @@ pinned datasets such as <code>refim_alma_mosaic.ms</code>, <code>papersky_mosaic
 </tr>
 </tbody>
 </table>
+<h2 id="runtime-effects">Runtime Effects<a class="headerlink" href="#runtime-effects" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Imager task protocol v3 carries <code>parallel</code>, <code>chanchunks</code>, shared source
+  memory/prepare/row-block/read-ahead controls, and dirty-product FFT precision
+  and backend policy. <code>parallel=false</code> forces one source block, one prepare/grid
+  worker, CPU acceleration, and RustFFT for a reproducible serial comparison.</li>
+<li>Diagnostic progress reports planned/tracked/high-water memory, source bytes,
+  effective read bandwidth, producer/consumer blocked time and overlap, queue
+  and worker state, stage timings, GPU eligibility/selection, device/host bytes,
+  command/kernel time, and CPU fallback reasons.</li>
+<li>Apple GPU product finishing is an execution choice, not a product-mode fork.
+  Auto selects resident MPSGraph for supported f32 dirty-product grids already
+  planned in Metal-shared storage; host-resident grids remain on CPU. Explicit
+  Metal bypasses the Auto placement choice, while unsupported or failed
+  resident work uses the same CPU product path.</li>
+<li>W-projection Auto planning derives plane count from selected projected W,
+  CASA's 1.05 W-range safety factor, and rectangular field angle without a
+  fixed plane cap or longest-baseline proxy. Full-grid CPU density and W-project
+  worker paths compare exact update, zero-fill, and merge cell touches instead
+  of switching at a raw sample count.</li>
+<li>W-projection in-memory and replay inputs share one Metal partial-grid
+  dispatcher. Partial count follows update density and live device headroom;
+  replay combines chunk results in deterministic host f64 order and narrows
+  once, while the source stream overlaps cached and newly read blocks under the
+  same two-live-block residency bound.</li>
+</ul>
 <h2 id="theory-tutorial-cross-checks">Theory / Tutorial Cross-Checks<a class="headerlink" href="#theory-tutorial-cross-checks" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Faceting requires phase offsets and baseline recomputation per facet
