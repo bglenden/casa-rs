@@ -138,6 +138,13 @@ package struct PrototypePythonCell: Identifiable, Codable, Equatable {
 package enum PrototypeVisualizationKind: String, Codable, Equatable {
     case measurementSetPlot = "measurement-set-plot"
     case imageView = "image-view"
+
+    package var sourceSurfaceTitle: String {
+        switch self {
+        case .measurementSetPlot: "MeasurementSet Explorer"
+        case .imageView: "Image Explorer"
+        }
+    }
 }
 
 package struct PrototypeExplorerParameter: Identifiable, Codable, Equatable {
@@ -151,7 +158,6 @@ package struct PrototypeNotebookVisualizationRevision: Identifiable, Codable, Eq
     package var sequence: Int
     package var title: String
     package var kind: PrototypeVisualizationKind
-    package var sourceSurface: String
     package var parameters: [PrototypeExplorerParameter]
     package var assetPath: String
 
@@ -160,7 +166,6 @@ package struct PrototypeNotebookVisualizationRevision: Identifiable, Codable, Eq
         sequence: Int,
         title: String,
         kind: PrototypeVisualizationKind,
-        sourceSurface: String,
         parameters: [PrototypeExplorerParameter],
         assetPath: String
     ) {
@@ -168,7 +173,6 @@ package struct PrototypeNotebookVisualizationRevision: Identifiable, Codable, Eq
         self.sequence = sequence
         self.title = title
         self.kind = kind
-        self.sourceSurface = sourceSurface
         self.parameters = parameters
         self.assetPath = assetPath
     }
@@ -357,7 +361,6 @@ package enum PrototypePythonFixtureAdapter {
                     sequence: 1,
                     title: "TW Hya · amplitude vs UV distance",
                     kind: .measurementSetPlot,
-                    sourceSurface: "MeasurementSet Explorer",
                     parameters: [
                         PrototypeExplorerParameter(id: "x-axis", label: "X axis", value: "UV distance"),
                         PrototypeExplorerParameter(id: "y-axis", label: "Y axis", value: "Amplitude"),
@@ -374,7 +377,6 @@ package enum PrototypePythonFixtureAdapter {
                     sequence: 1,
                     title: "TW Hya · continuum image",
                     kind: .imageView,
-                    sourceSurface: "Image Explorer",
                     parameters: [
                         PrototypeExplorerParameter(id: "plane", label: "Plane", value: "0"),
                         PrototypeExplorerParameter(id: "stretch", label: "Stretch", value: "Asinh"),

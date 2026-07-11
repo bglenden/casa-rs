@@ -5047,7 +5047,6 @@ public final class WorkbenchStore: ObservableObject {
             sequence: sequence,
             title: session.title,
             kind: session.kind,
-            sourceSurface: session.kind == .measurementSetPlot ? "MeasurementSet Explorer" : "Image Explorer",
             parameters: session.parameters,
             assetPath: "notebooks/assets/explorers/\(visualizationID)/r\(sequence).png"
         )

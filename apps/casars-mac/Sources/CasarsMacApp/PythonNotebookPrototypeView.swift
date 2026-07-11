@@ -103,7 +103,7 @@ struct PythonNotebookPrototypeView: View {
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(revision.title).workbenchFont(.subheadline, weight: .semibold).lineLimit(1)
-                        Text("Saved from \(revision.sourceSurface) · revision \(revision.sequence)")
+                        Text("Saved from \(revision.kind.sourceSurfaceTitle) · revision \(revision.sequence)")
                             .workbenchFont(.caption2)
                             .foregroundStyle(.secondary)
                             .accessibilityIdentifier("notebookVisualization.revisionCount.\(visualization.id)")
@@ -557,7 +557,6 @@ struct PythonNotebookPrototypeView: View {
                         sequence: 0,
                         title: session.title,
                         kind: session.kind,
-                        sourceSurface: explorerSurfaceTitle,
                         parameters: session.parameters,
                         assetPath: "fixture://unsaved"
                     ))
