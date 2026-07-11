@@ -7,6 +7,7 @@ import Foundation
 /// task-provider, or parameter-profile contracts.
 package enum WorkbenchPrototypeKind: String, Codable, Equatable {
     case notebook
+    case python
 }
 
 package enum NotebookPrototypeScenario: String, Codable, Equatable {

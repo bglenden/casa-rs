@@ -186,7 +186,7 @@ struct EmptyWorkbenchPanel: View {
                     Label("Open Project Directory", systemImage: "folder")
                 }
                 .accessibilityIdentifier("empty.openProject")
-                .disabled(store.isNotebookPrototypeRuntime)
+                .disabled(store.isPrototypeRuntime)
 
                 Button {
                     if let url = TutorialPackOpenPanel.choosePack() {
@@ -196,7 +196,7 @@ struct EmptyWorkbenchPanel: View {
                     Label("Open Tutorial Pack", systemImage: "book")
                 }
                 .accessibilityIdentifier("empty.openTutorialPack")
-                .disabled(store.isNotebookPrototypeRuntime)
+                .disabled(store.isPrototypeRuntime)
 
                 Button {
                     store.openFixtureProject()
@@ -204,7 +204,7 @@ struct EmptyWorkbenchPanel: View {
                     Label("Open Demo Project", systemImage: "shippingbox")
                 }
                 .accessibilityIdentifier("empty.openDemoProject")
-                .disabled(store.isNotebookPrototypeRuntime)
+                .disabled(store.isPrototypeRuntime)
             }
 
             if !store.state.lastErrors.isEmpty {
@@ -9719,6 +9719,14 @@ struct PythonPanel: View {
     @ObservedObject var store: WorkbenchStore
 
     var body: some View {
+        if store.isPythonPrototypeRuntime {
+            PythonNotebookPrototypeView(store: store)
+        } else {
+            legacyFixturePanel
+        }
+    }
+
+    private var legacyFixturePanel: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 PanelHeader(title: "Python", subtitle: "Dual-ported fixture terminal with captured matplotlib previews")

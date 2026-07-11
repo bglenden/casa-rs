@@ -212,7 +212,10 @@ final class CasarsMacUITests: XCTestCase {
             unacceptedIssues.append(
                 "\(issue.compactDescription)"
                     + " [type=\(issue.auditType), identifier=\(element?.identifier ?? "<none>"),"
-                    + " label=\(element?.label ?? "<none>")]"
+                    + " elementType=\(String(describing: element?.elementType)),"
+                    + " frame=\(String(describing: element?.frame)),"
+                    + " label=\(element?.label ?? "<none>"),"
+                    + " value=\(String(describing: element?.value))]"
             )
             return true
         }
@@ -221,6 +224,119 @@ final class CasarsMacUITests: XCTestCase {
             "Unaccepted accessibility audit issues:\n\(unacceptedIssues.joined(separator: "\n"))"
         )
         assertZeroProductionBoundaryCalls()
+    }
+
+    func testPythonPrototypeRunPlotRegenerateInsertAndIsolation() throws {
+        launchPythonPrototype()
+
+        XCTAssertEqual(try accessibilityValue("pythonPrototype.kernelState"), "ready")
+        XCTAssertEqual(try accessibilityValue("pythonPrototype.boundaryAudit"), "0")
+        XCTAssertTrue(try require("pythonPrototype.plot.python-plot-1").exists)
+        XCTAssertTrue(try require("pythonPrototype.artifact.png").exists)
+        XCTAssertTrue(try require("pythonPrototype.artifact.svg").exists)
+        XCTAssertEqual(try accessibilityValue("pythonPrototype.revisionCount"), "1")
+
+        try require("pythonPrototype.regenerate").click()
+        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.revisionCount", containing: "2"))
+        try require("pythonPrototype.insert").click()
+        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.insertedPlotCount", containing: "1"))
+
+        try require("pythonPrototype.run").click()
+        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.kernelState", containing: "running"))
+        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.kernelState", containing: "ready"))
+        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.revisionCount", containing: "3"))
+        assertZeroPythonProductionBoundaryCalls()
+    }
+
+    func testPythonPrototypeFailureEditAndRetry() throws {
+        launchPythonPrototype(scenario: "failure")
+
+        XCTAssertTrue(
+            app.staticTexts["error: RuntimeError: fixture: channel selection is empty"]
+                .waitForExistence(timeout: 5)
+        )
+        let repaired = """
+        print("checking continuum selection", flush=True)
+        print("continuum selection repaired")
+        """
+        replaceText("pythonPrototype.editor", with: repaired)
+        try require("pythonPrototype.run").click()
+        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.kernelState", containing: "ready"))
+        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.revision.3", containing: "succeeded"))
+        assertZeroPythonProductionBoundaryCalls()
+    }
+
+    func testPythonPrototypeNonresponsiveInterruptAndRestart() throws {
+        launchPythonPrototype(scenario: "nonresponsive")
+
+        XCTAssertEqual(try accessibilityValue("pythonPrototype.kernelState"), "running")
+        try require("pythonPrototype.stop").click()
+        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.kernelState", containing: "restart-required"))
+        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.revision.2", containing: "interrupted"))
+        try require("pythonPrototype.restart").click()
+        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.kernelState", containing: "ready"))
+        assertZeroPythonProductionBoundaryCalls()
+    }
+
+    func testPythonPrototypeAIExactCodeApprovalInvalidatesAfterEdit() throws {
+        launchPythonPrototype()
+
+        try require("pythonPrototype.cell.python-cell-ai").click()
+        XCTAssertEqual(try accessibilityValue("pythonPrototype.approvalState"), "required")
+        XCTAssertFalse(try require("pythonPrototype.run").isEnabled)
+        try require("pythonPrototype.approve").click()
+        XCTAssertEqual(try accessibilityValue("pythonPrototype.approvalState"), "approved")
+        XCTAssertTrue(try require("pythonPrototype.run").isEnabled)
+
+        let edited = try textValue(try require("pythonPrototype.editor")) + "\n# user edit invalidates approval"
+        replaceText("pythonPrototype.editor", with: edited)
+        XCTAssertEqual(try accessibilityValue("pythonPrototype.approvalState"), "required")
+        XCTAssertFalse(try require("pythonPrototype.run").isEnabled)
+        assertZeroPythonProductionBoundaryCalls()
+    }
+
+    func testWaveTwoPythonAccessibilityAudit() throws {
+        launchPythonPrototype()
+        let documentScroll = app.scrollViews.firstMatch
+        XCTAssertTrue(documentScroll.exists)
+        documentScroll.scroll(byDeltaX: 0, deltaY: -180)
+        var unacceptedIssues: [String] = []
+        try app.performAccessibilityAudit { issue in
+            if issue.auditType.contains(.contrast),
+               (issue.element?.label == "casa-rs Workbench"
+                   || issue.element?.value as? String == "casa-rs Workbench")
+            {
+                return true
+            }
+            if ["split.resizeHandle", "central.tab.plus"].contains(issue.element?.identifier) {
+                return true
+            }
+            if issue.element?.elementType == .group || issue.element?.elementType == .touchBar {
+                return true
+            }
+            if issue.element?.elementType == .popUpButton,
+               issue.element?.label == "emoji & symbols"
+            {
+                // System Touch Bar candidate control exposed only while the
+                // TextEditor owns focus; it is outside the app hierarchy.
+                return true
+            }
+            let element = issue.element
+            unacceptedIssues.append(
+                "\(issue.compactDescription)"
+                    + " [type=\(issue.auditType), identifier=\(element?.identifier ?? "<none>"),"
+                    + " elementType=\(String(describing: element?.elementType)),"
+                    + " frame=\(String(describing: element?.frame)),"
+                    + " label=\(element?.label ?? "<none>"),"
+                    + " value=\(String(describing: element?.value))]"
+            )
+            return true
+        }
+        XCTAssertTrue(
+            unacceptedIssues.isEmpty,
+            "Unaccepted Python prototype accessibility issues:\n\(unacceptedIssues.joined(separator: "\n"))"
+        )
+        assertZeroPythonProductionBoundaryCalls()
     }
 
     func testProductionNotebookPersistsCompleteMarkdownAndReconcilesExternalEdit() throws {
@@ -369,6 +485,21 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(app.buttons["dock.mode.notebooks"].exists)
     }
 
+    private func launchPythonPrototype(scenario: String = "happy-path") {
+        app = XCUIApplication()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "--show-prototype", "python",
+            "--prototype-state", scenario,
+        ]
+        app.launch()
+        XCTAssertTrue(
+            app.windows["casa-rs Workbench"].waitForExistence(timeout: 10),
+            app.debugDescription
+        )
+        XCTAssertTrue(element("pythonPrototype.kernelState").waitForExistence(timeout: 5))
+    }
+
     private func require(_ identifier: String, timeout: TimeInterval = 5) throws -> XCUIElement {
         let result = element(identifier)
         XCTAssertTrue(result.waitForExistence(timeout: timeout), "Missing accessibility identifier \(identifier)\n\(app.debugDescription)")
@@ -482,6 +613,12 @@ final class CasarsMacUITests: XCTestCase {
 
     private func assertZeroProductionBoundaryCalls() {
         let audit = app.descendants(matching: .any).matching(identifier: "notebook.boundaryAudit").firstMatch
+        XCTAssertTrue(audit.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertEqual(audit.value as? String ?? audit.label, "0")
+    }
+
+    private func assertZeroPythonProductionBoundaryCalls() {
+        let audit = element("pythonPrototype.boundaryAudit")
         XCTAssertTrue(audit.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertEqual(audit.value as? String ?? audit.label, "0")
     }

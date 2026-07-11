@@ -2713,6 +2713,8 @@ public struct WorkbenchState: Codable, Equatable {
     package var scientificNotebooks: ScientificNotebookProjectState?
     /// Ephemeral fixture projection present only for the notebook interaction prototype.
     package var prototypeNotebook: PrototypeScientificNotebookProjection?
+    /// Ephemeral fixture projection present only for the Wave 2 Python interaction prototype.
+    package var prototypePython: PrototypePythonNotebookProjection?
     public var activeTaskID: String
     public var taskUISchemas: [String: TaskUISchema]
     public var parameterSessions: [String: SurfaceParameterSession]
@@ -2785,6 +2787,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.tutorialPack = tutorialPack
         scientificNotebooks = nil
         prototypeNotebook = nil
+        prototypePython = nil
         self.activeTaskID = activeTaskID
         self.taskUISchemas = taskUISchemas
         self.parameterSessions = parameterSessions
@@ -2853,8 +2856,16 @@ public struct WorkbenchState: Codable, Equatable {
         prototypeNotebook != nil
     }
 
+    package var isPythonPrototype: Bool {
+        prototypePython != nil
+    }
+
+    package var isPrototype: Bool {
+        isNotebookPrototype || isPythonPrototype
+    }
+
     public var isDemoProject: Bool {
-        project.source.isDemo && !isNotebookPrototype
+        project.source.isDemo && !isPrototype
     }
 }
 
@@ -2906,6 +2917,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var activeProjectSource: ProjectSource
     public var tutorialPack: DebugTutorialPackSnapshot?
     package var prototypeNotebook: DebugPrototypeScientificNotebookSnapshot?
+    package var prototypePython: DebugPrototypePythonNotebookSnapshot?
     public var scientificNotebook: DebugScientificNotebookSnapshot?
     public var discoveredDatasets: [String]
     public var probeDiagnostics: [String]
@@ -2943,6 +2955,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         activeProjectSource = state.project.source
         tutorialPack = state.tutorialPack.map(DebugTutorialPackSnapshot.init(context:))
         prototypeNotebook = state.prototypeNotebook.map(DebugPrototypeScientificNotebookSnapshot.init(state:))
+        prototypePython = state.prototypePython.map(DebugPrototypePythonNotebookSnapshot.init(state:))
         scientificNotebook = state.scientificNotebooks.map(DebugScientificNotebookSnapshot.init(state:))
         activeLeftDockMode = state.dockMode
         leftDockCollapsed = state.leftDockCollapsed
@@ -3058,6 +3071,51 @@ package struct DebugPrototypeScientificNotebookSnapshot: Codable, Equatable {
             }
         )
         selectedReceiptID = state.selectedReceiptID
+    }
+}
+
+package struct DebugPrototypePythonCellSnapshot: Codable, Equatable {
+    package var id: String
+    package var owner: PythonOwner
+    package var behavior: PrototypePythonCellBehavior
+    package var sourceDigest: String
+    package var approvalIsValid: Bool
+    package var revisionStatuses: [PrototypePythonCellStatus]
+    package var plotRevisionIDs: [String]
+    package var insertedPlotRevisionIDs: [String]
+
+    package init(cell: PrototypePythonCell) {
+        id = cell.id
+        owner = cell.owner
+        behavior = cell.behavior
+        sourceDigest = cell.sourceDigest
+        approvalIsValid = cell.approvalIsValid
+        revisionStatuses = cell.revisions.map(\.status)
+        let plots = cell.revisions.compactMap(\.plot)
+        plotRevisionIDs = plots.map(\.id)
+        insertedPlotRevisionIDs = plots.filter(\.insertedInNotebook).map(\.id)
+    }
+}
+
+package struct DebugPrototypePythonNotebookSnapshot: Codable, Equatable {
+    package var prototypeKind: WorkbenchPrototypeKind
+    package var scenario: PythonPrototypeScenario
+    package var notebookTitle: String
+    package var selectedCellID: String
+    package var kernelState: PrototypePythonKernelState
+    package var runningCellID: String?
+    package var insertedPlotCount: Int
+    package var cells: [DebugPrototypePythonCellSnapshot]
+
+    package init(state: PrototypePythonNotebookProjection) {
+        prototypeKind = state.prototypeKind
+        scenario = state.scenario
+        notebookTitle = state.notebookTitle
+        selectedCellID = state.selectedCellID
+        kernelState = state.kernelState
+        runningCellID = state.runningCellID
+        insertedPlotCount = state.insertedPlotCount
+        cells = state.cells.map(DebugPrototypePythonCellSnapshot.init(cell:))
     }
 }
 

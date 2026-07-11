@@ -799,6 +799,7 @@ private struct SessionLastDestination: Hashable {
 private enum WorkbenchRuntimeKind {
     case production
     case notebookPrototype
+    case pythonPrototype
 }
 
 public final class WorkbenchStore: ObservableObject {
@@ -861,7 +862,13 @@ public final class WorkbenchStore: ObservableObject {
             }
         }
         self.state = initialState
-        runtimeKind = initialState.isNotebookPrototype ? .notebookPrototype : .production
+        if initialState.isNotebookPrototype {
+            runtimeKind = .notebookPrototype
+        } else if initialState.isPythonPrototype {
+            runtimeKind = .pythonPrototype
+        } else {
+            runtimeKind = .production
+        }
         self.probeClient = probeClient
         self.demoProjectClient = demoProjectClient
         self.plotClient = plotClient
@@ -917,12 +924,41 @@ public final class WorkbenchStore: ObservableObject {
         )
     }
 
+    package static func pythonPrototype(
+        scenario: PythonPrototypeScenario = .primary,
+        dependencies: NotebookPrototypeRuntimeDependencies = .denied
+    ) -> WorkbenchStore {
+        NotebookPrototypeBoundaryAudit.reset()
+        return WorkbenchStore(
+            state: pythonPrototypeState(scenario: scenario),
+            probeClient: dependencies.probeClient,
+            demoProjectClient: dependencies.demoProjectClient,
+            plotClient: dependencies.plotClient,
+            imageExplorerClient: dependencies.imageExplorerClient,
+            tableBrowserClient: dependencies.tableBrowserClient,
+            genericTaskClient: dependencies.genericTaskClient,
+            taskCatalogClient: PrototypeTaskCatalogClient(),
+            taskUISchemaClient: dependencies.taskUISchemaClient,
+            surfaceParameterClient: dependencies.surfaceParameterClient,
+            taskExecutionMatrixClient: PrototypeTaskExecutionMatrixClient(),
+            imagerProgressSource: EmptyImagerProgressSource()
+        )
+    }
+
     package var isNotebookPrototypeRuntime: Bool {
         runtimeKind == .notebookPrototype
     }
 
+    package var isPythonPrototypeRuntime: Bool {
+        runtimeKind == .pythonPrototype
+    }
+
+    package var isPrototypeRuntime: Bool {
+        runtimeKind != .production
+    }
+
     package var prototypeProductionBoundaryInvocationCount: Int {
-        runtimeKind == .notebookPrototype ? NotebookPrototypeBoundaryAudit.count : 0
+        isPrototypeRuntime ? NotebookPrototypeBoundaryAudit.count : 0
     }
 
     private static func notebookPrototypeState(
@@ -962,6 +998,45 @@ public final class WorkbenchStore: ObservableObject {
             )
         ]
         state.activeTabID = "tab-scientific-notebook"
+        return state
+    }
+
+    private static func pythonPrototypeState(
+        scenario: PythonPrototypeScenario,
+        interfaceFontSize: Double = WorkbenchState.defaultInterfaceFontSize
+    ) -> WorkbenchState {
+        var state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+        state.project = ProjectFixture(
+            name: "TW Hya Reduction",
+            rootPath: "/PrototypeProjects/tw-hya-reduction",
+            datasets: [
+                DatasetSummary(
+                    id: "prototype-twhya-ms",
+                    name: "twhya_calibrated.ms",
+                    path: "data/twhya_calibrated.ms",
+                    kind: .measurementSet,
+                    size: "2.1 GB fixture",
+                    units: "Jy, Hz, seconds",
+                    fields: ["TW Hya"],
+                    spectralWindows: ["spw 0: continuum", "spw 1: line"],
+                    dataColumns: ["DATA", "CORRECTED_DATA"],
+                    notes: "Deterministic Python prototype metadata; no data are opened."
+                )
+            ],
+            source: .fixture
+        )
+        state.selectedDatasetID = "prototype-twhya-ms"
+        state.prototypePython = PrototypePythonFixtureAdapter.make(scenario: scenario)
+        state.leftDockCollapsed = true
+        state.inspectorCollapsed = true
+        state.tabs = [
+            WorkbenchTab(
+                id: "tab-python-prototype",
+                title: "Python · TW Hya analysis",
+                kind: .python
+            )
+        ]
+        state.activeTabID = "tab-python-prototype"
         return state
     }
 
@@ -2135,14 +2210,19 @@ public final class WorkbenchStore: ObservableObject {
     /// explorer, task, schema, parameter, or process adapter.
     @discardableResult
     private func rejectPrototypeProductionAction(_ action: String) -> Bool {
-        guard runtimeKind == .notebookPrototype else { return false }
-        state.lastErrors.append("\(action) are unavailable in the in-memory notebook prototype")
+        guard runtimeKind != .production else { return false }
+        let prototypeName = runtimeKind == .notebookPrototype ? "notebook" : "Python"
+        state.lastErrors.append("\(action) are unavailable in the in-memory \(prototypeName) prototype")
         return true
     }
 
     public func openTab(_ tab: WorkbenchTab) {
         if runtimeKind == .notebookPrototype,
            tab.kind != .notebook && !(tab.kind == .task && tab.prototypeReceiptID != nil) {
+            _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
+            return
+        }
+        if runtimeKind == .pythonPrototype, tab.kind != .python {
             _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
             return
         }
@@ -4763,6 +4843,201 @@ public final class WorkbenchStore: ObservableObject {
             affectedPaths: state.taskRun.outputPaths,
             approval: "user"
         ))
+    }
+
+    package func selectPrototypePythonCell(_ cellID: String) {
+        guard runtimeKind == .pythonPrototype,
+              state.prototypePython?.cells.contains(where: { $0.id == cellID }) == true
+        else { return }
+        state.prototypePython?.selectedCellID = cellID
+    }
+
+    package func setPrototypePythonSource(cellID: String, source: String) {
+        guard runtimeKind == .pythonPrototype,
+              let index = state.prototypePython?.cells.firstIndex(where: { $0.id == cellID })
+        else { return }
+        state.prototypePython?.cells[index].source = source
+    }
+
+    package func approvePrototypePythonSource(cellID: String) {
+        guard runtimeKind == .pythonPrototype,
+              let index = state.prototypePython?.cells.firstIndex(where: { $0.id == cellID }),
+              state.prototypePython?.cells[index].owner == .ai
+        else { return }
+        state.prototypePython?.cells[index].approvedSourceDigest =
+            state.prototypePython?.cells[index].sourceDigest
+    }
+
+    package func runPrototypePythonCell(_ cellID: String) {
+        guard runtimeKind == .pythonPrototype,
+              state.prototypePython?.kernelState == .ready,
+              let index = state.prototypePython?.cells.firstIndex(where: { $0.id == cellID }),
+              state.prototypePython?.cells[index].approvalIsValid == true
+        else { return }
+
+        let sequence = state.prototypePython?.nextExecutionSequence ?? 1
+        state.prototypePython?.nextExecutionSequence = sequence + 1
+        state.prototypePython?.selectedCellID = cellID
+        state.prototypePython?.kernelState = .running
+        state.prototypePython?.runningCellID = cellID
+        let digest = state.prototypePython?.cells[index].sourceDigest ?? ""
+        state.prototypePython?.cells[index].revisions.append(
+            PrototypePythonExecutionRevision(
+                id: "python-execution-\(sequence)",
+                sequence: sequence,
+                status: .running,
+                sourceDigest: digest,
+                outputs: [PrototypePythonOutputEvent(
+                    id: "python-output-\(sequence)-1",
+                    order: 1,
+                    channel: .stdout,
+                    text: "Fixture kernel accepted cell \(cellID)."
+                )]
+            )
+        )
+
+        guard state.prototypePython?.cells[index].behavior != .nonresponsive else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.completePrototypePythonCell(cellID: cellID, sequence: sequence)
+        }
+    }
+
+    package func runAllPrototypePythonCells() {
+        guard runtimeKind == .pythonPrototype,
+              state.prototypePython?.kernelState == .ready
+        else { return }
+        let cellIDs = state.prototypePython?.cells
+            .filter { $0.behavior != .nonresponsive && $0.approvalIsValid }
+            .map(\.id) ?? []
+        for cellID in cellIDs {
+            let sequence = state.prototypePython?.nextExecutionSequence ?? 1
+            state.prototypePython?.nextExecutionSequence = sequence + 1
+            appendCompletedPrototypePythonRevision(cellID: cellID, sequence: sequence)
+        }
+        state.prototypePython?.selectedCellID = cellIDs.last ?? state.prototypePython?.selectedCellID ?? ""
+    }
+
+    package func interruptPrototypePythonKernel() {
+        guard runtimeKind == .pythonPrototype,
+              state.prototypePython?.kernelState == .running,
+              let cellID = state.prototypePython?.runningCellID,
+              let cellIndex = state.prototypePython?.cells.firstIndex(where: { $0.id == cellID }),
+              let revisionIndex = state.prototypePython?.cells[cellIndex].revisions.lastIndex(where: { $0.status == .running })
+        else { return }
+
+        state.prototypePython?.cells[cellIndex].revisions[revisionIndex].status = .interrupted
+        state.prototypePython?.cells[cellIndex].revisions[revisionIndex].outputs.append(
+            PrototypePythonOutputEvent(
+                id: "python-output-interrupt-\(state.prototypePython?.cells[cellIndex].revisions[revisionIndex].sequence ?? 0)",
+                order: 2,
+                channel: .stderr,
+                text: state.prototypePython?.cells[cellIndex].behavior == .nonresponsive
+                    ? "Interrupt was ignored; restart is required."
+                    : "KeyboardInterrupt"
+            )
+        )
+        let requiresRestart = state.prototypePython?.cells[cellIndex].behavior == .nonresponsive
+        state.prototypePython?.kernelState = requiresRestart ? .restartRequired : .ready
+        state.prototypePython?.runningCellID = nil
+    }
+
+    package func restartPrototypePythonKernel() {
+        guard runtimeKind == .pythonPrototype else { return }
+        if state.prototypePython?.kernelState == .running {
+            interruptPrototypePythonKernel()
+        }
+        state.prototypePython?.kernelState = .ready
+        state.prototypePython?.runningCellID = nil
+    }
+
+    package func regeneratePrototypePythonPlot(cellID: String) {
+        guard runtimeKind == .pythonPrototype,
+              state.prototypePython?.kernelState == .ready,
+              let cell = state.prototypePython?.cells.first(where: { $0.id == cellID }),
+              cell.behavior == .plot,
+              cell.approvalIsValid
+        else { return }
+        let sequence = state.prototypePython?.nextExecutionSequence ?? 1
+        state.prototypePython?.nextExecutionSequence = sequence + 1
+        appendCompletedPrototypePythonRevision(cellID: cellID, sequence: sequence)
+    }
+
+    package func insertPrototypePythonPlot(cellID: String, plotID: String) {
+        guard runtimeKind == .pythonPrototype,
+              let cellIndex = state.prototypePython?.cells.firstIndex(where: { $0.id == cellID }),
+              let revisionIndex = state.prototypePython?.cells[cellIndex].revisions.firstIndex(where: { $0.plot?.id == plotID })
+        else { return }
+        state.prototypePython?.cells[cellIndex].revisions[revisionIndex].plot?.insertedInNotebook = true
+    }
+
+    private func completePrototypePythonCell(cellID: String, sequence: Int) {
+        guard runtimeKind == .pythonPrototype,
+              state.prototypePython?.kernelState == .running,
+              state.prototypePython?.runningCellID == cellID
+        else { return }
+        appendCompletedPrototypePythonRevision(cellID: cellID, sequence: sequence, replacingRunning: true)
+        state.prototypePython?.kernelState = .ready
+        state.prototypePython?.runningCellID = nil
+    }
+
+    private func appendCompletedPrototypePythonRevision(
+        cellID: String,
+        sequence: Int,
+        replacingRunning: Bool = false
+    ) {
+        guard let cellIndex = state.prototypePython?.cells.firstIndex(where: { $0.id == cellID }) else { return }
+        let cell = state.prototypePython?.cells[cellIndex]
+        let fails = cell?.behavior == .failure && cell?.source.contains("raise RuntimeError") == true
+        let status: PrototypePythonCellStatus = fails ? .failed : .succeeded
+        var outputs = [
+            PrototypePythonOutputEvent(
+                id: "python-output-\(sequence)-1",
+                order: 1,
+                channel: .stdout,
+                text: fails ? "checking continuum selection" : "Completed deterministic fixture execution."
+            )
+        ]
+        if fails {
+            outputs.append(PrototypePythonOutputEvent(
+                id: "python-output-\(sequence)-2",
+                order: 2,
+                channel: .error,
+                text: "RuntimeError: fixture: channel selection is empty"
+            ))
+        } else {
+            outputs.append(PrototypePythonOutputEvent(
+                id: "python-output-\(sequence)-2",
+                order: 2,
+                channel: .stderr,
+                text: "Fixture environment: casa-rs-python / matplotlib"
+            ))
+        }
+        let plot = cell?.behavior == .plot && !fails
+            ? PrototypePythonPlotRevision(
+                id: "python-plot-\(sequence)",
+                sequence: sequence,
+                title: cellID == "python-cell-ai"
+                    ? "AI proposal · radial profile"
+                    : "TW Hya · amplitude vs UV distance",
+                pngPath: "notebooks/assets/\(cellID)/execution-\(sequence)/figure-1.png",
+                svgPath: "notebooks/assets/\(cellID)/execution-\(sequence)/figure-1.svg"
+            )
+            : nil
+        let revision = PrototypePythonExecutionRevision(
+            id: "python-execution-\(sequence)",
+            sequence: sequence,
+            status: status,
+            sourceDigest: cell?.sourceDigest ?? "",
+            outputs: outputs,
+            plot: plot
+        )
+        if replacingRunning,
+           let revisionIndex = state.prototypePython?.cells[cellIndex].revisions.lastIndex(where: { $0.sequence == sequence })
+        {
+            state.prototypePython?.cells[cellIndex].revisions[revisionIndex] = revision
+        } else {
+            state.prototypePython?.cells[cellIndex].revisions.append(revision)
+        }
     }
 
     public func setPythonOwner(_ owner: PythonOwner) {

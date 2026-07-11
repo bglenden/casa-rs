@@ -28,10 +28,11 @@ private struct GUIEvidenceCaptureRequest {
         case impbcorRun = "impbcor-run"
         case imageExplorer = "image-explorer"
         case notebookPrototype = "notebook-prototype"
+        case pythonPrototype = "python-prototype"
 
         var requiresTutorialPack: Bool {
             switch self {
-            case .imagerProgressMockup, .notebookPrototype:
+            case .imagerProgressMockup, .notebookPrototype, .pythonPrototype:
                 false
             default:
                 true
@@ -57,16 +58,14 @@ private struct GUIEvidenceCaptureRequest {
     var preset: MeasurementSetExplorerPlotPreset
     var iterationAxis: MeasurementSetPlotIterationAxis?
     var prototypeScenario: NotebookPrototypeScenario
+    var pythonPrototypeScenario: PythonPrototypeScenario
     var outputPath: String
     var width: CGFloat
     var height: CGFloat
 
     init(arguments: [String]) throws {
         let captureKind = CaptureKind(rawValue: Self.argumentValue(after: "--capture-kind", in: arguments) ?? CaptureKind.measurementSetPlot.rawValue) ?? .measurementSetPlot
-        if let error = CasarsMacApp.prototypeLaunchValidationError(
-            arguments: arguments,
-            forceNotebookPrototype: captureKind == .notebookPrototype
-        ) {
+        if let error = CasarsMacApp.prototypeLaunchValidationError(arguments: arguments) {
             throw GUIEvidenceCaptureError.invalidArgument(error)
         }
         let tutorialPackPath = Self.argumentValue(after: "--open-tutorial-pack", in: arguments)
@@ -96,6 +95,9 @@ private struct GUIEvidenceCaptureRequest {
         self.preset = Self.plotPreset(Self.argumentValue(after: "--preset", in: arguments)) ?? .uvCoverage
         self.iterationAxis = Self.iterationAxis(Self.argumentValue(after: "--iteraxis", in: arguments))
         self.prototypeScenario = try Self.prototypeScenario(Self.argumentValue(after: "--prototype-state", in: arguments))
+        self.pythonPrototypeScenario = try Self.pythonPrototypeScenario(
+            Self.argumentValue(after: "--prototype-state", in: arguments)
+        )
         self.outputPath = outputPath
         self.width = CGFloat(Double(Self.argumentValue(after: "--width", in: arguments) ?? "1440") ?? 1440)
         self.height = CGFloat(Double(Self.argumentValue(after: "--height", in: arguments) ?? "960") ?? 960)
@@ -155,6 +157,18 @@ private struct GUIEvidenceCaptureRequest {
             )
         }
     }
+
+    private static func pythonPrototypeScenario(_ value: String?) throws -> PythonPrototypeScenario {
+        switch value {
+        case "failure": .failure
+        case "nonresponsive": .nonresponsive
+        case nil, "happy-path", "external-conflict": .primary
+        default:
+            throw GUIEvidenceCaptureError.invalidArgument(
+                "--prototype-state for python requires: happy-path, failure, or nonresponsive"
+            )
+        }
+    }
 }
 
 private enum GUIEvidenceCaptureError: Error, CustomStringConvertible {
@@ -191,9 +205,14 @@ private enum GUIEvidenceCaptureRenderer {
     static func render(request: GUIEvidenceCaptureRequest) throws {
         NSApplication.shared.setActivationPolicy(.accessory)
 
-        let store = request.captureKind == .notebookPrototype
-            ? WorkbenchStore.notebookPrototype(scenario: request.prototypeScenario)
-            : WorkbenchStore.empty()
+        let store: WorkbenchStore = switch request.captureKind {
+        case .notebookPrototype:
+            WorkbenchStore.notebookPrototype(scenario: request.prototypeScenario)
+        case .pythonPrototype:
+            WorkbenchStore.pythonPrototype(scenario: request.pythonPrototypeScenario)
+        default:
+            WorkbenchStore.empty()
+        }
         store.setInterfaceFontSize(WorkbenchState.defaultInterfaceFontSize)
         if let tutorialPackPath = request.tutorialPackPath {
             store.openTutorialPack(path: tutorialPackPath)
@@ -220,11 +239,31 @@ private enum GUIEvidenceCaptureRenderer {
             try renderImageExplorer(request: request, store: store)
         case .notebookPrototype:
             try renderNotebookPrototype(request: request, store: store)
+        case .pythonPrototype:
+            try renderPythonPrototype(request: request, store: store)
         }
     }
 
     @MainActor
     private static func renderNotebookPrototype(
+        request: GUIEvidenceCaptureRequest,
+        store: WorkbenchStore
+    ) throws {
+        let view = WorkbenchView(store: store)
+            .environment(\.workbenchFontSize, WorkbenchState.defaultInterfaceFontSize)
+            .preferredColorScheme(.dark)
+            .frame(width: request.width, height: request.height)
+        let png = try renderPNGWithHostingView(
+            view: view,
+            width: request.width,
+            height: request.height,
+            scale: 2.0
+        )
+        try writePNG(png, outputPath: request.outputPath)
+    }
+
+    @MainActor
+    private static func renderPythonPrototype(
         request: GUIEvidenceCaptureRequest,
         store: WorkbenchStore
     ) throws {
