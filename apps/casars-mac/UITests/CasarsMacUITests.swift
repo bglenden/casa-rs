@@ -239,9 +239,13 @@ final class CasarsMacUITests: XCTestCase {
         try require("pythonPrototype.regenerate").click()
         XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.revisionCount", containing: "2"))
         let previous = try require("pythonPrototype.previousRevisions.python-cell-plot")
-        XCTAssertFalse(element("pythonPrototype.revision.1").exists)
+        let firstRevision = element("pythonPrototype.revision.1")
+        XCTAssertFalse(firstRevision.exists)
         previous.click()
-        XCTAssertTrue(element("pythonPrototype.revision.1").waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            waitForAccessibilityValue("pythonPrototype.previousRevisions.python-cell-plot", containing: "expanded")
+        )
+        XCTAssertTrue(firstRevision.waitForExistence(timeout: 3))
         try require("pythonPrototype.insert").click()
         XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.insertedPlotCount", containing: "1"))
 
@@ -293,6 +297,9 @@ final class CasarsMacUITests: XCTestCase {
         print("checking continuum selection", flush=True)
         print("continuum selection repaired")
         """
+        let documentScroll = app.scrollViews.firstMatch
+        XCTAssertTrue(documentScroll.exists)
+        documentScroll.scroll(byDeltaX: 0, deltaY: -1_100)
         replaceText("pythonPrototype.editor", with: repaired)
         try require("pythonPrototype.run").click()
         XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.kernelState", containing: "ready"))

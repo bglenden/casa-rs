@@ -142,6 +142,12 @@ Use `Closes #N` only for issues that should auto-close on merge.
   behavior changes. If the UI-test target or supported macOS runner is
   unavailable, stop and record the blocker instead of silently waiving the
   gate.
+- Batch local native GUI automation into exclusive foreground windows. Finish
+  compilation before the window, announce it before focus is taken, and run
+  the complete suite as one uninterrupted batch. During normal implementation
+  use core tests, debug-state checks, and deterministic capture; accumulate
+  interaction changes for prototype-handoff and pre-Review GUI gates. Use a
+  focused XCUITest run only to diagnose a failure from the consolidated gate.
 - Before implementing behavior that exists in CASA/casacore C++, inspect the
   relevant upstream task/tool/library path first and preserve its semantics
   unless there is an explicit reason to diverge.

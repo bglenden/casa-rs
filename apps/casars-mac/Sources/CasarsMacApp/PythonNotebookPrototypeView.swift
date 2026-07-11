@@ -85,6 +85,9 @@ struct PythonNotebookPrototypeView: View {
                     visualizationCard(visualization)
                 }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Saved notebook visualizations")
+            .accessibilityIdentifier("notebookVisualization.collection")
         }
     }
 
@@ -362,17 +365,32 @@ struct PythonNotebookPrototypeView: View {
                 revisionCard(cell: cell, revision: latest)
                 let previous = cell.revisions.filter { $0.id != latest.id }.sorted { $0.sequence > $1.sequence }
                 if !previous.isEmpty {
-                    DisclosureGroup(
-                        "Previous revisions (\(previous.count))",
-                        isExpanded: historyBinding(cell.id, in: $expandedExecutionHistory)
-                    ) {
+                    let historyIsExpanded = expandedExecutionHistory.contains(cell.id)
+                    Button {
+                        if historyIsExpanded {
+                            expandedExecutionHistory.remove(cell.id)
+                        } else {
+                            expandedExecutionHistory.insert(cell.id)
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: historyIsExpanded ? "chevron.down" : "chevron.right")
+                                .imageScale(.small)
+                            Text("Previous revisions (\(previous.count))")
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .workbenchFont(.caption, weight: .semibold)
+                    .accessibilityIdentifier("pythonPrototype.previousRevisions.\(cell.id)")
+                    .accessibilityValue(historyIsExpanded ? "expanded" : "collapsed")
+                    if historyIsExpanded {
                         VStack(alignment: .leading, spacing: 6) {
                             ForEach(previous) { compactRevisionRow($0) }
                         }
                         .padding(.top, 6)
                     }
-                    .workbenchFont(.caption, weight: .semibold)
-                    .accessibilityIdentifier("pythonPrototype.previousRevisions.\(cell.id)")
                 }
             }
         }
@@ -381,7 +399,8 @@ struct PythonNotebookPrototypeView: View {
     private func compactRevisionRow(_ revision: PrototypePythonExecutionRevision) -> some View {
         HStack(spacing: 7) {
             statusDot(revision.status)
-            Text("Revision \(revision.sequence)").workbenchFont(.caption, weight: .semibold)
+            Text("Revision \(revision.sequence)")
+                .workbenchFont(.caption, weight: .semibold)
             Text(revision.status.rawValue.capitalized).workbenchFont(.caption).foregroundStyle(.secondary)
             Spacer()
             if revision.plot != nil { Image(systemName: "chart.xyaxis.line").foregroundStyle(.secondary) }
@@ -393,7 +412,8 @@ struct PythonNotebookPrototypeView: View {
         .padding(.vertical, 7)
         .background(Color.secondary.opacity(0.035))
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Revision \(revision.sequence)")
         .accessibilityIdentifier("pythonPrototype.revision.\(revision.sequence)")
         .accessibilityValue(revision.status.rawValue)
     }

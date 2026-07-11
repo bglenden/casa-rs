@@ -66,6 +66,19 @@ or `--show-prototype python` with deterministic fixture state and assert that
 the production-boundary audit remains zero. Production notebook tests use only
 unique test-owned temporary projects and remove them after each test.
 
+Local execution is deliberately batched into one exclusive foreground window.
+The harness completes Rust and Xcode `build-for-testing` work first, then shows
+a notification and ten-second countdown before running the whole suite with
+`test-without-building`. Do not use the keyboard, mouse, or switch applications
+until the completion notification. Set
+`CASA_RS_GUI_TEST_COUNTDOWN_SECONDS=<seconds>` to change the countdown, or
+`CASA_RS_GUI_TEST_EXCLUSIVE_NOTICE=0` only for an already isolated session.
+Normal edit loops should use `swift test`, debug-state checks, and deterministic
+evidence capture; accumulate interaction changes and run GUI tests together at
+a prototype-review checkpoint rather than interleaving focused XCUITest runs
+throughout development. A focused run remains appropriate when diagnosing a
+failure from the consolidated gate.
+
 Disposable build and test output lives under `apps/casars-mac/.gui-test/`.
 The retained result bundle is
 `apps/casars-mac/.gui-test/CasarsMacUITests.xcresult`; failing workflows attach

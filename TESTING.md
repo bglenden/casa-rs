@@ -75,6 +75,15 @@ Verification: just verify
   repository root. Its disposable DerivedData and retained `.xcresult` bundle
   live under `apps/casars-mac/.gui-test/`.
 
+Local native GUI automation owns an exclusive foreground window. `just
+gui-test` performs all compilation first, announces a countdown, then runs the
+complete XCUITest suite in one `test-without-building` batch. Do not use the
+Mac during that window. During implementation, prefer core Swift tests,
+debug-state assertions, and deterministic capture; batch user-visible
+interaction changes and run the GUI suite at coherent prototype-handoff and
+pre-Review checkpoints. Use isolated focused XCUITest runs only to diagnose a
+failure found by a consolidated run, not as the normal edit loop.
+
 ## Coverage / confidence policy
 
 - CI enforces 75% line coverage.
