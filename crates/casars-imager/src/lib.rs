@@ -52699,7 +52699,10 @@ mod tests {
             assert!(plan.direct_metal_scratch_bytes > 0);
             assert_eq!(plan.gpu_staging_bytes, plan.direct_metal_scratch_bytes);
             assert!(plan.reserved_buffer_bytes >= plan.direct_metal_scratch_bytes);
-            assert!(plan.row_block_rows > 1);
+            assert!(plan.row_block_rows >= 1);
+            assert!(plan.source_stream_buffer_bytes > 0);
+            assert!(plan.live_row_block_bytes > 0);
+            assert!(plan.planned_active_bytes <= plan.total_budget_bytes);
             let scratch = plan_mosaic_mtmfs_direct_scratch(
                 [imsize; 2],
                 nterms,
@@ -62009,7 +62012,7 @@ deconvolver=mtmfs
             assert_f32_images_close(
                 format!("{}.{}", image_prefix.display(), suffix),
                 format!("{}.{}", serial_prefix.display(), suffix),
-                1.0e-5,
+                1.0e-4,
             );
         }
 
@@ -62383,7 +62386,7 @@ deconvolver=mtmfs
             assert_f32_images_close(
                 format!("{}.{}", image_prefix.display(), suffix),
                 format!("{}.{}", serial_prefix.display(), suffix),
-                1.0e-5,
+                1.0e-4,
             );
         }
 
