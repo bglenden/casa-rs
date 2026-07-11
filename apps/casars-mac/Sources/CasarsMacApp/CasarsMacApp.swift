@@ -86,7 +86,7 @@ struct CasarsMacApp: App {
     var body: some Scene {
         WindowGroup("casa-rs Workbench") {
             WorkbenchView(store: store)
-                .frame(minWidth: 1120, minHeight: 720)
+                .frame(minWidth: 960, minHeight: 640)
                 .environment(\.workbenchFontSize, store.state.interfaceFontSize)
                 .background(WindowConfigurationView())
                 .onAppear {
@@ -1013,7 +1013,7 @@ final class WorkbenchFallbackWindowController {
         }
 
         let rootView = WorkbenchView(store: store)
-            .frame(minWidth: 1120, minHeight: 720)
+            .frame(minWidth: 960, minHeight: 640)
             .environment(\.workbenchFontSize, store.state.interfaceFontSize)
         let window = NSWindow(
             contentRect: NSRect(x: 140, y: 120, width: 1280, height: 860),
@@ -1051,7 +1051,7 @@ final class WorkbenchFallbackWindowController {
 }
 
 enum WorkbenchWindowPlacement {
-    private static let minimumSize = NSSize(width: 1120, height: 720)
+    private static let minimumSize = NSSize(width: 960, height: 640)
     private static let preferredSize = NSSize(width: 1280, height: 860)
 
     static func apply(to window: NSWindow, forcePreferredFrame: Bool = false) {

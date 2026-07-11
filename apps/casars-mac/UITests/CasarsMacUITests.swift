@@ -108,11 +108,7 @@ final class CasarsMacUITests: XCTestCase {
 
         try require("central.tab.tab-scientific-notebook").click()
         let statusID = "notebook.executionStatus.receipt-imager-mfs"
-        try require(statusID).click()
-        if !waitForAccessibilityValue(statusID, containing: "expanded") {
-            try require(statusID).click()
-        }
-        XCTAssertTrue(waitForAccessibilityValue(statusID, containing: "expanded"))
+        try expandExecutionStatus(statusID)
         XCTAssertTrue(try require("notebook.execution.restart.receipt-imager-mfs").waitForExistence(timeout: 3))
 
         try require(statusID).doubleClick()
@@ -123,17 +119,17 @@ final class CasarsMacUITests: XCTestCase {
     func testFixtureRestartCompletionCancellationAndIsolation() throws {
         launchPrototype()
 
-        let status = try require("notebook.executionStatus.receipt-imager-mfs")
-        status.click()
+        let statusID = "notebook.executionStatus.receipt-imager-mfs"
+        try expandExecutionStatus(statusID)
         try require("notebook.execution.restart.receipt-imager-mfs").click()
-        XCTAssertTrue(waitForAccessibilityValue("notebook.executionStatus.receipt-imager-mfs", containing: "Running"))
+        XCTAssertTrue(waitForAccessibilityValue(statusID, containing: "Running"))
         try require("notebook.execution.complete.receipt-imager-mfs").click()
-        XCTAssertTrue(waitForAccessibilityValue("notebook.executionStatus.receipt-imager-mfs", containing: "Succeeded"))
+        XCTAssertTrue(waitForAccessibilityValue(statusID, containing: "Succeeded"))
 
         try require("notebook.execution.restart.receipt-imager-mfs").click()
-        XCTAssertTrue(waitForAccessibilityValue("notebook.executionStatus.receipt-imager-mfs", containing: "Running"))
+        XCTAssertTrue(waitForAccessibilityValue(statusID, containing: "Running"))
         try require("notebook.execution.cancel.receipt-imager-mfs").click()
-        XCTAssertTrue(waitForAccessibilityValue("notebook.executionStatus.receipt-imager-mfs", containing: "Cancelled"))
+        XCTAssertTrue(waitForAccessibilityValue(statusID, containing: "Cancelled"))
         XCTAssertTrue(try textValue(try require("notebook.execution.revisionCount.receipt-imager-mfs")).contains("3 revisions"))
 
         let workbenchMenu = app.menuBars.menuBarItems["Workbench"]
@@ -387,16 +383,16 @@ final class CasarsMacUITests: XCTestCase {
 
     private func clickIdentified(_ identifier: String, timeout: TimeInterval = 5) throws {
         let control = try require(identifier, timeout: timeout)
-        if control.isHittable {
-            control.click()
-        } else {
-            app.activate()
-            // The hosted macOS runner is narrower than the workbench minimum
-            // size, leaving the dock button's center below the visible screen.
-            // Its upper edge remains visible and still exercises the identified
-            // production control.
-            control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).click()
+        XCTAssertTrue(control.isHittable, "Identified control is not hittable: \(identifier)\n\(app.debugDescription)")
+        control.click()
+    }
+
+    private func expandExecutionStatus(_ identifier: String) throws {
+        try require(identifier).click()
+        if !waitForAccessibilityValue(identifier, containing: "expanded") {
+            try require(identifier).click()
         }
+        XCTAssertTrue(waitForAccessibilityValue(identifier, containing: "expanded"))
     }
 
     private func notebookSelector(_ notebookID: String) -> XCUIElement {
@@ -414,21 +410,22 @@ final class CasarsMacUITests: XCTestCase {
         let result = element(identifier)
         XCTAssertTrue(result.waitForExistence(timeout: 5), "Missing editable element \(identifier)")
         result.click()
-        result.typeKey("a", modifierFlags: .command)
+        app.typeKey("a", modifierFlags: .command)
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         XCTAssertTrue(pasteboard.setString(value, forType: .string))
-        result.typeKey("v", modifierFlags: .command)
+        app.typeKey("v", modifierFlags: .command)
+        let edited = element(identifier)
         if identifier == "notebook.editor.raw" {
             XCTAssertTrue(
-                waitForTextValue(result, equalTo: value),
+                waitForTextValue(edited, equalTo: value),
                 "Raw editor did not commit the complete pasted document"
             )
-            result.typeKey(.tab, modifierFlags: [])
+            app.typeKey(.tab, modifierFlags: [])
             Thread.sleep(forTimeInterval: 0.2)
         } else {
             XCTAssertTrue(
-                waitForTextValue(result, containing: value),
+                waitForTextValue(edited, containing: value),
                 "Editable element \(identifier) did not commit the pasted value"
             )
         }
