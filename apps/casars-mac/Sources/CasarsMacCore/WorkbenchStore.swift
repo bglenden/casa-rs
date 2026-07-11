@@ -813,11 +813,13 @@ public final class WorkbenchStore: ObservableObject {
     private let taskUISchemaClient: TaskUISchemaClient
     private let surfaceParameterClient: SurfaceParameterClient
     private let taskExecutionMatrixClient: TaskExecutionMatrixClient
+    private var notebookPersistenceClient: NotebookPersistenceClient
     private let imagerProgressSource: ImagerProgressSource
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private let tableBrowserQueue = DispatchQueue(label: "casars.mac.tablebrowser-cell-window", qos: .userInitiated)
     private var activeTaskExecutions: [String: TaskExecution] = [:]
     private var taskParameterAttempts: [String: TaskParameterAttempt] = [:]
+    private var notebookAttemptHandles: [String: NotebookAttemptHandle] = [:]
     private var measurementSetParameterAttempts: [String: TaskParameterAttempt] = [:]
     private var acceptedSessionParameterValues: [String: [String: SurfaceParameterValue]] = [:]
     private var acceptedSessionParameterSequence: [String: UInt64] = [:]
@@ -869,7 +871,12 @@ public final class WorkbenchStore: ObservableObject {
         self.taskUISchemaClient = taskUISchemaClient
         self.surfaceParameterClient = surfaceParameterClient
         self.taskExecutionMatrixClient = taskExecutionMatrixClient
+        notebookPersistenceClient = UniFFINotebookPersistenceClient()
         self.imagerProgressSource = imagerProgressSource
+    }
+
+    package func installNotebookPersistenceClientForTesting(_ client: NotebookPersistenceClient) {
+        notebookPersistenceClient = client
     }
 
     deinit {
@@ -1008,6 +1015,7 @@ public final class WorkbenchStore: ObservableObject {
             state.project = probed.project
             state.probeDiagnostics = probed.diagnostics
             state.selectedDatasetID = probed.project.datasets.first?.id
+            loadScientificNotebooks()
             state.dockMode = .datasets
             state.leftDockCollapsed = false
             state.inspectorCollapsed = false
@@ -2230,7 +2238,11 @@ public final class WorkbenchStore: ObservableObject {
                 openTab(WorkbenchTab(id: nextTaskTabID(), title: "Tasks", kind: .task, datasetID: state.selectedDatasetID))
             }
         case .notebook:
-            guard let notebook = state.prototypeNotebook else {
+            if let notebook = state.prototypeNotebook {
+                openTab(WorkbenchTab(id: "tab-scientific-notebook", title: notebook.filename, kind: .notebook))
+                return
+            }
+            guard let notebook = state.scientificNotebooks?.activeNotebook else {
                 state.lastErrors.append("No notebook is open")
                 return
             }
@@ -2275,6 +2287,178 @@ public final class WorkbenchStore: ObservableObject {
             scenario: scenario,
             interfaceFontSize: state.interfaceFontSize
         )
+    }
+
+    package func loadScientificNotebooks() {
+        guard runtimeKind == .production, state.hasProject else { return }
+        do {
+            state.scientificNotebooks = try notebookPersistenceClient.loadProject(
+                projectRoot: state.project.rootPath
+            )
+        } catch {
+            state.lastErrors.append("Load project notebooks: \(error)")
+        }
+    }
+
+    package func createScientificNotebook(filename: String? = nil, title: String = "CASA-RS notebook") {
+        guard runtimeKind == .production, state.hasProject else { return }
+        do {
+            let created = try notebookPersistenceClient.create(
+                projectRoot: state.project.rootPath,
+                filename: filename,
+                title: title
+            )
+            loadScientificNotebooks()
+            selectScientificNotebook(created.id)
+            openDefaultTab(kind: .notebook)
+        } catch {
+            state.lastErrors.append("Create project notebook: \(error)")
+        }
+    }
+
+    package func createNextNamedScientificNotebook() {
+        let existing = Set(state.scientificNotebooks?.notebooks.map(\.filename) ?? [])
+        var index = 1
+        while existing.contains("Notebook-\(index).md") { index += 1 }
+        createScientificNotebook(
+            filename: "Notebook-\(index).md",
+            title: "Notebook \(index)"
+        )
+    }
+
+    package func selectScientificNotebook(_ notebookID: String) {
+        guard var project = state.scientificNotebooks,
+              project.notebooks.contains(where: { $0.id == notebookID })
+        else { return }
+        project.activeNotebookID = notebookID
+        state.scientificNotebooks = project
+        if let tabIndex = state.tabs.firstIndex(where: { $0.kind == .notebook }) {
+            state.tabs[tabIndex].title = project.activeNotebook?.filename ?? "Notebook"
+            state.activeTabID = state.tabs[tabIndex].id
+        } else {
+            openDefaultTab(kind: .notebook)
+        }
+    }
+
+    package func setScientificNotebookDraft(_ markdown: String) {
+        updateActiveScientificNotebook { document in
+            document.draftSource = markdown
+            document.conflict = nil
+        }
+    }
+
+    package func setScientificNotebookViewMode(_ mode: NotebookDocumentViewMode) {
+        updateActiveScientificNotebook { $0.viewMode = mode }
+    }
+
+    package func saveScientificNotebook(
+        resolution: NotebookConflictResolution = .reject
+    ) {
+        guard let projectRoot = state.scientificNotebooks?.projectRoot,
+              let document = state.scientificNotebooks?.activeNotebook
+        else { return }
+        do {
+            switch try notebookPersistenceClient.save(
+                projectRoot: projectRoot,
+                document: document,
+                resolution: resolution
+            ) {
+            case let .saved(saved), let .reloaded(saved):
+                replaceScientificNotebook(saved)
+            case let .conflict(conflict):
+                updateActiveScientificNotebook { $0.conflict = conflict }
+            }
+        } catch {
+            state.lastErrors.append("Save notebook \(document.filename): \(error)")
+        }
+    }
+
+    package func resolveScientificNotebookConflict(keepingDraft: Bool) {
+        saveScientificNotebook(resolution: keepingDraft ? .keepLocal : .reloadExternal)
+    }
+
+    package func openScientificNotebookTask(cellID: String) {
+        guard let project = state.scientificNotebooks,
+              let document = project.activeNotebook,
+              let receipt = document.receipts
+                .filter({ $0.cellId == cellID })
+                .max(by: { $0.revision < $1.revision }),
+              let intent = receipt.sparseIntent
+        else {
+            state.lastErrors.append("No recorded task parameters exist for notebook cell \(cellID)")
+            return
+        }
+        guard state.taskCatalog.contains(where: { $0.id == intent.surface }) else {
+            state.lastErrors.append("Notebook task \(intent.surface) is not in the current task catalog")
+            return
+        }
+
+        let tabID = nextTaskTabID()
+        openTab(WorkbenchTab(
+            id: tabID,
+            title: taskTitle(intent.surface),
+            kind: .task,
+            datasetID: state.selectedDatasetID,
+            taskID: intent.surface
+        ))
+        state.activeTaskID = intent.surface
+        loadTaskUISchemaIfNeeded(intent.surface, instanceID: tabID)
+        do {
+            let bundle = try surfaceParameterClient.loadBundle(surfaceID: intent.surface)
+            let sourcePath = "\(project.projectRoot)/notebooks/\(document.filename)#\(cellID)"
+            let snapshot = try surfaceParameterClient.load(
+                surfaceID: intent.surface,
+                profileTOML: intent.profileTOML,
+                sourcePath: sourcePath
+            )
+            let key = parameterSessionKey(surfaceID: intent.surface, instanceID: tabID)
+            state.parameterSessions[key] = SurfaceParameterSession(
+                bundle: bundle,
+                snapshot: snapshot,
+                selectedSource: .file,
+                baseProfileTOML: intent.profileTOML,
+                baseProfilePath: sourcePath,
+                workspace: project.projectRoot,
+                saveLast: true
+            )
+            applySelectedDatasetParameterContext(surfaceID: intent.surface, instanceID: tabID)
+            let currentContractVersion = UInt32(clamping: bundle.surface.contractVersion)
+            if currentContractVersion != receipt.providerContractVersion {
+                state.taskRun.warnings.append(
+                    "Notebook run used provider contract \(receipt.providerContractVersion); the installed contract is \(currentContractVersion). Review the typed parameter diff before running."
+                )
+            }
+            if let currentSession = parameterSession(surfaceID: intent.surface, instanceID: tabID),
+               currentSession.values.mapValues(JSONValue.init(parameterValue:)) != receipt.resolvedParameters {
+                state.taskRun.warnings.append(
+                    "Current defaults or project context resolve differently from this historical notebook run."
+                )
+            }
+        } catch {
+            state.lastErrors.append("Load notebook parameters for \(intent.surface): \(error)")
+        }
+    }
+
+    private func updateActiveScientificNotebook(
+        _ update: (inout NotebookDocumentState) -> Void
+    ) {
+        guard var project = state.scientificNotebooks,
+              let activeID = project.activeNotebookID,
+              let index = project.notebooks.firstIndex(where: { $0.id == activeID })
+        else { return }
+        update(&project.notebooks[index])
+        state.scientificNotebooks = project
+    }
+
+    private func replaceScientificNotebook(_ replacement: NotebookDocumentState) {
+        guard var project = state.scientificNotebooks,
+              let index = project.notebooks.firstIndex(where: { $0.id == replacement.id })
+        else { return }
+        var document = replacement
+        document.viewMode = project.notebooks[index].viewMode
+        project.notebooks[index] = document
+        project.activeNotebookID = document.id
+        state.scientificNotebooks = project
     }
 
     package func selectPrototypeNotebook(_ notebookID: String) {
@@ -3902,6 +4086,18 @@ public final class WorkbenchStore: ObservableObject {
         ] = confirmed
     }
 
+    public func setNotebookRecordingBypassOnce(tabID: String, enabled: Bool) {
+        if enabled {
+            state.notebookRecordingBypassTabs.insert(tabID)
+        } else {
+            state.notebookRecordingBypassTabs.remove(tabID)
+        }
+    }
+
+    public func notebookRecordingBypassOnce(tabID: String) -> Bool {
+        state.notebookRecordingBypassTabs.contains(tabID)
+    }
+
     public func taskExecutionMatrixRow(taskID: String? = nil) -> TaskExecutionMatrixRow? {
         state.taskExecutionMatrixRows.first { $0.taskID == (taskID ?? state.activeTaskID) }
     }
@@ -3976,10 +4172,25 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("Parameter session for \(taskID) is unavailable")
             return
         }
+        let runID = nextJobID(prefix: taskID)
+        let tabID = state.activeTabID.isEmpty ? "tab-task-\(taskID)" : state.activeTabID
         if parameterSession.hasErrors {
             let messages = parameterSession.snapshot.diagnostics
                 .filter { $0.level == "error" }
                 .map(\.message)
+            beginNotebookTaskRecording(
+                runID: runID,
+                tabID: tabID,
+                taskID: taskID,
+                session: parameterSession,
+                runSafety: SurfaceRunSafety(
+                    classes: [],
+                    requiresInteractiveConfirmation: false,
+                    requiresOverwriteConfirmation: false,
+                    requiresInputMutationConfirmation: false
+                )
+            )
+            finalizeNotebookTaskRecording(runID: runID, status: "failed", diagnostics: messages)
             state.taskRun = TaskRun(
                 state: .failed,
                 progress: 1.0,
@@ -4000,6 +4211,23 @@ public final class WorkbenchStore: ObservableObject {
                 values: parameterSession.values
             )
         } catch {
+            beginNotebookTaskRecording(
+                runID: runID,
+                tabID: tabID,
+                taskID: taskID,
+                session: parameterSession,
+                runSafety: SurfaceRunSafety(
+                    classes: [],
+                    requiresInteractiveConfirmation: false,
+                    requiresOverwriteConfirmation: false,
+                    requiresInputMutationConfirmation: false
+                )
+            )
+            finalizeNotebookTaskRecording(
+                runID: runID,
+                status: "failed",
+                diagnostics: ["Evaluate run safety: \(error)"]
+            )
             state.lastErrors.append("Evaluate run safety for \(taskID): \(error)")
             return
         }
@@ -4025,12 +4253,29 @@ public final class WorkbenchStore: ObservableObject {
                 values: parameterSession.values
             )
         } catch {
+            beginNotebookTaskRecording(
+                runID: runID,
+                tabID: tabID,
+                taskID: taskID,
+                session: parameterSession,
+                runSafety: runSafety
+            )
+            finalizeNotebookTaskRecording(
+                runID: runID,
+                status: "failed",
+                diagnostics: ["Project provider invocation: \(error)"]
+            )
             state.lastErrors.append("Project provider invocation for \(taskID): \(error)")
             return
         }
-        let runID = nextJobID(prefix: taskID)
         let summary = genericTaskRequestSummary(taskID: taskID, instanceID: instanceID)
-        let tabID = state.activeTabID.isEmpty ? "tab-task-\(taskID)" : state.activeTabID
+        beginNotebookTaskRecording(
+            runID: runID,
+            tabID: tabID,
+            taskID: taskID,
+            session: parameterSession,
+            runSafety: runSafety
+        )
         startJob(WorkbenchJob(
             id: runID,
             tabID: tabID,
@@ -4093,6 +4338,11 @@ public final class WorkbenchStore: ObservableObject {
             activeTaskExecutions[runID] = execution
         } catch {
             taskParameterAttempts.removeValue(forKey: runID)
+            finalizeNotebookTaskRecording(
+                runID: runID,
+                status: "failed",
+                diagnostics: ["\(error)"]
+            )
             state.taskRun = TaskRun(
                 state: .failed,
                 progress: 1.0,
@@ -4105,6 +4355,116 @@ public final class WorkbenchStore: ObservableObject {
             )
             state.lastErrors.append("Start \(task.displayName): \(error)")
         }
+    }
+
+    private func beginNotebookTaskRecording(
+        runID: String,
+        tabID: String,
+        taskID: String,
+        session: SurfaceParameterSession,
+        runSafety: SurfaceRunSafety
+    ) {
+        guard state.hasProject else { return }
+        let bypass = state.notebookRecordingBypassTabs.remove(tabID) != nil
+        let explicitParameters = session.snapshot.states.compactMapValues { state -> JSONValue? in
+            guard state.explicit, let value = state.value else { return nil }
+            return JSONValue(parameterValue: value)
+        }
+        let resolvedParameters = session.values.mapValues(JSONValue.init(parameterValue:))
+        let outputPaths = session.bundle.surface.bindings.compactMap { binding -> String? in
+            guard binding.contextRole == "output_product",
+                  let value = session.values[binding.name]
+            else { return nil }
+            return resolvedTaskPathString(value.displayText)
+        }
+        let intent = NotebookTaskIntent(
+            format: 1,
+            surface: taskID,
+            kind: session.bundle.surface.kind,
+            contract: UInt32(clamping: session.bundle.surface.contractVersion),
+            parameters: explicitParameters
+        )
+        let approvals = runSafety.requiresInteractiveConfirmation ? [
+            NotebookApprovalRecord(
+                kind: "run_safety",
+                actor: "user",
+                timestamp: Self.unixMilliseconds(),
+                contentHash: nil
+            )
+        ] : []
+        do {
+            let result = try notebookPersistenceClient.beginRecording(request: NotebookBeginRecordingRequest(
+                projectRoot: state.project.rootPath,
+                policy: bypass ? "bypass_once" : "record",
+                request: NotebookRecordingRequest(
+                    initiatingSurface: "gui",
+                    operationId: taskID,
+                    notebookId: state.scientificNotebooks?.activeNotebookID,
+                    cellId: nil,
+                    taskIntent: intent,
+                    providerContractVersion: UInt32(clamping: session.bundle.surface.contractVersion),
+                    resolvedParameters: resolvedParameters,
+                    runSafety: NotebookRunSafetyRecord(
+                        classification: runSafety.classes.joined(separator: ","),
+                        affectedPaths: outputPaths
+                    ),
+                    approvals: approvals
+                )
+            ))
+            if let handle = result.handle {
+                notebookAttemptHandles[runID] = handle
+            }
+            if let warning = result.warning {
+                presentNotebookRecordingWarning(warning)
+            }
+            loadScientificNotebooks()
+        } catch {
+            presentNotebookRecordingWarning("could not start: \(error)")
+        }
+    }
+
+    private func finalizeNotebookTaskRecording(
+        runID: String,
+        status: String,
+        affectedPaths: [String] = [],
+        products: [String] = [],
+        diagnostics: [String] = [],
+        stdout: String = "",
+        stderr: String = ""
+    ) {
+        guard let handle = notebookAttemptHandles.removeValue(forKey: runID) else { return }
+        do {
+            try notebookPersistenceClient.finalizeRecording(request: NotebookFinalizeRecordingRequest(
+                projectRoot: state.project.rootPath,
+                handle: handle,
+                finalization: NotebookReceiptFinalization(
+                    status: status,
+                    finishedAt: Self.unixMilliseconds(),
+                    affectedPaths: affectedPaths,
+                    products: products.map {
+                        NotebookReceiptArtifact(role: "product", path: $0, mediaType: nil)
+                    },
+                    artifacts: [],
+                    diagnostics: diagnostics,
+                    stdout: Array(stdout.utf8),
+                    stderr: Array(stderr.utf8),
+                    casaLog: nil
+                )
+            ))
+            loadScientificNotebooks()
+        } catch {
+            presentNotebookRecordingWarning("could not finalize: \(error)")
+        }
+    }
+
+    private func presentNotebookRecordingWarning(_ warning: String) {
+        let message = "Notebook recording warning: \(warning)"
+        state.taskRun.warnings.append(message)
+        state.lastErrors.append(message)
+    }
+
+    private static func unixMilliseconds() -> UInt64 {
+        UInt64(max(0, Date().timeIntervalSince1970 * 1_000))
     }
 
     public func stopTask() {
@@ -4263,6 +4623,11 @@ public final class WorkbenchStore: ObservableObject {
             activeTaskExecutions[jobID]?.cancel()
             activeTaskExecutions.removeValue(forKey: jobID)
             taskParameterAttempts.removeValue(forKey: jobID)
+            finalizeNotebookTaskRecording(
+                runID: jobID,
+                status: "cancelled",
+                diagnostics: ["Cancellation requested by the user."]
+            )
             if state.taskRun.runID == jobID {
                 let progressSnapshot = terminalImagerProgressSnapshot(
                     taskID: state.activeTaskID,
@@ -5889,6 +6254,15 @@ public final class WorkbenchStore: ObservableObject {
                     affectedPaths: affectedPaths,
                     approval: "user"
                 ))
+                finalizeNotebookTaskRecording(
+                    runID: runID,
+                    status: "succeeded",
+                    affectedPaths: affectedPaths,
+                    products: affectedPaths,
+                    diagnostics: state.taskRun.diagnostics,
+                    stdout: result.stdout,
+                    stderr: result.stderr
+                )
                 if let parameterAttempt, parameterAttempt.saveLast {
                     do {
                         _ = try surfaceParameterClient.writeLast(
@@ -5922,6 +6296,12 @@ public final class WorkbenchStore: ObservableObject {
                     state.taskRun.imagerProgress = progressSnapshot
                 }
                 state.lastErrors.append("Task failed: \(failure.message)")
+                finalizeNotebookTaskRecording(
+                    runID: runID,
+                    status: "failed",
+                    diagnostics: [failure.message] + failure.diagnostics,
+                    stderr: failure.diagnostics.joined(separator: "\n")
+                )
             case .cancelled(let failure):
                 job.status = .cancelled
                 job.error = failure.message
@@ -5942,6 +6322,12 @@ public final class WorkbenchStore: ObservableObject {
                     state.taskRun.diagnostics.append(contentsOf: failure.diagnostics)
                     state.taskRun.imagerProgress = progressSnapshot
                 }
+                finalizeNotebookTaskRecording(
+                    runID: runID,
+                    status: "cancelled",
+                    diagnostics: [failure.message] + failure.diagnostics,
+                    stderr: failure.diagnostics.joined(separator: "\n")
+                )
             }
         }
     }

@@ -1386,6 +1386,100 @@ final class WorkbenchStoreTests: XCTestCase {
         store.stopTask()
     }
 
+    func testGenericTaskNotebookRecordingTracksSuccessCancellationAndOneRunBypass() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-notebook-task-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let imageURL = rootURL.appendingPathComponent("input.image", isDirectory: true)
+        let taskClient = HoldingGenericTaskClient()
+        let notebookClient = RecordingNotebookPersistenceClient()
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "Project",
+            rootPath: rootURL.path,
+            datasets: [DatasetSummary(
+                id: imageURL.path,
+                name: imageURL.lastPathComponent,
+                path: imageURL.path,
+                kind: .imageCube,
+                size: "4 x 4",
+                units: "Jy/beam",
+                shape: [4, 4],
+                notes: "test image"
+            )],
+            source: .probed
+        )
+        state.selectedDatasetID = imageURL.path
+        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.activeTaskID = "imhead"
+        let store = WorkbenchStore(
+            state: state,
+            genericTaskClient: taskClient,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+        store.installNotebookPersistenceClientForTesting(notebookClient)
+        store.loadTaskUISchemaIfNeeded("imhead")
+
+        store.runTask()
+        try taskClient.emitSucceeded()
+        waitFor("successful notebook receipt") {
+            notebookClient.finalizeRequests.last?.finalization.status == "succeeded"
+        }
+        XCTAssertEqual(notebookClient.beginRequests.first?.request.initiatingSurface, "gui")
+        XCTAssertEqual(notebookClient.beginRequests.first?.request.operationId, "imhead")
+        XCTAssertEqual(notebookClient.beginRequests.first?.policy, "record")
+
+        store.runTask()
+        store.stopTask()
+        XCTAssertEqual(notebookClient.finalizeRequests.last?.finalization.status, "cancelled")
+
+        let tabID = store.state.activeTabID.isEmpty ? "tab-task-imhead" : store.state.activeTabID
+        store.setNotebookRecordingBypassOnce(tabID: tabID, enabled: true)
+        let finalizedCount = notebookClient.finalizeRequests.count
+        store.runTask()
+        XCTAssertEqual(notebookClient.beginRequests.last?.policy, "bypass_once")
+        store.stopTask()
+        XCTAssertEqual(notebookClient.finalizeRequests.count, finalizedCount)
+        XCTAssertFalse(store.notebookRecordingBypassOnce(tabID: tabID))
+    }
+
+    func testNotebookRecordingFailureDoesNotBlockTaskAndRetainsVisibleWarning() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-notebook-warning-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let taskClient = HoldingGenericTaskClient()
+        let notebookClient = RecordingNotebookPersistenceClient()
+        notebookClient.beginError = NSError(
+            domain: "NotebookRecorder",
+            code: 17,
+            userInfo: [NSLocalizedDescriptionKey: "fixture recorder unavailable"]
+        )
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [], source: .probed)
+        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.activeTaskID = "imhead"
+        let store = WorkbenchStore(
+            state: state,
+            genericTaskClient: taskClient,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+        store.installNotebookPersistenceClientForTesting(notebookClient)
+        store.loadTaskUISchemaIfNeeded("imhead")
+        store.setGenericTaskValue(taskID: "imhead", argumentID: "imagename", value: "input.image")
+
+        store.runTask()
+
+        XCTAssertEqual(store.state.taskRun.state, .running)
+        XCTAssertEqual(taskClient.requests.count, 1)
+        XCTAssertTrue(store.state.lastErrors.contains { $0.contains("Notebook recording warning") })
+    }
+
     func testSessionLastRequiresSuccessfulOpenAndIgnoresTransientNavigation() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-session-last-\(UUID().uuidString)", isDirectory: true)
@@ -6445,6 +6539,40 @@ private final class RecordingSurfaceParameterClient: SurfaceParameterClient {
             bytesWritten: 0,
             managedKind: successful ? "last_successful" : "last"
         )
+    }
+}
+
+private final class RecordingNotebookPersistenceClient: NotebookPersistenceClient {
+    private let base = UniFFINotebookPersistenceClient()
+    private(set) var beginRequests: [NotebookBeginRecordingRequest] = []
+    private(set) var finalizeRequests: [NotebookFinalizeRecordingRequest] = []
+    var beginError: Error?
+
+    func loadProject(projectRoot: String) throws -> ScientificNotebookProjectState {
+        try base.loadProject(projectRoot: projectRoot)
+    }
+
+    func create(projectRoot: String, filename: String?, title: String) throws -> NotebookDocumentState {
+        try base.create(projectRoot: projectRoot, filename: filename, title: title)
+    }
+
+    func save(
+        projectRoot: String,
+        document: NotebookDocumentState,
+        resolution: NotebookConflictResolution
+    ) throws -> NotebookSaveResult {
+        try base.save(projectRoot: projectRoot, document: document, resolution: resolution)
+    }
+
+    func beginRecording(request: NotebookBeginRecordingRequest) throws -> NotebookBeginRecordingResult {
+        beginRequests.append(request)
+        if let beginError { throw beginError }
+        return try base.beginRecording(request: request)
+    }
+
+    func finalizeRecording(request: NotebookFinalizeRecordingRequest) throws {
+        finalizeRequests.append(request)
+        try base.finalizeRecording(request: request)
     }
 }
 

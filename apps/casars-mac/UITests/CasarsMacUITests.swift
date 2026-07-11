@@ -3,6 +3,7 @@ import XCTest
 
 final class CasarsMacUITests: XCTestCase {
     private var app: XCUIApplication!
+    private var productionProjectURL: URL?
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -22,6 +23,10 @@ final class CasarsMacUITests: XCTestCase {
         }
         app?.terminate()
         app = nil
+        if let productionProjectURL {
+            try? FileManager.default.removeItem(at: productionProjectURL)
+            self.productionProjectURL = nil
+        }
     }
 
     func testCompleteDocumentEditingAndTaskProjection() throws {
@@ -218,6 +223,57 @@ final class CasarsMacUITests: XCTestCase {
         assertZeroProductionBoundaryCalls()
     }
 
+    func testProductionNotebookPersistsCompleteMarkdownAndReconcilesExternalEdit() throws {
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-mac-ui-notebook-\(UUID().uuidString)", isDirectory: true)
+        let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
+        try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
+        let notebookFile = notebooks.appendingPathComponent("default.md")
+        let initial = """
+        <!-- casa-rs-notebook:v1 id=019f0000-0000-7000-8000-000000000001 -->
+
+        # UI production notebook
+
+        Initial note.
+        """ + "\n"
+        try initial.write(to: notebookFile, atomically: true, encoding: .utf8)
+        productionProjectURL = project
+
+        app = XCUIApplication()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "--open-project", project.path,
+        ]
+        app.launch()
+        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
+        let notebookDock = app.buttons["dock.mode.notebooks"]
+        XCTAssertTrue(notebookDock.waitForExistence(timeout: 5), app.debugDescription)
+        notebookDock.click()
+        let selector = element("notebook.selector.019f0000-0000-7000-8000-000000000001")
+        XCTAssertTrue(selector.waitForExistence(timeout: 5), app.debugDescription)
+        selector.click()
+        try require("notebook.selector.open").click()
+        XCTAssertTrue(element("notebook.viewMode").waitForExistence(timeout: 5), app.debugDescription)
+
+        selectViewMode("Raw")
+        let edited = initial + "\nSaved from the launched production UI.\n"
+        replaceText("notebook.editor.raw", with: edited)
+        try require("notebook.save").click()
+        XCTAssertTrue(waitForFile(notebookFile, containing: "Saved from the launched production UI."))
+        XCTAssertEqual(try accessibilityValue("notebook.dirtyState"), "saved")
+
+        let local = edited + "\nLocal dirty edit.\n"
+        replaceText("notebook.editor.raw", with: local)
+        let external = edited + "\nExternal third-party edit.\n"
+        try external.write(to: notebookFile, atomically: true, encoding: .utf8)
+        try require("notebook.save").click()
+        XCTAssertTrue(try require("notebook.conflict.reloadExternal").exists)
+        try require("notebook.conflict.reloadExternal").click()
+        XCTAssertTrue(waitForValue("notebook.editor.raw", containing: "External third-party edit."))
+        XCTAssertFalse(try textValue(try require("notebook.editor.raw")).contains("Local dirty edit."))
+        XCTAssertEqual(try accessibilityValue("notebook.dirtyState"), "saved")
+    }
+
     private func launchPrototype(scenario: String = "happy-path") {
         app = XCUIApplication()
         app.launchArguments = [
@@ -296,6 +352,17 @@ final class CasarsMacUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(5)
         repeat {
             if element.value as? String == expected {
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        } while Date() < deadline
+        return false
+    }
+
+    private func waitForFile(_ url: URL, containing text: String) -> Bool {
+        let deadline = Date().addingTimeInterval(5)
+        repeat {
+            if (try? String(contentsOf: url, encoding: .utf8))?.contains(text) == true {
                 return true
             }
             Thread.sleep(forTimeInterval: 0.05)

@@ -150,6 +150,21 @@ fn mutating_tui_task_requires_second_run_key_to_confirm() {
 }
 
 #[test]
+fn tui_notebook_bypass_is_visible_and_reversible_before_the_next_run() {
+    let app_definition = resolve_app(Some("imhead")).expect("imhead app");
+    let schema = app_definition.load_schema().expect("imhead schema");
+    let mut app = AppState::from_schema(app_definition, schema);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+    assert!(app.notebook_bypass_once_for_test());
+    assert!(app.status_line_for_test().contains("next run only"));
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+    assert!(!app.notebook_bypass_once_for_test());
+    assert!(app.status_line_for_test().contains("enabled"));
+}
+
+#[test]
 fn tui_confirmation_is_driven_by_catalog_safety_for_adapter_mutations() {
     for id in ["statwt", "clearcal", "delmod", "ft"] {
         let temp = tempdir().expect("tempdir");

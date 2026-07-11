@@ -131,7 +131,8 @@ Use `Closes #N` only for issues that should auto-close on merge.
 - Native macOS GUI behavior uses XCTest/XCUIAutomation as the executable
   end-to-end interaction layer. Issue #368 establishes the thin Xcode app host,
   macOS UI Testing Bundle, and stable `just gui-test` entrypoint for the current
-  notebook wave; it must land before Wave 1 production integration begins.
+  notebook wave; it must be implemented and green before Wave 1 production
+  integration begins, and lands with the completed wave PR.
   Thereafter, every user-visible `casars-mac` wave must identify its critical
   workflows during shaping, add or update stable accessibility identifiers and
   XCUITest coverage during implementation, and record a green `just gui-test`

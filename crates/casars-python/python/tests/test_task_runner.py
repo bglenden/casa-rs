@@ -48,6 +48,7 @@ def test_run_uses_canonical_profile_and_forwards_runtime_controls(
         workspace=tmp_path,
         binary=binary,
         save_last=False,
+        record_notebook=False,
         confirm_overwrite=True,
         confirm_mutation=True,
         env={"FAKE_CASARS_LOG": str(log)},
@@ -60,6 +61,7 @@ def test_run_uses_canonical_profile_and_forwards_runtime_controls(
         "--workspace",
         str(tmp_path),
         "--no-save-last",
+        "--no-notebook-recording",
         "--confirm-overwrite",
         "--confirm-mutation",
     ]

@@ -8,6 +8,7 @@ mod execution;
 mod graphics;
 mod imaging_workflow;
 mod movie_perf;
+mod notebook_recording;
 mod parameters_cli;
 mod registry;
 mod shell;

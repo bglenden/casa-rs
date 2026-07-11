@@ -96,6 +96,7 @@ use crate::movie_perf::{
     BackendTimingBreakdown, MovieFrameOutcome, MoviePerfContext, MoviePerfTracer,
     MoviePipelineState,
 };
+use crate::notebook_recording::NotebookRecording;
 use crate::registry::{AppShellKind, BrowserAppKind, RegistryApp};
 use crate::shell::{
     BrowserOverviewDisplay, InspectOverviewDisplay, render_browser_overview_lines,
@@ -112,6 +113,7 @@ use crate::workflow::{
     render_workflow_product_row_display, render_workflow_stage_display,
     render_workflow_value_display, stale_descendant_product_indices,
 };
+use casa_notebook::ExecutionStatus as NotebookExecutionStatus;
 
 const DENSE_SPINNER_FRAMES: &[&str] = &["|", "/", "-", "\\"];
 const RICH_SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠴", "⠦"];
@@ -353,6 +355,7 @@ enum AppAction {
     FocusPrevious,
     StartRun,
     ToggleAdvanced,
+    ToggleNotebookBypass,
     CancelSession,
     OpenPathChooser,
     OpenParameterSources,
@@ -769,6 +772,7 @@ pub(crate) struct AppState {
     kitty_movie_store_invalidated: bool,
     last_click: Option<ClickState>,
     pending_run_confirmation: bool,
+    notebook_bypass_once: bool,
     movie_perf: MoviePerfTracer,
     quit: bool,
     return_to_launcher: bool,
@@ -781,6 +785,7 @@ struct RunningState {
     file_output_path: Option<String>,
     cancel_requested: bool,
     task_last_state: Option<TaskLastState>,
+    notebook_recording: Option<NotebookRecording>,
 }
 
 #[derive(Debug)]
@@ -2401,6 +2406,7 @@ impl AppState {
             kitty_movie_store_invalidated: false,
             last_click: None,
             pending_run_confirmation: false,
+            notebook_bypass_once: false,
             movie_perf: MoviePerfTracer::from_env(),
             quit: false,
             return_to_launcher: false,
@@ -2482,6 +2488,7 @@ impl AppState {
             kitty_movie_store_invalidated: false,
             last_click: None,
             pending_run_confirmation: false,
+            notebook_bypass_once: false,
             movie_perf: MoviePerfTracer::from_env(),
             quit: false,
             return_to_launcher: false,
@@ -3952,6 +3959,13 @@ impl AppState {
             {
                 return Some(AppAction::ToggleAdvanced);
             }
+            KeyCode::Char('v')
+                if key_event.modifiers.is_empty()
+                    && mode != InputMode::Edit
+                    && !self.has_active_session() =>
+            {
+                return Some(AppAction::ToggleNotebookBypass);
+            }
             KeyCode::Char('o')
                 if key_event.modifiers == KeyModifiers::CONTROL
                     && mode != InputMode::Edit
@@ -4235,6 +4249,15 @@ impl AppState {
                 }
             }
             AppAction::ToggleAdvanced => self.toggle_advanced(),
+            AppAction::ToggleNotebookBypass => {
+                self.notebook_bypass_once = !self.notebook_bypass_once;
+                self.result.status_line = if self.notebook_bypass_once {
+                    "Notebook recording will be skipped for the next run only.".into()
+                } else {
+                    "Notebook recording is enabled for the next run.".into()
+                };
+                self.result.status_kind = StatusKind::Warning;
+            }
             AppAction::CancelSession => self.cancel_current(),
             AppAction::OpenPathChooser => self.open_path_chooser_for_selected_field(),
             AppAction::OpenParameterSources => self.open_parameter_source_picker(),
@@ -4553,6 +4576,11 @@ impl AppState {
             if self.running.is_none() {
                 parts.push("a adv".to_string());
                 parts.push("r run".to_string());
+                parts.push(if self.notebook_bypass_once {
+                    "v notebook: skip once".to_string()
+                } else {
+                    "v notebook: record".to_string()
+                });
             } else {
                 parts.push("x cancel".to_string());
             }
@@ -4586,7 +4614,7 @@ impl AppState {
             "Global: p primary pane  y copy  b apps  t theme  q quit".to_string(),
         ];
         if self.running.is_none() && self.browser_session.is_none() && self.edit_state.is_none() {
-            lines.push("Global: r run  a advanced options".to_string());
+            lines.push("Global: r run  a advanced options  v skip notebook once".to_string());
         } else if self.running.is_some() {
             lines.push("Global: x cancel active process".to_string());
         } else if self.browser_session.is_some() {
@@ -6303,6 +6331,11 @@ impl AppState {
     #[cfg(test)]
     pub(crate) fn status_line_for_test(&self) -> &str {
         &self.result.status_line
+    }
+
+    #[cfg(test)]
+    pub(crate) fn notebook_bypass_once_for_test(&self) -> bool {
+        self.notebook_bypass_once
     }
 
     #[cfg(test)]
@@ -9952,6 +9985,7 @@ impl AppState {
 
         match self.build_execution_plan() {
             Ok(plan) => {
+                let notebook_bypass_once = std::mem::take(&mut self.notebook_bypass_once);
                 let mut task_last_state = TaskLastState::new(
                     ManagedStateStore::for_workspace(&self.parameter_workspace),
                     self.app.id.clone(),
@@ -9973,25 +10007,44 @@ impl AppState {
                         return;
                     }
                 };
+                let mut notebook_recording = self.parameter_session.as_ref().map(|session| {
+                    NotebookRecording::begin(
+                        self.parameter_workspace.clone(),
+                        "tui",
+                        &self.app.id,
+                        session,
+                        notebook_bypass_once,
+                        requires_run_confirmation,
+                    )
+                });
+                let notebook_warning = notebook_recording
+                    .as_mut()
+                    .and_then(NotebookRecording::take_warning);
                 match spawn_process(&plan) {
                     Ok(process) => {
-                        let status_line = last_warning.as_ref().map_or_else(
-                            || format!("Running {}...", self.app.id),
-                            |warning| {
-                                format!(
-                                    "Running {}... Warning: could not save Last: {warning}",
-                                    self.app.id
-                                )
-                            },
-                        );
+                        let mut run_warnings = Vec::new();
+                        if let Some(warning) = &last_warning {
+                            run_warnings.push(format!("could not save Last: {warning}"));
+                        }
+                        if let Some(warning) = &notebook_warning {
+                            run_warnings.push(format!("notebook recording unavailable: {warning}"));
+                        }
+                        let status_line = if run_warnings.is_empty() {
+                            format!("Running {}...", self.app.id)
+                        } else {
+                            format!(
+                                "Running {}... Warning: {}",
+                                self.app.id,
+                                run_warnings.join("; ")
+                            )
+                        };
                         self.result = ResultState {
                             status_line,
                             status_kind: StatusKind::Running,
-                            stderr: last_warning
-                                .map(|warning| {
-                                    format!("Automatic parameter save warning: {warning}\n")
-                                })
-                                .unwrap_or_default(),
+                            stderr: run_warnings
+                                .into_iter()
+                                .map(|warning| format!("Automatic run warning: {warning}\n"))
+                                .collect(),
                             file_output_path: plan.file_output_path.clone(),
                             ..ResultState::default()
                         };
@@ -10006,9 +10059,19 @@ impl AppState {
                             file_output_path: plan.file_output_path,
                             cancel_requested: false,
                             task_last_state: Some(task_last_state),
+                            notebook_recording,
                         });
                     }
                     Err(error) => {
+                        if let Some(recording) = notebook_recording.as_mut() {
+                            let _ = recording.finalize(
+                                NotebookExecutionStatus::Failed,
+                                String::new(),
+                                String::new(),
+                                Vec::new(),
+                                vec![error.clone()],
+                            );
+                        }
                         self.result.status_line = format!("Failed to launch {}.", self.app.id);
                         self.result.status_kind = StatusKind::Error;
                         self.result.stderr = format!("{error}\n");
@@ -15203,6 +15266,22 @@ impl AppState {
             return;
         };
         let completed_successfully = success && !running.cancel_requested;
+        let notebook_status = if running.cancel_requested {
+            NotebookExecutionStatus::Cancelled
+        } else if success {
+            NotebookExecutionStatus::Succeeded
+        } else {
+            NotebookExecutionStatus::Failed
+        };
+        let notebook_warning = running.notebook_recording.as_mut().and_then(|recording| {
+            recording.finalize(
+                notebook_status,
+                self.result.stdout.clone(),
+                self.result.stderr.clone(),
+                running.file_output_path.iter().map(PathBuf::from).collect(),
+                Vec::new(),
+            )
+        });
         let automatic_save_warning = running
             .task_last_state
             .as_mut()
@@ -15211,6 +15290,11 @@ impl AppState {
             self.result
                 .stderr
                 .push_str(&format!("Automatic parameter save warning: {warning}\n"));
+        }
+        if let Some(warning) = &notebook_warning {
+            self.result
+                .stderr
+                .push_str(&format!("Notebook recording warning: {warning}\n"));
         }
         let save_warning_suffix = automatic_save_warning
             .as_ref()

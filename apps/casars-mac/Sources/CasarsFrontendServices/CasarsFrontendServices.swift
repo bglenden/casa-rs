@@ -2996,6 +2996,8 @@ public enum FrontendServiceError: Swift.Error {
     )
     case Parameters(reason: String
     )
+    case Notebook(reason: String
+    )
 }
 
 
@@ -3031,6 +3033,9 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
             reason: try FfiConverterString.read(from: &buf)
             )
         case 7: return .Parameters(
+            reason: try FfiConverterString.read(from: &buf)
+            )
+        case 8: return .Notebook(
             reason: try FfiConverterString.read(from: &buf)
             )
 
@@ -3077,6 +3082,11 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
 
         case let .Parameters(reason):
             writeInt(&buf, Int32(7))
+            FfiConverterString.write(reason, into: &buf)
+
+
+        case let .Notebook(reason):
+            writeInt(&buf, Int32(8))
             FfiConverterString.write(reason, into: &buf)
 
         }
@@ -3924,6 +3934,65 @@ public func buildTableBrowserSnapshotJson(datasetPath: String, width: UInt16, he
 })
 }
 /**
+ * Begin best-effort project recording or apply the visible one-run bypass.
+ */
+public func notebookBeginRecordingJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_begin_recording_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * Lazily create the default notebook or create a named Markdown notebook.
+ */
+public func notebookCreateJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_create_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * Export portable Markdown/assets or explicitly include managed receipts.
+ */
+public func notebookExport(requestJson: String)throws   {try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_export(
+        FfiConverterString.lower(requestJson),$0
+    )
+}
+}
+/**
+ * Finalize exactly one immutable receipt revision.
+ */
+public func notebookFinalizeRecordingJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_finalize_recording_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * Project notebook list, complete Markdown sources, conflict tokens, and receipts.
+ */
+public func notebookProjectJson(projectRoot: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_project_json(
+        FfiConverterString.lower(projectRoot),$0
+    )
+})
+}
+/**
+ * Atomically save one complete Markdown source with explicit conflict handling.
+ */
+public func notebookSaveJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_save_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
  * Return the validated aggregate catalog of canonical parameter concepts and surfaces.
  */
 public func parameterCatalogJson()throws  -> String  {
@@ -4179,6 +4248,24 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_build_table_browser_snapshot_json() != 45866) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_notebook_begin_recording_json() != 6921) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_notebook_create_json() != 57099) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_notebook_export() != 9852) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_notebook_finalize_recording_json() != 44107) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_notebook_project_json() != 4287) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_notebook_save_json() != 28987) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_parameter_catalog_json() != 8) {

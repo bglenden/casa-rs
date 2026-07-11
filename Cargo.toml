@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/casa-notebook",
     "crates/casa-provider-contracts",
     "crates/casa-task-runtime",
     "crates/casars",

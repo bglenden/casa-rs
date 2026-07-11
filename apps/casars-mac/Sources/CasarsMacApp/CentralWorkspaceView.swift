@@ -69,7 +69,10 @@ struct CentralWorkspaceView: View {
                 Button("Notebook") {
                     store.openDefaultTab(kind: .notebook)
                 }
-                .disabled(store.state.prototypeNotebook == nil)
+                .disabled(
+                    store.state.prototypeNotebook == nil
+                        && store.state.scientificNotebooks?.activeNotebook == nil
+                )
                 .accessibilityIdentifier("central.tab.openNotebook")
                 Button("Tutorial") {
                     store.openDefaultTab(kind: .tutorial)
@@ -8425,6 +8428,13 @@ struct GenericTaskPanel: View {
                     ))
                     .toggleStyle(.switch)
                     .help("Disable managed Last and Last Successful writes for this tab.")
+                    Toggle("Skip notebook once", isOn: Binding(
+                        get: { store.notebookRecordingBypassOnce(tabID: tabID) },
+                        set: { store.setNotebookRecordingBypassOnce(tabID: tabID, enabled: $0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .help("Do not add this one task attempt to the project notebook. The bypass clears when Run is pressed.")
+                    .accessibilityIdentifier("task.notebook.bypassOnce")
                 }
                 if !session.snapshot.diagnostics.isEmpty {
                     ForEach(session.snapshot.diagnostics) { diagnostic in

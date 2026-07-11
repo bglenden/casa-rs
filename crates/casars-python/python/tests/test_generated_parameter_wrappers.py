@@ -43,6 +43,7 @@ def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -
         profile="imager.toml",
         base_source="defaults",
         save_last=False,
+        record_notebook=False,
     )
 
     assert captured["task"] == "imager"
@@ -54,6 +55,7 @@ def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -
     assert captured["profile"] == "imager.toml"
     assert captured["base_source"] == "defaults"
     assert captured["save_last"] is False
+    assert captured["record_notebook"] is False
 
 
 def test_importvla_wrapper_preserves_the_archive_path_list(monkeypatch) -> None:

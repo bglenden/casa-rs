@@ -365,6 +365,63 @@ struct LeftDockView: View {
                 }
                 .padding(10)
             }
+        } else if let notebooks = store.state.scientificNotebooks {
+            VStack(spacing: 0) {
+                List(selection: Binding(
+                    get: { notebooks.activeNotebookID },
+                    set: { notebookID in
+                        if let notebookID {
+                            store.selectScientificNotebook(notebookID)
+                            store.openDefaultTab(kind: .notebook)
+                        }
+                    }
+                )) {
+                    ForEach(notebooks.notebooks) { document in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: "doc.richtext")
+                                .foregroundStyle(document.id == notebooks.activeNotebookID ? Color.accentColor : .secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(document.title)
+                                    .workbenchFont(.subheadline, weight: .semibold)
+                                    .lineLimit(1)
+                                Text(document.filename)
+                                    .workbenchFont(.caption, design: .monospaced)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 4)
+                            if document.isDirty {
+                                Circle().fill(.orange).frame(width: 7, height: 7)
+                            }
+                        }
+                        .padding(.vertical, 3)
+                        .tag(Optional(document.id))
+                        .accessibilityIdentifier("notebook.selector.\(document.id)")
+                    }
+                }
+                .listStyle(.sidebar)
+                .accessibilityIdentifier("dock.notebooks")
+                Divider()
+                Button {
+                    store.openDefaultTab(kind: .notebook)
+                } label: {
+                    Label("Open selected notebook", systemImage: "arrow.up.forward.app")
+                }
+                .buttonStyle(.borderless)
+                .padding(10)
+                .accessibilityIdentifier("notebook.selector.open")
+                Button {
+                    if notebooks.notebooks.isEmpty {
+                        store.createScientificNotebook()
+                    } else {
+                        store.createNextNamedScientificNotebook()
+                    }
+                } label: {
+                    Label(notebooks.notebooks.isEmpty ? "Create default notebook" : "New notebook", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .padding(.bottom, 10)
+                .accessibilityIdentifier("notebook.selector.new")
+            }
         } else {
             VStack(alignment: .leading, spacing: 12) {
                 Text("No notebooks yet")
@@ -374,11 +431,13 @@ struct LeftDockView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
-                    if let url = ProjectOpenPanel.chooseDirectory() {
+                    if store.state.hasProject {
+                        store.createScientificNotebook()
+                    } else if let url = ProjectOpenPanel.chooseDirectory() {
                         store.openProject(path: url.path)
                     }
                 } label: {
-                    Label("Open Project", systemImage: "folder")
+                    Label(store.state.hasProject ? "Create Notebook" : "Open Project", systemImage: store.state.hasProject ? "plus" : "folder")
                 }
                 .accessibilityIdentifier("dock.empty.primary")
                 Spacer()

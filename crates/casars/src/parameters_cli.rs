@@ -4,10 +4,9 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
+use casa_notebook::ExecutionStatus;
 use casa_provider_contracts::{
     ParameterConcept, ParameterType, ParameterValue, ProviderInvocation,
     ProviderInvocationAdaptation, SurfaceContractBundle, SurfaceKind, builtin_surface_bundle,
@@ -20,6 +19,8 @@ use casa_task_runtime::{
     resolve_profile, write_parameter_profile_atomic,
 };
 
+use crate::execution::{ExecutionPlan, run_process_blocking};
+use crate::notebook_recording::NotebookRecording;
 use crate::registry::resolve_app;
 use crate::startup::{StartupLaunch, StartupPrefill, StartupValue};
 
@@ -143,30 +144,59 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
         eprintln!("Warning: could not save Last for {surface_id}: {warning}");
     }
 
-    let app = resolve_app(Some(&surface_id))?;
-    let mut command = app.resolve_command()?.command();
-    command.current_dir(&options.workspace);
-    command.args(&invocation.args);
-    let status = if let Some(stdin) = invocation.stdin {
-        command.stdin(Stdio::piped());
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("start {surface_id}: {error}"))?;
-        child
-            .stdin
-            .take()
-            .ok_or_else(|| format!("open {surface_id} provider stdin"))?
-            .write_all(stdin.as_bytes())
-            .map_err(|error| format!("write {surface_id} provider request: {error}"))?;
-        child
-            .wait()
-            .map_err(|error| format!("wait for {surface_id}: {error}"))?
-    } else {
-        command
-            .status()
-            .map_err(|error| format!("start {surface_id}: {error}"))?
+    let mut recording = NotebookRecording::begin(
+        options.workspace.clone(),
+        "cli",
+        &surface_id,
+        &session,
+        options.no_notebook_recording,
+        options.confirm_overwrite || options.confirm_mutation,
+    );
+    if let Some(warning) = recording.take_warning() {
+        eprintln!("Warning: notebook recording unavailable for {surface_id}: {warning}");
+    }
+
+    let execution = (|| {
+        let app = resolve_app(Some(&surface_id))?;
+        let plan = ExecutionPlan {
+            command: app.resolve_command()?,
+            arguments: invocation.args.iter().map(OsString::from).collect(),
+            stdin: invocation.stdin,
+            working_directory: options.workspace.clone(),
+            renderer: None,
+            file_output_path: None,
+        };
+        run_process_blocking(&plan).map_err(|error| format!("run {surface_id}: {error}"))
+    })();
+    let execution = match execution {
+        Ok(execution) => execution,
+        Err(error) => {
+            if let Some(warning) = recording.finalize(
+                ExecutionStatus::Failed,
+                String::new(),
+                String::new(),
+                Vec::new(),
+                vec![error.clone()],
+            ) {
+                eprintln!("Warning: notebook receipt finalization failed: {warning}");
+            }
+            return Err(error);
+        }
     };
-    let successful = status.success();
+    let successful = execution.exit.success;
+    if let Some(warning) = recording.finalize(
+        if successful {
+            ExecutionStatus::Succeeded
+        } else {
+            ExecutionStatus::Failed
+        },
+        execution.stdout,
+        execution.stderr,
+        Vec::new(),
+        Vec::new(),
+    ) {
+        eprintln!("Warning: notebook receipt finalization failed: {warning}");
+    }
     let completed = last.after_completion(successful);
     if let Some(warning) = completed.warning {
         eprintln!("Warning: could not save Last Successful for {surface_id}: {warning}");
@@ -174,7 +204,13 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
     if successful {
         Ok(())
     } else {
-        Err(format!("{surface_id} exited with {status}"))
+        Err(format!(
+            "{surface_id} exited with code {}",
+            execution
+                .exit
+                .code
+                .map_or_else(|| "unknown".to_owned(), |code| code.to_string())
+        ))
     }
 }
 
@@ -244,6 +280,7 @@ struct SurfaceOptions {
     overrides: ResolutionPatch,
     save_params: Option<PathBuf>,
     no_save_last: bool,
+    no_notebook_recording: bool,
     confirm_overwrite: bool,
     confirm_mutation: bool,
 }
@@ -259,6 +296,7 @@ fn parse_surface_options(
     let context = ResolutionPatch::default();
     let mut save_params = None;
     let mut no_save_last = false;
+    let mut no_notebook_recording = false;
     let mut confirm_overwrite = false;
     let mut confirm_mutation = false;
     let positional = bundle
@@ -306,6 +344,8 @@ fn parse_surface_options(
             save_params = Some(required_path(args.get(index), "--save-params file")?);
         } else if raw == "--no-save-last" {
             no_save_last = true;
+        } else if raw == "--no-notebook-recording" && allow_runtime_controls {
+            no_notebook_recording = true;
         } else if raw == "--confirm-overwrite" && allow_runtime_controls {
             confirm_overwrite = true;
         } else if raw == "--confirm-mutation" && allow_runtime_controls {
@@ -371,6 +411,7 @@ fn parse_surface_options(
         overrides,
         save_params,
         no_save_last,
+        no_notebook_recording,
         confirm_overwrite,
         confirm_mutation,
     })
@@ -815,7 +856,7 @@ Usage:\n\
   casars open SESSION [SOURCE] [OVERRIDES] [--workspace DIR] [--save-params FILE]\n\n\
 SOURCE is exactly one of --defaults, --last, --last-successful (tasks), or --params FILE.\n\
 Overrides use CASA names such as --vis, --imsize, --cell, or --unset NAME.\n\
-Runtime-only controls: --no-save-last, --confirm-overwrite, --confirm-mutation.\n"
+Runtime-only controls: --no-save-last, --no-notebook-recording (one run), --confirm-overwrite, --confirm-mutation.\n"
         .to_string()
 }
 

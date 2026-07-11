@@ -16,6 +16,7 @@
 		000000000000000000000046 /* WorkbenchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000016 /* WorkbenchView.swift */; };
 		000000000000000000000047 /* CasarsMacUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000020 /* CasarsMacUITests.swift */; };
 		000000000000000000000048 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 000000000000000000000032 /* XCTest.framework */; };
+		000000000000000000000049 /* PersistentScientificNotebookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000017 /* PersistentScientificNotebookView.swift */; };
 		0000000000000000000000B2 /* CasarsMacCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000B1 /* CasarsMacCore */; };
 /* End PBXBuildFile section */
 
@@ -37,6 +38,7 @@
 		000000000000000000000014 /* WorkbenchFont.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchFont.swift; sourceTree = "<group>"; };
 		000000000000000000000015 /* WorkbenchPlotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchPlotView.swift; sourceTree = "<group>"; };
 		000000000000000000000016 /* WorkbenchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchView.swift; sourceTree = "<group>"; };
+		000000000000000000000017 /* PersistentScientificNotebookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistentScientificNotebookView.swift; sourceTree = "<group>"; };
 		000000000000000000000020 /* CasarsMacUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CasarsMacUITests.swift; sourceTree = "<group>"; };
 		000000000000000000000030 /* casars-mac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = casars-mac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000031 /* CasarsMacUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CasarsMacUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -89,6 +91,7 @@
 				000000000000000000000011 /* CentralWorkspaceView.swift */,
 				000000000000000000000012 /* GUIEvidenceCapture.swift */,
 				000000000000000000000013 /* ScientificNotebookView.swift */,
+				000000000000000000000017 /* PersistentScientificNotebookView.swift */,
 				000000000000000000000014 /* WorkbenchFont.swift */,
 				000000000000000000000015 /* WorkbenchPlotView.swift */,
 				000000000000000000000016 /* WorkbenchView.swift */,
@@ -238,6 +241,7 @@
 				000000000000000000000041 /* CentralWorkspaceView.swift in Sources */,
 				000000000000000000000042 /* GUIEvidenceCapture.swift in Sources */,
 				000000000000000000000043 /* ScientificNotebookView.swift in Sources */,
+				000000000000000000000049 /* PersistentScientificNotebookView.swift in Sources */,
 				000000000000000000000044 /* WorkbenchFont.swift in Sources */,
 				000000000000000000000045 /* WorkbenchPlotView.swift in Sources */,
 				000000000000000000000046 /* WorkbenchView.swift in Sources */,

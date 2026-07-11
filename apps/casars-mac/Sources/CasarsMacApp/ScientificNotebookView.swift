@@ -12,6 +12,8 @@ struct ScientificNotebookView: View {
         Group {
             if let notebook = store.state.prototypeNotebook {
                 notebookWorkspace(notebook)
+            } else if store.state.scientificNotebooks?.activeNotebook != nil {
+                PersistentScientificNotebookView(store: store)
             } else {
                 unavailableNotebook
             }
@@ -566,7 +568,7 @@ struct PrototypeNotebookTaskView: View {
     }
 }
 
-private struct RichMarkdownBlockEditor: View {
+struct RichMarkdownBlockEditor: View {
     @Binding var source: String
     let headingLevel: Int?
     let isInsertionSurface: Bool

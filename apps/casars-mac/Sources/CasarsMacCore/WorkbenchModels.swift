@@ -2708,12 +2708,16 @@ public struct WorkbenchState: Codable, Equatable {
     public var taskCatalog: [TaskCatalogEntry]
     public var taskExecutionMatrixRows: [TaskExecutionMatrixRow]
     public var tutorialPack: TutorialPackContext?
+    /// Rust-backed project notebook state. The complete Markdown source remains
+    /// the editable authority; this is only an in-memory GUI projection.
+    package var scientificNotebooks: ScientificNotebookProjectState?
     /// Ephemeral fixture projection present only for the notebook interaction prototype.
     package var prototypeNotebook: PrototypeScientificNotebookProjection?
     public var activeTaskID: String
     public var taskUISchemas: [String: TaskUISchema]
     public var parameterSessions: [String: SurfaceParameterSession]
     public var genericTaskConfirmations: [String: Bool]
+    public var notebookRecordingBypassTabs: Set<String>
     public var history: [ProcessingHistoryEvent]
     public var commandQuery: String
     public var lastErrors: [String]
@@ -2748,6 +2752,7 @@ public struct WorkbenchState: Codable, Equatable {
         taskUISchemas: [String: TaskUISchema] = [:],
         parameterSessions: [String: SurfaceParameterSession] = [:],
         genericTaskConfirmations: [String: Bool] = [:],
+        notebookRecordingBypassTabs: Set<String> = [],
         history: [ProcessingHistoryEvent],
         commandQuery: String,
         lastErrors: [String],
@@ -2777,11 +2782,13 @@ public struct WorkbenchState: Codable, Equatable {
         self.taskCatalog = taskCatalog
         self.taskExecutionMatrixRows = taskExecutionMatrixRows
         self.tutorialPack = tutorialPack
+        scientificNotebooks = nil
         prototypeNotebook = nil
         self.activeTaskID = activeTaskID
         self.taskUISchemas = taskUISchemas
         self.parameterSessions = parameterSessions
         self.genericTaskConfirmations = genericTaskConfirmations
+        self.notebookRecordingBypassTabs = notebookRecordingBypassTabs
         self.history = history
         self.commandQuery = commandQuery
         self.lastErrors = lastErrors

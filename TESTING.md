@@ -59,6 +59,7 @@ Verification: just verify
 - GitHub PR CI: lint/test plus editable Python package checks
 - GitHub tag CI: PR CI plus smoke, suite-install, and CI-like coverage
 - Native macOS GUI prototype and frontend services:
+  `cargo test -p casa-notebook --test wave1_contract`,
   `cargo test -p casars-frontend-services`,
   `cargo test -p casars-imager dirty_imaging_json_request_accepts_gui_selection_fields`,
   `scripts/test-frontend-services-python.sh`, `swift test` from
@@ -84,14 +85,16 @@ Verification: just verify
 XCTest/XCUIAutomation is the canonical end-to-end test layer for user-visible
 `casars-mac` behavior. Issue #368 establishes a thin Xcode app host around the
 existing Swift package sources, a macOS UI Testing Bundle, and the stable
-`just gui-test` command. This gate must land before Wave 1 production adapters
-are connected and remains required for later user-visible GUI waves.
+`just gui-test` command. This gate must be implemented and green before Wave 1
+production adapters are connected, lands with the completed Wave 1 PR, and
+remains required for later user-visible GUI waves.
 
 The executable GUI layer follows these rules:
 
-- Launch deterministic fixture states with `XCUIApplication.launchArguments`;
-  do not open user projects, contact providers or networks, run scientific
-  tasks, or write durable project/notebook data.
+- Launch deterministic fixture states with `XCUIApplication.launchArguments`.
+  Production-boundary persistence tests may create and remove a unique
+  test-owned temporary project; never open user projects, contact providers or
+  networks, run scientific tasks, or leave project/notebook data behind.
 - Select normal controls through stable accessibility identifiers. Coordinate-
   only automation is not an acceptable default path.
 - Cover the smallest critical set of complete user workflows: editing and
@@ -125,7 +128,8 @@ For each wave:
   adapter integration
 - user-visible native macOS GUI changes identify critical XCUITest workflows
   during shaping and record a green `just gui-test` result before Review; for
-  Wave 1, #368 must land before Phase B begins
+  Wave 1, #368 must be implemented and green before Phase B begins and lands
+  with the completed wave
 - after prototype approval, real adapters must match the accepted interaction
   and state contract; deterministic fixture adapters remain available for
   regression tests and may not be treated as evidence that persistence,

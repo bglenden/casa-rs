@@ -31,9 +31,10 @@ Implementation is allowed only after the wave is approved. Invoking this skill a
 7. Run `quick` during the edit loop.
 8. Add or update tests for the stated acceptance checks.
 9. For user-visible native macOS GUI changes, add or update launched-app
-   XCTest/XCUIAutomation coverage and run `just gui-test`. Issue #368 must land
-   before the current notebook wave enters production integration. If the test
-   target or supported runner is unavailable, stop and record the blocker;
+   XCTest/XCUIAutomation coverage and run `just gui-test`. Issue #368 must be
+   implemented and green before the current notebook wave enters production
+   integration, and lands with the completed wave PR. If the test target or
+   supported runner is unavailable, stop and record the blocker;
    screenshots, debug JSON, or manual/computer-use evidence do not waive it.
 10. Run the `refactor` skill on the code involved in the current wave before finalizing the PR. If the wave has no code refactor surface, record why it is not applicable.
 11. Keep the refactor pass bounded to touched or directly exposed code. If `refactor` identifies a larger coherent refactor, produce the brief and ask before expanding the wave.
