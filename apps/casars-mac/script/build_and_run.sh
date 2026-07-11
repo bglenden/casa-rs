@@ -395,7 +395,9 @@ open_app() {
   if [[ "$RUN_ACTIVE_TASK" == "1" ]]; then
     app_args+=(--run-active-task)
   fi
-  app_args+=("${EXTRA_APP_ARGS[@]}")
+  if [[ "${#EXTRA_APP_ARGS[@]}" -gt 0 ]]; then
+    app_args+=("${EXTRA_APP_ARGS[@]}")
+  fi
 
   /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE" --args "${app_args[@]}"
 }
@@ -425,7 +427,9 @@ debug_app() {
   if [[ "$RUN_ACTIVE_TASK" == "1" ]]; then
     app_args+=(--run-active-task)
   fi
-  app_args+=("${EXTRA_APP_ARGS[@]}")
+  if [[ "${#EXTRA_APP_ARGS[@]}" -gt 0 ]]; then
+    app_args+=("${EXTRA_APP_ARGS[@]}")
+  fi
 
   lldb -- "$APP_BINARY" "${app_args[@]}"
 }
