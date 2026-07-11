@@ -110,6 +110,10 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
         use_mask="auto-multithresh",
         auto_mask={"sidelobe_threshold": 2.0, "noise_threshold": 4.25},
         mask_boxes=[(100, 100, 150, 150)],
+        parallel=True,
+        imaging_read_ahead_blocks=2,
+        imaging_fft_precision="f32",
+        imaging_fft_backend="metal-mpsgraph",
         binary=binary,
     )
 
@@ -140,6 +144,10 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["auto_mask"]["sidelobe_threshold"] == 2.0
     assert request["auto_mask"]["noise_threshold"] == 4.25
     assert request["mask_boxes"] == [[100, 100, 150, 150]]
+    assert request["parallel"] is True
+    assert request["imaging_read_ahead_blocks"] == 2
+    assert request["imaging_fft_precision"] == "f32"
+    assert request["imaging_fft_backend"] == "metal-mpsgraph"
 
 
 def test_wrapper_encodes_briggs_bandwidth_taper(tmp_path: Path) -> None:
@@ -175,6 +183,57 @@ def test_wrapper_accepts_casa_hogbom_alias(tmp_path: Path) -> None:
     assert request["hogbom_iteration_mode"] == "casa_inclusive"
 
 
+@pytest.mark.parametrize(
+    ("task", "spectral_mode"),
+    [(imager.cube, "cube"), (imager.cubedata, "cubedata")],
+)
+def test_spectral_cube_wrappers_encode_runtime_controls(
+    task,
+    spectral_mode: str,
+    tmp_path: Path,
+) -> None:
+    binary = _write_stub_binary(tmp_path / spectral_mode / "casars-imager", version="ok")
+    cube_axis = {
+        "outframe": "BARY",
+        "veltype": "optical",
+        "interpolation": "nearest",
+        "rest_frequency_hz": 1.42e9,
+        "start": {"kind": "channel", "channel": 3},
+        "width": {"kind": "frequency_hz", "hz": 1.0e6, "frame": "BARY"},
+    }
+
+    result = task(
+        Path("line.ms"),
+        Path("products/line"),
+        image_size=512,
+        cell_arcsec=0.2,
+        spw="0:3~18",
+        channel_start=3,
+        channel_count=16,
+        cube_axis=cube_axis,
+        weighting="briggs",
+        robust=-0.25,
+        per_channel_weight_density=False,
+        restoring_beam_mode="common",
+        parallel=True,
+        chanchunks=4,
+        imaging_read_ahead_blocks=2,
+        binary=binary,
+    )
+
+    request = result["result"]["request"]
+    assert request["measurement_set"] == "line.ms"
+    assert request["image_name"] == "products/line"
+    assert request["spectral_mode"] == spectral_mode
+    assert request["cube_axis"] == cube_axis
+    assert request["weighting"] == {"kind": "briggs", "robust": -0.25}
+    assert request["per_channel_weight_density"] is False
+    assert request["restoring_beam_mode"] == "common"
+    assert request["parallel"] is True
+    assert request["chanchunks"] == 4
+    assert request["imaging_read_ahead_blocks"] == 2
+
+
 def test_wrapper_rejects_unimplemented_gridder_mode(tmp_path: Path) -> None:
     binary = _write_stub_binary(tmp_path / "ok" / "casars-imager", version="ok")
 
@@ -193,7 +252,7 @@ def _write_stub_binary(
     path: Path,
     *,
     version: str,
-    protocol_version: int = 2,
+    protocol_version: int = 3,
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     script = textwrap.dedent(

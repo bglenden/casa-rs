@@ -22,8 +22,8 @@ use casa_imaging::{
 use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation};
 use casa_types::measures::doppler::DopplerRef;
 use casars_imager::{
-    CliConfig, ImagerRunTaskRequest, ImagingFftPrecisionPolicy, RunSummary, SpectralMode,
-    StandardMfsAccelerationPolicy, run_from_request,
+    CliConfig, ImagerRunTaskRequest, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy,
+    RunSummary, SpectralMode, StandardMfsAccelerationPolicy, run_from_request,
 };
 
 #[derive(Debug, Clone)]
@@ -52,7 +52,11 @@ struct Options {
     imaging_prepare_buffer_mb: Option<usize>,
     imaging_row_block_rows: Option<usize>,
     imaging_prepare_workers: Option<usize>,
+    imaging_read_ahead_blocks: Option<usize>,
+    parallel: Option<bool>,
+    chanchunks: Option<usize>,
     imaging_fft_precision: ImagingFftPrecisionPolicy,
+    imaging_fft_backend: ImagingFftBackendPolicy,
     nterms: usize,
     multiscale_scales: Vec<f32>,
     small_scale_bias: f32,
@@ -366,7 +370,7 @@ fn create_temp_workdir() -> Result<PathBuf, String> {
 }
 
 fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
-    CliConfig {
+    let mut config = CliConfig {
         ms: options.ms.clone(),
         imagename,
         imsize: options.imsize,
@@ -423,6 +427,7 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         force_standard_gridder: options.force_standard_gridder,
         w_project_planes: options.w_project_planes,
         dirty_only: options.dirty_only,
+        chanchunks: options.chanchunks,
         standard_mfs_acceleration: options.standard_mfs_acceleration,
         standard_mfs_backend: None,
         standard_mfs_grid_threads: options.standard_mfs_grid_threads.clone(),
@@ -437,9 +442,19 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         imaging_prepare_buffer_mb: options.imaging_prepare_buffer_mb,
         imaging_row_block_rows: options.imaging_row_block_rows,
         imaging_prepare_workers: options.imaging_prepare_workers,
+        imaging_read_ahead_blocks: options.imaging_read_ahead_blocks,
         imaging_fft_precision: options.imaging_fft_precision,
+        imaging_fft_backend: options.imaging_fft_backend,
         write_preview_pngs: false,
+    };
+    if options.parallel == Some(false) {
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Cpu;
+        config.standard_mfs_grid_threads = Some("1".to_string());
+        config.imaging_prepare_workers = Some(1);
+        config.imaging_read_ahead_blocks = Some(1);
+        config.standard_mfs_metal_grouped_input_cache = Some(false);
     }
+    config
 }
 
 fn run_profile_request(options: &Options, imagename: PathBuf) -> Result<RunSummary, String> {
@@ -612,7 +627,11 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut imaging_prepare_buffer_mb = None::<usize>;
     let mut imaging_row_block_rows = None::<usize>;
     let mut imaging_prepare_workers = None::<usize>;
+    let mut imaging_read_ahead_blocks = None::<usize>;
+    let mut parallel = None::<bool>;
+    let mut chanchunks = None::<usize>;
     let mut imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
+    let mut imaging_fft_backend = ImagingFftBackendPolicy::Auto;
     let mut nterms = 1usize;
     let mut multiscale_scales = Vec::<f32>::new();
     let mut small_scale_bias = 0.0f32;
@@ -663,6 +682,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--width" => {
                 cube_width = Some(parse_cube_axis_value(&next_value(&mut args, "--width")?)?)
             }
+            "--chanchunks" => chanchunks = Some(parse_next(&mut args, "--chanchunks")?),
             "--datacolumn" => datacolumn = Some(next_value(&mut args, "--datacolumn")?),
             "--corr" => correlation = Some(next_value(&mut args, "--corr")?),
             "--specmode" => {
@@ -709,9 +729,19 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--imaging-prepare-workers" => {
                 imaging_prepare_workers = Some(parse_next(&mut args, "--imaging-prepare-workers")?)
             }
+            "--imaging-read-ahead-blocks" => {
+                imaging_read_ahead_blocks =
+                    Some(parse_next(&mut args, "--imaging-read-ahead-blocks")?)
+            }
+            "--parallel" => parallel = Some(true),
+            "--no-parallel" => parallel = Some(false),
             "--imaging-fft-precision" | "--fft-precision" => {
                 imaging_fft_precision =
                     parse_imaging_fft_precision(&next_value(&mut args, "--imaging-fft-precision")?)?
+            }
+            "--imaging-fft-backend" | "--fft-backend" => {
+                imaging_fft_backend =
+                    parse_imaging_fft_backend(&next_value(&mut args, "--imaging-fft-backend")?)?
             }
             "--nterms" => nterms = parse_next(&mut args, "--nterms")?,
             "--scales" => {
@@ -778,6 +808,11 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let weighting = parse_weighting_mode(&weighting_name, robust)?;
     let per_channel_weight_density =
         per_channel_weight_density.unwrap_or(matches!(spectral_mode, SpectralMode::Cube));
+    if parallel == Some(false) && imaging_fft_backend == ImagingFftBackendPolicy::MetalMpsGraph {
+        return Err(
+            "--no-parallel conflicts with --imaging-fft-backend=metal-mpsgraph".to_string(),
+        );
+    }
 
     Ok(Options {
         ms: ms.ok_or_else(help_text)?,
@@ -804,7 +839,11 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         imaging_prepare_buffer_mb,
         imaging_row_block_rows,
         imaging_prepare_workers,
+        imaging_read_ahead_blocks,
+        parallel,
+        chanchunks,
         imaging_fft_precision,
+        imaging_fft_backend,
         nterms,
         multiscale_scales,
         small_scale_bias,
@@ -955,6 +994,20 @@ fn parse_imaging_fft_precision(text: &str) -> Result<ImagingFftPrecisionPolicy, 
     }
 }
 
+fn parse_imaging_fft_backend(text: &str) -> Result<ImagingFftBackendPolicy, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" | "default" => Ok(ImagingFftBackendPolicy::Auto),
+        "rustfft" | "rust-fft" | "cpu" => Ok(ImagingFftBackendPolicy::RustFft),
+        "accelerate" | "vdsp" => Ok(ImagingFftBackendPolicy::Accelerate),
+        "metal-mpsgraph" | "mpsgraph" | "mps-graph" | "metal" | "gpu" => {
+            Ok(ImagingFftBackendPolicy::MetalMpsGraph)
+        }
+        _ => Err(format!(
+            "unsupported --imaging-fft-backend value {text:?}; expected auto, rustfft, accelerate, or metal-mpsgraph"
+        )),
+    }
+}
+
 fn validate_metal_minor_cycle_chunk(text: &str) -> Result<(), String> {
     let value = text.trim();
     if value.eq_ignore_ascii_case("auto")
@@ -1038,6 +1091,7 @@ Options:
   --channel-count N
   --start VALUE
   --width VALUE
+  --chanchunks N
   --datacolumn NAME
   --corr XX|YY|RR|LL
   --specmode mfs|cube|cubedata
@@ -1052,10 +1106,14 @@ Options:
   --standard-mfs-grid-threads N|auto
   --standard-mfs-metal-minor-cycle-chunk auto|auto:MS|full|N
   --imaging-fft-precision auto|f64|f32
+  --imaging-fft-backend auto|rustfft|accelerate|metal-mpsgraph
   --imaging-memory-target-mb N
   --imaging-prepare-buffer-mb N
   --imaging-row-block-rows N
   --imaging-prepare-workers N
+  --imaging-read-ahead-blocks N
+  --parallel
+  --no-parallel
   --nterms N
   --scales PIXELS
   --smallscalebias VALUE

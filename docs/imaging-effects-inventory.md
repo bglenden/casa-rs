@@ -1,8 +1,9 @@
 # Imaging Effects Inventory
 
 Truth class: current descriptive
-Last reality check: 2026-05-02
+Last reality check: 2026-07-09
 Verification:
+- `just docs-check`
 - `cargo test -p casa-imaging mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule`
 - `cargo test -p casa-imaging mosaic_clean_reduces_residual_peak_and_tracks_pb_weight_image`
 - `cargo test -p casars-imager pbcor_products_apply_primary_beam_cutoff`
@@ -30,6 +31,9 @@ pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
 | `tclean(gridder='mosaic')` product writing | `.psf`, `.residual`, `.model`, `.image`, `.sumwt`, PB/weight-like products | `casars-imager::write_products` | implemented for mosaic MFS `.weight`, `.pb`, and optional `.image.pbcor`; panel proof landed in #53 |
 | CASA minor-cycle controllers | cleaned mosaic images, masks, thresholds, cycle controls | standard controller plus final visibility-domain mosaic residual refresh path | implemented for the #53 Hogbom/Multiscale MFS proof; source-region tutorial deltas are now sub-percent |
 | CASA cube mosaic path | spectral cube imaging with frequency-dependent PB and common beams | `casars-imager` cube preparation plus `casa-imaging` mosaic dirty path | implemented for the #163 two-channel M100 dirty probe; full 70-channel scale-up remains issue scope |
+| CASA `MultiTermFT` over mosaic/PB projection | Taylor-term density, PSF, residual, model, restoration, PB correction, and alpha products | `run_mosaic_mtmfs_from_single_plane_stream` with raw-UVW density sidecars and mosaic metadata replay | first supported slice implemented for one MS, MFS, `nterms <= 2`, no W term, natural/uniform/Briggs weighting, user masks, and clean or dirty execution; higher terms and W/AW/pointing/startmodel/outlier/multi-MS combinations reject during planning |
+| Visibility source traversal | overlap source reads with row preparation without changing sample order or residency bounds | shared `stream_imaging_source_read_ahead_blocks` producer/consumer path | standard MFS, mosaic MFS/MT-MFS replay, cube/cubedata, and mosaic cube share the path; the current maximum is two live blocks (one producer plus one consumer), with a zero-capacity rendezvous queue, cooperative producer cancellation after consumer failure, and slab guards when read-ahead would reduce residency/locality |
+| Dirty-product gridding, FFT, and normalization | accumulate, transform, and normalize PSF/residual/weight grids without changing product semantics | CPU finishers plus guarded Apple MPSGraph resident standard/mosaic finishers and direct disjoint-tile mosaic MFS/MT-MFS accumulation | eligible standard and single-term mosaic f32 products may remain Metal-shared through correction, normalization, and peak reduction; MT-MFS retains its input through the batched inverse FFT, then corrects and normalizes on CPU. Exact-plan MT-MFS grouping keeps f64/Complex64 moments until the f32 tile and bounds compaction/routing scratch with an image-shape and plane-count formula. Auto compares exact input-boundary movement: host-resident products remain on CPU while Metal-shared products avoid host materialization; unsupported resident work returns to the host path, explicit Metal fails closed, and f64 remains CPU |
 | CASA `pbcor` products | PB-corrected restored images with cutoff semantics | `mosaic_pb_product_from_weight`, `pb_correct_image_product`, `--pbcor` | implemented for mosaic MFS products using the current mosaic weight image and explicit `--pblimit` cutoff |
 | CASA `usemask='auto-multithresh'` | automask generation | `casars-imager --usemask auto-multithresh` with guide-visible threshold, pruning, growth, negative-mask, and fast-noise controls; writes `.mask` product | #167 implements the Automasking Guide slice; full per-major-cycle CASA mask update parity remains evidence-driven issue scope |
 | CASA `startmodel` | seed `imagename.model` from one or more model images before deconvolution/model prediction | `casars-imager --startmodel`; task contract `start_model`; Python `start_model` | #219 implements one existing single-plane startmodel image for non-mosaic, single-term MFS. CASA source seams are `task_deconvolve.py::check_starmodel_model_collisions`, `SynthesisParamsImage` startmodel parsing/validation in `SynthesisUtilMethods.cc`, and `SynthesisImager::createIMStore` calling `SIImageStore::setModelImage`; list/MTMFS/regrid/mosaic cases are rejected with explicit errors rather than silently ignored |
@@ -45,8 +49,35 @@ pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
 | WProject MFS | partial, source-backed dirty gates exist | wproject projector | standard CLEAN controller path | normal image sidecars | not first Wave 6 blocker |
 | Mosaic MFS dirty | source-backed center-pixel contribution rule, phase-gradient projector | homogeneous ALMA/EVLA PB models, beam-frequency buckets, natural/Briggs weighting | dirty path remains available | `.psf`, `.residual`, `.model`, `.image`, `.sumwt`, `.weight`, `.pb` | reused by #53 panel harness |
 | Mosaic MFS cleaned | same as dirty path | same as dirty plus final visibility-domain residual refresh | Hogbom/Clark/Multiscale now run for `niter > 0`; #53 tutorial source-region deltas are below 1% of the CASA peak | restored and PB-corrected products now written for MFS mosaic | first ALMA #161 proof generated; VLA #169 proof uses the same panel harness |
+| Mosaic MT-MFS first slice | mosaic phase/PB metadata plus separate raw-UVW density coordinates are replayed from bounded row blocks | homogeneous mosaic projector with natural/uniform/Briggs weighting and CASA-compatible f32 density/Taylor arithmetic | MT-MFS dirty and clean paths for `nterms <= 2`; unsupported wider projection/control combinations reject before retained visibility materialization | Taylor-term `.psf`, `.residual`, `.model`, `.image`, `.sumwt`, PB/PB-corrected products, and alpha/alpha-error products where requested | CASA oracle products are the correctness gate for #262; large ALMA mosaic MT-MFS is the bounded-memory/performance sentinel |
 | Mosaic cube | phase/PB are channel aware in the dirty multi-MS route | ALMA/ACA HetArray screen sizing and PB normalization now match the #163 CASA probe below 1% max image error | dirty path proven; cleaned cube scale-up remains issue scope | `.psf`, `.residual`, `.image`, `.image.pbcor`, `.sumwt`, `.weight`, `.pb` for the #163 probe | #163 M100 12m+7m combined cube |
 | Heterogeneous mosaic / AW-style | source-backed HetArray phase-gradient projector | ALMA/ACA Airy PBs, support-sized screens, and sky coverage | dirty path proven for #163; cleaned/full-cube proof still open | M100 two-channel probe products and panels | active Wave 6 capability, no longer deferred |
+
+## Runtime Effects
+
+- Imager task protocol v3 carries `parallel`, `chanchunks`, shared source
+  memory/prepare/row-block/read-ahead controls, and dirty-product FFT precision
+  and backend policy. `parallel=false` forces one source block, one prepare/grid
+  worker, CPU acceleration, and RustFFT for a reproducible serial comparison.
+- Diagnostic progress reports planned/tracked/high-water memory, source bytes,
+  effective read bandwidth, producer/consumer blocked time and overlap, queue
+  and worker state, stage timings, GPU eligibility/selection, device/host bytes,
+  command/kernel time, and CPU fallback reasons.
+- Apple GPU product finishing is an execution choice, not a product-mode fork.
+  Auto selects resident MPSGraph for supported f32 dirty-product grids already
+  planned in Metal-shared storage; host-resident grids remain on CPU. Explicit
+  Metal bypasses the Auto placement choice, while unsupported or failed
+  resident work uses the same CPU product path.
+- W-projection Auto planning derives plane count from selected projected W,
+  CASA's 1.05 W-range safety factor, and rectangular field angle without a
+  fixed plane cap or longest-baseline proxy. Full-grid CPU density and W-project
+  worker paths compare exact update, zero-fill, and merge cell touches instead
+  of switching at a raw sample count.
+- W-projection in-memory and replay inputs share one Metal partial-grid
+  dispatcher. Partial count follows update density and live device headroom;
+  replay combines chunk results in deterministic host f64 order and narrows
+  once, while the source stream overlaps cached and newly read blocks under the
+  same two-live-block residency bound.
 
 ## Theory / Tutorial Cross-Checks
 

@@ -427,6 +427,11 @@
       "fingerprint": "7e449844d086e9dc59eda85109d039e07be9a21899463b079d5fa03214c6f46b"
     },
     {
+      "id": "parameter.chanchunks",
+      "semantic_revision": 1,
+      "fingerprint": "3d36e096d708f2a90cdfede2b39934f6225eed3452eee9702a06a024c8187587"
+    },
+    {
       "id": "parameter.chanlist",
       "semantic_revision": 1,
       "fingerprint": "60cfb50da2d0be2cd55337633586dd12e022fc080b81a1b17e9a4377aaa9b163"
@@ -892,9 +897,19 @@
       "fingerprint": "16a487a95140f7458101fc5a48724dab2554cf4ec13130f387601328b8a29dc9"
     },
     {
+      "id": "parameter.imaging_fft_backend",
+      "semantic_revision": 1,
+      "fingerprint": "108c054c653117741335d5f20c11501b503ea3c7af467b95072713f93a0fc052"
+    },
+    {
       "id": "parameter.imaging_mode",
       "semantic_revision": 1,
       "fingerprint": "9db92daad38f18d6da2e753095af1266f7afd1f5e27f42cd06f7210eb0a68643"
+    },
+    {
+      "id": "parameter.imaging_read_ahead_blocks",
+      "semantic_revision": 1,
+      "fingerprint": "1cc11bc71f8ef10083305a549c9a0aed7e97941cab39b21ea86bfef34d4d8911"
     },
     {
       "id": "parameter.imdirection",
@@ -1240,6 +1255,11 @@
       "id": "parameter.page_spec",
       "semantic_revision": 1,
       "fingerprint": "794ec40a416646c419c9432a6c0dd92aefd301f0244d373fc02f1b1012278428"
+    },
+    {
+      "id": "parameter.parallel",
+      "semantic_revision": 1,
+      "fingerprint": "a0fa47a175aec2943e0fec7058716f4cc8254170791db06195a8ffeba0fb4d47"
     },
     {
       "id": "parameter.parameter",
@@ -2112,6 +2132,11 @@
       "id": "imager",
       "contract_version": 2,
       "fingerprint": "cf538a0923108600ace380405c7e615c3836adf1b6f43989d8fced7f4d9096f2"
+    },
+    {
+      "id": "imager",
+      "contract_version": 3,
+      "fingerprint": "888499951d86ef5a45d65bcd586944a142b4f314c8b6ce76653d59205027b593"
     },
     {
       "id": "imcollapse",

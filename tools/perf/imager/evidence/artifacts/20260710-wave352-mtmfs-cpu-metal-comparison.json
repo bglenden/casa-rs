@@ -1,0 +1,2107 @@
+{
+  "beam_info": {
+    "psf_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-product-f32-270e6b04/rust/rust.psf",
+    "status": "missing_psf"
+  },
+  "products": {
+    ".image.tt0": {
+      "casa_max": 117.55806732177734,
+      "casa_min": -21.744266510009766,
+      "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-product-f32-270e6b04/rust/rust.image.tt0",
+      "casa_peak_abs": {
+        "abs_value": 117.55806732177734,
+        "location": [
+          639,
+          638,
+          0,
+          0
+        ],
+        "value": 117.55806732177734
+      },
+      "casa_rms": 3.9558087701535993,
+      "correlation": 0.9999999999998775,
+      "diff_abs_max": 9.1552734375e-05,
+      "diff_abs_max_over_casa_peak": 7.787873385533285e-07,
+      "diff_peak_abs": {
+        "abs_value": 9.1552734375e-05,
+        "location": [
+          641,
+          641,
+          0,
+          0
+        ],
+        "value": 9.1552734375e-05
+      },
+      "diff_rms": 2.2869558590551392e-06,
+      "diff_rms_over_casa_rms": 5.781259893830357e-07,
+      "finite_overlap": 1638400,
+      "review_panel": {
+        "casa_rs_and_casa_color_limits": [
+          -21.744272232055664,
+          117.55812072753906
+        ],
+        "difference_color_limits": [
+          -9.1552734375e-05,
+          9.1552734375e-05
+        ],
+        "display_bounds": {
+          "blc": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "inc": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "trc": [
+            1279,
+            1279,
+            0,
+            0
+          ]
+        },
+        "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+        "display_reason": null,
+        "display_sample_stride": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "display_shape": [
+          1280,
+          1280,
+          1,
+          1
+        ],
+        "display_status": "derived",
+        "display_transform": "center_plane_full_spatial_display",
+        "path": "/private/tmp/wave352-mtmfs-cpu-metal-panels/image_tt0.review.png",
+        "status": "written",
+        "structured_difference_label": "good",
+        "structured_difference_summary": ".image.tt0: good; amplitude and beam-scale structure checks passed.",
+        "zoom_panel": {
+          "bounds": {
+            "x_end": 1280,
+            "x_start": 0,
+            "y_end": 1280,
+            "y_start": 0
+          },
+          "reason": "zoom bounds cover the full review plane",
+          "status": "skipped"
+        }
+      },
+      "rust_max": 117.55812072753906,
+      "rust_min": -21.744272232055664,
+      "rust_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.image.tt0",
+      "rust_peak_abs": {
+        "abs_value": 117.55812072753906,
+        "location": [
+          639,
+          638,
+          0,
+          0
+        ],
+        "value": 117.55812072753906
+      },
+      "rust_rms": 3.9558101641607455,
+      "sample_stride": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "sampled_elements": 1638400,
+      "shape": [
+        1280,
+        1280,
+        1,
+        1
+      ],
+      "status": "compared",
+      "structured_difference": {
+        "analysis_pixels": 1638400,
+        "beam_block_rms_by_scale": [
+          {
+            "approx_independent_beams_per_block": 4.0,
+            "beam_width_multiplier": 2.0,
+            "block_mean_rms": 2.1345923195774296e-06,
+            "block_mean_rms_over_mean_pixel_rms": 2.0291115216469384,
+            "block_side_pixels": 2,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 1.0519837361353492e-06,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 409600,
+            "normalized_block_mean_rms": 5.396095826681091e-07
+          },
+          {
+            "approx_independent_beams_per_block": 16.0,
+            "beam_width_multiplier": 4.0,
+            "block_mean_rms": 2.0689865814005893e-06,
+            "block_mean_rms_over_mean_pixel_rms": 1.9053287303942432,
+            "block_side_pixels": 4,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 1.0858948109035665e-06,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 102400,
+            "normalized_block_mean_rms": 5.230249240082081e-07
+          },
+          {
+            "approx_independent_beams_per_block": 64.0,
+            "beam_width_multiplier": 8.0,
+            "block_mean_rms": 2.005425244621504e-06,
+            "block_mean_rms_over_mean_pixel_rms": 1.7984617554591453,
+            "block_side_pixels": 8,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 1.1150780596440992e-06,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 25600,
+            "normalized_block_mean_rms": 5.069570753147493e-07
+          },
+          {
+            "approx_independent_beams_per_block": 256.0,
+            "beam_width_multiplier": 16.0,
+            "block_mean_rms": 1.8342324330450812e-06,
+            "block_mean_rms_over_mean_pixel_rms": 1.5705227636901447,
+            "block_side_pixels": 16,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 1.1679120325103197e-06,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 6400,
+            "normalized_block_mean_rms": 4.636807640663227e-07
+          },
+          {
+            "approx_independent_beams_per_block": 1024.0,
+            "beam_width_multiplier": 32.0,
+            "block_mean_rms": 1.4639681019453581e-06,
+            "block_mean_rms_over_mean_pixel_rms": 1.1683675004661103,
+            "block_side_pixels": 32,
+            "max_block_robust_z": 380.38521718106506,
+            "mean_pixel_rms_in_blocks": 1.2530031016450906e-06,
+            "median_abs_block_mean": 2.7586651185629307e-08,
+            "n_blocks": 1600,
+            "normalized_block_mean_rms": 3.7008060475292236e-07
+          }
+        ],
+        "beam_block_side_pixels": 1,
+        "block_rms_decay_slope_vs_independent_beams": -0.06309503502135942,
+        "classification": {
+          "amplitude": "good",
+          "overall": "good",
+          "structure": "good",
+          "structure_components": {
+            "block_rms_decay_slope_vs_independent_beams": "bad",
+            "large_scale_power_fraction": "bad",
+            "low_order_r2_quadratic": "good"
+          },
+          "structure_suppressed_by_numerical_floor": true,
+          "thresholds": {
+            "block_rms_decay_slope_vs_independent_beams": {
+              "bad": "> -0.15",
+              "good": "<= -0.35",
+              "investigate": "-0.35 .. -0.15"
+            },
+            "large_scale_power_fraction": {
+              "bad": "> 0.5",
+              "good": "< 0.25",
+              "investigate": "0.25 .. 0.5"
+            },
+            "low_order_r2_quadratic": {
+              "bad": "> 0.2",
+              "good": "< 0.05",
+              "investigate": "0.05 .. 0.2"
+            },
+            "normalized_diff_rms": {
+              "bad": "> 1e-3",
+              "good": "< 1e-4",
+              "investigate": "1e-4 .. 1e-3",
+              "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+            }
+          }
+        },
+        "diff_rms": 2.2869558590551392e-06,
+        "large_scale_power_fraction": {
+          "fraction": 0.8108562296583613,
+          "frequency_cutoff_cycles_per_pixel": 0.125,
+          "min_wavelength_beams": 8.0
+        },
+        "low_order_r2_quadratic": 0.00016007133123085993,
+        "mask": {
+          "type": "finite_overlap"
+        },
+        "masked_pixels": 1638400,
+        "normalization": {
+          "type": "casa_support_rms_or_peak",
+          "value": 3.9558087701535993
+        },
+        "normalized_diff_rms": 5.781259893830357e-07,
+        "review": {
+          "checks": [
+            {
+              "label": "good",
+              "meaning": "beam/product-scale RMS amplitude difference",
+              "name": "normalized_diff_rms",
+              "value": 5.781259893830357e-07
+            },
+            {
+              "label": "bad",
+              "meaning": "whether averaging over independent beams suppresses the difference",
+              "name": "block_rms_decay_slope_vs_independent_beams",
+              "value": -0.06309503502135942
+            },
+            {
+              "label": "bad",
+              "meaning": "fraction of difference power on scales much larger than the beam",
+              "name": "large_scale_power_fraction",
+              "value": 0.8108562296583613
+            },
+            {
+              "label": "good",
+              "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+              "name": "low_order_r2_quadratic",
+              "value": 0.00016007133123085993
+            }
+          ],
+          "label": "good",
+          "legend": {
+            "bad": "Structured or large enough difference; do not close without explanation.",
+            "good": "No review action expected from this check.",
+            "investigate": "Plausible but needs review in context.",
+            "unknown": "Check could not be evaluated for this product."
+          },
+          "summary": ".image.tt0: good; amplitude and beam-scale structure checks passed."
+        },
+        "scale_offset_gradient_fit": {
+          "coefficients": {
+            "dx_pixels": -5.839491785872281e-07,
+            "dy_pixels": -2.111332295156713e-07,
+            "offset": 4.8626040376887986e-08,
+            "scale": 3.5240125874462123e-07
+          },
+          "diff_rms": 2.2869558590551392e-06,
+          "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+          "r2": 0.37573815663604493,
+          "residual_rms": 1.8065329586450597e-06,
+          "status": "computed"
+        },
+        "status": "computed"
+      }
+    },
+    ".image.tt1": {
+      "casa_max": 13182.005859375,
+      "casa_min": -9913.1533203125,
+      "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-product-f32-270e6b04/rust/rust.image.tt1",
+      "casa_peak_abs": {
+        "abs_value": 13182.005859375,
+        "location": [
+          627,
+          631,
+          0,
+          0
+        ],
+        "value": 13182.005859375
+      },
+      "casa_rms": 947.2523322576233,
+      "correlation": 1.0,
+      "diff_abs_max": 0.0099639892578125,
+      "diff_abs_max_over_casa_peak": 7.558780783522519e-07,
+      "diff_peak_abs": {
+        "abs_value": 0.0099639892578125,
+        "location": [
+          1135,
+          629,
+          0,
+          0
+        ],
+        "value": -0.0099639892578125
+      },
+      "diff_rms": 0.000807746742724001,
+      "diff_rms_over_casa_rms": 8.527260532564399e-07,
+      "finite_overlap": 1638400,
+      "review_panel": {
+        "casa_rs_and_casa_color_limits": [
+          -9913.1591796875,
+          13182.009765625
+        ],
+        "difference_color_limits": [
+          -0.0099639892578125,
+          0.0099639892578125
+        ],
+        "display_bounds": {
+          "blc": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "inc": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "trc": [
+            1279,
+            1279,
+            0,
+            0
+          ]
+        },
+        "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+        "display_reason": null,
+        "display_sample_stride": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "display_shape": [
+          1280,
+          1280,
+          1,
+          1
+        ],
+        "display_status": "derived",
+        "display_transform": "center_plane_full_spatial_display",
+        "path": "/private/tmp/wave352-mtmfs-cpu-metal-panels/image_tt1.review.png",
+        "status": "written",
+        "structured_difference_label": "good",
+        "structured_difference_summary": ".image.tt1: good; amplitude and beam-scale structure checks passed.",
+        "zoom_panel": {
+          "bounds": {
+            "x_end": 1280,
+            "x_start": 0,
+            "y_end": 1280,
+            "y_start": 0
+          },
+          "reason": "zoom bounds cover the full review plane",
+          "status": "skipped"
+        }
+      },
+      "rust_max": 13182.009765625,
+      "rust_min": -9913.1591796875,
+      "rust_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.image.tt1",
+      "rust_peak_abs": {
+        "abs_value": 13182.009765625,
+        "location": [
+          627,
+          631,
+          0,
+          0
+        ],
+        "value": 13182.009765625
+      },
+      "rust_rms": 947.2526757947238,
+      "sample_stride": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "sampled_elements": 1638400,
+      "shape": [
+        1280,
+        1280,
+        1,
+        1
+      ],
+      "status": "compared",
+      "structured_difference": {
+        "analysis_pixels": 1638400,
+        "beam_block_rms_by_scale": [
+          {
+            "approx_independent_beams_per_block": 4.0,
+            "beam_width_multiplier": 2.0,
+            "block_mean_rms": 0.0007710267126835214,
+            "block_mean_rms_over_mean_pixel_rms": 1.821908240454077,
+            "block_side_pixels": 2,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 0.0004231973353890519,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 409600,
+            "normalized_block_mean_rms": 8.139612713815162e-07
+          },
+          {
+            "approx_independent_beams_per_block": 16.0,
+            "beam_width_multiplier": 4.0,
+            "block_mean_rms": 0.0007535988051307928,
+            "block_mean_rms_over_mean_pixel_rms": 1.7366144199907592,
+            "block_side_pixels": 4,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 0.000433947107922093,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 102400,
+            "normalized_block_mean_rms": 7.955628922387676e-07
+          },
+          {
+            "approx_independent_beams_per_block": 64.0,
+            "beam_width_multiplier": 8.0,
+            "block_mean_rms": 0.0007323193582351796,
+            "block_mean_rms_over_mean_pixel_rms": 1.6460904690051896,
+            "block_side_pixels": 8,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 0.0004448840279585331,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 25600,
+            "normalized_block_mean_rms": 7.730985011035174e-07
+          },
+          {
+            "approx_independent_beams_per_block": 256.0,
+            "beam_width_multiplier": 16.0,
+            "block_mean_rms": 0.0006766455092832529,
+            "block_mean_rms_over_mean_pixel_rms": 1.4536071760067555,
+            "block_side_pixels": 16,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 0.0004654940622555844,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 6400,
+            "normalized_block_mean_rms": 7.143244584793762e-07
+          },
+          {
+            "approx_independent_beams_per_block": 1024.0,
+            "beam_width_multiplier": 32.0,
+            "block_mean_rms": 0.0005581326199356749,
+            "block_mean_rms_over_mean_pixel_rms": 1.126895349253196,
+            "block_side_pixels": 32,
+            "max_block_robust_z": 210.2044383225883,
+            "mean_pixel_rms_in_blocks": 0.0004952834531667511,
+            "median_abs_block_mean": 1.1593103408813477e-05,
+            "n_blocks": 1600,
+            "normalized_block_mean_rms": 5.892121886947016e-07
+          }
+        ],
+        "beam_block_side_pixels": 1,
+        "block_rms_decay_slope_vs_independent_beams": -0.05438711099323341,
+        "classification": {
+          "amplitude": "good",
+          "overall": "good",
+          "structure": "good",
+          "structure_components": {
+            "block_rms_decay_slope_vs_independent_beams": "bad",
+            "large_scale_power_fraction": "bad",
+            "low_order_r2_quadratic": "good"
+          },
+          "structure_suppressed_by_numerical_floor": true,
+          "thresholds": {
+            "block_rms_decay_slope_vs_independent_beams": {
+              "bad": "> -0.15",
+              "good": "<= -0.35",
+              "investigate": "-0.35 .. -0.15"
+            },
+            "large_scale_power_fraction": {
+              "bad": "> 0.5",
+              "good": "< 0.25",
+              "investigate": "0.25 .. 0.5"
+            },
+            "low_order_r2_quadratic": {
+              "bad": "> 0.2",
+              "good": "< 0.05",
+              "investigate": "0.05 .. 0.2"
+            },
+            "normalized_diff_rms": {
+              "bad": "> 1e-3",
+              "good": "< 1e-4",
+              "investigate": "1e-4 .. 1e-3",
+              "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+            }
+          }
+        },
+        "diff_rms": 0.000807746742724001,
+        "large_scale_power_fraction": {
+          "fraction": 0.8681840604624828,
+          "frequency_cutoff_cycles_per_pixel": 0.125,
+          "min_wavelength_beams": 8.0
+        },
+        "low_order_r2_quadratic": 0.0001958404866159169,
+        "mask": {
+          "type": "finite_overlap"
+        },
+        "masked_pixels": 1638400,
+        "normalization": {
+          "type": "casa_support_rms_or_peak",
+          "value": 947.2523322576233
+        },
+        "normalized_diff_rms": 8.527260532564399e-07,
+        "review": {
+          "checks": [
+            {
+              "label": "good",
+              "meaning": "beam/product-scale RMS amplitude difference",
+              "name": "normalized_diff_rms",
+              "value": 8.527260532564399e-07
+            },
+            {
+              "label": "bad",
+              "meaning": "whether averaging over independent beams suppresses the difference",
+              "name": "block_rms_decay_slope_vs_independent_beams",
+              "value": -0.05438711099323341
+            },
+            {
+              "label": "bad",
+              "meaning": "fraction of difference power on scales much larger than the beam",
+              "name": "large_scale_power_fraction",
+              "value": 0.8681840604624828
+            },
+            {
+              "label": "good",
+              "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+              "name": "low_order_r2_quadratic",
+              "value": 0.0001958404866159169
+            }
+          ],
+          "label": "good",
+          "legend": {
+            "bad": "Structured or large enough difference; do not close without explanation.",
+            "good": "No review action expected from this check.",
+            "investigate": "Plausible but needs review in context.",
+            "unknown": "Check could not be evaluated for this product."
+          },
+          "summary": ".image.tt1: good; amplitude and beam-scale structure checks passed."
+        },
+        "scale_offset_gradient_fit": {
+          "coefficients": {
+            "dx_pixels": -3.801369101700175e-07,
+            "dy_pixels": 1.1599000077744389e-07,
+            "offset": -9.661561270636164e-06,
+            "scale": 3.6269875824934075e-07
+          },
+          "diff_rms": 0.000807746742724001,
+          "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+          "r2": 0.18185209308241645,
+          "residual_rms": 0.0007305780628152135,
+          "status": "computed"
+        },
+        "status": "computed"
+      }
+    },
+    ".psf.tt0": {
+      "casa_max": 1.0,
+      "casa_min": -0.02294398657977581,
+      "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-product-f32-270e6b04/rust/rust.psf.tt0",
+      "casa_peak_abs": {
+        "abs_value": 1.0,
+        "location": [
+          640,
+          640,
+          0,
+          0
+        ],
+        "value": 1.0
+      },
+      "casa_rms": 0.002261707200074331,
+      "correlation": 0.9999999999998964,
+      "diff_abs_max": 1.1920928955078125e-07,
+      "diff_abs_max_over_casa_peak": 1.1920928955078125e-07,
+      "diff_peak_abs": {
+        "abs_value": 1.1920928955078125e-07,
+        "location": [
+          639,
+          639,
+          0,
+          0
+        ],
+        "value": -1.1920928955078125e-07
+      },
+      "diff_rms": 8.886845662959805e-10,
+      "diff_rms_over_casa_rms": 3.929264434701246e-07,
+      "finite_overlap": 1638400,
+      "review_panel": {
+        "casa_rs_and_casa_color_limits": [
+          -0.02294398657977581,
+          1.0
+        ],
+        "difference_color_limits": [
+          -1.1920928955078125e-07,
+          1.1920928955078125e-07
+        ],
+        "display_bounds": {
+          "blc": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "inc": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "trc": [
+            1279,
+            1279,
+            0,
+            0
+          ]
+        },
+        "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+        "display_reason": null,
+        "display_sample_stride": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "display_shape": [
+          1280,
+          1280,
+          1,
+          1
+        ],
+        "display_status": "derived",
+        "display_transform": "center_plane_full_spatial_display",
+        "path": "/private/tmp/wave352-mtmfs-cpu-metal-panels/psf_tt0.review.png",
+        "status": "written",
+        "structured_difference_label": "good",
+        "structured_difference_summary": ".psf.tt0: good; amplitude and beam-scale structure checks passed.",
+        "zoom_panel": {
+          "bounds": {
+            "x_end": 1280,
+            "x_start": 0,
+            "y_end": 1280,
+            "y_start": 0
+          },
+          "reason": "zoom bounds cover the full review plane",
+          "status": "skipped"
+        }
+      },
+      "rust_max": 1.0,
+      "rust_min": -0.022943982854485512,
+      "rust_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.psf.tt0",
+      "rust_peak_abs": {
+        "abs_value": 1.0,
+        "location": [
+          640,
+          640,
+          0,
+          0
+        ],
+        "value": 1.0
+      },
+      "rust_rms": 0.0022617072642303108,
+      "sample_stride": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "sampled_elements": 1638400,
+      "shape": [
+        1280,
+        1280,
+        1,
+        1
+      ],
+      "status": "compared",
+      "structured_difference": {
+        "analysis_pixels": 1638400,
+        "beam_block_rms_by_scale": [
+          {
+            "approx_independent_beams_per_block": 4.0,
+            "beam_width_multiplier": 2.0,
+            "block_mean_rms": 7.553500191774404e-10,
+            "block_mean_rms_over_mean_pixel_rms": 1.4219352529632903,
+            "block_side_pixels": 2,
+            "max_block_robust_z": 195.59038235866436,
+            "mean_pixel_rms_in_blocks": 5.312126678083992e-10,
+            "median_abs_block_mean": 3.0831870390102267e-10,
+            "n_blocks": 409600,
+            "normalized_block_mean_rms": 3.339733892842609e-07
+          },
+          {
+            "approx_independent_beams_per_block": 16.0,
+            "beam_width_multiplier": 4.0,
+            "block_mean_rms": 5.575479620722736e-10,
+            "block_mean_rms_over_mean_pixel_rms": 0.9719403192645291,
+            "block_side_pixels": 4,
+            "max_block_robust_z": 110.45567128284239,
+            "mean_pixel_rms_in_blocks": 5.736442361956671e-10,
+            "median_abs_block_mean": 2.4445068191880637e-10,
+            "n_blocks": 102400,
+            "normalized_block_mean_rms": 2.465164200096059e-07
+          },
+          {
+            "approx_independent_beams_per_block": 64.0,
+            "beam_width_multiplier": 8.0,
+            "block_mean_rms": 3.4127968650187015e-10,
+            "block_mean_rms_over_mean_pixel_rms": 0.5568117766160021,
+            "block_side_pixels": 8,
+            "max_block_robust_z": 46.016961998999136,
+            "mean_pixel_rms_in_blocks": 6.12917507916197e-10,
+            "median_abs_block_mean": 1.6599668861694283e-10,
+            "n_blocks": 25600,
+            "normalized_block_mean_rms": 1.5089472522820548e-07
+          },
+          {
+            "approx_independent_beams_per_block": 256.0,
+            "beam_width_multiplier": 16.0,
+            "block_mean_rms": 1.9541842985247174e-10,
+            "block_mean_rms_over_mean_pixel_rms": 0.3004772931698425,
+            "block_side_pixels": 16,
+            "max_block_robust_z": 31.383423645606136,
+            "mean_pixel_rms_in_blocks": 6.503600581292941e-10,
+            "median_abs_block_mean": 9.819313027611964e-11,
+            "n_blocks": 6400,
+            "normalized_block_mean_rms": 8.640306306937048e-08
+          },
+          {
+            "approx_independent_beams_per_block": 1024.0,
+            "beam_width_multiplier": 32.0,
+            "block_mean_rms": 1.0663408815104892e-10,
+            "block_mean_rms_over_mean_pixel_rms": 0.15627569107560826,
+            "block_side_pixels": 32,
+            "max_block_robust_z": 21.81724105919861,
+            "mean_pixel_rms_in_blocks": 6.823459708743693e-10,
+            "median_abs_block_mean": 5.2894939296666e-11,
+            "n_blocks": 1600,
+            "normalized_block_mean_rms": 4.7147609623183935e-08
+          }
+        ],
+        "beam_block_side_pixels": 1,
+        "block_rms_decay_slope_vs_independent_beams": -0.35807413120197584,
+        "classification": {
+          "amplitude": "good",
+          "overall": "good",
+          "structure": "good",
+          "structure_components": {
+            "block_rms_decay_slope_vs_independent_beams": "good",
+            "large_scale_power_fraction": "investigate",
+            "low_order_r2_quadratic": "good"
+          },
+          "structure_suppressed_by_numerical_floor": true,
+          "thresholds": {
+            "block_rms_decay_slope_vs_independent_beams": {
+              "bad": "> -0.15",
+              "good": "<= -0.35",
+              "investigate": "-0.35 .. -0.15"
+            },
+            "large_scale_power_fraction": {
+              "bad": "> 0.5",
+              "good": "< 0.25",
+              "investigate": "0.25 .. 0.5"
+            },
+            "low_order_r2_quadratic": {
+              "bad": "> 0.2",
+              "good": "< 0.05",
+              "investigate": "0.05 .. 0.2"
+            },
+            "normalized_diff_rms": {
+              "bad": "> 1e-3",
+              "good": "< 1e-4",
+              "investigate": "1e-4 .. 1e-3",
+              "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+            }
+          }
+        },
+        "diff_rms": 8.886845662959805e-10,
+        "large_scale_power_fraction": {
+          "fraction": 0.4127786762965885,
+          "frequency_cutoff_cycles_per_pixel": 0.125,
+          "min_wavelength_beams": 8.0
+        },
+        "low_order_r2_quadratic": 4.265295584504614e-06,
+        "mask": {
+          "type": "finite_overlap"
+        },
+        "masked_pixels": 1638400,
+        "normalization": {
+          "type": "casa_support_rms_or_peak",
+          "value": 0.002261707200074331
+        },
+        "normalized_diff_rms": 3.929264434701246e-07,
+        "review": {
+          "checks": [
+            {
+              "label": "good",
+              "meaning": "beam/product-scale RMS amplitude difference",
+              "name": "normalized_diff_rms",
+              "value": 3.929264434701246e-07
+            },
+            {
+              "label": "good",
+              "meaning": "whether averaging over independent beams suppresses the difference",
+              "name": "block_rms_decay_slope_vs_independent_beams",
+              "value": -0.35807413120197584
+            },
+            {
+              "label": "investigate",
+              "meaning": "fraction of difference power on scales much larger than the beam",
+              "name": "large_scale_power_fraction",
+              "value": 0.4127786762965885
+            },
+            {
+              "label": "good",
+              "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+              "name": "low_order_r2_quadratic",
+              "value": 4.265295584504614e-06
+            }
+          ],
+          "label": "good",
+          "legend": {
+            "bad": "Structured or large enough difference; do not close without explanation.",
+            "good": "No review action expected from this check.",
+            "investigate": "Plausible but needs review in context.",
+            "unknown": "Check could not be evaluated for this product."
+          },
+          "summary": ".psf.tt0: good; amplitude and beam-scale structure checks passed."
+        },
+        "scale_offset_gradient_fit": {
+          "coefficients": {
+            "dx_pixels": -5.593361463183405e-08,
+            "dy_pixels": -1.529685806318493e-07,
+            "offset": -1.5456898784571493e-13,
+            "scale": 2.8366095125858294e-08
+          },
+          "diff_rms": 8.886845662959805e-10,
+          "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+          "r2": 0.03254533733854825,
+          "residual_rms": 8.741036670207878e-10,
+          "status": "computed"
+        },
+        "status": "computed"
+      }
+    },
+    ".psf.tt1": {
+      "casa_max": 2.526400635360915e-07,
+      "casa_min": -2.5949327664420707e-07,
+      "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-product-f32-270e6b04/rust/rust.psf.tt1",
+      "casa_peak_abs": {
+        "abs_value": 2.5949327664420707e-07,
+        "location": [
+          642,
+          638,
+          0,
+          0
+        ],
+        "value": -2.5949327664420707e-07
+      },
+      "casa_rms": 1.7438781781071346e-09,
+      "correlation": 0.9999999999998406,
+      "diff_abs_max": 9.947598300641403e-14,
+      "diff_abs_max_over_casa_peak": 3.8334705350692455e-07,
+      "diff_peak_abs": {
+        "abs_value": 9.947598300641403e-14,
+        "location": [
+          638,
+          639,
+          0,
+          0
+        ],
+        "value": -9.947598300641403e-14
+      },
+      "diff_rms": 9.809152988252124e-16,
+      "diff_rms_over_casa_rms": 5.62490723916238e-07,
+      "finite_overlap": 1638400,
+      "review_panel": {
+        "casa_rs_and_casa_color_limits": [
+          -2.5949327664420707e-07,
+          2.526400635360915e-07
+        ],
+        "difference_color_limits": [
+          -9.947598300641403e-14,
+          9.947598300641403e-14
+        ],
+        "display_bounds": {
+          "blc": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "inc": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "trc": [
+            1279,
+            1279,
+            0,
+            0
+          ]
+        },
+        "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+        "display_reason": null,
+        "display_sample_stride": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "display_shape": [
+          1280,
+          1280,
+          1,
+          1
+        ],
+        "display_status": "derived",
+        "display_transform": "center_plane_full_spatial_display",
+        "path": "/private/tmp/wave352-mtmfs-cpu-metal-panels/psf_tt1.review.png",
+        "status": "written",
+        "structured_difference_label": "good",
+        "structured_difference_summary": ".psf.tt1: good; amplitude and beam-scale structure checks passed.",
+        "zoom_panel": {
+          "bounds": {
+            "x_end": 1280,
+            "x_start": 0,
+            "y_end": 1280,
+            "y_start": 0
+          },
+          "reason": "zoom bounds cover the full review plane",
+          "status": "skipped"
+        }
+      },
+      "rust_max": 2.5264003511438204e-07,
+      "rust_min": -2.5949324822249764e-07,
+      "rust_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.psf.tt1",
+      "rust_peak_abs": {
+        "abs_value": 2.5949324822249764e-07,
+        "location": [
+          642,
+          638,
+          0,
+          0
+        ],
+        "value": -2.5949324822249764e-07
+      },
+      "rust_rms": 1.7438781681934432e-09,
+      "sample_stride": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "sampled_elements": 1638400,
+      "shape": [
+        1280,
+        1280,
+        1,
+        1
+      ],
+      "status": "compared",
+      "structured_difference": {
+        "analysis_pixels": 1638400,
+        "beam_block_rms_by_scale": [
+          {
+            "approx_independent_beams_per_block": 4.0,
+            "beam_width_multiplier": 2.0,
+            "block_mean_rms": 8.31537046347712e-16,
+            "block_mean_rms_over_mean_pixel_rms": 1.1022730488789512,
+            "block_side_pixels": 2,
+            "max_block_robust_z": 83.54982310935888,
+            "mean_pixel_rms_in_blocks": 7.543839044177059e-16,
+            "median_abs_block_mean": 4.3021142204224816e-16,
+            "n_blocks": 409600,
+            "normalized_block_mean_rms": 4.768320727829113e-07
+          },
+          {
+            "approx_independent_beams_per_block": 16.0,
+            "beam_width_multiplier": 4.0,
+            "block_mean_rms": 6.200413262023877e-16,
+            "block_mean_rms_over_mean_pixel_rms": 0.7694935535438427,
+            "block_side_pixels": 4,
+            "max_block_robust_z": 54.36278006386586,
+            "mean_pixel_rms_in_blocks": 8.057784543442055e-16,
+            "median_abs_block_mean": 3.124331847924322e-16,
+            "n_blocks": 102400,
+            "normalized_block_mean_rms": 3.555531194704219e-07
+          },
+          {
+            "approx_independent_beams_per_block": 64.0,
+            "beam_width_multiplier": 8.0,
+            "block_mean_rms": 3.907575243502834e-16,
+            "block_mean_rms_over_mean_pixel_rms": 0.46693319684891843,
+            "block_side_pixels": 8,
+            "max_block_robust_z": 28.099731049116865,
+            "mean_pixel_rms_in_blocks": 8.368595914518313e-16,
+            "median_abs_block_mean": 1.8881804350308687e-16,
+            "n_blocks": 25600,
+            "normalized_block_mean_rms": 2.2407386551188172e-07
+          },
+          {
+            "approx_independent_beams_per_block": 256.0,
+            "beam_width_multiplier": 16.0,
+            "block_mean_rms": 2.2134126559198475e-16,
+            "block_mean_rms_over_mean_pixel_rms": 0.2575097075723388,
+            "block_side_pixels": 16,
+            "max_block_robust_z": 15.878448718233377,
+            "mean_pixel_rms_in_blocks": 8.595453261885526e-16,
+            "median_abs_block_mean": 1.073143330178487e-16,
+            "n_blocks": 6400,
+            "normalized_block_mean_rms": 1.2692472924469768e-07
+          },
+          {
+            "approx_independent_beams_per_block": 1024.0,
+            "beam_width_multiplier": 32.0,
+            "block_mean_rms": 1.202304788167914e-16,
+            "block_mean_rms_over_mean_pixel_rms": 0.13801467568019066,
+            "block_side_pixels": 32,
+            "max_block_robust_z": 9.225030584459066,
+            "mean_pixel_rms_in_blocks": 8.711427116301093e-16,
+            "median_abs_block_mean": 6.069033418724425e-17,
+            "n_blocks": 1600,
+            "normalized_block_mean_rms": 6.894431063257739e-08
+          }
+        ],
+        "beam_block_side_pixels": 1,
+        "block_rms_decay_slope_vs_independent_beams": -0.35330238347953186,
+        "classification": {
+          "amplitude": "good",
+          "overall": "good",
+          "structure": "good",
+          "structure_components": {
+            "block_rms_decay_slope_vs_independent_beams": "good",
+            "large_scale_power_fraction": "investigate",
+            "low_order_r2_quadratic": "good"
+          },
+          "structure_suppressed_by_numerical_floor": true,
+          "thresholds": {
+            "block_rms_decay_slope_vs_independent_beams": {
+              "bad": "> -0.15",
+              "good": "<= -0.35",
+              "investigate": "-0.35 .. -0.15"
+            },
+            "large_scale_power_fraction": {
+              "bad": "> 0.5",
+              "good": "< 0.25",
+              "investigate": "0.25 .. 0.5"
+            },
+            "low_order_r2_quadratic": {
+              "bad": "> 0.2",
+              "good": "< 0.05",
+              "investigate": "0.05 .. 0.2"
+            },
+            "normalized_diff_rms": {
+              "bad": "> 1e-3",
+              "good": "< 1e-4",
+              "investigate": "1e-4 .. 1e-3",
+              "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+            }
+          }
+        },
+        "diff_rms": 9.809152988252124e-16,
+        "large_scale_power_fraction": {
+          "fraction": 0.40459068389817104,
+          "frequency_cutoff_cycles_per_pixel": 0.125,
+          "min_wavelength_beams": 8.0
+        },
+        "low_order_r2_quadratic": 3.838154736146571e-06,
+        "mask": {
+          "type": "finite_overlap"
+        },
+        "masked_pixels": 1638400,
+        "normalization": {
+          "type": "casa_support_rms_or_peak",
+          "value": 1.7438781781071346e-09
+        },
+        "normalized_diff_rms": 5.62490723916238e-07,
+        "review": {
+          "checks": [
+            {
+              "label": "good",
+              "meaning": "beam/product-scale RMS amplitude difference",
+              "name": "normalized_diff_rms",
+              "value": 5.62490723916238e-07
+            },
+            {
+              "label": "good",
+              "meaning": "whether averaging over independent beams suppresses the difference",
+              "name": "block_rms_decay_slope_vs_independent_beams",
+              "value": -0.35330238347953186
+            },
+            {
+              "label": "investigate",
+              "meaning": "fraction of difference power on scales much larger than the beam",
+              "name": "large_scale_power_fraction",
+              "value": 0.40459068389817104
+            },
+            {
+              "label": "good",
+              "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+              "name": "low_order_r2_quadratic",
+              "value": 3.838154736146571e-06
+            }
+          ],
+          "label": "good",
+          "legend": {
+            "bad": "Structured or large enough difference; do not close without explanation.",
+            "good": "No review action expected from this check.",
+            "investigate": "Plausible but needs review in context.",
+            "unknown": "Check could not be evaluated for this product."
+          },
+          "summary": ".psf.tt1: good; amplitude and beam-scale structure checks passed."
+        },
+        "scale_offset_gradient_fit": {
+          "coefficients": {
+            "dx_pixels": 5.989614944228055e-08,
+            "dy_pixels": 7.454910366436949e-09,
+            "offset": -6.757057393960142e-19,
+            "scale": -5.685001694334874e-09
+          },
+          "diff_rms": 9.809152988252124e-16,
+          "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+          "r2": 0.004547789719013595,
+          "residual_rms": 9.786820264674887e-16,
+          "status": "computed"
+        },
+        "status": "computed"
+      }
+    },
+    ".psf.tt2": {
+      "casa_max": 1.6086341148024985e-09,
+      "casa_min": -3.694239358864593e-11,
+      "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-product-f32-270e6b04/rust/rust.psf.tt2",
+      "casa_peak_abs": {
+        "abs_value": 1.6086341148024985e-09,
+        "location": [
+          640,
+          640,
+          0,
+          0
+        ],
+        "value": 1.6086341148024985e-09
+      },
+      "casa_rms": 3.638114287620201e-12,
+      "correlation": 0.9999999999999216,
+      "diff_abs_max": 3.3306690738754696e-16,
+      "diff_abs_max_over_casa_peak": 2.0704951133554664e-07,
+      "diff_peak_abs": {
+        "abs_value": 3.3306690738754696e-16,
+        "location": [
+          641,
+          641,
+          0,
+          0
+        ],
+        "value": 3.3306690738754696e-16
+      },
+      "diff_rms": 1.4250392415192783e-18,
+      "diff_rms_over_casa_rms": 3.916972169808989e-07,
+      "finite_overlap": 1638400,
+      "review_panel": {
+        "casa_rs_and_casa_color_limits": [
+          -3.694239358864593e-11,
+          1.608634225824801e-09
+        ],
+        "difference_color_limits": [
+          -3.3306690738754696e-16,
+          3.3306690738754696e-16
+        ],
+        "display_bounds": {
+          "blc": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "inc": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "trc": [
+            1279,
+            1279,
+            0,
+            0
+          ]
+        },
+        "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+        "display_reason": null,
+        "display_sample_stride": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "display_shape": [
+          1280,
+          1280,
+          1,
+          1
+        ],
+        "display_status": "derived",
+        "display_transform": "center_plane_full_spatial_display",
+        "path": "/private/tmp/wave352-mtmfs-cpu-metal-panels/psf_tt2.review.png",
+        "status": "written",
+        "structured_difference_label": "good",
+        "structured_difference_summary": ".psf.tt2: good; amplitude and beam-scale structure checks passed.",
+        "zoom_panel": {
+          "bounds": {
+            "x_end": 1280,
+            "x_start": 0,
+            "y_end": 1280,
+            "y_start": 0
+          },
+          "reason": "zoom bounds cover the full review plane",
+          "status": "skipped"
+        }
+      },
+      "rust_max": 1.608634225824801e-09,
+      "rust_min": -3.694237971085812e-11,
+      "rust_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.psf.tt2",
+      "rust_peak_abs": {
+        "abs_value": 1.608634225824801e-09,
+        "location": [
+          640,
+          640,
+          0,
+          0
+        ],
+        "value": 1.608634225824801e-09
+      },
+      "rust_rms": 3.638114450104748e-12,
+      "sample_stride": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "sampled_elements": 1638400,
+      "shape": [
+        1280,
+        1280,
+        1,
+        1
+      ],
+      "status": "compared",
+      "structured_difference": {
+        "analysis_pixels": 1638400,
+        "beam_block_rms_by_scale": [
+          {
+            "approx_independent_beams_per_block": 4.0,
+            "beam_width_multiplier": 2.0,
+            "block_mean_rms": 1.2290309335652248e-18,
+            "block_mean_rms_over_mean_pixel_rms": 1.4428175552210738,
+            "block_side_pixels": 2,
+            "max_block_robust_z": 303.1850059410268,
+            "mean_pixel_rms_in_blocks": 8.518269888786515e-19,
+            "median_abs_block_mean": 4.939790269268673e-19,
+            "n_blocks": 409600,
+            "normalized_block_mean_rms": 3.378208699345645e-07
+          },
+          {
+            "approx_independent_beams_per_block": 16.0,
+            "beam_width_multiplier": 4.0,
+            "block_mean_rms": 8.937540823715125e-19,
+            "block_mean_rms_over_mean_pixel_rms": 0.9716289266158713,
+            "block_side_pixels": 4,
+            "max_block_robust_z": 112.02670468337713,
+            "mean_pixel_rms_in_blocks": 9.198512496786273e-19,
+            "median_abs_block_mean": 3.917527381051139e-19,
+            "n_blocks": 102400,
+            "normalized_block_mean_rms": 2.45664102805342e-07
+          },
+          {
+            "approx_independent_beams_per_block": 64.0,
+            "beam_width_multiplier": 8.0,
+            "block_mean_rms": 5.422678755094316e-19,
+            "block_mean_rms_over_mean_pixel_rms": 0.5515932801594986,
+            "block_side_pixels": 8,
+            "max_block_robust_z": 44.26111581802245,
+            "mean_pixel_rms_in_blocks": 9.830936942390406e-19,
+            "median_abs_block_mean": 2.6265714144580054e-19,
+            "n_blocks": 25600,
+            "normalized_block_mean_rms": 1.4905190783991153e-07
+          },
+          {
+            "approx_independent_beams_per_block": 256.0,
+            "beam_width_multiplier": 16.0,
+            "block_mean_rms": 3.1350877162469836e-19,
+            "block_mean_rms_over_mean_pixel_rms": 0.30074993454073023,
+            "block_side_pixels": 16,
+            "max_block_robust_z": 31.084293215237103,
+            "mean_pixel_rms_in_blocks": 1.0424234076840346e-18,
+            "median_abs_block_mean": 1.5206211127048333e-19,
+            "n_blocks": 6400,
+            "normalized_block_mean_rms": 8.617342580234712e-08
+          },
+          {
+            "approx_independent_beams_per_block": 1024.0,
+            "beam_width_multiplier": 32.0,
+            "block_mean_rms": 1.6851221321014038e-19,
+            "block_mean_rms_over_mean_pixel_rms": 0.15425087777124663,
+            "block_side_pixels": 32,
+            "max_block_robust_z": 20.79202415939676,
+            "mean_pixel_rms_in_blocks": 1.0924554572716485e-18,
+            "median_abs_block_mean": 7.986212971758394e-20,
+            "n_blocks": 1600,
+            "normalized_block_mean_rms": 4.631855953056638e-08
+          }
+        ],
+        "beam_block_side_pixels": 1,
+        "block_rms_decay_slope_vs_independent_beams": -0.36222822243458436,
+        "classification": {
+          "amplitude": "good",
+          "overall": "good",
+          "structure": "good",
+          "structure_components": {
+            "block_rms_decay_slope_vs_independent_beams": "good",
+            "large_scale_power_fraction": "investigate",
+            "low_order_r2_quadratic": "good"
+          },
+          "structure_suppressed_by_numerical_floor": true,
+          "thresholds": {
+            "block_rms_decay_slope_vs_independent_beams": {
+              "bad": "> -0.15",
+              "good": "<= -0.35",
+              "investigate": "-0.35 .. -0.15"
+            },
+            "large_scale_power_fraction": {
+              "bad": "> 0.5",
+              "good": "< 0.25",
+              "investigate": "0.25 .. 0.5"
+            },
+            "low_order_r2_quadratic": {
+              "bad": "> 0.2",
+              "good": "< 0.05",
+              "investigate": "0.05 .. 0.2"
+            },
+            "normalized_diff_rms": {
+              "bad": "> 1e-3",
+              "good": "< 1e-4",
+              "investigate": "1e-4 .. 1e-3",
+              "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+            }
+          }
+        },
+        "diff_rms": 1.4250392415192783e-18,
+        "large_scale_power_fraction": {
+          "fraction": 0.40837059176022505,
+          "frequency_cutoff_cycles_per_pixel": 0.125,
+          "min_wavelength_beams": 8.0
+        },
+        "low_order_r2_quadratic": 1.7716267266543184e-06,
+        "mask": {
+          "type": "finite_overlap"
+        },
+        "masked_pixels": 1638400,
+        "normalization": {
+          "type": "casa_support_rms_or_peak",
+          "value": 3.638114287620201e-12
+        },
+        "normalized_diff_rms": 3.916972169808989e-07,
+        "review": {
+          "checks": [
+            {
+              "label": "good",
+              "meaning": "beam/product-scale RMS amplitude difference",
+              "name": "normalized_diff_rms",
+              "value": 3.916972169808989e-07
+            },
+            {
+              "label": "good",
+              "meaning": "whether averaging over independent beams suppresses the difference",
+              "name": "block_rms_decay_slope_vs_independent_beams",
+              "value": -0.36222822243458436
+            },
+            {
+              "label": "investigate",
+              "meaning": "fraction of difference power on scales much larger than the beam",
+              "name": "large_scale_power_fraction",
+              "value": 0.40837059176022505
+            },
+            {
+              "label": "good",
+              "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+              "name": "low_order_r2_quadratic",
+              "value": 1.7716267266543184e-06
+            }
+          ],
+          "label": "good",
+          "legend": {
+            "bad": "Structured or large enough difference; do not close without explanation.",
+            "good": "No review action expected from this check.",
+            "investigate": "Plausible but needs review in context.",
+            "unknown": "Check could not be evaluated for this product."
+          },
+          "summary": ".psf.tt2: good; amplitude and beam-scale structure checks passed."
+        },
+        "scale_offset_gradient_fit": {
+          "coefficients": {
+            "dx_pixels": -1.0329027516278131e-40,
+            "dy_pixels": 3.902179919148283e-40,
+            "offset": -1.2483395670059759e-21,
+            "scale": 1.2746225616634092e-37
+          },
+          "diff_rms": 1.4250392415192783e-18,
+          "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+          "r2": 0.0,
+          "residual_rms": 1.425038694744169e-18,
+          "status": "computed"
+        },
+        "status": "computed"
+      }
+    },
+    ".residual.tt0": {
+      "casa_max": 117.5574722290039,
+      "casa_min": -21.744651794433594,
+      "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-product-f32-270e6b04/rust/rust.residual.tt0",
+      "casa_peak_abs": {
+        "abs_value": 117.5574722290039,
+        "location": [
+          639,
+          638,
+          0,
+          0
+        ],
+        "value": 117.5574722290039
+      },
+      "casa_rms": 3.955800112269646,
+      "correlation": 0.9999999999998765,
+      "diff_abs_max": 9.1552734375e-05,
+      "diff_abs_max_over_casa_peak": 7.787912808864566e-07,
+      "diff_peak_abs": {
+        "abs_value": 9.1552734375e-05,
+        "location": [
+          641,
+          641,
+          0,
+          0
+        ],
+        "value": 9.1552734375e-05
+      },
+      "diff_rms": 2.286932341148791e-06,
+      "diff_rms_over_casa_rms": 5.781213095311482e-07,
+      "finite_overlap": 1638400,
+      "review_panel": {
+        "casa_rs_and_casa_color_limits": [
+          -21.744657516479492,
+          117.55752563476562
+        ],
+        "difference_color_limits": [
+          -9.1552734375e-05,
+          9.1552734375e-05
+        ],
+        "display_bounds": {
+          "blc": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "inc": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "trc": [
+            1279,
+            1279,
+            0,
+            0
+          ]
+        },
+        "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+        "display_reason": null,
+        "display_sample_stride": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "display_shape": [
+          1280,
+          1280,
+          1,
+          1
+        ],
+        "display_status": "derived",
+        "display_transform": "center_plane_full_spatial_display",
+        "path": "/private/tmp/wave352-mtmfs-cpu-metal-panels/residual_tt0.review.png",
+        "status": "written",
+        "structured_difference_label": "good",
+        "structured_difference_summary": ".residual.tt0: good; amplitude and beam-scale structure checks passed.",
+        "zoom_panel": {
+          "bounds": {
+            "x_end": 1280,
+            "x_start": 0,
+            "y_end": 1280,
+            "y_start": 0
+          },
+          "reason": "zoom bounds cover the full review plane",
+          "status": "skipped"
+        }
+      },
+      "rust_max": 117.55752563476562,
+      "rust_min": -21.744657516479492,
+      "rust_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.residual.tt0",
+      "rust_peak_abs": {
+        "abs_value": 117.55752563476562,
+        "location": [
+          639,
+          638,
+          0,
+          0
+        ],
+        "value": 117.55752563476562
+      },
+      "rust_rms": 3.955801506261054,
+      "sample_stride": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "sampled_elements": 1638400,
+      "shape": [
+        1280,
+        1280,
+        1,
+        1
+      ],
+      "status": "compared",
+      "structured_difference": {
+        "analysis_pixels": 1638400,
+        "beam_block_rms_by_scale": [
+          {
+            "approx_independent_beams_per_block": 4.0,
+            "beam_width_multiplier": 2.0,
+            "block_mean_rms": 2.1345713642056255e-06,
+            "block_mean_rms_over_mean_pixel_rms": 2.0291062714285926,
+            "block_side_pixels": 2,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 1.0519761307044704e-06,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 409600,
+            "normalized_block_mean_rms": 5.396054663087898e-07
+          },
+          {
+            "approx_independent_beams_per_block": 16.0,
+            "beam_width_multiplier": 4.0,
+            "block_mean_rms": 2.0689673863795572e-06,
+            "block_mean_rms_over_mean_pixel_rms": 1.905325242486554,
+            "block_side_pixels": 4,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 1.0858867243470942e-06,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 102400,
+            "normalized_block_mean_rms": 5.230212163557689e-07
+          },
+          {
+            "approx_independent_beams_per_block": 64.0,
+            "beam_width_multiplier": 8.0,
+            "block_mean_rms": 2.0054074821220817e-06,
+            "block_mean_rms_over_mean_pixel_rms": 1.7984594473645599,
+            "block_side_pixels": 8,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 1.1150696141971846e-06,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 25600,
+            "normalized_block_mean_rms": 5.069536946272739e-07
+          },
+          {
+            "approx_independent_beams_per_block": 256.0,
+            "beam_width_multiplier": 16.0,
+            "block_mean_rms": 1.8342127636373779e-06,
+            "block_mean_rms_over_mean_pixel_rms": 1.57051599991842,
+            "block_side_pixels": 16,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 1.167904538210789e-06,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 6400,
+            "normalized_block_mean_rms": 4.636768066081569e-07
+          },
+          {
+            "approx_independent_beams_per_block": 1024.0,
+            "beam_width_multiplier": 32.0,
+            "block_mean_rms": 1.4639395234796044e-06,
+            "block_mean_rms_over_mean_pixel_rms": 1.16835233230905,
+            "block_side_pixels": 32,
+            "max_block_robust_z": 380.6092216749826,
+            "mean_pixel_rms_in_blocks": 1.252994908296521e-06,
+            "median_abs_block_mean": 2.757041528411719e-08,
+            "n_blocks": 1600,
+            "normalized_block_mean_rms": 3.7007419028553167e-07
+          }
+        ],
+        "beam_block_side_pixels": 1,
+        "block_rms_decay_slope_vs_independent_beams": -0.06309653937036873,
+        "classification": {
+          "amplitude": "good",
+          "overall": "good",
+          "structure": "good",
+          "structure_components": {
+            "block_rms_decay_slope_vs_independent_beams": "bad",
+            "large_scale_power_fraction": "bad",
+            "low_order_r2_quadratic": "good"
+          },
+          "structure_suppressed_by_numerical_floor": true,
+          "thresholds": {
+            "block_rms_decay_slope_vs_independent_beams": {
+              "bad": "> -0.15",
+              "good": "<= -0.35",
+              "investigate": "-0.35 .. -0.15"
+            },
+            "large_scale_power_fraction": {
+              "bad": "> 0.5",
+              "good": "< 0.25",
+              "investigate": "0.25 .. 0.5"
+            },
+            "low_order_r2_quadratic": {
+              "bad": "> 0.2",
+              "good": "< 0.05",
+              "investigate": "0.05 .. 0.2"
+            },
+            "normalized_diff_rms": {
+              "bad": "> 1e-3",
+              "good": "< 1e-4",
+              "investigate": "1e-4 .. 1e-3",
+              "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+            }
+          }
+        },
+        "diff_rms": 2.286932341148791e-06,
+        "large_scale_power_fraction": {
+          "fraction": 0.810855895398731,
+          "frequency_cutoff_cycles_per_pixel": 0.125,
+          "min_wavelength_beams": 8.0
+        },
+        "low_order_r2_quadratic": 0.0001600483187321755,
+        "mask": {
+          "type": "finite_overlap"
+        },
+        "masked_pixels": 1638400,
+        "normalization": {
+          "type": "casa_support_rms_or_peak",
+          "value": 3.955800112269646
+        },
+        "normalized_diff_rms": 5.781213095311482e-07,
+        "review": {
+          "checks": [
+            {
+              "label": "good",
+              "meaning": "beam/product-scale RMS amplitude difference",
+              "name": "normalized_diff_rms",
+              "value": 5.781213095311482e-07
+            },
+            {
+              "label": "bad",
+              "meaning": "whether averaging over independent beams suppresses the difference",
+              "name": "block_rms_decay_slope_vs_independent_beams",
+              "value": -0.06309653937036873
+            },
+            {
+              "label": "bad",
+              "meaning": "fraction of difference power on scales much larger than the beam",
+              "name": "large_scale_power_fraction",
+              "value": 0.810855895398731
+            },
+            {
+              "label": "good",
+              "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+              "name": "low_order_r2_quadratic",
+              "value": 0.0001600483187321755
+            }
+          ],
+          "label": "good",
+          "legend": {
+            "bad": "Structured or large enough difference; do not close without explanation.",
+            "good": "No review action expected from this check.",
+            "investigate": "Plausible but needs review in context.",
+            "unknown": "Check could not be evaluated for this product."
+          },
+          "summary": ".residual.tt0: good; amplitude and beam-scale structure checks passed."
+        },
+        "scale_offset_gradient_fit": {
+          "coefficients": {
+            "dx_pixels": -5.839015901892812e-07,
+            "dy_pixels": -2.112121833927604e-07,
+            "offset": 4.862348016877666e-08,
+            "scale": 3.5239805198402637e-07
+          },
+          "diff_rms": 2.286932341148791e-06,
+          "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+          "r2": 0.37573715317700784,
+          "residual_rms": 1.8065158685294095e-06,
+          "status": "computed"
+        },
+        "status": "computed"
+      }
+    },
+    ".residual.tt1": {
+      "casa_max": 2.0451499949558638e-05,
+      "casa_min": -1.536521449452266e-05,
+      "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-product-f32-270e6b04/rust/rust.residual.tt1",
+      "casa_peak_abs": {
+        "abs_value": 2.0451499949558638e-05,
+        "location": [
+          625,
+          630,
+          0,
+          0
+        ],
+        "value": 2.0451499949558638e-05
+      },
+      "casa_rms": 1.516970084317855e-06,
+      "correlation": 1.0,
+      "diff_abs_max": 1.5774048733874224e-11,
+      "diff_abs_max_over_casa_peak": 7.712905543739662e-07,
+      "diff_peak_abs": {
+        "abs_value": 1.5774048733874224e-11,
+        "location": [
+          1135,
+          629,
+          0,
+          0
+        ],
+        "value": -1.5774048733874224e-11
+      },
+      "diff_rms": 1.276058855624155e-12,
+      "diff_rms_over_casa_rms": 8.411892026189613e-07,
+      "finite_overlap": 1638400,
+      "review_panel": {
+        "casa_rs_and_casa_color_limits": [
+          -1.536522358946968e-05,
+          2.0451507225516252e-05
+        ],
+        "difference_color_limits": [
+          -1.5774048733874224e-11,
+          1.5774048733874224e-11
+        ],
+        "display_bounds": {
+          "blc": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "inc": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "trc": [
+            1279,
+            1279,
+            0,
+            0
+          ]
+        },
+        "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+        "display_reason": null,
+        "display_sample_stride": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "display_shape": [
+          1280,
+          1280,
+          1,
+          1
+        ],
+        "display_status": "derived",
+        "display_transform": "center_plane_full_spatial_display",
+        "path": "/private/tmp/wave352-mtmfs-cpu-metal-panels/residual_tt1.review.png",
+        "status": "written",
+        "structured_difference_label": "good",
+        "structured_difference_summary": ".residual.tt1: good; amplitude and beam-scale structure checks passed.",
+        "zoom_panel": {
+          "bounds": {
+            "x_end": 1280,
+            "x_start": 0,
+            "y_end": 1280,
+            "y_start": 0
+          },
+          "reason": "zoom bounds cover the full review plane",
+          "status": "skipped"
+        }
+      },
+      "rust_max": 2.0451507225516252e-05,
+      "rust_min": -1.536522358946968e-05,
+      "rust_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.residual.tt1",
+      "rust_peak_abs": {
+        "abs_value": 2.0451507225516252e-05,
+        "location": [
+          625,
+          630,
+          0,
+          0
+        ],
+        "value": 2.0451507225516252e-05
+      },
+      "rust_rms": 1.51697061829439e-06,
+      "sample_stride": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "sampled_elements": 1638400,
+      "shape": [
+        1280,
+        1280,
+        1,
+        1
+      ],
+      "status": "compared",
+      "structured_difference": {
+        "analysis_pixels": 1638400,
+        "beam_block_rms_by_scale": [
+          {
+            "approx_independent_beams_per_block": 4.0,
+            "beam_width_multiplier": 2.0,
+            "block_mean_rms": 1.2192107633959911e-12,
+            "block_mean_rms_over_mean_pixel_rms": 1.8183057595976089,
+            "block_side_pixels": 2,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 6.705202119943802e-13,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 409600,
+            "normalized_block_mean_rms": 8.037144410426795e-07
+          },
+          {
+            "approx_independent_beams_per_block": 16.0,
+            "beam_width_multiplier": 4.0,
+            "block_mean_rms": 1.1920136403506778e-12,
+            "block_mean_rms_over_mean_pixel_rms": 1.7341557125867197,
+            "block_side_pixels": 4,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 6.873740528021176e-13,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 102400,
+            "normalized_block_mean_rms": 7.85785858715004e-07
+          },
+          {
+            "approx_independent_beams_per_block": 64.0,
+            "beam_width_multiplier": 8.0,
+            "block_mean_rms": 1.158144245571061e-12,
+            "block_mean_rms_over_mean_pixel_rms": 1.6431742460657772,
+            "block_side_pixels": 8,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 7.048213227197207e-13,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 25600,
+            "normalized_block_mean_rms": 7.634588562712828e-07
+          },
+          {
+            "approx_independent_beams_per_block": 256.0,
+            "beam_width_multiplier": 16.0,
+            "block_mean_rms": 1.069954578991298e-12,
+            "block_mean_rms_over_mean_pixel_rms": 1.4501969723105494,
+            "block_side_pixels": 16,
+            "max_block_robust_z": null,
+            "mean_pixel_rms_in_blocks": 7.377994847738344e-13,
+            "median_abs_block_mean": 0.0,
+            "n_blocks": 6400,
+            "normalized_block_mean_rms": 7.053234536740591e-07
+          },
+          {
+            "approx_independent_beams_per_block": 1024.0,
+            "beam_width_multiplier": 32.0,
+            "block_mean_rms": 8.852359481639782e-13,
+            "block_mean_rms_over_mean_pixel_rms": 1.12737785775508,
+            "block_side_pixels": 32,
+            "max_block_robust_z": 197.2814622529551,
+            "mean_pixel_rms_in_blocks": 7.852167239888204e-13,
+            "median_abs_block_mean": 1.9406161790372356e-14,
+            "n_blocks": 1600,
+            "normalized_block_mean_rms": 5.835553102301602e-07
+          }
+        ],
+        "beam_block_side_pixels": 1,
+        "block_rms_decay_slope_vs_independent_beams": -0.05397391967506792,
+        "classification": {
+          "amplitude": "good",
+          "overall": "good",
+          "structure": "good",
+          "structure_components": {
+            "block_rms_decay_slope_vs_independent_beams": "bad",
+            "large_scale_power_fraction": "bad",
+            "low_order_r2_quadratic": "good"
+          },
+          "structure_suppressed_by_numerical_floor": true,
+          "thresholds": {
+            "block_rms_decay_slope_vs_independent_beams": {
+              "bad": "> -0.15",
+              "good": "<= -0.35",
+              "investigate": "-0.35 .. -0.15"
+            },
+            "large_scale_power_fraction": {
+              "bad": "> 0.5",
+              "good": "< 0.25",
+              "investigate": "0.25 .. 0.5"
+            },
+            "low_order_r2_quadratic": {
+              "bad": "> 0.2",
+              "good": "< 0.05",
+              "investigate": "0.05 .. 0.2"
+            },
+            "normalized_diff_rms": {
+              "bad": "> 1e-3",
+              "good": "< 1e-4",
+              "investigate": "1e-4 .. 1e-3",
+              "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+            }
+          }
+        },
+        "diff_rms": 1.276058855624155e-12,
+        "large_scale_power_fraction": {
+          "fraction": 0.8708813270915897,
+          "frequency_cutoff_cycles_per_pixel": 0.125,
+          "min_wavelength_beams": 8.0
+        },
+        "low_order_r2_quadratic": 0.0002201823393322977,
+        "mask": {
+          "type": "finite_overlap"
+        },
+        "masked_pixels": 1638400,
+        "normalization": {
+          "type": "casa_support_rms_or_peak",
+          "value": 1.516970084317855e-06
+        },
+        "normalized_diff_rms": 8.411892026189613e-07,
+        "review": {
+          "checks": [
+            {
+              "label": "good",
+              "meaning": "beam/product-scale RMS amplitude difference",
+              "name": "normalized_diff_rms",
+              "value": 8.411892026189613e-07
+            },
+            {
+              "label": "bad",
+              "meaning": "whether averaging over independent beams suppresses the difference",
+              "name": "block_rms_decay_slope_vs_independent_beams",
+              "value": -0.05397391967506792
+            },
+            {
+              "label": "bad",
+              "meaning": "fraction of difference power on scales much larger than the beam",
+              "name": "large_scale_power_fraction",
+              "value": 0.8708813270915897
+            },
+            {
+              "label": "good",
+              "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+              "name": "low_order_r2_quadratic",
+              "value": 0.0002201823393322977
+            }
+          ],
+          "label": "good",
+          "legend": {
+            "bad": "Structured or large enough difference; do not close without explanation.",
+            "good": "No review action expected from this check.",
+            "investigate": "Plausible but needs review in context.",
+            "unknown": "Check could not be evaluated for this product."
+          },
+          "summary": ".residual.tt1: good; amplitude and beam-scale structure checks passed."
+        },
+        "scale_offset_gradient_fit": {
+          "coefficients": {
+            "dx_pixels": -3.622553100823844e-07,
+            "dy_pixels": 6.401422690134666e-08,
+            "offset": -1.9178752656869984e-14,
+            "scale": 3.5204302527742286e-07
+          },
+          "diff_rms": 1.276058855624155e-12,
+          "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+          "r2": 0.17588317270910647,
+          "residual_rms": 1.1583093403253032e-12,
+          "status": "computed"
+        },
+        "status": "computed"
+      }
+    }
+  },
+  "status": "completed",
+  "structured_difference_review": {
+    "checks_by_product": {
+      "block_rms_decay_slope_vs_independent_beams": {
+        ".image.tt0": "bad",
+        ".image.tt1": "bad",
+        ".psf.tt0": "good",
+        ".psf.tt1": "good",
+        ".psf.tt2": "good",
+        ".residual.tt0": "bad",
+        ".residual.tt1": "bad"
+      },
+      "large_scale_power_fraction": {
+        ".image.tt0": "bad",
+        ".image.tt1": "bad",
+        ".psf.tt0": "investigate",
+        ".psf.tt1": "investigate",
+        ".psf.tt2": "investigate",
+        ".residual.tt0": "bad",
+        ".residual.tt1": "bad"
+      },
+      "low_order_r2_quadratic": {
+        ".image.tt0": "good",
+        ".image.tt1": "good",
+        ".psf.tt0": "good",
+        ".psf.tt1": "good",
+        ".psf.tt2": "good",
+        ".residual.tt0": "good",
+        ".residual.tt1": "good"
+      },
+      "normalized_diff_rms": {
+        ".image.tt0": "good",
+        ".image.tt1": "good",
+        ".psf.tt0": "good",
+        ".psf.tt1": "good",
+        ".psf.tt2": "good",
+        ".residual.tt0": "good",
+        ".residual.tt1": "good"
+      }
+    },
+    "label": "good",
+    "legend": {
+      "bad": "Structured or large enough difference; do not close without explanation.",
+      "good": "No review action expected from this check.",
+      "investigate": "Plausible but needs review in context.",
+      "unknown": "Check could not be evaluated for this product."
+    },
+    "product_summaries": {
+      ".image.tt0": ".image.tt0: good; amplitude and beam-scale structure checks passed.",
+      ".image.tt1": ".image.tt1: good; amplitude and beam-scale structure checks passed.",
+      ".psf.tt0": ".psf.tt0: good; amplitude and beam-scale structure checks passed.",
+      ".psf.tt1": ".psf.tt1: good; amplitude and beam-scale structure checks passed.",
+      ".psf.tt2": ".psf.tt2: good; amplitude and beam-scale structure checks passed.",
+      ".residual.tt0": ".residual.tt0: good; amplitude and beam-scale structure checks passed.",
+      ".residual.tt1": ".residual.tt1: good; amplitude and beam-scale structure checks passed."
+    },
+    "products": {
+      ".image.tt0": "good",
+      ".image.tt1": "good",
+      ".psf.tt0": "good",
+      ".psf.tt1": "good",
+      ".psf.tt2": "good",
+      ".residual.tt0": "good",
+      ".residual.tt1": "good"
+    },
+    "summary": "overall good; good: .image.tt0, .image.tt1, .psf.tt0, .psf.tt1, .psf.tt2, .residual.tt0, .residual.tt1",
+    "thresholds": {
+      "block_rms_decay_slope_vs_independent_beams": {
+        "bad": "> -0.15",
+        "good": "<= -0.35",
+        "investigate": "-0.35 .. -0.15"
+      },
+      "large_scale_power_fraction": {
+        "bad": "> 0.5",
+        "good": "< 0.25",
+        "investigate": "0.25 .. 0.5"
+      },
+      "low_order_r2_quadratic": {
+        "bad": "> 0.2",
+        "good": "< 0.05",
+        "investigate": "0.05 .. 0.2"
+      },
+      "normalized_diff_rms": {
+        "bad": "> 1e-3",
+        "good": "< 1e-4",
+        "investigate": "1e-4 .. 1e-3",
+        "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+      }
+    }
+  }
+}

@@ -103,10 +103,10 @@ impl StandardMfsStreamingWeightingPlan {
         selected_frequency_range_hz: [f64; 2],
         weight_density_mode: WeightDensityMode,
     ) -> Result<Self, crate::ImagingError> {
-        let gridder = StandardGridder::new(geometry)?;
         let density_convention = density_cell_convention(weighting, weight_density_mode);
         let density_build_convention =
             density_build_cell_convention(weighting, weight_density_mode);
+        let gridder = StandardGridder::new(geometry)?;
         let density = match weighting {
             WeightingMode::Natural => None,
             WeightingMode::Uniform
@@ -1480,7 +1480,18 @@ fn build_density_grid(
     let thread_count = requested_threads
         .min(thread::available_parallelism().map_or(1, |value| value.get()))
         .max(1);
-    if thread_count > 1 && sample_count >= 100_000 {
+    let actual_threads = if batches.len() == 1 {
+        thread_count.min(sample_count)
+    } else {
+        thread_count.min(batches.len())
+    }
+    .max(1);
+    if density_grid_parallel_profitable(
+        sample_count,
+        gridder.density_grid_shape(),
+        mirror_hermitian,
+        actual_threads,
+    ) {
         return build_density_grid_parallel(
             batches,
             gridder,
@@ -1490,6 +1501,30 @@ fn build_density_grid(
         );
     }
     build_density_grid_serial(batches, gridder, mirror_hermitian, convention)
+}
+
+fn density_grid_parallel_profitable(
+    sample_count: usize,
+    [nx, ny]: [usize; 2],
+    mirror_hermitian: bool,
+    thread_count: usize,
+) -> bool {
+    if thread_count <= 1 || sample_count == 0 {
+        return false;
+    }
+    let updates_per_sample = if mirror_hermitian { 2u128 } else { 1u128 };
+    let update_cell_touches = (sample_count as u128)
+        .saturating_mul(updates_per_sample)
+        .saturating_mul(2);
+    let grid_cells = (nx as u128).saturating_mul(ny as u128);
+    let workers = thread_count as u128;
+    let worker_update_touches = update_cell_touches.div_ceil(workers);
+    let worker_zero_touches = grid_cells;
+    let merge_touches = grid_cells.saturating_mul(workers).saturating_mul(3);
+    worker_update_touches
+        .saturating_add(worker_zero_touches)
+        .saturating_add(merge_touches)
+        < update_cell_touches
 }
 
 fn build_density_grid_serial(
@@ -2951,6 +2986,71 @@ mod tests {
     }
 
     #[test]
+    fn briggs_per_plane_density_source_preserves_aligned_sample_order() {
+        let request = request_for(WeightingMode::Briggs { robust: 0.5 });
+        let gridder = StandardGridder::new(request.geometry).unwrap();
+        let target_batch = VisibilityBatch {
+            u_lambda: vec![40.0, 140.0, 260.0],
+            v_lambda: vec![10.0, -20.0, 35.0],
+            w_lambda: vec![0.0; 3],
+            weight: vec![1.0; 3],
+            sumwt_factor: vec![1.0; 3],
+            gridable: vec![true; 3],
+            visibility: vec![Complex32::new(1.0, 0.0); 3],
+        };
+        let density_batch = VisibilityBatch {
+            u_lambda: vec![0.0, 0.0, 260.0],
+            v_lambda: vec![0.0, 0.0, 35.0],
+            w_lambda: target_batch.w_lambda.clone(),
+            weight: target_batch.weight.clone(),
+            sumwt_factor: target_batch.sumwt_factor.clone(),
+            gridable: target_batch.gridable.clone(),
+            visibility: target_batch.visibility.clone(),
+        };
+
+        let sidecar_trace = trace_weighting_with_density_source(
+            WeightingMode::Briggs { robust: 0.5 },
+            WeightDensityMode::PerPlane,
+            None,
+            fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz),
+            std::slice::from_ref(&target_batch),
+            std::slice::from_ref(&density_batch),
+            &gridder,
+        )
+        .unwrap();
+        let target_trace = trace_weighting_with_density_source(
+            WeightingMode::Briggs { robust: 0.5 },
+            WeightDensityMode::PerPlane,
+            None,
+            fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz),
+            std::slice::from_ref(&target_batch),
+            std::slice::from_ref(&target_batch),
+            &gridder,
+        )
+        .unwrap();
+
+        assert_eq!(sidecar_trace.samples.len(), 3);
+        for (index, sample) in sidecar_trace.samples.iter().enumerate() {
+            assert_eq!(sample.batch_index, 0);
+            assert_eq!(sample.sample_index, index);
+            assert_eq!(sample.u_lambda, target_batch.u_lambda[index]);
+            assert_eq!(sample.v_lambda, target_batch.v_lambda[index]);
+        }
+        assert_eq!(
+            sidecar_trace.samples[0].density_weight,
+            sidecar_trace.samples[1].density_weight
+        );
+        assert_ne!(
+            sidecar_trace.samples[1].density_weight,
+            target_trace.samples[1].density_weight
+        );
+        assert_ne!(
+            sidecar_trace.weighted_batches[0].weight[1],
+            target_trace.weighted_batches[0].weight[1]
+        );
+    }
+
+    #[test]
     fn standard_mfs_density_array_row_applies_flags_and_weight_spectrum_precedence() {
         let geometry = ImageGeometry {
             image_shape: [64, 64],
@@ -3172,5 +3272,27 @@ mod tests {
         );
         assert_eq!(density[(17, 17)], 2.0);
         assert_eq!(density[(14, 14)], 2.0);
+    }
+
+    #[test]
+    fn density_parallelism_uses_grid_and_update_work_instead_of_sample_cutoff() {
+        assert!(!density_grid_parallel_profitable(
+            20_000,
+            [2048, 1536],
+            true,
+            8,
+        ));
+        assert!(density_grid_parallel_profitable(
+            40_000_000,
+            [2048, 1536],
+            true,
+            8,
+        ));
+        assert!(!density_grid_parallel_profitable(
+            40_000_000,
+            [2048, 1536],
+            true,
+            1,
+        ));
     }
 }

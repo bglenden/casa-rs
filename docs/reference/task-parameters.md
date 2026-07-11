@@ -10,16 +10,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 375
+- Concepts: 379
 - Surfaces: 42 (40 task, 2 session)
-- Surface bindings: 745
+- Surface bindings: 749
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 3 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 2 | <code>calibration</code> | 51 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 2 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 2 | <code>imager</code> | 63 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 3 | <code>imager</code> | 67 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 2 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 2 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 2 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -234,7 +234,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -304,6 +304,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>wterm</code> | <code>parameter.wterm@r1</code> | <code>choice (3 values)</code> | <code>"none"</code>; optional | Stages | W-term correction mode |
 | <code>gridder</code> | <code>parameter.gridder@r1</code> | <code>choice (7 values)</code> | <code>"standard"</code>; optional | Stages | CASA tclean gridder. casa-rs supports standard, wproject, and mosaic; widefield/AW-family modes are visible but not implemented yet. |
 | <code>standard_mfs_acceleration</code> | <code>parameter.standard_mfs_acceleration@r1</code> | <code>choice (4 values)</code> | <code>"auto"</code>; optional | Stages | Backend policy for standard/MFS-compatible gridding stages |
+| <code>parallel</code> | <code>parameter.parallel@r1</code> | <code>optional&lt;bool&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Permit planned local parallel or accelerated execution; false forces the serial CPU comparison surface |
+| <code>imaging_read_ahead_blocks</code> | <code>parameter.imaging_read_ahead_blocks@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Maximum number of live source row blocks used for bounded read and prepare overlap<br><em>Surface:</em> The runtime rejects zero; Auto defaults are selected from mode and memory geometry. |
+| <code>imaging_fft_backend</code> | <code>parameter.imaging_fft_backend@r1</code> | <code>choice (4 values)</code> | <code>"auto"</code>; optional | Stages | Backend policy for dirty and residual product FFT transforms |
+| <code>chanchunks</code> | <code>parameter.chanchunks@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Requested number of top-level spectral channel chunks; the memory planner may select a larger active plane group when it fits<br><em>Surface:</em> Applies to cube and cubedata imaging; the runtime rejects zero and MFS use. |
 
 <a id="surface-simobserve"></a>
 

@@ -29,14 +29,14 @@ use serde_json::Value as JsonValue;
 
 use crate::{
     AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, FrontendStageTimings,
-    ImagingFftPrecisionPolicy, RunSummary, SaveModelMode, SpectralMode,
-    StandardMfsAccelerationPolicy, run_from_request,
+    ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, RunSummary, SaveModelMode, SpectralMode,
+    StandardMfsAccelerationPolicy, apply_parallel_runtime_control, run_from_request,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 /// Stable protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 2;
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 3;
 /// Version of the newline-delimited imager progress-event payload.
 pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
 /// Version of the authoritative observability snapshot embedded in progress events.
@@ -1920,6 +1920,16 @@ pub struct ImagerRunTaskRequest {
     /// Skip CLEAN and only write dirty/residual products.
     #[serde(default)]
     pub dirty_only: bool,
+    /// CASA-like local parallel execution intent.
+    ///
+    /// `None` preserves the runtime default. `Some(false)` forces the local
+    /// serial CPU execution surface used for performance/correctness
+    /// comparisons.
+    #[serde(default)]
+    pub parallel: Option<bool>,
+    /// Optional CASA-like top-level spectral channel chunk count request.
+    #[serde(default)]
+    pub chanchunks: Option<usize>,
     /// Runtime acceleration policy for single-plane standard-family imaging.
     #[serde(default)]
     pub standard_mfs_acceleration: StandardMfsAccelerationPolicy,
@@ -1962,9 +1972,15 @@ pub struct ImagerRunTaskRequest {
     /// Optional shared imaging source-stream prepare worker count.
     #[serde(default)]
     pub imaging_prepare_workers: Option<usize>,
+    /// Optional shared imaging source-stream read-ahead live block count.
+    #[serde(default)]
+    pub imaging_read_ahead_blocks: Option<usize>,
     /// Imaging-wide FFT precision policy for dirty/residual product transforms.
     #[serde(default)]
     pub imaging_fft_precision: ImagingFftPrecisionPolicy,
+    /// Imaging-wide FFT backend policy for dirty/residual product transforms.
+    #[serde(default)]
+    pub imaging_fft_backend: ImagingFftBackendPolicy,
     /// Write PNG preview sidecars for the CASA image products.
     #[serde(default = "default_write_preview_pngs")]
     pub write_preview_pngs: bool,
@@ -2035,6 +2051,8 @@ impl ImagerRunTaskRequest {
             force_standard_gridder: config.force_standard_gridder,
             w_project_planes: config.w_project_planes,
             dirty_only: config.dirty_only,
+            parallel: None,
+            chanchunks: config.chanchunks,
             standard_mfs_acceleration: config.standard_mfs_acceleration,
             standard_mfs_backend: config.standard_mfs_backend.clone(),
             standard_mfs_grid_threads: config.standard_mfs_grid_threads.clone(),
@@ -2051,7 +2069,9 @@ impl ImagerRunTaskRequest {
             imaging_prepare_buffer_mb: config.imaging_prepare_buffer_mb,
             imaging_row_block_rows: config.imaging_row_block_rows,
             imaging_prepare_workers: config.imaging_prepare_workers,
+            imaging_read_ahead_blocks: config.imaging_read_ahead_blocks,
             imaging_fft_precision: config.imaging_fft_precision,
+            imaging_fft_backend: config.imaging_fft_backend,
             write_preview_pngs: config.write_preview_pngs,
             progress: None,
         }
@@ -2072,6 +2092,15 @@ impl ImagerRunTaskRequest {
         }
         if self.nterms == 0 {
             return Err("nterms must be at least 1".to_string());
+        }
+        if self.chanchunks == Some(0) {
+            return Err("chanchunks must be positive".to_string());
+        }
+        if self.chanchunks.is_some() && spectral_mode == SpectralMode::Mfs {
+            return Err("chanchunks applies only to cube and cubedata imaging".to_string());
+        }
+        if self.imaging_read_ahead_blocks == Some(0) {
+            return Err("imaging_read_ahead_blocks must be positive".to_string());
         }
         if self.start_model.is_some() {
             if spectral_mode != SpectralMode::Mfs {
@@ -2112,7 +2141,7 @@ impl ImagerRunTaskRequest {
                 }
             }
         }
-        Ok(CliConfig {
+        let mut config = CliConfig {
             ms: self.measurement_set.clone(),
             imagename: self.image_name.clone(),
             imsize: self.image_size,
@@ -2171,6 +2200,7 @@ impl ImagerRunTaskRequest {
             force_standard_gridder: self.force_standard_gridder,
             w_project_planes: self.w_project_planes,
             dirty_only: self.dirty_only,
+            chanchunks: self.chanchunks,
             standard_mfs_acceleration: self.standard_mfs_acceleration,
             standard_mfs_backend: self.standard_mfs_backend.clone(),
             standard_mfs_grid_threads: self.standard_mfs_grid_threads.clone(),
@@ -2185,9 +2215,13 @@ impl ImagerRunTaskRequest {
             imaging_prepare_buffer_mb: self.imaging_prepare_buffer_mb,
             imaging_row_block_rows: self.imaging_row_block_rows,
             imaging_prepare_workers: self.imaging_prepare_workers,
+            imaging_read_ahead_blocks: self.imaging_read_ahead_blocks,
             imaging_fft_precision: self.imaging_fft_precision,
+            imaging_fft_backend: self.imaging_fft_backend,
             write_preview_pngs: self.write_preview_pngs,
-        })
+        };
+        apply_parallel_runtime_control(self.parallel, &mut config)?;
+        Ok(config)
     }
 
     /// Execute the imaging task and return the canonical run result.
@@ -2875,7 +2909,7 @@ mod tests {
         ImagerWTermMode, ImagerWeighting,
     };
     use crate::{
-        CliConfig, ImagingFftPrecisionPolicy, SaveModelMode, SpectralMode,
+        CliConfig, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, SaveModelMode, SpectralMode,
         StandardMfsAccelerationPolicy,
     };
 
@@ -3007,6 +3041,8 @@ mod tests {
             OsString::from("8"),
             OsString::from("--imaging-fft-precision"),
             OsString::from("f32"),
+            OsString::from("--imaging-fft-backend"),
+            OsString::from("metal-mpsgraph"),
             OsString::from("--dirty-only"),
             OsString::from("--no-preview-pngs"),
         ])
@@ -3038,6 +3074,10 @@ mod tests {
         assert_eq!(
             restored.imaging_fft_precision,
             ImagingFftPrecisionPolicy::F32
+        );
+        assert_eq!(
+            restored.imaging_fft_backend,
+            ImagingFftBackendPolicy::MetalMpsGraph
         );
         assert!(restored.dirty_only);
         assert!(!restored.write_preview_pngs);
@@ -3120,6 +3160,8 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            parallel: None,
+            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
             standard_mfs_grid_threads: None,
@@ -3134,7 +3176,9 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };
@@ -3205,6 +3249,8 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            parallel: None,
+            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
             standard_mfs_grid_threads: None,
@@ -3219,7 +3265,9 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };
@@ -3466,6 +3514,8 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            parallel: None,
+            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
             standard_mfs_grid_threads: None,
@@ -3480,7 +3530,9 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };
@@ -3644,6 +3696,8 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            parallel: None,
+            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
             standard_mfs_grid_threads: None,
@@ -3658,7 +3712,9 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };
@@ -4205,6 +4261,8 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            parallel: None,
+            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
             standard_mfs_grid_threads: None,
@@ -4219,7 +4277,9 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };
