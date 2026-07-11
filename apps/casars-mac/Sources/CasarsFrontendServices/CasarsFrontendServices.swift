@@ -3944,6 +3944,16 @@ public func notebookBeginRecordingJson(requestJson: String)throws  -> String  {
 })
 }
 /**
+ * Parse one complete in-memory Markdown draft through the Rust-owned cell contract.
+ */
+public func notebookCellsJson(source: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_cells_json(
+        FfiConverterString.lower(source),$0
+    )
+})
+}
+/**
  * Lazily create the default notebook or create a named Markdown notebook.
  */
 public func notebookCreateJson(requestJson: String)throws  -> String  {
@@ -4251,6 +4261,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_notebook_begin_recording_json() != 6921) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_notebook_cells_json() != 12501) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_notebook_create_json() != 57099) {

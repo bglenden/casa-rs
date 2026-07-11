@@ -249,7 +249,7 @@ final class CasarsMacUITests: XCTestCase {
 
         [parameters]
         imagename = "input.image"
-        mode = "summary"
+        mode = "list"
         ```
         <!-- /casa-rs-cell -->
         """ + "\n"
@@ -335,6 +335,25 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(try require("task.change").exists)
         XCTAssertTrue(app.staticTexts["Image Header"].waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertFalse(app.buttons["Stop"].isEnabled, "Loading notebook parameters must not execute the task")
+        let mode = try require("task.parameter.mode")
+        XCTAssertTrue(try textValue(mode).contains("list"), "Markdown task intent must win over historical receipt intent")
+
+        mode.click()
+        let summaryChoice = app.menuItems["summary"]
+        XCTAssertTrue(summaryChoice.waitForExistence(timeout: 3), app.debugDescription)
+        summaryChoice.click()
+        XCTAssertTrue(waitForValue("task.parameter.mode", containing: "summary"))
+
+        try require("central.tab.tab-scientific-notebook").click()
+        try require("notebook.parameters.open.\(cellID)").click()
+        XCTAssertTrue(try require("notebook.taskReplace.sheet").exists)
+        XCTAssertTrue(try require("notebook.taskReplace.diff.mode").exists)
+        try require("notebook.taskReplace.cancel").click()
+
+        try require("notebook.parameters.open.\(cellID)").click()
+        try require("notebook.taskReplace.confirm").click()
+        XCTAssertTrue(waitForValue("task.parameter.mode", containing: "list"))
+        XCTAssertFalse(app.buttons["Stop"].isEnabled, "Replacing notebook parameters must not execute the task")
     }
 
     private func launchPrototype(scenario: String = "happy-path") {

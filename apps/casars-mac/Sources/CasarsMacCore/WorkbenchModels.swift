@@ -2718,6 +2718,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var parameterSessions: [String: SurfaceParameterSession]
     public var genericTaskConfirmations: [String: Bool]
     public var notebookRecordingBypassTabs: Set<String>
+    package var pendingNotebookTaskReplacement: NotebookTaskReplacementPreview?
     public var history: [ProcessingHistoryEvent]
     public var commandQuery: String
     public var lastErrors: [String]
@@ -2789,6 +2790,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.parameterSessions = parameterSessions
         self.genericTaskConfirmations = genericTaskConfirmations
         self.notebookRecordingBypassTabs = notebookRecordingBypassTabs
+        pendingNotebookTaskReplacement = nil
         self.history = history
         self.commandQuery = commandQuery
         self.lastErrors = lastErrors

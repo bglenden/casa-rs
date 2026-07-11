@@ -1483,6 +1483,89 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(store.state.lastErrors.contains { $0.contains("Notebook recording warning") })
     }
 
+    func testAuthoredNotebookTaskCellLoadsWithoutReceiptAndDirtyReplacementRequiresTypedPreview() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-notebook-replay-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [], source: .probed)
+        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        let store = WorkbenchStore(
+            state: state,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+        store.createScientificNotebook(filename: "Analysis.md", title: "Analysis")
+        let created = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook)
+        let cellID = UUID().uuidString.lowercased()
+        let taskCell = """
+
+        <!-- casa-rs-cell:v1 id=\(cellID) kind=task -->
+        ```toml
+        [casars]
+        format = 1
+        surface = "imhead"
+        kind = "task"
+        contract = 1
+
+        [parameters]
+        imagename = ["input.image"]
+        mode = "list"
+        ```
+        <!-- /casa-rs-cell -->
+        """
+        store.setScientificNotebookDraft(created.source + taskCell)
+        store.saveScientificNotebook()
+
+        let saved = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook)
+        XCTAssertTrue(saved.receipts.isEmpty)
+        XCTAssertEqual(saved.cells.first?.taskIntent?.parameters["mode"], .string("list"))
+
+        store.openScientificNotebookTask(cellID: cellID)
+        let taskTab = try XCTUnwrap(store.state.tabs.first { $0.kind == .task })
+        XCTAssertEqual(store.parameterText(surfaceID: "imhead", instanceID: taskTab.id, name: "mode"), "list")
+        XCTAssertEqual(store.state.taskRun.state, .idle)
+
+        store.setGenericTaskValue(
+            taskID: "imhead",
+            instanceID: taskTab.id,
+            argumentID: "mode",
+            value: "summary"
+        )
+        XCTAssertEqual(store.parameterSession(surfaceID: "imhead", instanceID: taskTab.id)?.snapshot.dirty, true)
+
+        store.openScientificNotebookTask(cellID: cellID)
+        let preview = try XCTUnwrap(store.state.pendingNotebookTaskReplacement)
+        XCTAssertEqual(preview.targetTabID, taskTab.id)
+        XCTAssertEqual(preview.differences.first { $0.parameter == "mode" }?.currentValue, .string("summary"))
+        XCTAssertEqual(preview.differences.first { $0.parameter == "mode" }?.notebookValue, .string("list"))
+        XCTAssertEqual(store.parameterText(surfaceID: "imhead", instanceID: taskTab.id, name: "mode"), "summary")
+
+        store.cancelNotebookTaskReplacement()
+        XCTAssertNil(store.state.pendingNotebookTaskReplacement)
+        XCTAssertEqual(store.parameterText(surfaceID: "imhead", instanceID: taskTab.id, name: "mode"), "summary")
+
+        store.openScientificNotebookTask(cellID: cellID)
+        store.confirmNotebookTaskReplacement()
+        XCTAssertNil(store.state.pendingNotebookTaskReplacement)
+        XCTAssertEqual(store.parameterText(surfaceID: "imhead", instanceID: taskTab.id, name: "mode"), "list")
+        XCTAssertEqual(store.state.tabs.filter { $0.kind == .task }.count, 1)
+
+        let currentSource = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook?.draftSource)
+        store.setScientificNotebookDraft(
+            currentSource.replacingOccurrences(of: "mode = \"list\"", with: "mode = \"summary\"")
+        )
+        XCTAssertEqual(
+            store.state.scientificNotebooks?.activeNotebook?.cells.first?.taskIntent?.parameters["mode"],
+            .string("summary")
+        )
+        store.openScientificNotebookTask(cellID: cellID)
+        XCTAssertNil(store.state.pendingNotebookTaskReplacement)
+        XCTAssertEqual(store.parameterText(surfaceID: "imhead", instanceID: taskTab.id, name: "mode"), "summary")
+    }
+
     func testSessionLastRequiresSuccessfulOpenAndIgnoresTransientNavigation() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-session-last-\(UUID().uuidString)", isDirectory: true)
@@ -3460,6 +3543,66 @@ final class WorkbenchStoreTests: XCTestCase {
         store.runImageExplorerCommandOnce(.setDefaultMask(name: "mask0"), datasetID: imageDataset.id)
         XCTAssertEqual(imageClient.requests.last?.transientCommands.map(\.command), ["set_default_mask"])
         XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.transientCommands, [])
+    }
+
+    func testImageRegionAndMaskWritesRecordSuccessFailureAndOneRunBypass() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-notebook-image-write-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let imagePath = rootURL.appendingPathComponent("restored.image", isDirectory: true).path
+        let imageDataset = DatasetSummary(
+            id: imagePath,
+            name: "restored.image",
+            path: imagePath,
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "Test image"
+        )
+        let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        let notebookClient = RecordingNotebookPersistenceClient()
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [imageDataset], source: .probed)
+        state.selectedDatasetID = imageDataset.id
+        state.tabs = [WorkbenchTab(
+            id: imageDataset.explorerTabID,
+            title: imageDataset.name,
+            kind: .datasetExplorer,
+            datasetID: imageDataset.id
+        )]
+        state.activeTabID = imageDataset.explorerTabID
+        let store = WorkbenchStore(
+            state: state,
+            imageExplorerClient: imageClient,
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+        store.installNotebookPersistenceClientForTesting(notebookClient)
+        store.refreshImageExplorer(datasetID: imageDataset.id)
+
+        store.runImageExplorerCommandOnce(.setDefaultMask(name: "mask0"), datasetID: imageDataset.id)
+        XCTAssertEqual(notebookClient.beginRequests.last?.request.operationId, "imexplore.set_default_mask")
+        XCTAssertEqual(notebookClient.beginRequests.last?.request.runSafety.classification, "input_mutation")
+        XCTAssertEqual(notebookClient.beginRequests.last?.request.runSafety.affectedPaths, [imagePath])
+        XCTAssertNil(notebookClient.beginRequests.last?.request.taskIntent)
+        XCTAssertEqual(notebookClient.finalizeRequests.last?.finalization.status, "succeeded")
+
+        store.setNotebookRecordingBypassOnce(tabID: imageDataset.explorerTabID, enabled: true)
+        let finalizedBeforeBypass = notebookClient.finalizeRequests.count
+        store.runImageExplorerCommandOnce(.unsetDefaultMask, datasetID: imageDataset.id)
+        XCTAssertEqual(notebookClient.beginRequests.last?.policy, "bypass_once")
+        XCTAssertEqual(notebookClient.finalizeRequests.count, finalizedBeforeBypass)
+        XCTAssertFalse(store.notebookRecordingBypassOnce(tabID: imageDataset.explorerTabID))
+
+        imageClient.failWhenCommandsAreQueued = true
+        store.runImageExplorerCommandOnce(.deleteMask(name: "mask0"), datasetID: imageDataset.id)
+        XCTAssertEqual(notebookClient.finalizeRequests.last?.finalization.status, "failed")
+        XCTAssertTrue(
+            notebookClient.finalizeRequests.last?.finalization.diagnostics.contains {
+                $0.contains("bad region command sequence")
+            } == true
+        )
     }
 
     func testImageExplorerBoxRegionReplacesQueuedRegionCommands() throws {
@@ -6550,6 +6693,10 @@ private final class RecordingNotebookPersistenceClient: NotebookPersistenceClien
     private(set) var beginRequests: [NotebookBeginRecordingRequest] = []
     private(set) var finalizeRequests: [NotebookFinalizeRecordingRequest] = []
     var beginError: Error?
+
+    func projectCells(source: String) throws -> [NotebookCellState] {
+        try base.projectCells(source: source)
+    }
 
     func loadProject(projectRoot: String) throws -> ScientificNotebookProjectState {
         try base.loadProject(projectRoot: projectRoot)

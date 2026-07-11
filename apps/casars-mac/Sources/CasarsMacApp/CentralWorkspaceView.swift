@@ -1439,6 +1439,17 @@ private struct ImageExplorerControlsView: View {
                         }
                     }
                 }
+
+                if let tabID = store.state.project.datasets.first(where: { $0.id == datasetID })?.explorerTabID {
+                    Toggle("Skip notebook once", isOn: Binding(
+                        get: { store.notebookRecordingBypassOnce(tabID: tabID) },
+                        set: { store.setNotebookRecordingBypassOnce(tabID: tabID, enabled: $0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .help("Do not record the next region or mask write in the project notebook.")
+                    .accessibilityIdentifier("imageExplorer.notebook.bypassOnce")
+                }
             }
             Text(activeRegionSummary)
                 .foregroundStyle(.secondary)
@@ -8541,6 +8552,7 @@ struct GenericTaskPanel: View {
             VStack(alignment: .leading, spacing: 3) {
                 Toggle(label, isOn: toggle)
                     .help(argument.help)
+                    .accessibilityIdentifier("task.parameter.\(argument.id)")
                 parameterOriginRow(argument.id)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -8568,6 +8580,7 @@ struct GenericTaskPanel: View {
                         syncSelectedRegion: false,
                         onAction: nil
                     )
+                    .accessibilityIdentifier("task.parameter.\(argument.id)")
                 } else if isPathArgument(argument) {
                     DatasetPathInputControl(
                         store: store,
@@ -8583,6 +8596,7 @@ struct GenericTaskPanel: View {
                         syncSelectedRegion: false,
                         onAction: nil
                     )
+                    .accessibilityIdentifier("task.parameter.\(argument.id)")
                 } else if !selectableChoices.isEmpty {
                     Picker(label, selection: value) {
                         ForEach(selectableChoices, id: \.self) { choice in
@@ -8591,12 +8605,15 @@ struct GenericTaskPanel: View {
                     }
                     .labelsHidden()
                     .help(argument.help)
+                    .accessibilityIdentifier("task.parameter.\(argument.id)")
                 } else if isChannelSelectionArgument(argument) {
                     genericChannelSelectionControl(label: label, value: value, argument: argument)
+                        .accessibilityIdentifier("task.parameter.\(argument.id)")
                 } else {
                     TextField(prompt(for: argument), text: value)
                         .textFieldStyle(.roundedBorder)
                         .help(helpText(for: argument))
+                        .accessibilityIdentifier("task.parameter.\(argument.id)")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

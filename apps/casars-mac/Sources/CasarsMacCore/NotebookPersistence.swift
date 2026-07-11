@@ -131,18 +131,44 @@ package struct NotebookExecutionReceipt: Codable, Equatable, Identifiable {
     package var id: String { "\(runId)-\(revision)" }
 }
 
+package struct NotebookCellState: Codable, Equatable, Identifiable {
+    package var id: String
+    package var kind: String
+    package var taskIntent: NotebookTaskIntent?
+}
+
+package struct NotebookTaskReplacementDiff: Codable, Equatable, Identifiable {
+    package var parameter: String
+    package var currentValue: JSONValue?
+    package var notebookValue: JSONValue?
+
+    package var id: String { parameter }
+}
+
+package struct NotebookTaskReplacementPreview: Codable, Equatable, Identifiable {
+    package var targetTabID: String
+    package var cellID: String
+    package var sourcePath: String
+    package var intent: NotebookTaskIntent
+    package var receipt: NotebookExecutionReceipt?
+    package var differences: [NotebookTaskReplacementDiff]
+
+    package var id: String { "\(targetTabID)::\(cellID)" }
+}
+
 package struct NotebookDocumentState: Codable, Equatable, Identifiable {
     package var id: String
     package var filename: String
     package var source: String
     package var contentHash: String
+    package var cells: [NotebookCellState]
     package var receipts: [NotebookExecutionReceipt]
     package var draftSource: String
     package var viewMode: NotebookDocumentViewMode
     package var conflict: NotebookConflictState?
 
     private enum CodingKeys: String, CodingKey {
-        case id, filename, source, contentHash, receipts
+        case id, filename, source, contentHash, cells, receipts
     }
 
     package init(from decoder: Decoder) throws {
@@ -151,6 +177,7 @@ package struct NotebookDocumentState: Codable, Equatable, Identifiable {
         filename = try values.decode(String.self, forKey: .filename)
         source = try values.decode(String.self, forKey: .source)
         contentHash = try values.decode(String.self, forKey: .contentHash)
+        cells = try values.decodeIfPresent([NotebookCellState].self, forKey: .cells) ?? []
         receipts = try values.decode([NotebookExecutionReceipt].self, forKey: .receipts)
         draftSource = source
         viewMode = .rich
@@ -178,7 +205,22 @@ package struct NotebookExternalDocument: Codable, Equatable {
     package var filename: String
     package var source: String
     package var contentHash: String
+    package var cells: [NotebookCellState]
     package var receipts: [NotebookExecutionReceipt]
+
+    private enum CodingKeys: String, CodingKey {
+        case id, filename, source, contentHash, cells, receipts
+    }
+
+    package init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        filename = try values.decode(String.self, forKey: .filename)
+        source = try values.decode(String.self, forKey: .source)
+        contentHash = try values.decode(String.self, forKey: .contentHash)
+        cells = try values.decodeIfPresent([NotebookCellState].self, forKey: .cells) ?? []
+        receipts = try values.decode([NotebookExecutionReceipt].self, forKey: .receipts)
+    }
 }
 
 package struct ScientificNotebookProjectState: Codable, Equatable {
@@ -217,6 +259,7 @@ package enum NotebookSaveResult: Equatable {
 }
 
 package protocol NotebookPersistenceClient {
+    func projectCells(source: String) throws -> [NotebookCellState]
     func loadProject(projectRoot: String) throws -> ScientificNotebookProjectState
     func create(projectRoot: String, filename: String?, title: String) throws -> NotebookDocumentState
     func save(
@@ -298,6 +341,11 @@ package struct UniFFINotebookPersistenceClient: NotebookPersistenceClient {
         encoder.keyEncodingStrategy = .convertToSnakeCase
         decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
+    }
+
+    package func projectCells(source: String) throws -> [NotebookCellState] {
+        let json = try CasarsFrontendServices.notebookCellsJson(source: source)
+        return try decoder.decode([NotebookCellState].self, from: Data(json.utf8))
     }
 
     package func loadProject(projectRoot: String) throws -> ScientificNotebookProjectState {

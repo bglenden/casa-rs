@@ -14,9 +14,12 @@ The public surface is split into three layers:
 
 The common task wrappers render a current-contract TOML draft through the Rust
 runtime and delegate execution, safety controls, and Last persistence to
-`casars run`. Specialized machine-protocol wrappers continue to send canonical
-JSON invocations to providers and require a matching `--protocol-info`
-response before first use.
+`casars run`. They record project-aware attempts as Python-initiated receipts,
+accept an optional existing notebook filename or stable ID, and expose a
+one-run recording bypass. Specialized machine-protocol wrappers continue to
+send canonical JSON invocations directly to providers and require a matching
+`--protocol-info` response before first use; because they have no project
+context, they do not infer a workspace or record implicitly.
 
 ADR-0006 defines the implemented `casars.parameters` API and sparse TOML
 profile contract shared with CLI, TUI, and GUI surfaces. All 40 catalog tasks

@@ -74,6 +74,7 @@ def run(
     base_source: TaskBaseSource = "defaults",
     overrides: Mapping[str, ParameterData] | None = None,
     workspace: StrPath | None = None,
+    notebook: str | None = None,
     save_last: bool = True,
     record_notebook: bool = True,
     confirm_overwrite: bool = False,
@@ -95,8 +96,9 @@ def run(
     Runtime-only authorization remains explicit through
     ``confirm_overwrite`` and ``confirm_mutation`` and is never persisted in
     the profile. ``record_notebook=False`` is the visible one-run recording
-    bypass. The CLI owns automatic Last, Last Successful, and notebook receipt
-    updates.
+    bypass. ``notebook`` explicitly routes the receipt to a named notebook
+    filename or stable ID; otherwise the project default receives it. The CLI
+    owns automatic Last, Last Successful, and notebook receipt updates.
     Captured stdout and stderr are retained on the returned completion and on
     :class:`TaskExecutionError`.
     """
@@ -126,7 +128,11 @@ def run(
             str(profile_path),
             "--workspace",
             str(resolved_workspace),
+            "--initiating-surface",
+            "python",
         ]
+        if notebook is not None:
+            command.extend(["--notebook", notebook])
         if not save_last:
             command.append("--no-save-last")
         if not record_notebook:

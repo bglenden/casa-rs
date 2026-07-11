@@ -146,9 +146,10 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
 
     let mut recording = NotebookRecording::begin(
         options.workspace.clone(),
-        "cli",
+        &options.initiating_surface,
         &surface_id,
         &session,
+        options.notebook.as_deref(),
         options.no_notebook_recording,
         options.confirm_overwrite || options.confirm_mutation,
     );
@@ -276,6 +277,8 @@ enum SourceChoice {
 struct SurfaceOptions {
     source: SourceChoice,
     workspace: PathBuf,
+    notebook: Option<String>,
+    initiating_surface: String,
     context: ResolutionPatch,
     overrides: ResolutionPatch,
     save_params: Option<PathBuf>,
@@ -292,6 +295,8 @@ fn parse_surface_options(
 ) -> Result<SurfaceOptions, String> {
     let mut source = None;
     let mut workspace = None;
+    let mut notebook = None;
+    let mut initiating_surface = "cli".to_string();
     let mut overrides = ResolutionPatch::default();
     let context = ResolutionPatch::default();
     let mut save_params = None;
@@ -333,6 +338,15 @@ fn parse_surface_options(
         } else if raw == "--workspace" {
             index += 1;
             workspace = Some(required_path(args.get(index), "--workspace directory")?);
+        } else if raw == "--notebook" && allow_runtime_controls {
+            index += 1;
+            notebook = Some(required_utf8(args.get(index), "--notebook filename or ID")?);
+        } else if raw == "--initiating-surface" && allow_runtime_controls {
+            index += 1;
+            initiating_surface = required_utf8(args.get(index), "--initiating-surface value")?;
+            if !matches!(initiating_surface.as_str(), "cli" | "python") {
+                return Err("--initiating-surface must be cli or python".to_string());
+            }
         } else if raw == "--unset" {
             index += 1;
             let name = required_utf8(args.get(index), "--unset parameter")?;
@@ -407,6 +421,8 @@ fn parse_surface_options(
     Ok(SurfaceOptions {
         source: source.unwrap_or(SourceChoice::Defaults),
         workspace,
+        notebook,
+        initiating_surface,
         context,
         overrides,
         save_params,
@@ -852,11 +868,11 @@ Usage:\n\
   casars params save SURFACE FILE [SOURCE] [OVERRIDES]\n\
   casars params template SURFACE\n\
   casars params describe NAME\n\
-  casars run TASK [SOURCE] [OVERRIDES] [--workspace DIR] [--save-params FILE]\n\
+  casars run TASK [SOURCE] [OVERRIDES] [--workspace DIR] [--notebook FILE_OR_ID] [--save-params FILE]\n\
   casars open SESSION [SOURCE] [OVERRIDES] [--workspace DIR] [--save-params FILE]\n\n\
 SOURCE is exactly one of --defaults, --last, --last-successful (tasks), or --params FILE.\n\
 Overrides use CASA names such as --vis, --imsize, --cell, or --unset NAME.\n\
-Runtime-only controls: --no-save-last, --no-notebook-recording (one run), --confirm-overwrite, --confirm-mutation.\n"
+Runtime-only controls: --notebook FILE_OR_ID, --initiating-surface cli|python, --no-save-last, --no-notebook-recording (one run), --confirm-overwrite, --confirm-mutation.\n"
         .to_string()
 }
 
@@ -932,6 +948,26 @@ mod tests {
         );
         assert_eq!(expected["values"]["niter"], 7);
         assert_eq!(session.values()["niter"], ParameterValue::Integer(7));
+    }
+
+    #[test]
+    fn task_runtime_controls_select_named_notebook_and_python_surface() {
+        let bundle = builtin_surface_bundle("imstat").unwrap();
+        let options = parse_surface_options(
+            &bundle,
+            &[
+                "--imagename".into(),
+                "input.image".into(),
+                "--notebook".into(),
+                "Analysis.md".into(),
+                "--initiating-surface".into(),
+                "python".into(),
+            ],
+            true,
+        )
+        .unwrap();
+        assert_eq!(options.notebook.as_deref(), Some("Analysis.md"));
+        assert_eq!(options.initiating_surface, "python");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 # Scientific Notebooks, Tutorials, Python, and AI Assistant
 
 Truth class: accepted design
-Last reality check: 2026-07-10
+Last reality check: 2026-07-11
 Verification: just docs-check
 Architecture decision: [ADR-0007](adr/0007-scientific-notebooks-and-assistant-boundary.md)
 
@@ -129,10 +129,11 @@ Contract/default drift is shown before rerun.
 Project-aware GUI, TUI, `casars run`, and Python surfaces record all
 app-mediated write attempts. This includes tasks, downloads/imports, Python
 cells, region or mask changes, and similar persistent operations. Failed,
-cancelled, and interrupted attempts remain visible. Direct provider binaries
-record only with explicit workspace/notebook arguments. Workspace resolution
-uses an explicit directory or the exact current directory; it never searches
-parents.
+cancelled, and interrupted attempts remain visible. Direct provider programs
+never infer project or notebook state. Recorded direct execution uses `casars
+run` with an explicit workspace and, when needed, an explicit existing notebook
+filename or stable ID. Workspace resolution uses an explicit directory or the
+exact current directory; it never searches parents.
 
 The initiating notebook receives the event, otherwise it is appended to
 `notebooks/default.md`. A one-run bypass is available and is never stored in a
@@ -279,11 +280,16 @@ editor, and task parameter replay.
 Wave 1 production uses one Rust-owned store across GUI, TUI, `casars run`, and
 the generated Python task wrappers. Pending attempts retain per-run advisory
 leases so a live operation is not recovered as interrupted; a released lease
-is recovered on the next project load. Notebook replay opens a fresh canonical
-schema-driven task tab and shows provider/default drift warnings without
-executing or asserting exact replay. Direct provider binaries do not infer a
-project or record implicitly; project-aware direct use is routed through an app
-surface with explicit workspace context.
+is recovered on the next project load. Rust-parsed Markdown cells, including
+authored cells with no receipt, drive the native task blocks. Replay opens a
+fresh canonical schema-driven task tab when needed, replaces a clean matching
+target directly, and shows a typed diff confirmation before replacing a dirty
+target. Provider/default drift remains a warning rather than an exact-replay
+claim. GUI and TUI region/mask writes also record immutable operation receipts.
+Direct provider binaries do not infer a project or record implicitly;
+project-aware execution is routed through an app surface with explicit
+workspace context. CLI and Python task callers can select an existing notebook
+filename or stable ID explicitly; otherwise recording routes to `default.md`.
 
 ### Wave 2: Python and plots
 

@@ -20,8 +20,9 @@ use casa_ms::{
     MsScatterSeries, MsSelectionSpec, VisibilityDataColumn, build_msexplore_payload_from_spec,
 };
 use casa_notebook::{
-    AttemptHandle, ConflictResolution, ExecutionReceipt, ExportMode, NotebookStore,
-    ReceiptFinalization, RecordingPolicy, RecordingRequest, SaveResult,
+    AttemptHandle, ConflictResolution, ExecutionReceipt, ExportMode, NotebookDocument,
+    NotebookStore, ReceiptFinalization, RecordingPolicy, RecordingRequest, SaveResult,
+    TaskCellIntent,
 };
 use casa_provider_contracts::{
     ParameterValue, ProviderInvocationAdaptation, RunSafetyClass, SurfaceContractBundle,
@@ -720,7 +721,27 @@ struct NotebookProjection {
     filename: String,
     source: String,
     content_hash: String,
+    cells: Vec<NotebookCellProjection>,
     receipts: Vec<ExecutionReceipt>,
+}
+
+#[derive(Debug, Serialize)]
+struct NotebookCellProjection {
+    id: String,
+    kind: String,
+    task_intent: Option<TaskCellIntent>,
+}
+
+fn notebook_cell_projections(document: &NotebookDocument) -> Vec<NotebookCellProjection> {
+    document
+        .cells()
+        .iter()
+        .map(|cell| NotebookCellProjection {
+            id: cell.id.to_string(),
+            kind: cell.kind.as_str().to_owned(),
+            task_intent: cell.task.clone(),
+        })
+        .collect()
 }
 
 #[derive(Debug, Serialize)]
@@ -819,8 +840,18 @@ fn notebook_projection(
         filename: snapshot.entry.filename,
         source: snapshot.document.source().to_owned(),
         content_hash: snapshot.content_hash,
+        cells: notebook_cell_projections(&snapshot.document),
         receipts,
     })
+}
+
+/// Parse one complete in-memory Markdown draft through the Rust-owned cell contract.
+#[uniffi::export]
+pub fn notebook_cells_json(source: String) -> FrontendResult<String> {
+    let document = NotebookDocument::parse(source)
+        .map_err(|error| notebook_error("parse notebook draft cells", error))?;
+    serde_json::to_string(&notebook_cell_projections(&document))
+        .map_err(|error| notebook_error("serialize notebook draft cells", error))
 }
 
 /// Project notebook list, complete Markdown sources, conflict tokens, and receipts.
@@ -6323,6 +6354,51 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn notebook_projection_includes_authored_task_cells_without_receipts() {
+        let project = tempfile::tempdir().expect("project");
+        let project_root = project.path().canonicalize().expect("canonical project");
+        let created_json = notebook_create_json(
+            serde_json::json!({
+                "project_root": project_root,
+                "filename": "Authored.md",
+                "title": "Authored"
+            })
+            .to_string(),
+        )
+        .expect("create notebook");
+        let created: serde_json::Value = serde_json::from_str(&created_json).unwrap();
+        let cell_id = casa_notebook::CellId::new();
+        let source = format!(
+            "{}\n<!-- casa-rs-cell:v1 id={cell_id} kind=task -->\n```toml\n[casars]\nformat = 1\nsurface = \"imhead\"\nkind = \"task\"\ncontract = 1\n\n[parameters]\nmode = \"summary\"\n```\n<!-- /casa-rs-cell -->\n",
+            created["source"].as_str().expect("source")
+        );
+        notebook_save_json(
+            serde_json::json!({
+                "project_root": project_root,
+                "filename": "Authored.md",
+                "base_hash": created["content_hash"],
+                "source": source,
+                "resolution": "reject"
+            })
+            .to_string(),
+        )
+        .expect("save authored task cell");
+
+        let project_json = notebook_project_json(project_root.display().to_string())
+            .expect("reload notebook project");
+        let projection: serde_json::Value = serde_json::from_str(&project_json).unwrap();
+        let notebook = &projection["notebooks"][0];
+        assert_eq!(notebook["receipts"].as_array().unwrap().len(), 0);
+        assert_eq!(notebook["cells"][0]["id"], cell_id.to_string());
+        assert_eq!(notebook["cells"][0]["kind"], "task");
+        assert_eq!(notebook["cells"][0]["task_intent"]["surface"], "imhead");
+        assert_eq!(
+            notebook["cells"][0]["task_intent"]["parameters"]["mode"],
+            "summary"
         );
     }
 

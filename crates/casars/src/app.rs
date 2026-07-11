@@ -312,6 +312,50 @@ enum BrowserRequest {
     Escape,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct NotebookBrowserOperation {
+    operation_id: String,
+    parameters: BTreeMap<String, serde_json::Value>,
+    affected_paths: Vec<PathBuf>,
+}
+
+fn notebook_browser_operation(
+    command: &BrowserRequest,
+    root_path: &str,
+) -> Option<NotebookBrowserOperation> {
+    let (operation, fields) = match command {
+        BrowserRequest::SaveImageRegionDefinition => ("save_region_definition", Vec::new()),
+        BrowserRequest::RenameImageRegionDefinition { name, new_name } => (
+            "rename_region_definition",
+            vec![("name", name.clone()), ("new_name", new_name.clone())],
+        ),
+        BrowserRequest::DeleteImageRegionDefinition { name } => {
+            ("delete_region_definition", vec![("name", name.clone())])
+        }
+        BrowserRequest::SetImageDefaultMask { name } => {
+            ("set_default_mask", vec![("name", name.clone())])
+        }
+        BrowserRequest::UnsetImageDefaultMask => ("unset_default_mask", Vec::new()),
+        BrowserRequest::DeleteImageMask { name } => ("delete_mask", vec![("name", name.clone())]),
+        BrowserRequest::WriteImageRegionMask => ("write_region_mask", Vec::new()),
+        _ => return None,
+    };
+    let mut parameters = BTreeMap::from([
+        ("dataset".into(), serde_json::json!(root_path)),
+        ("command".into(), serde_json::json!(operation)),
+    ]);
+    parameters.extend(
+        fields
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), serde_json::json!(value))),
+    );
+    Some(NotebookBrowserOperation {
+        operation_id: format!("imexplore.{operation}"),
+        parameters,
+        affected_paths: vec![PathBuf::from(root_path)],
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EditAction {
     Cancel,
@@ -3979,7 +4023,8 @@ impl AppState {
             KeyCode::Char('v')
                 if key_event.modifiers.is_empty()
                     && mode != InputMode::Edit
-                    && !self.has_active_session() =>
+                    && (!self.has_active_session()
+                        || self.image_browser_session_state().is_some()) =>
             {
                 return Some(AppAction::ToggleNotebookBypass);
             }
@@ -4269,9 +4314,10 @@ impl AppState {
             AppAction::ToggleNotebookBypass => {
                 self.notebook_bypass_once = !self.notebook_bypass_once;
                 self.result.status_line = if self.notebook_bypass_once {
-                    "Notebook recording will be skipped for the next run only.".into()
+                    "Notebook recording will be skipped for the next run or image write only."
+                        .into()
                 } else {
-                    "Notebook recording is enabled for the next run.".into()
+                    "Notebook recording is enabled for the next run or image write.".into()
                 };
                 self.result.status_kind = StatusKind::Warning;
             }
@@ -4557,6 +4603,11 @@ impl AppState {
                 parts.push("M mask".to_string());
                 parts.push("P pin".to_string());
                 parts.push("n/N probe".to_string());
+                parts.push(if self.notebook_bypass_once {
+                    "v notebook: skip once".to_string()
+                } else {
+                    "v notebook: record".to_string()
+                });
             }
             if self.browser_uses_parameter_pane() {
                 parts.push("r reopen".to_string());
@@ -6353,6 +6404,11 @@ impl AppState {
     #[cfg(test)]
     pub(crate) fn notebook_bypass_once_for_test(&self) -> bool {
         self.notebook_bypass_once
+    }
+
+    #[cfg(test)]
+    pub(crate) fn parameter_workspace_for_test(&self) -> &Path {
+        &self.parameter_workspace
     }
 
     #[cfg(test)]
@@ -10030,6 +10086,7 @@ impl AppState {
                         "tui",
                         &self.app.id,
                         session,
+                        None,
                         notebook_bypass_once,
                         requires_run_confirmation,
                     )
@@ -10466,6 +10523,25 @@ impl AppState {
 
     fn send_browser_command(&mut self, command: BrowserRequest) -> bool {
         let accepted_command = command.clone();
+        let notebook_operation = self
+            .browser_session
+            .as_ref()
+            .and_then(|session| notebook_browser_operation(&command, &session.root_path));
+        let mut notebook_recording = notebook_operation.as_ref().map(|operation| {
+            let bypass_once = std::mem::take(&mut self.notebook_bypass_once);
+            NotebookRecording::begin_operation(
+                self.parameter_workspace.clone(),
+                "tui",
+                &operation.operation_id,
+                operation.parameters.clone(),
+                "input_mutation",
+                operation.affected_paths.clone(),
+                bypass_once,
+            )
+        });
+        let notebook_begin_warning = notebook_recording
+            .as_mut()
+            .and_then(NotebookRecording::take_warning);
         let movie_perf = &mut self.movie_perf;
         let mut sync_image_parameters = None::<ImageBrowserParameters>;
         let mut accepted_axis_selection = None::<usize>;
@@ -10877,6 +10953,29 @@ impl AppState {
             }
         };
 
+        let notebook_finalize_warning = match (
+            notebook_recording.as_mut(),
+            notebook_operation.as_ref(),
+            &result,
+        ) {
+            (Some(recording), Some(operation), Ok(())) => recording.finalize(
+                NotebookExecutionStatus::Succeeded,
+                String::new(),
+                String::new(),
+                operation.affected_paths.clone(),
+                Vec::new(),
+            ),
+            (Some(recording), Some(operation), Err((error, _))) => recording.finalize(
+                NotebookExecutionStatus::Failed,
+                String::new(),
+                String::new(),
+                operation.affected_paths.clone(),
+                vec![error.message().to_string()],
+            ),
+            _ => None,
+        };
+        let notebook_warning = notebook_begin_warning.or(notebook_finalize_warning);
+
         match result {
             Ok(()) => {
                 let durable_parameter_change = match self.sync_accepted_browser_parameters(
@@ -10890,6 +10989,11 @@ impl AppState {
                             "Browser updated, but accepted parameters could not be recorded: {error}"
                         );
                         self.result.status_kind = StatusKind::Warning;
+                        if let Some(warning) = notebook_warning {
+                            self.result
+                                .stderr
+                                .push_str(&format!("Notebook recording warning: {warning}\n"));
+                        }
                         return true;
                     }
                 };
@@ -10911,6 +11015,16 @@ impl AppState {
                 self.result.status_kind = StatusKind::Info;
                 if durable_parameter_change {
                     self.accept_live_parameter_changes();
+                }
+                if let Some(warning) = notebook_warning {
+                    self.result
+                        .stderr
+                        .push_str(&format!("Notebook recording warning: {warning}\n"));
+                    self.result.status_line = format!(
+                        "{} Notebook recording warning: {warning}",
+                        self.result.status_line
+                    );
+                    self.result.status_kind = StatusKind::Warning;
                 }
                 true
             }
@@ -10941,11 +11055,14 @@ impl AppState {
                         let _ = session.cancel();
                     }
                 }
-                let details = if stderr.trim().is_empty() {
+                let mut details = if stderr.trim().is_empty() {
                     format!("{}\n", error.message())
                 } else {
                     format!("{}\n{stderr}", error.message())
                 };
+                if let Some(warning) = notebook_warning {
+                    details.push_str(&format!("Notebook recording warning: {warning}\n"));
+                }
                 let status = if keep_session {
                     error.message().to_string()
                 } else {
@@ -19272,11 +19389,12 @@ mod tests {
     use ratatui::layout::Rect;
 
     use super::{
-        AppState, BrowserSession, BrowserSessionKind, ConfigStore, FormField, FormSectionContent,
-        ImageBrowserLeftPaneMode, ImageBrowserSessionState, ImageMovieState, ImagePlaneColormap,
-        ImagePlaneMode, StaticFormItem, build_workflow_sections, centered_window_start,
-        expand_tilde_path_with_home, image_pan_parameters, image_plane_draw_rect,
-        image_zoom_parameters, new_direct_image_movie_engine,
+        AppState, BrowserRequest, BrowserSession, BrowserSessionKind, ConfigStore, FormField,
+        FormSectionContent, ImageBrowserLeftPaneMode, ImageBrowserSessionState, ImageMovieState,
+        ImagePlaneColormap, ImagePlaneMode, StaticFormItem, build_workflow_sections,
+        centered_window_start, expand_tilde_path_with_home, image_pan_parameters,
+        image_plane_draw_rect, image_zoom_parameters, new_direct_image_movie_engine,
+        notebook_browser_operation,
     };
     use std::{
         path::{Path, PathBuf},
@@ -19304,6 +19422,30 @@ mod tests {
         assert_eq!(
             expand_tilde_path_with_home("./relative/path", Some(Path::new("/tmp/home"))),
             PathBuf::from("./relative/path")
+        );
+    }
+
+    #[test]
+    fn image_browser_write_requests_project_notebook_operation_evidence() {
+        let operation = notebook_browser_operation(
+            &BrowserRequest::RenameImageRegionDefinition {
+                name: "source".into(),
+                new_name: "target".into(),
+            },
+            "/project/restored.image",
+        )
+        .expect("persistent operation");
+        assert_eq!(operation.operation_id, "imexplore.rename_region_definition");
+        assert_eq!(operation.parameters["name"], "source");
+        assert_eq!(operation.parameters["new_name"], "target");
+        assert_eq!(
+            operation.affected_paths,
+            [PathBuf::from("/project/restored.image")]
+        );
+
+        assert!(
+            notebook_browser_operation(&BrowserRequest::LoadNextImageRegionDefinition, "image")
+                .is_none()
         );
     }
 

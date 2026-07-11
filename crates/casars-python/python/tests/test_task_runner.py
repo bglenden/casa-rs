@@ -46,6 +46,7 @@ def test_run_uses_canonical_profile_and_forwards_runtime_controls(
         "flagmanager",
         parameters,
         workspace=tmp_path,
+        notebook="Analysis.md",
         binary=binary,
         save_last=False,
         record_notebook=False,
@@ -60,6 +61,10 @@ def test_run_uses_canonical_profile_and_forwards_runtime_controls(
     assert recorded["argv"][4:] == [
         "--workspace",
         str(tmp_path),
+        "--initiating-surface",
+        "python",
+        "--notebook",
+        "Analysis.md",
         "--no-save-last",
         "--no-notebook-recording",
         "--confirm-overwrite",

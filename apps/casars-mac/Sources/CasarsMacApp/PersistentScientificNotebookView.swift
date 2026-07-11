@@ -42,6 +42,14 @@ struct PersistentScientificNotebookView: View {
                 }
             }
         }
+        .sheet(item: Binding(
+            get: { store.state.pendingNotebookTaskReplacement },
+            set: { value in
+                if value == nil { store.cancelNotebookTaskReplacement() }
+            }
+        )) { preview in
+            NotebookTaskReplacementSheet(store: store, preview: preview)
+        }
     }
 
     private func toolbar(_ document: NotebookDocumentState) -> some View {
@@ -147,7 +155,7 @@ struct PersistentScientificNotebookView: View {
     @ViewBuilder
     private func taskCell(cellID: String, document: NotebookDocumentState, fallback: String) -> some View {
         let receipts = document.receipts.filter { $0.cellId == cellID }.sorted { $0.revision > $1.revision }
-        if let intent = receipts.first?.sparseIntent {
+        if let intent = document.cells.first(where: { $0.id == cellID })?.taskIntent {
             VStack(alignment: .leading, spacing: 5) {
                 Button {
                     store.openScientificNotebookTask(cellID: cellID)
@@ -241,5 +249,71 @@ struct PersistentScientificNotebookView: View {
         case "cancelled", "interrupted": .orange
         default: .secondary
         }
+    }
+}
+
+private struct NotebookTaskReplacementSheet: View {
+    @ObservedObject var store: WorkbenchStore
+    let preview: NotebookTaskReplacementPreview
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Replace edited task parameters?")
+                    .workbenchFont(.title3, weight: .semibold)
+                    .accessibilityIdentifier("notebook.taskReplace.sheet")
+                Text("The existing \(preview.intent.surface) task tab has unsaved parameter edits. Review the typed changes before replacing them from this notebook cell.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+                GridRow {
+                    Text("Parameter").workbenchFont(.caption, weight: .semibold)
+                    Text("Current edit").workbenchFont(.caption, weight: .semibold)
+                    Text("Notebook").workbenchFont(.caption, weight: .semibold)
+                }
+                Divider().gridCellColumns(3)
+                if preview.differences.isEmpty {
+                    Text("No resolved value differences; replacing still discards the edited draft state.")
+                        .foregroundStyle(.secondary)
+                        .gridCellColumns(3)
+                } else {
+                    ForEach(preview.differences) { difference in
+                        GridRow {
+                            Text(difference.parameter)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            diffValue(difference.currentValue)
+                            diffValue(difference.notebookValue)
+                        }
+                        .accessibilityIdentifier("notebook.taskReplace.diff.\(difference.parameter)")
+                    }
+                }
+            }
+            .padding(12)
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    store.cancelNotebookTaskReplacement()
+                }
+                .keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier("notebook.taskReplace.cancel")
+                Button("Replace Parameters") {
+                    store.confirmNotebookTaskReplacement()
+                }
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("notebook.taskReplace.confirm")
+            }
+        }
+        .padding(22)
+        .frame(minWidth: 660, minHeight: 300, alignment: .topLeading)
+    }
+
+    private func diffValue(_ value: JSONValue?) -> some View {
+        Text(value?.displayText ?? "—")
+            .font(.system(size: 12, design: .monospaced))
+            .textSelection(.enabled)
     }
 }

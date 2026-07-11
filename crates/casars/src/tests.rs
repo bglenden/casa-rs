@@ -20,6 +20,7 @@ use casa_ms::ui_schema::UiCommandSchema;
 use casa_ms::{
     MeasurementSet, MeasurementSetBuilder, MsPlotPreset, OptionalMainColumn, SubtableId,
 };
+use casa_notebook::NotebookStore;
 use casa_provider_contracts::{ParameterValue, builtin_surface_bundle};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_task_runtime::{
@@ -157,7 +158,10 @@ fn tui_notebook_bypass_is_visible_and_reversible_before_the_next_run() {
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
     assert!(app.notebook_bypass_once_for_test());
-    assert!(app.status_line_for_test().contains("next run only"));
+    assert!(
+        app.status_line_for_test()
+            .contains("next run or image write")
+    );
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
     assert!(!app.notebook_bypass_once_for_test());
@@ -3830,6 +3834,21 @@ fn imexplore_mask_checkbox_toggles_default_mask_off() {
         app.image_browser_snapshot_for_test()
             .and_then(|snapshot| snapshot.default_mask_name.as_deref()),
         None
+    );
+    let notebook_store = NotebookStore::open(app.parameter_workspace_for_test()).expect("store");
+    let notebook = notebook_store
+        .open_notebook("default.md")
+        .expect("default notebook");
+    let receipts = notebook_store
+        .receipts_for_notebook(notebook.entry.id)
+        .expect("operation receipts");
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].initiating_surface, "tui");
+    assert_eq!(receipts[0].operation_id, "imexplore.unset_default_mask");
+    assert!(receipts[0].sparse_intent.is_none());
+    assert_eq!(
+        receipts[0].status,
+        casa_notebook::ExecutionStatus::Succeeded
     );
 }
 

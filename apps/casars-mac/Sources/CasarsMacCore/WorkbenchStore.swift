@@ -2341,8 +2341,10 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func setScientificNotebookDraft(_ markdown: String) {
+        let projectedCells = try? notebookPersistenceClient.projectCells(source: markdown)
         updateActiveScientificNotebook { document in
             document.draftSource = markdown
+            document.cells = projectedCells ?? []
             document.conflict = nil
         }
     }
@@ -2380,63 +2382,186 @@ public final class WorkbenchStore: ObservableObject {
     package func openScientificNotebookTask(cellID: String) {
         guard let project = state.scientificNotebooks,
               let document = project.activeNotebook,
-              let receipt = document.receipts
-                .filter({ $0.cellId == cellID })
-                .max(by: { $0.revision < $1.revision }),
-              let intent = receipt.sparseIntent
+              let cell = document.cells.first(where: { $0.id == cellID }),
+              let intent = cell.taskIntent
         else {
-            state.lastErrors.append("No recorded task parameters exist for notebook cell \(cellID)")
+            state.lastErrors.append("No task parameters exist for notebook cell \(cellID)")
             return
         }
         guard state.taskCatalog.contains(where: { $0.id == intent.surface }) else {
             state.lastErrors.append("Notebook task \(intent.surface) is not in the current task catalog")
             return
         }
+        let receipt = document.receipts
+            .filter({ $0.cellId == cellID })
+            .max(by: { $0.revision < $1.revision })
+        let sourcePath = "\(project.projectRoot)/notebooks/\(document.filename)#\(cellID)"
 
-        let tabID = nextTaskTabID()
-        openTab(WorkbenchTab(
-            id: tabID,
-            title: taskTitle(intent.surface),
-            kind: .task,
-            datasetID: state.selectedDatasetID,
-            taskID: intent.surface
-        ))
-        state.activeTaskID = intent.surface
-        loadTaskUISchemaIfNeeded(intent.surface, instanceID: tabID)
         do {
-            let bundle = try surfaceParameterClient.loadBundle(surfaceID: intent.surface)
-            let sourcePath = "\(project.projectRoot)/notebooks/\(document.filename)#\(cellID)"
-            let snapshot = try surfaceParameterClient.load(
-                surfaceID: intent.surface,
-                profileTOML: intent.profileTOML,
+            let prepared = try prepareNotebookTask(
+                intent: intent,
                 sourcePath: sourcePath
             )
-            let key = parameterSessionKey(surfaceID: intent.surface, instanceID: tabID)
-            state.parameterSessions[key] = SurfaceParameterSession(
-                bundle: bundle,
-                snapshot: snapshot,
-                selectedSource: .file,
-                baseProfileTOML: intent.profileTOML,
-                baseProfilePath: sourcePath,
-                workspace: project.projectRoot,
-                saveLast: true
+            let matchingTabs = state.tabs.filter {
+                $0.kind == .task && $0.taskID == intent.surface
+            }
+            if matchingTabs.count == 1,
+               let target = matchingTabs.first,
+               let current = parameterSession(surfaceID: intent.surface, instanceID: target.id),
+               current.snapshot.dirty
+            {
+                state.pendingNotebookTaskReplacement = NotebookTaskReplacementPreview(
+                    targetTabID: target.id,
+                    cellID: cellID,
+                    sourcePath: sourcePath,
+                    intent: intent,
+                    receipt: receipt,
+                    differences: notebookTaskDifferences(
+                        current: current,
+                        notebook: prepared.snapshot
+                    )
+                )
+                return
+            }
+
+            let targetTabID: String
+            if matchingTabs.count == 1, let target = matchingTabs.first {
+                targetTabID = target.id
+            } else {
+                targetTabID = nextTaskTabID()
+                openTab(WorkbenchTab(
+                    id: targetTabID,
+                    title: taskTitle(intent.surface),
+                    kind: .task,
+                    datasetID: state.selectedDatasetID,
+                    taskID: intent.surface
+                ))
+            }
+            installNotebookTask(
+                intent: intent,
+                receipt: receipt,
+                projectRoot: project.projectRoot,
+                sourcePath: sourcePath,
+                targetTabID: targetTabID,
+                bundle: prepared.bundle,
+                snapshot: prepared.snapshot
             )
-            applySelectedDatasetParameterContext(surfaceID: intent.surface, instanceID: tabID)
-            let currentContractVersion = UInt32(clamping: bundle.surface.contractVersion)
-            if currentContractVersion != receipt.providerContractVersion {
-                state.taskRun.warnings.append(
-                    "Notebook run used provider contract \(receipt.providerContractVersion); the installed contract is \(currentContractVersion). Review the typed parameter diff before running."
-                )
-            }
-            if let currentSession = parameterSession(surfaceID: intent.surface, instanceID: tabID),
-               currentSession.values.mapValues(JSONValue.init(parameterValue:)) != receipt.resolvedParameters {
-                state.taskRun.warnings.append(
-                    "Current defaults or project context resolve differently from this historical notebook run."
-                )
-            }
         } catch {
             state.lastErrors.append("Load notebook parameters for \(intent.surface): \(error)")
         }
+    }
+
+    package func cancelNotebookTaskReplacement() {
+        state.pendingNotebookTaskReplacement = nil
+    }
+
+    package func confirmNotebookTaskReplacement() {
+        guard let preview = state.pendingNotebookTaskReplacement,
+              let projectRoot = state.scientificNotebooks?.projectRoot,
+              state.tabs.contains(where: {
+                  $0.id == preview.targetTabID
+                      && $0.kind == .task
+                      && $0.taskID == preview.intent.surface
+              })
+        else {
+            state.pendingNotebookTaskReplacement = nil
+            return
+        }
+        do {
+            let prepared = try prepareNotebookTask(
+                intent: preview.intent,
+                sourcePath: preview.sourcePath
+            )
+            installNotebookTask(
+                intent: preview.intent,
+                receipt: preview.receipt,
+                projectRoot: projectRoot,
+                sourcePath: preview.sourcePath,
+                targetTabID: preview.targetTabID,
+                bundle: prepared.bundle,
+                snapshot: prepared.snapshot
+            )
+            state.pendingNotebookTaskReplacement = nil
+        } catch {
+            state.lastErrors.append("Replace task parameters for \(preview.intent.surface): \(error)")
+        }
+    }
+
+    private func prepareNotebookTask(
+        intent: NotebookTaskIntent,
+        sourcePath: String
+    ) throws -> (bundle: SurfaceParameterBundle, snapshot: SurfaceParameterSnapshot) {
+        let bundle = try surfaceParameterClient.loadBundle(surfaceID: intent.surface)
+        let snapshot = try surfaceParameterClient.load(
+            surfaceID: intent.surface,
+            profileTOML: intent.profileTOML,
+            sourcePath: sourcePath
+        )
+        return (bundle, snapshot)
+    }
+
+    private func installNotebookTask(
+        intent: NotebookTaskIntent,
+        receipt: NotebookExecutionReceipt?,
+        projectRoot: String,
+        sourcePath: String,
+        targetTabID: String,
+        bundle: SurfaceParameterBundle,
+        snapshot: SurfaceParameterSnapshot
+    ) {
+        state.activeTaskID = intent.surface
+        loadTaskUISchemaIfNeeded(intent.surface, instanceID: targetTabID)
+        let key = parameterSessionKey(surfaceID: intent.surface, instanceID: targetTabID)
+        state.parameterSessions[key] = SurfaceParameterSession(
+            bundle: bundle,
+            snapshot: snapshot,
+            selectedSource: .file,
+            baseProfileTOML: intent.profileTOML,
+            baseProfilePath: sourcePath,
+            workspace: projectRoot,
+            saveLast: true
+        )
+        applySelectedDatasetParameterContext(surfaceID: intent.surface, instanceID: targetTabID)
+        activateTab(targetTabID)
+
+        guard let receipt else { return }
+        let currentContractVersion = UInt32(clamping: bundle.surface.contractVersion)
+        if currentContractVersion != receipt.providerContractVersion {
+            state.taskRun.warnings.append(
+                "Notebook run used provider contract \(receipt.providerContractVersion); the installed contract is \(currentContractVersion). Review the typed parameter diff before running."
+            )
+        }
+        if let currentSession = parameterSession(surfaceID: intent.surface, instanceID: targetTabID),
+           currentSession.values.mapValues(JSONValue.init(parameterValue:)) != receipt.resolvedParameters {
+            state.taskRun.warnings.append(
+                "Current defaults or project context resolve differently from this historical notebook run."
+            )
+        }
+    }
+
+    private func notebookTaskDifferences(
+        current: SurfaceParameterSession,
+        notebook: SurfaceParameterSnapshot
+    ) -> [NotebookTaskReplacementDiff] {
+        var currentValues = current.snapshot.states.compactMapValues(\.value)
+            .mapValues(JSONValue.init(parameterValue:))
+        for (parameter, draft) in current.draftText {
+            currentValues[parameter] = .string(draft)
+        }
+        let notebookValues = notebook.states.compactMapValues(\.value)
+            .mapValues(JSONValue.init(parameterValue:))
+        return Set(currentValues.keys).union(notebookValues.keys)
+            .sorted()
+            .compactMap { parameter in
+                let currentValue = currentValues[parameter]
+                let notebookValue = notebookValues[parameter]
+                guard currentValue != notebookValue else { return nil }
+                return NotebookTaskReplacementDiff(
+                    parameter: parameter,
+                    currentValue: currentValue,
+                    notebookValue: notebookValue
+                )
+            }
     }
 
     private func updateActiveScientificNotebook(
@@ -2786,15 +2911,16 @@ public final class WorkbenchStore: ObservableObject {
         )
     }
 
-    public func refreshImageExplorer(datasetID: String) {
-        guard !rejectPrototypeProductionAction("Image explorers") else { return }
+    @discardableResult
+    public func refreshImageExplorer(datasetID: String) -> Bool {
+        guard !rejectPrototypeProductionAction("Image explorers") else { return false }
         guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
             state.lastErrors.append("Unknown dataset \(datasetID)")
-            return
+            return false
         }
         guard dataset.kind == .imageCube else {
             state.lastErrors.append("Dataset \(dataset.name) is not an image")
-            return
+            return false
         }
         let instanceID = state.project.datasets.first(where: { $0.id == datasetID })?.explorerTabID
         if state.imageExplorers[datasetID] == nil {
@@ -2807,7 +2933,7 @@ public final class WorkbenchStore: ObservableObject {
         }
         guard let explorerState = state.imageExplorers[datasetID]
             ?? profiledImageExplorerState(datasetID: datasetID, instanceID: instanceID)
-        else { return }
+        else { return false }
         do {
             var nextState = explorerState
             var snapshot = try imageExplorerClient.buildSnapshot(
@@ -2832,6 +2958,7 @@ public final class WorkbenchStore: ObservableObject {
             applyReadyImageExplorerSnapshot(snapshot, to: &nextState)
             state.imageExplorers[datasetID] = nextState
             acceptSessionParameters("imexplore", instanceID: instanceID)
+            return true
         } catch {
             let originalError = error
             if explorerState.hasQueuedImageExplorerCommands {
@@ -2848,7 +2975,7 @@ public final class WorkbenchStore: ObservableObject {
                     state.lastErrors.append(
                         "Cleared invalid image explorer region command sequence for \(dataset.name): \(error)"
                     )
-                    return
+                    return false
                 } catch let recoveryError {
                     state.lastErrors.append(
                         "Image explorer command recovery failed for \(dataset.name): \(recoveryError)"
@@ -2861,6 +2988,7 @@ public final class WorkbenchStore: ObservableObject {
             failedState.snapshot = nil
             state.imageExplorers[datasetID] = failedState
             state.lastErrors.append("Open image explorer for \(dataset.name): \(originalError)")
+            return false
         }
     }
 
@@ -3389,6 +3517,20 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func runImageExplorerCommandOnce(_ command: ImageExplorerCommand, datasetID: String) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        let operation = notebookImageOperation(command: command, dataset: dataset)
+        let handle = operation.flatMap {
+            beginNotebookOperationRecording(
+                operationID: $0.operationID,
+                parameters: $0.parameters,
+                classification: $0.classification,
+                affectedPaths: $0.affectedPaths,
+                bypassTabID: dataset.explorerTabID
+            )
+        }
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.transientCommands.append(command)
         state.imageExplorers[datasetID] = explorerState
@@ -3397,7 +3539,59 @@ public final class WorkbenchStore: ObservableObject {
         } else if command.command == "unset_default_mask" {
             setImageExplorerParameterValue(datasetID: datasetID, name: "mask", value: .string("none"))
         }
-        refreshImageExplorer(datasetID: datasetID)
+        let errorCount = state.lastErrors.count
+        let succeeded = refreshImageExplorer(datasetID: datasetID)
+        if let operation {
+            let diagnostics = succeeded ? [] : Array(state.lastErrors.dropFirst(errorCount))
+            finalizeNotebookOperationRecording(
+                handle: handle,
+                status: succeeded ? "succeeded" : "failed",
+                affectedPaths: operation.affectedPaths,
+                products: operation.productPaths,
+                diagnostics: diagnostics
+            )
+        }
+    }
+
+    private func notebookImageOperation(
+        command: ImageExplorerCommand,
+        dataset: DatasetSummary
+    ) -> (
+        operationID: String,
+        parameters: [String: JSONValue],
+        classification: String,
+        affectedPaths: [String],
+        productPaths: [String]
+    )? {
+        let mutatingCommands: Set<String> = [
+            "save_region_definition",
+            "rename_region_definition",
+            "delete_region_definition",
+            "set_default_mask",
+            "unset_default_mask",
+            "delete_mask",
+            "write_region_mask",
+        ]
+        let exportsRegion = command.command == "export_region_file"
+        guard mutatingCommands.contains(command.command) || exportsRegion else { return nil }
+        var parameters: [String: JSONValue] = [
+            "dataset": .string(dataset.path),
+            "command": .string(command.command),
+        ]
+        if let name = command.name { parameters["name"] = .string(name) }
+        if let newName = command.newName { parameters["new_name"] = .string(newName) }
+        if let setDefault = command.setDefault { parameters["set_default"] = .bool(setDefault) }
+        if let path = command.path { parameters["path"] = .string(path) }
+        let affectedPaths = exportsRegion
+            ? command.path.map { [$0] } ?? []
+            : [dataset.path]
+        return (
+            operationID: "imexplore.\(command.command)",
+            parameters: parameters,
+            classification: exportsRegion ? "product_write" : "input_mutation",
+            affectedPaths: affectedPaths,
+            productPaths: exportsRegion ? affectedPaths : []
+        )
     }
 
     public func loadImageExplorerRegionFile(path: String, datasetID: String) {
@@ -4423,6 +4617,81 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
+    private func beginNotebookOperationRecording(
+        operationID: String,
+        parameters: [String: JSONValue],
+        classification: String,
+        affectedPaths: [String],
+        bypassTabID: String
+    ) -> NotebookAttemptHandle? {
+        guard state.hasProject else { return nil }
+        let bypass = state.notebookRecordingBypassTabs.remove(bypassTabID) != nil
+        do {
+            let result = try notebookPersistenceClient.beginRecording(request: NotebookBeginRecordingRequest(
+                projectRoot: state.project.rootPath,
+                policy: bypass ? "bypass_once" : "record",
+                request: NotebookRecordingRequest(
+                    initiatingSurface: "gui",
+                    operationId: operationID,
+                    notebookId: state.scientificNotebooks?.activeNotebookID,
+                    cellId: nil,
+                    taskIntent: nil,
+                    providerContractVersion: 1,
+                    resolvedParameters: parameters,
+                    runSafety: NotebookRunSafetyRecord(
+                        classification: classification,
+                        affectedPaths: affectedPaths
+                    ),
+                    approvals: [NotebookApprovalRecord(
+                        kind: "user_action",
+                        actor: "user",
+                        timestamp: Self.unixMilliseconds(),
+                        contentHash: nil
+                    )]
+                )
+            ))
+            if let warning = result.warning {
+                presentNotebookRecordingWarning(warning)
+            }
+            return result.handle
+        } catch {
+            presentNotebookRecordingWarning("could not start \(operationID): \(error)")
+            return nil
+        }
+    }
+
+    private func finalizeNotebookOperationRecording(
+        handle: NotebookAttemptHandle?,
+        status: String,
+        affectedPaths: [String],
+        products: [String],
+        diagnostics: [String]
+    ) {
+        guard let handle else { return }
+        do {
+            try notebookPersistenceClient.finalizeRecording(request: NotebookFinalizeRecordingRequest(
+                projectRoot: state.project.rootPath,
+                handle: handle,
+                finalization: NotebookReceiptFinalization(
+                    status: status,
+                    finishedAt: Self.unixMilliseconds(),
+                    affectedPaths: affectedPaths,
+                    products: products.map {
+                        NotebookReceiptArtifact(role: "product", path: $0, mediaType: nil)
+                    },
+                    artifacts: [],
+                    diagnostics: diagnostics,
+                    stdout: [],
+                    stderr: [],
+                    casaLog: Self.configuredCasaLogPath
+                )
+            ))
+            loadScientificNotebooks()
+        } catch {
+            presentNotebookRecordingWarning("could not finalize operation: \(error)")
+        }
+    }
+
     private func finalizeNotebookTaskRecording(
         runID: String,
         status: String,
@@ -4448,7 +4717,7 @@ public final class WorkbenchStore: ObservableObject {
                     diagnostics: diagnostics,
                     stdout: Array(stdout.utf8),
                     stderr: Array(stderr.utf8),
-                    casaLog: nil
+                    casaLog: Self.configuredCasaLogPath
                 )
             ))
             loadScientificNotebooks()
@@ -4465,6 +4734,10 @@ public final class WorkbenchStore: ObservableObject {
 
     private static func unixMilliseconds() -> UInt64 {
         UInt64(max(0, Date().timeIntervalSince1970 * 1_000))
+    }
+
+    private static var configuredCasaLogPath: String? {
+        ProcessInfo.processInfo.environment["CASA_RS_LOG_TABLE"]
     }
 
     public func stopTask() {

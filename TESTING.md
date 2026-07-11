@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-07-10
+Last reality check: 2026-07-11
 Verification: just verify
 
 ## Test categories
@@ -139,7 +139,8 @@ For each wave:
   explicit external-edit reconciliation, concurrent immutable revisions,
   active-attempt leases and interrupted recovery, replay drift, export
   boundaries, GUI/TUI/CLI/Python recording and one-run bypasses, production
-  debug state, and launched-app persistence/task-tab interaction
+  debug state, authored task cells without receipts, clean/dirty task-tab
+  parameter replacement, and launched-app persistence/task-tab interaction
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review
