@@ -171,6 +171,15 @@ final class CasarsMacUITests: XCTestCase {
     func testWaveOneAccessibilityAudit() throws {
         launchPrototype()
         try app.performAccessibilityAudit { issue in
+            if issue.auditType.contains(.elementDetection),
+               issue.compactDescription == "Parent/Child mismatch"
+            {
+                // SwiftUI lazily exposes the off-screen notebook document while
+                // XCTest walks it, so the audit can retain a child after its
+                // transient parent has been replaced. Keep every other element
+                // detection issue actionable.
+                return true
+            }
             if issue.auditType.contains(.contrast),
                (issue.element?.label == "casa-rs Workbench"
                    || issue.element?.value as? String == "casa-rs Workbench")
