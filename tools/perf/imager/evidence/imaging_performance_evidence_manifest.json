@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "description": "Durable identities and checked-in copies of final imaging-performance artifacts.",
+  "artifacts": [
+    {
+      "artifact_id": "standard-mfs-final-baseline",
+      "workload_id": "wave3-standard-mfs-single-term-heavy-wave2",
+      "artifact_role": "baseline",
+      "checked_in_path": "evidence/artifacts/20260709T193312Z-wave3-standard-mfs-single-term-heavy-wave2-0388d03c.json",
+      "source_path": "/private/tmp/casa-rs-wave343-standard-final-baseline/20260709T193312Z-wave3-standard-mfs-single-term-heavy-wave2-0388d03c.json",
+      "sha256": "ad062bde17c3b506d4db70cca9f972886c673638c8b96107465aacf12508a786"
+    },
+    {
+      "artifact_id": "standard-mfs-final-candidate",
+      "workload_id": "wave3-standard-mfs-single-term-heavy-wave2",
+      "artifact_role": "candidate",
+      "checked_in_path": "evidence/artifacts/20260709T194937Z-wave3-standard-mfs-single-term-heavy-wave2-58dd109d.json",
+      "source_path": "/private/tmp/casa-rs-wave343-standard-final-candidate3/20260709T194937Z-wave3-standard-mfs-single-term-heavy-wave2-58dd109d.json",
+      "sha256": "884a5df47bc3e357b5b73a7bdfd32463197d977b29d79bd0988470148965c19b"
+    },
+    {
+      "artifact_id": "standard-mfs-final-comparison",
+      "workload_id": "wave3-standard-mfs-single-term-heavy-wave2",
+      "artifact_role": "product_comparison",
+      "checked_in_path": "evidence/artifacts/casa-rs-wave343-standard-final-comparison.json",
+      "source_path": "/private/tmp/casa-rs-wave343-standard-final-comparison.json",
+      "sha256": "165cb2bda7d6c8a0c7c23e05c3787004349ee180a37844402c82e9feb6627254"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-large-final-baseline",
+      "workload_id": "wave3-mosaic-mtmfs-alma-large-bounded",
+      "artifact_role": "baseline",
+      "checked_in_path": "evidence/artifacts/20260709T195654Z-wave3-mosaic-mtmfs-alma-large-bounded-06a89dc3.json",
+      "source_path": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-baseline/20260709T195654Z-wave3-mosaic-mtmfs-alma-large-bounded-06a89dc3.json",
+      "sha256": "617c79b299c1016550b941eebd27c02322cbe56d1491088b5f9acffd2f52d03c"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-large-final-candidate",
+      "workload_id": "wave3-mosaic-mtmfs-alma-large-bounded",
+      "artifact_role": "candidate",
+      "checked_in_path": "evidence/artifacts/20260709T195437Z-wave3-mosaic-mtmfs-alma-large-bounded-ad12286b.json",
+      "source_path": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-candidate/20260709T195437Z-wave3-mosaic-mtmfs-alma-large-bounded-ad12286b.json",
+      "sha256": "8305a8b7f607d4bf83abaad0eaf32d991aabfe6d800fc17ebaee5e759656a299"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-large-final-comparison",
+      "workload_id": "wave3-mosaic-mtmfs-alma-large-bounded",
+      "artifact_role": "product_comparison",
+      "checked_in_path": "evidence/artifacts/casa-rs-wave343-mosaic-mtmfs-large-final-comparison.json",
+      "source_path": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-comparison.json",
+      "sha256": "d1ea28644fc718e65145bb7e6b184c9ec6896ec8d4e4eefb25786cf6b0744e5e"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-final-casa-oracle",
+      "workload_id": "wave262-mosaic-mtmfs-small-casa-oracle",
+      "artifact_role": "casa_oracle",
+      "checked_in_path": "evidence/artifacts/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.json",
+      "source_path": "/private/tmp/casa-rs-wave262-current-head-oracle/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.json",
+      "sha256": "b2b153fc60460d05c0eb2a0137833734dfb346ef924a6319527f656d3f2e01c5"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-final-primary-comparison",
+      "workload_id": "wave262-mosaic-mtmfs-small-casa-oracle",
+      "artifact_role": "primary_comparison",
+      "checked_in_path": "evidence/artifacts/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.comparison.json",
+      "source_path": "/private/tmp/casa-rs-wave262-current-head-oracle/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.comparison.json",
+      "sha256": "a7dfe96f887adf5f98d5744868807f8bd812e8d1b59d716dcc9c524b09f47a58"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-final-full-comparison",
+      "workload_id": "wave262-mosaic-mtmfs-small-casa-oracle",
+      "artifact_role": "full_comparison",
+      "checked_in_path": "evidence/artifacts/wave262-current-head-all-comparison.json",
+      "source_path": "/private/tmp/wave262-current-head-all-comparison.json",
+      "sha256": "544c8c66edd30ea0149b3427b512ae65286430690d82077359e59d59c4136dbd"
+    },
+    {
+      "artifact_id": "mosaic-mfs-large-dirty-product-cpu",
+      "workload_id": "wave352-mosaic-mfs-alma-large-dirty-product-f32",
+      "artifact_role": "baseline",
+      "checked_in_path": "evidence/artifacts/20260710T153654Z-wave352-mosaic-mfs-cpu-f32.json",
+      "source_path": "/private/tmp/wave352-counterbalanced-mfs/20260710T152434Z-wave352-mosaic-mfs-alma-large-dirty-prod-vs-wave352-mosaic-mfs-alma-large-dirty-prod-ae7ee40f/runs/009-measured-03-01-baseline/20260710T153654Z-wave352-mosaic-mfs-alma-large-dirty-product-f32-70147f8e.json",
+      "sha256": "6e7e3694073d2653127e0786c2f4d4f864a79e12b01ab3f6c1a25d6cd6d8d23b"
+    },
+    {
+      "artifact_id": "mosaic-mfs-large-dirty-product-metal",
+      "workload_id": "wave352-mosaic-mfs-alma-large-dirty-product-metal-f32",
+      "artifact_role": "candidate",
+      "checked_in_path": "evidence/artifacts/20260710T153829Z-wave352-mosaic-mfs-metal-f32.json",
+      "source_path": "/private/tmp/wave352-counterbalanced-mfs/20260710T152434Z-wave352-mosaic-mfs-alma-large-dirty-prod-vs-wave352-mosaic-mfs-alma-large-dirty-prod-ae7ee40f/runs/010-measured-03-02-candidate/20260710T153829Z-wave352-mosaic-mfs-alma-large-dirty-product-metal-f32-1b56d03f.json",
+      "sha256": "e7a8c57ddd103f4d4193d70f6963c3b8a549e5732683dbf0df2d69a7ef8eb55f"
+    },
+    {
+      "artifact_id": "mosaic-mfs-large-dirty-product-comparison",
+      "workload_id": "wave352-mosaic-mfs-alma-large-dirty-product-metal-f32",
+      "artifact_role": "product_comparison",
+      "checked_in_path": "evidence/artifacts/20260710-wave352-mfs-cpu-metal-comparison.json",
+      "source_path": "/private/tmp/wave352-mfs-cpu-metal-comparison.json",
+      "sha256": "a740da6b1c4e321af4a780d8cece09bab8adaf904ae6632a4138b45a9d0b9824"
+    },
+    {
+      "artifact_id": "mosaic-mfs-large-dirty-product-counterbalanced",
+      "workload_id": "wave352-mosaic-mfs-alma-large-dirty-product-metal-f32",
+      "artifact_role": "counterbalanced_comparison",
+      "checked_in_path": "evidence/artifacts/20260710T152434Z-wave352-mfs-cpu-metal-counterbalanced.json",
+      "source_path": "/private/tmp/wave352-counterbalanced-mfs/20260710T152434Z-wave352-mosaic-mfs-alma-large-dirty-prod-vs-wave352-mosaic-mfs-alma-large-dirty-prod-ae7ee40f.json",
+      "sha256": "9bf811c8a0d2d6cf2028f4b00d79218023b0ef69971e5ec9ce7fefeb723699ce"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-large-direct-cpu",
+      "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-f32",
+      "artifact_role": "baseline",
+      "checked_in_path": "evidence/artifacts/20260710T154201Z-wave352-mosaic-mtmfs-cpu-f32.json",
+      "source_path": "/private/tmp/wave352-counterbalanced-mtmfs/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/runs/001-measured-01-01-baseline/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-product-f32-270e6b04.json",
+      "sha256": "a008cdc9f236947cc0b342f57bae8606f59b09c131670dd620ce4601038a72ea"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-large-direct-metal",
+      "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32",
+      "artifact_role": "candidate",
+      "checked_in_path": "evidence/artifacts/20260710T154356Z-wave352-mosaic-mtmfs-metal-f32.json",
+      "source_path": "/private/tmp/wave352-counterbalanced-mtmfs/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/runs/002-measured-01-02-candidate/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51.json",
+      "sha256": "187c6b8e387f7fd3532a179f2458957311229ab4707e898a2cf1ace876294e57"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-large-direct-comparison",
+      "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32",
+      "artifact_role": "product_comparison",
+      "checked_in_path": "evidence/artifacts/20260710-wave352-mtmfs-cpu-metal-comparison.json",
+      "source_path": "/private/tmp/wave352-mtmfs-cpu-metal-comparison.json",
+      "sha256": "c040c0f760f413cc0a2efead2afd423dcc869f5c8436bcf14637fc6c1d90f17a"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-large-direct-counterbalanced",
+      "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32",
+      "artifact_role": "counterbalanced_comparison",
+      "checked_in_path": "evidence/artifacts/20260710T154201Z-wave352-mtmfs-cpu-metal-counterbalanced.json",
+      "source_path": "/private/tmp/wave352-counterbalanced-mtmfs/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a.json",
+      "sha256": "d798c26d454a01cb14df78332bd6787b3cc7ad2b15a3e15386d548e789c7a806"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-formula-planner-baseline",
+      "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32",
+      "artifact_role": "baseline",
+      "checked_in_path": "evidence/artifacts/20260710T154356Z-wave352-mosaic-mtmfs-metal-formula-baseline-f32.json",
+      "source_path": "/private/tmp/wave352-formula-mtmfs-baseline/20260710T154356Z-wave352-mosaic-mtmfs-metal-formula-baseline-f32.json",
+      "sha256": "187c6b8e387f7fd3532a179f2458957311229ab4707e898a2cf1ace876294e57"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-formula-planner-candidate",
+      "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32",
+      "artifact_role": "candidate",
+      "checked_in_path": "evidence/artifacts/20260710T182534Z-wave352-mosaic-mtmfs-metal-formula-f32.json",
+      "source_path": "/private/tmp/wave352-formula-mtmfs-unsandboxed-v2/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f.json",
+      "sha256": "8a3f5fda248e9558eee6fa370f76cf7fe16bcfb74198023c6521e70125114dfd"
+    },
+    {
+      "artifact_id": "mosaic-mtmfs-formula-planner-comparison",
+      "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32",
+      "artifact_role": "product_comparison",
+      "checked_in_path": "evidence/artifacts/20260710T183021Z-wave352-mosaic-mtmfs-metal-formula-comparison.json",
+      "source_path": "/private/tmp/wave352-formula-mtmfs-comparison/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938.json",
+      "sha256": "7cb6c0990becc0732b0e81b9a8aedd7a3e3115c8068f663433d263f4d09e93c6"
+    },
+    {
+      "artifact_id": "mosaic-cube-chanchunks-formula-baseline",
+      "workload_id": "wave4-mosaic-cube-alma-medium-dirty-bounded",
+      "artifact_role": "baseline",
+      "checked_in_path": "evidence/artifacts/20260710T200719Z-wave56-mosaic-cube-chanchunks1.json",
+      "source_path": "/private/tmp/wave56-final/alternating/20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-boun-vs-wave4-mosaic-cube-alma-medium-dirty-boun-3f87984f/runs/001-measured-01-01-baseline/20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-bounded-c31ba184.json",
+      "sha256": "473ad7fd7f3aec41dc42a34eead16df362b5484859e69183252971386de1f84e"
+    },
+    {
+      "artifact_id": "mosaic-cube-chanchunks-formula-candidate",
+      "workload_id": "wave4-mosaic-cube-alma-medium-dirty-bounded",
+      "artifact_role": "candidate",
+      "checked_in_path": "evidence/artifacts/20260710T200748Z-wave56-mosaic-cube-chanchunks4.json",
+      "source_path": "/private/tmp/wave56-final/alternating/20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-boun-vs-wave4-mosaic-cube-alma-medium-dirty-boun-3f87984f/runs/002-measured-01-02-candidate/20260710T200748Z-wave4-mosaic-cube-alma-medium-dirty-bounded-0748bceb.json",
+      "sha256": "a7e4074f7a13702cc28fe562b4500d3933cef6c6936877db72089d6d526d8fa8"
+    },
+    {
+      "artifact_id": "mosaic-cube-chanchunks-formula-comparison",
+      "workload_id": "wave4-mosaic-cube-alma-medium-dirty-bounded",
+      "artifact_role": "product_comparison",
+      "checked_in_path": "evidence/artifacts/20260710-wave56-mosaic-cube-chanchunks-comparison.json",
+      "source_path": "/private/tmp/wave56-final/same-path.comparison.json",
+      "sha256": "51221bf71250b0900522014f3c3bd79bbdf73cce5906abe72cf83e6e8b2db41a"
+    },
+    {
+      "artifact_id": "mosaic-cube-chanchunks-formula-counterbalanced",
+      "workload_id": "wave4-mosaic-cube-alma-medium-dirty-bounded",
+      "artifact_role": "counterbalanced_comparison",
+      "checked_in_path": "evidence/artifacts/20260710T200719Z-wave56-mosaic-cube-chanchunks-counterbalanced.json",
+      "source_path": "/private/tmp/wave56-final/alternating/20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-boun-vs-wave4-mosaic-cube-alma-medium-dirty-boun-3f87984f.json",
+      "sha256": "b81d482eb44cfeb7ddd4087e4e333de5d49bd8a6a123b72157e2863ad648d8b0"
+    },
+    {
+      "artifact_id": "standard-mfs-single-block-read-ahead-counterbalanced",
+      "workload_id": "wave1-standard-mfs-dirty-smoke",
+      "artifact_role": "counterbalanced_comparison",
+      "checked_in_path": "evidence/artifacts/20260710T212004Z-wave1-standard-mfs-single-block-read-ahead-counterbalanced.json",
+      "source_path": "/private/tmp/casa-rs-current-head-single-block-read-ahead/20260710T212004Z-wave1-standard-mfs-dirty-smoke-vs-wave1-standard-mfs-dirty-smoke-fe4c7599.json",
+      "sha256": "82c0aa76fb8400cf963572f70b3dcd7eb649b5d2d23214e5cd755f7f518e2e6a"
+    },
+    {
+      "artifact_id": "wprojection-medium-multicpu",
+      "workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-multicpu",
+      "artifact_role": "baseline",
+      "checked_in_path": "evidence/artifacts/20260710T223405Z-wave3-wprojection-multicpu.json",
+      "source_path": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/runs/001-measured-01-01-baseline/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381.json",
+      "sha256": "42dc9bf90f344ea70a6078ebf6958f107018a0e160f5b8f342d90e6678c00cb4"
+    },
+    {
+      "artifact_id": "wprojection-medium-metal",
+      "workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto",
+      "artifact_role": "candidate",
+      "checked_in_path": "evidence/artifacts/20260710T223425Z-wave3-wprojection-metal.json",
+      "source_path": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/runs/002-measured-01-02-candidate/20260710T223425Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-f1b378b8.json",
+      "sha256": "e1fbca8a856095631e6b7a7496a999b4aa3e0511b43e1a23d2c94e0ce3293f3a"
+    },
+    {
+      "artifact_id": "wprojection-medium-cpu-metal-counterbalanced",
+      "workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto",
+      "artifact_role": "counterbalanced_comparison",
+      "checked_in_path": "evidence/artifacts/20260710T223405Z-wave3-wprojection-cpu-metal-counterbalanced.json",
+      "source_path": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f.json",
+      "sha256": "5b4cf0fb1eb3a01e9decfd870c2a400ee2381dc0452eb1251184d14dd4dcd538"
+    },
+    {
+      "artifact_id": "wprojection-final-casa-oracle",
+      "workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto",
+      "artifact_role": "casa_oracle",
+      "checked_in_path": "evidence/artifacts/20260710T224409Z-wave3-wprojection-final-casa-oracle.json",
+      "source_path": "/private/tmp/casa-rs-wprojection-final-casa-oracle/20260710T224409Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-b4ca9838.json",
+      "sha256": "85ea1569544a1b02a63918db0349a905446f615acf4a413a3511feac99999ff5"
+    },
+    {
+      "artifact_id": "wprojection-final-casa-comparison",
+      "workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto",
+      "artifact_role": "full_comparison",
+      "checked_in_path": "evidence/artifacts/20260710T224409Z-wave3-wprojection-final-casa-comparison.json",
+      "source_path": "/private/tmp/casa-rs-wprojection-final-casa-oracle/20260710T224409Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-b4ca9838.comparison.json",
+      "sha256": "e304b071fe6341e80a7086baba5b479dfecfd640a9874fedf7488466d2173903"
+    }
+  ]
+}

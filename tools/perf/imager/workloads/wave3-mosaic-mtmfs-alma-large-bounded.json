@@ -1,0 +1,65 @@
+{
+  "id": "wave3-mosaic-mtmfs-alma-large-bounded",
+  "mode_id": "mosaic-mtmfs-large",
+  "description": "Wave #343/#262 large bounded seven-field ALMA mosaic MT-MFS row for read-ahead and product-invariance evidence.",
+  "dataset": {
+    "key": "wave1-alma-mosaic-large",
+    "relative_path": "wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "mfs",
+    "gridder": "mosaic",
+    "wterm": "none",
+    "field": "0,1,2,3,4,5,6",
+    "phasecenter_field": 0,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 16,
+    "imsize": 1280,
+    "cell_arcsec": 0.08,
+    "weighting": "briggs",
+    "robust": 0.5,
+    "deconvolver": "mtmfs",
+    "nterms": 2,
+    "niter": 0,
+    "minor_cycle_length": 25,
+    "pblimit": 0.2,
+    "write_pb": true,
+    "pbcor": true,
+    "standard_mfs_acceleration": "auto",
+    "imaging_memory_target_mb": 4096,
+    "imaging_read_ahead_blocks": 2
+  },
+  "run": {
+    "repeats": 1,
+    "run_label": "wave3-mosaic-mtmfs-alma-large-bounded",
+    "storage_label": "external-ssd-wave1-large",
+    "ms_staging": "direct",
+    "phase_probe": "0",
+    "skip_profile": "1",
+    "evidence_role": "read_ahead_enabled"
+  },
+  "review": {
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true,
+    "required_evidence_roles": [
+      "read_ahead_disabled",
+      "read_ahead_enabled",
+      "casa_oracle"
+    ]
+  },
+  "comparison": {
+    "products": [
+      ".image.tt0",
+      ".image.tt1",
+      ".residual.tt0",
+      ".residual.tt1",
+      ".psf.tt0",
+      ".psf.tt1",
+      ".psf.tt2"
+    ],
+    "max_elements_per_product": 1000000
+  }
+}

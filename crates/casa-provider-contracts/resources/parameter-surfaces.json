@@ -8116,7 +8116,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -9011,6 +9011,56 @@
               "label": "Spectral Mode",
               "group": "Stages",
               "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "chanchunks",
+          "concept": {
+            "id": "parameter.chanchunks",
+            "semantic_revision": 1
+          },
+          "order": 66,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": "Applies to cube and cubedata imaging; the runtime rejects zero and MFS use.",
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--chanchunks"
+              ],
+              "false_flags": [],
+              "metavar": "N"
+            },
+            "provider": {
+              "field": "chanchunks",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "chanchunks",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Channel Chunks",
+              "group": "Stages",
+              "advanced": true,
               "hidden": false
             }
           },
@@ -11335,12 +11385,170 @@
           },
           "aliases": [],
           "reviewed_homonym": null
+        },
+        {
+          "name": "parallel",
+          "concept": {
+            "id": "parameter.parallel",
+            "semantic_revision": 1
+          },
+          "order": 63,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--parallel"
+              ],
+              "false_flags": [
+                "--no-parallel"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "parallel",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "parallel",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Parallel",
+              "group": "Stages",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "imaging_read_ahead_blocks",
+          "concept": {
+            "id": "parameter.imaging_read_ahead_blocks",
+            "semantic_revision": 1
+          },
+          "order": 64,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": "The runtime rejects zero; Auto defaults are selected from mode and memory geometry.",
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--imaging-read-ahead-blocks"
+              ],
+              "false_flags": [],
+              "metavar": "N"
+            },
+            "provider": {
+              "field": "imaging_read_ahead_blocks",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "imaging_read_ahead_blocks",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Read-Ahead Blocks",
+              "group": "Stages",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "imaging_fft_backend",
+          "concept": {
+            "id": "parameter.imaging_fft_backend",
+            "semantic_revision": 1
+          },
+          "order": 65,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "auto"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--imaging-fft-backend"
+              ],
+              "false_flags": [],
+              "metavar": "BACKEND"
+            },
+            "provider": {
+              "field": "imaging_fft_backend",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "imaging_fft_backend",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Product FFT Backend",
+              "group": "Stages",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
         }
       ],
       "migrations": [
         {
           "from_contract": 1,
           "to_contract": 2,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
           "steps": [],
           "changed_defaults": []
         }

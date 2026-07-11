@@ -1,0 +1,3258 @@
+{
+  "artifacts": {
+    "comparison_root": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/comparisons/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938",
+    "products_root": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/products/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938",
+    "result_dir": "/private/tmp/wave352-formula-mtmfs-comparison",
+    "root": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts",
+    "tmp_root": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/tmp"
+  },
+  "benchmark_features": {
+    "backend": {
+      "cpu_multi_worker_reason": null,
+      "cube_per_plane_backend": null,
+      "cube_per_plane_fallback_reasons": null,
+      "cube_per_plane_fixed_tile_eligible": null,
+      "cube_per_plane_grid_threads": null,
+      "cube_per_plane_metal_eligible": null,
+      "cube_per_plane_phase": null,
+      "cube_per_plane_workers": null,
+      "dirty_product_fft_fallback_used": null,
+      "dirty_product_fft_requested_backend": null,
+      "dirty_product_fft_selected_backend": null,
+      "dirty_product_gpu_resident_fallback_used": null,
+      "dirty_product_gpu_resident_reason": null,
+      "dirty_product_gpu_resident_requested_backend": null,
+      "dirty_product_gpu_resident_selected_backend": null,
+      "gpu_metal_reason": null,
+      "mosaic_cube_slab_active_planes": null,
+      "mosaic_cube_slab_count": null,
+      "mosaic_cube_slab_executor_capabilities": null,
+      "mosaic_cube_slab_nplanes": null,
+      "mosaic_cube_slab_product_state": null,
+      "mosaic_cube_slab_schedule": null,
+      "mosaic_cube_slab_source_reuse": null,
+      "mosaic_cube_slab_worker_count": null,
+      "requested_acceleration": "auto",
+      "requested_imaging_fft_backend": null,
+      "resolved_backend": null,
+      "resolved_grid_threads": null,
+      "resolved_initial_dirty_backend": null,
+      "resolved_residual_backend": null,
+      "resolved_tile_anchor": null
+    },
+    "image": {
+      "image_work": 22937600,
+      "imsize_x": 1280,
+      "imsize_y": 1280,
+      "output_planes": 2,
+      "product_count": 7
+    },
+    "mode_cost": {
+      "actual_major_cycles": null,
+      "actual_minor_iterations": null,
+      "cycleniter": "25",
+      "deconvolver": "mtmfs",
+      "gridder": "mosaic",
+      "mosaic_field_count": 7,
+      "mtmfs_nterms": 2,
+      "multiscale_scale_count": null,
+      "niter": 0,
+      "specmode": "mfs",
+      "weighting": "briggs",
+      "wprojplanes": null
+    },
+    "resources": {
+      "available_parallelism": 10,
+      "dirty_product_fft_requested_backend": null,
+      "dirty_product_fft_selected_backend": null,
+      "dirty_product_fft_total_ms": null,
+      "dirty_product_gpu_resident_device_exec_ms": null,
+      "dirty_product_gpu_resident_exec_ms": null,
+      "dirty_product_gpu_resident_pack_ms": null,
+      "dirty_product_gpu_resident_plan_ms": null,
+      "dirty_product_gpu_resident_postprocess_ms": null,
+      "dirty_product_gpu_resident_sync_ms": null,
+      "dirty_product_gpu_resident_total_ms": null,
+      "dirty_product_gpu_resident_transfer_from_device_ms": null,
+      "dirty_product_gpu_resident_transfer_to_device_ms": null,
+      "logical_cores": 10,
+      "memory_headroom_bytes": null,
+      "memory_target_bytes": null,
+      "metal_device": null,
+      "metal_grouped_input_cache": null,
+      "peak_rss_bytes": null,
+      "physical_cores": 10,
+      "physical_memory_bytes": 34359738368,
+      "planned_active_bytes": null,
+      "row_block_count": null,
+      "row_block_rows": null,
+      "source_read_ahead_consumer_ms": null,
+      "source_read_ahead_consumer_recv_blocked_ms": null,
+      "source_read_ahead_effective_read_bandwidth_mib_s": null,
+      "source_read_ahead_enabled": null,
+      "source_read_ahead_live_row_block_high_water": null,
+      "source_read_ahead_mode": null,
+      "source_read_ahead_modes": [],
+      "source_read_ahead_producer_consumer_overlap_ms": null,
+      "source_read_ahead_producer_send_blocked_ms": null,
+      "source_read_ahead_queue_capacity": null,
+      "source_read_ahead_row_blocks": null,
+      "source_read_ahead_source_bytes": null,
+      "source_read_ahead_source_prepare_ms": null,
+      "source_read_ahead_source_read_ms": null,
+      "source_read_ahead_source_route_ms": null,
+      "source_read_ahead_summary_count": 0
+    },
+    "schema_version": 1,
+    "visibility": {
+      "correlation_source": "scalar-plane-after-polarization-collapse",
+      "correlations": 1,
+      "flagged_fraction": null,
+      "gridded_samples": null,
+      "selected_channels": 16,
+      "selected_rows": null,
+      "source_stream_throughput_samples_per_s": null,
+      "visibility_work": null
+    }
+  },
+  "command": {
+    "argv": [
+      "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
+      "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms"
+    ],
+    "env": {
+      "BENCH_REPEATS": "1",
+      "CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "1",
+      "IMAGER_BENCH_CASA_GRIDDER": "mosaic",
+      "IMAGER_BENCH_CELL_ARCSEC": "0.08",
+      "IMAGER_BENCH_CHANNEL_COUNT": "16",
+      "IMAGER_BENCH_CHANNEL_START": "0",
+      "IMAGER_BENCH_CUBE_START": "",
+      "IMAGER_BENCH_CUBE_WIDTH": "",
+      "IMAGER_BENCH_CYCLEFACTOR": "1.0",
+      "IMAGER_BENCH_DECONVOLVER": "mtmfs",
+      "IMAGER_BENCH_FIELD": "0,1,2,3,4,5,6",
+      "IMAGER_BENCH_GAIN": "0.1",
+      "IMAGER_BENCH_GRIDDER": "mosaic",
+      "IMAGER_BENCH_HOGBOM_ITERATION_MODE": "strict",
+      "IMAGER_BENCH_IMAGING_FFT_BACKEND": "metal-mpsgraph",
+      "IMAGER_BENCH_IMAGING_FFT_PRECISION": "f32",
+      "IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB": "4096",
+      "IMAGER_BENCH_IMAGING_READ_AHEAD_BLOCKS": "2",
+      "IMAGER_BENCH_IMSIZE": "1280",
+      "IMAGER_BENCH_INTERPOLATION": "linear",
+      "IMAGER_BENCH_KEEP_OUTPUT_ROOT": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/products/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938",
+      "IMAGER_BENCH_MAX_PSFFRACTION": "0.8",
+      "IMAGER_BENCH_MINOR_CYCLE_LENGTH": "25",
+      "IMAGER_BENCH_MIN_PSFFRACTION": "0.05",
+      "IMAGER_BENCH_MODE": "clean",
+      "IMAGER_BENCH_MS_STAGING": "direct",
+      "IMAGER_BENCH_NITER": "0",
+      "IMAGER_BENCH_NSIGMA": "0.0",
+      "IMAGER_BENCH_NTERMS": "2",
+      "IMAGER_BENCH_PBCOR": "1",
+      "IMAGER_BENCH_PBLIMIT": "0.2",
+      "IMAGER_BENCH_PERCHANWEIGHTDENSITY": "0",
+      "IMAGER_BENCH_PHASECENTER_FIELD": "0",
+      "IMAGER_BENCH_PHASE_PROBE": "0",
+      "IMAGER_BENCH_PROFILE_REPEATS": "3",
+      "IMAGER_BENCH_PSFCUTOFF": "0.35",
+      "IMAGER_BENCH_REUSE_CASA_PREFIX": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust",
+      "IMAGER_BENCH_REUSE_RUST_PREFIX": "/private/tmp/wave352-formula-artifacts-unsandboxed-v2/products/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f/rust/rust",
+      "IMAGER_BENCH_ROBUST": "0.5",
+      "IMAGER_BENCH_SCALES": "",
+      "IMAGER_BENCH_SKIP_CASA": "1",
+      "IMAGER_BENCH_SKIP_PROFILE": "1",
+      "IMAGER_BENCH_SKIP_RUST": "1",
+      "IMAGER_BENCH_SPECMODE": "mfs",
+      "IMAGER_BENCH_SPW": "0",
+      "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": "auto",
+      "IMAGER_BENCH_THRESHOLD_JY": "0.0",
+      "IMAGER_BENCH_TMP_ROOT": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/tmp",
+      "IMAGER_BENCH_WEIGHTING": "briggs",
+      "IMAGER_BENCH_WPROJPLANES": "",
+      "IMAGER_BENCH_WRITE_PB": "1",
+      "IMAGER_BENCH_WTERM": "none"
+    }
+  },
+  "comparison": {
+    "max_elements_per_product": 2000000,
+    "products": [
+      ".image.tt0",
+      ".image.tt1",
+      ".residual.tt0",
+      ".residual.tt1",
+      ".psf.tt0",
+      ".psf.tt1",
+      ".psf.tt2"
+    ]
+  },
+  "completed_at": "2026-07-10T18:30:56.026350Z",
+  "created_at": "2026-07-10T18:30:21.394782Z",
+  "dataset": {
+    "key": "wave1-alma-mosaic-large",
+    "path": "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
+    "relative_path": "wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT"
+  },
+  "environment": {
+    "bench_script": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
+    "bench_script_sha256": "ae11ebebc5b7741314d5aade375da2eb3491557f886d8155447d849caad56de5",
+    "casa_python": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python",
+    "git_branch": "codex/improve-imaging-performance",
+    "git_commit": "04a7eda96ffc463bb8109b145df268e5a640fb10",
+    "logical_cores": 10,
+    "physical_cores": 10,
+    "physical_memory_bytes": 34359738368,
+    "python": "3.13.5",
+    "repo_root": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs"
+  },
+  "exit_code": 0,
+  "human_review": {
+    "evidence_role": "metal_f32_candidate",
+    "panel_reason": null,
+    "panel_status": "ready",
+    "reason": "mode ticket cannot move to Done until the review bundle is accepted",
+    "required_evidence_roles": [
+      "cpu_f32_baseline",
+      "metal_f32_candidate"
+    ],
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true,
+    "status": "pending",
+    "structured_difference_label": "good",
+    "structured_difference_legend": {
+      "bad": "Structured or large enough difference; do not close without explanation.",
+      "good": "No review action expected from this check.",
+      "investigate": "Plausible but needs review in context.",
+      "unknown": "Check could not be evaluated for this product."
+    },
+    "structured_difference_summary": "overall good; good: .image.tt0, .image.tt1, .psf.tt0, .psf.tt1, .psf.tt2, .residual.tt0, .residual.tt1"
+  },
+  "logs": {
+    "benchmark_log": "/private/tmp/wave352-formula-mtmfs-comparison/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938.log"
+  },
+  "manifest_path": "/private/tmp/wave352-formula-mtmfs-compare.json",
+  "mode": {
+    "bench_mode": "clean",
+    "chanchunks": null,
+    "channel_count": 16,
+    "deconvolver": "mtmfs",
+    "gridder": "mosaic",
+    "hogbom_iteration_mode": "strict",
+    "image_shape": [
+      1280,
+      1280
+    ],
+    "imaging_fft_backend": "metal-mpsgraph",
+    "imaging_fft_precision": "f32",
+    "imaging_read_ahead_blocks": 2,
+    "niter": 0,
+    "nterms": 2,
+    "parallel": null,
+    "perchanweightdensity": "0",
+    "specmode": "mfs",
+    "standard_mfs_acceleration": "auto",
+    "standard_mfs_metal_minor_cycle_chunk": null,
+    "start": null,
+    "weighting": "briggs",
+    "width": null,
+    "wprojplanes": null
+  },
+  "products": {
+    "casa_prefix": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/products/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938/casa/casa",
+    "root": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/products/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938",
+    "rust_prefix": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/products/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938/rust/rust"
+  },
+  "results": {
+    "backend_plan_logs": {
+      "clark_minor_cycle_diagnostics": [],
+      "clean_residual_refresh_diagnostics": [],
+      "cube_per_plane_backend": [],
+      "cube_plane_state_store": [],
+      "cube_product_summaries": [],
+      "cube_resident_clean_control": [],
+      "cube_resident_clean_executor": [],
+      "cube_resident_clean_finish_planes": [],
+      "cube_resident_clean_stage": [],
+      "cube_source_row_blocks": [],
+      "dirty_product_fft": [],
+      "dirty_product_gpu_resident": [],
+      "dirty_product_gpu_resident_fallback": [],
+      "executor_limitations": [],
+      "frontend_progress": [],
+      "hogbom_minor_cycle_diagnostics": [],
+      "image_product_writes": [],
+      "imaging_source_read_ahead": [],
+      "metal_diagnostics": [],
+      "minor_cycle_diagnostics": [],
+      "mosaic_cube_slab_executor_summaries": [],
+      "mosaic_cube_slab_planes": [],
+      "mosaic_cube_slab_plans": [],
+      "multiscale_minor_cycle_diagnostics": [],
+      "profile_runs": [],
+      "schema_version": 1,
+      "single_plane_execution_plan": [],
+      "source_stream_consumer": [],
+      "source_stream_memory_plan": [],
+      "spectral_slab_events": [],
+      "spectral_slab_memory": [],
+      "spectral_slab_plans": [],
+      "standard_mfs_runtime_plan": [],
+      "standard_mfs_source_read_ahead": [],
+      "summary": {
+        "active_rows": null,
+        "clean_residual_refresh_accounted_ms": null,
+        "clean_residual_refresh_backend": null,
+        "clean_residual_refresh_calls": 0,
+        "clean_residual_refresh_model_fft_ms": null,
+        "clean_residual_refresh_ms": null,
+        "clean_residual_refresh_overhead_ms": null,
+        "clean_residual_refresh_residual_degrid_grid_ms": null,
+        "clean_residual_refresh_residual_fft_ms": null,
+        "clean_residual_refresh_residual_normalize_ms": null,
+        "cube_per_plane_backend": null,
+        "cube_per_plane_fallback_reasons": null,
+        "cube_per_plane_fixed_tile_eligible": null,
+        "cube_per_plane_grid_threads": null,
+        "cube_per_plane_metal_eligible": null,
+        "cube_per_plane_phase": null,
+        "cube_per_plane_workers": null,
+        "cube_plane_state_store_bytes_read": null,
+        "cube_plane_state_store_bytes_written": null,
+        "cube_plane_state_store_cleanup_policy": null,
+        "cube_plane_state_store_count": 0,
+        "cube_plane_state_store_elapsed_ms": null,
+        "cube_plane_state_store_kind": null,
+        "cube_product_bytes": null,
+        "cube_product_group_planes": null,
+        "cube_product_groups": null,
+        "cube_product_image_ms": null,
+        "cube_product_image_pbcor_ms": null,
+        "cube_product_model_ms": null,
+        "cube_product_pb_ms": null,
+        "cube_product_psf_ms": null,
+        "cube_product_residual_ms": null,
+        "cube_product_role_ms": null,
+        "cube_product_summary_count": 0,
+        "cube_product_sumwt_ms": null,
+        "cube_product_tiled_c_order_calls": null,
+        "cube_product_tiled_copied_elements": null,
+        "cube_product_tiled_direct_pack_ns": null,
+        "cube_product_tiled_direct_swap_ns": null,
+        "cube_product_tiled_direct_write_bytes": null,
+        "cube_product_tiled_direct_write_calls": null,
+        "cube_product_tiled_direct_write_ns": null,
+        "cube_product_tiled_direct_write_tiles": null,
+        "cube_product_tiled_fortran_calls": null,
+        "cube_product_tiled_lru_batch_flush_bytes": null,
+        "cube_product_tiled_lru_batch_flush_tiles": null,
+        "cube_product_tiled_lru_zero_fill_tiles": null,
+        "cube_product_tiled_tile_visits": null,
+        "cube_product_weight_ms": null,
+        "cube_product_write_ms": null,
+        "cube_resident_clean_actual_updates": null,
+        "cube_resident_clean_cleaned_planes": null,
+        "cube_resident_clean_completed": null,
+        "cube_resident_clean_consume_ms": null,
+        "cube_resident_clean_control_prepare_ms": null,
+        "cube_resident_clean_control_source_read_ms": null,
+        "cube_resident_clean_controller_overhead_ms": null,
+        "cube_resident_clean_core_total_ms": null,
+        "cube_resident_clean_cycle_threshold": null,
+        "cube_resident_clean_elapsed_ms": null,
+        "cube_resident_clean_finish_cleaned_plane_count": 0,
+        "cube_resident_clean_finish_plane_count": 0,
+        "cube_resident_clean_finish_skipped_plane_count": 0,
+        "cube_resident_clean_major_cycle_refresh_ms": null,
+        "cube_resident_clean_max_actual_updates_per_plane": null,
+        "cube_resident_clean_minor_cycle_ms": null,
+        "cube_resident_clean_minor_cycle_solve_ms": null,
+        "cube_resident_clean_minor_iterations_from_planes": null,
+        "cube_resident_clean_model_nonzero_pixels": null,
+        "cube_resident_clean_model_nonzero_planes": 0,
+        "cube_resident_clean_model_peak_abs_jy": null,
+        "cube_resident_clean_model_sum_abs_jy": null,
+        "cube_resident_clean_planes": null,
+        "cube_resident_clean_planes_at_or_below_threshold": null,
+        "cube_resident_clean_product_write_ms": null,
+        "cube_resident_clean_publish_prepare_ms": null,
+        "cube_resident_clean_publish_source_read_ms": null,
+        "cube_resident_clean_reported_updates": null,
+        "cube_resident_clean_residency": null,
+        "cube_resident_clean_residual_refresh_overhead_ms": null,
+        "cube_resident_clean_restore_ms": null,
+        "cube_resident_clean_result_wait_ms": null,
+        "cube_resident_clean_skipped_minor_cycle_planes": null,
+        "cube_resident_clean_skipped_model_nonzero_planes": 0,
+        "cube_resident_clean_stop_reason_counts": null,
+        "cube_resident_clean_trace_minor_cycles": null,
+        "cube_source_row_block_rows": null,
+        "cube_source_row_blocks": null,
+        "cube_source_row_blocks_prepare_ms": null,
+        "cube_source_row_blocks_read_ms": null,
+        "cube_source_row_blocks_visibility_capacity_bytes": null,
+        "cube_source_row_blocks_wall_ms": null,
+        "dirty_product_fft_fallback_used": null,
+        "dirty_product_fft_requested_backend": null,
+        "dirty_product_fft_selected_backend": null,
+        "dirty_product_fft_total_ms": null,
+        "dirty_product_gpu_resident_device_exec_ms": null,
+        "dirty_product_gpu_resident_exec_ms": null,
+        "dirty_product_gpu_resident_fallback_reason": null,
+        "dirty_product_gpu_resident_fallback_used": null,
+        "dirty_product_gpu_resident_pack_ms": null,
+        "dirty_product_gpu_resident_plan_ms": null,
+        "dirty_product_gpu_resident_postprocess_ms": null,
+        "dirty_product_gpu_resident_products": null,
+        "dirty_product_gpu_resident_reason": null,
+        "dirty_product_gpu_resident_requested_backend": null,
+        "dirty_product_gpu_resident_selected_backend": null,
+        "dirty_product_gpu_resident_sync_ms": null,
+        "dirty_product_gpu_resident_total_ms": null,
+        "dirty_product_gpu_resident_transfer_from_device_ms": null,
+        "dirty_product_gpu_resident_transfer_to_device_ms": null,
+        "executor_limitation_materialization": null,
+        "executor_limitation_reason": null,
+        "frontend_io_time_ms": null,
+        "frontend_wall_to_io_ratio": null,
+        "gridded_samples": null,
+        "image_product_write_count": 0,
+        "image_product_write_elements_by_suffix": {},
+        "image_product_write_ms_by_suffix": {},
+        "image_product_write_role_by_suffix": {},
+        "image_product_write_shape_by_suffix": {},
+        "major_cycles": null,
+        "memory_target_bytes": null,
+        "metal_device_available": null,
+        "metal_diagnostic_count": 0,
+        "metal_grouped_append_data_flag_copy_ms": null,
+        "metal_grouped_append_group_assign_ms": null,
+        "metal_grouped_append_group_finalize_ms": null,
+        "metal_grouped_append_lane_push_ms": null,
+        "metal_grouped_append_run_desc_ms": null,
+        "metal_grouped_append_setup_ms": null,
+        "metal_grouped_input_cache": null,
+        "metal_residual_refresh_append_total_ms": null,
+        "metal_residual_refresh_calls": 0,
+        "metal_residual_refresh_candidate_model_reads": null,
+        "metal_residual_refresh_candidate_tap_visits": null,
+        "metal_residual_refresh_chunks": null,
+        "metal_residual_refresh_density_buffer_ms": null,
+        "metal_residual_refresh_detail_dispatch_gpu_ms": null,
+        "metal_residual_refresh_detail_dispatch_kernel_ms": null,
+        "metal_residual_refresh_detail_dispatch_wait_ms": null,
+        "metal_residual_refresh_detail_readback_ms": null,
+        "metal_residual_refresh_dispatch_encode_ms": null,
+        "metal_residual_refresh_dispatch_gpu_ms": null,
+        "metal_residual_refresh_dispatch_input_buffers_ms": null,
+        "metal_residual_refresh_dispatch_kernel_ms": null,
+        "metal_residual_refresh_dispatch_params_buffer_ms": null,
+        "metal_residual_refresh_dispatch_wait_ms": null,
+        "metal_residual_refresh_exact_candidate_grid_atomic_adds": null,
+        "metal_residual_refresh_grid_buffer_ms": null,
+        "metal_residual_refresh_group_descs": null,
+        "metal_residual_refresh_grouped_candidate_grid_atomic_adds": null,
+        "metal_residual_refresh_grouped_candidate_scan_tests": null,
+        "metal_residual_refresh_input_cache_chunks": null,
+        "metal_residual_refresh_input_cache_fills": null,
+        "metal_residual_refresh_input_cache_hits": null,
+        "metal_residual_refresh_input_cache_host_bytes": null,
+        "metal_residual_refresh_lane_refs": null,
+        "metal_residual_refresh_logical_lanes": null,
+        "metal_residual_refresh_model_buffer_ms": null,
+        "metal_residual_refresh_model_pack_ms": null,
+        "metal_residual_refresh_prepare_plus_dispatch_ms": null,
+        "metal_residual_refresh_readback_ms": null,
+        "metal_residual_refresh_replay_ms": null,
+        "metal_residual_refresh_runs": null,
+        "metal_residual_refresh_staged_bytes": null,
+        "metal_residual_refresh_unsupported_runs": null,
+        "minor_iterations": null,
+        "modeled_source_read_bytes": null,
+        "mosaic_cube_slab_active_planes": null,
+        "mosaic_cube_slab_count": null,
+        "mosaic_cube_slab_executor_capabilities": null,
+        "mosaic_cube_slab_executor_elapsed_ms": null,
+        "mosaic_cube_slab_executor_summary_count": 0,
+        "mosaic_cube_slab_executor_worker_max_ms": null,
+        "mosaic_cube_slab_executor_worker_sum_ms": null,
+        "mosaic_cube_slab_nplanes": null,
+        "mosaic_cube_slab_plane_count": 0,
+        "mosaic_cube_slab_plane_publish_ms": null,
+        "mosaic_cube_slab_plane_worker_sum_ms": null,
+        "mosaic_cube_slab_product_state": null,
+        "mosaic_cube_slab_product_write_ms": null,
+        "mosaic_cube_slab_schedule": null,
+        "mosaic_cube_slab_source_reuse": null,
+        "mosaic_cube_slab_worker_count": null,
+        "peak_rss_bytes": null,
+        "planned_active_bytes": null,
+        "requested_imaging_fft_backend": null,
+        "resolved_backend": null,
+        "resolved_grid_threads": null,
+        "resolved_initial_dirty_backend": null,
+        "resolved_minor_cycle_backend": null,
+        "resolved_minor_cycle_backend_reason": null,
+        "resolved_residual_backend": null,
+        "resolved_tile_anchor": null,
+        "row_block_rows": null,
+        "selected_channels": null,
+        "single_plane_reason": {
+          "cpu_multi_worker": null,
+          "gpu_metal": null
+        },
+        "source_read_ahead_consumer_ms": null,
+        "source_read_ahead_consumer_recv_blocked_ms": null,
+        "source_read_ahead_effective_read_bandwidth_mib_s": null,
+        "source_read_ahead_enabled": null,
+        "source_read_ahead_live_row_block_high_water": null,
+        "source_read_ahead_max_live_row_blocks": null,
+        "source_read_ahead_mode": null,
+        "source_read_ahead_modes": [],
+        "source_read_ahead_producer_consumer_overlap_ms": null,
+        "source_read_ahead_producer_send_blocked_ms": null,
+        "source_read_ahead_queue_capacity": null,
+        "source_read_ahead_row_blocks": null,
+        "source_read_ahead_source_bytes": null,
+        "source_read_ahead_source_prepare_ms": null,
+        "source_read_ahead_source_read_ms": null,
+        "source_read_ahead_source_route_ms": null,
+        "source_read_ahead_streamed_samples": null,
+        "source_read_ahead_summary_count": 0,
+        "source_stream_buffer_bytes": null,
+        "spectral_active_planes": null,
+        "spectral_backend": null,
+        "spectral_best_modeled_active_planes": null,
+        "spectral_best_modeled_output_spill_io_bytes": null,
+        "spectral_best_modeled_product_write_bytes": null,
+        "spectral_best_modeled_schedule": null,
+        "spectral_best_modeled_slab_count": null,
+        "spectral_best_modeled_source_channel_visits": null,
+        "spectral_best_modeled_source_read_bytes": null,
+        "spectral_best_modeled_total_io_bytes": null,
+        "spectral_best_modeled_visibility_cache_io_bytes": null,
+        "spectral_cache_budget_bytes": null,
+        "spectral_candidate_io_costs": null,
+        "spectral_data_channel_read_granularity": null,
+        "spectral_executor_capabilities": null,
+        "spectral_flag_channel_read_granularity": null,
+        "spectral_full_source_channel_count": null,
+        "spectral_max_slab_source_channels": null,
+        "spectral_memory_max_current_rss_bytes": null,
+        "spectral_memory_max_delta_from_baseline_bytes": null,
+        "spectral_memory_max_delta_from_previous_bytes": null,
+        "spectral_memory_max_delta_slab_id": null,
+        "spectral_memory_max_delta_stage": null,
+        "spectral_memory_max_peak_rss_bytes": null,
+        "spectral_modeled_full_cache_source_read_bytes": null,
+        "spectral_modeled_no_cache_source_read_bytes": null,
+        "spectral_modeled_output_spill_io_bytes": null,
+        "spectral_modeled_output_spill_read_bytes": null,
+        "spectral_modeled_output_spill_write_bytes": null,
+        "spectral_modeled_product_write_bytes": null,
+        "spectral_modeled_source_read_bytes": null,
+        "spectral_modeled_total_io_bytes": null,
+        "spectral_modeled_visibility_cache_fill_bytes": null,
+        "spectral_modeled_visibility_cache_io_bytes": null,
+        "spectral_modeled_visibility_cache_read_bytes": null,
+        "spectral_prepared_residency": null,
+        "spectral_product_batch_planes": null,
+        "spectral_schedule": null,
+        "spectral_slab_count": null,
+        "spectral_source_cell_channel_count": null,
+        "spectral_source_channel_visits": null,
+        "spectral_visibility_cache_bytes": null,
+        "spectral_visibility_cache_policy": null,
+        "spectral_visibility_cache_saved_read_bytes": null,
+        "spectral_visibility_resident_cache_layout": null,
+        "spectral_visibility_row_cache_overhead_bytes": null,
+        "spectral_visibility_row_channel_bytes": null,
+        "spectral_visibility_row_fixed_bytes": null,
+        "spectral_visibility_row_fixed_resident_bytes": null,
+        "spectral_weight_spectrum_channel_read_granularity": null,
+        "visibility_geometry_cache_budget_bytes": null,
+        "visibility_geometry_cache_bypasses": null,
+        "visibility_geometry_cache_elapsed_ms": null,
+        "visibility_geometry_cache_enabled": null,
+        "visibility_geometry_cache_entries": null,
+        "visibility_geometry_cache_fills": null,
+        "visibility_geometry_cache_hits": null,
+        "visibility_geometry_cache_misses": null,
+        "visibility_geometry_cache_rejected_model_dependent": null,
+        "visibility_geometry_cache_resident_bytes": null,
+        "visibility_geometry_cache_shares": null,
+        "visibility_row_cache_overhead_bytes": null,
+        "visibility_row_channel_bytes": null,
+        "visibility_row_fixed_bytes": null,
+        "visibility_row_fixed_resident_bytes": null
+      },
+      "visibility_geometry_cache": [],
+      "worker_diagnostics": []
+    },
+    "benchmark_features": {
+      "backend": {
+        "cpu_multi_worker_reason": null,
+        "cube_per_plane_backend": null,
+        "cube_per_plane_fallback_reasons": null,
+        "cube_per_plane_fixed_tile_eligible": null,
+        "cube_per_plane_grid_threads": null,
+        "cube_per_plane_metal_eligible": null,
+        "cube_per_plane_phase": null,
+        "cube_per_plane_workers": null,
+        "dirty_product_fft_fallback_used": null,
+        "dirty_product_fft_requested_backend": null,
+        "dirty_product_fft_selected_backend": null,
+        "dirty_product_gpu_resident_fallback_used": null,
+        "dirty_product_gpu_resident_reason": null,
+        "dirty_product_gpu_resident_requested_backend": null,
+        "dirty_product_gpu_resident_selected_backend": null,
+        "gpu_metal_reason": null,
+        "mosaic_cube_slab_active_planes": null,
+        "mosaic_cube_slab_count": null,
+        "mosaic_cube_slab_executor_capabilities": null,
+        "mosaic_cube_slab_nplanes": null,
+        "mosaic_cube_slab_product_state": null,
+        "mosaic_cube_slab_schedule": null,
+        "mosaic_cube_slab_source_reuse": null,
+        "mosaic_cube_slab_worker_count": null,
+        "requested_acceleration": "auto",
+        "requested_imaging_fft_backend": null,
+        "resolved_backend": null,
+        "resolved_grid_threads": null,
+        "resolved_initial_dirty_backend": null,
+        "resolved_residual_backend": null,
+        "resolved_tile_anchor": null
+      },
+      "image": {
+        "image_work": 22937600,
+        "imsize_x": 1280,
+        "imsize_y": 1280,
+        "output_planes": 2,
+        "product_count": 7
+      },
+      "mode_cost": {
+        "actual_major_cycles": null,
+        "actual_minor_iterations": null,
+        "cycleniter": "25",
+        "deconvolver": "mtmfs",
+        "gridder": "mosaic",
+        "mosaic_field_count": 7,
+        "mtmfs_nterms": 2,
+        "multiscale_scale_count": null,
+        "niter": 0,
+        "specmode": "mfs",
+        "weighting": "briggs",
+        "wprojplanes": null
+      },
+      "resources": {
+        "available_parallelism": 10,
+        "dirty_product_fft_requested_backend": null,
+        "dirty_product_fft_selected_backend": null,
+        "dirty_product_fft_total_ms": null,
+        "dirty_product_gpu_resident_device_exec_ms": null,
+        "dirty_product_gpu_resident_exec_ms": null,
+        "dirty_product_gpu_resident_pack_ms": null,
+        "dirty_product_gpu_resident_plan_ms": null,
+        "dirty_product_gpu_resident_postprocess_ms": null,
+        "dirty_product_gpu_resident_sync_ms": null,
+        "dirty_product_gpu_resident_total_ms": null,
+        "dirty_product_gpu_resident_transfer_from_device_ms": null,
+        "dirty_product_gpu_resident_transfer_to_device_ms": null,
+        "logical_cores": 10,
+        "memory_headroom_bytes": null,
+        "memory_target_bytes": null,
+        "metal_device": null,
+        "metal_grouped_input_cache": null,
+        "peak_rss_bytes": null,
+        "physical_cores": 10,
+        "physical_memory_bytes": 34359738368,
+        "planned_active_bytes": null,
+        "row_block_count": null,
+        "row_block_rows": null,
+        "source_read_ahead_consumer_ms": null,
+        "source_read_ahead_consumer_recv_blocked_ms": null,
+        "source_read_ahead_effective_read_bandwidth_mib_s": null,
+        "source_read_ahead_enabled": null,
+        "source_read_ahead_live_row_block_high_water": null,
+        "source_read_ahead_mode": null,
+        "source_read_ahead_modes": [],
+        "source_read_ahead_producer_consumer_overlap_ms": null,
+        "source_read_ahead_producer_send_blocked_ms": null,
+        "source_read_ahead_queue_capacity": null,
+        "source_read_ahead_row_blocks": null,
+        "source_read_ahead_source_bytes": null,
+        "source_read_ahead_source_prepare_ms": null,
+        "source_read_ahead_source_read_ms": null,
+        "source_read_ahead_source_route_ms": null,
+        "source_read_ahead_summary_count": 0
+      },
+      "schema_version": 1,
+      "visibility": {
+        "correlation_source": "scalar-plane-after-polarization-collapse",
+        "correlations": 1,
+        "flagged_fraction": null,
+        "gridded_samples": null,
+        "selected_channels": 16,
+        "selected_rows": null,
+        "source_stream_throughput_samples_per_s": null,
+        "visibility_work": null
+      }
+    },
+    "casa": {
+      "reason": "CASA tclean timing section was not reported",
+      "status": "missing",
+      "timings_seconds": {
+        "median": null,
+        "runs": []
+      }
+    },
+    "casa_clean_control_diagnostics": [],
+    "product_comparison": {
+      "beam_info": {
+        "psf_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.psf",
+        "status": "missing_psf"
+      },
+      "input": "/private/tmp/wave352-formula-mtmfs-comparison/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938.comparison-input.json",
+      "log": "/private/tmp/wave352-formula-mtmfs-comparison/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938.comparison.log",
+      "panel_dir": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/comparisons/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938/panels",
+      "products": {
+        ".image.tt0": {
+          "casa_max": 117.55812072753906,
+          "casa_min": -21.744272232055664,
+          "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.image.tt0",
+          "casa_peak_abs": {
+            "abs_value": 117.55812072753906,
+            "location": [
+              639,
+              638,
+              0,
+              0
+            ],
+            "value": 117.55812072753906
+          },
+          "casa_rms": 3.9558101641607455,
+          "correlation": 0.9999999999999564,
+          "diff_abs_max": 7.62939453125e-05,
+          "diff_abs_max_over_casa_peak": 6.489891539634611e-07,
+          "diff_peak_abs": {
+            "abs_value": 7.62939453125e-05,
+            "location": [
+              638,
+              640,
+              0,
+              0
+            ],
+            "value": -7.62939453125e-05
+          },
+          "diff_rms": 2.2193758377088706e-06,
+          "diff_rms_over_casa_rms": 5.61042048432e-07,
+          "finite_overlap": 1638400,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -21.744272232055664,
+              117.55812072753906
+            ],
+            "difference_color_limits": [
+              -7.62939453125e-05,
+              7.62939453125e-05
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "trc": [
+                1279,
+                1279,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "display_shape": [
+              1280,
+              1280,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/comparisons/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938/panels/image_tt0.review.png",
+            "status": "written",
+            "structured_difference_label": "good",
+            "structured_difference_summary": ".image.tt0: good; amplitude and beam-scale structure checks passed.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 1280,
+                "x_start": 0,
+                "y_end": 1280,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 117.55806732177734,
+          "rust_min": -21.744260787963867,
+          "rust_path": "/private/tmp/wave352-formula-artifacts-unsandboxed-v2/products/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f/rust/rust.image.tt0",
+          "rust_peak_abs": {
+            "abs_value": 117.55806732177734,
+            "location": [
+              639,
+              638,
+              0,
+              0
+            ],
+            "value": 117.55806732177734
+          },
+          "rust_rms": 3.95580847776168,
+          "sample_stride": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "sampled_elements": 1638400,
+          "shape": [
+            1280,
+            1280,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 1638400,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 2.115858288252864e-06,
+                "block_mean_rms_over_mean_pixel_rms": 2.1584084957042933,
+                "block_side_pixels": 2,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 9.802863046841627e-07,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 409600,
+                "normalized_block_mean_rms": 5.348735658304167e-07
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 2.0733962146058517e-06,
+                "block_mean_rms_over_mean_pixel_rms": 2.0626545911728105,
+                "block_side_pixels": 4,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 1.0052076695143289e-06,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 102400,
+                "normalized_block_mean_rms": 5.241394628565899e-07
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 2.0269405465009983e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.9701328402104188,
+                "block_side_pixels": 8,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 1.0288344547794616e-06,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 25600,
+                "normalized_block_mean_rms": 5.123958082884973e-07
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 1.902136420762231e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.7776760656390642,
+                "block_side_pixels": 16,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 1.0700129554134622e-06,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 6400,
+                "normalized_block_mean_rms": 4.808462342291855e-07
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 1.5330638753610198e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.330644866655035,
+                "block_side_pixels": 32,
+                "max_block_robust_z": 463.18792844086954,
+                "mean_pixel_rms_in_blocks": 1.1521209856802921e-06,
+                "median_abs_block_mean": 2.7253891587974977e-08,
+                "n_blocks": 1600,
+                "normalized_block_mean_rms": 3.8754738264500884e-07
+              }
+            ],
+            "beam_block_side_pixels": 1,
+            "block_rms_decay_slope_vs_independent_beams": -0.052701275346560224,
+            "classification": {
+              "amplitude": "good",
+              "overall": "good",
+              "structure": "good",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "bad",
+                "large_scale_power_fraction": "bad",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": true,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 2.2193758377088706e-06,
+            "large_scale_power_fraction": {
+              "fraction": 0.8840972393726165,
+              "frequency_cutoff_cycles_per_pixel": 0.125,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 0.00020017303514929807,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 1638400,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 3.9558101641607455
+            },
+            "normalized_diff_rms": 5.61042048432e-07,
+            "review": {
+              "checks": [
+                {
+                  "label": "good",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 5.61042048432e-07
+                },
+                {
+                  "label": "bad",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.052701275346560224
+                },
+                {
+                  "label": "bad",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.8840972393726165
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 0.00020017303514929807
+                }
+              ],
+              "label": "good",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".image.tt0: good; amplitude and beam-scale structure checks passed."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": 3.859495488529081e-10,
+                "dy_pixels": -7.856474928602992e-08,
+                "offset": -5.430782209514676e-08,
+                "scale": -4.263165998515747e-07
+              },
+              "diff_rms": 2.2193758377088706e-06,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.5778130581904057,
+              "residual_rms": 1.4416417601923446e-06,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        },
+        ".image.tt1": {
+          "casa_max": 13182.009765625,
+          "casa_min": -9913.1591796875,
+          "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.image.tt1",
+          "casa_peak_abs": {
+            "abs_value": 13182.009765625,
+            "location": [
+              627,
+              631,
+              0,
+              0
+            ],
+            "value": 13182.009765625
+          },
+          "casa_rms": 947.2526757947238,
+          "correlation": 1.0,
+          "diff_abs_max": 0.0093994140625,
+          "diff_abs_max_over_casa_peak": 7.1304863443593e-07,
+          "diff_peak_abs": {
+            "abs_value": 0.0093994140625,
+            "location": [
+              155,
+              713,
+              0,
+              0
+            ],
+            "value": 0.0093994140625
+          },
+          "diff_rms": 0.0008648905074167991,
+          "diff_rms_over_casa_rms": 9.13051532624255e-07,
+          "finite_overlap": 1638400,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -9913.1591796875,
+              13182.009765625
+            ],
+            "difference_color_limits": [
+              -0.0093994140625,
+              0.0093994140625
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "trc": [
+                1279,
+                1279,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "display_shape": [
+              1280,
+              1280,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/comparisons/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938/panels/image_tt1.review.png",
+            "status": "written",
+            "structured_difference_label": "good",
+            "structured_difference_summary": ".image.tt1: good; amplitude and beam-scale structure checks passed.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 1280,
+                "x_start": 0,
+                "y_end": 1280,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 13182.00390625,
+          "rust_min": -9913.1533203125,
+          "rust_path": "/private/tmp/wave352-formula-artifacts-unsandboxed-v2/products/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f/rust/rust.image.tt1",
+          "rust_peak_abs": {
+            "abs_value": 13182.00390625,
+            "location": [
+              627,
+              631,
+              0,
+              0
+            ],
+            "value": 13182.00390625
+          },
+          "rust_rms": 947.2522618133762,
+          "sample_stride": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "sampled_elements": 1638400,
+          "shape": [
+            1280,
+            1280,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 1638400,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 0.0008430276377344448,
+                "block_mean_rms_over_mean_pixel_rms": 1.9282544572207692,
+                "block_side_pixels": 2,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 0.0004371972975752987,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 409600,
+                "normalized_block_mean_rms": 8.89971239223118e-07
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 0.000831080751434978,
+                "block_mean_rms_over_mean_pixel_rms": 1.8653884779736376,
+                "block_side_pixels": 4,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 0.00044552690297399984,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 102400,
+                "normalized_block_mean_rms": 8.773590961226052e-07
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 0.0008136613876815923,
+                "block_mean_rms_over_mean_pixel_rms": 1.784710326402643,
+                "block_side_pixels": 8,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 0.00045590669569422587,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 25600,
+                "normalized_block_mean_rms": 8.589697432091692e-07
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 0.000768686639306002,
+                "block_mean_rms_over_mean_pixel_rms": 1.6156587470807469,
+                "block_side_pixels": 16,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 0.00047577289492283165,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 6400,
+                "normalized_block_mean_rms": 8.114905969107884e-07
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 0.0006379402266778866,
+                "block_mean_rms_over_mean_pixel_rms": 1.240631693108853,
+                "block_side_pixels": 32,
+                "max_block_robust_z": 218.99858002876067,
+                "mean_pixel_rms_in_blocks": 0.0005142059728292897,
+                "median_abs_block_mean": 1.2744043488055468e-05,
+                "n_blocks": 1600,
+                "normalized_block_mean_rms": 6.734636311717663e-07
+              }
+            ],
+            "beam_block_side_pixels": 1,
+            "block_rms_decay_slope_vs_independent_beams": -0.04584552102444739,
+            "classification": {
+              "amplitude": "good",
+              "overall": "good",
+              "structure": "good",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "bad",
+                "large_scale_power_fraction": "bad",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": true,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 0.0008648905074167991,
+            "large_scale_power_fraction": {
+              "fraction": 0.9361989231693368,
+              "frequency_cutoff_cycles_per_pixel": 0.125,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 0.0009708016789810037,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 1638400,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 947.2526757947238
+            },
+            "normalized_diff_rms": 9.13051532624255e-07,
+            "review": {
+              "checks": [
+                {
+                  "label": "good",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 9.13051532624255e-07
+                },
+                {
+                  "label": "bad",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.04584552102444739
+                },
+                {
+                  "label": "bad",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.9361989231693368
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 0.0009708016789810037
+                }
+              ],
+              "label": "good",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".image.tt1: good; amplitude and beam-scale structure checks passed."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": -1.667286842949578e-07,
+                "dy_pixels": -8.350726129426197e-08,
+                "offset": 2.6116013592916746e-06,
+                "scale": -4.370427098734964e-07
+              },
+              "diff_rms": 0.0008648905074167991,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.2292351597313077,
+              "residual_rms": 0.0007593143048192436,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        },
+        ".psf.tt0": {
+          "casa_max": 1.0,
+          "casa_min": -0.022943982854485512,
+          "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.psf.tt0",
+          "casa_peak_abs": {
+            "abs_value": 1.0,
+            "location": [
+              640,
+              640,
+              0,
+              0
+            ],
+            "value": 1.0
+          },
+          "casa_rms": 0.0022617072642303108,
+          "correlation": 0.9999999999999359,
+          "diff_abs_max": 1.1920928955078125e-07,
+          "diff_abs_max_over_casa_peak": 1.1920928955078125e-07,
+          "diff_peak_abs": {
+            "abs_value": 1.1920928955078125e-07,
+            "location": [
+              641,
+              641,
+              0,
+              0
+            ],
+            "value": 1.1920928955078125e-07
+          },
+          "diff_rms": 6.238858164271562e-10,
+          "diff_rms_over_casa_rms": 2.758472885921746e-07,
+          "finite_overlap": 1638400,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -0.02294398471713066,
+              1.0
+            ],
+            "difference_color_limits": [
+              -1.1920928955078125e-07,
+              1.1920928955078125e-07
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "trc": [
+                1279,
+                1279,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "display_shape": [
+              1280,
+              1280,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/comparisons/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938/panels/psf_tt0.review.png",
+            "status": "written",
+            "structured_difference_label": "good",
+            "structured_difference_summary": ".psf.tt0: good; amplitude and beam-scale structure checks passed.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 1280,
+                "x_start": 0,
+                "y_end": 1280,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 1.0,
+          "rust_min": -0.02294398471713066,
+          "rust_path": "/private/tmp/wave352-formula-artifacts-unsandboxed-v2/products/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f/rust/rust.psf.tt0",
+          "rust_peak_abs": {
+            "abs_value": 1.0,
+            "location": [
+              640,
+              640,
+              0,
+              0
+            ],
+            "value": 1.0
+          },
+          "rust_rms": 0.002261707254639068,
+          "sample_stride": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "sampled_elements": 1638400,
+          "shape": [
+            1280,
+            1280,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 1638400,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 5.187073752462851e-10,
+                "block_mean_rms_over_mean_pixel_rms": 1.0612494157865127,
+                "block_side_pixels": 2,
+                "max_block_robust_z": 92.09047169387112,
+                "mean_pixel_rms_in_blocks": 4.887704695336496e-10,
+                "median_abs_block_mean": 3.2741809263825417e-10,
+                "n_blocks": 409600,
+                "normalized_block_mean_rms": 2.293432856894538e-07
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 4.1456414711201857e-10,
+                "block_mean_rms_over_mean_pixel_rms": 0.7907957287362795,
+                "block_side_pixels": 4,
+                "max_block_robust_z": 29.59668711506144,
+                "mean_pixel_rms_in_blocks": 5.242367049383376e-10,
+                "median_abs_block_mean": 2.705191626262149e-10,
+                "n_blocks": 102400,
+                "normalized_block_mean_rms": 1.832969958882368e-07
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 2.837109669214432e-10,
+                "block_mean_rms_over_mean_pixel_rms": 0.5133499252476331,
+                "block_side_pixels": 8,
+                "max_block_robust_z": 9.60215325004513,
+                "mean_pixel_rms_in_blocks": 5.526658385789865e-10,
+                "median_abs_block_mean": 1.8743939733667503e-10,
+                "n_blocks": 25600,
+                "normalized_block_mean_rms": 1.2544106454819823e-07
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 1.6432627521967137e-10,
+                "block_mean_rms_over_mean_pixel_rms": 0.2878427430842366,
+                "block_side_pixels": 16,
+                "max_block_robust_z": 4.233124416007007,
+                "mean_pixel_rms_in_blocks": 5.708890676169718e-10,
+                "median_abs_block_mean": 1.102598012892031e-10,
+                "n_blocks": 6400,
+                "normalized_block_mean_rms": 7.265585507839531e-08
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 9.05523043368368e-11,
+                "block_mean_rms_over_mean_pixel_rms": 0.15505777812295254,
+                "block_side_pixels": 32,
+                "max_block_robust_z": 3.4390219016386614,
+                "mean_pixel_rms_in_blocks": 5.839907254767552e-10,
+                "median_abs_block_mean": 5.945249847982836e-11,
+                "n_blocks": 1600,
+                "normalized_block_mean_rms": 4.003714617225362e-08
+              }
+            ],
+            "beam_block_side_pixels": 1,
+            "block_rms_decay_slope_vs_independent_beams": -0.3185613708944437,
+            "classification": {
+              "amplitude": "good",
+              "overall": "good",
+              "structure": "good",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "investigate",
+                "large_scale_power_fraction": "bad",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": true,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 6.238858164271562e-10,
+            "large_scale_power_fraction": {
+              "fraction": 0.5079952895727766,
+              "frequency_cutoff_cycles_per_pixel": 0.125,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 5.267539373021712e-06,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 1638400,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 0.0022617072642303108
+            },
+            "normalized_diff_rms": 2.758472885921746e-07,
+            "review": {
+              "checks": [
+                {
+                  "label": "good",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 2.758472885921746e-07
+                },
+                {
+                  "label": "investigate",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.3185613708944437
+                },
+                {
+                  "label": "bad",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.5079952895727766
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 5.267539373021712e-06
+                }
+              ],
+              "label": "good",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".psf.tt0: good; amplitude and beam-scale structure checks passed."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": -7.13712576949528e-08,
+                "dy_pixels": 3.345897509510997e-08,
+                "offset": -8.701932686221531e-13,
+                "scale": -4.240758503124396e-09
+              },
+              "diff_rms": 6.238858164271562e-10,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.018221952137333575,
+              "residual_rms": 6.181748737358451e-10,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        },
+        ".psf.tt1": {
+          "casa_max": 2.5264003511438204e-07,
+          "casa_min": -2.5949324822249764e-07,
+          "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.psf.tt1",
+          "casa_peak_abs": {
+            "abs_value": 2.5949324822249764e-07,
+            "location": [
+              642,
+              638,
+              0,
+              0
+            ],
+            "value": -2.5949324822249764e-07
+          },
+          "casa_rms": 1.7438781681934432e-09,
+          "correlation": 0.9999999999998885,
+          "diff_abs_max": 4.263256414560601e-14,
+          "diff_abs_max_over_casa_peak": 1.6429161235459782e-07,
+          "diff_peak_abs": {
+            "abs_value": 4.263256414560601e-14,
+            "location": [
+              639,
+              642,
+              0,
+              0
+            ],
+            "value": -4.263256414560601e-14
+          },
+          "diff_rms": 7.616774040080722e-16,
+          "diff_rms_over_casa_rms": 4.3677214263031105e-07,
+          "finite_overlap": 1638400,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -2.5949324822249764e-07,
+              2.5264003511438204e-07
+            ],
+            "difference_color_limits": [
+              -4.263256414560601e-14,
+              4.263256414560601e-14
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "trc": [
+                1279,
+                1279,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "display_shape": [
+              1280,
+              1280,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/comparisons/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938/panels/psf_tt1.review.png",
+            "status": "written",
+            "structured_difference_label": "good",
+            "structured_difference_summary": ".psf.tt1: good; amplitude and beam-scale structure checks passed.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 1280,
+                "x_start": 0,
+                "y_end": 1280,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 2.5264003511438204e-07,
+          "rust_min": -2.5949324822249764e-07,
+          "rust_path": "/private/tmp/wave352-formula-artifacts-unsandboxed-v2/products/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f/rust/rust.psf.tt1",
+          "rust_peak_abs": {
+            "abs_value": 2.5949324822249764e-07,
+            "location": [
+              642,
+              638,
+              0,
+              0
+            ],
+            "value": -2.5949324822249764e-07
+          },
+          "rust_rms": 1.743878045311676e-09,
+          "sample_stride": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "sampled_elements": 1638400,
+          "shape": [
+            1280,
+            1280,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 1638400,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 6.488528953463538e-16,
+                "block_mean_rms_over_mean_pixel_rms": 0.9815847645606666,
+                "block_side_pixels": 2,
+                "max_block_robust_z": 21.057272490976633,
+                "mean_pixel_rms_in_blocks": 6.610258418556084e-16,
+                "median_abs_block_mean": 4.2674197509029455e-16,
+                "n_blocks": 409600,
+                "normalized_block_mean_rms": 3.720746708002703e-07
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 4.844202581944229e-16,
+                "block_mean_rms_over_mean_pixel_rms": 0.6859326362750576,
+                "block_side_pixels": 4,
+                "max_block_robust_z": 12.585069839430687,
+                "mean_pixel_rms_in_blocks": 7.062213292912502e-16,
+                "median_abs_block_mean": 3.2131009007965727e-16,
+                "n_blocks": 102400,
+                "normalized_block_mean_rms": 2.777833148150792e-07
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 3.057728807527555e-16,
+                "block_mean_rms_over_mean_pixel_rms": 0.4177734995181565,
+                "block_side_pixels": 8,
+                "max_block_robust_z": 7.334105700112202,
+                "mean_pixel_rms_in_blocks": 7.319106671567772e-16,
+                "median_abs_block_mean": 2.0216071824647342e-16,
+                "n_blocks": 25600,
+                "normalized_block_mean_rms": 1.7534073556842475e-07
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 1.7500671512142794e-16,
+                "block_mean_rms_over_mean_pixel_rms": 0.23515325867897952,
+                "block_side_pixels": 16,
+                "max_block_robust_z": 5.746161669440096,
+                "mean_pixel_rms_in_blocks": 7.442240694624568e-16,
+                "median_abs_block_mean": 1.1427032309065617e-16,
+                "n_blocks": 6400,
+                "normalized_block_mean_rms": 1.0035489767196567e-07
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 9.641471119149015e-17,
+                "block_mean_rms_over_mean_pixel_rms": 0.12858956865919569,
+                "block_side_pixels": 32,
+                "max_block_robust_z": 5.897537271765602,
+                "mean_pixel_rms_in_blocks": 7.497864111125576e-16,
+                "median_abs_block_mean": 6.23773988250482e-17,
+                "n_blocks": 1600,
+                "normalized_block_mean_rms": 5.528752693278465e-08
+              }
+            ],
+            "beam_block_side_pixels": 1,
+            "block_rms_decay_slope_vs_independent_beams": -0.3484990695849095,
+            "classification": {
+              "amplitude": "good",
+              "overall": "good",
+              "structure": "good",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "investigate",
+                "large_scale_power_fraction": "investigate",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": true,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 7.616774040080722e-16,
+            "large_scale_power_fraction": {
+              "fraction": 0.4481626098301237,
+              "frequency_cutoff_cycles_per_pixel": 0.125,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 1.1741213691629504e-05,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 1638400,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 1.7438781681934432e-09
+            },
+            "normalized_diff_rms": 4.3677214263031105e-07,
+            "review": {
+              "checks": [
+                {
+                  "label": "good",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 4.3677214263031105e-07
+                },
+                {
+                  "label": "investigate",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.3484990695849095
+                },
+                {
+                  "label": "investigate",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.4481626098301237
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 1.1741213691629504e-05
+                }
+              ],
+              "label": "good",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".psf.tt1: good; amplitude and beam-scale structure checks passed."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": -2.0908166678675015e-08,
+                "dy_pixels": 2.0532530828633566e-10,
+                "offset": 6.111586480997363e-19,
+                "scale": -7.046475278477853e-08
+              },
+              "diff_rms": 7.616774040080722e-16,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.02691571309751173,
+              "residual_rms": 7.513566998037854e-16,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        },
+        ".psf.tt2": {
+          "casa_max": 1.608634225824801e-09,
+          "casa_min": -3.694237971085812e-11,
+          "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.psf.tt2",
+          "casa_peak_abs": {
+            "abs_value": 1.608634225824801e-09,
+            "location": [
+              640,
+              640,
+              0,
+              0
+            ],
+            "value": 1.608634225824801e-09
+          },
+          "casa_rms": 3.638114450104748e-12,
+          "correlation": 0.99999999999997,
+          "diff_abs_max": 1.1102230246251565e-16,
+          "diff_abs_max_over_casa_peak": 6.901649901523808e-08,
+          "diff_peak_abs": {
+            "abs_value": 1.1102230246251565e-16,
+            "location": [
+              639,
+              639,
+              0,
+              0
+            ],
+            "value": 1.1102230246251565e-16
+          },
+          "diff_rms": 9.828895211964604e-19,
+          "diff_rms_over_casa_rms": 2.701645411864823e-07,
+          "finite_overlap": 1638400,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -3.694237971085812e-11,
+              1.608634225824801e-09
+            ],
+            "difference_color_limits": [
+              -1.1102230246251565e-16,
+              1.1102230246251565e-16
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "trc": [
+                1279,
+                1279,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "display_shape": [
+              1280,
+              1280,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/comparisons/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938/panels/psf_tt2.review.png",
+            "status": "written",
+            "structured_difference_label": "good",
+            "structured_difference_summary": ".psf.tt2: good; amplitude and beam-scale structure checks passed.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 1280,
+                "x_start": 0,
+                "y_end": 1280,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 1.6086341148024985e-09,
+          "rust_min": -3.694237971085812e-11,
+          "rust_path": "/private/tmp/wave352-formula-artifacts-unsandboxed-v2/products/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f/rust/rust.psf.tt2",
+          "rust_peak_abs": {
+            "abs_value": 1.6086341148024985e-09,
+            "location": [
+              640,
+              640,
+              0,
+              0
+            ],
+            "value": 1.6086341148024985e-09
+          },
+          "rust_rms": 3.638114317816556e-12,
+          "sample_stride": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "sampled_elements": 1638400,
+          "shape": [
+            1280,
+            1280,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 1638400,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 8.2218414649489205e-19,
+                "block_mean_rms_over_mean_pixel_rms": 1.0511773427173672,
+                "block_side_pixels": 2,
+                "max_block_robust_z": 70.83882437990087,
+                "mean_pixel_rms_in_blocks": 7.82155506100891e-19,
+                "median_abs_block_mean": 5.285485590866834e-19,
+                "n_blocks": 409600,
+                "normalized_block_mean_rms": 2.2599183114517464e-07
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 6.627788932190829e-19,
+                "block_mean_rms_over_mean_pixel_rms": 0.7904616625864432,
+                "block_side_pixels": 4,
+                "max_block_robust_z": 32.95145851241309,
+                "mean_pixel_rms_in_blocks": 8.384706363246336e-19,
+                "median_abs_block_mean": 4.359638874848481e-19,
+                "n_blocks": 102400,
+                "normalized_block_mean_rms": 1.8217648243583988e-07
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 4.506301861277358e-19,
+                "block_mean_rms_over_mean_pixel_rms": 0.5101310507447956,
+                "block_side_pixels": 8,
+                "max_block_robust_z": 10.08191025236721,
+                "mean_pixel_rms_in_blocks": 8.833616096683626e-19,
+                "median_abs_block_mean": 2.9741299603859424e-19,
+                "n_blocks": 25600,
+                "normalized_block_mean_rms": 1.2386366407872666e-07
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 2.6296968935049265e-19,
+                "block_mean_rms_over_mean_pixel_rms": 0.28850816317876915,
+                "block_side_pixels": 16,
+                "max_block_robust_z": 5.176441207337784,
+                "mean_pixel_rms_in_blocks": 9.114809316072904e-19,
+                "median_abs_block_mean": 1.795901392189711e-19,
+                "n_blocks": 6400,
+                "normalized_block_mean_rms": 7.228186274978823e-08
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 1.3286960271045125e-19,
+                "block_mean_rms_over_mean_pixel_rms": 0.14283046733398572,
+                "block_side_pixels": 32,
+                "max_block_robust_z": 4.5071329534916655,
+                "mean_pixel_rms_in_blocks": 9.302609253511535e-19,
+                "median_abs_block_mean": 8.947543215739343e-20,
+                "n_blocks": 1600,
+                "normalized_block_mean_rms": 3.652155657352278e-08
+              }
+            ],
+            "beam_block_side_pixels": 1,
+            "block_rms_decay_slope_vs_independent_beams": -0.32962660343105743,
+            "classification": {
+              "amplitude": "good",
+              "overall": "good",
+              "structure": "good",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "investigate",
+                "large_scale_power_fraction": "bad",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": true,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 9.828895211964604e-19,
+            "large_scale_power_fraction": {
+              "fraction": 0.5269556238046927,
+              "frequency_cutoff_cycles_per_pixel": 0.125,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 2.241467717878365e-06,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 1638400,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 3.638114450104748e-12
+            },
+            "normalized_diff_rms": 2.701645411864823e-07,
+            "review": {
+              "checks": [
+                {
+                  "label": "good",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 2.701645411864823e-07
+                },
+                {
+                  "label": "investigate",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.32962660343105743
+                },
+                {
+                  "label": "bad",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.5269556238046927
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 2.241467717878365e-06
+                }
+              ],
+              "label": "good",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".psf.tt2: good; amplitude and beam-scale structure checks passed."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": 6.063909270587042e-41,
+                "dy_pixels": -2.3007754514583827e-40,
+                "offset": 7.357730517567855e-22,
+                "scale": -7.512732435786898e-38
+              },
+              "diff_rms": 9.828895211964604e-19,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.0,
+              "residual_rms": 9.828892458033222e-19,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        },
+        ".residual.tt0": {
+          "casa_max": 117.55752563476562,
+          "casa_min": -21.744657516479492,
+          "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.residual.tt0",
+          "casa_peak_abs": {
+            "abs_value": 117.55752563476562,
+            "location": [
+              639,
+              638,
+              0,
+              0
+            ],
+            "value": 117.55752563476562
+          },
+          "casa_rms": 3.955801506261054,
+          "correlation": 0.9999999999999389,
+          "diff_abs_max": 7.62939453125e-05,
+          "diff_abs_max_over_casa_peak": 6.489924392380829e-07,
+          "diff_peak_abs": {
+            "abs_value": 7.62939453125e-05,
+            "location": [
+              638,
+              640,
+              0,
+              0
+            ],
+            "value": -7.62939453125e-05
+          },
+          "diff_rms": 2.219352595862998e-06,
+          "diff_rms_over_casa_rms": 5.610374009793748e-07,
+          "finite_overlap": 1638400,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -21.744657516479492,
+              117.55752563476562
+            ],
+            "difference_color_limits": [
+              -7.62939453125e-05,
+              7.62939453125e-05
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "trc": [
+                1279,
+                1279,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "display_shape": [
+              1280,
+              1280,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/comparisons/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938/panels/residual_tt0.review.png",
+            "status": "written",
+            "structured_difference_label": "good",
+            "structured_difference_summary": ".residual.tt0: good; amplitude and beam-scale structure checks passed.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 1280,
+                "x_start": 0,
+                "y_end": 1280,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 117.5574722290039,
+          "rust_min": -21.744646072387695,
+          "rust_path": "/private/tmp/wave352-formula-artifacts-unsandboxed-v2/products/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f/rust/rust.residual.tt0",
+          "rust_peak_abs": {
+            "abs_value": 117.5574722290039,
+            "location": [
+              639,
+              638,
+              0,
+              0
+            ],
+            "value": 117.5574722290039
+          },
+          "rust_rms": 3.9557998198806468,
+          "sample_stride": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "sampled_elements": 1638400,
+          "shape": [
+            1280,
+            1280,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 1638400,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 2.1158387040817556e-06,
+                "block_mean_rms_over_mean_pixel_rms": 2.1584004347878594,
+                "block_side_pixels": 2,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 9.802808922662736e-07,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 409600,
+                "normalized_block_mean_rms": 5.348697857394783e-07
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 2.0733777233893977e-06,
+                "block_mean_rms_over_mean_pixel_rms": 2.062648579553712,
+                "block_side_pixels": 4,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 1.005201634414141e-06,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 102400,
+                "normalized_block_mean_rms": 5.241359355639443e-07
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 2.0269216599350354e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.9701267034573355,
+                "block_side_pixels": 8,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 1.0288280730259792e-06,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 25600,
+                "normalized_block_mean_rms": 5.123921553513037e-07
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 1.9021176192444146e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.777668148322201,
+                "block_side_pixels": 16,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 1.0700071444941349e-06,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 6400,
+                "normalized_block_mean_rms": 4.808425337403389e-07
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 1.5330436422111978e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.3306357150395292,
+                "block_side_pixels": 32,
+                "max_block_robust_z": 464.18494156090793,
+                "mean_pixel_rms_in_blocks": 1.152113703911559e-06,
+                "median_abs_block_mean": 2.719535352468938e-08,
+                "n_blocks": 1600,
+                "normalized_block_mean_rms": 3.8754311604987496e-07
+              }
+            ],
+            "beam_block_side_pixels": 1,
+            "block_rms_decay_slope_vs_independent_beams": -0.05270191374643017,
+            "classification": {
+              "amplitude": "good",
+              "overall": "good",
+              "structure": "good",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "bad",
+                "large_scale_power_fraction": "bad",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": true,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 2.219352595862998e-06,
+            "large_scale_power_fraction": {
+              "fraction": 0.8840986640320221,
+              "frequency_cutoff_cycles_per_pixel": 0.125,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 0.0002001613157758264,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 1638400,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 3.955801506261054
+            },
+            "normalized_diff_rms": 5.610374009793748e-07,
+            "review": {
+              "checks": [
+                {
+                  "label": "good",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 5.610374009793748e-07
+                },
+                {
+                  "label": "bad",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.05270191374643017
+                },
+                {
+                  "label": "bad",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.8840986640320221
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 0.0002001613157758264
+                }
+              ],
+              "label": "good",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".residual.tt0: good; amplitude and beam-scale structure checks passed."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": 3.853732573057419e-10,
+                "dy_pixels": -7.850629818226299e-08,
+                "offset": -5.4305398805368876e-08,
+                "scale": -4.263128167375334e-07
+              },
+              "diff_rms": 2.219352595862998e-06,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.5778122303086906,
+              "residual_rms": 1.441628106989754e-06,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        },
+        ".residual.tt1": {
+          "casa_max": 2.0451507225516252e-05,
+          "casa_min": -1.536522358946968e-05,
+          "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust.residual.tt1",
+          "casa_peak_abs": {
+            "abs_value": 2.0451507225516252e-05,
+            "location": [
+              625,
+              630,
+              0,
+              0
+            ],
+            "value": 2.0451507225516252e-05
+          },
+          "casa_rms": 1.51697061829439e-06,
+          "correlation": 0.9999999999989753,
+          "diff_abs_max": 1.5347723092418164e-11,
+          "diff_abs_max_over_casa_peak": 7.504445967321973e-07,
+          "diff_peak_abs": {
+            "abs_value": 1.5347723092418164e-11,
+            "location": [
+              155,
+              713,
+              0,
+              0
+            ],
+            "value": 1.5347723092418164e-11
+          },
+          "diff_rms": 1.3768371276917856e-12,
+          "diff_rms_over_casa_rms": 9.076228050084689e-07,
+          "finite_overlap": 1638400,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -1.536522358946968e-05,
+              2.0451507225516252e-05
+            ],
+            "difference_color_limits": [
+              -1.5347723092418164e-11,
+              1.5347723092418164e-11
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "trc": [
+                1279,
+                1279,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "display_shape": [
+              1280,
+              1280,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/comparisons/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938/panels/residual_tt1.review.png",
+            "status": "written",
+            "structured_difference_label": "good",
+            "structured_difference_summary": ".residual.tt1: good; amplitude and beam-scale structure checks passed.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 1280,
+                "x_start": 0,
+                "y_end": 1280,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 2.045150176854804e-05,
+          "rust_min": -1.536521449452266e-05,
+          "rust_path": "/private/tmp/wave352-formula-artifacts-unsandboxed-v2/products/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f/rust/rust.residual.tt1",
+          "rust_peak_abs": {
+            "abs_value": 2.045150176854804e-05,
+            "location": [
+              625,
+              630,
+              0,
+              0
+            ],
+            "value": 2.045150176854804e-05
+          },
+          "rust_rms": 1.5169699631799386e-06,
+          "sample_stride": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "sampled_elements": 1638400,
+          "shape": [
+            1280,
+            1280,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 1638400,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 1.3439325585431648e-12,
+                "block_mean_rms_over_mean_pixel_rms": 1.9255746887638094,
+                "block_side_pixels": 2,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 6.979384213893825e-13,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 409600,
+                "normalized_block_mean_rms": 8.859318317280389e-07
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 1.3253960469892091e-12,
+                "block_mean_rms_over_mean_pixel_rms": 1.864189585128097,
+                "block_side_pixels": 4,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 7.109770688361265e-13,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 102400,
+                "normalized_block_mean_rms": 8.737124048450073e-07
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 1.297705191289692e-12,
+                "block_mean_rms_over_mean_pixel_rms": 1.7834745132247527,
+                "block_side_pixels": 8,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 7.276275504174563e-13,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 25600,
+                "normalized_block_mean_rms": 8.554583560417078e-07
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 1.2264481983857749e-12,
+                "block_mean_rms_over_mean_pixel_rms": 1.6142478329796774,
+                "block_side_pixels": 16,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 7.597645004248955e-13,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 6400,
+                "normalized_block_mean_rms": 8.084851371509984e-07
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 1.0174955231610473e-12,
+                "block_mean_rms_over_mean_pixel_rms": 1.2383626479480692,
+                "block_side_pixels": 32,
+                "max_block_robust_z": 221.9533719313108,
+                "mean_pixel_rms_in_blocks": 8.216458440885696e-13,
+                "median_abs_block_mean": 1.9740285794878076e-14,
+                "n_blocks": 1600,
+                "normalized_block_mean_rms": 6.7074174732868e-07
+              }
+            ],
+            "beam_block_side_pixels": 1,
+            "block_rms_decay_slope_vs_independent_beams": -0.04574069063865929,
+            "classification": {
+              "amplitude": "good",
+              "overall": "good",
+              "structure": "good",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "bad",
+                "large_scale_power_fraction": "bad",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": true,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 1.3768371276917856e-12,
+            "large_scale_power_fraction": {
+              "fraction": 0.9396775585152193,
+              "frequency_cutoff_cycles_per_pixel": 0.125,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 0.0010684441697530467,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 1638400,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 1.51697061829439e-06
+            },
+            "normalized_diff_rms": 9.076228050084689e-07,
+            "review": {
+              "checks": [
+                {
+                  "label": "good",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 9.076228050084689e-07
+                },
+                {
+                  "label": "bad",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.04574069063865929
+                },
+                {
+                  "label": "bad",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.9396775585152193
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 0.0010684441697530467
+                }
+              ],
+              "label": "good",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".residual.tt1: good; amplitude and beam-scale structure checks passed."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": -1.865466430662362e-07,
+                "dy_pixels": -5.482754139262739e-08,
+                "offset": 8.346716531704285e-15,
+                "scale": -4.318753380609077e-07
+              },
+              "diff_rms": 1.3768371276917856e-12,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.22656960711324126,
+              "residual_rms": 1.2108456135438714e-12,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        }
+      },
+      "status": "completed",
+      "structured_difference_review": {
+        "checks_by_product": {
+          "block_rms_decay_slope_vs_independent_beams": {
+            ".image.tt0": "bad",
+            ".image.tt1": "bad",
+            ".psf.tt0": "investigate",
+            ".psf.tt1": "investigate",
+            ".psf.tt2": "investigate",
+            ".residual.tt0": "bad",
+            ".residual.tt1": "bad"
+          },
+          "large_scale_power_fraction": {
+            ".image.tt0": "bad",
+            ".image.tt1": "bad",
+            ".psf.tt0": "bad",
+            ".psf.tt1": "investigate",
+            ".psf.tt2": "bad",
+            ".residual.tt0": "bad",
+            ".residual.tt1": "bad"
+          },
+          "low_order_r2_quadratic": {
+            ".image.tt0": "good",
+            ".image.tt1": "good",
+            ".psf.tt0": "good",
+            ".psf.tt1": "good",
+            ".psf.tt2": "good",
+            ".residual.tt0": "good",
+            ".residual.tt1": "good"
+          },
+          "normalized_diff_rms": {
+            ".image.tt0": "good",
+            ".image.tt1": "good",
+            ".psf.tt0": "good",
+            ".psf.tt1": "good",
+            ".psf.tt2": "good",
+            ".residual.tt0": "good",
+            ".residual.tt1": "good"
+          }
+        },
+        "label": "good",
+        "legend": {
+          "bad": "Structured or large enough difference; do not close without explanation.",
+          "good": "No review action expected from this check.",
+          "investigate": "Plausible but needs review in context.",
+          "unknown": "Check could not be evaluated for this product."
+        },
+        "product_summaries": {
+          ".image.tt0": ".image.tt0: good; amplitude and beam-scale structure checks passed.",
+          ".image.tt1": ".image.tt1: good; amplitude and beam-scale structure checks passed.",
+          ".psf.tt0": ".psf.tt0: good; amplitude and beam-scale structure checks passed.",
+          ".psf.tt1": ".psf.tt1: good; amplitude and beam-scale structure checks passed.",
+          ".psf.tt2": ".psf.tt2: good; amplitude and beam-scale structure checks passed.",
+          ".residual.tt0": ".residual.tt0: good; amplitude and beam-scale structure checks passed.",
+          ".residual.tt1": ".residual.tt1: good; amplitude and beam-scale structure checks passed."
+        },
+        "products": {
+          ".image.tt0": "good",
+          ".image.tt1": "good",
+          ".psf.tt0": "good",
+          ".psf.tt1": "good",
+          ".psf.tt2": "good",
+          ".residual.tt0": "good",
+          ".residual.tt1": "good"
+        },
+        "summary": "overall good; good: .image.tt0, .image.tt1, .psf.tt0, .psf.tt1, .psf.tt2, .residual.tt0, .residual.tt1",
+        "thresholds": {
+          "block_rms_decay_slope_vs_independent_beams": {
+            "bad": "> -0.15",
+            "good": "<= -0.35",
+            "investigate": "-0.35 .. -0.15"
+          },
+          "large_scale_power_fraction": {
+            "bad": "> 0.5",
+            "good": "< 0.25",
+            "investigate": "0.25 .. 0.5"
+          },
+          "low_order_r2_quadratic": {
+            "bad": "> 0.2",
+            "good": "< 0.05",
+            "investigate": "0.05 .. 0.2"
+          },
+          "normalized_diff_rms": {
+            "bad": "> 1e-3",
+            "good": "< 1e-4",
+            "investigate": "1e-4 .. 1e-3",
+            "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+          }
+        }
+      }
+    },
+    "product_paths": {
+      "casa_prefix": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust",
+      "product_root": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/products/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938",
+      "rust_prefix": "/private/tmp/wave352-formula-artifacts-unsandboxed-v2/products/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f/rust/rust"
+    },
+    "rust": {
+      "reason": "Rust release CLI timing section was not reported",
+      "status": "missing",
+      "timings_seconds": {
+        "median": null,
+        "runs": []
+      }
+    },
+    "stage_breakdown": {
+      "casa": {
+        "categories": {
+          "cube_major_cycle_algorithm_envelope": {
+            "components_ms": {},
+            "description": "CASA cube major-cycle envelope. For cube imaging this brackets CubeMajorCycleAlgorithm work including C++ tuneSelectData, nSubCubeFitInMemory, gridding/degridding, normalization, and subimage writeback that are not exposed as separate Python timers.",
+            "missing_fields": [
+              "make_psf",
+              "calcres_major_cycle",
+              "clean_major_cycle"
+            ],
+            "reason": "no source timing fields found: make_psf, calcres_major_cycle, clean_major_cycle",
+            "source_fields": [
+              "make_psf",
+              "calcres_major_cycle",
+              "clean_major_cycle"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "deconvolution_minor_cycle": {
+            "components_ms": {},
+            "description": "CASA minor-cycle, mask update, and convergence checks. For cube imaging minor_cycle brackets CubeMinorCycleAlgorithm.",
+            "missing_fields": [
+              "minor_cycle",
+              "update_mask",
+              "has_converged"
+            ],
+            "reason": "no source timing fields found: minor_cycle, update_mask, has_converged",
+            "source_fields": [
+              "minor_cycle",
+              "update_mask",
+              "has_converged"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "image_store_writeback_and_restore": {
+            "components_ms": {},
+            "description": "CASA image-store writeback envelope: cube subimage writes occur inside major-cycle C++ calls, while final restored-image writes are included in restore_images.",
+            "missing_fields": [
+              "clean_major_cycle",
+              "calcres_major_cycle",
+              "restore_images"
+            ],
+            "reason": "no source timing fields found: clean_major_cycle, calcres_major_cycle, restore_images",
+            "source_fields": [
+              "clean_major_cycle",
+              "calcres_major_cycle",
+              "restore_images"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "major_cycle_residual": {
+            "components_ms": {},
+            "description": "CASA residual major-cycle and clean major-cycle work.",
+            "missing_fields": [
+              "calcres_major_cycle",
+              "clean_major_cycle"
+            ],
+            "reason": "no source timing fields found: calcres_major_cycle, clean_major_cycle",
+            "source_fields": [
+              "calcres_major_cycle",
+              "clean_major_cycle"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "ms_selection_and_image_definition": {
+            "components_ms": {},
+            "description": "Narrow CASA helper timings for synthesisimager.selectdata, defineimage, normalizerinfo, and CF-cache setup during initializeImagers.",
+            "missing_fields": [
+              "select_data",
+              "define_image",
+              "normalizer_info",
+              "cf_cache_setup"
+            ],
+            "reason": "no source timing fields found: select_data, define_image, normalizer_info, cf_cache_setup",
+            "source_fields": [
+              "select_data",
+              "define_image",
+              "normalizer_info",
+              "cf_cache_setup"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "psf_and_primary_beam": {
+            "components_ms": {},
+            "description": "CASA PSF and PB construction.",
+            "missing_fields": [
+              "make_psf",
+              "make_pb"
+            ],
+            "reason": "no source timing fields found: make_psf, make_pb",
+            "source_fields": [
+              "make_psf",
+              "make_pb"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "restore_and_cleanup": {
+            "components_ms": {},
+            "description": "CASA restore and tool cleanup.",
+            "missing_fields": [
+              "restore_images",
+              "delete_tools"
+            ],
+            "reason": "no source timing fields found: restore_images, delete_tools",
+            "source_fields": [
+              "restore_images",
+              "delete_tools"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "setup_and_tool_construction": {
+            "components_ms": {},
+            "description": "CASA PySynthesisImager setup, construction, initialization, and memory estimation.",
+            "missing_fields": [
+              "parameter_setup",
+              "construct_imager",
+              "initialize_imagers",
+              "initialize_normalizers",
+              "initialize_deconvolvers",
+              "initialize_iteration_control",
+              "estimate_memory"
+            ],
+            "reason": "no source timing fields found: parameter_setup, construct_imager, initialize_imagers, initialize_normalizers, initialize_deconvolvers, initialize_iteration_control, estimate_memory",
+            "source_fields": [
+              "parameter_setup",
+              "construct_imager",
+              "initialize_imagers",
+              "initialize_normalizers",
+              "initialize_deconvolvers",
+              "initialize_iteration_control",
+              "estimate_memory"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "total": {
+            "components_ms": {},
+            "description": "CASA phase probe total.",
+            "missing_fields": [
+              "total"
+            ],
+            "reason": "no source timing fields found: total",
+            "source_fields": [
+              "total"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "weighting_density_setup": {
+            "components_ms": {},
+            "description": "CASA weighting setup; set_weighting_core is the direct synthesisimager.setweighting call when the phase probe is enabled.",
+            "missing_fields": [
+              "set_weighting",
+              "set_weighting_core"
+            ],
+            "reason": "no source timing fields found: set_weighting, set_weighting_core",
+            "source_fields": [
+              "set_weighting",
+              "set_weighting_core"
+            ],
+            "status": "missing",
+            "total_ms": null
+          }
+        },
+        "status": "missing"
+      },
+      "contract_review": "local benchmark result JSON only; no provider protocol or managed-output schema change",
+      "instrumentation_scope": "benchmark-harness",
+      "rust": {
+        "categories": {
+          "coordinate_and_product_writeback": {
+            "components_ms": {},
+            "description": "Output coordinate construction and image product writeback.",
+            "missing_fields": [
+              "build_coordinate_system",
+              "write_products"
+            ],
+            "reason": "no source timing fields found: build_coordinate_system, write_products",
+            "source_fields": [
+              "build_coordinate_system",
+              "write_products"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "core_total": {
+            "components_ms": {},
+            "description": "Total pure imaging-core wallclock from the Rust profiler.",
+            "missing_fields": [
+              "total"
+            ],
+            "reason": "no source timing fields found: total",
+            "source_fields": [
+              "total"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "deconvolution_minor_cycle": {
+            "components_ms": {},
+            "description": "Minor-cycle component selection and subtraction.",
+            "reason": "dirty-only or niter=0 workload",
+            "source_fields": [
+              "minor_cycle_solve"
+            ],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "fft": {
+            "components_ms": {},
+            "description": "PSF, model, and residual FFT work.",
+            "missing_fields": [
+              "psf_fft",
+              "model_fft",
+              "residual_fft"
+            ],
+            "reason": "no source timing fields found: psf_fft, model_fft, residual_fft",
+            "source_fields": [
+              "psf_fft",
+              "model_fft",
+              "residual_fft"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "frontend_ms_preparation": {
+            "components_ms": {},
+            "description": "MS open, selection, row adaptation, and phase-center resolution.",
+            "missing_fields": [
+              "open_measurement_set",
+              "prepare_plane_input",
+              "extract_phase_center"
+            ],
+            "reason": "no source timing fields found: open_measurement_set, prepare_plane_input, extract_phase_center",
+            "source_fields": [
+              "open_measurement_set",
+              "prepare_plane_input",
+              "extract_phase_center"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "frontend_total": {
+            "components_ms": {},
+            "description": "Total frontend wallclock from the Rust profiler.",
+            "missing_fields": [
+              "frontend_total"
+            ],
+            "reason": "no source timing fields found: frontend_total",
+            "source_fields": [
+              "frontend_total"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "gridding_degridding": {
+            "components_ms": {},
+            "description": "PSF gridding plus residual degrid/grid work.",
+            "missing_fields": [
+              "psf_grid",
+              "residual_degrid_grid"
+            ],
+            "reason": "no source timing fields found: psf_grid, residual_degrid_grid",
+            "source_fields": [
+              "psf_grid",
+              "residual_degrid_grid"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "model_prediction_and_residual_refresh": {
+            "components_ms": {},
+            "description": "Major-cycle model prediction and residual refresh aggregate.",
+            "reason": "dirty-only or niter=0 workload",
+            "source_fields": [
+              "major_cycle_refresh"
+            ],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "normalization_pb_correction": {
+            "components_ms": {},
+            "description": "PSF and residual normalization; PB correction is included when the selected mode produces PB products.",
+            "missing_fields": [
+              "psf_normalize",
+              "residual_normalize"
+            ],
+            "reason": "no source timing fields found: psf_normalize, residual_normalize",
+            "source_fields": [
+              "psf_normalize",
+              "residual_normalize"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "preview_sidecar_generation": {
+            "components_ms": {},
+            "description": "The benchmark script passes --no-preview-pngs, so preview sidecars are disabled.",
+            "reason": "disabled by benchmark harness",
+            "source_fields": [],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "projection_pb_cf_preparation": {
+            "components_ms": {},
+            "description": "No dedicated Wave 1 casa-rs timing field yet; projection/PB setup is included in the gridding/PB product paths where applicable.",
+            "reason": "No dedicated Wave 1 casa-rs timing field yet; projection/PB setup is included in the gridding/PB product paths where applicable.",
+            "source_fields": [],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "restore_and_beam_fit": {
+            "components_ms": {},
+            "description": "Restoring-beam fit and restored-image generation.",
+            "reason": "dirty-only or niter=0 workload",
+            "source_fields": [
+              "beam_fit",
+              "restore"
+            ],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "standard_mfs_source_prepare": {
+            "components_ms": {},
+            "description": "Prepared-source adaptation into imaging batches.",
+            "reason": "not reported for this preparation path",
+            "source_fields": [
+              "prepare_processing_buffer"
+            ],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "standard_mfs_source_read": {
+            "components_ms": {},
+            "description": "Prepared source reads from MS and table columns. Accepts the legacy raw timer key.",
+            "reason": "not reported for this preparation path",
+            "source_fields": [
+              "get_ms_values_into_processing_buffer"
+            ],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "visibility_adaptation_and_chunking": {
+            "components_ms": {},
+            "description": "Visibility adaptation before entering the imaging core.",
+            "missing_fields": [
+              "prepare_plane_input"
+            ],
+            "reason": "no source timing fields found: prepare_plane_input",
+            "source_fields": [
+              "prepare_plane_input"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "weighting_density_setup": {
+            "components_ms": {},
+            "description": "Imaging weights, density grids, and taper setup.",
+            "missing_fields": [
+              "weighting"
+            ],
+            "reason": "no source timing fields found: weighting",
+            "source_fields": [
+              "weighting"
+            ],
+            "status": "missing",
+            "total_ms": null
+          }
+        },
+        "status": "missing"
+      },
+      "schema_version": 1,
+      "units": "milliseconds"
+    },
+    "stage_medians_ms": {
+      "casa": {},
+      "rust": {}
+    }
+  },
+  "review": {
+    "evidence_role": "metal_f32_candidate",
+    "required_evidence_roles": [
+      "cpu_f32_baseline",
+      "metal_f32_candidate"
+    ],
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true
+  },
+  "run": {
+    "env": {},
+    "ms_staging": "direct",
+    "phase_probe": "0",
+    "profile_repeats": 3,
+    "repeats": 1,
+    "reuse_casa_prefix": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/products/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51/rust/rust",
+    "reuse_rust_prefix": "/private/tmp/wave352-formula-artifacts-unsandboxed-v2/products/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f/rust/rust",
+    "run_label": "wave352-mosaic-mtmfs-large-metal-f32",
+    "skip_casa": "1",
+    "skip_rust": "1",
+    "storage_label": "external-ssd-wave1-large",
+    "stream_log": false
+  },
+  "run_id": "20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938",
+  "run_support": {
+    "bench_script": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
+    "reason": null,
+    "status": "runnable"
+  },
+  "schema_version": 1,
+  "started_at": "2026-07-10T18:30:21.418874Z",
+  "status": "completed",
+  "workload": {
+    "description": "Issue #352 large-tier ALMA mosaic MT-MFS dirty-product Metal f32 row using all seven fields, 16 selected channels, and a 1280 image.",
+    "id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32",
+    "mode_id": "mosaic-mtmfs-large"
+  }
+}

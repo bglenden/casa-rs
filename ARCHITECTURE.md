@@ -118,6 +118,119 @@ prototype and an explicit approval gate before real adapters are connected.
 The prototype state belongs in `CasarsMacCore`; it may not establish persisted
 or provider semantics that bypass the Rust-owned contracts.
 
+### Imaging execution
+
+`casars-imager` owns MeasurementSet selection, bounded source streaming, mode
+dispatch, runtime policy, protocol telemetry, and persisted product writing.
+`casa-imaging` remains the prepared-visibility computation boundary for
+weighting, gridding/degridding, FFTs, normalization, deconvolution, restoration,
+and product semantics.
+
+The app uses one shared bounded producer/consumer primitive for source
+read-ahead across standard MFS, mosaic MFS replay, supported mosaic MT-MFS,
+standard and mosaic cube slabs, cubedata preparation, and trace preparation.
+`imaging_read_ahead_blocks` is a maximum live row-block count, not a queue-depth
+request. The current implementation caps it at two: one producer-owned block
+and one consumer-owned block. Queue capacity is `max_live_row_blocks - 2`, so
+the two-block case uses a rendezvous channel and cannot retain a third queued
+block. A value of one runs synchronously. Full-slab spectral routes remain
+single-block by default and accept explicit two-block read-ahead only when the
+memory planner does not lose plane residency or row locality. Consumer failure
+sets a shared cancellation token, drops the rendezvous receiver to wake a
+blocked producer, and prevents another bounded source read after the current
+in-flight read; the original consumer error remains the returned context.
+
+The first bounded mosaic MT-MFS slice supports one MeasurementSet,
+`specmode='mfs'`, `gridder='mosaic'`, `nterms <= 2`, no W term, natural,
+uniform, or Briggs weighting, user masks, clean or dirty products, and optional
+PB/PB-corrected products. Each weighting, initial-dirty, and residual-refresh
+pass replays the same bounded row stream; Briggs density uses a raw-UVW sidecar
+so CASA's density cell conventions remain independent of mosaic projection
+coordinates. Broader W/AW, pointing, start-model, outlier, multi-MS, and
+higher-term combinations still reject during planning.
+
+Imager task protocol v3 carries the local execution controls (`parallel`,
+`chanchunks`, shared source memory/row-block/worker/read-ahead settings, and
+dirty-product FFT precision/backend policy). Diagnostic progress events expose
+planned and measured memory, source bytes and read bandwidth, read/prepare
+overlap, producer/consumer blocking, live-block high water, worker/queue state,
+stage timings, and backend selection or fallback reasons. The task protocol is
+v3, the newline-delimited progress event schema is v1, and the embedded
+observability snapshot schema is v2. `parallel=false` selects the serial CPU
+comparison surface, including one live source block and RustFFT product
+transforms.
+
+`chanchunks` supplies a minimum spectral-slab residency shape, not an exact
+worker cap or a switch for shared-source concurrency. For every cube plan, the
+runtime derives active-plane and worker concurrency from plane/channel geometry,
+hardware capacity, the exact source-cache size, the per-plane working set, and
+the run-level memory target. If all planes fit, it uses the ordinary one-slab
+route. Any selected multi-slab shape is eligible for bounded shared-source reuse
+when the same formula proves the source cache and concurrent plane state
+resident; neither dataset identity nor a particular `chanchunks` value selects
+that route.
+
+On Apple platforms, eligible f32 standard and single-term mosaic dirty products
+can keep grids resident through MPSGraph FFT, correction, normalization, and
+peak reduction. Mosaic MT-MFS keeps its multi-plane input resident through the
+batched inverse FFT, then performs Taylor-term image correction and PB
+normalization on the CPU. Explicit `metal-mpsgraph` requests select the resident
+path when supported and fail closed on backend errors. `auto` compares exact
+input-boundary movement from shape, batch, precision, and placement instead of
+using an image-size crossover: host-resident grids stay on CPU, while
+Metal-shared grids stay on Metal and avoid host materialization. Under `auto`,
+unsupported shapes, unavailable devices, resident-command failures, and f64
+product transforms use the CPU finisher. Standard and mosaic MFS recover
+retained shared grids directly. When `auto` must recover an MT-MFS Metal
+attempt, it replays the bounded source stream to rebuild equivalent host grids;
+that recovery route does not alter the normal direct Metal-shared MT-MFS
+accumulation path. Backend and fallback decisions are reported in diagnostic
+telemetry rather than changing product membership or persistence semantics.
+
+W-projection Auto plane selection follows the CASA geometric relation using
+the selected rows' observed maximum absolute projected W, CASA's 1.05 W-range
+safety factor, and the actual rectangular half-field angle. It does not use the
+array's longest physical baseline as a proxy, round to a power of two, or clamp
+to a tested image-size regime; like CASA, the positive plane-count expression
+is truncated to an integer. Explicit `wprojplanes` remains an accuracy/cost
+choice; both explicit and Auto plans scale their quadratic W coordinates to the
+same safety-expanded observed W range.
+
+W-projection has one Metal dispatch and reduction implementation for both
+materialized sample slices and bounded replay chunks. The partial-grid count is
+derived from sample count, grid cells, convolution-kernel cells, output-grid
+count, and live Metal working-set headroom. Its square-root update-density
+balance minimizes the sum of per-partial atomic depth and final reduction
+depth; it is not selected by dataset or image identity. Each replay chunk uses
+that shared plan, and completed chunk grids are combined in deterministic host
+f64 order before the one final f32 narrowing. The replay producer includes any
+already prepared first block in the same bounded stream as later source blocks,
+so the normal two-live-block policy can overlap the next source read with CPU
+or Metal gridding without a separate cached-block execution path.
+
+Large mosaic MFS and MT-MFS can write directly into the Metal-shared f32 FFT
+input through disjoint output-owned tiles. CPU workers route exact convolution
+plan records to disjoint tiles and convolve without atomics or full-grid worker
+replicas. Standard MFS retains its established 256-pixel tiling; MT-MFS derives
+its tile edge and count from grid geometry, kernel support, requested workers,
+and the available scratch budget. MT-MFS keeps f64 PSF moments and Complex64
+dirty moments per complete plan key, applies the Taylor residual identity before
+gridding, and narrows only at the bounded f32 tile. The complete key includes
+grid location, subpixel offset, support, and clipped tap ranges; projector/PB
+identity remains fixed by the metadata group. MT-MFS processes one metadata
+group and bounded compaction chunk at a time. The frontend derives the requested
+scratch from image cells, Taylor plane count, and planned workers, then caps it
+by the run-level memory target after fixed products, caches, and one source row
+block are reserved. The core reduces worker count when a support-sized tile
+cannot fit, subtracts exact worker-tile storage, and converts the remainder into
+a raw-sample limit from the actual compact record layout and geometry-derived
+route-copy bound. Reusable standard-MFS tap plans likewise receive an exact byte
+budget instead of a sample-count cutoff. The frontend memory planner and core
+executor share these formulas; no dataset identity or benchmark-specific sample
+threshold participates in the decision. Image-domain correction, PB
+normalization, and product semantics stay after the FFT. No generic
+compatibility block facade or normal-path host full-grid upload is retained.
+
 ## Persistence / external systems
 
 - casacore-compatible table trees and image tables on local disk

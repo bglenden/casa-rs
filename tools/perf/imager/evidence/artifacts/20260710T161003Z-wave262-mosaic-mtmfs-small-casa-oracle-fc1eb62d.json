@@ -1,0 +1,3335 @@
+{
+  "artifacts": {
+    "comparison_root": "/private/tmp/casa-rs-wave262-current-head-artifacts/comparisons/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d",
+    "products_root": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d",
+    "result_dir": "/private/tmp/casa-rs-wave262-current-head-oracle",
+    "root": "/private/tmp/casa-rs-wave262-current-head-artifacts",
+    "tmp_root": "/private/tmp/casa-rs-wave262-current-head-artifacts/tmp"
+  },
+  "benchmark_features": {
+    "backend": {
+      "cpu_multi_worker_reason": "mosaic-auto-uses-single-grid-owner-or-metal-groups",
+      "cube_per_plane_backend": null,
+      "cube_per_plane_fallback_reasons": null,
+      "cube_per_plane_fixed_tile_eligible": null,
+      "cube_per_plane_grid_threads": null,
+      "cube_per_plane_metal_eligible": null,
+      "cube_per_plane_phase": null,
+      "cube_per_plane_workers": null,
+      "dirty_product_fft_fallback_used": null,
+      "dirty_product_fft_requested_backend": null,
+      "dirty_product_fft_selected_backend": null,
+      "dirty_product_gpu_resident_fallback_used": null,
+      "dirty_product_gpu_resident_reason": null,
+      "dirty_product_gpu_resident_requested_backend": null,
+      "dirty_product_gpu_resident_selected_backend": null,
+      "gpu_metal_reason": "mosaic-screen-projector-metal-single-grid-owner",
+      "mosaic_cube_slab_active_planes": null,
+      "mosaic_cube_slab_count": null,
+      "mosaic_cube_slab_executor_capabilities": null,
+      "mosaic_cube_slab_nplanes": null,
+      "mosaic_cube_slab_product_state": null,
+      "mosaic_cube_slab_schedule": null,
+      "mosaic_cube_slab_source_reuse": null,
+      "mosaic_cube_slab_worker_count": null,
+      "requested_acceleration": "auto",
+      "requested_imaging_fft_backend": "auto",
+      "resolved_backend": "cpu",
+      "resolved_grid_threads": 4,
+      "resolved_initial_dirty_backend": "metal-row-run-grouped",
+      "resolved_residual_backend": "metal-row-run-grouped",
+      "resolved_tile_anchor": "default"
+    },
+    "image": {
+      "image_work": 9830400,
+      "imsize_x": 1280,
+      "imsize_y": 1280,
+      "output_planes": 2,
+      "product_count": 3
+    },
+    "mode_cost": {
+      "actual_major_cycles": null,
+      "actual_minor_iterations": null,
+      "cycleniter": "1",
+      "deconvolver": "mtmfs",
+      "gridder": "mosaic",
+      "mosaic_field_count": 7,
+      "mtmfs_nterms": 2,
+      "multiscale_scale_count": null,
+      "niter": 1,
+      "specmode": "mfs",
+      "weighting": "briggs",
+      "wprojplanes": null
+    },
+    "resources": {
+      "available_parallelism": 10,
+      "dirty_product_fft_requested_backend": null,
+      "dirty_product_fft_selected_backend": null,
+      "dirty_product_fft_total_ms": null,
+      "dirty_product_gpu_resident_device_exec_ms": null,
+      "dirty_product_gpu_resident_exec_ms": null,
+      "dirty_product_gpu_resident_pack_ms": null,
+      "dirty_product_gpu_resident_plan_ms": null,
+      "dirty_product_gpu_resident_postprocess_ms": null,
+      "dirty_product_gpu_resident_sync_ms": null,
+      "dirty_product_gpu_resident_total_ms": null,
+      "dirty_product_gpu_resident_transfer_from_device_ms": null,
+      "dirty_product_gpu_resident_transfer_to_device_ms": null,
+      "logical_cores": 10,
+      "memory_headroom_bytes": 16226893712,
+      "memory_target_bytes": 17179869184,
+      "metal_device": true,
+      "metal_grouped_input_cache": "planner",
+      "peak_rss_bytes": null,
+      "physical_cores": 10,
+      "physical_memory_bytes": 34359738368,
+      "planned_active_bytes": 952975472,
+      "row_block_count": 1,
+      "row_block_rows": 261744,
+      "source_read_ahead_consumer_ms": 8403.462,
+      "source_read_ahead_consumer_recv_blocked_ms": 0.0,
+      "source_read_ahead_effective_read_bandwidth_mib_s": 695.2102909527798,
+      "source_read_ahead_enabled": false,
+      "source_read_ahead_live_row_block_high_water": 1,
+      "source_read_ahead_mode": "mosaic_mtmfs_replay",
+      "source_read_ahead_modes": [
+        "mosaic_mtmfs_replay"
+      ],
+      "source_read_ahead_producer_consumer_overlap_ms": 0.0,
+      "source_read_ahead_producer_send_blocked_ms": 0.0,
+      "source_read_ahead_queue_capacity": 0,
+      "source_read_ahead_row_blocks": 3,
+      "source_read_ahead_source_bytes": 344455104,
+      "source_read_ahead_source_prepare_ms": 8403.462,
+      "source_read_ahead_source_read_ms": 472.516,
+      "source_read_ahead_source_route_ms": 0.0,
+      "source_read_ahead_summary_count": 3
+    },
+    "schema_version": 1,
+    "visibility": {
+      "correlation_source": "scalar-plane-after-polarization-collapse",
+      "correlations": 1,
+      "flagged_fraction": null,
+      "gridded_samples": null,
+      "selected_channels": 8,
+      "selected_rows": 261744,
+      "source_stream_throughput_samples_per_s": null,
+      "visibility_work": 2093952
+    }
+  },
+  "command": {
+    "argv": [
+      "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
+      "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/alma/mosaic/small/ms/wave1-alma-mosaic-small.ms"
+    ],
+    "env": {
+      "BENCH_REPEATS": "1",
+      "CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "1",
+      "IMAGER_BENCH_CASA_GRIDDER": "mosaic",
+      "IMAGER_BENCH_CELL_ARCSEC": "0.08",
+      "IMAGER_BENCH_CHANNEL_COUNT": "8",
+      "IMAGER_BENCH_CHANNEL_START": "0",
+      "IMAGER_BENCH_CUBE_START": "",
+      "IMAGER_BENCH_CUBE_WIDTH": "",
+      "IMAGER_BENCH_CYCLEFACTOR": "1.0",
+      "IMAGER_BENCH_DECONVOLVER": "mtmfs",
+      "IMAGER_BENCH_FIELD": "0,1,2,3,4,5,6",
+      "IMAGER_BENCH_GAIN": "0.1",
+      "IMAGER_BENCH_GRIDDER": "mosaic",
+      "IMAGER_BENCH_HOGBOM_ITERATION_MODE": "strict",
+      "IMAGER_BENCH_IMAGING_FFT_BACKEND": "auto",
+      "IMAGER_BENCH_IMAGING_FFT_PRECISION": "auto",
+      "IMAGER_BENCH_IMAGING_READ_AHEAD_BLOCKS": "2",
+      "IMAGER_BENCH_IMSIZE": "1280",
+      "IMAGER_BENCH_INTERPOLATION": "linear",
+      "IMAGER_BENCH_KEEP_OUTPUT_ROOT": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d",
+      "IMAGER_BENCH_MAX_PSFFRACTION": "0.8",
+      "IMAGER_BENCH_MINOR_CYCLE_LENGTH": "1",
+      "IMAGER_BENCH_MIN_PSFFRACTION": "0.05",
+      "IMAGER_BENCH_MODE": "clean",
+      "IMAGER_BENCH_MS_STAGING": "direct",
+      "IMAGER_BENCH_NITER": "1",
+      "IMAGER_BENCH_NSIGMA": "0.0",
+      "IMAGER_BENCH_NTERMS": "2",
+      "IMAGER_BENCH_PBCOR": "1",
+      "IMAGER_BENCH_PBLIMIT": "0.2",
+      "IMAGER_BENCH_PERCHANWEIGHTDENSITY": "0",
+      "IMAGER_BENCH_PHASECENTER_FIELD": "0",
+      "IMAGER_BENCH_PHASE_PROBE": "0",
+      "IMAGER_BENCH_PROFILE_REPEATS": "1",
+      "IMAGER_BENCH_PSFCUTOFF": "0.35",
+      "IMAGER_BENCH_ROBUST": "0.5",
+      "IMAGER_BENCH_SCALES": "",
+      "IMAGER_BENCH_SKIP_CASA": "0",
+      "IMAGER_BENCH_SKIP_PROFILE": "1",
+      "IMAGER_BENCH_SKIP_RUST": "0",
+      "IMAGER_BENCH_SPECMODE": "mfs",
+      "IMAGER_BENCH_SPW": "0",
+      "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": "auto",
+      "IMAGER_BENCH_THRESHOLD_JY": "0.0",
+      "IMAGER_BENCH_TMP_ROOT": "/private/tmp/casa-rs-wave262-current-head-artifacts/tmp",
+      "IMAGER_BENCH_WEIGHTING": "briggs",
+      "IMAGER_BENCH_WPROJPLANES": "",
+      "IMAGER_BENCH_WRITE_PB": "1",
+      "IMAGER_BENCH_WTERM": "none"
+    }
+  },
+  "comparison": {
+    "max_elements_per_product": 1000000,
+    "products": [
+      ".image.tt0",
+      ".residual.tt0",
+      ".psf.tt0"
+    ]
+  },
+  "completed_at": "2026-07-10T16:11:24.539959Z",
+  "created_at": "2026-07-10T16:10:03.619057Z",
+  "dataset": {
+    "key": "wave1-alma-mosaic-small",
+    "path": "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/alma/mosaic/small/ms/wave1-alma-mosaic-small.ms",
+    "relative_path": "wave1/alma/mosaic/small/ms/wave1-alma-mosaic-small.ms",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT"
+  },
+  "environment": {
+    "bench_script": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
+    "bench_script_sha256": "ae11ebebc5b7741314d5aade375da2eb3491557f886d8155447d849caad56de5",
+    "casa_python": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python",
+    "git_branch": "codex/improve-imaging-performance",
+    "git_commit": "04a7eda96ffc463bb8109b145df268e5a640fb10",
+    "logical_cores": 10,
+    "physical_cores": 10,
+    "physical_memory_bytes": 34359738368,
+    "python": "3.13.5",
+    "repo_root": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs"
+  },
+  "exit_code": 0,
+  "human_review": {
+    "evidence_role": "casa_oracle",
+    "panel_reason": null,
+    "panel_status": "ready",
+    "reason": "mode ticket cannot move to Done until the review bundle is accepted",
+    "required_evidence_roles": [
+      "before_baseline",
+      "after_multi_worker_cpu",
+      "after_gpu_metal",
+      "casa_cpp"
+    ],
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true,
+    "status": "pending",
+    "structured_difference_label": "good",
+    "structured_difference_legend": {
+      "bad": "Structured or large enough difference; do not close without explanation.",
+      "good": "No review action expected from this check.",
+      "investigate": "Plausible but needs review in context.",
+      "unknown": "Check could not be evaluated for this product."
+    },
+    "structured_difference_summary": "overall good; good: .image.tt0, .psf.tt0, .residual.tt0"
+  },
+  "logs": {
+    "benchmark_log": "/private/tmp/casa-rs-wave262-current-head-oracle/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.log"
+  },
+  "manifest_path": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/tools/perf/imager/workloads/wave262-mosaic-mtmfs-small-casa-oracle.json",
+  "mode": {
+    "bench_mode": "clean",
+    "chanchunks": null,
+    "channel_count": 8,
+    "deconvolver": "mtmfs",
+    "gridder": "mosaic",
+    "hogbom_iteration_mode": "strict",
+    "image_shape": [
+      1280,
+      1280
+    ],
+    "imaging_fft_backend": "auto",
+    "imaging_fft_precision": "auto",
+    "imaging_read_ahead_blocks": 2,
+    "niter": 1,
+    "nterms": 2,
+    "parallel": null,
+    "perchanweightdensity": "0",
+    "specmode": "mfs",
+    "standard_mfs_acceleration": "auto",
+    "standard_mfs_metal_minor_cycle_chunk": null,
+    "start": null,
+    "weighting": "briggs",
+    "width": null,
+    "wprojplanes": null
+  },
+  "products": {
+    "casa_prefix": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/casa/casa",
+    "root": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d",
+    "rust_prefix": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/rust/rust"
+  },
+  "results": {
+    "backend_plan_logs": {
+      "clark_minor_cycle_diagnostics": [],
+      "clean_residual_refresh_diagnostics": [],
+      "cube_per_plane_backend": [],
+      "cube_plane_state_store": [],
+      "cube_product_summaries": [],
+      "cube_resident_clean_control": [],
+      "cube_resident_clean_executor": [],
+      "cube_resident_clean_finish_planes": [],
+      "cube_resident_clean_stage": [],
+      "cube_source_row_blocks": [],
+      "dirty_product_fft": [],
+      "dirty_product_gpu_resident": [],
+      "dirty_product_gpu_resident_fallback": [],
+      "executor_limitations": [],
+      "frontend_progress": [
+        {
+          "fields": {
+            "stage": "open_measurement_set",
+            "stage_elapsed_s": 0.064,
+            "total_elapsed_s": 0.064
+          },
+          "name": "frontend",
+          "raw": "frontend stage=open_measurement_set stage_elapsed_s=0.064 total_elapsed_s=0.064"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/select_main_rows/scan_rows",
+            "stage_elapsed_s": 0.044,
+            "total_elapsed_s": 0.044
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/select_main_rows/scan_rows stage_elapsed_s=0.044 total_elapsed_s=0.044"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/select_main_rows/resolve_phase_center",
+            "stage_elapsed_s": 0.063,
+            "total_elapsed_s": 0.063
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/select_main_rows/resolve_phase_center stage_elapsed_s=0.063 total_elapsed_s=0.063"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/build_pointing_resolver",
+            "stage_elapsed_s": 0.0,
+            "total_elapsed_s": 0.0
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/build_pointing_resolver stage_elapsed_s=0.000 total_elapsed_s=0.000"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/load_selected_uvw",
+            "stage_elapsed_s": 0.062,
+            "total_elapsed_s": 0.062
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/load_selected_uvw stage_elapsed_s=0.062 total_elapsed_s=0.062"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/use_selected_antenna_ids",
+            "stage_elapsed_s": 0.062,
+            "total_elapsed_s": 0.062
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/use_selected_antenna_ids stage_elapsed_s=0.062 total_elapsed_s=0.062"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/load_selected_pointing_ids",
+            "stage_elapsed_s": 0.062,
+            "total_elapsed_s": 0.062
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/load_selected_pointing_ids stage_elapsed_s=0.062 total_elapsed_s=0.062"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/row_loop",
+            "stage_elapsed_s": 0.068,
+            "total_elapsed_s": 0.068
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/row_loop stage_elapsed_s=0.068 total_elapsed_s=0.068"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input",
+            "stage_elapsed_s": 0.221,
+            "total_elapsed_s": 0.286
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input stage_elapsed_s=0.221 total_elapsed_s=0.286"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/load_selected_uvw",
+            "stage_elapsed_s": 0.009,
+            "total_elapsed_s": 0.01
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/load_selected_uvw stage_elapsed_s=0.009 total_elapsed_s=0.010"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/use_selected_antenna_ids",
+            "stage_elapsed_s": 0.01,
+            "total_elapsed_s": 0.01
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/use_selected_antenna_ids stage_elapsed_s=0.010 total_elapsed_s=0.010"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/load_selected_pointing_ids",
+            "stage_elapsed_s": 0.01,
+            "total_elapsed_s": 0.01
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/load_selected_pointing_ids stage_elapsed_s=0.010 total_elapsed_s=0.010"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/row_loop",
+            "stage_elapsed_s": 0.013,
+            "total_elapsed_s": 0.013
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/row_loop stage_elapsed_s=0.013 total_elapsed_s=0.013"
+        },
+        {
+          "fields": {
+            "blocks": 1,
+            "elapsed_s": 0.063,
+            "invocation": 0,
+            "load_visibility_values": false,
+            "pass": "WeightingDensity",
+            "rows_done": 261744,
+            "rows_total": 261744,
+            "samples": 2093952,
+            "stage": "run_imaging/mosaic_mtmfs_stream_replay"
+          },
+          "name": "frontend",
+          "raw": "frontend stage=run_imaging/mosaic_mtmfs_stream_replay invocation=0 pass=WeightingDensity load_visibility_values=false rows_done=261744 rows_total=261744 blocks=1 samples=2093952 elapsed_s=0.063"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/load_selected_uvw",
+            "stage_elapsed_s": 0.011,
+            "total_elapsed_s": 0.011
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/load_selected_uvw stage_elapsed_s=0.011 total_elapsed_s=0.011"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/use_selected_antenna_ids",
+            "stage_elapsed_s": 0.011,
+            "total_elapsed_s": 0.011
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/use_selected_antenna_ids stage_elapsed_s=0.011 total_elapsed_s=0.011"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/load_selected_pointing_ids",
+            "stage_elapsed_s": 0.011,
+            "total_elapsed_s": 0.011
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/load_selected_pointing_ids stage_elapsed_s=0.011 total_elapsed_s=0.011"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/row_loop",
+            "stage_elapsed_s": 0.014,
+            "total_elapsed_s": 0.014
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/row_loop stage_elapsed_s=0.014 total_elapsed_s=0.014"
+        },
+        {
+          "fields": {
+            "blocks": 1,
+            "elapsed_s": 4.233,
+            "invocation": 1,
+            "load_visibility_values": true,
+            "pass": "InitialDirty",
+            "rows_done": 261744,
+            "rows_total": 261744,
+            "samples": 2093952,
+            "stage": "run_imaging/mosaic_mtmfs_stream_replay"
+          },
+          "name": "frontend",
+          "raw": "frontend stage=run_imaging/mosaic_mtmfs_stream_replay invocation=1 pass=InitialDirty load_visibility_values=true rows_done=261744 rows_total=261744 blocks=1 samples=2093952 elapsed_s=4.233"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/load_selected_uvw",
+            "stage_elapsed_s": 0.009,
+            "total_elapsed_s": 0.009
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/load_selected_uvw stage_elapsed_s=0.009 total_elapsed_s=0.009"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/use_selected_antenna_ids",
+            "stage_elapsed_s": 0.01,
+            "total_elapsed_s": 0.01
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/use_selected_antenna_ids stage_elapsed_s=0.010 total_elapsed_s=0.010"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/load_selected_pointing_ids",
+            "stage_elapsed_s": 0.01,
+            "total_elapsed_s": 0.01
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/load_selected_pointing_ids stage_elapsed_s=0.010 total_elapsed_s=0.010"
+        },
+        {
+          "fields": {
+            "stage": "prepare_plane_input/build_prepared_geometry_rows/row_loop",
+            "stage_elapsed_s": 0.013,
+            "total_elapsed_s": 0.013
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/build_prepared_geometry_rows/row_loop stage_elapsed_s=0.013 total_elapsed_s=0.013"
+        },
+        {
+          "fields": {
+            "blocks": 1,
+            "elapsed_s": 4.579,
+            "invocation": 2,
+            "load_visibility_values": true,
+            "pass": "ResidualRefresh",
+            "rows_done": 261744,
+            "rows_total": 261744,
+            "samples": 2093952,
+            "stage": "run_imaging/mosaic_mtmfs_stream_replay"
+          },
+          "name": "frontend",
+          "raw": "frontend stage=run_imaging/mosaic_mtmfs_stream_replay invocation=2 pass=ResidualRefresh load_visibility_values=true rows_done=261744 rows_total=261744 blocks=1 samples=2093952 elapsed_s=4.579"
+        },
+        {
+          "fields": {
+            "adapt_samples_ms": 0.0,
+            "cube_assignment_nonempty": 0,
+            "cube_assignment_visits": 0,
+            "cube_density_cell_ms": 0.0,
+            "cube_density_grid_update_ms": 0.0,
+            "cube_density_samples_accepted": 0,
+            "cube_density_sidecar_ms": 0.0,
+            "cube_density_weight_ms": 0.0,
+            "cube_metadata_ms": 0.0,
+            "cube_source_frequency_cache_hits": 0,
+            "cube_source_frequency_cache_misses": 0,
+            "cube_source_frequency_lookup_ms": 0.0,
+            "cube_spectral_cache_hits": 0,
+            "cube_spectral_cache_misses": 0,
+            "cube_spectral_lookup_ms": 0.0,
+            "cube_visibility_push_ms": 0.0,
+            "cube_visibility_sample_ms": 0.0,
+            "cube_visibility_samples_accepted": 0,
+            "data_ms": 0.0,
+            "flag_ms": 0.0,
+            "flag_row_ms": 0.0,
+            "rows_flagged": 0,
+            "rows_seen": 1046976,
+            "rows_skipped_by_flag_row": 126,
+            "stage": "prepare_plane_input/accumulate_rows/detail",
+            "total_elapsed_s": 9.828,
+            "weight_ms": 0.0,
+            "weight_spectrum_ms": 0.0
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/accumulate_rows/detail rows_seen=1046976 rows_flagged=0 rows_skipped_by_flag_row=126 cube_assignment_visits=0 cube_assignment_nonempty=0 cube_visibility_samples_accepted=0 cube_density_samples_accepted=0 cube_spectral_cache_hits=0 cube_spectral_cache_misses=0 cube_source_frequency_cache_hits=0 cube_source_frequency_cache_misses=0 flag_row_ms=0.000 data_ms=0.000 flag_ms=0.000 weight_ms=0.000 weight_spectrum_ms=0.000 adapt_samples_ms=0.000 cube_spectral_lookup_ms=0.000 cube_source_frequency_lookup_ms=0.000 cube_density_sidecar_ms=0.000 cube_density_weight_ms=0.000 cube_density_cell_ms=0.000 cube_density_grid_update_ms=0.000 cube_visibility_sample_ms=0.000 cube_visibility_push_ms=0.000 cube_metadata_ms=0.000 total_elapsed_s=9.828"
+        },
+        {
+          "fields": {
+            "stage": "run_imaging",
+            "stage_elapsed_s": 9.607,
+            "total_elapsed_s": 9.893
+          },
+          "name": "frontend",
+          "raw": "frontend stage=run_imaging stage_elapsed_s=9.607 total_elapsed_s=9.893"
+        },
+        {
+          "fields": {
+            "stage": "build_coordinate_system",
+            "stage_elapsed_s": 0.0,
+            "total_elapsed_s": 9.893
+          },
+          "name": "frontend",
+          "raw": "frontend stage=build_coordinate_system stage_elapsed_s=0.000 total_elapsed_s=9.893"
+        },
+        {
+          "fields": {
+            "stage": "write_products",
+            "stage_elapsed_s": 0.51,
+            "total_elapsed_s": 10.403
+          },
+          "name": "frontend",
+          "raw": "frontend stage=write_products stage_elapsed_s=0.510 total_elapsed_s=10.403"
+        },
+        {
+          "fields": {
+            "stage": "cli/run_from_request_return",
+            "stage_elapsed_s": 10.415
+          },
+          "name": "frontend",
+          "raw": "frontend stage=cli/run_from_request_return stage_elapsed_s=10.415"
+        },
+        {
+          "fields": {
+            "stage": "cli/result_summary_build",
+            "stage_elapsed_s": 0.0,
+            "total_elapsed_s": 10.415
+          },
+          "name": "frontend",
+          "raw": "frontend stage=cli/result_summary_build stage_elapsed_s=0.000 total_elapsed_s=10.415"
+        },
+        {
+          "fields": {
+            "count": 0,
+            "stage": "cli/warning_emit",
+            "stage_elapsed_s": 0.0,
+            "total_elapsed_s": 10.415
+          },
+          "name": "frontend",
+          "raw": "frontend stage=cli/warning_emit count=0 stage_elapsed_s=0.000 total_elapsed_s=10.415"
+        },
+        {
+          "fields": {
+            "adapt_samples_ms": 0.0,
+            "cube_assignment_nonempty": 0,
+            "cube_assignment_visits": 0,
+            "cube_density_cell_ms": 0.0,
+            "cube_density_grid_update_ms": 0.0,
+            "cube_density_samples_accepted": 0,
+            "cube_density_sidecar_ms": 0.0,
+            "cube_density_weight_ms": 0.0,
+            "cube_metadata_ms": 0.0,
+            "cube_source_frequency_cache_hits": 0,
+            "cube_source_frequency_cache_misses": 0,
+            "cube_source_frequency_lookup_ms": 0.0,
+            "cube_spectral_cache_hits": 0,
+            "cube_spectral_cache_misses": 0,
+            "cube_spectral_lookup_ms": 0.0,
+            "cube_visibility_push_ms": 0.0,
+            "cube_visibility_sample_ms": 0.0,
+            "cube_visibility_samples_accepted": 0,
+            "data_ms": 0.0,
+            "flag_ms": 0.0,
+            "flag_row_ms": 0.0,
+            "rows_flagged": 0,
+            "rows_seen": 1046976,
+            "rows_skipped_by_flag_row": 126,
+            "stage": "prepare_plane_input/accumulate_rows/detail",
+            "total_elapsed_s": 9.828,
+            "weight_ms": 0.0,
+            "weight_spectrum_ms": 0.0
+          },
+          "name": "frontend",
+          "raw": "frontend stage=prepare_plane_input/accumulate_rows/detail rows_seen=1046976 rows_flagged=0 rows_skipped_by_flag_row=126 cube_assignment_visits=0 cube_assignment_nonempty=0 cube_visibility_samples_accepted=0 cube_density_samples_accepted=0 cube_spectral_cache_hits=0 cube_spectral_cache_misses=0 cube_source_frequency_cache_hits=0 cube_source_frequency_cache_misses=0 flag_row_ms=0.000 data_ms=0.000 flag_ms=0.000 weight_ms=0.000 weight_spectrum_ms=0.000 adapt_samples_ms=0.000 cube_spectral_lookup_ms=0.000 cube_source_frequency_lookup_ms=0.000 cube_density_sidecar_ms=0.000 cube_density_weight_ms=0.000 cube_density_cell_ms=0.000 cube_density_grid_update_ms=0.000 cube_visibility_sample_ms=0.000 cube_visibility_push_ms=0.000 cube_metadata_ms=0.000 total_elapsed_s=9.828"
+        },
+        {
+          "fields": {
+            "stage": "write_products",
+            "stage_elapsed_s": 0.51,
+            "total_elapsed_s": 10.403
+          },
+          "name": "frontend",
+          "raw": "frontend stage=write_products stage_elapsed_s=0.510 total_elapsed_s=10.403"
+        },
+        {
+          "fields": {
+            "stage": "cli/run_from_request_return",
+            "stage_elapsed_s": 10.415
+          },
+          "name": "frontend",
+          "raw": "frontend stage=cli/run_from_request_return stage_elapsed_s=10.415"
+        },
+        {
+          "fields": {
+            "stage": "cli/result_summary_build",
+            "stage_elapsed_s": 0.0,
+            "total_elapsed_s": 10.415
+          },
+          "name": "frontend",
+          "raw": "frontend stage=cli/result_summary_build stage_elapsed_s=0.000 total_elapsed_s=10.415"
+        },
+        {
+          "fields": {
+            "count": 0,
+            "stage": "cli/warning_emit",
+            "stage_elapsed_s": 0.0,
+            "total_elapsed_s": 10.415
+          },
+          "name": "frontend",
+          "raw": "frontend stage=cli/warning_emit count=0 stage_elapsed_s=0.000 total_elapsed_s=10.415"
+        }
+      ],
+      "hogbom_minor_cycle_diagnostics": [],
+      "image_product_writes": [
+        {
+          "fields": {
+            "elapsed_ms": 35.151,
+            "elements": 1638400,
+            "role": "psf",
+            "shape": "1280x1280x1x1",
+            "suffix": ".psf.tt0"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.psf.tt0 role=psf shape=1280x1280x1x1 elements=1638400 elapsed_ms=35.151"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 133.101,
+            "elements": 1638400,
+            "role": "psf",
+            "shape": "1280x1280x1x1",
+            "suffix": ".psf.tt1"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.psf.tt1 role=psf shape=1280x1280x1x1 elements=1638400 elapsed_ms=133.101"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 36.413,
+            "elements": 1638400,
+            "role": "psf",
+            "shape": "1280x1280x1x1",
+            "suffix": ".psf.tt2"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.psf.tt2 role=psf shape=1280x1280x1x1 elements=1638400 elapsed_ms=36.413"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 79.284,
+            "elements": 1638400,
+            "role": "residual",
+            "shape": "1280x1280x1x1",
+            "suffix": ".residual.tt0"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.residual.tt0 role=residual shape=1280x1280x1x1 elements=1638400 elapsed_ms=79.284"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 24.242,
+            "elements": 1638400,
+            "role": "residual",
+            "shape": "1280x1280x1x1",
+            "suffix": ".residual.tt1"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.residual.tt1 role=residual shape=1280x1280x1x1 elements=1638400 elapsed_ms=24.242"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 23.204,
+            "elements": 1638400,
+            "role": "model",
+            "shape": "1280x1280x1x1",
+            "suffix": ".model.tt0"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.model.tt0 role=model shape=1280x1280x1x1 elements=1638400 elapsed_ms=23.204"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 22.992,
+            "elements": 1638400,
+            "role": "model",
+            "shape": "1280x1280x1x1",
+            "suffix": ".model.tt1"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.model.tt1 role=model shape=1280x1280x1x1 elements=1638400 elapsed_ms=22.992"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 22.833,
+            "elements": 1638400,
+            "role": "image",
+            "shape": "1280x1280x1x1",
+            "suffix": ".image.tt0"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.image.tt0 role=image shape=1280x1280x1x1 elements=1638400 elapsed_ms=22.833"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 22.837,
+            "elements": 1638400,
+            "role": "image",
+            "shape": "1280x1280x1x1",
+            "suffix": ".image.tt1"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.image.tt1 role=image shape=1280x1280x1x1 elements=1638400 elapsed_ms=22.837"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 0.93,
+            "elements": 1,
+            "role": "sumwt",
+            "shape": "1x1x1x1",
+            "suffix": ".sumwt.tt0"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.sumwt.tt0 role=sumwt shape=1x1x1x1 elements=1 elapsed_ms=0.930"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 0.924,
+            "elements": 1,
+            "role": "sumwt",
+            "shape": "1x1x1x1",
+            "suffix": ".sumwt.tt1"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.sumwt.tt1 role=sumwt shape=1x1x1x1 elements=1 elapsed_ms=0.924"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 0.913,
+            "elements": 1,
+            "role": "sumwt",
+            "shape": "1x1x1x1",
+            "suffix": ".sumwt.tt2"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.sumwt.tt2 role=sumwt shape=1x1x1x1 elements=1 elapsed_ms=0.913"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 23.103,
+            "elements": 1638400,
+            "role": "alpha",
+            "shape": "1280x1280x1x1",
+            "suffix": ".alpha"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.alpha role=alpha shape=1280x1280x1x1 elements=1638400 elapsed_ms=23.103"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 23.193,
+            "elements": 1638400,
+            "role": "alpha.error",
+            "shape": "1280x1280x1x1",
+            "suffix": ".alpha.error"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.alpha.error role=alpha.error shape=1280x1280x1x1 elements=1638400 elapsed_ms=23.193"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 13.942,
+            "elements": 1638400,
+            "role": "pb",
+            "shape": "1280x1280x1x1",
+            "suffix": ".pb.tt0"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.pb.tt0 role=pb shape=1280x1280x1x1 elements=1638400 elapsed_ms=13.942"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 6.089,
+            "elements": 1638400,
+            "role": "pb",
+            "shape": "1280x1280x1x1",
+            "suffix": ".pb.tt1"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.pb.tt1 role=pb shape=1280x1280x1x1 elements=1638400 elapsed_ms=6.089"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 14.225,
+            "elements": 1638400,
+            "role": "pbcor.image",
+            "shape": "1280x1280x1x1",
+            "suffix": ".image.tt0.pbcor"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.image.tt0.pbcor role=pbcor.image shape=1280x1280x1x1 elements=1638400 elapsed_ms=14.225"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 13.97,
+            "elements": 1638400,
+            "role": "pbcor.image",
+            "shape": "1280x1280x1x1",
+            "suffix": ".image.tt1.pbcor"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.image.tt1.pbcor role=pbcor.image shape=1280x1280x1x1 elements=1638400 elapsed_ms=13.970"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 35.151,
+            "elements": 1638400,
+            "role": "psf",
+            "shape": "1280x1280x1x1",
+            "suffix": ".psf.tt0"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.psf.tt0 role=psf shape=1280x1280x1x1 elements=1638400 elapsed_ms=35.151"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 133.101,
+            "elements": 1638400,
+            "role": "psf",
+            "shape": "1280x1280x1x1",
+            "suffix": ".psf.tt1"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.psf.tt1 role=psf shape=1280x1280x1x1 elements=1638400 elapsed_ms=133.101"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 36.413,
+            "elements": 1638400,
+            "role": "psf",
+            "shape": "1280x1280x1x1",
+            "suffix": ".psf.tt2"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.psf.tt2 role=psf shape=1280x1280x1x1 elements=1638400 elapsed_ms=36.413"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 79.284,
+            "elements": 1638400,
+            "role": "residual",
+            "shape": "1280x1280x1x1",
+            "suffix": ".residual.tt0"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.residual.tt0 role=residual shape=1280x1280x1x1 elements=1638400 elapsed_ms=79.284"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 24.242,
+            "elements": 1638400,
+            "role": "residual",
+            "shape": "1280x1280x1x1",
+            "suffix": ".residual.tt1"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.residual.tt1 role=residual shape=1280x1280x1x1 elements=1638400 elapsed_ms=24.242"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 23.204,
+            "elements": 1638400,
+            "role": "model",
+            "shape": "1280x1280x1x1",
+            "suffix": ".model.tt0"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.model.tt0 role=model shape=1280x1280x1x1 elements=1638400 elapsed_ms=23.204"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 22.992,
+            "elements": 1638400,
+            "role": "model",
+            "shape": "1280x1280x1x1",
+            "suffix": ".model.tt1"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.model.tt1 role=model shape=1280x1280x1x1 elements=1638400 elapsed_ms=22.992"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 22.833,
+            "elements": 1638400,
+            "role": "image",
+            "shape": "1280x1280x1x1",
+            "suffix": ".image.tt0"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.image.tt0 role=image shape=1280x1280x1x1 elements=1638400 elapsed_ms=22.833"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 22.837,
+            "elements": 1638400,
+            "role": "image",
+            "shape": "1280x1280x1x1",
+            "suffix": ".image.tt1"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.image.tt1 role=image shape=1280x1280x1x1 elements=1638400 elapsed_ms=22.837"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 0.93,
+            "elements": 1,
+            "role": "sumwt",
+            "shape": "1x1x1x1",
+            "suffix": ".sumwt.tt0"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.sumwt.tt0 role=sumwt shape=1x1x1x1 elements=1 elapsed_ms=0.930"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 0.924,
+            "elements": 1,
+            "role": "sumwt",
+            "shape": "1x1x1x1",
+            "suffix": ".sumwt.tt1"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.sumwt.tt1 role=sumwt shape=1x1x1x1 elements=1 elapsed_ms=0.924"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 0.913,
+            "elements": 1,
+            "role": "sumwt",
+            "shape": "1x1x1x1",
+            "suffix": ".sumwt.tt2"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.sumwt.tt2 role=sumwt shape=1x1x1x1 elements=1 elapsed_ms=0.913"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 23.103,
+            "elements": 1638400,
+            "role": "alpha",
+            "shape": "1280x1280x1x1",
+            "suffix": ".alpha"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.alpha role=alpha shape=1280x1280x1x1 elements=1638400 elapsed_ms=23.103"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 23.193,
+            "elements": 1638400,
+            "role": "alpha.error",
+            "shape": "1280x1280x1x1",
+            "suffix": ".alpha.error"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.alpha.error role=alpha.error shape=1280x1280x1x1 elements=1638400 elapsed_ms=23.193"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 13.942,
+            "elements": 1638400,
+            "role": "pb",
+            "shape": "1280x1280x1x1",
+            "suffix": ".pb.tt0"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.pb.tt0 role=pb shape=1280x1280x1x1 elements=1638400 elapsed_ms=13.942"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 6.089,
+            "elements": 1638400,
+            "role": "pb",
+            "shape": "1280x1280x1x1",
+            "suffix": ".pb.tt1"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.pb.tt1 role=pb shape=1280x1280x1x1 elements=1638400 elapsed_ms=6.089"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 14.225,
+            "elements": 1638400,
+            "role": "pbcor.image",
+            "shape": "1280x1280x1x1",
+            "suffix": ".image.tt0.pbcor"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.image.tt0.pbcor role=pbcor.image shape=1280x1280x1x1 elements=1638400 elapsed_ms=14.225"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 13.97,
+            "elements": 1638400,
+            "role": "pbcor.image",
+            "shape": "1280x1280x1x1",
+            "suffix": ".image.tt1.pbcor"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.image.tt1.pbcor role=pbcor.image shape=1280x1280x1x1 elements=1638400 elapsed_ms=13.970"
+        }
+      ],
+      "imaging_source_read_ahead": [
+        {
+          "fields": {
+            "consumer_ms": 40.748,
+            "consumer_recv_blocked_ms": 0.0,
+            "effective_read_bandwidth_mib_s": 837.258,
+            "enabled": false,
+            "live_row_block_high_water": 1,
+            "max_live_row_blocks": 2,
+            "mode": "mosaic_mtmfs_replay",
+            "producer_consumer_overlap_ms": 0.0,
+            "producer_send_blocked_ms": 0.0,
+            "queue_capacity": 0,
+            "row_block_rows": 261744,
+            "row_blocks": 1,
+            "source_bytes": 19892544,
+            "source_prepare_ms": 40.748,
+            "source_read_ms": 22.659,
+            "source_route_ms": 0.0,
+            "streamed_samples": 2093952
+          },
+          "name": "imaging_source_read_ahead_summary",
+          "raw": "imaging_source_read_ahead_summary mode=mosaic_mtmfs_replay enabled=false max_live_row_blocks=2 queue_capacity=0 live_row_block_high_water=1 row_blocks=1 row_block_rows=261744 consumer_recv_blocked_ms=0.000 producer_send_blocked_ms=0.000 producer_consumer_overlap_ms=0.000 source_read_ms=22.659 source_route_ms=0.000 consumer_ms=40.748 source_prepare_ms=40.748 source_bytes=19892544 effective_read_bandwidth_mib_s=837.258 streamed_samples=2093952"
+        },
+        {
+          "fields": {
+            "consumer_ms": 3825.226,
+            "consumer_recv_blocked_ms": 0.0,
+            "effective_read_bandwidth_mib_s": 379.122,
+            "enabled": false,
+            "live_row_block_high_water": 1,
+            "max_live_row_blocks": 2,
+            "mode": "mosaic_mtmfs_replay",
+            "producer_consumer_overlap_ms": 0.0,
+            "producer_send_blocked_ms": 0.0,
+            "queue_capacity": 0,
+            "row_block_rows": 261744,
+            "row_blocks": 1,
+            "source_bytes": 162281280,
+            "source_prepare_ms": 3825.226,
+            "source_read_ms": 408.216,
+            "source_route_ms": 0.0,
+            "streamed_samples": 2093952
+          },
+          "name": "imaging_source_read_ahead_summary",
+          "raw": "imaging_source_read_ahead_summary mode=mosaic_mtmfs_replay enabled=false max_live_row_blocks=2 queue_capacity=0 live_row_block_high_water=1 row_blocks=1 row_block_rows=261744 consumer_recv_blocked_ms=0.000 producer_send_blocked_ms=0.000 producer_consumer_overlap_ms=0.000 source_read_ms=408.216 source_route_ms=0.000 consumer_ms=3825.226 source_prepare_ms=3825.226 source_bytes=162281280 effective_read_bandwidth_mib_s=379.122 streamed_samples=2093952"
+        },
+        {
+          "fields": {
+            "consumer_ms": 4537.488,
+            "consumer_recv_blocked_ms": 0.0,
+            "effective_read_bandwidth_mib_s": 3716.587,
+            "enabled": false,
+            "live_row_block_high_water": 1,
+            "max_live_row_blocks": 2,
+            "mode": "mosaic_mtmfs_replay",
+            "producer_consumer_overlap_ms": 0.0,
+            "producer_send_blocked_ms": 0.0,
+            "queue_capacity": 0,
+            "row_block_rows": 261744,
+            "row_blocks": 1,
+            "source_bytes": 162281280,
+            "source_prepare_ms": 4537.488,
+            "source_read_ms": 41.641,
+            "source_route_ms": 0.0,
+            "streamed_samples": 2093952
+          },
+          "name": "imaging_source_read_ahead_summary",
+          "raw": "imaging_source_read_ahead_summary mode=mosaic_mtmfs_replay enabled=false max_live_row_blocks=2 queue_capacity=0 live_row_block_high_water=1 row_blocks=1 row_block_rows=261744 consumer_recv_blocked_ms=0.000 producer_send_blocked_ms=0.000 producer_consumer_overlap_ms=0.000 source_read_ms=41.641 source_route_ms=0.000 consumer_ms=4537.488 source_prepare_ms=4537.488 source_bytes=162281280 effective_read_bandwidth_mib_s=3716.587 streamed_samples=2093952"
+        },
+        {
+          "fields": {
+            "consumer_ms": 40.748,
+            "consumer_recv_blocked_ms": 0.0,
+            "effective_read_bandwidth_mib_s": 837.258,
+            "enabled": false,
+            "live_row_block_high_water": 1,
+            "max_live_row_blocks": 2,
+            "mode": "mosaic_mtmfs_replay",
+            "producer_consumer_overlap_ms": 0.0,
+            "producer_send_blocked_ms": 0.0,
+            "queue_capacity": 0,
+            "row_block_rows": 261744,
+            "row_blocks": 1,
+            "source_bytes": 19892544,
+            "source_prepare_ms": 40.748,
+            "source_read_ms": 22.659,
+            "source_route_ms": 0.0,
+            "streamed_samples": 2093952
+          },
+          "name": "imaging_source_read_ahead_summary",
+          "raw": "imaging_source_read_ahead_summary mode=mosaic_mtmfs_replay enabled=false max_live_row_blocks=2 queue_capacity=0 live_row_block_high_water=1 row_blocks=1 row_block_rows=261744 consumer_recv_blocked_ms=0.000 producer_send_blocked_ms=0.000 producer_consumer_overlap_ms=0.000 source_read_ms=22.659 source_route_ms=0.000 consumer_ms=40.748 source_prepare_ms=40.748 source_bytes=19892544 effective_read_bandwidth_mib_s=837.258 streamed_samples=2093952"
+        },
+        {
+          "fields": {
+            "consumer_ms": 3825.226,
+            "consumer_recv_blocked_ms": 0.0,
+            "effective_read_bandwidth_mib_s": 379.122,
+            "enabled": false,
+            "live_row_block_high_water": 1,
+            "max_live_row_blocks": 2,
+            "mode": "mosaic_mtmfs_replay",
+            "producer_consumer_overlap_ms": 0.0,
+            "producer_send_blocked_ms": 0.0,
+            "queue_capacity": 0,
+            "row_block_rows": 261744,
+            "row_blocks": 1,
+            "source_bytes": 162281280,
+            "source_prepare_ms": 3825.226,
+            "source_read_ms": 408.216,
+            "source_route_ms": 0.0,
+            "streamed_samples": 2093952
+          },
+          "name": "imaging_source_read_ahead_summary",
+          "raw": "imaging_source_read_ahead_summary mode=mosaic_mtmfs_replay enabled=false max_live_row_blocks=2 queue_capacity=0 live_row_block_high_water=1 row_blocks=1 row_block_rows=261744 consumer_recv_blocked_ms=0.000 producer_send_blocked_ms=0.000 producer_consumer_overlap_ms=0.000 source_read_ms=408.216 source_route_ms=0.000 consumer_ms=3825.226 source_prepare_ms=3825.226 source_bytes=162281280 effective_read_bandwidth_mib_s=379.122 streamed_samples=2093952"
+        },
+        {
+          "fields": {
+            "consumer_ms": 4537.488,
+            "consumer_recv_blocked_ms": 0.0,
+            "effective_read_bandwidth_mib_s": 3716.587,
+            "enabled": false,
+            "live_row_block_high_water": 1,
+            "max_live_row_blocks": 2,
+            "mode": "mosaic_mtmfs_replay",
+            "producer_consumer_overlap_ms": 0.0,
+            "producer_send_blocked_ms": 0.0,
+            "queue_capacity": 0,
+            "row_block_rows": 261744,
+            "row_blocks": 1,
+            "source_bytes": 162281280,
+            "source_prepare_ms": 4537.488,
+            "source_read_ms": 41.641,
+            "source_route_ms": 0.0,
+            "streamed_samples": 2093952
+          },
+          "name": "imaging_source_read_ahead_summary",
+          "raw": "imaging_source_read_ahead_summary mode=mosaic_mtmfs_replay enabled=false max_live_row_blocks=2 queue_capacity=0 live_row_block_high_water=1 row_blocks=1 row_block_rows=261744 consumer_recv_blocked_ms=0.000 producer_send_blocked_ms=0.000 producer_consumer_overlap_ms=0.000 source_read_ms=41.641 source_route_ms=0.000 consumer_ms=4537.488 source_prepare_ms=4537.488 source_bytes=162281280 effective_read_bandwidth_mib_s=3716.587 streamed_samples=2093952"
+        }
+      ],
+      "metal_diagnostics": [],
+      "minor_cycle_diagnostics": [],
+      "mosaic_cube_slab_executor_summaries": [],
+      "mosaic_cube_slab_planes": [],
+      "mosaic_cube_slab_plans": [],
+      "multiscale_minor_cycle_diagnostics": [],
+      "profile_runs": [],
+      "schema_version": 1,
+      "single_plane_execution_plan": [
+        {
+          "fields": {
+            "cpu_multi_worker_eligible": false,
+            "cpu_multi_worker_reason": "mosaic-auto-uses-single-grid-owner-or-metal-groups",
+            "deconvolver": "mtmfs",
+            "gpu_metal_eligible": true,
+            "gpu_metal_reason": "mosaic-screen-projector-metal-single-grid-owner",
+            "one_output_channel": true,
+            "output_channels": 1,
+            "output_products": ".image.tt0,.residual.tt0,.model.tt0,.psf.tt0,.sumwt.tt0,.image.tt1,.residual.tt1,.model.tt1,.psf.tt1,.sumwt.tt1,.alpha,.alpha.error,.pb.tt0,.pb.tt1,.image.tt0.pbcor,.image.tt1.pbcor,.alpha.pbcor",
+            "pb_products": true,
+            "pb_requirement": "mosaic-projection",
+            "projection": "mosaic",
+            "source_stream": "bounded",
+            "source_stream_memory": "planner",
+            "spectral": "mfs",
+            "stage_timing_attribution": "frontend-core-product-stages",
+            "standard_mfs_regression_sentinel": false,
+            "weighting": "briggs"
+          },
+          "name": "single_plane_execution_plan",
+          "raw": "single_plane_execution_plan spectral=mfs projection=mosaic deconvolver=mtmfs weighting=briggs output_channels=1 one_output_channel=true source_stream=bounded source_stream_memory=planner pb_products=true pb_requirement=mosaic-projection output_products=.image.tt0,.residual.tt0,.model.tt0,.psf.tt0,.sumwt.tt0,.image.tt1,.residual.tt1,.model.tt1,.psf.tt1,.sumwt.tt1,.alpha,.alpha.error,.pb.tt0,.pb.tt1,.image.tt0.pbcor,.image.tt1.pbcor,.alpha.pbcor cpu_multi_worker_eligible=false cpu_multi_worker_reason=mosaic-auto-uses-single-grid-owner-or-metal-groups gpu_metal_eligible=true gpu_metal_reason=mosaic-screen-projector-metal-single-grid-owner stage_timing_attribution=frontend-core-product-stages standard_mfs_regression_sentinel=false"
+        },
+        {
+          "fields": {
+            "cpu_multi_worker_eligible": false,
+            "cpu_multi_worker_reason": "mosaic-auto-uses-single-grid-owner-or-metal-groups",
+            "deconvolver": "mtmfs",
+            "gpu_metal_eligible": true,
+            "gpu_metal_reason": "mosaic-screen-projector-metal-single-grid-owner",
+            "one_output_channel": true,
+            "output_channels": 1,
+            "output_products": ".image.tt0,.residual.tt0,.model.tt0,.psf.tt0,.sumwt.tt0,.image.tt1,.residual.tt1,.model.tt1,.psf.tt1,.sumwt.tt1,.alpha,.alpha.error,.pb.tt0,.pb.tt1,.image.tt0.pbcor,.image.tt1.pbcor,.alpha.pbcor",
+            "pb_products": true,
+            "pb_requirement": "mosaic-projection",
+            "projection": "mosaic",
+            "source_stream": "bounded",
+            "source_stream_memory": "planner",
+            "spectral": "mfs",
+            "stage_timing_attribution": "frontend-core-product-stages",
+            "standard_mfs_regression_sentinel": false,
+            "weighting": "briggs"
+          },
+          "name": "single_plane_execution_plan",
+          "raw": "single_plane_execution_plan spectral=mfs projection=mosaic deconvolver=mtmfs weighting=briggs output_channels=1 one_output_channel=true source_stream=bounded source_stream_memory=planner pb_products=true pb_requirement=mosaic-projection output_products=.image.tt0,.residual.tt0,.model.tt0,.psf.tt0,.sumwt.tt0,.image.tt1,.residual.tt1,.model.tt1,.psf.tt1,.sumwt.tt1,.alpha,.alpha.error,.pb.tt0,.pb.tt1,.image.tt0.pbcor,.image.tt1.pbcor,.alpha.pbcor cpu_multi_worker_eligible=false cpu_multi_worker_reason=mosaic-auto-uses-single-grid-owner-or-metal-groups gpu_metal_eligible=true gpu_metal_reason=mosaic-screen-projector-metal-single-grid-owner stage_timing_attribution=frontend-core-product-stages standard_mfs_regression_sentinel=false"
+        }
+      ],
+      "source_stream_consumer": [],
+      "source_stream_memory_plan": [
+        {
+          "fields": {
+            "execution_mode": "mosaic_mtmfs_single_plane_stream",
+            "executor_plan_bytes_estimate": 0,
+            "fixed_tile_edge": 0,
+            "fixed_tile_resident_bytes": 0,
+            "fixed_tile_resident_limit": 0,
+            "global_grid_bytes": 75497472,
+            "gpu_staging_bytes": 0,
+            "gridded_visibility_bytes": 0,
+            "heuristic_row_block_rows": 261744,
+            "image_working_set_bytes": 104857600,
+            "live_bucket_bytes": 134012928,
+            "live_row_block_bytes": 268025856,
+            "local_grid_bytes_estimate": 0,
+            "max_live_row_blocks": 2,
+            "memory_target_bytes": 17179869184,
+            "memory_target_source": "system_half",
+            "metal_grouped_input_cache_bytes": 0,
+            "metal_grouped_input_cache_enabled": false,
+            "modeled_source_read_bytes": 50254848,
+            "output_image_bytes": 0,
+            "peak_rss_bytes": 0,
+            "planned_active_bytes": 952975472,
+            "planned_reserved_bytes": 1086988400,
+            "prepare_buffer_bytes": 16226893712,
+            "prepare_buffer_floor_applied": false,
+            "product_status": "cpu",
+            "queued_task_bytes": 0,
+            "reserve_over_budget_bytes": 0,
+            "resident_tile_buffer_bytes": 0,
+            "routed_replay_cache_bytes": 0,
+            "routed_replay_cache_enabled": false,
+            "row_block_rows": 261744,
+            "row_block_rows_source": "shape-planner",
+            "rows_total": 261744,
+            "selected_channels": 8,
+            "source_stream": "bounded",
+            "source_stream_buffer_bytes": 460931184,
+            "system_memory_bytes": 34359738368,
+            "tile_cell_bin_bytes": 0,
+            "total_budget_bytes": 17179869184,
+            "visibility_row_cache_overhead_bytes": 33,
+            "visibility_row_channel_bytes": 18,
+            "visibility_row_fixed_bytes": 48,
+            "visibility_row_fixed_resident_bytes": 81,
+            "weighting_density_bytes": 6553600,
+            "worker_buffers": 1,
+            "worker_staging_bytes": 380633088
+          },
+          "name": "standard_mfs_memory_plan_actual",
+          "raw": "standard_mfs_memory_plan_actual source_stream=bounded execution_mode=mosaic_mtmfs_single_plane_stream rows_total=261744 selected_channels=8 row_block_rows=261744 row_block_rows_source=shape-planner heuristic_row_block_rows=261744 worker_buffers=1 system_memory_bytes=34359738368 memory_target_bytes=17179869184 memory_target_source=system_half total_budget_bytes=17179869184 planned_reserved_bytes=1086988400 planned_active_bytes=952975472 reserve_over_budget_bytes=0 prepare_buffer_floor_applied=false prepare_buffer_bytes=16226893712 image_working_set_bytes=104857600 weighting_density_bytes=6553600 gridded_visibility_bytes=0 output_image_bytes=0 fixed_tile_resident_bytes=0 fixed_tile_resident_limit=0 fixed_tile_edge=0 fixed_tile_anchor= max_live_row_blocks=2 source_stream_buffer_bytes=460931184 live_row_block_bytes=268025856 live_bucket_bytes=134012928 visibility_row_channel_bytes=18 visibility_row_fixed_bytes=48 visibility_row_fixed_resident_bytes=81 visibility_row_cache_overhead_bytes=33 modeled_source_read_bytes=50254848 queued_task_bytes=0 resident_tile_buffer_bytes=0 global_grid_bytes=75497472 tile_cell_bin_bytes=0 worker_staging_bytes=380633088 gpu_staging_bytes=0 routed_replay_cache_bytes=0 routed_replay_cache_enabled=false metal_grouped_input_cache_bytes=0 metal_grouped_input_cache_enabled=false executor_plan_bytes_estimate=0 local_grid_bytes_estimate=0 peak_rss_bytes=0 product_status=cpu"
+        },
+        {
+          "fields": {
+            "execution_mode": "mosaic_mtmfs_single_plane_stream",
+            "executor_plan_bytes_estimate": 0,
+            "fixed_tile_edge": 0,
+            "fixed_tile_resident_bytes": 0,
+            "fixed_tile_resident_limit": 0,
+            "global_grid_bytes": 75497472,
+            "gpu_staging_bytes": 0,
+            "gridded_visibility_bytes": 0,
+            "heuristic_row_block_rows": 261744,
+            "image_working_set_bytes": 104857600,
+            "live_bucket_bytes": 134012928,
+            "live_row_block_bytes": 268025856,
+            "local_grid_bytes_estimate": 0,
+            "max_live_row_blocks": 2,
+            "memory_target_bytes": 17179869184,
+            "memory_target_source": "system_half",
+            "metal_grouped_input_cache_bytes": 0,
+            "metal_grouped_input_cache_enabled": false,
+            "modeled_source_read_bytes": 50254848,
+            "output_image_bytes": 0,
+            "peak_rss_bytes": 0,
+            "planned_active_bytes": 952975472,
+            "planned_reserved_bytes": 1086988400,
+            "prepare_buffer_bytes": 16226893712,
+            "prepare_buffer_floor_applied": false,
+            "product_status": "cpu",
+            "queued_task_bytes": 0,
+            "reserve_over_budget_bytes": 0,
+            "resident_tile_buffer_bytes": 0,
+            "routed_replay_cache_bytes": 0,
+            "routed_replay_cache_enabled": false,
+            "row_block_rows": 261744,
+            "row_block_rows_source": "shape-planner",
+            "rows_total": 261744,
+            "selected_channels": 8,
+            "source_stream": "bounded",
+            "source_stream_buffer_bytes": 460931184,
+            "system_memory_bytes": 34359738368,
+            "tile_cell_bin_bytes": 0,
+            "total_budget_bytes": 17179869184,
+            "visibility_row_cache_overhead_bytes": 33,
+            "visibility_row_channel_bytes": 18,
+            "visibility_row_fixed_bytes": 48,
+            "visibility_row_fixed_resident_bytes": 81,
+            "weighting_density_bytes": 6553600,
+            "worker_buffers": 1,
+            "worker_staging_bytes": 380633088
+          },
+          "name": "standard_mfs_memory_plan_actual",
+          "raw": "standard_mfs_memory_plan_actual source_stream=bounded execution_mode=mosaic_mtmfs_single_plane_stream rows_total=261744 selected_channels=8 row_block_rows=261744 row_block_rows_source=shape-planner heuristic_row_block_rows=261744 worker_buffers=1 system_memory_bytes=34359738368 memory_target_bytes=17179869184 memory_target_source=system_half total_budget_bytes=17179869184 planned_reserved_bytes=1086988400 planned_active_bytes=952975472 reserve_over_budget_bytes=0 prepare_buffer_floor_applied=false prepare_buffer_bytes=16226893712 image_working_set_bytes=104857600 weighting_density_bytes=6553600 gridded_visibility_bytes=0 output_image_bytes=0 fixed_tile_resident_bytes=0 fixed_tile_resident_limit=0 fixed_tile_edge=0 fixed_tile_anchor= max_live_row_blocks=2 source_stream_buffer_bytes=460931184 live_row_block_bytes=268025856 live_bucket_bytes=134012928 visibility_row_channel_bytes=18 visibility_row_fixed_bytes=48 visibility_row_fixed_resident_bytes=81 visibility_row_cache_overhead_bytes=33 modeled_source_read_bytes=50254848 queued_task_bytes=0 resident_tile_buffer_bytes=0 global_grid_bytes=75497472 tile_cell_bin_bytes=0 worker_staging_bytes=380633088 gpu_staging_bytes=0 routed_replay_cache_bytes=0 routed_replay_cache_enabled=false metal_grouped_input_cache_bytes=0 metal_grouped_input_cache_enabled=false executor_plan_bytes_estimate=0 local_grid_bytes_estimate=0 peak_rss_bytes=0 product_status=cpu"
+        }
+      ],
+      "spectral_slab_events": [],
+      "spectral_slab_memory": [],
+      "spectral_slab_plans": [],
+      "standard_mfs_runtime_plan": [
+        {
+          "fields": {
+            "auto_metal": true,
+            "auto_multi_cpu": true,
+            "backend": "cpu",
+            "backend_source": "auto",
+            "density_threads": 4,
+            "density_threads_source": "auto",
+            "eligible": true,
+            "grid_threads": 4,
+            "grid_threads_source": "auto",
+            "imaging_fft_backend": "auto",
+            "imaging_fft_precision": "auto",
+            "initial_dirty_backend": "metal-row-run-grouped",
+            "initial_dirty_backend_source": "auto",
+            "metal_device_available": true,
+            "metal_grouped_input_cache": "planner",
+            "metal_grouped_input_cache_source": "not_applicable",
+            "metal_minor_cycle_chunk": "full",
+            "metal_minor_cycle_chunk_source": "not_applicable",
+            "minor_cycle_backend": "cpu",
+            "minor_cycle_backend_reason": "not_applicable",
+            "mtmfs_metal_backend": "metal-sample-cache",
+            "mtmfs_metal_input_cache": "planned",
+            "policy": "auto",
+            "residual_backend": "metal-row-run-grouped",
+            "residual_backend_source": "auto",
+            "tile_anchor": "default",
+            "tile_anchor_source": "not_applicable",
+            "worker_candidate_costs": "1:cost=1638400,waves=1,contention_milli=1000,eff_speedup_milli=1000,command_target_ms=none;2:cost=885143,waves=1,contention_milli=1000,eff_speedup_milli=1851,command_target_ms=none;3:cost=721126,waves=1,contention_milli=1000,eff_speedup_milli=2272,command_target_ms=none;4:cost=704688,waves=1,contention_milli=1000,eff_speedup_milli=2325,command_target_ms=none;5:cost=747445,waves=1,contention_milli=1000,eff_speedup_milli=2192,command_target_ms=none;6:cost=819200,waves=1,contention_milli=1000,eff_speedup_milli=2000,command_target_ms=none;7:cost=908203,waves=1,contention_milli=1000,eff_speedup_milli=1804,command_target_ms=none;8:cost=1007626,waves=1,contention_milli=1000,eff_speedup_milli=1626,command_target_ms=none;9:cost=1114557,waves=1,contention_milli=1000,eff_speedup_milli=1470,command_target_ms=none;10:cost=1226347,waves=1,contention_milli=1000,eff_speedup_milli=1336,command_target_ms=none",
+            "worker_model": "intra_plane_cpu_diminishing_return_v1",
+            "worker_modeled_cost_units": 704688
+          },
+          "name": "standard_mfs_runtime_plan",
+          "raw": "standard_mfs_runtime_plan policy=auto imaging_fft_precision=auto imaging_fft_backend=auto eligible=true auto_multi_cpu=true auto_metal=true metal_device_available=true worker_model=intra_plane_cpu_diminishing_return_v1 worker_modeled_cost_units=704688 worker_candidate_costs=1:cost=1638400,waves=1,contention_milli=1000,eff_speedup_milli=1000,command_target_ms=none;2:cost=885143,waves=1,contention_milli=1000,eff_speedup_milli=1851,command_target_ms=none;3:cost=721126,waves=1,contention_milli=1000,eff_speedup_milli=2272,command_target_ms=none;4:cost=704688,waves=1,contention_milli=1000,eff_speedup_milli=2325,command_target_ms=none;5:cost=747445,waves=1,contention_milli=1000,eff_speedup_milli=2192,command_target_ms=none;6:cost=819200,waves=1,contention_milli=1000,eff_speedup_milli=2000,command_target_ms=none;7:cost=908203,waves=1,contention_milli=1000,eff_speedup_milli=1804,command_target_ms=none;8:cost=1007626,waves=1,contention_milli=1000,eff_speedup_milli=1626,command_target_ms=none;9:cost=1114557,waves=1,contention_milli=1000,eff_speedup_milli=1470,command_target_ms=none;10:cost=1226347,waves=1,contention_milli=1000,eff_speedup_milli=1336,command_target_ms=none backend=cpu backend_source=auto grid_threads=4 grid_threads_source=auto density_threads=4 density_threads_source=auto tile_anchor=default tile_anchor_source=not_applicable residual_backend=metal-row-run-grouped residual_backend_source=auto initial_dirty_backend=metal-row-run-grouped initial_dirty_backend_source=auto metal_grouped_input_cache=planner metal_grouped_input_cache_source=not_applicable minor_cycle_backend=cpu minor_cycle_backend_reason=not_applicable metal_minor_cycle_chunk=full metal_minor_cycle_chunk_source=not_applicable mtmfs_metal_backend=metal-sample-cache mtmfs_metal_input_cache=planned"
+        },
+        {
+          "fields": {
+            "auto_metal": true,
+            "auto_multi_cpu": true,
+            "backend": "cpu",
+            "backend_source": "auto",
+            "density_threads": 4,
+            "density_threads_source": "auto",
+            "eligible": true,
+            "grid_threads": 4,
+            "grid_threads_source": "auto",
+            "imaging_fft_backend": "auto",
+            "imaging_fft_precision": "auto",
+            "initial_dirty_backend": "metal-row-run-grouped",
+            "initial_dirty_backend_source": "auto",
+            "metal_device_available": true,
+            "metal_grouped_input_cache": "planner",
+            "metal_grouped_input_cache_source": "not_applicable",
+            "metal_minor_cycle_chunk": "full",
+            "metal_minor_cycle_chunk_source": "not_applicable",
+            "minor_cycle_backend": "cpu",
+            "minor_cycle_backend_reason": "not_applicable",
+            "mtmfs_metal_backend": "metal-sample-cache",
+            "mtmfs_metal_input_cache": "planned",
+            "policy": "auto",
+            "residual_backend": "metal-row-run-grouped",
+            "residual_backend_source": "auto",
+            "tile_anchor": "default",
+            "tile_anchor_source": "not_applicable",
+            "worker_candidate_costs": "1:cost=1638400,waves=1,contention_milli=1000,eff_speedup_milli=1000,command_target_ms=none;2:cost=885143,waves=1,contention_milli=1000,eff_speedup_milli=1851,command_target_ms=none;3:cost=721126,waves=1,contention_milli=1000,eff_speedup_milli=2272,command_target_ms=none;4:cost=704688,waves=1,contention_milli=1000,eff_speedup_milli=2325,command_target_ms=none;5:cost=747445,waves=1,contention_milli=1000,eff_speedup_milli=2192,command_target_ms=none;6:cost=819200,waves=1,contention_milli=1000,eff_speedup_milli=2000,command_target_ms=none;7:cost=908203,waves=1,contention_milli=1000,eff_speedup_milli=1804,command_target_ms=none;8:cost=1007626,waves=1,contention_milli=1000,eff_speedup_milli=1626,command_target_ms=none;9:cost=1114557,waves=1,contention_milli=1000,eff_speedup_milli=1470,command_target_ms=none;10:cost=1226347,waves=1,contention_milli=1000,eff_speedup_milli=1336,command_target_ms=none",
+            "worker_model": "intra_plane_cpu_diminishing_return_v1",
+            "worker_modeled_cost_units": 704688
+          },
+          "name": "standard_mfs_runtime_plan",
+          "raw": "standard_mfs_runtime_plan policy=auto imaging_fft_precision=auto imaging_fft_backend=auto eligible=true auto_multi_cpu=true auto_metal=true metal_device_available=true worker_model=intra_plane_cpu_diminishing_return_v1 worker_modeled_cost_units=704688 worker_candidate_costs=1:cost=1638400,waves=1,contention_milli=1000,eff_speedup_milli=1000,command_target_ms=none;2:cost=885143,waves=1,contention_milli=1000,eff_speedup_milli=1851,command_target_ms=none;3:cost=721126,waves=1,contention_milli=1000,eff_speedup_milli=2272,command_target_ms=none;4:cost=704688,waves=1,contention_milli=1000,eff_speedup_milli=2325,command_target_ms=none;5:cost=747445,waves=1,contention_milli=1000,eff_speedup_milli=2192,command_target_ms=none;6:cost=819200,waves=1,contention_milli=1000,eff_speedup_milli=2000,command_target_ms=none;7:cost=908203,waves=1,contention_milli=1000,eff_speedup_milli=1804,command_target_ms=none;8:cost=1007626,waves=1,contention_milli=1000,eff_speedup_milli=1626,command_target_ms=none;9:cost=1114557,waves=1,contention_milli=1000,eff_speedup_milli=1470,command_target_ms=none;10:cost=1226347,waves=1,contention_milli=1000,eff_speedup_milli=1336,command_target_ms=none backend=cpu backend_source=auto grid_threads=4 grid_threads_source=auto density_threads=4 density_threads_source=auto tile_anchor=default tile_anchor_source=not_applicable residual_backend=metal-row-run-grouped residual_backend_source=auto initial_dirty_backend=metal-row-run-grouped initial_dirty_backend_source=auto metal_grouped_input_cache=planner metal_grouped_input_cache_source=not_applicable minor_cycle_backend=cpu minor_cycle_backend_reason=not_applicable metal_minor_cycle_chunk=full metal_minor_cycle_chunk_source=not_applicable mtmfs_metal_backend=metal-sample-cache mtmfs_metal_input_cache=planned"
+        }
+      ],
+      "standard_mfs_source_read_ahead": [],
+      "summary": {
+        "active_rows": 261744,
+        "clean_residual_refresh_accounted_ms": null,
+        "clean_residual_refresh_backend": null,
+        "clean_residual_refresh_calls": 0,
+        "clean_residual_refresh_model_fft_ms": null,
+        "clean_residual_refresh_ms": null,
+        "clean_residual_refresh_overhead_ms": null,
+        "clean_residual_refresh_residual_degrid_grid_ms": null,
+        "clean_residual_refresh_residual_fft_ms": null,
+        "clean_residual_refresh_residual_normalize_ms": null,
+        "cube_per_plane_backend": null,
+        "cube_per_plane_fallback_reasons": null,
+        "cube_per_plane_fixed_tile_eligible": null,
+        "cube_per_plane_grid_threads": null,
+        "cube_per_plane_metal_eligible": null,
+        "cube_per_plane_phase": null,
+        "cube_per_plane_workers": null,
+        "cube_plane_state_store_bytes_read": null,
+        "cube_plane_state_store_bytes_written": null,
+        "cube_plane_state_store_cleanup_policy": null,
+        "cube_plane_state_store_count": 0,
+        "cube_plane_state_store_elapsed_ms": null,
+        "cube_plane_state_store_kind": null,
+        "cube_product_bytes": null,
+        "cube_product_group_planes": null,
+        "cube_product_groups": null,
+        "cube_product_image_ms": null,
+        "cube_product_image_pbcor_ms": null,
+        "cube_product_model_ms": null,
+        "cube_product_pb_ms": null,
+        "cube_product_psf_ms": null,
+        "cube_product_residual_ms": null,
+        "cube_product_role_ms": null,
+        "cube_product_summary_count": 0,
+        "cube_product_sumwt_ms": null,
+        "cube_product_tiled_c_order_calls": null,
+        "cube_product_tiled_copied_elements": null,
+        "cube_product_tiled_direct_pack_ns": null,
+        "cube_product_tiled_direct_swap_ns": null,
+        "cube_product_tiled_direct_write_bytes": null,
+        "cube_product_tiled_direct_write_calls": null,
+        "cube_product_tiled_direct_write_ns": null,
+        "cube_product_tiled_direct_write_tiles": null,
+        "cube_product_tiled_fortran_calls": null,
+        "cube_product_tiled_lru_batch_flush_bytes": null,
+        "cube_product_tiled_lru_batch_flush_tiles": null,
+        "cube_product_tiled_lru_zero_fill_tiles": null,
+        "cube_product_tiled_tile_visits": null,
+        "cube_product_weight_ms": null,
+        "cube_product_write_ms": null,
+        "cube_resident_clean_actual_updates": null,
+        "cube_resident_clean_cleaned_planes": null,
+        "cube_resident_clean_completed": null,
+        "cube_resident_clean_consume_ms": null,
+        "cube_resident_clean_control_prepare_ms": null,
+        "cube_resident_clean_control_source_read_ms": null,
+        "cube_resident_clean_controller_overhead_ms": null,
+        "cube_resident_clean_core_total_ms": null,
+        "cube_resident_clean_cycle_threshold": null,
+        "cube_resident_clean_elapsed_ms": null,
+        "cube_resident_clean_finish_cleaned_plane_count": 0,
+        "cube_resident_clean_finish_plane_count": 0,
+        "cube_resident_clean_finish_skipped_plane_count": 0,
+        "cube_resident_clean_major_cycle_refresh_ms": null,
+        "cube_resident_clean_max_actual_updates_per_plane": null,
+        "cube_resident_clean_minor_cycle_ms": null,
+        "cube_resident_clean_minor_cycle_solve_ms": null,
+        "cube_resident_clean_minor_iterations_from_planes": null,
+        "cube_resident_clean_model_nonzero_pixels": null,
+        "cube_resident_clean_model_nonzero_planes": 0,
+        "cube_resident_clean_model_peak_abs_jy": null,
+        "cube_resident_clean_model_sum_abs_jy": null,
+        "cube_resident_clean_planes": null,
+        "cube_resident_clean_planes_at_or_below_threshold": null,
+        "cube_resident_clean_product_write_ms": null,
+        "cube_resident_clean_publish_prepare_ms": null,
+        "cube_resident_clean_publish_source_read_ms": null,
+        "cube_resident_clean_reported_updates": null,
+        "cube_resident_clean_residency": null,
+        "cube_resident_clean_residual_refresh_overhead_ms": null,
+        "cube_resident_clean_restore_ms": null,
+        "cube_resident_clean_result_wait_ms": null,
+        "cube_resident_clean_skipped_minor_cycle_planes": null,
+        "cube_resident_clean_skipped_model_nonzero_planes": 0,
+        "cube_resident_clean_stop_reason_counts": null,
+        "cube_resident_clean_trace_minor_cycles": null,
+        "cube_source_row_block_rows": null,
+        "cube_source_row_blocks": null,
+        "cube_source_row_blocks_prepare_ms": null,
+        "cube_source_row_blocks_read_ms": null,
+        "cube_source_row_blocks_visibility_capacity_bytes": null,
+        "cube_source_row_blocks_wall_ms": null,
+        "dirty_product_fft_fallback_used": null,
+        "dirty_product_fft_requested_backend": null,
+        "dirty_product_fft_selected_backend": null,
+        "dirty_product_fft_total_ms": null,
+        "dirty_product_gpu_resident_device_exec_ms": null,
+        "dirty_product_gpu_resident_exec_ms": null,
+        "dirty_product_gpu_resident_fallback_reason": null,
+        "dirty_product_gpu_resident_fallback_used": null,
+        "dirty_product_gpu_resident_pack_ms": null,
+        "dirty_product_gpu_resident_plan_ms": null,
+        "dirty_product_gpu_resident_postprocess_ms": null,
+        "dirty_product_gpu_resident_products": null,
+        "dirty_product_gpu_resident_reason": null,
+        "dirty_product_gpu_resident_requested_backend": null,
+        "dirty_product_gpu_resident_selected_backend": null,
+        "dirty_product_gpu_resident_sync_ms": null,
+        "dirty_product_gpu_resident_total_ms": null,
+        "dirty_product_gpu_resident_transfer_from_device_ms": null,
+        "dirty_product_gpu_resident_transfer_to_device_ms": null,
+        "executor_limitation_materialization": null,
+        "executor_limitation_reason": null,
+        "frontend_io_time_ms": null,
+        "frontend_wall_to_io_ratio": null,
+        "gridded_samples": null,
+        "image_product_write_count": 18,
+        "image_product_write_elements_by_suffix": {
+          ".alpha": 1638400,
+          ".alpha.error": 1638400,
+          ".image.tt0": 1638400,
+          ".image.tt0.pbcor": 1638400,
+          ".image.tt1": 1638400,
+          ".image.tt1.pbcor": 1638400,
+          ".model.tt0": 1638400,
+          ".model.tt1": 1638400,
+          ".pb.tt0": 1638400,
+          ".pb.tt1": 1638400,
+          ".psf.tt0": 1638400,
+          ".psf.tt1": 1638400,
+          ".psf.tt2": 1638400,
+          ".residual.tt0": 1638400,
+          ".residual.tt1": 1638400,
+          ".sumwt.tt0": 1,
+          ".sumwt.tt1": 1,
+          ".sumwt.tt2": 1
+        },
+        "image_product_write_ms_by_suffix": {
+          ".alpha": 23.103,
+          ".alpha.error": 23.193,
+          ".image.tt0": 22.833,
+          ".image.tt0.pbcor": 14.225,
+          ".image.tt1": 22.837,
+          ".image.tt1.pbcor": 13.97,
+          ".model.tt0": 23.204,
+          ".model.tt1": 22.992,
+          ".pb.tt0": 13.942,
+          ".pb.tt1": 6.089,
+          ".psf.tt0": 35.151,
+          ".psf.tt1": 133.101,
+          ".psf.tt2": 36.413,
+          ".residual.tt0": 79.284,
+          ".residual.tt1": 24.242,
+          ".sumwt.tt0": 0.93,
+          ".sumwt.tt1": 0.924,
+          ".sumwt.tt2": 0.913
+        },
+        "image_product_write_role_by_suffix": {
+          ".alpha": "alpha",
+          ".alpha.error": "alpha.error",
+          ".image.tt0": "image",
+          ".image.tt0.pbcor": "pbcor.image",
+          ".image.tt1": "image",
+          ".image.tt1.pbcor": "pbcor.image",
+          ".model.tt0": "model",
+          ".model.tt1": "model",
+          ".pb.tt0": "pb",
+          ".pb.tt1": "pb",
+          ".psf.tt0": "psf",
+          ".psf.tt1": "psf",
+          ".psf.tt2": "psf",
+          ".residual.tt0": "residual",
+          ".residual.tt1": "residual",
+          ".sumwt.tt0": "sumwt",
+          ".sumwt.tt1": "sumwt",
+          ".sumwt.tt2": "sumwt"
+        },
+        "image_product_write_shape_by_suffix": {
+          ".alpha": "1280x1280x1x1",
+          ".alpha.error": "1280x1280x1x1",
+          ".image.tt0": "1280x1280x1x1",
+          ".image.tt0.pbcor": "1280x1280x1x1",
+          ".image.tt1": "1280x1280x1x1",
+          ".image.tt1.pbcor": "1280x1280x1x1",
+          ".model.tt0": "1280x1280x1x1",
+          ".model.tt1": "1280x1280x1x1",
+          ".pb.tt0": "1280x1280x1x1",
+          ".pb.tt1": "1280x1280x1x1",
+          ".psf.tt0": "1280x1280x1x1",
+          ".psf.tt1": "1280x1280x1x1",
+          ".psf.tt2": "1280x1280x1x1",
+          ".residual.tt0": "1280x1280x1x1",
+          ".residual.tt1": "1280x1280x1x1",
+          ".sumwt.tt0": "1x1x1x1",
+          ".sumwt.tt1": "1x1x1x1",
+          ".sumwt.tt2": "1x1x1x1"
+        },
+        "major_cycles": null,
+        "memory_target_bytes": 17179869184,
+        "metal_device_available": true,
+        "metal_diagnostic_count": 0,
+        "metal_grouped_append_data_flag_copy_ms": null,
+        "metal_grouped_append_group_assign_ms": null,
+        "metal_grouped_append_group_finalize_ms": null,
+        "metal_grouped_append_lane_push_ms": null,
+        "metal_grouped_append_run_desc_ms": null,
+        "metal_grouped_append_setup_ms": null,
+        "metal_grouped_input_cache": "planner",
+        "metal_residual_refresh_append_total_ms": null,
+        "metal_residual_refresh_calls": 0,
+        "metal_residual_refresh_candidate_model_reads": null,
+        "metal_residual_refresh_candidate_tap_visits": null,
+        "metal_residual_refresh_chunks": null,
+        "metal_residual_refresh_density_buffer_ms": null,
+        "metal_residual_refresh_detail_dispatch_gpu_ms": null,
+        "metal_residual_refresh_detail_dispatch_kernel_ms": null,
+        "metal_residual_refresh_detail_dispatch_wait_ms": null,
+        "metal_residual_refresh_detail_readback_ms": null,
+        "metal_residual_refresh_dispatch_encode_ms": null,
+        "metal_residual_refresh_dispatch_gpu_ms": null,
+        "metal_residual_refresh_dispatch_input_buffers_ms": null,
+        "metal_residual_refresh_dispatch_kernel_ms": null,
+        "metal_residual_refresh_dispatch_params_buffer_ms": null,
+        "metal_residual_refresh_dispatch_wait_ms": null,
+        "metal_residual_refresh_exact_candidate_grid_atomic_adds": null,
+        "metal_residual_refresh_grid_buffer_ms": null,
+        "metal_residual_refresh_group_descs": null,
+        "metal_residual_refresh_grouped_candidate_grid_atomic_adds": null,
+        "metal_residual_refresh_grouped_candidate_scan_tests": null,
+        "metal_residual_refresh_input_cache_chunks": null,
+        "metal_residual_refresh_input_cache_fills": null,
+        "metal_residual_refresh_input_cache_hits": null,
+        "metal_residual_refresh_input_cache_host_bytes": null,
+        "metal_residual_refresh_lane_refs": null,
+        "metal_residual_refresh_logical_lanes": null,
+        "metal_residual_refresh_model_buffer_ms": null,
+        "metal_residual_refresh_model_pack_ms": null,
+        "metal_residual_refresh_prepare_plus_dispatch_ms": null,
+        "metal_residual_refresh_readback_ms": null,
+        "metal_residual_refresh_replay_ms": null,
+        "metal_residual_refresh_runs": null,
+        "metal_residual_refresh_staged_bytes": null,
+        "metal_residual_refresh_unsupported_runs": null,
+        "minor_iterations": null,
+        "modeled_source_read_bytes": 50254848,
+        "mosaic_cube_slab_active_planes": null,
+        "mosaic_cube_slab_count": null,
+        "mosaic_cube_slab_executor_capabilities": null,
+        "mosaic_cube_slab_executor_elapsed_ms": null,
+        "mosaic_cube_slab_executor_summary_count": 0,
+        "mosaic_cube_slab_executor_worker_max_ms": null,
+        "mosaic_cube_slab_executor_worker_sum_ms": null,
+        "mosaic_cube_slab_nplanes": null,
+        "mosaic_cube_slab_plane_count": 0,
+        "mosaic_cube_slab_plane_publish_ms": null,
+        "mosaic_cube_slab_plane_worker_sum_ms": null,
+        "mosaic_cube_slab_product_state": null,
+        "mosaic_cube_slab_product_write_ms": null,
+        "mosaic_cube_slab_schedule": null,
+        "mosaic_cube_slab_source_reuse": null,
+        "mosaic_cube_slab_worker_count": null,
+        "peak_rss_bytes": null,
+        "planned_active_bytes": 952975472,
+        "requested_imaging_fft_backend": "auto",
+        "resolved_backend": "cpu",
+        "resolved_grid_threads": 4,
+        "resolved_initial_dirty_backend": "metal-row-run-grouped",
+        "resolved_minor_cycle_backend": "cpu",
+        "resolved_minor_cycle_backend_reason": "not_applicable",
+        "resolved_residual_backend": "metal-row-run-grouped",
+        "resolved_tile_anchor": "default",
+        "row_block_rows": 261744,
+        "selected_channels": 8,
+        "single_plane_reason": {
+          "cpu_multi_worker": "mosaic-auto-uses-single-grid-owner-or-metal-groups",
+          "gpu_metal": "mosaic-screen-projector-metal-single-grid-owner"
+        },
+        "source_read_ahead_consumer_ms": 8403.462,
+        "source_read_ahead_consumer_recv_blocked_ms": 0.0,
+        "source_read_ahead_effective_read_bandwidth_mib_s": 695.2102909527798,
+        "source_read_ahead_enabled": false,
+        "source_read_ahead_live_row_block_high_water": 1,
+        "source_read_ahead_max_live_row_blocks": 2,
+        "source_read_ahead_mode": "mosaic_mtmfs_replay",
+        "source_read_ahead_modes": [
+          "mosaic_mtmfs_replay"
+        ],
+        "source_read_ahead_producer_consumer_overlap_ms": 0.0,
+        "source_read_ahead_producer_send_blocked_ms": 0.0,
+        "source_read_ahead_queue_capacity": 0,
+        "source_read_ahead_row_blocks": 3,
+        "source_read_ahead_source_bytes": 344455104,
+        "source_read_ahead_source_prepare_ms": 8403.462,
+        "source_read_ahead_source_read_ms": 472.516,
+        "source_read_ahead_source_route_ms": 0.0,
+        "source_read_ahead_streamed_samples": 6281856,
+        "source_read_ahead_summary_count": 3,
+        "source_stream_buffer_bytes": 460931184,
+        "spectral_active_planes": null,
+        "spectral_backend": null,
+        "spectral_best_modeled_active_planes": null,
+        "spectral_best_modeled_output_spill_io_bytes": null,
+        "spectral_best_modeled_product_write_bytes": null,
+        "spectral_best_modeled_schedule": null,
+        "spectral_best_modeled_slab_count": null,
+        "spectral_best_modeled_source_channel_visits": null,
+        "spectral_best_modeled_source_read_bytes": null,
+        "spectral_best_modeled_total_io_bytes": null,
+        "spectral_best_modeled_visibility_cache_io_bytes": null,
+        "spectral_cache_budget_bytes": null,
+        "spectral_candidate_io_costs": null,
+        "spectral_data_channel_read_granularity": null,
+        "spectral_executor_capabilities": null,
+        "spectral_flag_channel_read_granularity": null,
+        "spectral_full_source_channel_count": null,
+        "spectral_max_slab_source_channels": null,
+        "spectral_memory_max_current_rss_bytes": null,
+        "spectral_memory_max_delta_from_baseline_bytes": null,
+        "spectral_memory_max_delta_from_previous_bytes": null,
+        "spectral_memory_max_delta_slab_id": null,
+        "spectral_memory_max_delta_stage": null,
+        "spectral_memory_max_peak_rss_bytes": null,
+        "spectral_modeled_full_cache_source_read_bytes": null,
+        "spectral_modeled_no_cache_source_read_bytes": null,
+        "spectral_modeled_output_spill_io_bytes": null,
+        "spectral_modeled_output_spill_read_bytes": null,
+        "spectral_modeled_output_spill_write_bytes": null,
+        "spectral_modeled_product_write_bytes": null,
+        "spectral_modeled_source_read_bytes": null,
+        "spectral_modeled_total_io_bytes": null,
+        "spectral_modeled_visibility_cache_fill_bytes": null,
+        "spectral_modeled_visibility_cache_io_bytes": null,
+        "spectral_modeled_visibility_cache_read_bytes": null,
+        "spectral_prepared_residency": null,
+        "spectral_product_batch_planes": null,
+        "spectral_schedule": null,
+        "spectral_slab_count": null,
+        "spectral_source_cell_channel_count": null,
+        "spectral_source_channel_visits": null,
+        "spectral_visibility_cache_bytes": null,
+        "spectral_visibility_cache_policy": null,
+        "spectral_visibility_cache_saved_read_bytes": null,
+        "spectral_visibility_resident_cache_layout": null,
+        "spectral_visibility_row_cache_overhead_bytes": null,
+        "spectral_visibility_row_channel_bytes": null,
+        "spectral_visibility_row_fixed_bytes": null,
+        "spectral_visibility_row_fixed_resident_bytes": null,
+        "spectral_weight_spectrum_channel_read_granularity": null,
+        "visibility_geometry_cache_budget_bytes": null,
+        "visibility_geometry_cache_bypasses": null,
+        "visibility_geometry_cache_elapsed_ms": null,
+        "visibility_geometry_cache_enabled": null,
+        "visibility_geometry_cache_entries": null,
+        "visibility_geometry_cache_fills": null,
+        "visibility_geometry_cache_hits": null,
+        "visibility_geometry_cache_misses": null,
+        "visibility_geometry_cache_rejected_model_dependent": null,
+        "visibility_geometry_cache_resident_bytes": null,
+        "visibility_geometry_cache_shares": null,
+        "visibility_row_cache_overhead_bytes": 33,
+        "visibility_row_channel_bytes": 18,
+        "visibility_row_fixed_bytes": 48,
+        "visibility_row_fixed_resident_bytes": 81
+      },
+      "visibility_geometry_cache": [],
+      "worker_diagnostics": []
+    },
+    "benchmark_features": {
+      "backend": {
+        "cpu_multi_worker_reason": "mosaic-auto-uses-single-grid-owner-or-metal-groups",
+        "cube_per_plane_backend": null,
+        "cube_per_plane_fallback_reasons": null,
+        "cube_per_plane_fixed_tile_eligible": null,
+        "cube_per_plane_grid_threads": null,
+        "cube_per_plane_metal_eligible": null,
+        "cube_per_plane_phase": null,
+        "cube_per_plane_workers": null,
+        "dirty_product_fft_fallback_used": null,
+        "dirty_product_fft_requested_backend": null,
+        "dirty_product_fft_selected_backend": null,
+        "dirty_product_gpu_resident_fallback_used": null,
+        "dirty_product_gpu_resident_reason": null,
+        "dirty_product_gpu_resident_requested_backend": null,
+        "dirty_product_gpu_resident_selected_backend": null,
+        "gpu_metal_reason": "mosaic-screen-projector-metal-single-grid-owner",
+        "mosaic_cube_slab_active_planes": null,
+        "mosaic_cube_slab_count": null,
+        "mosaic_cube_slab_executor_capabilities": null,
+        "mosaic_cube_slab_nplanes": null,
+        "mosaic_cube_slab_product_state": null,
+        "mosaic_cube_slab_schedule": null,
+        "mosaic_cube_slab_source_reuse": null,
+        "mosaic_cube_slab_worker_count": null,
+        "requested_acceleration": "auto",
+        "requested_imaging_fft_backend": "auto",
+        "resolved_backend": "cpu",
+        "resolved_grid_threads": 4,
+        "resolved_initial_dirty_backend": "metal-row-run-grouped",
+        "resolved_residual_backend": "metal-row-run-grouped",
+        "resolved_tile_anchor": "default"
+      },
+      "image": {
+        "image_work": 9830400,
+        "imsize_x": 1280,
+        "imsize_y": 1280,
+        "output_planes": 2,
+        "product_count": 3
+      },
+      "mode_cost": {
+        "actual_major_cycles": null,
+        "actual_minor_iterations": null,
+        "cycleniter": "1",
+        "deconvolver": "mtmfs",
+        "gridder": "mosaic",
+        "mosaic_field_count": 7,
+        "mtmfs_nterms": 2,
+        "multiscale_scale_count": null,
+        "niter": 1,
+        "specmode": "mfs",
+        "weighting": "briggs",
+        "wprojplanes": null
+      },
+      "resources": {
+        "available_parallelism": 10,
+        "dirty_product_fft_requested_backend": null,
+        "dirty_product_fft_selected_backend": null,
+        "dirty_product_fft_total_ms": null,
+        "dirty_product_gpu_resident_device_exec_ms": null,
+        "dirty_product_gpu_resident_exec_ms": null,
+        "dirty_product_gpu_resident_pack_ms": null,
+        "dirty_product_gpu_resident_plan_ms": null,
+        "dirty_product_gpu_resident_postprocess_ms": null,
+        "dirty_product_gpu_resident_sync_ms": null,
+        "dirty_product_gpu_resident_total_ms": null,
+        "dirty_product_gpu_resident_transfer_from_device_ms": null,
+        "dirty_product_gpu_resident_transfer_to_device_ms": null,
+        "logical_cores": 10,
+        "memory_headroom_bytes": 16226893712,
+        "memory_target_bytes": 17179869184,
+        "metal_device": true,
+        "metal_grouped_input_cache": "planner",
+        "peak_rss_bytes": null,
+        "physical_cores": 10,
+        "physical_memory_bytes": 34359738368,
+        "planned_active_bytes": 952975472,
+        "row_block_count": 1,
+        "row_block_rows": 261744,
+        "source_read_ahead_consumer_ms": 8403.462,
+        "source_read_ahead_consumer_recv_blocked_ms": 0.0,
+        "source_read_ahead_effective_read_bandwidth_mib_s": 695.2102909527798,
+        "source_read_ahead_enabled": false,
+        "source_read_ahead_live_row_block_high_water": 1,
+        "source_read_ahead_mode": "mosaic_mtmfs_replay",
+        "source_read_ahead_modes": [
+          "mosaic_mtmfs_replay"
+        ],
+        "source_read_ahead_producer_consumer_overlap_ms": 0.0,
+        "source_read_ahead_producer_send_blocked_ms": 0.0,
+        "source_read_ahead_queue_capacity": 0,
+        "source_read_ahead_row_blocks": 3,
+        "source_read_ahead_source_bytes": 344455104,
+        "source_read_ahead_source_prepare_ms": 8403.462,
+        "source_read_ahead_source_read_ms": 472.516,
+        "source_read_ahead_source_route_ms": 0.0,
+        "source_read_ahead_summary_count": 3
+      },
+      "schema_version": 1,
+      "visibility": {
+        "correlation_source": "scalar-plane-after-polarization-collapse",
+        "correlations": 1,
+        "flagged_fraction": null,
+        "gridded_samples": null,
+        "selected_channels": 8,
+        "selected_rows": 261744,
+        "source_stream_throughput_samples_per_s": null,
+        "visibility_work": 2093952
+      }
+    },
+    "casa": {
+      "reason": null,
+      "status": "ran",
+      "timings_seconds": {
+        "median": 14.981171,
+        "runs": [
+          14.981171
+        ]
+      }
+    },
+    "casa_clean_control_diagnostics": [],
+    "product_comparison": {
+      "beam_info": {
+        "psf_path": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/casa/casa.psf",
+        "status": "missing_psf"
+      },
+      "input": "/private/tmp/casa-rs-wave262-current-head-oracle/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.comparison-input.json",
+      "log": "/private/tmp/casa-rs-wave262-current-head-oracle/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.comparison.log",
+      "panel_dir": "/private/tmp/casa-rs-wave262-current-head-artifacts/comparisons/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/panels",
+      "products": {
+        ".image.tt0": {
+          "casa_max": 111.6287612915039,
+          "casa_min": -32.11152267456055,
+          "casa_path": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/casa/casa.image.tt0",
+          "casa_peak_abs": {
+            "abs_value": 111.6287612915039,
+            "location": [
+              319,
+              319,
+              0,
+              0
+            ],
+            "value": 111.6287612915039
+          },
+          "casa_rms": 3.5854628378877624,
+          "correlation": 0.9999999999999422,
+          "diff_abs_max": 0.000244140625,
+          "diff_abs_max_over_casa_peak": 2.1870763607459434e-06,
+          "diff_peak_abs": {
+            "abs_value": 0.000244140625,
+            "location": [
+              318,
+              319,
+              0,
+              0
+            ],
+            "value": -0.000244140625
+          },
+          "diff_rms": 1.3554609461959367e-06,
+          "diff_rms_over_casa_rms": 3.780435072071349e-07,
+          "finite_overlap": 409600,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -32.11152267456055,
+              111.62876892089844
+            ],
+            "difference_color_limits": [
+              -0.000244140625,
+              0.000244140625
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                2,
+                2,
+                1,
+                1
+              ],
+              "trc": [
+                1279,
+                1279,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              2,
+              2,
+              1,
+              1
+            ],
+            "display_shape": [
+              1280,
+              1280,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/casa-rs-wave262-current-head-artifacts/comparisons/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/panels/image_tt0.review.png",
+            "status": "written",
+            "structured_difference_label": "good",
+            "structured_difference_summary": ".image.tt0: good; amplitude and beam-scale structure checks passed.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 640,
+                "x_start": 0,
+                "y_end": 640,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 111.62876892089844,
+          "rust_min": -32.11152267456055,
+          "rust_path": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/rust/rust.image.tt0",
+          "rust_peak_abs": {
+            "abs_value": 111.62876892089844,
+            "location": [
+              319,
+              319,
+              0,
+              0
+            ],
+            "value": 111.62876892089844
+          },
+          "rust_rms": 3.585462494046735,
+          "sample_stride": [
+            2,
+            2,
+            1,
+            1
+          ],
+          "sampled_elements": 409600,
+          "shape": [
+            1280,
+            1280,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 409600,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 1.1894234416254369e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.828798668980476,
+                "block_side_pixels": 2,
+                "max_block_robust_z": 14414.383197377434,
+                "mean_pixel_rms_in_blocks": 6.503851199150971e-07,
+                "median_abs_block_mean": 5.2657718064424985e-09,
+                "n_blocks": 102400,
+                "normalized_block_mean_rms": 3.317349796675455e-07
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 1.077646916427767e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.5802269587345532,
+                "block_side_pixels": 4,
+                "max_block_robust_z": 6189.195614752966,
+                "mean_pixel_rms_in_blocks": 6.819570508344874e-07,
+                "median_abs_block_mean": 3.799304076532693e-09,
+                "n_blocks": 25600,
+                "normalized_block_mean_rms": 3.0056005741859016e-07
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 9.096831572311698e-07,
+                "block_mean_rms_over_mean_pixel_rms": 1.2624451524993359,
+                "block_side_pixels": 8,
+                "max_block_robust_z": 2710.406317198643,
+                "mean_pixel_rms_in_blocks": 7.205724188731822e-07,
+                "median_abs_block_mean": 2.8514297069890705e-09,
+                "n_blocks": 6400,
+                "normalized_block_mean_rms": 2.5371428971972687e-07
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 5.756482150476655e-07,
+                "block_mean_rms_over_mean_pixel_rms": 0.7467878857186825,
+                "block_side_pixels": 16,
+                "max_block_robust_z": 225.86479791052835,
+                "mean_pixel_rms_in_blocks": 7.708322886005066e-07,
+                "median_abs_block_mean": 1.1235170844304114e-08,
+                "n_blocks": 1600,
+                "normalized_block_mean_rms": 1.6055060143554201e-07
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 2.657329823207737e-07,
+                "block_mean_rms_over_mean_pixel_rms": 0.322498560068708,
+                "block_side_pixels": 32,
+                "max_block_robust_z": 31.704398045896166,
+                "mean_pixel_rms_in_blocks": 8.239819187538686e-07,
+                "median_abs_block_mean": 2.3075448406604902e-08,
+                "n_blocks": 400,
+                "normalized_block_mean_rms": 7.41139970864459e-08
+              }
+            ],
+            "beam_block_side_pixels": 1,
+            "block_rms_decay_slope_vs_independent_beams": -0.26145258190151355,
+            "classification": {
+              "amplitude": "good",
+              "overall": "good",
+              "structure": "good",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "investigate",
+                "large_scale_power_fraction": "bad",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": true,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 1.3554609461959367e-06,
+            "large_scale_power_fraction": {
+              "fraction": 0.699424893388607,
+              "frequency_cutoff_cycles_per_pixel": 0.125,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 0.00012478165940432717,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 409600,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 3.5854628378877624
+            },
+            "normalized_diff_rms": 3.780435072071349e-07,
+            "review": {
+              "checks": [
+                {
+                  "label": "good",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 3.780435072071349e-07
+                },
+                {
+                  "label": "investigate",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.26145258190151355
+                },
+                {
+                  "label": "bad",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.699424893388607
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 0.00012478165940432717
+                }
+              ],
+              "label": "good",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".image.tt0: good; amplitude and beam-scale structure checks passed."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": -1.5597418755342206e-07,
+                "dy_pixels": 6.622618460351029e-08,
+                "offset": -1.65007068846814e-08,
+                "scale": -9.588147254063752e-08
+              },
+              "diff_rms": 1.3554609461959367e-06,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.06844323040746747,
+              "residual_rms": 1.3081401342206954e-06,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        },
+        ".psf.tt0": {
+          "casa_max": 1.0,
+          "casa_min": -0.07683621346950531,
+          "casa_path": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/casa/casa.psf.tt0",
+          "casa_peak_abs": {
+            "abs_value": 1.0,
+            "location": [
+              320,
+              320,
+              0,
+              0
+            ],
+            "value": 1.0
+          },
+          "casa_rms": 0.004786414991787525,
+          "correlation": 0.9999999999999899,
+          "diff_abs_max": 5.960464477539063e-08,
+          "diff_abs_max_over_casa_peak": 5.960464477539063e-08,
+          "diff_peak_abs": {
+            "abs_value": 5.960464477539063e-08,
+            "location": [
+              319,
+              320,
+              0,
+              0
+            ],
+            "value": 5.960464477539063e-08
+          },
+          "diff_rms": 4.572665623206884e-10,
+          "diff_rms_over_casa_rms": 9.553424914163545e-08,
+          "finite_overlap": 409600,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -0.07683621346950531,
+              1.0
+            ],
+            "difference_color_limits": [
+              -5.960464477539063e-08,
+              5.960464477539063e-08
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                2,
+                2,
+                1,
+                1
+              ],
+              "trc": [
+                1279,
+                1279,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              2,
+              2,
+              1,
+              1
+            ],
+            "display_shape": [
+              1280,
+              1280,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/casa-rs-wave262-current-head-artifacts/comparisons/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/panels/psf_tt0.review.png",
+            "status": "written",
+            "structured_difference_label": "good",
+            "structured_difference_summary": ".psf.tt0: good; amplitude and beam-scale structure checks passed.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 640,
+                "x_start": 0,
+                "y_end": 640,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 1.0,
+          "rust_min": -0.07683621346950531,
+          "rust_path": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/rust/rust.psf.tt0",
+          "rust_peak_abs": {
+            "abs_value": 1.0,
+            "location": [
+              320,
+              320,
+              0,
+              0
+            ],
+            "value": 1.0
+          },
+          "rust_rms": 0.004786415056264047,
+          "sample_stride": [
+            2,
+            2,
+            1,
+            1
+          ],
+          "sampled_elements": 409600,
+          "shape": [
+            1280,
+            1280,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 409600,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 2.702493951842819e-10,
+                "block_mean_rms_over_mean_pixel_rms": 0.9859131198133247,
+                "block_side_pixels": 2,
+                "max_block_robust_z": 207.20356131121005,
+                "mean_pixel_rms_in_blocks": 2.741107606271145e-10,
+                "median_abs_block_mean": 9.094947017729282e-11,
+                "n_blocks": 102400,
+                "normalized_block_mean_rms": 5.646175595889046e-08
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 1.4640295852683887e-10,
+                "block_mean_rms_over_mean_pixel_rms": 0.48891064803632506,
+                "block_side_pixels": 4,
+                "max_block_robust_z": 80.67036679083091,
+                "mean_pixel_rms_in_blocks": 2.994472693831807e-10,
+                "median_abs_block_mean": 5.440270456347207e-11,
+                "n_blocks": 25600,
+                "normalized_block_mean_rms": 3.0587184516602794e-08
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 7.637663188953222e-11,
+                "block_mean_rms_over_mean_pixel_rms": 0.24486119928165365,
+                "block_side_pixels": 8,
+                "max_block_robust_z": 34.934454150224475,
+                "mean_pixel_rms_in_blocks": 3.11918066699001e-10,
+                "median_abs_block_mean": 2.8977709121136286e-11,
+                "n_blocks": 6400,
+                "normalized_block_mean_rms": 1.595695985838636e-08
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 3.9404175200195506e-11,
+                "block_mean_rms_over_mean_pixel_rms": 0.12332799215107458,
+                "block_side_pixels": 16,
+                "max_block_robust_z": 21.610682633469615,
+                "mean_pixel_rms_in_blocks": 3.1950714929280694e-10,
+                "median_abs_block_mean": 1.4106937840097089e-11,
+                "n_blocks": 1600,
+                "normalized_block_mean_rms": 8.232502879045117e-09
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 1.8337837534062813e-11,
+                "block_mean_rms_over_mean_pixel_rms": 0.05649979623230375,
+                "block_side_pixels": 32,
+                "max_block_robust_z": 16.27426105423589,
+                "mean_pixel_rms_in_blocks": 3.245646667231369e-10,
+                "median_abs_block_mean": 6.535553348507861e-12,
+                "n_blocks": 400,
+                "normalized_block_mean_rms": 3.831225993886168e-09
+              }
+            ],
+            "beam_block_side_pixels": 1,
+            "block_rms_decay_slope_vs_independent_beams": -0.4828158112917822,
+            "classification": {
+              "amplitude": "good",
+              "overall": "good",
+              "structure": "good",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "good",
+                "large_scale_power_fraction": "good",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": true,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 4.572665623206884e-10,
+            "large_scale_power_fraction": {
+              "fraction": 0.10270100438229411,
+              "frequency_cutoff_cycles_per_pixel": 0.125,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 2.163198168958491e-05,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 409600,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 0.004786414991787525
+            },
+            "normalized_diff_rms": 9.553424914163545e-08,
+            "review": {
+              "checks": [
+                {
+                  "label": "good",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 9.553424914163545e-08
+                },
+                {
+                  "label": "good",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.4828158112917822
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.10270100438229411
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 2.163198168958491e-05
+                }
+              ],
+              "label": "good",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".psf.tt0: good; amplitude and beam-scale structure checks passed."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": 3.802377311357312e-09,
+                "dy_pixels": 7.635705473197745e-09,
+                "offset": 1.4953365172778283e-12,
+                "scale": 1.3470738937304582e-08
+              },
+              "diff_rms": 4.572665623206884e-10,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.023368987496460103,
+              "residual_rms": 4.518896392257176e-10,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        },
+        ".residual.tt0": {
+          "casa_max": 104.04131317138672,
+          "casa_min": -32.11137771606445,
+          "casa_path": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/casa/casa.residual.tt0",
+          "casa_peak_abs": {
+            "abs_value": 104.04131317138672,
+            "location": [
+              320,
+              320,
+              0,
+              0
+            ],
+            "value": 104.04131317138672
+          },
+          "casa_rms": 3.582587362693538,
+          "correlation": 1.0,
+          "diff_abs_max": 2.288818359375e-05,
+          "diff_abs_max_over_casa_peak": 2.199912986108356e-07,
+          "diff_peak_abs": {
+            "abs_value": 2.288818359375e-05,
+            "location": [
+              317,
+              315,
+              0,
+              0
+            ],
+            "value": -2.288818359375e-05
+          },
+          "diff_rms": 1.1959619871599257e-06,
+          "diff_rms_over_casa_rms": 3.338263288744344e-07,
+          "finite_overlap": 409600,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -32.11137771606445,
+              104.04131317138672
+            ],
+            "difference_color_limits": [
+              -2.288818359375e-05,
+              2.288818359375e-05
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                2,
+                2,
+                1,
+                1
+              ],
+              "trc": [
+                1279,
+                1279,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              2,
+              2,
+              1,
+              1
+            ],
+            "display_shape": [
+              1280,
+              1280,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/casa-rs-wave262-current-head-artifacts/comparisons/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/panels/residual_tt0.review.png",
+            "status": "written",
+            "structured_difference_label": "good",
+            "structured_difference_summary": ".residual.tt0: good; amplitude and beam-scale structure checks passed.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 640,
+                "x_start": 0,
+                "y_end": 640,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 104.04130554199219,
+          "rust_min": -32.11137771606445,
+          "rust_path": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/rust/rust.residual.tt0",
+          "rust_peak_abs": {
+            "abs_value": 104.04130554199219,
+            "location": [
+              320,
+              320,
+              0,
+              0
+            ],
+            "value": 104.04130554199219
+          },
+          "rust_rms": 3.582587084387786,
+          "sample_stride": [
+            2,
+            2,
+            1,
+            1
+          ],
+          "sampled_elements": 409600,
+          "shape": [
+            1280,
+            1280,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 409600,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 1.1174130993034081e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.733930053845983,
+                "block_side_pixels": 2,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 6.444395475036058e-07,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 102400,
+                "normalized_block_mean_rms": 3.1190114466972566e-07
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 1.0419516277843653e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.5461120502174013,
+                "block_side_pixels": 4,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 6.739172802112595e-07,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 25600,
+                "normalized_block_mean_rms": 2.908377444286475e-07
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 8.916298427524428e-07,
+                "block_mean_rms_over_mean_pixel_rms": 1.260101158514554,
+                "block_side_pixels": 8,
+                "max_block_robust_z": null,
+                "mean_pixel_rms_in_blocks": 7.075859241360617e-07,
+                "median_abs_block_mean": 0.0,
+                "n_blocks": 6400,
+                "normalized_block_mean_rms": 2.488787439037016e-07
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 5.656420775791166e-07,
+                "block_mean_rms_over_mean_pixel_rms": 0.7563940998960206,
+                "block_side_pixels": 16,
+                "max_block_robust_z": 193.86879842390573,
+                "mean_pixel_rms_in_blocks": 7.478139737695916e-07,
+                "median_abs_block_mean": 1.1115844245068729e-08,
+                "n_blocks": 1600,
+                "normalized_block_mean_rms": 1.5788647151198663e-07
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 2.602636771765305e-07,
+                "block_mean_rms_over_mean_pixel_rms": 0.332140707622422,
+                "block_side_pixels": 32,
+                "max_block_robust_z": 27.123681342717006,
+                "mean_pixel_rms_in_blocks": 7.835946368621536e-07,
+                "median_abs_block_mean": 2.2658056764157664e-08,
+                "n_blocks": 400,
+                "normalized_block_mean_rms": 7.264684732791929e-08
+              }
+            ],
+            "beam_block_side_pixels": 1,
+            "block_rms_decay_slope_vs_independent_beams": -0.2542780228330322,
+            "classification": {
+              "amplitude": "good",
+              "overall": "good",
+              "structure": "good",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "investigate",
+                "large_scale_power_fraction": "bad",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": true,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 1.1959619871599257e-06,
+            "large_scale_power_fraction": {
+              "fraction": 0.8383318092890494,
+              "frequency_cutoff_cycles_per_pixel": 0.125,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 0.00010824999106251454,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 409600,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 3.582587362693538
+            },
+            "normalized_diff_rms": 3.338263288744344e-07,
+            "review": {
+              "checks": [
+                {
+                  "label": "good",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 3.338263288744344e-07
+                },
+                {
+                  "label": "investigate",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.2542780228330322
+                },
+                {
+                  "label": "bad",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.8383318092890494
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 0.00010824999106251454
+                }
+              ],
+              "label": "good",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".residual.tt0: good; amplitude and beam-scale structure checks passed."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": -1.5416506299001938e-07,
+                "dy_pixels": 7.887919021283021e-08,
+                "offset": -1.4491498346156321e-08,
+                "scale": -7.76678937565934e-08
+              },
+              "diff_rms": 1.1959619871599257e-06,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.05970032839770434,
+              "residual_rms": 1.1596152402457557e-06,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        }
+      },
+      "status": "completed",
+      "structured_difference_review": {
+        "checks_by_product": {
+          "block_rms_decay_slope_vs_independent_beams": {
+            ".image.tt0": "investigate",
+            ".psf.tt0": "good",
+            ".residual.tt0": "investigate"
+          },
+          "large_scale_power_fraction": {
+            ".image.tt0": "bad",
+            ".psf.tt0": "good",
+            ".residual.tt0": "bad"
+          },
+          "low_order_r2_quadratic": {
+            ".image.tt0": "good",
+            ".psf.tt0": "good",
+            ".residual.tt0": "good"
+          },
+          "normalized_diff_rms": {
+            ".image.tt0": "good",
+            ".psf.tt0": "good",
+            ".residual.tt0": "good"
+          }
+        },
+        "label": "good",
+        "legend": {
+          "bad": "Structured or large enough difference; do not close without explanation.",
+          "good": "No review action expected from this check.",
+          "investigate": "Plausible but needs review in context.",
+          "unknown": "Check could not be evaluated for this product."
+        },
+        "product_summaries": {
+          ".image.tt0": ".image.tt0: good; amplitude and beam-scale structure checks passed.",
+          ".psf.tt0": ".psf.tt0: good; amplitude and beam-scale structure checks passed.",
+          ".residual.tt0": ".residual.tt0: good; amplitude and beam-scale structure checks passed."
+        },
+        "products": {
+          ".image.tt0": "good",
+          ".psf.tt0": "good",
+          ".residual.tt0": "good"
+        },
+        "summary": "overall good; good: .image.tt0, .psf.tt0, .residual.tt0",
+        "thresholds": {
+          "block_rms_decay_slope_vs_independent_beams": {
+            "bad": "> -0.15",
+            "good": "<= -0.35",
+            "investigate": "-0.35 .. -0.15"
+          },
+          "large_scale_power_fraction": {
+            "bad": "> 0.5",
+            "good": "< 0.25",
+            "investigate": "0.25 .. 0.5"
+          },
+          "low_order_r2_quadratic": {
+            "bad": "> 0.2",
+            "good": "< 0.05",
+            "investigate": "0.05 .. 0.2"
+          },
+          "normalized_diff_rms": {
+            "bad": "> 1e-3",
+            "good": "< 1e-4",
+            "investigate": "1e-4 .. 1e-3",
+            "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+          }
+        }
+      }
+    },
+    "product_paths": {
+      "casa_prefix": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/casa/casa",
+      "product_root": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d",
+      "rust_prefix": "/private/tmp/casa-rs-wave262-current-head-artifacts/products/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d/rust/rust"
+    },
+    "rust": {
+      "reason": null,
+      "status": "ran",
+      "timings_seconds": {
+        "median": 12.116323,
+        "runs": [
+          12.116323
+        ]
+      }
+    },
+    "stage_breakdown": {
+      "casa": {
+        "categories": {
+          "cube_major_cycle_algorithm_envelope": {
+            "components_ms": {},
+            "description": "CASA cube major-cycle envelope. For cube imaging this brackets CubeMajorCycleAlgorithm work including C++ tuneSelectData, nSubCubeFitInMemory, gridding/degridding, normalization, and subimage writeback that are not exposed as separate Python timers.",
+            "missing_fields": [
+              "make_psf",
+              "calcres_major_cycle",
+              "clean_major_cycle"
+            ],
+            "reason": "no source timing fields found: make_psf, calcres_major_cycle, clean_major_cycle",
+            "source_fields": [
+              "make_psf",
+              "calcres_major_cycle",
+              "clean_major_cycle"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "deconvolution_minor_cycle": {
+            "components_ms": {},
+            "description": "CASA minor-cycle, mask update, and convergence checks. For cube imaging minor_cycle brackets CubeMinorCycleAlgorithm.",
+            "missing_fields": [
+              "minor_cycle",
+              "update_mask",
+              "has_converged"
+            ],
+            "reason": "no source timing fields found: minor_cycle, update_mask, has_converged",
+            "source_fields": [
+              "minor_cycle",
+              "update_mask",
+              "has_converged"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "image_store_writeback_and_restore": {
+            "components_ms": {},
+            "description": "CASA image-store writeback envelope: cube subimage writes occur inside major-cycle C++ calls, while final restored-image writes are included in restore_images.",
+            "missing_fields": [
+              "clean_major_cycle",
+              "calcres_major_cycle",
+              "restore_images"
+            ],
+            "reason": "no source timing fields found: clean_major_cycle, calcres_major_cycle, restore_images",
+            "source_fields": [
+              "clean_major_cycle",
+              "calcres_major_cycle",
+              "restore_images"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "major_cycle_residual": {
+            "components_ms": {},
+            "description": "CASA residual major-cycle and clean major-cycle work.",
+            "missing_fields": [
+              "calcres_major_cycle",
+              "clean_major_cycle"
+            ],
+            "reason": "no source timing fields found: calcres_major_cycle, clean_major_cycle",
+            "source_fields": [
+              "calcres_major_cycle",
+              "clean_major_cycle"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "ms_selection_and_image_definition": {
+            "components_ms": {},
+            "description": "Narrow CASA helper timings for synthesisimager.selectdata, defineimage, normalizerinfo, and CF-cache setup during initializeImagers.",
+            "missing_fields": [
+              "select_data",
+              "define_image",
+              "normalizer_info",
+              "cf_cache_setup"
+            ],
+            "reason": "no source timing fields found: select_data, define_image, normalizer_info, cf_cache_setup",
+            "source_fields": [
+              "select_data",
+              "define_image",
+              "normalizer_info",
+              "cf_cache_setup"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "psf_and_primary_beam": {
+            "components_ms": {},
+            "description": "CASA PSF and PB construction.",
+            "missing_fields": [
+              "make_psf",
+              "make_pb"
+            ],
+            "reason": "no source timing fields found: make_psf, make_pb",
+            "source_fields": [
+              "make_psf",
+              "make_pb"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "restore_and_cleanup": {
+            "components_ms": {},
+            "description": "CASA restore and tool cleanup.",
+            "missing_fields": [
+              "restore_images",
+              "delete_tools"
+            ],
+            "reason": "no source timing fields found: restore_images, delete_tools",
+            "source_fields": [
+              "restore_images",
+              "delete_tools"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "setup_and_tool_construction": {
+            "components_ms": {},
+            "description": "CASA PySynthesisImager setup, construction, initialization, and memory estimation.",
+            "missing_fields": [
+              "parameter_setup",
+              "construct_imager",
+              "initialize_imagers",
+              "initialize_normalizers",
+              "initialize_deconvolvers",
+              "initialize_iteration_control",
+              "estimate_memory"
+            ],
+            "reason": "no source timing fields found: parameter_setup, construct_imager, initialize_imagers, initialize_normalizers, initialize_deconvolvers, initialize_iteration_control, estimate_memory",
+            "source_fields": [
+              "parameter_setup",
+              "construct_imager",
+              "initialize_imagers",
+              "initialize_normalizers",
+              "initialize_deconvolvers",
+              "initialize_iteration_control",
+              "estimate_memory"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "total": {
+            "components_ms": {},
+            "description": "CASA phase probe total.",
+            "missing_fields": [
+              "total"
+            ],
+            "reason": "no source timing fields found: total",
+            "source_fields": [
+              "total"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "weighting_density_setup": {
+            "components_ms": {},
+            "description": "CASA weighting setup; set_weighting_core is the direct synthesisimager.setweighting call when the phase probe is enabled.",
+            "missing_fields": [
+              "set_weighting",
+              "set_weighting_core"
+            ],
+            "reason": "no source timing fields found: set_weighting, set_weighting_core",
+            "source_fields": [
+              "set_weighting",
+              "set_weighting_core"
+            ],
+            "status": "missing",
+            "total_ms": null
+          }
+        },
+        "status": "missing"
+      },
+      "contract_review": "local benchmark result JSON only; no provider protocol or managed-output schema change",
+      "instrumentation_scope": "benchmark-harness",
+      "rust": {
+        "categories": {
+          "coordinate_and_product_writeback": {
+            "components_ms": {},
+            "description": "Output coordinate construction and image product writeback.",
+            "missing_fields": [
+              "build_coordinate_system",
+              "write_products"
+            ],
+            "reason": "no source timing fields found: build_coordinate_system, write_products",
+            "source_fields": [
+              "build_coordinate_system",
+              "write_products"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "core_total": {
+            "components_ms": {},
+            "description": "Total pure imaging-core wallclock from the Rust profiler.",
+            "missing_fields": [
+              "total"
+            ],
+            "reason": "no source timing fields found: total",
+            "source_fields": [
+              "total"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "deconvolution_minor_cycle": {
+            "components_ms": {},
+            "description": "Minor-cycle component selection and subtraction.",
+            "missing_fields": [
+              "minor_cycle_solve"
+            ],
+            "reason": "no source timing fields found: minor_cycle_solve",
+            "source_fields": [
+              "minor_cycle_solve"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "fft": {
+            "components_ms": {},
+            "description": "PSF, model, and residual FFT work.",
+            "missing_fields": [
+              "psf_fft",
+              "model_fft",
+              "residual_fft"
+            ],
+            "reason": "no source timing fields found: psf_fft, model_fft, residual_fft",
+            "source_fields": [
+              "psf_fft",
+              "model_fft",
+              "residual_fft"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "frontend_ms_preparation": {
+            "components_ms": {},
+            "description": "MS open, selection, row adaptation, and phase-center resolution.",
+            "missing_fields": [
+              "open_measurement_set",
+              "prepare_plane_input",
+              "extract_phase_center"
+            ],
+            "reason": "no source timing fields found: open_measurement_set, prepare_plane_input, extract_phase_center",
+            "source_fields": [
+              "open_measurement_set",
+              "prepare_plane_input",
+              "extract_phase_center"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "frontend_total": {
+            "components_ms": {},
+            "description": "Total frontend wallclock from the Rust profiler.",
+            "missing_fields": [
+              "frontend_total"
+            ],
+            "reason": "no source timing fields found: frontend_total",
+            "source_fields": [
+              "frontend_total"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "gridding_degridding": {
+            "components_ms": {},
+            "description": "PSF gridding plus residual degrid/grid work.",
+            "missing_fields": [
+              "psf_grid",
+              "residual_degrid_grid"
+            ],
+            "reason": "no source timing fields found: psf_grid, residual_degrid_grid",
+            "source_fields": [
+              "psf_grid",
+              "residual_degrid_grid"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "model_prediction_and_residual_refresh": {
+            "components_ms": {},
+            "description": "Major-cycle model prediction and residual refresh aggregate.",
+            "missing_fields": [
+              "major_cycle_refresh"
+            ],
+            "reason": "no source timing fields found: major_cycle_refresh",
+            "source_fields": [
+              "major_cycle_refresh"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "normalization_pb_correction": {
+            "components_ms": {},
+            "description": "PSF and residual normalization; PB correction is included when the selected mode produces PB products.",
+            "missing_fields": [
+              "psf_normalize",
+              "residual_normalize"
+            ],
+            "reason": "no source timing fields found: psf_normalize, residual_normalize",
+            "source_fields": [
+              "psf_normalize",
+              "residual_normalize"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "preview_sidecar_generation": {
+            "components_ms": {},
+            "description": "The benchmark script passes --no-preview-pngs, so preview sidecars are disabled.",
+            "reason": "disabled by benchmark harness",
+            "source_fields": [],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "projection_pb_cf_preparation": {
+            "components_ms": {},
+            "description": "No dedicated Wave 1 casa-rs timing field yet; projection/PB setup is included in the gridding/PB product paths where applicable.",
+            "reason": "No dedicated Wave 1 casa-rs timing field yet; projection/PB setup is included in the gridding/PB product paths where applicable.",
+            "source_fields": [],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "restore_and_beam_fit": {
+            "components_ms": {},
+            "description": "Restoring-beam fit and restored-image generation.",
+            "missing_fields": [
+              "beam_fit",
+              "restore"
+            ],
+            "reason": "no source timing fields found: beam_fit, restore",
+            "source_fields": [
+              "beam_fit",
+              "restore"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "standard_mfs_source_prepare": {
+            "components_ms": {},
+            "description": "Prepared-source adaptation into imaging batches.",
+            "reason": "not reported for this preparation path",
+            "source_fields": [
+              "prepare_processing_buffer"
+            ],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "standard_mfs_source_read": {
+            "components_ms": {},
+            "description": "Prepared source reads from MS and table columns. Accepts the legacy raw timer key.",
+            "reason": "not reported for this preparation path",
+            "source_fields": [
+              "get_ms_values_into_processing_buffer"
+            ],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "visibility_adaptation_and_chunking": {
+            "components_ms": {},
+            "description": "Visibility adaptation before entering the imaging core.",
+            "missing_fields": [
+              "prepare_plane_input"
+            ],
+            "reason": "no source timing fields found: prepare_plane_input",
+            "source_fields": [
+              "prepare_plane_input"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "weighting_density_setup": {
+            "components_ms": {},
+            "description": "Imaging weights, density grids, and taper setup.",
+            "missing_fields": [
+              "weighting"
+            ],
+            "reason": "no source timing fields found: weighting",
+            "source_fields": [
+              "weighting"
+            ],
+            "status": "missing",
+            "total_ms": null
+          }
+        },
+        "status": "missing"
+      },
+      "schema_version": 1,
+      "units": "milliseconds"
+    },
+    "stage_medians_ms": {
+      "casa": {},
+      "rust": {}
+    }
+  },
+  "review": {
+    "evidence_role": "casa_oracle",
+    "required_evidence_roles": [
+      "before_baseline",
+      "after_multi_worker_cpu",
+      "after_gpu_metal",
+      "casa_cpp"
+    ],
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true
+  },
+  "run": {
+    "env": {},
+    "ms_staging": "direct",
+    "phase_probe": "0",
+    "profile_repeats": 1,
+    "repeats": 1,
+    "reuse_casa_prefix": null,
+    "reuse_rust_prefix": null,
+    "run_label": "wave262-mosaic-mtmfs-small-casa-oracle",
+    "skip_casa": "0",
+    "skip_rust": "0",
+    "storage_label": "external-ssd-wave1-small",
+    "stream_log": true
+  },
+  "run_id": "20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d",
+  "run_support": {
+    "bench_script": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
+    "reason": null,
+    "status": "runnable"
+  },
+  "schema_version": 1,
+  "started_at": "2026-07-10T16:10:03.645119Z",
+  "status": "completed",
+  "workload": {
+    "description": "Issue #262 final CASA oracle for the first supported mosaic MT-MFS slice at the intended 1280-pixel geometry.",
+    "id": "wave262-mosaic-mtmfs-small-casa-oracle",
+    "mode_id": "mosaic-mtmfs-first-slice"
+  }
+}

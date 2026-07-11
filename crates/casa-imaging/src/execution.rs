@@ -11274,7 +11274,6 @@ fn mtmfs_metal_sample(
             ImagingError::InvalidRequest("MTMFS Metal negative y center exceeds u32".to_string())
         })?,
     ];
-    let scaled = (frequency_hz - reffreq_hz) / reffreq_hz;
     Ok(Some(MetalMtmfsSample {
         positive_center_x: positive_center[0],
         positive_center_y: positive_center[1],
@@ -11286,7 +11285,7 @@ fn mtmfs_metal_sample(
         negative_y_weight_base: mtmfs_metal_weight_base(negative_taps.y)?,
         weight,
         sumwt_factor,
-        taylor_x: scaled as f32,
+        taylor_x: crate::mtmfs_casa_taylor_x(frequency_hz, reffreq_hz),
         _pad0: 0.0,
         visibility_re: visibility.re,
         visibility_im: visibility.im,
@@ -18604,14 +18603,9 @@ impl StandardMfsDirtyCpuExecutor {
         Ok(())
     }
 
-    /// Return the reusable standard gridder.
-    pub(crate) fn gridder(&self) -> &StandardGridder {
-        &self.gridder
-    }
-
-    /// Return the accumulated dirty PSF and residual grids.
-    pub(crate) fn dirty_grids(&self) -> (&Array2<Complex64>, &Array2<Complex64>) {
-        self.workspace.dirty_grids()
+    /// Consume the executor and return the accumulated dirty PSF and residual grids.
+    pub(crate) fn into_dirty_grids(self) -> (Array2<Complex64>, Array2<Complex64>) {
+        self.workspace.into_dirty_grids()
     }
 
     /// Return the accumulated sample summary.
@@ -18806,9 +18800,9 @@ impl StandardMfsWorkspace {
         (&mut self.psf_grid, &mut self.residual_grid)
     }
 
-    /// Borrow the PSF and residual grids without clearing them.
-    pub(crate) fn dirty_grids(&self) -> (&Array2<Complex64>, &Array2<Complex64>) {
-        (&self.psf_grid, &self.residual_grid)
+    /// Consume the workspace and return the PSF and residual grids.
+    pub(crate) fn into_dirty_grids(self) -> (Array2<Complex64>, Array2<Complex64>) {
+        (self.psf_grid, self.residual_grid)
     }
 }
 
@@ -19742,7 +19736,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
-                materialized_sample_plan_max_samples: None,
+                materialized_sample_plan_budget_bytes: None,
                 w_project_max_abs_w_lambda: None,
                 progress_callback: None,
                 observability_callback: None,
@@ -19759,7 +19753,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
-                materialized_sample_plan_max_samples: None,
+                materialized_sample_plan_budget_bytes: None,
                 w_project_max_abs_w_lambda: None,
                 progress_callback: None,
                 observability_callback: None,
@@ -19909,7 +19903,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: true,
                 metal_grouped_input_cache: false,
-                materialized_sample_plan_max_samples: None,
+                materialized_sample_plan_budget_bytes: None,
                 w_project_max_abs_w_lambda: None,
                 progress_callback: None,
                 observability_callback: None,
@@ -20078,7 +20072,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
-                materialized_sample_plan_max_samples: None,
+                materialized_sample_plan_budget_bytes: None,
                 w_project_max_abs_w_lambda: None,
                 progress_callback: None,
                 observability_callback: None,
@@ -20197,7 +20191,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
-                materialized_sample_plan_max_samples: None,
+                materialized_sample_plan_budget_bytes: None,
                 w_project_max_abs_w_lambda: None,
                 progress_callback: None,
                 observability_callback: None,
@@ -20393,7 +20387,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
-                materialized_sample_plan_max_samples: None,
+                materialized_sample_plan_budget_bytes: None,
                 w_project_max_abs_w_lambda: None,
                 progress_callback: None,
                 observability_callback: None,

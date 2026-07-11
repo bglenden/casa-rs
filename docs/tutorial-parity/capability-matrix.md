@@ -1,7 +1,7 @@
 # CASA Tutorial Capability Matrix
 
 Truth class: current descriptive
-Last reality check: 2026-05-05
+Last reality check: 2026-07-09
 Verification: just docs-check
 
 Wave issue: #137
@@ -26,7 +26,11 @@ Status legend:
 - `casa-ms`: MeasurementSet summaries, selectors, plotting, derived MS support.
 - `casa-calibration`: summary/stats/apply/gain/bandpass/fluxscale workflows.
 - `casa-imaging` and `casars-imager`: MFS/cube imaging task surface and CASA
-  `tclean` parity harnesses for existing deterministic cases.
+  `tclean` parity harnesses for existing deterministic cases, including the
+  first bounded single-MS mosaic MT-MFS slice (`nterms <= 2`, no W term).
+- `casars-imager` task protocol v3: local `parallel`/`chanchunks`, shared
+  source-stream memory/row-block/worker/read-ahead controls, dirty-product FFT
+  precision/backend policy, and diagnostic memory/I/O/worker/backend telemetry.
 - `casa-images`, `casa-lattices`, `casa-coordinates`: image/lattice/coordinate
   storage and analysis substrate.
 - `casa-vla` and `casars-importvla`: VLA archive import surface.
@@ -40,8 +44,8 @@ Status legend:
 | `listobs` | partial | `casa-ms` | `msexplore` / future Python MS surface | selector grammar and TAQL extraction, reusable selector seam | CASA `listobs` on tutorial MS | timing for summary plus selected-row resolution | #75, #117, #121 |
 | `plotms` | partial | `casa-ms` | `msexplore`, calibration plots | long-tail axes, corrected-data diagnostics, polarization/P-band plots | CASA `plotms` or exported plot data where available | `scripts/bench-msexplore-vs-casa.sh` plus tutorial plot timings | #73, #117, #121 |
 | `plotcal` | partial | `casa-calibration` | `calibrate` diagnostic plots | CASA task-name compatibility is not a target; VLA pages need gain/bandpass/fluxscale diagnostic plot presets and export parity | CASA `plotcal` plots or exported caltable plot data where available | calibration plot timing on VLA tutorial caltables | #122, #128 |
-| `tclean` MFS | partial/available | `casa-imaging`, `casars-imager` | `casars-imager`; Python projection includes automask, `savemodel=modelcolumn`, single-plane `startmodel`, and supported MFS/Hogbom/multiscale `outlierfile` controls including CASA pixel-circle outlier masks | tutorial parameter mapping, VLA imaging guide regular/multiscale/MTMFS/w-projection and primary-beam product coverage, plus wider outlier variants such as mask images and cubes | CASA `tclean` image products plus MODEL_DATA comparisons for `savemodel=modelcolumn`, startmodel seeded model parity, #220 outlierfile dirty plus niter>0 products on `refim_twopoints_twochan.ms`, and #175 VLA imaging products on `SNR_G55_10s.calib.ms` | imager parity scripts and tutorial timings | #117, #127, #167, #175, #196, #219, #220 |
-| `tclean` cube / spectral | partial | `casa-imaging`, `casars-imager` | `casars-imager`; Python projection includes automask controls | cube seam coverage, spectral transform integration, large-cube controls, mosaic cube gridding for Antennae Band 7 line products | CASA `tclean` cube outputs | cube parity scripts and tutorial timings | #74, #76, #119, #123, #161, #167 |
+| `tclean` MFS | partial/available | `casa-imaging`, `casars-imager` | `casars-imager`; Python projection includes automask, `savemodel=modelcolumn`, single-plane `startmodel`, supported MFS/Hogbom/multiscale `outlierfile` controls, and protocol-v3 local execution controls | broader tutorial parameter mapping; mosaic MT-MFS beyond one MS, `nterms <= 2`, no W term, user masks, and natural/uniform/Briggs weighting; wider outlier variants such as mask images and cubes | CASA `tclean` image products plus MODEL_DATA comparisons; first-slice mosaic MT-MFS compares Taylor-term image/residual/PSF/model/sumwt/PB/pbcor/alpha products | existing GLENDENNING medium/large workload manifests, performance ledger, imager parity scripts, and tutorial timings | #117, #127, #167, #175, #196, #219, #220, #262, #343, #352 |
+| `tclean` cube / spectral | partial | `casa-imaging`, `casars-imager` | `casars-imager`; Python projection includes automask plus protocol-v3 `parallel`, `chanchunks`, and shared source read-ahead controls | cube seam coverage, spectral transform integration, and full-scale mosaic cube gridding for Antennae Band 7 line products | CASA `tclean` cube outputs plus read-ahead/serial-vs-parallel product equivalence | GLENDENNING medium/large cube/cubedata/mosaic workloads with source-read, overlap, bandwidth, and wall-time telemetry | #56, #74, #76, #119, #123, #161, #167, #343 |
 | legacy `clean` | external/compatibility reference | `casa-imaging`, `casars-imager` if comparison needed | no CASA alias planned | VLA imaging page references legacy output for comparison; implement equivalent capability through idiomatic imaging APIs, not a `clean` task clone | CASA legacy `clean` products only as regression inputs/comparison artifacts | compare legacy tutorial timing only if a breadth issue requires it | #128 |
 | `split` | partial | `casa-ms`, `casa-tables` | no dedicated task surface yet | corrected-data split, selected column/subset output, metadata preservation | CASA `split` output MS, 2x2 MS interop as needed | tutorial split timings | #118, #121 |
 | `mstransform` | missing/limited | `casa-ms` | none | spectral regrid/channel selection tutorial subset | CASA `mstransform` output MS | transform timing on VLA tutorials | #123 |
@@ -93,7 +97,7 @@ families are either implemented or deliberately split:
   solve/apply/diagnostics.
 - Imaging controls: cube spectral mode, automasking, pbcor, startmodel,
   outlier fields, mosaics, polarization, usepointing, large-cube runtime
-  controls.
+  controls, and mosaic MT-MFS outside the supported first slice.
 - Image analysis selectors: region, mask, channel/stokes slicing, spectral
   coordinate metadata, output coordinate systems.
 - Simulation controls: model image scaling, antenna/configuration files,
@@ -120,5 +124,13 @@ Performance:
   - `scripts/bench-msexplore-vs-casa.sh`
 - Add tutorial-specific timing scripts only in the wave that implements the
   relevant functionality.
+- For imaging-performance waves, reuse the checked-in GLENDENNING medium/large
+  workload manifests and record accepted, guarded, neutral, and rejected runs
+  in `tools/perf/imager/imaging_performance_ledger.json` rather than promoting
+  one-off timings.
+- Treat protocol-v3 source telemetry (`source_bytes`, read/route/consumer time,
+  producer/consumer blocked time, overlap, live-block high water, and effective
+  bandwidth) and backend telemetry as part of the performance oracle. A GPU
+  kernel-only win does not establish an end-to-end no-slowdown result.
 - Severe regressions block a wave; non-severe gaps become shaped follow-ups
   unless the wave's acceptance says match/exceed is required.

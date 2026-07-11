@@ -684,6 +684,14 @@ struct CasarsMacApp: App {
         if let channelCount = argumentValue(after: "--channel-count", in: arguments) {
             store.setGenericTaskValue(taskID: "imager", argumentID: "channel_count", value: channelCount)
         }
+        if let chanchunks = argumentValue(after: "--chanchunks", in: arguments) {
+            store.setGenericTaskValue(taskID: "imager", argumentID: "chanchunks", value: chanchunks)
+        }
+        if let parallel = argumentBool(after: "--parallel", defaultIfPresent: true, in: arguments) {
+            store.setGenericTaskToggle(taskID: "imager", argumentID: "parallel", value: parallel)
+        } else if argumentBool(after: "--no-parallel", defaultIfPresent: false, in: arguments) != nil {
+            store.setGenericTaskToggle(taskID: "imager", argumentID: "parallel", value: false)
+        }
         if let niter = argumentValue(after: "--niter", in: arguments).flatMap(Int.init) {
             store.setGenericTaskValue(taskID: "imager", argumentID: "niter", value: "\(niter)")
         }
@@ -707,6 +715,20 @@ struct CasarsMacApp: App {
                 taskID: "imager",
                 argumentID: "standard_mfs_acceleration",
                 value: standardMFSAcceleration
+            )
+        }
+        if let readAheadBlocks = argumentValue(after: "--imaging-read-ahead-blocks", in: arguments) {
+            store.setGenericTaskValue(
+                taskID: "imager",
+                argumentID: "imaging_read_ahead_blocks",
+                value: readAheadBlocks
+            )
+        }
+        if let fftBackend = argumentValue(after: "--imaging-fft-backend", in: arguments) {
+            store.setGenericTaskValue(
+                taskID: "imager",
+                argumentID: "imaging_fft_backend",
+                value: fftBackend
             )
         }
         if let interpolation = argumentValue(after: "--interpolation", in: arguments)
