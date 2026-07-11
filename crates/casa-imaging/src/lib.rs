@@ -38791,10 +38791,29 @@ mod tests {
         for (actual, expected) in metal.residual_terms.iter().zip(&host.residual_terms) {
             assert_array4_close(actual, expected, 2.0e-4);
         }
-        for (actual, expected) in metal.sumwt_terms.iter().zip(&host.sumwt_terms) {
+        for (order, (actual, expected)) in
+            metal.sumwt_terms.iter().zip(&host.sumwt_terms).enumerate()
+        {
             assert_array4_close(actual, expected, 2.0e-4);
-            assert!(actual.iter().all(|value| value.is_finite() && *value > 0.0));
+            assert!(actual.iter().all(|value| value.is_finite()));
+            if order == 0 {
+                assert!(actual.iter().all(|value| *value > 0.0));
+            }
         }
+        let zeroth_sumwt_scale = metal.sumwt_terms[0]
+            .iter()
+            .map(|value| value.abs())
+            .fold(0.0f32, f32::max);
+        let odd_sumwt_max = metal.sumwt_terms[1]
+            .iter()
+            .map(|value| value.abs())
+            .fold(0.0f32, f32::max);
+        let odd_cancellation_tolerance =
+            (32.0 * f32::EPSILON * zeroth_sumwt_scale).max(f32::EPSILON);
+        assert!(
+            odd_sumwt_max <= odd_cancellation_tolerance,
+            "symmetric frequencies should cancel odd sumwt moment: {odd_sumwt_max:.9e} > {odd_cancellation_tolerance:.9e}"
+        );
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
