@@ -619,7 +619,18 @@ final class CasarsMacUITests: XCTestCase {
         try clickIdentified("dock.mode.datasets")
         try clickIdentified("dock.mode.notebooks")
         try require("notebook.selector.open").click()
-        XCTAssertTrue(waitForValue("notebook.python.latestRevision.\(cellID)", containing: "stdout: 42"))
+        try bringIntoView(
+            "notebook.python.cell.\(cellID)",
+            in: "notebook.document.scroll",
+            deltaY: -220
+        )
+        XCTAssertTrue(
+            app.staticTexts
+                .matching(identifier: "notebook.python.cell.\(cellID)")
+                .matching(NSPredicate(format: "label == %@", "42"))
+                .firstMatch
+                .waitForExistence(timeout: 5)
+        )
     }
 
     private func launchPrototype(scenario: String = "happy-path") {

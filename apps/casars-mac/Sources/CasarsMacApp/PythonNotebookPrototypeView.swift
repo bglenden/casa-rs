@@ -317,6 +317,9 @@ struct PythonNotebookPrototypeView: View {
             Button("Approve exact code") {
                 store.approvePrototypePythonSource(cellID: cell.id)
             }
+            .simultaneousGesture(TapGesture().onEnded {
+                store.approvePrototypePythonSource(cellID: cell.id)
+            })
             .disabled(cell.approvalIsValid)
             .accessibilityIdentifier("pythonPrototype.approve")
         }
