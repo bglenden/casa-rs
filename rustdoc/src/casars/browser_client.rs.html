@@ -527,99 +527,109 @@
 <a href=#527 id=527 data-nosnippet>527</a>            std::env::set_var(<span class="string">"CASARS_BROWSER_REQUEST_TIMEOUT_MS"</span>, <span class="string">"50"</span>);
 <a href=#528 id=528 data-nosnippet>528</a>        }
 <a href=#529 id=529 data-nosnippet>529</a>
-<a href=#530 id=530 data-nosnippet>530</a>        <span class="kw">let </span>client =
-<a href=#531 id=531 data-nosnippet>531</a>            BrowserClient::spawn(<span class="kw-2">&amp;</span>ResolvedCommand::direct(script)).expect(<span class="string">"spawn browser client"</span>);
-<a href=#532 id=532 data-nosnippet>532</a>
-<a href=#533 id=533 data-nosnippet>533</a>        <span class="kw">let </span>error = client
-<a href=#534 id=534 data-nosnippet>534</a>            .request(BrowserCommand::GetSnapshot { viewport: <span class="prelude-val">None </span>})
-<a href=#535 id=535 data-nosnippet>535</a>            .expect_err(<span class="string">"request should time out"</span>);
-<a href=#536 id=536 data-nosnippet>536</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"timed out waiting for"</span>));
-<a href=#537 id=537 data-nosnippet>537</a>
-<a href=#538 id=538 data-nosnippet>538</a>        thread::sleep(Duration::from_millis(<span class="number">250</span>));
-<a href=#539 id=539 data-nosnippet>539</a>        <span class="macro">assert!</span>(
-<a href=#540 id=540 data-nosnippet>540</a>            client
-<a href=#541 id=541 data-nosnippet>541</a>                .request(BrowserCommand::GetSnapshot { viewport: <span class="prelude-val">None </span>})
-<a href=#542 id=542 data-nosnippet>542</a>                .is_err(),
-<a href=#543 id=543 data-nosnippet>543</a>            <span class="string">"late reply should not be reused after timeout"
-<a href=#544 id=544 data-nosnippet>544</a>        </span>);
-<a href=#545 id=545 data-nosnippet>545</a>
-<a href=#546 id=546 data-nosnippet>546</a>        <span class="kw">unsafe </span>{
-<a href=#547 id=547 data-nosnippet>547</a>            std::env::remove_var(<span class="string">"CASARS_BROWSER_REQUEST_TIMEOUT_MS"</span>);
-<a href=#548 id=548 data-nosnippet>548</a>        }
-<a href=#549 id=549 data-nosnippet>549</a>    }
-<a href=#550 id=550 data-nosnippet>550</a>
-<a href=#551 id=551 data-nosnippet>551</a>    <span class="attr">#[test]
-<a href=#552 id=552 data-nosnippet>552</a>    </span><span class="kw">fn </span>invalid_json_response_is_reported_as_protocol_error() {
-<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">let </span>_guard = <span class="kw">crate</span>::test_env_lock();
-<a href=#554 id=554 data-nosnippet>554</a>        <span class="kw">let </span>temp = tempdir().expect(<span class="string">"tempdir"</span>);
-<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">let </span>script = write_browser_script(
-<a href=#556 id=556 data-nosnippet>556</a>            temp.path(),
-<a href=#557 id=557 data-nosnippet>557</a>            <span class="string">"#!/bin/sh\nwhile IFS= read -r _line; do\n  printf '{not-json}\\n'\ndone\n"</span>,
-<a href=#558 id=558 data-nosnippet>558</a>        );
-<a href=#559 id=559 data-nosnippet>559</a>        <span class="kw">let </span>client =
-<a href=#560 id=560 data-nosnippet>560</a>            BrowserClient::spawn(<span class="kw-2">&amp;</span>ResolvedCommand::direct(script)).expect(<span class="string">"spawn browser client"</span>);
-<a href=#561 id=561 data-nosnippet>561</a>
-<a href=#562 id=562 data-nosnippet>562</a>        <span class="kw">let </span>error = client
-<a href=#563 id=563 data-nosnippet>563</a>            .request(BrowserCommand::GetSnapshot { viewport: <span class="prelude-val">None </span>})
-<a href=#564 id=564 data-nosnippet>564</a>            .expect_err(<span class="string">"invalid response should fail"</span>);
-<a href=#565 id=565 data-nosnippet>565</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"invalid_response"</span>));
-<a href=#566 id=566 data-nosnippet>566</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"parse browser response"</span>));
-<a href=#567 id=567 data-nosnippet>567</a>    }
-<a href=#568 id=568 data-nosnippet>568</a>
-<a href=#569 id=569 data-nosnippet>569</a>    <span class="attr">#[test]
-<a href=#570 id=570 data-nosnippet>570</a>    </span><span class="kw">fn </span>disconnected_session_surfaces_exit_and_stderr() {
-<a href=#571 id=571 data-nosnippet>571</a>        <span class="kw">let </span>_guard = <span class="kw">crate</span>::test_env_lock();
-<a href=#572 id=572 data-nosnippet>572</a>        <span class="kw">let </span>temp = tempdir().expect(<span class="string">"tempdir"</span>);
-<a href=#573 id=573 data-nosnippet>573</a>        <span class="kw">let </span>script = write_browser_script(
-<a href=#574 id=574 data-nosnippet>574</a>            temp.path(),
-<a href=#575 id=575 data-nosnippet>575</a>            <span class="string">"#!/bin/sh\nwhile IFS= read -r _line; do\n  echo 'backend exploded' &gt;&amp;2\n  exit 7\ndone\n"</span>,
-<a href=#576 id=576 data-nosnippet>576</a>        );
-<a href=#577 id=577 data-nosnippet>577</a>        <span class="kw">let </span>client =
-<a href=#578 id=578 data-nosnippet>578</a>            BrowserClient::spawn(<span class="kw-2">&amp;</span>ResolvedCommand::direct(script)).expect(<span class="string">"spawn browser client"</span>);
-<a href=#579 id=579 data-nosnippet>579</a>
-<a href=#580 id=580 data-nosnippet>580</a>        <span class="kw">let </span>error = client
-<a href=#581 id=581 data-nosnippet>581</a>            .request(BrowserCommand::GetSnapshot { viewport: <span class="prelude-val">None </span>})
-<a href=#582 id=582 data-nosnippet>582</a>            .expect_err(<span class="string">"disconnected session should fail"</span>);
-<a href=#583 id=583 data-nosnippet>583</a>        <span class="macro">assert!</span>(
-<a href=#584 id=584 data-nosnippet>584</a>            error.contains(<span class="string">"tablebrowser session exited"</span>)
-<a href=#585 id=585 data-nosnippet>585</a>                || error.contains(<span class="string">"write browser request"</span>)
-<a href=#586 id=586 data-nosnippet>586</a>                || error.contains(<span class="string">"timed out waiting for browser response"</span>)
-<a href=#587 id=587 data-nosnippet>587</a>        );
-<a href=#588 id=588 data-nosnippet>588</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"backend exploded"</span>) || error.contains(<span class="string">"exit status: 7"</span>));
-<a href=#589 id=589 data-nosnippet>589</a>    }
-<a href=#590 id=590 data-nosnippet>590</a>
-<a href=#591 id=591 data-nosnippet>591</a>    <span class="kw">fn </span>write_slow_browser_script(root: <span class="kw-2">&amp;</span>Path, delay_ms: u64) -&gt; PathBuf {
-<a href=#592 id=592 data-nosnippet>592</a>        <span class="kw">let </span>response = serde_json::to_string(<span class="kw-2">&amp;</span>BrowserResponseEnvelope::snapshot(BrowserSnapshot {
-<a href=#593 id=593 data-nosnippet>593</a>            capabilities: casars_tablebrowser_protocol::BrowserCapabilities { editable: <span class="bool-val">false </span>},
-<a href=#594 id=594 data-nosnippet>594</a>            view: casars_tablebrowser_protocol::BrowserView::Overview,
-<a href=#595 id=595 data-nosnippet>595</a>            parameters: casars_tablebrowser_protocol::BrowserParameters::default(),
-<a href=#596 id=596 data-nosnippet>596</a>            focus: casars_tablebrowser_protocol::BrowserFocus::Main,
-<a href=#597 id=597 data-nosnippet>597</a>            table_path: <span class="string">"/tmp/fake.ms"</span>.to_string(),
-<a href=#598 id=598 data-nosnippet>598</a>            breadcrumb: Vec::new(),
-<a href=#599 id=599 data-nosnippet>599</a>            viewport: BrowserViewport::new(<span class="number">80</span>, <span class="number">24</span>),
-<a href=#600 id=600 data-nosnippet>600</a>            status_line: <span class="string">"ok"</span>.to_string(),
-<a href=#601 id=601 data-nosnippet>601</a>            content_lines: <span class="macro">vec!</span>[<span class="string">"Overview"</span>.to_string()],
-<a href=#602 id=602 data-nosnippet>602</a>            vertical_metrics: <span class="prelude-val">None</span>,
-<a href=#603 id=603 data-nosnippet>603</a>            horizontal_metrics: <span class="prelude-val">None</span>,
-<a href=#604 id=604 data-nosnippet>604</a>            selected_address: <span class="prelude-val">None</span>,
-<a href=#605 id=605 data-nosnippet>605</a>            inspector: <span class="prelude-val">None</span>,
-<a href=#606 id=606 data-nosnippet>606</a>        }))
-<a href=#607 id=607 data-nosnippet>607</a>        .expect(<span class="string">"serialize snapshot"</span>);
-<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">let </span>script = <span class="macro">format!</span>(
-<a href=#609 id=609 data-nosnippet>609</a>            <span class="string">"#!/bin/sh\nwhile IFS= read -r line; do\n  sleep {}\n  printf '%s\\n' '{}'\ndone\n"</span>,
-<a href=#610 id=610 data-nosnippet>610</a>            delay_ms <span class="kw">as </span>f64 / <span class="number">1000.0</span>,
-<a href=#611 id=611 data-nosnippet>611</a>            response
-<a href=#612 id=612 data-nosnippet>612</a>        );
-<a href=#613 id=613 data-nosnippet>613</a>        write_browser_script(root, <span class="kw-2">&amp;</span>script)
-<a href=#614 id=614 data-nosnippet>614</a>    }
-<a href=#615 id=615 data-nosnippet>615</a>
-<a href=#616 id=616 data-nosnippet>616</a>    <span class="kw">fn </span>write_browser_script(root: <span class="kw-2">&amp;</span>Path, script: <span class="kw-2">&amp;</span>str) -&gt; PathBuf {
-<a href=#617 id=617 data-nosnippet>617</a>        <span class="kw">let </span>path = root.join(<span class="string">"browser.sh"</span>);
-<a href=#618 id=618 data-nosnippet>618</a>        fs::write(<span class="kw-2">&amp;</span>path, script).expect(<span class="string">"write script"</span>);
-<a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">let </span><span class="kw-2">mut </span>permissions = fs::metadata(<span class="kw-2">&amp;</span>path).expect(<span class="string">"metadata"</span>).permissions();
-<a href=#620 id=620 data-nosnippet>620</a>        permissions.set_mode(<span class="number">0o755</span>);
-<a href=#621 id=621 data-nosnippet>621</a>        fs::set_permissions(<span class="kw-2">&amp;</span>path, permissions).expect(<span class="string">"chmod"</span>);
-<a href=#622 id=622 data-nosnippet>622</a>        path
-<a href=#623 id=623 data-nosnippet>623</a>    }
-<a href=#624 id=624 data-nosnippet>624</a>}
+<a href=#530 id=530 data-nosnippet>530</a>        <span class="kw">let </span>client = spawn_test_browser(script);
+<a href=#531 id=531 data-nosnippet>531</a>
+<a href=#532 id=532 data-nosnippet>532</a>        <span class="kw">let </span>error = client
+<a href=#533 id=533 data-nosnippet>533</a>            .request(BrowserCommand::GetSnapshot { viewport: <span class="prelude-val">None </span>})
+<a href=#534 id=534 data-nosnippet>534</a>            .expect_err(<span class="string">"request should time out"</span>);
+<a href=#535 id=535 data-nosnippet>535</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"timed out waiting for"</span>));
+<a href=#536 id=536 data-nosnippet>536</a>
+<a href=#537 id=537 data-nosnippet>537</a>        thread::sleep(Duration::from_millis(<span class="number">250</span>));
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="macro">assert!</span>(
+<a href=#539 id=539 data-nosnippet>539</a>            client
+<a href=#540 id=540 data-nosnippet>540</a>                .request(BrowserCommand::GetSnapshot { viewport: <span class="prelude-val">None </span>})
+<a href=#541 id=541 data-nosnippet>541</a>                .is_err(),
+<a href=#542 id=542 data-nosnippet>542</a>            <span class="string">"late reply should not be reused after timeout"
+<a href=#543 id=543 data-nosnippet>543</a>        </span>);
+<a href=#544 id=544 data-nosnippet>544</a>
+<a href=#545 id=545 data-nosnippet>545</a>        <span class="kw">unsafe </span>{
+<a href=#546 id=546 data-nosnippet>546</a>            std::env::remove_var(<span class="string">"CASARS_BROWSER_REQUEST_TIMEOUT_MS"</span>);
+<a href=#547 id=547 data-nosnippet>547</a>        }
+<a href=#548 id=548 data-nosnippet>548</a>    }
+<a href=#549 id=549 data-nosnippet>549</a>
+<a href=#550 id=550 data-nosnippet>550</a>    <span class="attr">#[test]
+<a href=#551 id=551 data-nosnippet>551</a>    </span><span class="kw">fn </span>invalid_json_response_is_reported_as_protocol_error() {
+<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">let </span>_guard = <span class="kw">crate</span>::test_env_lock();
+<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">let </span>temp = tempdir().expect(<span class="string">"tempdir"</span>);
+<a href=#554 id=554 data-nosnippet>554</a>        <span class="kw">let </span>script = write_browser_script(
+<a href=#555 id=555 data-nosnippet>555</a>            temp.path(),
+<a href=#556 id=556 data-nosnippet>556</a>            <span class="string">"#!/bin/sh\nwhile IFS= read -r _line; do\n  printf '{not-json}\\n'\ndone\n"</span>,
+<a href=#557 id=557 data-nosnippet>557</a>        );
+<a href=#558 id=558 data-nosnippet>558</a>        <span class="kw">let </span>client = spawn_test_browser(script);
+<a href=#559 id=559 data-nosnippet>559</a>
+<a href=#560 id=560 data-nosnippet>560</a>        <span class="kw">let </span>error = client
+<a href=#561 id=561 data-nosnippet>561</a>            .request(BrowserCommand::GetSnapshot { viewport: <span class="prelude-val">None </span>})
+<a href=#562 id=562 data-nosnippet>562</a>            .expect_err(<span class="string">"invalid response should fail"</span>);
+<a href=#563 id=563 data-nosnippet>563</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"invalid_response"</span>));
+<a href=#564 id=564 data-nosnippet>564</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"parse browser response"</span>));
+<a href=#565 id=565 data-nosnippet>565</a>    }
+<a href=#566 id=566 data-nosnippet>566</a>
+<a href=#567 id=567 data-nosnippet>567</a>    <span class="attr">#[test]
+<a href=#568 id=568 data-nosnippet>568</a>    </span><span class="kw">fn </span>disconnected_session_surfaces_exit_and_stderr() {
+<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">let </span>_guard = <span class="kw">crate</span>::test_env_lock();
+<a href=#570 id=570 data-nosnippet>570</a>        <span class="kw">let </span>temp = tempdir().expect(<span class="string">"tempdir"</span>);
+<a href=#571 id=571 data-nosnippet>571</a>        <span class="kw">let </span>script = write_browser_script(
+<a href=#572 id=572 data-nosnippet>572</a>            temp.path(),
+<a href=#573 id=573 data-nosnippet>573</a>            <span class="string">"#!/bin/sh\nwhile IFS= read -r _line; do\n  echo 'backend exploded' &gt;&amp;2\n  exit 7\ndone\n"</span>,
+<a href=#574 id=574 data-nosnippet>574</a>        );
+<a href=#575 id=575 data-nosnippet>575</a>        <span class="kw">let </span>client = spawn_test_browser(script);
+<a href=#576 id=576 data-nosnippet>576</a>
+<a href=#577 id=577 data-nosnippet>577</a>        <span class="kw">let </span>error = client
+<a href=#578 id=578 data-nosnippet>578</a>            .request(BrowserCommand::GetSnapshot { viewport: <span class="prelude-val">None </span>})
+<a href=#579 id=579 data-nosnippet>579</a>            .expect_err(<span class="string">"disconnected session should fail"</span>);
+<a href=#580 id=580 data-nosnippet>580</a>        <span class="macro">assert!</span>(
+<a href=#581 id=581 data-nosnippet>581</a>            error.contains(<span class="string">"tablebrowser session exited"</span>)
+<a href=#582 id=582 data-nosnippet>582</a>                || error.contains(<span class="string">"write browser request"</span>)
+<a href=#583 id=583 data-nosnippet>583</a>                || error.contains(<span class="string">"timed out waiting for browser response"</span>)
+<a href=#584 id=584 data-nosnippet>584</a>        );
+<a href=#585 id=585 data-nosnippet>585</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"backend exploded"</span>) || error.contains(<span class="string">"exit status: 7"</span>));
+<a href=#586 id=586 data-nosnippet>586</a>    }
+<a href=#587 id=587 data-nosnippet>587</a>
+<a href=#588 id=588 data-nosnippet>588</a>    <span class="kw">fn </span>write_slow_browser_script(root: <span class="kw-2">&amp;</span>Path, delay_ms: u64) -&gt; PathBuf {
+<a href=#589 id=589 data-nosnippet>589</a>        <span class="kw">let </span>response = serde_json::to_string(<span class="kw-2">&amp;</span>BrowserResponseEnvelope::snapshot(BrowserSnapshot {
+<a href=#590 id=590 data-nosnippet>590</a>            capabilities: casars_tablebrowser_protocol::BrowserCapabilities { editable: <span class="bool-val">false </span>},
+<a href=#591 id=591 data-nosnippet>591</a>            view: casars_tablebrowser_protocol::BrowserView::Overview,
+<a href=#592 id=592 data-nosnippet>592</a>            parameters: casars_tablebrowser_protocol::BrowserParameters::default(),
+<a href=#593 id=593 data-nosnippet>593</a>            focus: casars_tablebrowser_protocol::BrowserFocus::Main,
+<a href=#594 id=594 data-nosnippet>594</a>            table_path: <span class="string">"/tmp/fake.ms"</span>.to_string(),
+<a href=#595 id=595 data-nosnippet>595</a>            breadcrumb: Vec::new(),
+<a href=#596 id=596 data-nosnippet>596</a>            viewport: BrowserViewport::new(<span class="number">80</span>, <span class="number">24</span>),
+<a href=#597 id=597 data-nosnippet>597</a>            status_line: <span class="string">"ok"</span>.to_string(),
+<a href=#598 id=598 data-nosnippet>598</a>            content_lines: <span class="macro">vec!</span>[<span class="string">"Overview"</span>.to_string()],
+<a href=#599 id=599 data-nosnippet>599</a>            vertical_metrics: <span class="prelude-val">None</span>,
+<a href=#600 id=600 data-nosnippet>600</a>            horizontal_metrics: <span class="prelude-val">None</span>,
+<a href=#601 id=601 data-nosnippet>601</a>            selected_address: <span class="prelude-val">None</span>,
+<a href=#602 id=602 data-nosnippet>602</a>            inspector: <span class="prelude-val">None</span>,
+<a href=#603 id=603 data-nosnippet>603</a>        }))
+<a href=#604 id=604 data-nosnippet>604</a>        .expect(<span class="string">"serialize snapshot"</span>);
+<a href=#605 id=605 data-nosnippet>605</a>        <span class="kw">let </span>script = <span class="macro">format!</span>(
+<a href=#606 id=606 data-nosnippet>606</a>            <span class="string">"#!/bin/sh\nwhile IFS= read -r line; do\n  sleep {}\n  printf '%s\\n' '{}'\ndone\n"</span>,
+<a href=#607 id=607 data-nosnippet>607</a>            delay_ms <span class="kw">as </span>f64 / <span class="number">1000.0</span>,
+<a href=#608 id=608 data-nosnippet>608</a>            response
+<a href=#609 id=609 data-nosnippet>609</a>        );
+<a href=#610 id=610 data-nosnippet>610</a>        write_browser_script(root, <span class="kw-2">&amp;</span>script)
+<a href=#611 id=611 data-nosnippet>611</a>    }
+<a href=#612 id=612 data-nosnippet>612</a>
+<a href=#613 id=613 data-nosnippet>613</a>    <span class="kw">fn </span>spawn_test_browser(script: PathBuf) -&gt; BrowserClient {
+<a href=#614 id=614 data-nosnippet>614</a>        <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
+<a href=#615 id=615 data-nosnippet>615</a>            <span class="kw">match </span>BrowserClient::spawn(<span class="kw-2">&amp;</span>ResolvedCommand::direct(script.clone())) {
+<a href=#616 id=616 data-nosnippet>616</a>                <span class="prelude-val">Ok</span>(client) =&gt; <span class="kw">return </span>client,
+<a href=#617 id=617 data-nosnippet>617</a>                <span class="prelude-val">Err</span>(error) <span class="kw">if </span>error.contains(<span class="string">"Text file busy"</span>) &amp;&amp; attempt &lt; <span class="number">2 </span>=&gt; {
+<a href=#618 id=618 data-nosnippet>618</a>                    thread::sleep(Duration::from_millis(<span class="number">10</span>));
+<a href=#619 id=619 data-nosnippet>619</a>                }
+<a href=#620 id=620 data-nosnippet>620</a>                <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">panic!</span>(<span class="string">"spawn browser client: {error}"</span>),
+<a href=#621 id=621 data-nosnippet>621</a>            }
+<a href=#622 id=622 data-nosnippet>622</a>        }
+<a href=#623 id=623 data-nosnippet>623</a>        <span class="macro">unreachable!</span>(<span class="string">"test browser spawn loop always returns or panics"</span>)
+<a href=#624 id=624 data-nosnippet>624</a>    }
+<a href=#625 id=625 data-nosnippet>625</a>
+<a href=#626 id=626 data-nosnippet>626</a>    <span class="kw">fn </span>write_browser_script(root: <span class="kw-2">&amp;</span>Path, script: <span class="kw-2">&amp;</span>str) -&gt; PathBuf {
+<a href=#627 id=627 data-nosnippet>627</a>        <span class="kw">let </span>path = root.join(<span class="string">"browser.sh"</span>);
+<a href=#628 id=628 data-nosnippet>628</a>        fs::write(<span class="kw-2">&amp;</span>path, script).expect(<span class="string">"write script"</span>);
+<a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">let </span><span class="kw-2">mut </span>permissions = fs::metadata(<span class="kw-2">&amp;</span>path).expect(<span class="string">"metadata"</span>).permissions();
+<a href=#630 id=630 data-nosnippet>630</a>        permissions.set_mode(<span class="number">0o755</span>);
+<a href=#631 id=631 data-nosnippet>631</a>        fs::set_permissions(<span class="kw-2">&amp;</span>path, permissions).expect(<span class="string">"chmod"</span>);
+<a href=#632 id=632 data-nosnippet>632</a>        path
+<a href=#633 id=633 data-nosnippet>633</a>    }
+<a href=#634 id=634 data-nosnippet>634</a>}
 </code></pre></div></section></main></body></html>
