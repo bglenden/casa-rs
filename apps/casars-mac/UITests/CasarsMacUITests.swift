@@ -512,6 +512,71 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Stop"].isEnabled, "Replacing notebook parameters must not execute the task")
     }
 
+    func testProductionPythonCellRunsPersistsReceiptAndSurvivesNotebookReload() throws {
+        let notebookID = "019f0000-0000-7000-8000-000000000101"
+        let cellID = "019f0000-0000-7000-8000-000000000102"
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-mac-ui-python-\(UUID().uuidString)", isDirectory: true)
+        let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
+        let pythonBin = project.appendingPathComponent(".casa-rs/python/bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: pythonBin, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: pythonBin.appendingPathComponent("python3"),
+            withDestinationURL: URL(fileURLWithPath: "/usr/bin/python3")
+        )
+        let notebookFile = notebooks.appendingPathComponent("python.md")
+        let source = """
+        <!-- casa-rs-notebook:v1 id=\(notebookID) -->
+
+        # Production Python notebook
+
+        This prose remains the primary document.
+
+        <!-- casa-rs-cell:v1 id=\(cellID) kind=python -->
+        ```python
+        value = 6 * 7
+        print(value)
+        ```
+        <!-- /casa-rs-cell -->
+        """ + "\n"
+        try source.write(to: notebookFile, atomically: true, encoding: .utf8)
+        productionProjectURL = project
+
+        app = XCUIApplication()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "--open-project", project.path,
+        ]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
+        try clickIdentified("dock.mode.notebooks")
+        XCTAssertTrue(notebookSelector(notebookID).waitForExistence(timeout: 5), app.debugDescription)
+        try require("notebook.selector.open").click()
+
+        XCTAssertTrue(
+            try require("notebook.python.authority").label.contains("normal user authority")
+        )
+        let run = try require("notebook.python.run.\(cellID)")
+        XCTAssertTrue(run.isEnabled, app.debugDescription)
+        run.click()
+        XCTAssertTrue(
+            waitForValue("notebook.python.latestRevision.\(cellID)", containing: "stdout: 42"),
+            app.debugDescription
+        )
+
+        let runs = project.appendingPathComponent(".casa-rs/notebook-runs", isDirectory: true)
+        XCTAssertTrue(waitForReceipt(in: runs, containing: "\"schema_version\": 2"))
+        XCTAssertTrue(waitForReceipt(in: runs, containing: "\"source\": \"value = 6 * 7\\nprint(value)\\n\""))
+
+        try require("central.tab.tab-scientific-notebook").click()
+        try clickIdentified("dock.mode.datasets")
+        try clickIdentified("dock.mode.notebooks")
+        try require("notebook.selector.open").click()
+        XCTAssertTrue(waitForValue("notebook.python.latestRevision.\(cellID)", containing: "stdout: 42"))
+    }
+
     private func launchPrototype(scenario: String = "happy-path") {
         app = XCUIApplication()
         app.launchArguments = [
@@ -633,6 +698,23 @@ final class CasarsMacUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(5)
         repeat {
             if (try? String(contentsOf: url, encoding: .utf8))?.contains(text) == true {
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        } while Date() < deadline
+        return false
+    }
+
+    private func waitForReceipt(in runs: URL, containing text: String) -> Bool {
+        let deadline = Date().addingTimeInterval(10)
+        repeat {
+            let receipts = (try? FileManager.default.contentsOfDirectory(
+                at: runs,
+                includingPropertiesForKeys: nil
+            ))?.map { $0.appendingPathComponent("receipt.json") } ?? []
+            if receipts.contains(where: {
+                (try? String(contentsOf: $0, encoding: .utf8))?.contains(text) == true
+            }) {
                 return true
             }
             Thread.sleep(forTimeInterval: 0.05)

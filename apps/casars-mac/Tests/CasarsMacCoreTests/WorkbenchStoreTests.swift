@@ -1566,6 +1566,158 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.parameterText(surfaceID: "imhead", instanceID: taskTab.id, name: "mode"), "summary")
     }
 
+    func testPersistentPythonCellRecordsExactV2ReceiptAndReopensOrderedOutput() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-python-notebook-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [], source: .probed)
+        let store = WorkbenchStore(state: state)
+        store.installPythonExecutableForTesting(try resolvedTestPython())
+        store.createScientificNotebook(filename: "Python.md", title: "Python")
+        let created = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook)
+        let cellID = UUID().uuidString.lowercased()
+        let source = "value = 40 + 2\nprint(value)\n"
+        store.setScientificNotebookDraft(created.source + """
+
+        <!-- casa-rs-cell:v1 id=\(cellID) kind=python -->
+        ```python
+        \(source)```
+        <!-- /casa-rs-cell -->
+        """)
+        store.saveScientificNotebook()
+        let savedCell = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook?.cells.first)
+        XCTAssertFalse(savedCell.body.isEmpty, "saved source: \(store.state.scientificNotebooks?.activeNotebook?.source ?? "missing")")
+
+        store.runScientificPythonCell(cellID)
+        waitFor("Python receipt", timeout: 10) {
+            store.state.scientificNotebooks?.activeNotebook?.receipts.first?.status == "succeeded"
+        }
+        let receipt = try XCTUnwrap(
+            store.state.scientificNotebooks?.activeNotebook?.receipts.first,
+            "\(store.state.lastErrors)"
+        )
+        XCTAssertEqual(receipt.schemaVersion, 2)
+        XCTAssertEqual(receipt.executionInput?.kind, "python")
+        XCTAssertEqual(receipt.executionInput?.details.source, source)
+        XCTAssertEqual(receipt.executionInput?.details.authority, "user")
+        XCTAssertTrue(receipt.executionInput?.details.environment.fingerprintSHA256.isEmpty == false)
+        XCTAssertTrue(receipt.orderedOutputs?.map(\.text).joined().contains("42") == true)
+        XCTAssertTrue(receipt.artifacts.contains { $0.role == "ordered_output" })
+
+        var reopenedState = EmptyWorkbench.makeState()
+        reopenedState.project = state.project
+        let reopened = WorkbenchStore(state: reopenedState)
+        reopened.loadScientificNotebooks()
+        let reopenedReceipt = try XCTUnwrap(reopened.state.scientificNotebooks?.activeNotebook?.receipts.first)
+        XCTAssertEqual(reopenedReceipt.executionInput?.details.source, source)
+        XCTAssertTrue(reopenedReceipt.orderedOutputs?.map(\.text).joined().contains("42") == true)
+    }
+
+    func testMeasurementSetVisualizationNewUpdateAndOpenExplorerRoundTrip() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-visualization-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let msPath = rootURL.appendingPathComponent("tutorial.ms").path
+        let dataset = DatasetSummary(
+            id: msPath,
+            name: "tutorial.ms",
+            path: msPath,
+            kind: .measurementSet,
+            size: "test",
+            units: "Jy",
+            notes: "tutorial"
+        )
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [dataset], source: .probed)
+        state.selectedDatasetID = dataset.id
+        state.measurementSetPlots[dataset.id] = MeasurementSetExplorerPlotState(
+            datasetID: dataset.id,
+            preset: .amplitudeVsTime,
+            selectedField: "0",
+            selectedSpectralWindow: "0",
+            selectedCorrelation: "XX",
+            dataColumn: "DATA",
+            status: .ready,
+            lastError: nil,
+            result: makePlotResult(
+                preset: .amplitudeVsTime,
+                title: "Amplitude vs time",
+                datasetPath: msPath
+            )
+        )
+        let store = WorkbenchStore(state: state)
+        store.createScientificNotebook(filename: "Plots.md", title: "Plots")
+
+        store.saveMeasurementSetPlotToNotebook(datasetID: dataset.id)
+        let first = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook?.visualizations.first)
+        XCTAssertEqual(first.revisions.count, 1)
+        XCTAssertEqual(first.revisions[0].reopen.parameters["selectedField"], .string("0"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: rootURL
+            .appendingPathComponent(first.revisions[0].assetPath).path))
+
+        store.saveMeasurementSetPlotToNotebook(datasetID: dataset.id, updating: first.id)
+        let updated = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook?.visualizations.first)
+        XCTAssertEqual(updated.id, first.id)
+        XCTAssertEqual(updated.revisions.count, 2)
+        XCTAssertNotEqual(updated.revisions[0].assetPath, updated.revisions[1].assetPath)
+
+        store.openNotebookVisualization(updated.id)
+        XCTAssertEqual(store.state.measurementSetPlots[dataset.id]?.preset, .amplitudeVsTime)
+        XCTAssertTrue(store.state.tabs.contains(where: { $0.kind == .datasetExplorer }))
+    }
+
+    func testImageVisualizationSaveCreatesStableNotebookPNG() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-image-visualization-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let imagePath = rootURL.appendingPathComponent("tutorial.image").path
+        let dataset = DatasetSummary(
+            id: imagePath,
+            name: "tutorial.image",
+            path: imagePath,
+            kind: .imageCube,
+            size: "2 x 2",
+            units: "Jy/beam",
+            shape: [2, 2],
+            notes: "tutorial"
+        )
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [dataset], source: .probed)
+        let store = WorkbenchStore(
+            state: state,
+            imageExplorerClient: StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        )
+        store.createScientificNotebook(filename: "Images.md", title: "Images")
+        store.openDatasetExplorer(dataset.id)
+        waitFor("image explorer snapshot") {
+            store.state.imageExplorers[dataset.id]?.snapshot?.plane != nil
+        }
+
+        store.saveImageExplorerToNotebook(datasetID: dataset.id)
+        let saved = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook?.visualizations.first)
+        let revision = try XCTUnwrap(saved.revisions.first)
+        XCTAssertEqual(revision.reopen.surface, "imexplore")
+        XCTAssertEqual(revision.render.mediaType, "image/png")
+        let data = try Data(contentsOf: rootURL.appendingPathComponent(revision.assetPath))
+        XCTAssertTrue(data.starts(with: [0x89, 0x50, 0x4e, 0x47]))
+    }
+
+    private func resolvedTestPython() throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        process.arguments = ["-f", "python3"]
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        try process.run()
+        process.waitUntilExit()
+        return String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func testSessionLastRequiresSuccessfulOpenAndIgnoresTransientNavigation() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-session-last-\(UUID().uuidString)", isDirectory: true)
@@ -6723,6 +6875,12 @@ private final class RecordingNotebookPersistenceClient: NotebookPersistenceClien
     func finalizeRecording(request: NotebookFinalizeRecordingRequest) throws {
         finalizeRequests.append(request)
         try base.finalizeRecording(request: request)
+    }
+
+    func saveVisualization(
+        request: NotebookSaveVisualizationEnvelope
+    ) throws -> NotebookVisualizationSnapshot {
+        try base.saveVisualization(request: request)
     }
 }
 

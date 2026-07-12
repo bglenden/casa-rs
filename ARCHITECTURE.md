@@ -107,7 +107,8 @@ family, state owner, fixture schema, runtime, or distribution path.
 
 ADR-0007 defines the runtime boundary for the scientific-notebook program.
 `casa-notebook` now owns the Wave 1 Markdown/cell, execution-receipt, locking,
-conflict, and export contracts shared by GUI, TUI, CLI, and Python. App surfaces
+conflict, export, receipt-v2 Python input/environment, and immutable explorer
+visualization-revision contracts shared by GUI, TUI, CLI, and Python. App surfaces
 record through this crate on an explicitly selected project root; recorder
 failure is a warning and never changes the scientific operation result. Swift
 uses DTO projections from `casars-frontend-services` and does not own the
@@ -123,13 +124,30 @@ implicit project recording; project-mediated execution enters through `casars
 run` or another app surface with an explicit workspace, and CLI/Python callers
 may route to an existing named notebook explicitly.
 
+Wave 2 adds one persistent, visible, interruptible Python subprocess per open
+notebook. Swift supervises its CASA-RS JSONL protocol and owns interrupt,
+terminate/kill, restart, Run All, and explicit project-environment actions;
+`casa-notebook` owns the durable execution evidence. The unrestricted user
+kernel is not reused for AI. The macOS AI worker is a distinct `sandbox-exec`
+Seatbelt process with denied networking and outside writes, a scrubbed
+environment, and one canonical writable staging root. Exact-source approval is
+checked before launch.
+
+Renderer-neutral MeasurementSet plot data is owned by `casa-ms`; UniFFI and
+PyO3 project that same Rust structure. `casars-python` adds NumPy-native MS
+series and image-plane/WCS records, with Matplotlib and Astropy confined to the
+optional `plot` extra. Swift explorer fixtures and frontend DTOs are not
+persisted contracts. Explicit MS/image snapshots are copied and versioned by
+`casa-notebook`; canonical typed explorer parameters are retained solely as
+reopen intent, never inserted as input forms or live links in Markdown.
+
 The planned later-wave tutorial-manifest support and `casars-assistant`
 TypeScript sidecar are isolated behind a
 CASA-RS-owned JSONL/stdio protocol and may use Pi as a replaceable model/auth
 adapter. Swift remains the native interaction layer, and
 `casars-frontend-services` remains a projection layer rather than a persistence
-implementation. The assistant and later-wave tutorial/kernel modules remain
-accepted architecture but do not exist until their implementation waves land.
+implementation. The assistant and later-wave tutorial modules remain accepted
+architecture but do not exist until their implementation waves land.
 
 Every notebook-program wave starts with a launchable deterministic GUI
 prototype and an explicit approval gate before real adapters are connected.

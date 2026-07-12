@@ -717,7 +717,7 @@ package struct PrototypeNotebookRichDocument: Equatable {
                 index += 1
                 continue
             }
-            if let cellID = taskCellID(from: content),
+            if let cellID = managedCellID(from: content),
                let closingIndex = (index + 1..<lines.count).first(where: {
                    String(source[lines[$0].contentRange])
                        .trimmingCharacters(in: .whitespaces) == "<!-- /casa-rs-cell -->"
@@ -744,7 +744,7 @@ package struct PrototypeNotebookRichDocument: Equatable {
         return result
     }
 
-    private static func taskCellID(from line: String) -> String? {
+    private static func managedCellID(from line: String) -> String? {
         let indentation = line.prefix { $0 == " " }.count
         guard indentation <= 3,
               line.dropFirst(indentation).first != "\t"
@@ -752,7 +752,9 @@ package struct PrototypeNotebookRichDocument: Equatable {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("<!-- casa-rs-cell:v1 "),
               trimmed.hasSuffix("-->"),
-              trimmed.split(whereSeparator: \.isWhitespace).contains("kind=task")
+              trimmed.split(whereSeparator: \.isWhitespace).contains(where: {
+                  $0 == "kind=task" || $0 == "kind=python"
+              })
         else { return nil }
         guard let idToken = trimmed
             .split(whereSeparator: \.isWhitespace)

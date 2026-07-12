@@ -177,6 +177,23 @@ Matplotlib figures are captured as PNG and SVG under the execution asset
 directory. The code and input references remain in the cell, so **Regenerate**
 creates a new execution and artifact revision without destroying the old one.
 
+Receipt schema v2 stores the exact Python source and SHA-256, `user` or
+`ai_worker` authority, selected input references, interpreter identity, Python
+implementation/version, installed CASA-RS and plotting package versions, and a
+validated environment fingerprint. Schema-v1 task receipts remain readable.
+Ordered stream events are retained as an immutable JSON execution artifact in
+addition to stdout/stderr sidecars.
+
+Python-native explorer data does not round-trip through screenshots. Use
+`casars.tasks.msexplore.data(...)` for the shared Rust `casa-ms` numeric plot
+document (NumPy series and point provenance), then
+`msexplore.plot_matplotlib(...)` for editable figure/axes objects. Use
+`casars.imexplore.data(...)` for image planes, masks, coordinate/WCS records,
+beam metadata, and overlays, then `casars.imexplore.imshow(...)` for editable
+Matplotlib/WCSAxes objects. The optional dependencies are installed with
+`casa-rs-python[plot]`; executable-rendered exports remain appropriate for
+GUI/TUI parity and regression images.
+
 AI Python is separate. The exact proposed code and expected artifact paths are
 shown before approval. Approval is bound to a content hash; any code change
 invalidates it. The worker has read-only project science data, a writable
@@ -325,14 +342,25 @@ exact-source approval for AI-proposed code. Deterministic
 `happy-path`, `failure`, and `nonresponsive` fixture states exercise retry,
 interrupt, forced restart, immutable revisions, and approval invalidation.
 
-Current reality: Wave 2 Phase A is implemented on issues #227 and #370 as a fixture-only
-`casars-mac` prototype with core tests, XCUITests, accessibility audit, debug
-JSON, and visual evidence. It has no Python process, project persistence,
-matplotlib runtime, task/provider call, or network access. Phase B production
-integration remains blocked until explicit interaction approval is recorded.
+Current reality: Wave 2 Phase A was accepted on issues #227 and #370. Phase B
+now uses an explicit project environment and one supervised persistent user
+kernel per notebook; records exact schema-v2 Python receipts and ordered
+output; captures immutable PNG/SVG execution assets; and presents environment
+creation and plotting-package installation only as explicit user actions.
+`casa-ms` owns the shared numeric MS plot-data contract consumed by both the
+UniFFI GUI projection and PyO3. Python-native image planes include WCS, masks,
+beam metadata, and overlays. The separate macOS AI worker uses Seatbelt with
+network denial, scrubbed credentials, read-only science inputs, one writable
+staging root, exact-source approval, symlink-escape coverage, and inherited
+subprocess restrictions.
 
-Production: project environment, persistent per-notebook user kernel,
-CASA-RS bindings, receipts, plot capture, and the restricted AI-worker boundary.
+Production explorer snapshots are Rust-owned `casa-notebook` records. MS and
+image explorers expose **Save to Notebook**; **New** creates a new identity and
+**Update** appends an immutable asset revision. Markdown contains only the
+quiet latest image link and identity marker. Managed metadata retains source
+references, canonical typed reopen parameters, contract and renderer identity,
+and every prior revision. Notebook previews enlarge without launching an
+explorer; **Open in Explorer** restores the saved parameters.
 
 ### Wave 3: tutorials and acquisition
 

@@ -56,6 +56,7 @@ final class NotebookPersistenceTests: XCTestCase {
                     contract: 1,
                     parameters: ["niter": .number(5)]
                 ),
+                executionInput: nil,
                 providerContractVersion: 1,
                 resolvedParameters: ["niter": .number(5)],
                 runSafety: NotebookRunSafetyRecord(
@@ -111,6 +112,7 @@ final class NotebookPersistenceTests: XCTestCase {
                 notebookId: nil,
                 cellId: nil,
                 taskIntent: nil,
+                executionInput: nil,
                 providerContractVersion: 1,
                 resolvedParameters: [:],
                 runSafety: NotebookRunSafetyRecord(classification: "read_only", affectedPaths: []),

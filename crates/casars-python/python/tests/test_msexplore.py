@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import os
 import stat
 import textwrap
 
@@ -220,6 +221,30 @@ def test_native_data_returns_numpy_without_reading_a_rendered_image(
     assert result.panels[0].series[0].provenance[1]["row"] == 5
     assert captured[0][1]["field"] == "0"
     assert captured[0][2]["preset"] == "amplitude_vs_time"
+
+
+def test_tutorial_measurement_set_returns_native_numeric_plot_data() -> None:
+    root = Path(os.environ.get("CASA_RS_TUTORIAL_DATA_ROOT", "~/SoftwareProjects/casa-tutorial-data")).expanduser()
+    measurement_set = root / "tutorial-parity/alma/first-look/twhya/imaging/alma-first-look-imaging.pack/twhya_calibrated.ms"
+    if not measurement_set.is_dir():
+        pytest.skip("local ALMA first-look tutorial MeasurementSet is unavailable")
+
+    result = msexplore.data(
+        measurement_set,
+        preset="amplitude_vs_time",
+        selection={"field": "0", "spw": "0"},
+    )
+
+    assert result.panels
+    assert result.panels[0].series
+    series = result.panels[0].series[0]
+    assert series.x.size == series.y.size > 0
+    assert np.isfinite(series.x).any()
+    assert np.isfinite(series.y).any()
+    pytest.importorskip("matplotlib")
+    figure, axes = msexplore.plot_matplotlib(result)
+    assert figure is not None
+    assert axes.collections
 
 
 def _write_stub_binary(

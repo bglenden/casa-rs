@@ -52,8 +52,8 @@ def data(
     slice_shape[axis] = 1
     mask = image.get_mask_slice(start, slice_shape)
     return ImagePlaneData(
-        values=np.asarray(image.get_plane(axis, index)),
-        mask=None if mask is None else np.squeeze(np.asarray(mask, dtype=np.bool_), axis=axis),
+        values=np.squeeze(np.asarray(image.get_plane(axis, index))),
+        mask=None if mask is None else np.squeeze(np.asarray(mask, dtype=np.bool_)),
         coordinate_system=image.coordinate_system,
         beam_metadata=image.image_info,
         overlays=tuple(overlays),

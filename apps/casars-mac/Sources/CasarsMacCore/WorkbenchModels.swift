@@ -1278,6 +1278,60 @@ public enum ImageExplorerColorMap: String, CaseIterable, Codable, Equatable, Ide
     }
 }
 
+package func imagePlaneRGB(
+    _ value: UInt8,
+    colorMap: ImageExplorerColorMap
+) -> (red: UInt8, green: UInt8, blue: UInt8) {
+    switch colorMap {
+    case .grayscale:
+        return (value, value, value)
+    case .viridis:
+        return interpolateImagePlaneColorStops(
+            value,
+            stops: [(68, 1, 84), (59, 82, 139), (33, 145, 140), (94, 201, 98), (253, 231, 37)]
+        )
+    case .inferno:
+        return interpolateImagePlaneColorStops(
+            value,
+            stops: [(0, 0, 4), (87, 15, 109), (187, 55, 84), (249, 142, 8), (252, 255, 164)]
+        )
+    case .magma:
+        return interpolateImagePlaneColorStops(
+            value,
+            stops: [(0, 0, 4), (74, 16, 107), (179, 53, 88), (251, 135, 97), (252, 253, 191)]
+        )
+    case .coolWarm:
+        return interpolateImagePlaneColorStops(
+            value,
+            stops: [(59, 76, 192), (180, 205, 232), (245, 245, 245), (221, 132, 105), (180, 4, 38)]
+        )
+    }
+}
+
+private func interpolateImagePlaneColorStops(
+    _ value: UInt8,
+    stops: [(red: UInt8, green: UInt8, blue: UInt8)]
+) -> (red: UInt8, green: UInt8, blue: UInt8) {
+    guard stops.count > 1 else { return stops.first ?? (value, value, value) }
+    let segmentCount = stops.count - 1
+    let scaled = Int(value) * segmentCount * 256 / 255
+    let segment = min(scaled / 256, segmentCount - 1)
+    let fraction = scaled % 256
+    let start = stops[segment]
+    let end = stops[segment + 1]
+    return (
+        interpolateImagePlaneChannel(start.red, end.red, fraction: fraction),
+        interpolateImagePlaneChannel(start.green, end.green, fraction: fraction),
+        interpolateImagePlaneChannel(start.blue, end.blue, fraction: fraction)
+    )
+}
+
+private func interpolateImagePlaneChannel(_ start: UInt8, _ end: UInt8, fraction: Int) -> UInt8 {
+    let startValue = Int(start)
+    let delta = Int(end) - startValue
+    return UInt8(clamping: startValue + (delta * fraction + 128) / 256)
+}
+
 public struct ImageExplorerSnapshotRequest: Codable, Equatable {
     public var datasetPath: String
     public var selectedView: String

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import numpy as np
+from pathlib import Path
+import os
+import pytest
 
 from casars import imexplore
 
@@ -54,3 +57,22 @@ def test_image_plane_data_includes_wcs_mask_beam_and_overlays(monkeypatch) -> No
     assert result.overlays == (overlay,)
     assert result.units == "Jy/beam"
     assert result.stretch == "asinh"
+
+
+def test_tutorial_image_returns_native_plane_and_wcs_metadata() -> None:
+    root = Path(os.environ.get("CASA_RS_TUTORIAL_DATA_ROOT", "~/SoftwareProjects/casa-tutorial-data")).expanduser()
+    image = root / "tutorial-parity/alma/first-look/twhya/twhya_cont.image"
+    if not image.is_dir():
+        pytest.skip("local ALMA first-look tutorial image is unavailable")
+
+    result = imexplore.data(image, axis=2, index=0)
+
+    assert result.values.ndim == 2
+    assert result.values.size > 0
+    assert result.coordinate_system
+    assert result.units
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("astropy")
+    figure, axes = imexplore.imshow(result)
+    assert figure is not None
+    assert axes.images

@@ -1691,6 +1691,23 @@ private struct ImageExplorerSnapshotView: View {
                     quickMovieControls
                     quickColorMapControl
 
+                    if snapshot.plane != nil {
+                        Menu("Save to Notebook") {
+                            Button("New image") {
+                                store.saveImageExplorerToNotebook(datasetID: datasetID)
+                            }
+                            ForEach(savedVisualizations) { visualization in
+                                Button("Update \(visualization.title)") {
+                                    store.saveImageExplorerToNotebook(
+                                        datasetID: datasetID,
+                                        updating: visualization.id
+                                    )
+                                }
+                            }
+                        }
+                        .accessibilityIdentifier("imageExplorer.saveToNotebook.\(datasetID)")
+                    }
+
                     Spacer()
 
                     Text(controlSummary)
@@ -1728,6 +1745,16 @@ private struct ImageExplorerSnapshotView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .accessibilityIdentifier("imageExplorer.snapshot")
+    }
+
+    private var savedVisualizations: [NotebookVisualizationSnapshot] {
+        guard let dataset = store.state.project.datasets.first(where: { $0.id == datasetID }) else {
+            return []
+        }
+        return store.state.scientificNotebooks?.activeNotebook?.visualizations.filter {
+            $0.revisions.last?.reopen.surface == "imexplore"
+                && $0.revisions.last?.sourceReferences.contains(dataset.path) == true
+        } ?? []
     }
 
     private static func regionIsSaved(
@@ -3291,65 +3318,6 @@ private func imagePlaneColor(_ sample: CGFloat, colorMap: ImageExplorerColorMap)
         green: Double(rgb.green) / 255.0,
         blue: Double(rgb.blue) / 255.0
     )
-}
-
-private func imagePlaneRGB(
-    _ value: UInt8,
-    colorMap: ImageExplorerColorMap
-) -> (red: UInt8, green: UInt8, blue: UInt8) {
-    switch colorMap {
-    case .grayscale:
-        return (value, value, value)
-    case .viridis:
-        return interpolateColorStops(
-            value,
-            stops: [(68, 1, 84), (59, 82, 139), (33, 145, 140), (94, 201, 98), (253, 231, 37)]
-        )
-    case .inferno:
-        return interpolateColorStops(
-            value,
-            stops: [(0, 0, 4), (87, 15, 109), (187, 55, 84), (249, 142, 8), (252, 255, 164)]
-        )
-    case .magma:
-        return interpolateColorStops(
-            value,
-            stops: [(0, 0, 4), (74, 16, 107), (179, 53, 88), (251, 135, 97), (252, 253, 191)]
-        )
-    case .coolWarm:
-        return interpolateColorStops(
-            value,
-            stops: [(59, 76, 192), (180, 205, 232), (245, 245, 245), (221, 132, 105), (180, 4, 38)]
-        )
-    }
-}
-
-private func interpolateColorStops(
-    _ value: UInt8,
-    stops: [(red: UInt8, green: UInt8, blue: UInt8)]
-) -> (red: UInt8, green: UInt8, blue: UInt8) {
-    guard !stops.isEmpty else {
-        return (value, value, value)
-    }
-    guard stops.count > 1 else {
-        return stops[0]
-    }
-    let segmentCount = stops.count - 1
-    let scaled = Int(value) * segmentCount * 256 / 255
-    let segment = min(scaled / 256, segmentCount - 1)
-    let fraction = scaled % 256
-    let start = stops[segment]
-    let end = stops[segment + 1]
-    return (
-        interpolateChannel(start.red, end.red, fraction: fraction),
-        interpolateChannel(start.green, end.green, fraction: fraction),
-        interpolateChannel(start.blue, end.blue, fraction: fraction)
-    )
-}
-
-private func interpolateChannel(_ start: UInt8, _ end: UInt8, fraction: Int) -> UInt8 {
-    let startValue = Int(start)
-    let delta = Int(end) - startValue
-    return UInt8(clamping: startValue + (delta * fraction + 128) / 256)
 }
 
 private func approximateTextWidth(_ text: String, fontSize: Double) -> CGFloat {
@@ -4981,6 +4949,22 @@ struct MeasurementSetPlotPanel: View {
                 .labelsHidden()
                 .frame(width: 220)
                 .accessibilityIdentifier("msPlot.preset.\(dataset.id)")
+                if visiblePlotResult != nil {
+                    Menu("Save to Notebook") {
+                        Button("New plot") {
+                            store.saveMeasurementSetPlotToNotebook(datasetID: dataset.id)
+                        }
+                        ForEach(savedVisualizations) { visualization in
+                            Button("Update \(visualization.title)") {
+                                store.saveMeasurementSetPlotToNotebook(
+                                    datasetID: dataset.id,
+                                    updating: visualization.id
+                                )
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("msPlot.saveToNotebook.\(dataset.id)")
+                }
             } else {
                 Picker("Format", selection: $summaryFormat) {
                     Text("Text").tag("text")
@@ -5035,6 +5019,13 @@ struct MeasurementSetPlotPanel: View {
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .shadow(color: Color.black.opacity(0.16), radius: 10, x: 0, y: 4)
+    }
+
+    private var savedVisualizations: [NotebookVisualizationSnapshot] {
+        store.state.scientificNotebooks?.activeNotebook?.visualizations.filter {
+            $0.revisions.last?.reopen.surface == "msexplore"
+                && $0.revisions.last?.sourceReferences.contains(dataset.path) == true
+        } ?? []
     }
 
     private var plotSelections: some View {

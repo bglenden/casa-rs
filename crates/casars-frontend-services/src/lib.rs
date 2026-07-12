@@ -23,7 +23,7 @@ use casa_ms::{
 use casa_notebook::{
     AttemptHandle, ConflictResolution, ExecutionReceipt, ExportMode, NotebookDocument,
     NotebookStore, ReceiptFinalization, RecordingPolicy, RecordingRequest, SaveResult,
-    TaskCellIntent,
+    SaveVisualizationRequest, TaskCellIntent, VisualizationSnapshot,
 };
 use casa_provider_contracts::{
     ParameterValue, ProviderInvocationAdaptation, RunSafetyClass, SurfaceContractBundle,
@@ -723,13 +723,29 @@ struct NotebookProjection {
     source: String,
     content_hash: String,
     cells: Vec<NotebookCellProjection>,
-    receipts: Vec<ExecutionReceipt>,
+    receipts: Vec<NotebookReceiptProjection>,
+    visualizations: Vec<VisualizationSnapshot>,
+}
+
+#[derive(Debug, Serialize)]
+struct NotebookReceiptProjection {
+    #[serde(flatten)]
+    receipt: ExecutionReceipt,
+    ordered_outputs: Vec<NotebookOutputProjection>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct NotebookOutputProjection {
+    order: usize,
+    channel: String,
+    text: String,
 }
 
 #[derive(Debug, Serialize)]
 struct NotebookCellProjection {
     id: String,
     kind: String,
+    body: String,
     task_intent: Option<TaskCellIntent>,
 }
 
@@ -740,6 +756,7 @@ fn notebook_cell_projections(document: &NotebookDocument) -> Vec<NotebookCellPro
         .map(|cell| NotebookCellProjection {
             id: cell.id.to_string(),
             kind: cell.kind.as_str().to_owned(),
+            body: document.source()[cell.body_range.clone()].to_owned(),
             task_intent: cell.task.clone(),
         })
         .collect()
@@ -820,6 +837,12 @@ struct NotebookExportRequest {
     mode: NotebookExportMode,
 }
 
+#[derive(Debug, Deserialize)]
+struct NotebookSaveVisualizationRequest {
+    project_root: String,
+    request: SaveVisualizationRequest,
+}
+
 fn notebook_error(action: &str, error: impl std::fmt::Display) -> FrontendServiceError {
     FrontendServiceError::Notebook {
         reason: format!("{action}: {error}"),
@@ -835,7 +858,25 @@ fn notebook_projection(
         .map_err(|error| notebook_error("open notebook", error))?;
     let receipts = store
         .receipts_for_notebook(snapshot.entry.id)
-        .map_err(|error| notebook_error("load notebook receipts", error))?;
+        .map_err(|error| notebook_error("load notebook receipts", error))?
+        .into_iter()
+        .map(|receipt| {
+            let ordered_outputs = receipt
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.role == "ordered_output")
+                .and_then(|artifact| fs::read(store.project_root().join(&artifact.path)).ok())
+                .and_then(|contents| serde_json::from_slice(&contents).ok())
+                .unwrap_or_default();
+            NotebookReceiptProjection {
+                receipt,
+                ordered_outputs,
+            }
+        })
+        .collect();
+    let visualizations = store
+        .visualizations_for_notebook(snapshot.entry.id)
+        .map_err(|error| notebook_error("load notebook visualizations", error))?;
     Ok(NotebookProjection {
         id: snapshot.entry.id.to_string(),
         filename: snapshot.entry.filename,
@@ -843,6 +884,7 @@ fn notebook_projection(
         content_hash: snapshot.content_hash,
         cells: notebook_cell_projections(&snapshot.document),
         receipts,
+        visualizations,
     })
 }
 
@@ -951,6 +993,20 @@ pub fn notebook_finalize_recording_json(request_json: String) -> FrontendResult<
         .map_err(|error| notebook_error("finalize notebook receipt", error))?;
     serde_json::to_string(&receipt)
         .map_err(|error| notebook_error("serialize notebook receipt", error))
+}
+
+/// Copy one explicit explorer visualization into a new immutable notebook revision.
+#[uniffi::export]
+pub fn notebook_save_visualization_json(request_json: String) -> FrontendResult<String> {
+    let request: NotebookSaveVisualizationRequest = serde_json::from_str(&request_json)
+        .map_err(|error| notebook_error("parse notebook visualization request", error))?;
+    let store = NotebookStore::open(PathBuf::from(&request.project_root))
+        .map_err(|error| notebook_error("open notebook project", error))?;
+    let snapshot = store
+        .save_visualization(request.request)
+        .map_err(|error| notebook_error("save notebook visualization", error))?;
+    serde_json::to_string(&snapshot)
+        .map_err(|error| notebook_error("serialize notebook visualization", error))
 }
 
 /// Export portable Markdown/assets or explicitly include managed receipts.
@@ -6437,6 +6493,11 @@ mod tests {
         assert_eq!(notebook["receipts"].as_array().unwrap().len(), 0);
         assert_eq!(notebook["cells"][0]["id"], cell_id.to_string());
         assert_eq!(notebook["cells"][0]["kind"], "task");
+        assert!(
+            notebook["cells"][0]["body"]
+                .as_str()
+                .is_some_and(|body| body.contains("[parameters]"))
+        );
         assert_eq!(notebook["cells"][0]["task_intent"]["surface"], "imhead");
         assert_eq!(
             notebook["cells"][0]["task_intent"]["parameters"]["mode"],

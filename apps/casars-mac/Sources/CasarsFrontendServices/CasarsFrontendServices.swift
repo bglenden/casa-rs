@@ -4003,6 +4003,16 @@ public func notebookSaveJson(requestJson: String)throws  -> String  {
 })
 }
 /**
+ * Copy one explicit explorer visualization into a new immutable notebook revision.
+ */
+public func notebookSaveVisualizationJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_save_visualization_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
  * Return the validated aggregate catalog of canonical parameter concepts and surfaces.
  */
 public func parameterCatalogJson()throws  -> String  {
@@ -4279,6 +4289,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_notebook_save_json() != 28987) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_notebook_save_visualization_json() != 16081) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_parameter_catalog_json() != 8) {
