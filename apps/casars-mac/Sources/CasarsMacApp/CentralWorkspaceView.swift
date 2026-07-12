@@ -194,13 +194,13 @@ struct EmptyWorkbenchPanel: View {
                 .disabled(store.isPrototypeRuntime)
 
                 Button {
-                    if let url = TutorialPackOpenPanel.choosePack() {
-                        store.openTutorialPack(path: url.path)
+                    if let url = TutorialTemplateOpenPanel.chooseTemplate() {
+                        store.openTutorialTemplate(path: url.path)
                     }
                 } label: {
                     Label("Fork Tutorial Template", systemImage: "book")
                 }
-                .accessibilityIdentifier("empty.openTutorialPack")
+                .accessibilityIdentifier("empty.openTutorialTemplate")
                 .disabled(store.isPrototypeRuntime || !store.state.hasProject)
 
                 Button {

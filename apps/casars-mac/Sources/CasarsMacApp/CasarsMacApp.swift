@@ -133,8 +133,8 @@ struct CasarsMacApp: App {
                 .disabled(store.isPrototypeRuntime)
 
                 Button("Fork Tutorial Template...") {
-                    if let url = TutorialPackOpenPanel.choosePack() {
-                        store.openTutorialPack(path: url.path)
+                    if let url = TutorialTemplateOpenPanel.chooseTemplate() {
+                        store.openTutorialTemplate(path: url.path)
                     }
                 }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
@@ -496,7 +496,7 @@ struct CasarsMacApp: App {
         if notebookPrototypeScenario == nil, pythonPrototypeScenario == nil,
            tutorialPrototypeScenario == nil, let tutorialPackPath {
             if let projectPath { store.openProject(path: projectPath) }
-            store.openTutorialPack(path: tutorialPackPath)
+            store.openTutorialTemplate(path: tutorialPackPath)
             if let tutorialSectionID {
                 store.openTutorialSectionTask(tutorialSectionID)
             }
@@ -932,7 +932,7 @@ struct CasarsMacApp: App {
             return
         } else if let startupTutorialPackPath {
             if let startupProjectPath { store.openProject(path: startupProjectPath) }
-            store.openTutorialPack(path: startupTutorialPackPath)
+            store.openTutorialTemplate(path: startupTutorialPackPath)
             if let startupTutorialSectionID {
                 store.selectTutorialSection(startupTutorialSectionID)
             }
@@ -1069,7 +1069,7 @@ final class WorkbenchFallbackWindowController {
                 ?? Self.argumentValue(after: "--probe-project", in: arguments) {
                 store.openProject(path: projectPath)
             }
-            store.openTutorialPack(path: tutorialPackPath)
+            store.openTutorialTemplate(path: tutorialPackPath)
             if let tutorialSectionID = Self.argumentValue(after: "--open-tutorial-section", in: arguments) {
                 store.selectTutorialSection(tutorialSectionID)
             }
@@ -1229,8 +1229,8 @@ enum ProjectOpenPanel {
     }
 }
 
-enum TutorialPackOpenPanel {
-    static func choosePack() -> URL? {
+enum TutorialTemplateOpenPanel {
+    static func chooseTemplate() -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = true

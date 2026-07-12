@@ -1250,7 +1250,7 @@ public final class WorkbenchStore: ObservableObject {
         )
     }
 
-    public func openTutorialPack(path: String) {
+    public func openTutorialTemplate(path: String) {
         guard !rejectPrototypeProductionAction("Tutorial templates") else { return }
         guard state.hasProject else {
             state.lastErrors.append("Open a project before forking a tutorial template")
@@ -1279,7 +1279,7 @@ public final class WorkbenchStore: ObservableObject {
                 }
                 templateRoot = migrationRoot
             } else {
-                throw TutorialPackLoadError.missingManifest(v1Manifest.path)
+                throw TutorialTemplateLoadError.missingManifest(v1Manifest.path)
             }
             let existing = Set(state.scientificNotebooks?.notebooks.map(\.filename) ?? [])
             let base = root.lastPathComponent.isEmpty ? "Tutorial" : root.lastPathComponent
@@ -2420,13 +2420,16 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func advanceTutorialAcquisition(datasetID: String, generation: UInt64) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self, let tutorial = self.state.activeTutorialProject else { return }
+        guard let tutorial = state.activeTutorialProject else { return }
+        let projectRoot = state.project.rootPath
+        let notebookID = tutorial.tutorial.notebookId
+        let persistenceClient = tutorialPersistenceClient
+        DispatchQueue.global(qos: .userInitiated).async {
             let result = Result {
-                try self.tutorialPersistenceClient.action(
+                try persistenceClient.action(
                     .advance,
-                    projectRoot: self.state.project.rootPath,
-                    notebookID: tutorial.tutorial.notebookId,
+                    projectRoot: projectRoot,
+                    notebookID: notebookID,
                     datasetID: datasetID,
                     generation: generation
                 )

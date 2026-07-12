@@ -1,7 +1,7 @@
 /// File-selection errors retained for the tutorial-template picker. Legacy
 /// `tutorial-pack.v0` interpretation and GUI state live only in the Rust
 /// one-shot migrator; Swift has no compatibility reader.
-public enum TutorialPackLoadError: Error, Equatable, CustomStringConvertible {
+public enum TutorialTemplateLoadError: Error, Equatable, CustomStringConvertible {
     case missingManifest(String)
 
     public var description: String {

@@ -226,7 +226,7 @@ private enum GUIEvidenceCaptureRenderer {
         }
         store.setInterfaceFontSize(WorkbenchState.defaultInterfaceFontSize)
         if let tutorialPackPath = request.tutorialPackPath {
-            store.openTutorialPack(path: tutorialPackPath)
+            store.openTutorialTemplate(path: tutorialPackPath)
         }
 
         switch request.captureKind {
