@@ -188,17 +188,6 @@ struct PythonNotebookPrototypeView: View {
                 }
 
                 if cell.id == projection?.selectedCellID {
-                    if cell.owner == .ai {
-                        Toggle("Approve exact code", isOn: Binding(
-                            get: { cell.approvalIsValid },
-                            set: { approved in
-                                if approved { store.approvePrototypePythonSource(cellID: cell.id) }
-                            }
-                        ))
-                        .toggleStyle(.button)
-                        .disabled(cell.approvalIsValid)
-                        .accessibilityIdentifier("pythonPrototype.approve")
-                    }
                     Button {
                         store.runPrototypePythonCell(cell.id)
                     } label: {
@@ -248,6 +237,13 @@ struct PythonNotebookPrototypeView: View {
             }
             Spacer()
             kernelState
+            if let cell = selectedCell, cell.owner == .ai {
+                Button("Approve exact code") {
+                    store.approvePrototypePythonSource(cellID: cell.id)
+                }
+                .disabled(cell.approvalIsValid)
+                .accessibilityIdentifier("pythonPrototype.approve")
+            }
             Button {
                 store.runAllPrototypePythonCells()
             } label: {
