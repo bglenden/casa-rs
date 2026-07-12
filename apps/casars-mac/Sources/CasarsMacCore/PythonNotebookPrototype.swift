@@ -35,6 +35,13 @@ package enum PrototypePythonCellBehavior: String, Codable, Equatable {
     case nonresponsive
 }
 
+/// Fixture-only presentation intent supplied by the visualization producer.
+/// The view never guesses from axis labels, units, or pixels at runtime.
+package enum PrototypeVisualizationAspect: String, Codable, Equatable {
+    case standardFourThree = "4:3"
+    case squareData = "square-data"
+}
+
 package struct PrototypePythonOutputEvent: Identifiable, Codable, Equatable {
     package let id: String
     package var order: Int
@@ -55,6 +62,7 @@ package struct PrototypePythonPlotRevision: Identifiable, Codable, Equatable {
     package var title: String
     package var pngPath: String
     package var svgPath: String
+    package var presentationAspect: PrototypeVisualizationAspect
     package var insertedInNotebook: Bool
 
     package init(
@@ -63,6 +71,7 @@ package struct PrototypePythonPlotRevision: Identifiable, Codable, Equatable {
         title: String,
         pngPath: String,
         svgPath: String,
+        presentationAspect: PrototypeVisualizationAspect,
         insertedInNotebook: Bool = false
     ) {
         self.id = id
@@ -70,6 +79,7 @@ package struct PrototypePythonPlotRevision: Identifiable, Codable, Equatable {
         self.title = title
         self.pngPath = pngPath
         self.svgPath = svgPath
+        self.presentationAspect = presentationAspect
         self.insertedInNotebook = insertedInNotebook
     }
 }
@@ -160,6 +170,7 @@ package struct PrototypeNotebookVisualizationRevision: Identifiable, Codable, Eq
     package var kind: PrototypeVisualizationKind
     package var parameters: [PrototypeExplorerParameter]
     package var assetPath: String
+    package var presentationAspect: PrototypeVisualizationAspect
 
     package init(
         id: String,
@@ -167,7 +178,8 @@ package struct PrototypeNotebookVisualizationRevision: Identifiable, Codable, Eq
         title: String,
         kind: PrototypeVisualizationKind,
         parameters: [PrototypeExplorerParameter],
-        assetPath: String
+        assetPath: String,
+        presentationAspect: PrototypeVisualizationAspect
     ) {
         self.id = id
         self.sequence = sequence
@@ -175,6 +187,7 @@ package struct PrototypeNotebookVisualizationRevision: Identifiable, Codable, Eq
         self.kind = kind
         self.parameters = parameters
         self.assetPath = assetPath
+        self.presentationAspect = presentationAspect
     }
 }
 
@@ -191,6 +204,7 @@ package struct PrototypeExplorerSession: Codable, Equatable {
     package var kind: PrototypeVisualizationKind
     package var title: String
     package var parameters: [PrototypeExplorerParameter]
+    package var presentationAspect: PrototypeVisualizationAspect
     package var targetVisualizationID: String?
 }
 
@@ -367,7 +381,8 @@ package enum PrototypePythonFixtureAdapter {
                         PrototypeExplorerParameter(id: "field", label: "Field", value: "TW Hya"),
                         PrototypeExplorerParameter(id: "averaging", label: "Channel averaging", value: "8"),
                     ],
-                    assetPath: "notebooks/assets/explorers/saved-visibility-plot/r1.png"
+                    assetPath: "notebooks/assets/explorers/saved-visibility-plot/r1.png",
+                    presentationAspect: .standardFourThree
                 )]
             ),
             PrototypeNotebookVisualization(
@@ -382,7 +397,8 @@ package enum PrototypePythonFixtureAdapter {
                         PrototypeExplorerParameter(id: "stretch", label: "Stretch", value: "Asinh"),
                         PrototypeExplorerParameter(id: "color-map", label: "Color map", value: "Inferno"),
                     ],
-                    assetPath: "notebooks/assets/explorers/saved-continuum-image/r1.png"
+                    assetPath: "notebooks/assets/explorers/saved-continuum-image/r1.png",
+                    presentationAspect: .squareData
                 )]
             ),
         ]
@@ -416,7 +432,8 @@ package enum PrototypePythonFixtureAdapter {
                 sequence: sequence,
                 title: "TW Hya · amplitude vs UV distance",
                 pngPath: "notebooks/assets/python-cell-plot/execution-\(sequence)/figure-1.png",
-                svgPath: "notebooks/assets/python-cell-plot/execution-\(sequence)/figure-1.svg"
+                svgPath: "notebooks/assets/python-cell-plot/execution-\(sequence)/figure-1.svg",
+                presentationAspect: .standardFourThree
             )
         )
     }

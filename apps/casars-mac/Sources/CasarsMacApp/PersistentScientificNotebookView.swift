@@ -6,6 +6,7 @@ struct PersistentScientificNotebookView: View {
     @State private var richDocument = PrototypeNotebookRichDocument(markdown: "")
     @State private var expandedCellIDs: Set<String> = []
     @State private var expandedPythonHistory: Set<String> = []
+    @State private var expandedPythonDetails: Set<String> = []
     @State private var lightboxRevision: NotebookVisualizationRevision?
 
     private var document: NotebookDocumentState? {
@@ -58,7 +59,10 @@ struct PersistentScientificNotebookView: View {
                 .appendingPathComponent(revision.assetPath).path)
             {
                 ScrollView([.horizontal, .vertical]) {
-                    Image(nsImage: image).resizable().scaledToFit().padding(24)
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(renderAspectRatio(revision), contentMode: .fit)
+                        .padding(24)
                 }
                 .frame(minWidth: 720, minHeight: 520)
                 .accessibilityIdentifier("notebook.visualization.lightbox")
@@ -317,7 +321,7 @@ struct PersistentScientificNotebookView: View {
             if let image = NSImage(contentsOfFile: path) {
                 Image(nsImage: image)
                     .resizable()
-                    .scaledToFit()
+                    .aspectRatio(renderAspectRatio(revision), contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: height)
             } else {
                 Text(revision.assetPath).workbenchFont(.caption, design: .monospaced)
@@ -337,6 +341,7 @@ struct PersistentScientificNotebookView: View {
                 Text("Python")
                     .workbenchFont(.caption, weight: .semibold)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("notebook.python.cell.\(cell.id)")
                 Text(store.pythonNotebookRuntime.status.rawValue.replacingOccurrences(of: "_", with: " "))
                     .workbenchFont(.caption2, weight: .semibold)
                     .foregroundStyle(.secondary)
@@ -389,7 +394,6 @@ struct PersistentScientificNotebookView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
-        .accessibilityIdentifier("notebook.python.cell.\(cell.id)")
     }
 
     private func pythonRevision(
@@ -397,29 +401,36 @@ struct PersistentScientificNotebookView: View {
         document: NotebookDocumentState,
         prominent: Bool
     ) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+        let detailsAreExpanded = expandedPythonDetails.contains(receipt.id)
+        return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 Circle().fill(statusColor(receipt.status)).frame(width: 6, height: 6)
                 Text("\(receipt.status.capitalized) · r\(receipt.revision)")
                     .workbenchFont(.caption2, weight: .semibold)
+                    .accessibilityIdentifier(
+                        prominent
+                            ? "notebook.python.latestRevision.\(receipt.cellId)"
+                            : "notebook.python.revision.\(receipt.id)"
+                    )
+                    .accessibilityValue("\(receipt.status) revision \(receipt.revision)")
                 Spacer()
-                if let environment = receipt.executionInput?.details.environment {
-                    Text("\(environment.implementation) \(environment.version)")
-                        .workbenchFont(.caption2, design: .monospaced)
-                        .foregroundStyle(.secondary)
+                Button {
+                    if detailsAreExpanded { expandedPythonDetails.remove(receipt.id) }
+                    else { expandedPythonDetails.insert(receipt.id) }
+                } label: {
+                    Label(
+                        detailsAreExpanded ? "Hide details" : "Details",
+                        systemImage: detailsAreExpanded ? "chevron.down" : "chevron.right"
+                    )
                 }
-            }
-            ForEach(receipt.orderedOutputs ?? []) { output in
-                Text(output.text)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(output.channel == "stderr" ? Color.red : Color.primary)
-                    .textSelection(.enabled)
-            }
-            ForEach(receipt.diagnostics, id: \.self) { diagnostic in
-                Text(diagnostic)
-                    .workbenchFont(.caption, design: .monospaced)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
+                .buttonStyle(.plain)
+                .workbenchFont(.caption2, weight: .semibold)
+                .accessibilityIdentifier(
+                    prominent
+                        ? "notebook.python.latestDetails.\(receipt.cellId)"
+                        : "notebook.python.details.\(receipt.id)"
+                )
+                .accessibilityValue(detailsAreExpanded ? "expanded" : "collapsed")
             }
             let figures = receipt.artifacts.filter { $0.mediaType == "image/png" }
             ForEach(figures, id: \.path) { artifact in
@@ -432,26 +443,47 @@ struct PersistentScientificNotebookView: View {
                         .accessibilityIdentifier("notebook.python.figure.\(receipt.id)")
                 }
             }
-            if !receipt.artifacts.isEmpty {
-                Text(receipt.artifacts.map { "\($0.role): \($0.path)" }.joined(separator: " · "))
-                    .workbenchFont(.caption2, design: .monospaced)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
+            if detailsAreExpanded {
+                VStack(alignment: .leading, spacing: 5) {
+                    if let environment = receipt.executionInput?.details.environment {
+                        Text("Environment · \(environment.implementation) \(environment.version)")
+                            .workbenchFont(.caption2, design: .monospaced)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(receipt.orderedOutputs ?? []) { output in
+                        HStack(alignment: .firstTextBaseline, spacing: 7) {
+                            Text(output.channel)
+                                .workbenchFont(.caption2, weight: .bold, design: .monospaced)
+                                .frame(width: 42, alignment: .leading)
+                            Text(output.text)
+                                .font(.system(size: 11, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
+                        .foregroundStyle(output.channel == "stderr" ? Color.red : Color.primary)
+                    }
+                    ForEach(receipt.diagnostics, id: \.self) { diagnostic in
+                        Text(diagnostic)
+                            .workbenchFont(.caption, design: .monospaced)
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    }
+                    if !receipt.artifacts.isEmpty {
+                        Text(receipt.artifacts.map { "\($0.role): \($0.path)" }.joined(separator: " · "))
+                            .workbenchFont(.caption2, design: .monospaced)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(.top, 2)
             }
         }
         .padding(8)
         .background(Color.secondary.opacity(prominent ? 0.05 : 0.025))
         .clipShape(RoundedRectangle(cornerRadius: 5))
-        .accessibilityIdentifier(
-            prominent
-                ? "notebook.python.latestRevision.\(receipt.cellId)"
-                : "notebook.python.revision.\(receipt.id)"
-        )
-        .accessibilityValue(
-            (["\(receipt.status) revision \(receipt.revision)"]
-                + (receipt.orderedOutputs ?? []).map { "\($0.channel): \($0.text)" })
-                .joined(separator: "\n")
-        )
+    }
+
+    private func renderAspectRatio(_ revision: NotebookVisualizationRevision) -> CGFloat {
+        CGFloat(revision.render.width) / CGFloat(max(1, revision.render.height))
     }
 
     private func pythonSource(_ body: String) -> String {

@@ -5601,6 +5601,7 @@ public final class WorkbenchStore: ObservableObject {
             kind: revision.kind,
             title: revision.title,
             parameters: revision.parameters,
+            presentationAspect: revision.presentationAspect,
             targetVisualizationID: visualizationID
         )
         republishPrototypePythonState()
@@ -5676,7 +5677,8 @@ public final class WorkbenchStore: ObservableObject {
             title: session.title,
             kind: session.kind,
             parameters: session.parameters,
-            assetPath: "notebooks/assets/explorers/\(visualizationID)/r\(sequence).png"
+            assetPath: "notebooks/assets/explorers/\(visualizationID)/r\(sequence).png",
+            presentationAspect: session.presentationAspect
         )
     }
 
@@ -5735,7 +5737,8 @@ public final class WorkbenchStore: ObservableObject {
                     ? "AI proposal · radial profile"
                     : "TW Hya · amplitude vs UV distance",
                 pngPath: "notebooks/assets/\(cellID)/execution-\(sequence)/figure-1.png",
-                svgPath: "notebooks/assets/\(cellID)/execution-\(sequence)/figure-1.svg"
+                svgPath: "notebooks/assets/\(cellID)/execution-\(sequence)/figure-1.svg",
+                presentationAspect: .standardFourThree
             )
             : nil
         let revision = PrototypePythonExecutionRevision(

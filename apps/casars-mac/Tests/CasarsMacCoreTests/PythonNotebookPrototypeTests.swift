@@ -21,6 +21,15 @@ final class PythonNotebookPrototypeTests: XCTestCase {
         XCTAssertEqual(debug.insertedPlotCount, 0)
         XCTAssertEqual(debug.savedVisualizationCount, 2)
         XCTAssertEqual(debug.visualizationRevisionCounts["saved-visibility-plot"], 1)
+        XCTAssertEqual(
+            store.state.prototypePython?.savedVisualizations[0].latestRevision?.presentationAspect,
+            .standardFourThree
+        )
+        XCTAssertEqual(
+            store.state.prototypePython?.savedVisualizations[1].latestRevision?.presentationAspect,
+            .squareData
+        )
+        XCTAssertEqual(try cell(store, id: "python-cell-plot").latestRevision?.plot?.presentationAspect, .standardFourThree)
     }
 
     func testPresetRevisionsRecordTheExactFixtureSourceDigest() throws {

@@ -246,6 +246,13 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertEqual(try accessibilityValue("pythonPrototype.kernelState"), "ready")
         XCTAssertEqual(try accessibilityValue("pythonPrototype.boundaryAudit"), "0")
         XCTAssertTrue(try require("pythonPrototype.plot.python-plot-1").exists)
+        XCTAssertFalse(element("pythonPrototype.artifact.png").exists)
+        XCTAssertFalse(element("pythonPrototype.artifact.svg").exists)
+        XCTAssertEqual(
+            try accessibilityValue("pythonPrototype.executionDetails.python-execution-1"),
+            "collapsed"
+        )
+        try require("pythonPrototype.executionDetails.python-execution-1").click()
         XCTAssertTrue(try require("pythonPrototype.artifact.png").exists)
         XCTAssertTrue(try require("pythonPrototype.artifact.svg").exists)
         XCTAssertEqual(try accessibilityValue("pythonPrototype.revisionCount"), "1")
@@ -319,10 +326,15 @@ final class CasarsMacUITests: XCTestCase {
     func testPythonPrototypeFailureEditAndRetry() throws {
         launchPythonPrototype(scenario: "failure")
 
-        XCTAssertTrue(
-            app.staticTexts["error: RuntimeError: fixture: channel selection is empty"]
-                .waitForExistence(timeout: 5)
+        let failureOutput = element("pythonPrototype.output.python-output-2-2")
+        XCTAssertFalse(failureOutput.exists)
+        XCTAssertEqual(
+            try accessibilityValue("pythonPrototype.executionDetails.python-execution-2"),
+            "collapsed"
         )
+        try require("pythonPrototype.executionDetails.python-execution-2").click()
+        XCTAssertTrue(failureOutput.waitForExistence(timeout: 5))
+        XCTAssertTrue(failureOutput.label.contains("RuntimeError: fixture: channel selection is empty"))
         let repaired = """
         print("checking continuum selection", flush=True)
         print("continuum selection repaired")
@@ -379,7 +391,6 @@ final class CasarsMacUITests: XCTestCase {
         launchPythonPrototype()
         let documentScroll = app.scrollViews.firstMatch
         XCTAssertTrue(documentScroll.exists)
-        documentScroll.scroll(byDeltaX: 0, deltaY: -180)
         var unacceptedIssues: [String] = []
         try app.performAccessibilityAudit { issue in
             if issue.auditType.contains(.contrast),
@@ -625,10 +636,13 @@ final class CasarsMacUITests: XCTestCase {
             in: "notebook.document.scroll",
             deltaY: -220
         )
-        let visibleOutput = app.staticTexts
-            .matching(identifier: "notebook.python.cell.\(cellID)")
-            .matching(NSPredicate(format: "label == %@", "42"))
-            .firstMatch
+        let visibleOutput = app.staticTexts["42"]
+        XCTAssertFalse(visibleOutput.exists)
+        XCTAssertEqual(
+            try accessibilityValue("notebook.python.latestDetails.\(cellID)"),
+            "collapsed"
+        )
+        try require("notebook.python.latestDetails.\(cellID)").click()
         XCTAssertTrue(
             visibleOutput.waitForExistence(timeout: 5),
             app.debugDescription
@@ -643,13 +657,11 @@ final class CasarsMacUITests: XCTestCase {
             in: "notebook.document.scroll",
             deltaY: -220
         )
-        XCTAssertTrue(
-            app.staticTexts
-                .matching(identifier: "notebook.python.cell.\(cellID)")
-                .matching(NSPredicate(format: "label == %@", "42"))
-                .firstMatch
-                .waitForExistence(timeout: 5)
+        XCTAssertEqual(
+            try accessibilityValue("notebook.python.latestDetails.\(cellID)"),
+            "expanded"
         )
+        XCTAssertTrue(visibleOutput.waitForExistence(timeout: 5))
     }
 
     private func launchPrototype(scenario: String = "happy-path") {
@@ -772,7 +784,13 @@ final class CasarsMacUITests: XCTestCase {
         let identifier = "notebook.viewMode.\(label.lowercased())"
         let segment = app.radioButtons[identifier]
         XCTAssertTrue(segment.waitForExistence(timeout: 5), app.debugDescription)
-        segment.click()
+        let window = app.windows.firstMatch
+        let segmentFrame = segment.frame
+        let windowFrame = window.frame
+        window.coordinate(withNormalizedOffset: CGVector(
+            dx: (segmentFrame.midX - windowFrame.minX) / windowFrame.width,
+            dy: (segmentFrame.midY - windowFrame.minY) / windowFrame.height
+        )).click()
     }
 
     private func replaceText(_ identifier: String, with value: String) {

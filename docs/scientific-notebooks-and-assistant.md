@@ -100,6 +100,12 @@ revisions remain available through a collapsed disclosure. Table-browser input
 forms are never recorded automatically; a separately shaped table excerpt or
 other rendered artifact may use this same explicit snapshot boundary later.
 
+Saved artifacts keep the producer-declared pixel aspect recorded in rendering
+metadata when shown as a compact preview or enlarged view. Image and equal-axis
+scientific renderers therefore choose square output when appropriate, while
+ordinary plots may choose another stable aspect. The notebook does not inspect
+axis labels or compare units at display time.
+
 The rich editor provides bounded WYSIWYG editing for prose throughout the
 complete document, including text before, between, and after typed cells, and
 always offers raw Markdown mode over that same complete source. Unsupported
@@ -183,6 +189,11 @@ implementation/version, installed CASA-RS and plotting package versions, and a
 validated environment fingerprint. Schema-v1 task receipts remain readable.
 Ordered stream events are retained as an immutable JSON execution artifact in
 addition to stdout/stderr sidecars.
+
+The normal reading view shows the latest status and scientific figures. Routine
+stdout, stderr, environment identity, source hashes, diagnostics, and artifact
+paths remain available under **Details**. A failed run is therefore a compact
+status row until expanded instead of displacing the surrounding notes.
 
 Python-native explorer data does not round-trip through screenshots. Use
 `casars.tasks.msexplore.data(...)` for the shared Rust `casa-ms` numeric plot
@@ -334,11 +345,13 @@ filename or stable ID explicitly; otherwise recording routes to `default.md`.
 
 Prototype: a full-width continuous notes-first notebook with inline expandable
 Python cells, live editor, Run/Stop/Restart/Run All, ordered stdout/stderr/error
-output, latest-first execution history with collapsed prior revisions,
+output behind compact execution details, latest-first execution history with
+collapsed prior revisions and failures,
 deterministic matplotlib-style PNG/SVG figures, regeneration, notebook
 insertion, explicit MeasurementSet/Image Explorer visualization snapshots,
 enlargement, parameter restoration, New plot/immutable Update actions, and
-exact-source approval for AI-proposed code. Deterministic
+producer-declared stable visualization aspects without display-time unit
+inference, plus exact-source approval for AI-proposed code. Deterministic
 `happy-path`, `failure`, and `nonresponsive` fixture states exercise retry,
 interrupt, forced restart, immutable revisions, and approval invalidation.
 

@@ -5,7 +5,9 @@ struct PythonNotebookPrototypeView: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var store: WorkbenchStore
     @State private var expandedExecutionHistory: Set<String> = []
+    @State private var expandedExecutionDetails: Set<String> = []
     @State private var expandedVisualizationHistory: Set<String> = []
+    @State private var expandedVisualizationDetails: Set<String> = []
 
     private var projection: PrototypePythonNotebookProjection? {
         store.state.prototypePython
@@ -93,46 +95,50 @@ struct PythonNotebookPrototypeView: View {
     }
 
     private func visualizationCard(_ visualization: PrototypeNotebookVisualization) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        HStack(alignment: .top, spacing: 10) {
             if let revision = visualization.latestRevision {
                 Button {
                     store.setPrototypeEnlargedVisualization(visualization.id)
                 } label: {
-                    visualizationPreview(revision).frame(height: 145).contentShape(Rectangle())
+                    aspectPreservingVisualization(revision)
+                        .frame(width: 190, height: 135)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("notebookVisualization.preview.\(visualization.id)")
                 .accessibilityLabel("Enlarge \(revision.title)")
 
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(revision.title).workbenchFont(.subheadline, weight: .semibold).lineLimit(1)
-                        Text("Saved from \(revision.kind.sourceSurfaceTitle) · revision \(revision.sequence)")
-                            .workbenchFont(.caption2)
-                            .prototypeSecondaryForeground()
-                            .accessibilityIdentifier("notebookVisualization.revisionCount.\(visualization.id)")
-                            .accessibilityValue("\(visualization.revisions.count)")
-                    }
-                    Spacer()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(revision.title)
+                        .workbenchFont(.subheadline, weight: .semibold)
+                        .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
+                        .lineLimit(2)
+                    Text("Saved from \(revision.kind.sourceSurfaceTitle) · revision \(revision.sequence)")
+                        .workbenchFont(.caption2)
+                        .prototypeSecondaryForeground()
+                        .accessibilityIdentifier("notebookVisualization.revisionCount.\(visualization.id)")
+                        .accessibilityValue("\(visualization.revisions.count)")
+                    Spacer(minLength: 2)
                     Button("Open in Explorer") { store.openPrototypeExplorer(visualizationID: visualization.id) }
                         .accessibilityIdentifier("notebookVisualization.openExplorer.\(visualization.id)")
-                }
 
-                if visualization.revisions.count > 1 {
-                    DisclosureGroup(
-                        "Previous revisions (\(visualization.revisions.count - 1))",
-                        isExpanded: historyBinding(visualization.id, in: $expandedVisualizationHistory)
-                    ) {
-                        ForEach(visualization.revisions.sorted(by: { $0.sequence > $1.sequence }).dropFirst()) { prior in
-                            Text("Revision \(prior.sequence) · \(prior.assetPath)")
-                                .workbenchFont(.caption2, design: .monospaced)
-                                .prototypeSecondaryForeground()
-                                .padding(.top, 4)
+                    if visualization.revisions.count > 1 {
+                        DisclosureGroup(
+                            "Previous revisions (\(visualization.revisions.count - 1))",
+                            isExpanded: historyBinding(visualization.id, in: $expandedVisualizationHistory)
+                        ) {
+                            ForEach(visualization.revisions.sorted(by: { $0.sequence > $1.sequence }).dropFirst()) { prior in
+                                Text("Revision \(prior.sequence) · \(prior.assetPath)")
+                                    .workbenchFont(.caption2, design: .monospaced)
+                                    .prototypeSecondaryForeground()
+                                    .padding(.top, 4)
+                            }
                         }
+                        .workbenchFont(.caption, weight: .semibold)
+                        .accessibilityIdentifier("notebookVisualization.previousRevisions.\(visualization.id)")
                     }
-                    .workbenchFont(.caption, weight: .semibold)
-                    .accessibilityIdentifier("notebookVisualization.previousRevisions.\(visualization.id)")
                 }
+                .frame(height: 135, alignment: .top)
             }
         }
         .padding(10)
@@ -159,18 +165,16 @@ struct PythonNotebookPrototypeView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(cell.title)
                                 .workbenchFont(.headline)
-                            Text(cell.owner == .ai ? "AI-proposed code · exact-source approval required" : "User code · normal user authority")
-                                .workbenchFont(.caption)
-                                .foregroundStyle(
-                                    cell.owner == .ai
-                                        ? Color.purple
-                                        : Color(nsColor: .labelColor).opacity(0.82)
-                                )
-                                .accessibilityIdentifier(
-                                    cell.id == projection?.selectedCellID
-                                        ? "pythonPrototype.ownerDisclosure"
-                                        : "pythonPrototype.ownerDisclosure.\(cell.id)"
-                                )
+                            if cell.owner == .ai {
+                                Text("AI-proposed code · exact-source approval required")
+                                    .workbenchFont(.caption)
+                                    .foregroundStyle(Color.purple)
+                                    .accessibilityIdentifier(
+                                        cell.id == projection?.selectedCellID
+                                            ? "pythonPrototype.ownerDisclosure"
+                                            : "pythonPrototype.ownerDisclosure.\(cell.id)"
+                                    )
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -334,10 +338,6 @@ struct PythonNotebookPrototypeView: View {
                 Text("Code")
                     .workbenchFont(.headline)
                     .foregroundStyle(Color(nsColor: .labelColor))
-                Spacer()
-                Text(cell.sourceDigest)
-                    .workbenchFont(.caption2, design: .monospaced)
-                    .prototypeSecondaryForeground()
             }
             TextEditor(text: Binding(
                 get: { selectedCell?.source ?? "" },
@@ -346,7 +346,7 @@ struct PythonNotebookPrototypeView: View {
             .font(.system(size: 13, design: .monospaced))
             .scrollContentBackground(.hidden)
             .padding(9)
-            .frame(minHeight: 145)
+            .frame(minHeight: 120)
             .background(Color(nsColor: .controlBackgroundColor))
             .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.secondary.opacity(0.28)))
             .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -429,52 +429,90 @@ struct PythonNotebookPrototypeView: View {
     }
 
     private func revisionCard(cell: PrototypePythonCell, revision: PrototypePythonExecutionRevision) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let detailsAreExpanded = expandedExecutionDetails.contains(revision.id)
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 statusDot(revision.status)
                 Text("Revision \(revision.sequence) · \(revision.status.rawValue.capitalized)")
                     .workbenchFont(.subheadline, weight: .semibold)
+                    .accessibilityIdentifier("pythonPrototype.revision.\(revision.sequence)")
+                    .accessibilityValue(revision.status.rawValue)
                 Spacer()
-                Text(revision.sourceDigest)
-                    .workbenchFont(.caption2, design: .monospaced)
-                    .prototypeSecondaryForeground()
-            }
-            .accessibilityIdentifier("pythonPrototype.revision.\(revision.sequence)")
-            .accessibilityValue(revision.status.rawValue)
-
-            ForEach(revision.outputs.sorted(by: { $0.order < $1.order })) { output in
-                Text("[\(output.channel.rawValue)]  \(output.text)")
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 5)
-                    .background(colorScheme == .dark ? Color.black : Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(output.channel.rawValue): \(output.text)")
+                Button {
+                    if detailsAreExpanded {
+                        expandedExecutionDetails.remove(revision.id)
+                    } else {
+                        expandedExecutionDetails.insert(revision.id)
+                    }
+                } label: {
+                    Label(detailsAreExpanded ? "Hide details" : "Details", systemImage: detailsAreExpanded ? "chevron.down" : "chevron.right")
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.plain)
+                .workbenchFont(.caption, weight: .semibold)
+                .accessibilityIdentifier("pythonPrototype.executionDetails.\(revision.id)")
+                .accessibilityValue(detailsAreExpanded ? "expanded" : "collapsed")
             }
 
             if let plot = revision.plot {
                 plotCard(cellID: cell.id, plot: plot)
             }
+
+            if detailsAreExpanded {
+                executionDetails(revision)
+            }
         }
-        .padding(12)
+        .padding(10)
         .background(Color.secondary.opacity(0.055))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.18)))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
+    private func executionDetails(_ revision: PrototypePythonExecutionRevision) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            LabeledContent("Source", value: revision.sourceDigest)
+                .workbenchFont(.caption2, design: .monospaced)
+                .prototypeSecondaryForeground()
+
+            ForEach(revision.outputs.sorted(by: { $0.order < $1.order })) { output in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(output.channel.rawValue)
+                        .workbenchFont(.caption2, weight: .bold, design: .monospaced)
+                        .frame(width: 44, alignment: .leading)
+                    Text(output.text)
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+                .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
+                .background(colorScheme == .dark ? Color.black : Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("pythonPrototype.output.\(output.id)")
+                .accessibilityLabel("\(output.channel.rawValue): \(output.text)")
+            }
+
+            if let plot = revision.plot {
+                HStack(spacing: 8) {
+                    artifactBadge("PNG", path: plot.pngPath, identifier: "pythonPrototype.artifact.png")
+                    artifactBadge("SVG", path: plot.svgPath, identifier: "pythonPrototype.artifact.svg")
+                }
+            }
+        }
+        .padding(.top, 2)
+    }
+
     private func plotCard(cellID: String, plot: PrototypePythonPlotRevision) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             DeterministicScientificPlot(title: plot.title)
-                .frame(height: 210)
+                .frame(width: 520, height: 520 / plot.presentationAspect.displayRatio)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(plot.title)
                 .accessibilityIdentifier("pythonPrototype.plot.\(plot.id)")
             HStack(spacing: 8) {
-                artifactBadge("PNG", path: plot.pngPath, identifier: "pythonPrototype.artifact.png")
-                artifactBadge("SVG", path: plot.svgPath, identifier: "pythonPrototype.artifact.svg")
                 Spacer()
                 Button("Regenerate") {
                     store.regeneratePrototypePythonPlot(cellID: cellID)
@@ -588,7 +626,8 @@ struct PythonNotebookPrototypeView: View {
                         title: session.title,
                         kind: session.kind,
                         parameters: session.parameters,
-                        assetPath: "fixture://unsaved"
+                        assetPath: "fixture://unsaved",
+                        presentationAspect: session.presentationAspect
                     ))
                     .accessibilityIdentifier("explorerSnapshot.preview")
                 }
@@ -618,6 +657,12 @@ struct PythonNotebookPrototypeView: View {
         }
     }
 
+    private func aspectPreservingVisualization(_ revision: PrototypeNotebookVisualizationRevision) -> some View {
+        visualizationPreview(revision)
+            .aspectRatio(revision.presentationAspect.displayRatio, contentMode: .fit)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var enlargedVisualizationBinding: Binding<Bool> {
         Binding(
             get: { projection?.enlargedVisualizationID != nil },
@@ -634,8 +679,8 @@ struct PythonNotebookPrototypeView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(revision.title).workbenchFont(.title2, weight: .semibold)
-                        Text("Saved snapshot · revision \(revision.sequence) · \(revision.assetPath)")
-                            .workbenchFont(.caption, design: .monospaced)
+                        Text("Saved snapshot · revision \(revision.sequence)")
+                            .workbenchFont(.caption)
                             .prototypeSecondaryForeground()
                     }
                     Spacer()
@@ -647,9 +692,21 @@ struct PythonNotebookPrototypeView: View {
                     Button("Done") { store.setPrototypeEnlargedVisualization(nil) }
                         .accessibilityIdentifier("notebookVisualization.lightboxDone")
                 }
-                visualizationPreview(revision)
-                    .frame(minWidth: 760, minHeight: 480)
+                aspectPreservingVisualization(revision)
+                    .frame(minWidth: 760, minHeight: 480, maxHeight: 560)
                     .accessibilityIdentifier("notebookVisualization.lightbox.\(visualization.id)")
+                DisclosureGroup(
+                    "Snapshot details",
+                    isExpanded: historyBinding(visualization.id, in: $expandedVisualizationDetails)
+                ) {
+                    Text(revision.assetPath)
+                        .workbenchFont(.caption2, design: .monospaced)
+                        .prototypeSecondaryForeground()
+                        .textSelection(.enabled)
+                        .padding(.top, 4)
+                }
+                .workbenchFont(.caption, weight: .semibold)
+                .accessibilityIdentifier("notebookVisualization.lightboxDetails.\(visualization.id)")
             }
             .padding(24)
         }
@@ -819,5 +876,14 @@ private extension View {
     /// on both macOS light and dark control backgrounds.
     func prototypeSecondaryForeground() -> some View {
         foregroundStyle(Color(nsColor: .labelColor).opacity(0.82))
+    }
+}
+
+private extension PrototypeVisualizationAspect {
+    var displayRatio: CGFloat {
+        switch self {
+        case .standardFourThree: 4.0 / 3.0
+        case .squareData: 1.0
+        }
     }
 }

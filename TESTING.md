@@ -154,7 +154,9 @@ For each wave:
   debug state, authored task cells without receipts, clean/dirty task-tab
   parameter replacement, and launched-app persistence/task-tab interaction
 - Wave 2 Phase A XCUITests cover plot regeneration and insertion, latest-first
-  execution output with collapsed prior revisions, explicit explorer snapshot
+  execution status with routine streams, paths, failures, and prior revisions
+  collapsed by default, explicit producer-declared plot/image aspect behavior,
+  explorer snapshot
   enlargement and parameter restoration, no live notebook mutation, New plot
   and immutable Update actions, observable running state, ordered failure
   output and retry, a nonresponsive cell's interrupt/restart path, exact-source
@@ -163,7 +165,8 @@ For each wave:
   transitions and exact source digests. These tests do not claim that Python,
   project persistence, matplotlib, or production explorer integration exists.
 - Wave 2 Phase B adds production evidence for exact-source receipt-v2 Python
-  execution, ordered output and immutable artifacts surviving a fresh notebook
+  execution, compact-by-default ordered output and immutable artifacts
+  surviving a fresh notebook
   load, persistent namespace plus interrupt/restart recovery, independent
   Seatbelt AI-worker denial of network/outside writes/symlink escape/credential
   inheritance, tutorial-backed native MeasurementSet and image-plane data with
