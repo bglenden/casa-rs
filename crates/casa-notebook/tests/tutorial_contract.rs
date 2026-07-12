@@ -557,6 +557,69 @@ fn tar_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
     bytes
 }
 
+fn tar_with_entry_type(path: &str, entry_type: tar::EntryType, contents: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    {
+        let mut builder = Builder::new(&mut bytes);
+        let mut header = Header::new_gnu();
+        header.set_entry_type(entry_type);
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o644);
+        header.set_path(path).unwrap();
+        header.set_cksum();
+        builder.append(&header, contents).unwrap();
+        builder.finish().unwrap();
+    }
+    bytes
+}
+
+fn archive_failure(archive: &[u8], max_entries: u64, max_expanded_bytes: u64) -> TutorialError {
+    let project_root = TempDir::new().unwrap();
+    let template_root = TempDir::new().unwrap();
+    let source = template_root.path().join("science.tar");
+    fs::write(&source, archive).unwrap();
+    let mut input = dataset(file_uri(&source), archive);
+    input.destination = "data/science.ms".into();
+    input.unpack = Some(TutorialUnpackPlan {
+        format: TutorialArchiveFormat::Tar,
+        archive_root: None,
+        max_entries,
+        max_expanded_bytes,
+    });
+    input.checks.clear();
+    let template = write_template(template_root.path(), vec![input]);
+    let forked = fork(project_root.path(), &template);
+    let project = TutorialProject::open(project_root.path()).unwrap();
+    let plan = project
+        .plan_acquisition(forked.notebook.entry.id, "science", None)
+        .unwrap();
+    let state = project
+        .begin_acquisition(
+            &plan,
+            TutorialAcquisitionApproval {
+                approval_sha256: plan.approval_sha256.clone(),
+                allow_missing_digest: false,
+                skipped_check_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+    for _ in 0..8 {
+        match project.advance_acquisition(
+            forked.notebook.entry.id,
+            "science",
+            state.current_generation,
+            4096,
+        ) {
+            Ok(_) => {}
+            Err(error) => {
+                assert!(!project_root.path().join("data/science.ms").exists());
+                return error;
+            }
+        }
+    }
+    panic!("archive unexpectedly materialized");
+}
+
 #[test]
 fn bounded_archive_materialization_rejects_links_and_limits_then_stages_safe_root() {
     let project_root = TempDir::new().unwrap();
@@ -682,6 +745,89 @@ fn unsafe_archive_link_is_rejected_without_exposing_a_destination() {
             .phase,
         TutorialAcquisitionPhase::UnsafeArchive
     );
+}
+
+#[test]
+fn archive_rejects_traversal_devices_case_collisions_and_bounded_bombs() {
+    let mut traversal = tar_bytes(&[("safe-name", b"x")]);
+    traversal[..11].copy_from_slice(b"../escape\0\0");
+    for byte in &mut traversal[148..156] {
+        *byte = b' ';
+    }
+    let checksum: u64 = traversal[..512].iter().map(|byte| u64::from(*byte)).sum();
+    traversal[148..156].copy_from_slice(format!("{checksum:06o}\0 ").as_bytes());
+    assert!(matches!(
+        archive_failure(&traversal, 8, 1024),
+        TutorialError::UnsafeArchive { .. }
+    ));
+
+    let device = tar_with_entry_type("device", tar::EntryType::Block, &[]);
+    assert!(matches!(
+        archive_failure(&device, 8, 1024),
+        TutorialError::UnsafeArchive { .. }
+    ));
+
+    let collision = tar_bytes(&[("Science/table.dat", b"one"), ("science/table.dat", b"two")]);
+    assert!(matches!(
+        archive_failure(&collision, 8, 1024),
+        TutorialError::ArchiveCollision { .. }
+    ));
+
+    let too_many = tar_bytes(&[("one", b"1"), ("two", b"2")]);
+    assert!(matches!(
+        archive_failure(&too_many, 1, 1024),
+        TutorialError::ArchiveLimit { .. }
+    ));
+
+    let too_large = tar_bytes(&[("large", b"expanded")]);
+    assert!(matches!(
+        archive_failure(&too_large, 8, 4),
+        TutorialError::ArchiveLimit { .. }
+    ));
+}
+
+#[test]
+fn failed_optional_check_is_recorded_without_blocking_ready_materialization() {
+    let project_root = TempDir::new().unwrap();
+    let template_root = TempDir::new().unwrap();
+    let bytes = b"not a directory";
+    let source = template_root.path().join("source.bin");
+    fs::write(&source, bytes).unwrap();
+    let mut input = dataset(file_uri(&source), bytes);
+    input.checks = vec![TutorialOptionalCheck {
+        id: "directory-shape".into(),
+        label: "Expected directory shape".into(),
+        kind: TutorialCheckKind::Directory,
+        path: "".into(),
+    }];
+    let template = write_template(template_root.path(), vec![input]);
+    let forked = fork(project_root.path(), &template);
+    let project = TutorialProject::open(project_root.path()).unwrap();
+    let plan = project
+        .plan_acquisition(forked.notebook.entry.id, "science", None)
+        .unwrap();
+    let state = project
+        .begin_acquisition(
+            &plan,
+            TutorialAcquisitionApproval {
+                approval_sha256: plan.approval_sha256.clone(),
+                allow_missing_digest: false,
+                skipped_check_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+    let ready = advance_ready(
+        &project,
+        forked.notebook.entry.id,
+        state.current_generation,
+        64,
+    );
+    assert_eq!(ready.phase, TutorialAcquisitionPhase::Ready);
+    assert_eq!(
+        ready.attempts.last().unwrap().checks[0].status,
+        TutorialCheckStatus::Failed
+    );
+    assert!(project_root.path().join("data/science.bin").is_file());
 }
 
 #[derive(Clone)]
