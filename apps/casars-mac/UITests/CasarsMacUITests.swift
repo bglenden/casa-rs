@@ -601,8 +601,17 @@ final class CasarsMacUITests: XCTestCase {
 
         selectViewMode("Raw")
         selectViewMode("Rich")
+        try bringIntoView(
+            "notebook.python.cell.\(cellID)",
+            in: "notebook.document.scroll",
+            deltaY: -220
+        )
+        let visibleOutput = app.staticTexts
+            .matching(identifier: "notebook.python.cell.\(cellID)")
+            .matching(NSPredicate(format: "label == %@", "42"))
+            .firstMatch
         XCTAssertTrue(
-            waitForValue("notebook.python.latestRevision.\(cellID)", containing: "stdout: 42"),
+            visibleOutput.waitForExistence(timeout: 5),
             app.debugDescription
         )
 

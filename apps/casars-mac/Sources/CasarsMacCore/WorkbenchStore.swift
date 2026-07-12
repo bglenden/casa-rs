@@ -5463,18 +5463,21 @@ public final class WorkbenchStore: ObservableObject {
 
     package func setPrototypePythonSource(cellID: String, source: String) {
         guard runtimeKind == .pythonPrototype,
-              let index = state.prototypePython?.cells.firstIndex(where: { $0.id == cellID })
+              var prototype = state.prototypePython,
+              let index = prototype.cells.firstIndex(where: { $0.id == cellID })
         else { return }
-        state.prototypePython?.cells[index].source = source
+        prototype.cells[index].source = source
+        state.prototypePython = prototype
     }
 
     package func approvePrototypePythonSource(cellID: String) {
         guard runtimeKind == .pythonPrototype,
-              let index = state.prototypePython?.cells.firstIndex(where: { $0.id == cellID }),
-              state.prototypePython?.cells[index].owner == .ai
+              var prototype = state.prototypePython,
+              let index = prototype.cells.firstIndex(where: { $0.id == cellID }),
+              prototype.cells[index].owner == .ai
         else { return }
-        state.prototypePython?.cells[index].approvedSourceDigest =
-            state.prototypePython?.cells[index].sourceDigest
+        prototype.cells[index].approvedSourceDigest = prototype.cells[index].sourceDigest
+        state.prototypePython = prototype
     }
 
     package func runPrototypePythonCell(_ cellID: String) {
