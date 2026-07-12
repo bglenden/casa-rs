@@ -189,9 +189,13 @@ struct PythonNotebookPrototypeView: View {
 
                 if cell.id == projection?.selectedCellID {
                     if cell.owner == .ai {
-                        Button("Approve exact code") {
-                            store.approvePrototypePythonSource(cellID: cell.id)
-                        }
+                        Toggle("Approve exact code", isOn: Binding(
+                            get: { cell.approvalIsValid },
+                            set: { approved in
+                                if approved { store.approvePrototypePythonSource(cellID: cell.id) }
+                            }
+                        ))
+                        .toggleStyle(.button)
                         .disabled(cell.approvalIsValid)
                         .accessibilityIdentifier("pythonPrototype.approve")
                     }
