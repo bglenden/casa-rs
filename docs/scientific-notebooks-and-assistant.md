@@ -388,9 +388,10 @@ destination, checksum, disk, extraction, and optional-check plan before a
 deterministic Download/Verify/Unpack/Ready simulation. Attempt generations make
 cancel/resume/restart and retry stale-safe; offline, checksum, unsafe-archive,
 and insufficient-disk states never appear staged. A ready fixture enables a
-typed parameter-diff preview and fixture task tab. This projection performs no
-file, network, archive, task, provider, or durable project operation and is not
-the tutorial-template v1 or acquisition contract.
+parameter block that opens the fixture task tab directly; the loaded tutorial
+overrides are identified in the form without an intermediate preview. This
+projection performs no file, network, archive, task, provider, or durable
+project operation and is not the tutorial-template v1 or acquisition contract.
 
 Production: tutorial-template v1, clean v0 migration, URI handlers, verified
 project-local acquisition, safe materialization, optional checks, and the TW Hya

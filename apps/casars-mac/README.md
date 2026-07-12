@@ -138,7 +138,8 @@ It keeps notes primary, shows compact section progress, requires an explicit
 source/checksum/disk/extraction approval, and simulates Download, Verify,
 Unpack, Ready, cancellation, resume, retry, offline, checksum, unsafe-archive,
 and insufficient-disk states. A ready fixture dataset enables a typed
-parameter-diff preview and the existing fixture task tab. Accepted states are
+parameter block that opens the existing fixture task tab directly, where
+tutorial overrides are visibly and accessibly identified. Accepted states are
 `happy-path`, `checksum-failure`, `disk-failure`, `offline`, and
 `unsafe-archive`. No file, network, archive, task, provider, or durable project
 adapter is invoked before Phase A interaction approval.

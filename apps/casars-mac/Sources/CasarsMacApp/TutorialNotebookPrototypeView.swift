@@ -4,7 +4,6 @@ import SwiftUI
 struct TutorialNotebookPrototypeView: View {
     @ObservedObject var store: WorkbenchStore
     @State private var expandedFailureDetails = false
-    @State private var showingTaskPreview = false
     @State private var learnerRichDocument = PrototypeNotebookRichDocument(markdown: "")
 
     private var tutorial: TutorialNotebookPrototypeProjection? {
@@ -25,9 +24,6 @@ struct TutorialNotebookPrototypeView: View {
         }
         .sheet(isPresented: approvalPresented) {
             approvalSheet
-        }
-        .sheet(isPresented: $showingTaskPreview) {
-            taskPreviewSheet
         }
         .onAppear {
             loadRichDocument()
@@ -425,8 +421,8 @@ struct TutorialNotebookPrototypeView: View {
     private var taskParameterCard: some View {
         let isReady = tutorial?.dataset.isReady == true
         return Button {
-            if isReady {
-                showingTaskPreview = true
+            if isReady, let taskID = tutorial?.fixtureTask.id {
+                store.openPrototypeTutorialTask(taskID: taskID)
             }
         } label: {
             VStack(alignment: .leading, spacing: 6) {
@@ -436,7 +432,7 @@ struct TutorialNotebookPrototypeView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Label(
-                        isReady ? "Preview changes" : "Waiting for data",
+                        isReady ? "Open Task" : "Waiting for data",
                         systemImage: isReady ? "arrow.up.forward.app" : "lock"
                     )
                         .workbenchFont(.caption)
@@ -458,6 +454,7 @@ struct TutorialNotebookPrototypeView: View {
         }
         .buttonStyle(.plain)
         .disabled(!isReady)
+        .help(isReady ? "Open the task with these tutorial overrides" : "Acquire the dataset before opening the task")
         .accessibilityIdentifier("notebook.parameters.open.tutorial-task-twhya-imager")
     }
 
@@ -548,50 +545,6 @@ struct TutorialNotebookPrototypeView: View {
                 .accessibilityIdentifier("tutorialPrototype.approval.\(id)")
                 .accessibilityValue(value)
         }
-    }
-
-    private var taskPreviewSheet: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 5) {
-                Label("Load tutorial task parameters?", systemImage: "slider.horizontal.3")
-                    .workbenchFont(.title2, weight: .semibold)
-                    .accessibilityIdentifier("tutorialPrototype.task.preview")
-                Text("The tutorial values will open in a fixture task tab. No task runs and no provider is contacted.")
-                    .foregroundStyle(.secondary)
-            }
-
-            Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
-                GridRow {
-                    Text("Parameter").workbenchFont(.caption, weight: .semibold)
-                    Text("Current").workbenchFont(.caption, weight: .semibold)
-                    Text("Tutorial").workbenchFont(.caption, weight: .semibold)
-                }
-                Divider().gridCellColumns(3)
-                ForEach(tutorial?.fixtureTask.parameterRows ?? []) { row in
-                    GridRow {
-                        Text(row.parameterID).font(.system(size: 12, design: .monospaced))
-                        Text("—").foregroundStyle(.secondary)
-                        Text(row.value).font(.system(size: 12, design: .monospaced))
-                    }
-                }
-            }
-
-            Spacer()
-            HStack {
-                Button("Cancel") { showingTaskPreview = false }
-                Spacer()
-                Button("Open Task") {
-                    if let taskID = tutorial?.fixtureTask.id {
-                        store.openPrototypeTutorialTask(taskID: taskID)
-                    }
-                    showingTaskPreview = false
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("tutorialPrototype.task.load")
-            }
-        }
-        .padding(24)
-        .frame(minWidth: 620, minHeight: 520)
     }
 
     private var progressLabel: String {

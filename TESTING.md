@@ -203,9 +203,10 @@ For each wave:
   rejection, offline/checksum/unsafe-archive/disk failures, retry recovery,
   section progress, learner annotations, and the rule that only Ready is
   staged. XCUITests cover the launched learner-notebook flow, complete approval
-  facts, compact failures, cancellation/resume, recovery, typed task-parameter
-  preview/loading, accessibility, and zero production-boundary calls. Opening
-  or selecting a tutorial never starts acquisition, and Phase A does not claim
+  facts, compact failures, cancellation/resume, recovery, direct task-parameter
+  loading with identified tutorial overrides, accessibility, and zero
+  production-boundary calls. Opening or selecting a tutorial never starts
+  acquisition, and Phase A does not claim
   a v1 manifest, persistence, network, checksum, extraction, or task adapter.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions

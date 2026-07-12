@@ -734,8 +734,6 @@ final class CasarsMacUITests: XCTestCase {
         let taskBlock = "notebook.parameters.open.tutorial-task-twhya-imager"
         try bringIntoView(taskBlock, in: "notebook.document.scroll", deltaY: -420)
         try clickIdentified(taskBlock)
-        XCTAssertTrue(try require("tutorialPrototype.task.preview").exists)
-        try clickIdentified("tutorialPrototype.task.load")
         XCTAssertTrue(
             try require("central.tab.tab-prototype-task-tutorial-task-twhya-imager")
                 .waitForExistence(timeout: 5)
@@ -745,6 +743,14 @@ final class CasarsMacUITests: XCTestCase {
             "data/twhya_calibrated.ms"
         )
         XCTAssertEqual(try textValue(try require("prototypeTask.parameter.imsize")), "250")
+        XCTAssertEqual(
+            try accessibilityValue("prototypeTask.parameterSource.vis"),
+            "tutorial override"
+        )
+        XCTAssertEqual(
+            try accessibilityValue("prototypeTask.parameterSource.imsize"),
+            "tutorial override"
+        )
     }
 
     func testTutorialPrototypeCancellationResumeAndAttemptIdentity() throws {
