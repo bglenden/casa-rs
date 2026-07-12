@@ -234,6 +234,11 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(try require("pythonPrototype.artifact.svg").exists)
         XCTAssertEqual(try accessibilityValue("pythonPrototype.revisionCount"), "1")
 
+        try bringIntoView(
+            "pythonPrototype.regenerate",
+            in: "pythonPrototype.documentScroll",
+            deltaY: -260
+        )
         try clickUntilAccessibilityValue(
             control: "pythonPrototype.regenerate",
             state: "pythonPrototype.revisionCount",
@@ -332,6 +337,11 @@ final class CasarsMacUITests: XCTestCase {
         }
         XCTAssertEqual(try accessibilityValue("pythonPrototype.approvalState"), "required")
         XCTAssertFalse(try require("pythonPrototype.run").isEnabled)
+        try bringIntoView(
+            "pythonPrototype.approve",
+            in: "pythonPrototype.documentScroll",
+            deltaY: -260
+        )
         try clickUntilAccessibilityValue(
             control: "pythonPrototype.approve",
             state: "pythonPrototype.approvalState",
@@ -572,6 +582,8 @@ final class CasarsMacUITests: XCTestCase {
         if element("inspector.collapse").isHittable {
             try clickIdentified("inspector.collapse")
         }
+        selectViewMode("Raw")
+        selectViewMode("Rich")
 
         let authority = try require("notebook.python.authority")
         XCTAssertTrue(
@@ -684,9 +696,8 @@ final class CasarsMacUITests: XCTestCase {
             if (element(stateIdentifier).value as? String)?.contains(expected) == true {
                 return
             }
-            app.activate()
             XCTAssertTrue(control.isHittable, "Control is not hittable: \(controlIdentifier)")
-            control.click()
+            control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         }
         XCTAssertTrue(
             waitForAccessibilityValue(stateIdentifier, containing: expected),
