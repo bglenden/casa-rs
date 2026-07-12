@@ -19,6 +19,7 @@
 		000000000000000000000049 /* PersistentScientificNotebookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000017 /* PersistentScientificNotebookView.swift */; };
 		00000000000000000000004A /* PythonNotebookPrototypeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000018 /* PythonNotebookPrototypeView.swift */; };
 		00000000000000000000004B /* TutorialNotebookPrototypeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000019 /* TutorialNotebookPrototypeView.swift */; };
+		00000000000000000000004C /* AIChatPrototypeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001A /* AIChatPrototypeView.swift */; };
 		0000000000000000000000B2 /* CasarsMacCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0000000000000000000000B1 /* CasarsMacCore */; };
 /* End PBXBuildFile section */
 
@@ -43,6 +44,7 @@
 		000000000000000000000017 /* PersistentScientificNotebookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistentScientificNotebookView.swift; sourceTree = "<group>"; };
 		000000000000000000000018 /* PythonNotebookPrototypeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonNotebookPrototypeView.swift; sourceTree = "<group>"; };
 		000000000000000000000019 /* TutorialNotebookPrototypeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorialNotebookPrototypeView.swift; sourceTree = "<group>"; };
+		00000000000000000000001A /* AIChatPrototypeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPrototypeView.swift; sourceTree = "<group>"; };
 		000000000000000000000020 /* CasarsMacUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CasarsMacUITests.swift; sourceTree = "<group>"; };
 		000000000000000000000030 /* casars-mac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = casars-mac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000031 /* CasarsMacUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CasarsMacUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -98,6 +100,7 @@
 				000000000000000000000017 /* PersistentScientificNotebookView.swift */,
 				000000000000000000000018 /* PythonNotebookPrototypeView.swift */,
 				000000000000000000000019 /* TutorialNotebookPrototypeView.swift */,
+				00000000000000000000001A /* AIChatPrototypeView.swift */,
 				000000000000000000000014 /* WorkbenchFont.swift */,
 				000000000000000000000015 /* WorkbenchPlotView.swift */,
 				000000000000000000000016 /* WorkbenchView.swift */,
@@ -250,6 +253,7 @@
 				000000000000000000000049 /* PersistentScientificNotebookView.swift in Sources */,
 				00000000000000000000004A /* PythonNotebookPrototypeView.swift in Sources */,
 				00000000000000000000004B /* TutorialNotebookPrototypeView.swift in Sources */,
+				00000000000000000000004C /* AIChatPrototypeView.swift in Sources */,
 				000000000000000000000044 /* WorkbenchFont.swift in Sources */,
 				000000000000000000000045 /* WorkbenchPlotView.swift in Sources */,
 				000000000000000000000046 /* WorkbenchView.swift in Sources */,

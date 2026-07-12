@@ -217,6 +217,16 @@ For each wave:
   forks a test-owned template into a disposable project, approves a local file
   acquisition, waits for Ready, and opens the normal task tab with accessible
   tutorial-override markers; it uses no user data or external network.
+- Wave 4 Phase A uses two package-internal fake providers and deterministic
+  context, citation, corpus, response, and proposal fixtures. Core tests cover
+  provider-neutral selection, explicit egress context, cited completion,
+  rate-limit retry, nonresponsive cancellation/restart, proposal rejection,
+  tool failure/cancellation/retry, debug projection, and zero production calls.
+  XCUITests cover the launched cited-answer/pin flow, explicit task approval and
+  Python rejection, conversation scrolling, rate-limit recovery,
+  nonresponsive worker restart, stable accessibility identifiers, and zero
+  production-boundary calls. Phase A does not claim authentication, network,
+  retrieval, Python, task, download, notebook-write, or transcript persistence.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review

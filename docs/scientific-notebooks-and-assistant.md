@@ -403,6 +403,21 @@ Prototype: provider/model selector, context chips, streaming cited answers,
 corpus/indexing states, source links, approval cards, plot insertion,
 pin-to-notebook, redaction preview, rate limits, and offline/error states.
 
+Current Phase A reality: `casars-mac --show-prototype ai` launches a compact
+full-width project discussion backed only by deterministic package-internal
+fixtures. Two fake providers share the same interaction contract. Users can
+select the model and bounded context, preview exactly what may leave the Mac,
+re-index or cancel a fixture corpus, inspect cited paper/source excerpts, pin
+answers, and explicitly apply or reject task, Python, plot, download, and note
+proposals after reviewing their exact payload, authority, and affected paths.
+`provider-error`, `rate-limited`, `offline`, `tool-failure`, and
+`nonresponsive` launch states exercise explicit retry, cancellation, and worker
+restart without silent retry or authority expansion. Debug state and the live
+header report zero production-boundary calls. This prototype does not perform
+authentication, network access, retrieval, Python, tasks, downloads, notebook
+writes, or transcript persistence and does not define a provider or persisted
+assistant contract.
+
 Production: Pi sidecar, secure authentication, local corpus, source overlays,
 web/retrieval/data tools, restricted AI Python, canonical task proposals,
 provider-neutral transcripts, and fake-provider plus live-provider smoke tests.

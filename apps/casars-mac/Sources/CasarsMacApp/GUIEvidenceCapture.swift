@@ -30,10 +30,11 @@ private struct GUIEvidenceCaptureRequest {
         case notebookPrototype = "notebook-prototype"
         case pythonPrototype = "python-prototype"
         case tutorialPrototype = "tutorial-prototype"
+        case aiPrototype = "ai-prototype"
 
         var requiresTutorialPack: Bool {
             switch self {
-            case .imagerProgressMockup, .notebookPrototype, .pythonPrototype, .tutorialPrototype:
+            case .imagerProgressMockup, .notebookPrototype, .pythonPrototype, .tutorialPrototype, .aiPrototype:
                 false
             default:
                 true
@@ -61,6 +62,7 @@ private struct GUIEvidenceCaptureRequest {
     var prototypeScenario: NotebookPrototypeScenario
     var pythonPrototypeScenario: PythonPrototypeScenario
     var tutorialPrototypeScenario: TutorialNotebookPrototypeScenario
+    var aiPrototypeScenario: AIChatPrototypeScenario
     var outputPath: String
     var width: CGFloat
     var height: CGFloat
@@ -101,6 +103,9 @@ private struct GUIEvidenceCaptureRequest {
             Self.argumentValue(after: "--prototype-state", in: arguments)
         )
         self.tutorialPrototypeScenario = try Self.tutorialPrototypeScenario(
+            Self.argumentValue(after: "--prototype-state", in: arguments)
+        )
+        self.aiPrototypeScenario = Self.aiPrototypeScenario(
             Self.argumentValue(after: "--prototype-state", in: arguments)
         )
         self.outputPath = outputPath
@@ -178,6 +183,17 @@ private struct GUIEvidenceCaptureRequest {
         default: .happyPath
         }
     }
+
+    private static func aiPrototypeScenario(_ value: String?) -> AIChatPrototypeScenario {
+        switch value {
+        case "provider-error": .providerError
+        case "rate-limited": .rateLimited
+        case "offline": .offline
+        case "tool-failure": .toolFailure
+        case "nonresponsive": .nonresponsive
+        default: .primary
+        }
+    }
 }
 
 private enum GUIEvidenceCaptureError: Error, CustomStringConvertible {
@@ -221,6 +237,8 @@ private enum GUIEvidenceCaptureRenderer {
             WorkbenchStore.pythonPrototype(scenario: request.pythonPrototypeScenario)
         case .tutorialPrototype:
             WorkbenchStore.tutorialPrototype(scenario: request.tutorialPrototypeScenario)
+        case .aiPrototype:
+            WorkbenchStore.aiPrototype(scenario: request.aiPrototypeScenario)
         default:
             WorkbenchStore.empty()
         }
@@ -254,6 +272,8 @@ private enum GUIEvidenceCaptureRenderer {
             try renderPythonPrototype(request: request, store: store)
         case .tutorialPrototype:
             try renderTutorialPrototype(request: request, store: store)
+        case .aiPrototype:
+            try renderAIPrototype(request: request, store: store)
         }
     }
 
@@ -295,6 +315,24 @@ private enum GUIEvidenceCaptureRenderer {
 
     @MainActor
     private static func renderTutorialPrototype(
+        request: GUIEvidenceCaptureRequest,
+        store: WorkbenchStore
+    ) throws {
+        let view = WorkbenchView(store: store)
+            .environment(\.workbenchFontSize, WorkbenchState.defaultInterfaceFontSize)
+            .preferredColorScheme(.dark)
+            .frame(width: request.width, height: request.height)
+        let png = try renderPNGWithHostingView(
+            view: view,
+            width: request.width,
+            height: request.height,
+            scale: 2.0
+        )
+        try writePNG(png, outputPath: request.outputPath)
+    }
+
+    @MainActor
+    private static func renderAIPrototype(
         request: GUIEvidenceCaptureRequest,
         store: WorkbenchStore
     ) throws {

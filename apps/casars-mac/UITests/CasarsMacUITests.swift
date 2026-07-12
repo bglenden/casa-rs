@@ -999,6 +999,63 @@ final class CasarsMacUITests: XCTestCase {
         assertZeroTutorialProductionBoundaryCalls()
     }
 
+    func testAIPrototypeCitedAnswerPinAndApprovedActions() throws {
+        launchAIPrototype()
+
+        XCTAssertTrue(try require("aiPrototype.boundaryStatus").label.contains("0 production calls"))
+        try clickIdentified("aiPrototype.context.plot")
+        try clickIdentified("aiPrototype.citation.citation-paper")
+        XCTAssertTrue(try require("aiPrototype.sourcePreview").exists)
+        try clickIdentified("aiPrototype.message.ai-assistant-initial.pin")
+        XCTAssertFalse(try require("aiPrototype.message.ai-assistant-initial.pin").isEnabled)
+
+        try clickIdentified("aiPrototype.send")
+        XCTAssertTrue(try require("aiPrototype.message.ai-assistant-1", timeout: 5).exists)
+
+        let taskApply = try require("aiPrototype.proposal.proposal-task.apply")
+        let conversationScroll = app.scrollViews.firstMatch
+        XCTAssertTrue(conversationScroll.exists)
+        for _ in 0..<3 where !taskApply.isHittable {
+            conversationScroll.scroll(byDeltaX: 0, deltaY: -240)
+        }
+        try clickIdentified("aiPrototype.proposal.proposal-task.apply")
+        XCTAssertTrue(
+            waitForAccessibilityValue(
+                "aiPrototype.proposal.proposal-task.state",
+                containing: "Succeeded",
+                timeout: 5
+            )
+        )
+        try clickIdentified("aiPrototype.proposal.proposal-python.reject")
+        XCTAssertTrue(
+            waitForAccessibilityValue(
+                "aiPrototype.proposal.proposal-python.state",
+                containing: "Rejected"
+            )
+        )
+        assertZeroAIProductionBoundaryCalls()
+    }
+
+    func testAIPrototypeRateLimitAndNonresponsiveRecoveryAreExplicit() throws {
+        launchAIPrototype(scenario: "rate-limited")
+        try clickIdentified("aiPrototype.send")
+        XCTAssertTrue(try require("aiPrototype.response.error", timeout: 5).exists)
+        try clickIdentified("aiPrototype.response.retry")
+        XCTAssertTrue(try require("aiPrototype.message.ai-assistant-3", timeout: 5).exists)
+        assertZeroAIProductionBoundaryCalls()
+
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 5))
+        launchAIPrototype(scenario: "nonresponsive")
+        try clickIdentified("aiPrototype.send")
+        XCTAssertTrue(try require("aiPrototype.response.streaming", timeout: 3).exists)
+        try clickIdentified("aiPrototype.response.cancel")
+        XCTAssertTrue(try require("aiPrototype.response.restartRequired").exists)
+        try clickIdentified("aiPrototype.response.restart")
+        XCTAssertFalse(element("aiPrototype.response.restartRequired").exists)
+        assertZeroAIProductionBoundaryCalls()
+    }
+
     private func launchPrototype(scenario: String = "happy-path") {
         app = XCUIApplication()
         ensureStoppedBeforeLaunch()
@@ -1048,6 +1105,26 @@ final class CasarsMacUITests: XCTestCase {
             app.debugDescription
         )
         XCTAssertTrue(element("tutorialPrototype.progressSummary").waitForExistence(timeout: 5))
+    }
+
+    private func launchAIPrototype(scenario: String = "happy-path") {
+        app = XCUIApplication()
+        ensureStoppedBeforeLaunch()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "--show-prototype", "ai",
+            "--prototype-state", scenario,
+        ]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(
+            app.windows["casa-rs Workbench"].waitForExistence(timeout: 10),
+            app.debugDescription
+        )
+        XCTAssertTrue(
+            element("aiPrototype.boundaryStatus").waitForExistence(timeout: 5),
+            app.debugDescription
+        )
     }
 
     private func ensureStoppedBeforeLaunch() {
@@ -1285,6 +1362,12 @@ final class CasarsMacUITests: XCTestCase {
 
     private func assertZeroTutorialProductionBoundaryCalls() {
         let audit = element("tutorialPrototype.boundaryAudit")
+        XCTAssertTrue(audit.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertEqual(audit.value as? String ?? audit.label, "0")
+    }
+
+    private func assertZeroAIProductionBoundaryCalls() {
+        let audit = element("aiPrototype.boundaryStatus")
         XCTAssertTrue(audit.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertEqual(audit.value as? String ?? audit.label, "0")
     }

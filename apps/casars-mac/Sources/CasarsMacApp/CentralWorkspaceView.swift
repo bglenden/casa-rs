@@ -9565,6 +9565,14 @@ struct AIChatPanel: View {
     @State private var draft = ""
 
     var body: some View {
+        if store.isAIPrototypeRuntime {
+            AIChatPrototypeView(store: store)
+        } else {
+            legacyFixturePanel
+        }
+    }
+
+    private var legacyFixturePanel: some View {
         VStack(spacing: 0) {
             PanelHeader(title: "AI Chat", subtitle: "Fixture assistant with explicit proposals and approval")
                 .padding()

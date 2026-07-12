@@ -803,6 +803,7 @@ private enum WorkbenchRuntimeKind {
     case notebookPrototype
     case pythonPrototype
     case tutorialPrototype
+    case aiPrototype
 }
 
 public final class WorkbenchStore: ObservableObject {
@@ -870,7 +871,9 @@ public final class WorkbenchStore: ObservableObject {
             }
         }
         self.state = initialState
-        if initialState.isTutorialPrototype {
+        if initialState.isAIPrototype {
+            runtimeKind = .aiPrototype
+        } else if initialState.isTutorialPrototype {
             runtimeKind = .tutorialPrototype
         } else if initialState.isNotebookPrototype {
             runtimeKind = .notebookPrototype
@@ -986,6 +989,27 @@ public final class WorkbenchStore: ObservableObject {
         )
     }
 
+    package static func aiPrototype(
+        scenario: AIChatPrototypeScenario = .primary,
+        dependencies: NotebookPrototypeRuntimeDependencies = .denied
+    ) -> WorkbenchStore {
+        NotebookPrototypeBoundaryAudit.reset()
+        return WorkbenchStore(
+            state: aiPrototypeState(scenario: scenario),
+            probeClient: dependencies.probeClient,
+            demoProjectClient: dependencies.demoProjectClient,
+            plotClient: dependencies.plotClient,
+            imageExplorerClient: dependencies.imageExplorerClient,
+            tableBrowserClient: dependencies.tableBrowserClient,
+            genericTaskClient: dependencies.genericTaskClient,
+            taskCatalogClient: PrototypeTaskCatalogClient(),
+            taskUISchemaClient: dependencies.taskUISchemaClient,
+            surfaceParameterClient: dependencies.surfaceParameterClient,
+            taskExecutionMatrixClient: PrototypeTaskExecutionMatrixClient(),
+            imagerProgressSource: EmptyImagerProgressSource()
+        )
+    }
+
     package var isNotebookPrototypeRuntime: Bool {
         runtimeKind == .notebookPrototype
     }
@@ -996,6 +1020,10 @@ public final class WorkbenchStore: ObservableObject {
 
     package var isTutorialPrototypeRuntime: Bool {
         runtimeKind == .tutorialPrototype
+    }
+
+    package var isAIPrototypeRuntime: Bool {
+        runtimeKind == .aiPrototype
     }
 
     package var isPrototypeRuntime: Bool {
@@ -1108,6 +1136,43 @@ public final class WorkbenchStore: ObservableObject {
             )
         ]
         state.activeTabID = "tab-tutorial-prototype"
+        return state
+    }
+
+    private static func aiPrototypeState(
+        scenario: AIChatPrototypeScenario,
+        interfaceFontSize: Double = WorkbenchState.defaultInterfaceFontSize
+    ) -> WorkbenchState {
+        var state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+        state.project = ProjectFixture(
+            name: "TW Hya Assistant Review",
+            rootPath: "/PrototypeProjects/tw-hya-assistant",
+            datasets: [
+                DatasetSummary(
+                    id: "prototype-twhya-ms",
+                    name: "twhya_calibrated.ms",
+                    path: "data/twhya_calibrated.ms",
+                    kind: .measurementSet,
+                    size: "2.1 GB fixture",
+                    units: "Jy, Hz, seconds",
+                    fields: ["TW Hya"],
+                    notes: "Deterministic AI prototype metadata; no data are opened."
+                )
+            ],
+            source: .fixture
+        )
+        state.selectedDatasetID = "prototype-twhya-ms"
+        state.prototypeAI = PrototypeAIChatFixtureAdapter.make(scenario: scenario)
+        state.leftDockCollapsed = true
+        state.inspectorCollapsed = true
+        state.tabs = [
+            WorkbenchTab(
+                id: "tab-ai-prototype",
+                title: "AI · TW Hya discussion",
+                kind: .aiChat
+            )
+        ]
+        state.activeTabID = "tab-ai-prototype"
         return state
     }
 
@@ -2113,6 +2178,7 @@ public final class WorkbenchStore: ObservableObject {
         case .notebookPrototype: "notebook"
         case .pythonPrototype: "Python"
         case .tutorialPrototype: "tutorial"
+        case .aiPrototype: "AI"
         case .production: "production"
         }
         state.lastErrors.append("\(action) are unavailable in the in-memory \(prototypeName) prototype")
@@ -2131,6 +2197,10 @@ public final class WorkbenchStore: ObservableObject {
         }
         if runtimeKind == .tutorialPrototype,
            tab.kind != .notebook && !(tab.kind == .task && tab.prototypeReceiptID != nil) {
+            _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
+            return
+        }
+        if runtimeKind == .aiPrototype, tab.kind != .aiChat {
             _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
             return
         }
@@ -2256,6 +2326,14 @@ public final class WorkbenchStore: ObservableObject {
             }
             openTab(WorkbenchTab(id: "tab-plot-samples", title: "Plot Samples", kind: .plotSamples))
         case .aiChat:
+            if state.isAIPrototype {
+                openTab(WorkbenchTab(
+                    id: "tab-ai-prototype",
+                    title: "AI · TW Hya discussion",
+                    kind: .aiChat
+                ))
+                return
+            }
             guard !rejectPrototypeProductionAction("AI chat") else { return }
             guard state.isDemoProject else {
                 state.lastErrors.append("AI chat is not connected yet")
@@ -3553,6 +3631,125 @@ public final class WorkbenchStore: ObservableObject {
         }
         projection.documents[documentIndex].tasks[receiptIndex].revisions[revisionIndex] = revision
         state.prototypeNotebook = projection
+    }
+
+    package func selectAIPrototypeProvider(_ providerID: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.selectProvider(providerID)
+        state.prototypeAI = projection
+    }
+
+    package func selectAIPrototypeModel(_ model: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.selectModel(model)
+        state.prototypeAI = projection
+    }
+
+    package func toggleAIPrototypeContext(_ contextID: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.toggleContext(contextID)
+        state.prototypeAI = projection
+    }
+
+    package func startAIPrototypeIndexing() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        let generation = projection.beginIndexing()
+        state.prototypeAI = projection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            guard let self, self.runtimeKind == .aiPrototype,
+                  var projection = self.state.prototypeAI
+            else { return }
+            projection.completeIndexing(generation: generation)
+            self.state.prototypeAI = projection
+        }
+    }
+
+    package func cancelAIPrototypeIndexing() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.cancelIndexing()
+        state.prototypeAI = projection
+    }
+
+    package func sendAIPrototypePrompt(_ prompt: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI,
+              let generation = projection.beginResponse(prompt: prompt)
+        else { return }
+        state.prototypeAI = projection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, self.runtimeKind == .aiPrototype,
+                  var projection = self.state.prototypeAI
+            else { return }
+            projection.completeResponse(generation: generation)
+            self.state.prototypeAI = projection
+        }
+    }
+
+    package func cancelAIPrototypeResponse() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.cancelResponse()
+        state.prototypeAI = projection
+    }
+
+    package func retryAIPrototypeResponse() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        let prompt = projection.activePrompt ?? "Retry the previous question with the same approved context."
+        projection.restartResponse()
+        guard let generation = projection.beginResponse(prompt: prompt) else {
+            state.prototypeAI = projection
+            return
+        }
+        state.prototypeAI = projection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, self.runtimeKind == .aiPrototype,
+                  var projection = self.state.prototypeAI
+            else { return }
+            projection.completeResponse(generation: generation)
+            self.state.prototypeAI = projection
+        }
+    }
+
+    package func restartAIPrototypeWorker() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.restartResponse()
+        state.prototypeAI = projection
+    }
+
+    package func pinAIPrototypeMessage(_ messageID: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.pinMessage(messageID)
+        state.prototypeAI = projection
+    }
+
+    package func approveAIPrototypeProposal(_ proposalID: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI,
+              let generation = projection.beginProposal(proposalID)
+        else { return }
+        state.prototypeAI = projection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            guard let self, self.runtimeKind == .aiPrototype,
+                  var projection = self.state.prototypeAI
+            else { return }
+            projection.completeProposal(proposalID, generation: generation)
+            self.state.prototypeAI = projection
+        }
+    }
+
+    package func rejectAIPrototypeProposal(_ proposalID: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.rejectProposal(proposalID)
+        state.prototypeAI = projection
+    }
+
+    package func cancelAIPrototypeProposal(_ proposalID: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.cancelProposal(proposalID)
+        state.prototypeAI = projection
+    }
+
+    package func retryAIPrototypeProposal(_ proposalID: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.retryProposal(proposalID)
+        state.prototypeAI = projection
     }
 
     package func selectTutorialPrototypeSection(_ sectionID: String) {
