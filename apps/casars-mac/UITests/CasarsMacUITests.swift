@@ -252,7 +252,7 @@ final class CasarsMacUITests: XCTestCase {
             try accessibilityValue("pythonPrototype.executionDetails.python-execution-1"),
             "collapsed"
         )
-        try require("pythonPrototype.executionDetails.python-execution-1").click()
+        try expandExecutionStatus("pythonPrototype.executionDetails.python-execution-1")
         try bringIntoView(
             "pythonPrototype.artifact.png",
             in: "pythonPrototype.documentScroll",
@@ -337,7 +337,7 @@ final class CasarsMacUITests: XCTestCase {
             try accessibilityValue("pythonPrototype.executionDetails.python-execution-2"),
             "collapsed"
         )
-        try require("pythonPrototype.executionDetails.python-execution-2").click()
+        try expandExecutionStatus("pythonPrototype.executionDetails.python-execution-2")
         XCTAssertTrue(failureOutput.waitForExistence(timeout: 5))
         XCTAssertTrue(failureOutput.label.contains("RuntimeError: fixture: channel selection is empty"))
         let repaired = """
