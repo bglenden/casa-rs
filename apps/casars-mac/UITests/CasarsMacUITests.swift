@@ -234,8 +234,11 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(try require("pythonPrototype.artifact.svg").exists)
         XCTAssertEqual(try accessibilityValue("pythonPrototype.revisionCount"), "1")
 
-        try require("pythonPrototype.regenerate").click()
-        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.revisionCount", containing: "2"))
+        try clickUntilAccessibilityValue(
+            control: "pythonPrototype.regenerate",
+            state: "pythonPrototype.revisionCount",
+            contains: "2"
+        )
         let previous = try require("pythonPrototype.previousRevisions.python-cell-plot")
         let firstRevision = element("pythonPrototype.revision.1")
         XCTAssertFalse(firstRevision.exists)
@@ -295,13 +298,11 @@ final class CasarsMacUITests: XCTestCase {
         print("checking continuum selection", flush=True)
         print("continuum selection repaired")
         """
-        let documentScroll = app.scrollViews["pythonPrototype.documentScroll"]
-        XCTAssertTrue(documentScroll.waitForExistence(timeout: 5))
-        if documentScroll.isHittable {
-            documentScroll.scroll(byDeltaX: 0, deltaY: -1_100)
-        } else {
-            app.windows["casa-rs Workbench"].scroll(byDeltaX: 0, deltaY: -1_100)
-        }
+        try bringIntoView(
+            "pythonPrototype.editor",
+            in: "pythonPrototype.documentScroll",
+            deltaY: -260
+        )
         replaceText("pythonPrototype.editor", with: repaired)
         try require("pythonPrototype.run").click()
         XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.kernelState", containing: "ready"))
@@ -331,8 +332,11 @@ final class CasarsMacUITests: XCTestCase {
         }
         XCTAssertEqual(try accessibilityValue("pythonPrototype.approvalState"), "required")
         XCTAssertFalse(try require("pythonPrototype.run").isEnabled)
-        try require("pythonPrototype.approve").click()
-        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.approvalState", containing: "approved"))
+        try clickUntilAccessibilityValue(
+            control: "pythonPrototype.approve",
+            state: "pythonPrototype.approvalState",
+            contains: "approved"
+        )
         XCTAssertTrue(try require("pythonPrototype.run").isEnabled)
 
         let edited = try textValue(try require("pythonPrototype.editor")) + "\n# user edit invalidates approval"
@@ -476,6 +480,7 @@ final class CasarsMacUITests: XCTestCase {
         let selector = notebookSelector(notebookID)
         XCTAssertTrue(selector.waitForExistence(timeout: 5), app.debugDescription)
         try require("notebook.selector.open").click()
+
         XCTAssertTrue(element("notebook.viewMode").waitForExistence(timeout: 5), app.debugDescription)
 
         selectViewMode("Raw")
@@ -564,11 +569,20 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(notebookSelector(notebookID).waitForExistence(timeout: 5), app.debugDescription)
         try require("notebook.selector.open").click()
 
+        if element("inspector.collapse").isHittable {
+            try clickIdentified("inspector.collapse")
+        }
+
         let authority = try require("notebook.python.authority")
         XCTAssertTrue(
             authority.label.contains("normal user authority")
                 || (authority.value as? String)?.contains("normal user authority") == true,
             authority.debugDescription
+        )
+        try bringIntoView(
+            "notebook.python.run.\(cellID)",
+            in: "notebook.document.scroll",
+            deltaY: -220
         )
         let run = try require("notebook.python.run.\(cellID)")
         XCTAssertTrue(run.isEnabled, app.debugDescription)
@@ -635,6 +649,49 @@ final class CasarsMacUITests: XCTestCase {
         let control = try require(identifier, timeout: timeout)
         XCTAssertTrue(control.isHittable, "Identified control is not hittable: \(identifier)\n\(app.debugDescription)")
         control.click()
+    }
+
+    private func bringIntoView(
+        _ identifier: String,
+        in scrollIdentifier: String,
+        deltaY: CGFloat,
+        attempts: Int = 8
+    ) throws {
+        let target = element(identifier)
+        if target.exists && target.isHittable {
+            return
+        }
+        let scroll = app.scrollViews[scrollIdentifier]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5), "Missing scroll view \(scrollIdentifier)")
+        XCTAssertTrue(scroll.isHittable, "Scroll view is not hittable: \(scrollIdentifier)")
+        for _ in 0..<attempts where !target.exists || !target.isHittable {
+            scroll.scroll(byDeltaX: 0, deltaY: deltaY)
+        }
+        XCTAssertTrue(
+            target.exists && target.isHittable,
+            "Unable to bring \(identifier) into view\n\(app.debugDescription)"
+        )
+    }
+
+    private func clickUntilAccessibilityValue(
+        control controlIdentifier: String,
+        state stateIdentifier: String,
+        contains expected: String,
+        attempts: Int = 2
+    ) throws {
+        let control = try require(controlIdentifier)
+        for _ in 0..<attempts {
+            if (element(stateIdentifier).value as? String)?.contains(expected) == true {
+                return
+            }
+            app.activate()
+            XCTAssertTrue(control.isHittable, "Control is not hittable: \(controlIdentifier)")
+            control.click()
+        }
+        XCTAssertTrue(
+            waitForAccessibilityValue(stateIdentifier, containing: expected),
+            "\(stateIdentifier) did not contain \(expected) after clicking \(controlIdentifier)"
+        )
     }
 
     private func expandExecutionStatus(_ identifier: String) throws {
