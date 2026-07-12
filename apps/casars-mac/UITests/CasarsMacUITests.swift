@@ -591,22 +591,20 @@ final class CasarsMacUITests: XCTestCase {
                 || (authority.value as? String)?.contains("normal user authority") == true,
             authority.debugDescription
         )
-        try bringIntoView(
-            "notebook.python.run.\(cellID)",
-            in: "notebook.document.scroll",
-            deltaY: -220
-        )
-        let run = try require("notebook.python.run.\(cellID)")
-        XCTAssertTrue(run.isEnabled, app.debugDescription)
-        run.click()
-        XCTAssertTrue(
-            waitForValue("notebook.python.latestRevision.\(cellID)", containing: "stdout: 42"),
-            app.debugDescription
-        )
+        let runAll = try require("notebook.python.runAll")
+        XCTAssertTrue(runAll.isEnabled, app.debugDescription)
+        runAll.click()
 
         let runs = project.appendingPathComponent(".casa-rs/notebook-runs", isDirectory: true)
         XCTAssertTrue(waitForReceipt(in: runs, containing: "\"schema_version\": 2"))
         XCTAssertTrue(waitForReceipt(in: runs, containing: "\"source\": \"value = 6 * 7\\nprint(value)\\n\""))
+
+        selectViewMode("Raw")
+        selectViewMode("Rich")
+        XCTAssertTrue(
+            waitForValue("notebook.python.latestRevision.\(cellID)", containing: "stdout: 42"),
+            app.debugDescription
+        )
 
         try require("central.tab.tab-scientific-notebook").click()
         try clickIdentified("dock.mode.datasets")
@@ -692,12 +690,13 @@ final class CasarsMacUITests: XCTestCase {
         attempts: Int = 2
     ) throws {
         let control = try require(controlIdentifier)
-        for _ in 0..<attempts {
-            if (element(stateIdentifier).value as? String)?.contains(expected) == true {
-                return
-            }
-            XCTAssertTrue(control.isHittable, "Control is not hittable: \(controlIdentifier)")
-            control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        if (element(stateIdentifier).value as? String)?.contains(expected) == true {
+            return
+        }
+        XCTAssertTrue(control.isHittable, "Control is not hittable: \(controlIdentifier)")
+        control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        if !waitForAccessibilityValue(stateIdentifier, containing: expected) && attempts > 1 {
+            control.typeKey(.space, modifierFlags: [])
         }
         XCTAssertTrue(
             waitForAccessibilityValue(stateIdentifier, containing: expected),
