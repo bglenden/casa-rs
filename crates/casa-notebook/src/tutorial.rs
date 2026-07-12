@@ -1351,21 +1351,8 @@ impl TutorialProject {
             }
             TutorialAcquisitionPhase::Materializing => {
                 let source = materialized_source(&attempt_directory, &dataset.dataset)?;
-                let destination = self.project_root.join(&dataset.dataset.destination);
-                if destination.exists() {
-                    return Err(TutorialError::DestinationExists { path: destination });
-                }
-                let parent =
-                    destination
-                        .parent()
-                        .ok_or_else(|| TutorialError::UnsafeProjectPath {
-                            path: dataset.dataset.destination.clone(),
-                        })?;
-                fs::create_dir_all(parent).map_err(|source| TutorialError::Io {
-                    action: "create tutorial dataset destination parent",
-                    path: parent.to_owned(),
-                    source,
-                })?;
+                let destination =
+                    prepare_project_destination(&self.project_root, &dataset.dataset.destination)?;
                 fs::rename(&source, &destination).map_err(|source| TutorialError::Io {
                     action: "publish verified tutorial dataset",
                     path: destination,
@@ -1840,6 +1827,88 @@ fn apply_attempt_failure(dataset: &mut TutorialDatasetLock, error: &TutorialErro
         attempt.phase = phase;
         attempt.error = Some(error.to_string());
         attempt.finished_at = Some(Timestamp::now());
+    }
+}
+
+fn prepare_project_destination(
+    project_root: &Path,
+    relative_destination: &Path,
+) -> Result<PathBuf, TutorialError> {
+    validate_project_path(relative_destination)?;
+    let canonical_root = fs::canonicalize(project_root).map_err(|source| TutorialError::Io {
+        action: "resolve tutorial project root",
+        path: project_root.to_owned(),
+        source,
+    })?;
+    let relative_parent =
+        relative_destination
+            .parent()
+            .ok_or_else(|| TutorialError::UnsafeProjectPath {
+                path: relative_destination.to_owned(),
+            })?;
+    let mut parent = project_root.to_owned();
+    for component in relative_parent.components() {
+        let Component::Normal(component) = component else {
+            return Err(TutorialError::UnsafeProjectPath {
+                path: relative_destination.to_owned(),
+            });
+        };
+        parent.push(component);
+        match fs::symlink_metadata(&parent) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(TutorialError::UnsafeProjectPath {
+                        path: relative_destination.to_owned(),
+                    });
+                }
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&parent).map_err(|source| TutorialError::Io {
+                    action: "create tutorial dataset destination parent",
+                    path: parent.clone(),
+                    source,
+                })?;
+            }
+            Err(source) => {
+                return Err(TutorialError::Io {
+                    action: "inspect tutorial dataset destination parent",
+                    path: parent,
+                    source,
+                });
+            }
+        }
+        let resolved_parent = fs::canonicalize(&parent).map_err(|source| TutorialError::Io {
+            action: "resolve tutorial dataset destination parent",
+            path: parent.clone(),
+            source,
+        })?;
+        if !resolved_parent.starts_with(&canonical_root) {
+            return Err(TutorialError::UnsafeProjectPath {
+                path: relative_destination.to_owned(),
+            });
+        }
+    }
+
+    let resolved_parent = fs::canonicalize(&parent).map_err(|source| TutorialError::Io {
+        action: "resolve tutorial dataset destination parent",
+        path: parent.clone(),
+        source,
+    })?;
+    if !resolved_parent.starts_with(&canonical_root) {
+        return Err(TutorialError::UnsafeProjectPath {
+            path: relative_destination.to_owned(),
+        });
+    }
+
+    let destination = project_root.join(relative_destination);
+    match fs::symlink_metadata(&destination) {
+        Ok(_) => Err(TutorialError::DestinationExists { path: destination }),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(destination),
+        Err(source) => Err(TutorialError::Io {
+            action: "inspect tutorial dataset destination",
+            path: destination,
+            source,
+        }),
     }
 }
 

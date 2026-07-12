@@ -3,7 +3,7 @@
 use std::{
     fs,
     io::{self, BufRead, BufReader, Write},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     path::Path,
     sync::{
         Arc,
@@ -539,6 +539,64 @@ fn existing_destination_is_a_distinct_failure_and_is_never_replaced() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn symlinked_destination_parent_cannot_publish_outside_the_project() {
+    use std::os::unix::fs::symlink;
+
+    let project_root = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let template_root = TempDir::new().unwrap();
+    let bytes = b"verified bytes must remain project-local";
+    let source = template_root.path().join("source.bin");
+    fs::write(&source, bytes).unwrap();
+    let template = write_template(
+        template_root.path(),
+        vec![dataset(file_uri(&source), bytes)],
+    );
+    let forked = fork(project_root.path(), &template);
+    symlink(outside.path(), project_root.path().join("data")).unwrap();
+    let project = TutorialProject::open(project_root.path()).unwrap();
+    let plan = project
+        .plan_acquisition(forked.notebook.entry.id, "science", None)
+        .unwrap();
+    let state = project
+        .begin_acquisition(
+            &plan,
+            TutorialAcquisitionApproval {
+                approval_sha256: plan.approval_sha256.clone(),
+                allow_missing_digest: false,
+                skipped_check_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+
+    let mut failure = None;
+    for _ in 0..8 {
+        match project.advance_acquisition(
+            forked.notebook.entry.id,
+            "science",
+            state.current_generation,
+            64,
+        ) {
+            Ok(_) => {}
+            Err(error) => {
+                failure = Some(error);
+                break;
+            }
+        }
+    }
+
+    assert!(matches!(
+        failure,
+        Some(TutorialError::UnsafeProjectPath { .. })
+    ));
+    assert!(!outside.path().join("science.bin").exists());
+    let lock = project.load_lock(forked.notebook.entry.id).unwrap();
+    assert!(!lock.datasets[0].staged);
+    assert_ne!(lock.datasets[0].phase, TutorialAcquisitionPhase::Ready);
+}
+
 fn tar_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut bytes = Vec::new();
     {
@@ -1052,6 +1110,70 @@ fn start_redirect_server(bytes: &'static [u8]) -> (String, thread::JoinHandle<()
     (format!("http://{address}/start"), handle)
 }
 
+fn start_changed_get_redirect_server(
+    bytes: &'static [u8],
+) -> (String, String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let handle = thread::spawn(move || {
+        for _ in 0..4 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).unwrap();
+            let mut line = String::new();
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+            }
+            if request_line.contains(" /start ") {
+                write!(
+                    stream,
+                    "HTTP/1.1 302 Found\r\nLocation: http://{address}/approved\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+            } else if request_line.starts_with("HEAD ") {
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    bytes.len()
+                )
+                .unwrap();
+            } else if request_line.contains(" /approved ") {
+                write!(
+                    stream,
+                    "HTTP/1.1 302 Found\r\nLocation: http://{address}/changed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+            } else if request_line.contains(" /changed ") {
+                write!(
+                    stream,
+                    "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes 0-{}/{}\r\nConnection: close\r\n\r\n",
+                    bytes.len(),
+                    bytes.len() - 1,
+                    bytes.len()
+                )
+                .unwrap();
+                stream.write_all(bytes).unwrap();
+            } else {
+                write!(
+                    stream,
+                    "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+            }
+        }
+    });
+    (
+        format!("http://{address}/start"),
+        format!("http://{address}/stop"),
+        handle,
+    )
+}
+
 #[test]
 fn built_in_http_handler_records_redirect_and_materializes_ranged_content() {
     let bytes = b"redirected http source";
@@ -1084,6 +1206,58 @@ fn built_in_http_handler_records_redirect_and_materializes_ranged_content() {
     );
     assert_eq!(ready.phase, TutorialAcquisitionPhase::Ready);
     server.join().unwrap();
+}
+
+#[test]
+fn built_in_http_handler_rejects_get_redirects_after_exact_approval() {
+    let bytes = b"unapproved redirected content";
+    let (uri, stop_uri, server) = start_changed_get_redirect_server(bytes);
+    let project_root = TempDir::new().unwrap();
+    let template_root = TempDir::new().unwrap();
+    let template = write_template(template_root.path(), vec![dataset(uri, bytes)]);
+    let forked = fork(project_root.path(), &template);
+    let project = TutorialProject::open(project_root.path()).unwrap();
+    let plan = project
+        .plan_acquisition(forked.notebook.entry.id, "science", None)
+        .unwrap();
+    assert!(plan.resolved_uri.ends_with("/approved"));
+    let state = project
+        .begin_acquisition(
+            &plan,
+            TutorialAcquisitionApproval {
+                approval_sha256: plan.approval_sha256.clone(),
+                allow_missing_digest: false,
+                skipped_check_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+
+    let result = project.advance_acquisition(
+        forked.notebook.entry.id,
+        "science",
+        state.current_generation,
+        1024,
+    );
+    let stop_address = stop_uri
+        .trim_start_matches("http://")
+        .split('/')
+        .next()
+        .unwrap();
+    if let Ok(mut stream) = TcpStream::connect(stop_address) {
+        stream
+            .write_all(b"GET /stop HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .unwrap();
+    }
+    server.join().unwrap();
+
+    assert!(matches!(result, Err(TutorialError::Network { .. })));
+    assert!(!project_root.path().join("data/science.bin").exists());
+    let lock = project.load_lock(forked.notebook.entry.id).unwrap();
+    assert_eq!(
+        lock.datasets[0].phase,
+        TutorialAcquisitionPhase::NetworkFailed
+    );
+    assert!(!lock.datasets[0].staged);
 }
 
 #[test]

@@ -152,16 +152,25 @@ impl TutorialUriHandler for FileTutorialUriHandler {
 
 struct HttpTutorialUriHandler {
     scheme: &'static str,
-    agent: ureq::Agent,
+    resolving_agent: ureq::Agent,
+    reading_agent: ureq::Agent,
 }
 
 impl HttpTutorialUriHandler {
     fn new(scheme: &'static str) -> Self {
-        let agent: ureq::Agent = ureq::config::Config::builder()
+        let resolving_agent: ureq::Agent = ureq::config::Config::builder()
             .save_redirect_history(true)
             .build()
             .into();
-        Self { scheme, agent }
+        let reading_agent: ureq::Agent = ureq::config::Config::builder()
+            .max_redirects(0)
+            .build()
+            .into();
+        Self {
+            scheme,
+            resolving_agent,
+            reading_agent,
+        }
     }
 }
 
@@ -171,14 +180,14 @@ impl TutorialUriHandler for HttpTutorialUriHandler {
     }
 
     fn resolve(&self, uri: &str) -> Result<TutorialSourceResolution, TutorialError> {
-        let response = self
-            .agent
-            .head(uri)
-            .call()
-            .map_err(|source| TutorialError::Network {
-                uri: uri.to_owned(),
-                detail: source.to_string(),
-            })?;
+        let response =
+            self.resolving_agent
+                .head(uri)
+                .call()
+                .map_err(|source| TutorialError::Network {
+                    uri: uri.to_owned(),
+                    detail: source.to_string(),
+                })?;
         let resolved_uri = response.get_uri().to_string();
         let redirects = response
             .get_redirect_history()
@@ -207,7 +216,7 @@ impl TutorialUriHandler for HttpTutorialUriHandler {
     ) -> Result<TutorialReadChunk, TutorialError> {
         let end = offset.saturating_add(limit.saturating_sub(1));
         let response = self
-            .agent
+            .reading_agent
             .get(uri)
             .header("Range", format!("bytes={offset}-{end}"))
             .call()
@@ -215,6 +224,19 @@ impl TutorialUriHandler for HttpTutorialUriHandler {
                 uri: uri.to_owned(),
                 detail: source.to_string(),
             })?;
+        if response.status().is_redirection() {
+            let location = response
+                .headers()
+                .get("location")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("<missing Location>");
+            return Err(TutorialError::Network {
+                uri: uri.to_owned(),
+                detail: format!(
+                    "source redirected after approval to {location}; plan and approve the new source first"
+                ),
+            });
+        }
         if offset > 0 && response.status().as_u16() != 206 {
             return Err(TutorialError::ResumeUnsupported {
                 uri: uri.to_owned(),
