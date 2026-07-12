@@ -47217,9 +47217,10 @@ mod tests {
             .map(|line| serde_json::from_str::<ImagerProgressEvent>(line).expect("progress event"))
             .collect::<Vec<_>>();
         let cube = events
-            .last()
+            .iter()
+            .find(|event| event.phase == "weighted mosaic groups complete")
             .and_then(|event| event.output_cube.as_ref())
-            .expect("last event cube");
+            .expect("weighted mosaic completion cube");
         assert_eq!(cube.z_planes, 16);
         assert_eq!(cube.active_plane_start, 7);
         assert_eq!(cube.active_plane_end, 14);
