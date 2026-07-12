@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import XCTest
 
 final class CasarsMacUITests: XCTestCase {
@@ -151,7 +152,7 @@ final class CasarsMacUITests: XCTestCase {
         let workbenchMenu = app.menuBars.menuBarItems["Workbench"]
         XCTAssertTrue(workbenchMenu.exists)
         workbenchMenu.click()
-        for prefix in ["Open Project Directory", "Open Tutorial Pack", "Open Demo Project"] {
+        for prefix in ["Open Project Directory", "Fork Tutorial Template", "Open Demo Project"] {
             let item = app.menuItems.matching(NSPredicate(format: "title BEGINSWITH %@", prefix)).firstMatch
             XCTAssertTrue(item.exists, "Missing menu item beginning with \(prefix)")
             XCTAssertFalse(item.isEnabled, "\(prefix) must be disabled in the isolated prototype runtime")
@@ -672,6 +673,332 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(visibleOutput.waitForExistence(timeout: 5))
     }
 
+    func testTutorialPrototypeLearnerNotesApprovalAndTaskLoading() throws {
+        launchTutorialPrototype()
+        let datasetID = "tutorial-dataset-twhya-calibrated"
+        XCTAssertEqual(
+            try accessibilityValue("tutorialPrototype.dataset.status.\(datasetID)"),
+            "missing"
+        )
+
+        replaceText(
+            "notebook.richElement.rich-element-3",
+            with: "Compare calibrated amplitudes before imaging."
+        )
+        selectViewMode("Raw")
+        let rawMarkdown = try textValue(try require("notebook.editor.raw"))
+        XCTAssertTrue(rawMarkdown.contains("Compare calibrated amplitudes before imaging."))
+        replaceText(
+            "notebook.editor.raw",
+            with: rawMarkdown.replacingOccurrences(
+                of: "Compare calibrated amplitudes before imaging.",
+                with: "Compare calibrated amplitudes and phases before imaging."
+            )
+        )
+        selectViewMode("Rich")
+        XCTAssertTrue(
+            waitForValue(
+                "notebook.richElement.rich-element-3",
+                containing: "Compare calibrated amplitudes and phases before imaging."
+            )
+        )
+        XCTAssertEqual(try accessibilityValue("notebook.dirtyState"), "dirty")
+
+        try clickIdentified("tutorialPrototype.dataset.review.\(datasetID)")
+        XCTAssertTrue(try require("tutorialPrototype.approval.sheet").exists)
+        XCTAssertEqual(try accessibilityValue("tutorialPrototype.approval.scheme"), "https")
+        XCTAssertTrue(
+            try accessibilityValue("tutorialPrototype.approval.expectedSize")
+                .contains("435742720 bytes")
+        )
+        XCTAssertEqual(
+            try accessibilityValue("tutorialPrototype.approval.destination"),
+            "data/twhya_calibrated.ms"
+        )
+        XCTAssertTrue(
+            try accessibilityValue("tutorialPrototype.approval.checksum")
+                .hasSuffix("a97b2")
+        )
+        try clickIdentified("tutorialPrototype.approval.approve")
+
+        XCTAssertTrue(
+            waitForAccessibilityValue(
+                "tutorialPrototype.dataset.status.\(datasetID)",
+                containing: "ready",
+                timeout: 8
+            ),
+            app.debugDescription
+        )
+        XCTAssertTrue(
+            try accessibilityValue("tutorialPrototype.progressSummary").contains("2 of 4")
+        )
+
+        let taskBlock = "notebook.parameters.open.tutorial-task-twhya-imager"
+        try bringIntoView(taskBlock, in: "notebook.document.scroll", deltaY: -420)
+        try clickIdentified(taskBlock)
+        XCTAssertTrue(
+            try require("central.tab.tab-prototype-task-tutorial-task-twhya-imager")
+                .waitForExistence(timeout: 5)
+        )
+        XCTAssertEqual(
+            try textValue(try require("prototypeTask.parameter.vis")),
+            "data/twhya_calibrated.ms"
+        )
+        XCTAssertEqual(try textValue(try require("prototypeTask.parameter.imsize")), "250")
+        XCTAssertEqual(
+            try accessibilityValue("prototypeTask.parameterSource.vis"),
+            "tutorial override"
+        )
+        XCTAssertEqual(
+            try accessibilityValue("prototypeTask.parameterSource.imsize"),
+            "tutorial override"
+        )
+    }
+
+    func testProductionTutorialForkApprovalReadyAndTaskLoading() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-gui-tutorial-\(UUID().uuidString)", isDirectory: true)
+        let project = root.appendingPathComponent("project", isDirectory: true)
+        let template = root.appendingPathComponent("template", isDirectory: true)
+        productionProjectURL = root
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: template, withIntermediateDirectories: true)
+        let bytes = Data("production GUI tutorial source".utf8)
+        let source = template.appendingPathComponent("source.bin")
+        try bytes.write(to: source)
+        let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        try """
+        # Production GUI tutorial
+
+        Editable learner notes.
+
+        <!-- casa-rs-cell:v1 id=019f7777-7777-7777-8777-777777777777 kind=task -->
+        ```toml
+        [casars]
+        format = 1
+        surface = "imager"
+        kind = "task"
+        contract = 1
+
+        [parameters]
+        vis = "data/science.bin"
+        imagename = "products/science"
+        weighting = "briggs"
+        robust = -0.5
+        ```
+        <!-- /casa-rs-cell -->
+        """.write(to: template.appendingPathComponent("tutorial.md"), atomically: true, encoding: .utf8)
+        try """
+        schema_version = 1
+        tutorial_id = "production-gui"
+        title = "Production GUI tutorial"
+
+        [[datasets]]
+        id = "science"
+        display_name = "Science input"
+        uri = "file://\(source.path)"
+        destination = "data/science.bin"
+        expected_size_bytes = \(bytes.count)
+        sha256 = "\(digest)"
+
+        [[sections]]
+        id = "run"
+        title = "Run"
+        dataset_ids = ["science"]
+        cell_ids = ["019f7777-7777-7777-8777-777777777777"]
+        """.write(to: template.appendingPathComponent("tutorial.toml"), atomically: true, encoding: .utf8)
+
+        app = XCUIApplication()
+        ensureStoppedBeforeLaunch()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "--open-project", project.path,
+            "--open-tutorial-pack", template.path,
+        ]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
+        XCTAssertEqual(try accessibilityValue("tutorial.dataset.science"), "missing")
+
+        try clickIdentified("tutorial.dataset.review.science")
+        XCTAssertTrue(try require("tutorial.approval.sheet").waitForExistence(timeout: 5))
+        try clickIdentified("tutorial.approval.approve")
+        XCTAssertTrue(
+            waitForAccessibilityValue("tutorial.dataset.science", containing: "ready"),
+            app.debugDescription
+        )
+
+        let cellID = "019f7777-7777-7777-8777-777777777777"
+        try clickIdentified("notebook.parameters.open.\(cellID)")
+        XCTAssertTrue(try require("task.parameter.vis").waitForExistence(timeout: 5))
+        XCTAssertEqual(try accessibilityValue("task.parameterSource.vis"), "tutorial override")
+        let taskScroll = try XCTUnwrap(
+            app.scrollViews.allElementsBoundByIndex.max {
+                $0.frame.width < $1.frame.width
+            },
+            app.debugDescription
+        )
+        for _ in 0..<6 {
+            taskScroll.scroll(byDeltaX: 0, deltaY: -420)
+        }
+        XCTAssertEqual(try accessibilityValue("task.parameterSource.robust"), "tutorial override")
+    }
+
+    func testTutorialPrototypeCancellationResumeAndAttemptIdentity() throws {
+        launchTutorialPrototype()
+        let datasetID = "tutorial-dataset-twhya-calibrated"
+        try clickIdentified("tutorialPrototype.dataset.review.\(datasetID)")
+        try clickIdentified("tutorialPrototype.approval.approve")
+
+        let progressID = "tutorialPrototype.dataset.progress.\(datasetID)"
+        XCTAssertTrue(
+            waitForPositivePercentage(progressID),
+            "Acquisition never reported resumable progress: \(app.debugDescription)"
+        )
+        let progress = try require(progressID)
+        XCTAssertTrue(try textValue(progress).hasSuffix("%"), progress.debugDescription)
+        try clickIdentified("tutorialPrototype.dataset.cancel.\(datasetID)")
+        XCTAssertTrue(
+            waitForAccessibilityValue(
+                "tutorialPrototype.dataset.status.\(datasetID)",
+                containing: "cancelled"
+            )
+        )
+        let firstAttempt = try accessibilityValue("tutorialPrototype.dataset.attempt.\(datasetID)")
+        let resumeOffset = try accessibilityValue("tutorialPrototype.dataset.resumeOffset.\(datasetID)")
+        XCTAssertNotEqual(resumeOffset, "0")
+
+        try clickIdentified("tutorialPrototype.dataset.resume.\(datasetID)")
+        XCTAssertNotEqual(
+            try accessibilityValue("tutorialPrototype.dataset.attempt.\(datasetID)"),
+            firstAttempt
+        )
+        XCTAssertTrue(
+            waitForAccessibilityValue(
+                "tutorialPrototype.dataset.status.\(datasetID)",
+                containing: "ready",
+                timeout: 8
+            )
+        )
+        assertZeroTutorialProductionBoundaryCalls()
+    }
+
+    func testTutorialPrototypeChecksumFailureStaysCompactAndRetryRecovers() throws {
+        launchTutorialPrototype(scenario: "checksum-failure")
+        let datasetID = "tutorial-dataset-twhya-calibrated"
+        try clickIdentified("tutorialPrototype.dataset.review.\(datasetID)")
+        try clickIdentified("tutorialPrototype.approval.approve")
+
+        XCTAssertTrue(
+            waitForAccessibilityValue(
+                "tutorialPrototype.dataset.status.\(datasetID)",
+                containing: "checksum-failed",
+                timeout: 8
+            )
+        )
+        XCTAssertEqual(
+            try accessibilityValue("tutorialPrototype.failure.details.\(datasetID)"),
+            "collapsed"
+        )
+        try clickIdentified("tutorialPrototype.dataset.retry.\(datasetID)")
+        XCTAssertTrue(
+            waitForAccessibilityValue(
+                "tutorialPrototype.dataset.status.\(datasetID)",
+                containing: "ready",
+                timeout: 8
+            )
+        )
+        assertZeroTutorialProductionBoundaryCalls()
+    }
+
+    func testTutorialPrototypeDiskFailureShowsPlanAndRecoversExplicitly() throws {
+        launchTutorialPrototype(scenario: "disk-failure")
+        let datasetID = "tutorial-dataset-twhya-calibrated"
+        try clickIdentified("tutorialPrototype.dataset.review.\(datasetID)")
+        let diskPlan = try accessibilityValue("tutorialPrototype.approval.diskRequirement")
+        XCTAssertTrue(diskPlan.contains("required"))
+        XCTAssertTrue(diskPlan.contains("free"))
+        try clickIdentified("tutorialPrototype.approval.approve")
+
+        XCTAssertTrue(
+            waitForAccessibilityValue(
+                "tutorialPrototype.dataset.status.\(datasetID)",
+                containing: "disk-failed"
+            )
+        )
+        XCTAssertEqual(
+            try accessibilityValue("tutorialPrototype.failure.details.\(datasetID)"),
+            "collapsed"
+        )
+        try clickIdentified("tutorialPrototype.dataset.makeSpaceAvailable.\(datasetID)")
+        XCTAssertTrue(
+            waitForAccessibilityValue(
+                "tutorialPrototype.dataset.status.\(datasetID)",
+                containing: "ready",
+                timeout: 8
+            )
+        )
+        assertZeroTutorialProductionBoundaryCalls()
+    }
+
+    func testTutorialPrototypeAccessibilityAndIsolation() throws {
+        launchTutorialPrototype()
+
+        let visibleWindowFrame = app.windows.firstMatch.frame
+        var unacceptedIssues: [String] = []
+        try app.performAccessibilityAudit { issue in
+            if issue.compactDescription == "Parent/Child mismatch" {
+                return true
+            }
+            if issue.auditType.contains(.contrast),
+               (issue.element?.label == "casa-rs Workbench"
+                   || issue.element?.value as? String == "casa-rs Workbench")
+            {
+                return true
+            }
+            if issue.element?.elementType == .group || issue.element?.elementType == .touchBar {
+                return true
+            }
+            if ["split.resizeHandle", "central.tab.plus"].contains(issue.element?.identifier) {
+                return true
+            }
+            if issue.auditType.contains(.contrast),
+               let identifier = issue.element?.identifier,
+               identifier == "notebook.boundaryAudit"
+                   || identifier.hasPrefix("notebook.selector.")
+            {
+                return true
+            }
+            if issue.auditType.contains(.contrast),
+               let frame = issue.element?.frame,
+               !frame.intersects(visibleWindowFrame)
+            {
+                // XCTest audits lazily retained ScrollView descendants even
+                // when their frames are fully outside the visible window.
+                // The retained element screenshot is unrelated screen pixels,
+                // so there is no rendered contrast to evaluate at this state.
+                return true
+            }
+            unacceptedIssues.append(issue.compactDescription)
+            return true
+        }
+        XCTAssertTrue(unacceptedIssues.isEmpty, unacceptedIssues.joined(separator: "\n"))
+
+        try clickIdentified("tutorialPrototype.dataset.review.tutorial-dataset-twhya-calibrated")
+        XCTAssertTrue(try require("tutorialPrototype.approval.sheet").exists)
+        try clickIdentified("tutorialPrototype.approval.cancel")
+        let workbenchMenu = app.menuBars.menuBarItems["Workbench"]
+        XCTAssertTrue(workbenchMenu.exists)
+        workbenchMenu.click()
+        for prefix in ["Open Project Directory", "Fork Tutorial Template", "Open Demo Project"] {
+            let item = app.menuItems.matching(NSPredicate(format: "title BEGINSWITH %@", prefix)).firstMatch
+            XCTAssertTrue(item.exists)
+            XCTAssertFalse(item.isEnabled)
+        }
+        app.typeKey(.escape, modifierFlags: [])
+        assertZeroTutorialProductionBoundaryCalls()
+    }
+
     private func launchPrototype(scenario: String = "happy-path") {
         app = XCUIApplication()
         ensureStoppedBeforeLaunch()
@@ -706,6 +1033,23 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(element("pythonPrototype.kernelState").waitForExistence(timeout: 5))
     }
 
+    private func launchTutorialPrototype(scenario: String = "happy-path") {
+        app = XCUIApplication()
+        ensureStoppedBeforeLaunch()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "--show-prototype", "tutorial",
+            "--prototype-state", scenario,
+        ]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(
+            app.windows["casa-rs Workbench"].waitForExistence(timeout: 10),
+            app.debugDescription
+        )
+        XCTAssertTrue(element("tutorialPrototype.progressSummary").waitForExistence(timeout: 5))
+    }
+
     private func ensureStoppedBeforeLaunch() {
         guard app.state != .notRunning else { return }
         app.terminate()
@@ -738,9 +1082,17 @@ final class CasarsMacUITests: XCTestCase {
         attempts: Int = 8
     ) throws {
         let target = element(identifier)
-        let scroll = app.scrollViews[scrollIdentifier]
+        let scroll = element(scrollIdentifier)
         XCTAssertTrue(scroll.waitForExistence(timeout: 5), "Missing scroll view \(scrollIdentifier)")
-        XCTAssertTrue(scroll.isHittable, "Scroll view is not hittable: \(scrollIdentifier)")
+        let hittable = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"),
+            object: scroll
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [hittable], timeout: 5),
+            .completed,
+            "Scroll view is not hittable: \(scrollIdentifier)"
+        )
         let isComfortablyVisible = {
             guard target.exists, target.isHittable else { return false }
             let viewport = scroll.frame.insetBy(dx: 8, dy: 40)
@@ -834,10 +1186,17 @@ final class CasarsMacUITests: XCTestCase {
         try textValue(try require(identifier))
     }
 
-    private func waitForValue(_ identifier: String, containing substring: String) -> Bool {
+    private func waitForValue(
+        _ identifier: String,
+        containing substring: String,
+        timeout: TimeInterval = 5
+    ) -> Bool {
         let element = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
         let predicate = NSPredicate(format: "value CONTAINS %@", substring)
-        return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: element)], timeout: 5) == .completed
+        return XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: predicate, object: element)],
+            timeout: timeout
+        ) == .completed
     }
 
     private func waitForTextValue(_ element: XCUIElement, equalTo expected: String) -> Bool {
@@ -890,8 +1249,26 @@ final class CasarsMacUITests: XCTestCase {
         return false
     }
 
-    private func waitForAccessibilityValue(_ identifier: String, containing substring: String) -> Bool {
-        waitForValue(identifier, containing: substring)
+    private func waitForAccessibilityValue(
+        _ identifier: String,
+        containing substring: String,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        waitForValue(identifier, containing: substring, timeout: timeout)
+    }
+
+    private func waitForPositivePercentage(_ identifier: String) -> Bool {
+        let result = element(identifier)
+        let deadline = Date().addingTimeInterval(5)
+        repeat {
+            if let value = result.value as? String,
+               let percentage = Int(value.replacingOccurrences(of: "%", with: "")),
+               percentage > 0 {
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        } while Date() < deadline
+        return false
     }
 
     private func assertZeroProductionBoundaryCalls() {
@@ -902,6 +1279,12 @@ final class CasarsMacUITests: XCTestCase {
 
     private func assertZeroPythonProductionBoundaryCalls() {
         let audit = element("pythonPrototype.boundaryAudit")
+        XCTAssertTrue(audit.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertEqual(audit.value as? String ?? audit.label, "0")
+    }
+
+    private func assertZeroTutorialProductionBoundaryCalls() {
+        let audit = element("tutorialPrototype.boundaryAudit")
         XCTAssertTrue(audit.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertEqual(audit.value as? String ?? audit.label, "0")
     }

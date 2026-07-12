@@ -73,7 +73,7 @@ final class NotebookPrototypeRuntimeIsolationTests: XCTestCase {
         store.openProject(path: "/never/project")
         store.openExternalMeasurementSetForImaging(path: "/never/input.ms")
         store.openFixtureProject()
-        store.openTutorialPack(path: "/never/pack.json")
+        store.openTutorialTemplate(path: "/never/pack.json")
         store.refreshProjectFromDisk()
         store.selectDockMode(.history)
         store.openDefaultTab(kind: .history)

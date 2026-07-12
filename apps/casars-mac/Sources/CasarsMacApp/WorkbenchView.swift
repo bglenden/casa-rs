@@ -296,7 +296,65 @@ struct LeftDockView: View {
 
     @ViewBuilder
     private var notebooksDock: some View {
-        if let notebook = store.state.prototypeNotebook {
+        if let tutorial = store.state.prototypeTutorial {
+            let notebook = tutorial.learnerNotebook
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Project notebooks")
+                        .workbenchFont(.caption, weight: .semibold)
+                    Spacer()
+                    Text("Tutorial")
+                        .workbenchFont(.caption2, weight: .semibold)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.accentColor.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+
+                List {
+                    ForEach(notebook.notebooks) { summary in
+                        Button {
+                            store.openDefaultTab(kind: .notebook)
+                        } label: {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Image(systemName: "graduationcap.fill")
+                                    .foregroundStyle(Color.accentColor)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(summary.title)
+                                        .workbenchFont(.subheadline, weight: .semibold)
+                                        .lineLimit(1)
+                                    Text(summary.filename)
+                                        .workbenchFont(.caption, design: .monospaced)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 4)
+                                if notebook.isDirty {
+                                    Circle().fill(.orange).frame(width: 7, height: 7)
+                                        .accessibilityLabel("Unsaved changes")
+                                }
+                            }
+                            .padding(.vertical, 3)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("notebook.selector.\(summary.id)")
+                    }
+                }
+                .listStyle(.sidebar)
+                .accessibilityIdentifier("dock.notebooks")
+
+                Divider()
+                Button {
+                    store.openDefaultTab(kind: .notebook)
+                } label: {
+                    Label("Open learner notebook", systemImage: "arrow.up.forward.app")
+                }
+                .buttonStyle(.borderless)
+                .padding(10)
+                .accessibilityIdentifier("notebook.selector.open")
+            }
+        } else if let notebook = store.state.prototypeNotebook {
             VStack(spacing: 0) {
                 HStack {
                     Text("Project notebooks")
@@ -482,6 +540,9 @@ struct LeftDockView: View {
     }
 
     private var projectSourceLabel: String {
+        if store.state.isTutorialPrototype {
+            return "Tutorial prototype"
+        }
         if store.state.isNotebookPrototype {
             return "Notebook prototype"
         }
@@ -490,7 +551,6 @@ struct LeftDockView: View {
         case .fixture: "Demo project"
         case .probed: "Real project"
         case .directMeasurementSet: "Direct MeasurementSet"
-        case .tutorialPack: "Tutorial pack"
         }
     }
 
@@ -1108,7 +1168,6 @@ struct InspectorView: View {
         case .fixture: "Demo metadata"
         case .probed: "Real probe metadata"
         case .directMeasurementSet: "Direct launch metadata"
-        case .tutorialPack: "Tutorial pack metadata"
         }
     }
 

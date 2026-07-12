@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-07-11
+Last reality check: 2026-07-12
 Verification: just docs-check
 
 ## System purpose
@@ -141,13 +141,22 @@ persisted contracts. Explicit MS/image snapshots are copied and versioned by
 `casa-notebook`; canonical typed explorer parameters are retained solely as
 reopen intent, never inserted as input forms or live links in Markdown.
 
-The planned later-wave tutorial-manifest support and `casars-assistant`
-TypeScript sidecar are isolated behind a
+`casa-notebook` owns portable tutorial-template v1, immutable template forking,
+the versioned URI-handler registry, exact acquisition approvals, integrity and
+bounded extraction, and `.casa-rs/tutorials/<notebook-id>/lock.toml`.
+`casars-frontend-services` projects those Rust contracts as JSON through
+UniFFI; Swift owns interaction and asynchronous orchestration only. The
+package-internal Wave 3 prototype remains deterministic review state and never
+becomes a persisted or public contract. `tutorial-pack.v0` has no runtime
+reader or GUI state; an explicit Rust one-shot migrator converts its prose,
+native GUI task steps, and regression overlay into v1.
+
+The planned `casars-assistant` TypeScript sidecar is isolated behind a
 CASA-RS-owned JSONL/stdio protocol and may use Pi as a replaceable model/auth
 adapter. Swift remains the native interaction layer, and
 `casars-frontend-services` remains a projection layer rather than a persistence
-implementation. The assistant and later-wave tutorial modules remain accepted
-architecture but do not exist until their implementation waves land.
+implementation. The assistant modules remain accepted architecture but do not
+exist until their implementation wave lands.
 
 Every notebook-program wave starts with a launchable deterministic GUI
 prototype and an explicit approval gate before real adapters are connected.

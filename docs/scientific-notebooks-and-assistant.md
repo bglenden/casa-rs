@@ -1,7 +1,7 @@
 # Scientific Notebooks, Tutorials, Python, and AI Assistant
 
 Truth class: accepted design
-Last reality check: 2026-07-11
+Last reality check: 2026-07-12
 Verification: just docs-check
 Architecture decision: [ADR-0007](adr/0007-scientific-notebooks-and-assistant-boundary.md)
 
@@ -380,6 +380,18 @@ explorer; **Open in Explorer** restores the saved parameters.
 Prototype: learner notebook, annotations, section progress, dataset acquisition
 through download/verify/unpack/ready, cancellation/resume, checksum and disk
 failures, and task-parameter loading.
+
+Current Phase A reality: `casars-mac --show-prototype tutorial` launches an
+in-memory TW Hya learner notebook in the existing Notebooks dock. Compact
+inline controls expose the exact source, resolved redirects, size, project
+destination, checksum, disk, extraction, and optional-check plan before a
+deterministic Download/Verify/Unpack/Ready simulation. Attempt generations make
+cancel/resume/restart and retry stale-safe; offline, checksum, unsafe-archive,
+and insufficient-disk states never appear staged. A ready fixture enables a
+parameter block that opens the fixture task tab directly; the loaded tutorial
+overrides are identified in the form without an intermediate preview. This
+projection performs no file, network, archive, task, provider, or durable
+project operation and is not the tutorial-template v1 or acquisition contract.
 
 Production: tutorial-template v1, clean v0 migration, URI handlers, verified
 project-local acquisition, safe materialization, optional checks, and the TW Hya

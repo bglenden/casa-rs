@@ -8,6 +8,7 @@ import Foundation
 package enum WorkbenchPrototypeKind: String, Codable, Equatable {
     case notebook
     case python
+    case tutorial
 }
 
 package enum NotebookPrototypeScenario: String, Codable, Equatable {

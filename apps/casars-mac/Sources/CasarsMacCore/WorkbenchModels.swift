@@ -215,7 +215,6 @@ public enum ProjectSource: String, Codable, Equatable {
     case fixture
     case probed
     case directMeasurementSet
-    case tutorialPack
 }
 
 public extension ProjectSource {
@@ -2761,7 +2760,10 @@ public struct WorkbenchState: Codable, Equatable {
     public var runProductGroups: [RunProductGroup]
     public var taskCatalog: [TaskCatalogEntry]
     public var taskExecutionMatrixRows: [TaskExecutionMatrixRow]
-    public var tutorialPack: TutorialPackContext?
+    /// Rust-backed portable learner tutorials for the open project.
+    package var tutorialProjects: [TutorialProjectState]
+    /// Exact Rust-issued plan awaiting explicit user approval.
+    package var pendingTutorialAcquisitionPlan: TutorialAcquisitionPlanState?
     /// Rust-backed project notebook state. The complete Markdown source remains
     /// the editable authority; this is only an in-memory GUI projection.
     package var scientificNotebooks: ScientificNotebookProjectState?
@@ -2769,6 +2771,8 @@ public struct WorkbenchState: Codable, Equatable {
     package var prototypeNotebook: PrototypeScientificNotebookProjection?
     /// Ephemeral fixture projection present only for the Wave 2 Python interaction prototype.
     package var prototypePython: PrototypePythonNotebookProjection?
+    /// Ephemeral fixture projection present only for the Wave 3 tutorial interaction prototype.
+    package var prototypeTutorial: TutorialNotebookPrototypeProjection?
     public var activeTaskID: String
     public var taskUISchemas: [String: TaskUISchema]
     public var parameterSessions: [String: SurfaceParameterSession]
@@ -2804,7 +2808,6 @@ public struct WorkbenchState: Codable, Equatable {
         runProductGroups: [RunProductGroup] = [],
         taskCatalog: [TaskCatalogEntry] = [],
         taskExecutionMatrixRows: [TaskExecutionMatrixRow] = [],
-        tutorialPack: TutorialPackContext? = nil,
         activeTaskID: String = "imager",
         taskUISchemas: [String: TaskUISchema] = [:],
         parameterSessions: [String: SurfaceParameterSession] = [:],
@@ -2838,10 +2841,12 @@ public struct WorkbenchState: Codable, Equatable {
         self.runProductGroups = runProductGroups
         self.taskCatalog = taskCatalog
         self.taskExecutionMatrixRows = taskExecutionMatrixRows
-        self.tutorialPack = tutorialPack
+        tutorialProjects = []
+        pendingTutorialAcquisitionPlan = nil
         scientificNotebooks = nil
         prototypeNotebook = nil
         prototypePython = nil
+        prototypeTutorial = nil
         self.activeTaskID = activeTaskID
         self.taskUISchemas = taskUISchemas
         self.parameterSessions = parameterSessions
@@ -2914,8 +2919,17 @@ public struct WorkbenchState: Codable, Equatable {
         prototypePython != nil
     }
 
+    package var isTutorialPrototype: Bool {
+        prototypeTutorial != nil
+    }
+
+    package var activeTutorialProject: TutorialProjectState? {
+        guard let notebookID = scientificNotebooks?.activeNotebookID else { return nil }
+        return tutorialProjects.first { $0.tutorial.notebookId == notebookID }
+    }
+
     package var isPrototype: Bool {
-        isNotebookPrototype || isPythonPrototype
+        isNotebookPrototype || isPythonPrototype || isTutorialPrototype
     }
 
     public var isDemoProject: Bool {
@@ -2961,6 +2975,24 @@ public struct DebugDatasetSnapshot: Codable, Equatable {
     }
 }
 
+package struct DebugTutorialProjectSnapshot: Codable, Equatable {
+    package var notebookID: String
+    package var tutorialID: String
+    package var title: String
+    package var datasets: [String: String]
+    package var stagedDatasets: [String]
+
+    package init(state: TutorialProjectState) {
+        notebookID = state.tutorial.notebookId
+        tutorialID = state.tutorial.tutorialId
+        title = state.tutorial.title
+        datasets = Dictionary(uniqueKeysWithValues: state.tutorial.datasets.map {
+            ($0.id, $0.phase.rawValue)
+        })
+        stagedDatasets = state.tutorial.datasets.filter(\.staged).map(\.id)
+    }
+}
+
 public struct DebugStateSnapshot: Codable, Equatable {
     public var activeProject: String
     public var activeLeftDockMode: DockMode
@@ -2969,9 +3001,10 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var selectedDatasetSummary: DebugDatasetSnapshot?
     public var activeProjectRoot: String
     public var activeProjectSource: ProjectSource
-    public var tutorialPack: DebugTutorialPackSnapshot?
     package var prototypeNotebook: DebugPrototypeScientificNotebookSnapshot?
     package var prototypePython: DebugPrototypePythonNotebookSnapshot?
+    package var prototypeTutorial: DebugTutorialNotebookPrototypeSnapshot?
+    package var tutorials: [DebugTutorialProjectSnapshot]
     public var scientificNotebook: DebugScientificNotebookSnapshot?
     public var discoveredDatasets: [String]
     public var probeDiagnostics: [String]
@@ -3007,9 +3040,10 @@ public struct DebugStateSnapshot: Codable, Equatable {
         activeProject = state.project.name
         activeProjectRoot = state.project.rootPath
         activeProjectSource = state.project.source
-        tutorialPack = state.tutorialPack.map(DebugTutorialPackSnapshot.init(context:))
         prototypeNotebook = state.prototypeNotebook.map(DebugPrototypeScientificNotebookSnapshot.init(state:))
         prototypePython = state.prototypePython.map(DebugPrototypePythonNotebookSnapshot.init(state:))
+        prototypeTutorial = state.prototypeTutorial.map(DebugTutorialNotebookPrototypeSnapshot.init(state:))
+        tutorials = state.tutorialProjects.map(DebugTutorialProjectSnapshot.init(state:))
         scientificNotebook = state.scientificNotebooks.map(DebugScientificNotebookSnapshot.init(state:))
         activeLeftDockMode = state.dockMode
         leftDockCollapsed = state.leftDockCollapsed
@@ -3181,57 +3215,43 @@ package struct DebugPrototypePythonNotebookSnapshot: Codable, Equatable {
     }
 }
 
-public struct DebugTutorialPackSnapshot: Codable, Equatable {
-    public var packID: String
-    public var tutorialID: String
-    public var title: String
-    public var declaredCasaVersion: String
-    public var rootPath: String
-    public var manifestPath: String
-    public var selectedSectionID: String?
-    public var selectedSectionTitle: String?
-    public var inputs: [TutorialPackInputState]
-    public var sections: [DebugTutorialPackSectionSnapshot]
-    public var workspaceRoot: String
-    public var nativeWorkspacePath: String
-    public var oracleWorkspacePath: String
-    public var reviewPath: String
-    public var learnerDocsIndex: String
+package struct DebugTutorialNotebookPrototypeSnapshot: Codable, Equatable {
+    package var prototypeKind: WorkbenchPrototypeKind
+    package var scenario: TutorialNotebookPrototypeScenario
+    package var title: String
+    package var learnerNotebookID: String
+    package var learnerNotebookDirty: Bool
+    package var selectedSectionID: String
+    package var sectionStatuses: [String: TutorialNotebookSectionStatus]
+    package var datasetID: String
+    package var datasetPhase: TutorialNotebookAcquisitionPhase
+    package var datasetIsStaged: Bool
+    package var datasetProgress: Double
+    package var resumeOffsetBytes: UInt64
+    package var currentGeneration: Int
+    package var attemptCount: Int
+    package var activeApproval: Bool
+    package var fixtureTaskID: String
 
-    public init(context: TutorialPackContext) {
-        packID = context.packID
-        tutorialID = context.tutorialID
-        title = context.title
-        declaredCasaVersion = context.declaredCasaVersion
-        rootPath = context.rootPath
-        manifestPath = context.manifestPath
-        selectedSectionID = context.selectedSection?.id
-        selectedSectionTitle = context.selectedSection?.title
-        inputs = context.inputs
-        sections = context.sections.map(DebugTutorialPackSectionSnapshot.init(section:))
-        workspaceRoot = context.workspaceRoot
-        nativeWorkspacePath = context.nativeWorkspacePath
-        oracleWorkspacePath = context.oracleWorkspacePath
-        reviewPath = context.reviewPath
-        learnerDocsIndex = context.learnerDocsIndex
-    }
-}
-
-public struct DebugTutorialPackSectionSnapshot: Codable, Equatable {
-    public var id: String
-    public var sequence: UInt64
-    public var title: String
-    public var tasks: [String]
-    public var reviewStatus: String
-    public var reviewRecordPath: String
-
-    public init(section: TutorialPackSection) {
-        id = section.id
-        sequence = section.sequence
-        title = section.title
-        tasks = section.tasks
-        reviewStatus = section.reviewCheckpoint.status
-        reviewRecordPath = section.reviewCheckpoint.recordPath
+    package init(state: TutorialNotebookPrototypeProjection) {
+        prototypeKind = state.prototypeKind
+        scenario = state.scenario
+        title = state.title
+        learnerNotebookID = state.learnerNotebook.notebookID
+        learnerNotebookDirty = state.learnerNotebook.isDirty
+        selectedSectionID = state.selectedSectionID
+        sectionStatuses = Dictionary(
+            uniqueKeysWithValues: state.sections.map { ($0.id, $0.status) }
+        )
+        datasetID = state.dataset.id
+        datasetPhase = state.dataset.phase
+        datasetIsStaged = state.dataset.isStaged
+        datasetProgress = state.dataset.currentAttempt?.progress ?? 0
+        resumeOffsetBytes = state.dataset.currentAttempt?.resumeOffsetBytes ?? 0
+        currentGeneration = state.currentGeneration
+        attemptCount = state.dataset.attempts.count
+        activeApproval = state.activeApproval != nil
+        fixtureTaskID = state.fixtureTask.id
     }
 }
 

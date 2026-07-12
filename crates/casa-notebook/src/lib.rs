@@ -11,6 +11,7 @@ mod ids;
 mod markdown;
 mod receipt;
 mod store;
+mod tutorial;
 mod visualization;
 
 pub use ids::{CellId, NotebookId, RunId};
@@ -23,6 +24,15 @@ pub use receipt::{
 pub use store::{
     AttemptHandle, ConflictResolution, ExportMode, NotebookConflict, NotebookEntry,
     NotebookSnapshot, NotebookStore, RecordingPolicy, SaveResult, StoreError,
+};
+pub use tutorial::{
+    TUTORIAL_LOCK_SCHEMA_VERSION, TUTORIAL_MANIFEST_SCHEMA_VERSION, TutorialAcquisitionApproval,
+    TutorialAcquisitionPhase, TutorialAcquisitionPlan, TutorialArchiveFormat, TutorialAttemptKind,
+    TutorialCheckKind, TutorialCheckOutcome, TutorialCheckStatus, TutorialDataset,
+    TutorialDatasetAttempt, TutorialDatasetLock, TutorialError, TutorialForkResult, TutorialLock,
+    TutorialManifest, TutorialOptionalCheck, TutorialProject, TutorialReadChunk,
+    TutorialRegressionOverlay, TutorialSection, TutorialSourceResolution, TutorialTemplate,
+    TutorialUnpackPlan, TutorialUriHandler, TutorialUriRegistry,
 };
 pub use visualization::{
     SaveVisualizationRequest, VISUALIZATION_SCHEMA_VERSION, VisualizationRenderMetadata,

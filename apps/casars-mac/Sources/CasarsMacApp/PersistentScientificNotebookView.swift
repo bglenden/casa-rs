@@ -8,6 +8,8 @@ struct PersistentScientificNotebookView: View {
     @State private var expandedPythonHistory: Set<String> = []
     @State private var expandedPythonDetails: Set<String> = []
     @State private var lightboxRevision: NotebookVisualizationRevision?
+    @State private var tutorialSourceOverrides: [String: String] = [:]
+    @State private var skippedTutorialChecks: Set<String> = []
 
     private var document: NotebookDocumentState? {
         store.state.scientificNotebooks?.activeNotebook
@@ -67,6 +69,17 @@ struct PersistentScientificNotebookView: View {
                 .frame(minWidth: 720, minHeight: 520)
                 .accessibilityIdentifier("notebook.visualization.lightbox")
             }
+        }
+        .sheet(isPresented: Binding(
+            get: { store.state.pendingTutorialAcquisitionPlan != nil },
+            set: { presented in
+                if !presented {
+                    store.dismissTutorialAcquisitionApproval()
+                    skippedTutorialChecks.removeAll()
+                }
+            }
+        )) {
+            tutorialApprovalSheet
         }
     }
 
@@ -178,6 +191,9 @@ struct PersistentScientificNotebookView: View {
             .accessibilityIdentifier("notebook.editor.raw")
         } else {
             VStack(alignment: .leading, spacing: 18) {
+                if let tutorial = store.state.activeTutorialProject {
+                    tutorialProgress(tutorial)
+                }
                 ForEach(richDocument.elements) { element in
                     if let cellID = element.taskID {
                         taskCell(cellID: cellID, document: document, fallback: element.source)
@@ -194,6 +210,216 @@ struct PersistentScientificNotebookView: View {
         }
     }
 
+    private func tutorialProgress(_ project: TutorialProjectState) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(project.tutorial.title, systemImage: "graduationcap")
+                    .workbenchFont(.headline)
+                Spacer()
+                Text("\(project.tutorial.datasets.filter(\.staged).count) of \(project.tutorial.datasets.count) datasets ready")
+                    .workbenchFont(.caption, weight: .semibold)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("tutorial.progressSummary")
+            }
+            ForEach(project.tutorial.datasets) { dataset in
+                tutorialDataset(dataset)
+            }
+        }
+        .padding(11)
+        .background(Color.accentColor.opacity(0.045))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.accentColor.opacity(0.16)))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("tutorial.project.\(project.tutorial.tutorialId)")
+    }
+
+    private func tutorialDataset(_ dataset: TutorialDatasetState) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(tutorialPhaseColor(dataset.phase))
+                    .frame(width: 6, height: 6)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(dataset.displayName).workbenchFont(.subheadline, weight: .semibold)
+                    Text("\(tutorialPhaseLabel(dataset.phase)) · \(dataset.destination)")
+                        .workbenchFont(.caption, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("tutorial.dataset.\(dataset.id)")
+                        .accessibilityValue(dataset.phase.rawValue)
+                }
+                Spacer()
+                tutorialDatasetActions(dataset)
+            }
+            if dataset.phase == .missing {
+                TextField(
+                    "Catalog URL or registered source URI",
+                    text: Binding(
+                        get: { tutorialSourceOverrides[dataset.id] ?? dataset.uri },
+                        set: { tutorialSourceOverrides[dataset.id] = $0 }
+                    )
+                )
+                .textFieldStyle(.plain)
+                .font(.system(size: 11, design: .monospaced))
+                .accessibilityIdentifier("tutorial.dataset.source.\(dataset.id)")
+            }
+            if let attempt = dataset.currentAttempt, dataset.phase.isRunning {
+                ProgressView(
+                    value: Double(attempt.downloadedBytes),
+                    total: Double(max(1, attempt.expectedSizeBytes ?? 1))
+                )
+                .controlSize(.small)
+                .accessibilityIdentifier("tutorial.dataset.progress.\(dataset.id)")
+            }
+            if let error = dataset.currentAttempt?.error {
+                DisclosureGroup("Details") {
+                    Text(error)
+                        .workbenchFont(.caption)
+                        .textSelection(.enabled)
+                        .padding(.top, 4)
+                }
+                .workbenchFont(.caption, weight: .semibold)
+                .accessibilityIdentifier("tutorial.dataset.failure.\(dataset.id)")
+            }
+            if dataset.phase == .ready, let attempt = dataset.currentAttempt, !attempt.checks.isEmpty {
+                DisclosureGroup("Verification checks") {
+                    ForEach(attempt.checks) { check in
+                        Text("\(check.status.capitalized): \(check.detail)")
+                            .workbenchFont(.caption)
+                    }
+                    .padding(.top, 4)
+                }
+                .workbenchFont(.caption, weight: .semibold)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    @ViewBuilder
+    private func tutorialDatasetActions(_ dataset: TutorialDatasetState) -> some View {
+        switch dataset.phase {
+        case .missing:
+            Button("Review") {
+                let source = tutorialSourceOverrides[dataset.id]
+                store.reviewTutorialAcquisition(
+                    datasetID: dataset.id,
+                    sourceOverride: source == dataset.uri ? nil : source
+                )
+            }
+            .accessibilityIdentifier("tutorial.dataset.review.\(dataset.id)")
+        case .downloading, .verifying, .unpacking, .checking, .materializing:
+            Button("Cancel", role: .destructive) {
+                store.cancelTutorialAcquisition(datasetID: dataset.id)
+            }
+            .accessibilityIdentifier("tutorial.dataset.cancel.\(dataset.id)")
+        case .cancelled, .networkFailed:
+            Button("Resume") { store.resumeTutorialAcquisition(datasetID: dataset.id) }
+                .accessibilityIdentifier("tutorial.dataset.resume.\(dataset.id)")
+            Button("Restart") { store.restartTutorialAcquisition(datasetID: dataset.id) }
+                .accessibilityIdentifier("tutorial.dataset.restart.\(dataset.id)")
+        case .checksumFailed, .unsafeArchive, .destinationCollision:
+            Button("Retry") { store.retryTutorialAcquisition(datasetID: dataset.id) }
+                .accessibilityIdentifier("tutorial.dataset.retry.\(dataset.id)")
+            Button("Restart") { store.restartTutorialAcquisition(datasetID: dataset.id) }
+                .accessibilityIdentifier("tutorial.dataset.restart.\(dataset.id)")
+        case .ready:
+            Label("Ready", systemImage: "checkmark.circle.fill")
+                .workbenchFont(.caption, weight: .semibold)
+                .foregroundStyle(.green)
+        }
+    }
+
+    @ViewBuilder
+    private var tutorialApprovalSheet: some View {
+        if let plan = store.state.pendingTutorialAcquisitionPlan {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Acquire tutorial dataset")
+                        .workbenchFont(.title2, weight: .semibold)
+                    approvalFact("Scheme", plan.scheme)
+                    approvalFact("Requested", plan.requestedUri)
+                    approvalFact("Resolved", plan.resolvedUri)
+                    if !plan.redirects.isEmpty {
+                        approvalFact("Redirects", plan.redirects.joined(separator: " → "))
+                    }
+                    approvalFact("Size", byteCount(plan.expectedSizeBytes ?? plan.resolvedSizeBytes))
+                    approvalFact("Destination", plan.destination)
+                    approvalFact("SHA-256", plan.expectedSha256 ?? "Not supplied — compute and pin after approval")
+                    approvalFact(
+                        "Disk",
+                        "\(byteCount(plan.requiredDiskBytes)) required · \(byteCount(plan.availableDiskBytes)) available"
+                    )
+                    approvalFact("Extraction", extractionLabel(plan.unpack))
+                    if plan.missingDigest {
+                        Label("No source digest is supplied. Approval permits download, verification against the computed digest, and pinning that SHA-256 in managed tutorial state.", systemImage: "exclamationmark.triangle")
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                    if !plan.checks.isEmpty {
+                        Text("Optional checks").workbenchFont(.headline)
+                        ForEach(plan.checks) { check in
+                            Toggle(
+                                check.label,
+                                isOn: Binding(
+                                    get: { !skippedTutorialChecks.contains(check.id) },
+                                    set: { enabled in
+                                        if enabled { skippedTutorialChecks.remove(check.id) }
+                                        else { skippedTutorialChecks.insert(check.id) }
+                                    }
+                                )
+                            )
+                        }
+                    }
+                    HStack {
+                        Button("Cancel") { store.dismissTutorialAcquisitionApproval() }
+                        Spacer()
+                        Button("Approve and Download") {
+                            store.approveTutorialAcquisition(
+                                skippedCheckIDs: Array(skippedTutorialChecks).sorted()
+                            )
+                            skippedTutorialChecks.removeAll()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!plan.hasEnoughDisk)
+                        .accessibilityIdentifier("tutorial.approval.approve")
+                    }
+                }
+                .padding(24)
+            }
+            .frame(minWidth: 640, minHeight: 560)
+            .accessibilityIdentifier("tutorial.approval.sheet")
+        }
+    }
+
+    private func approvalFact(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).workbenchFont(.caption, weight: .semibold).foregroundStyle(.secondary)
+            Text(value).workbenchFont(.caption, design: .monospaced).textSelection(.enabled)
+        }
+    }
+
+    private func byteCount(_ bytes: UInt64?) -> String {
+        guard let bytes else { return "Unknown" }
+        return ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+    }
+
+    private func extractionLabel(_ unpack: TutorialUnpackState?) -> String {
+        guard let unpack else { return "No archive; publish the verified file atomically" }
+        return "\(unpack.format), root \(unpack.archiveRoot ?? "archive root"), at most \(unpack.maxEntries) entries and \(byteCount(unpack.maxExpandedBytes)) expanded"
+    }
+
+    private func tutorialPhaseLabel(_ phase: TutorialAcquisitionPhase) -> String {
+        phase.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private func tutorialPhaseColor(_ phase: TutorialAcquisitionPhase) -> Color {
+        switch phase {
+        case .ready: .green
+        case .downloading, .verifying, .unpacking, .checking, .materializing: .accentColor
+        case .missing, .cancelled: .secondary
+        case .networkFailed, .checksumFailed, .unsafeArchive, .destinationCollision: .orange
+        }
+    }
+
     @ViewBuilder
     private func taskCell(cellID: String, document: NotebookDocumentState, fallback: String) -> some View {
         let receipts = document.receipts.filter { $0.cellId == cellID }.sorted { $0.revision > $1.revision }
@@ -202,6 +428,7 @@ struct PersistentScientificNotebookView: View {
         } else if let cell = document.cells.first(where: { $0.id == cellID }), cell.kind == "python" {
             pythonCell(cell, receipts: receipts, document: document)
         } else if let intent = document.cells.first(where: { $0.id == cellID })?.taskIntent {
+            let tutorialBlocked = tutorialTaskIsBlocked(cellID)
             VStack(alignment: .leading, spacing: 5) {
                 Button {
                     store.openScientificNotebookTask(cellID: cellID)
@@ -232,7 +459,15 @@ struct PersistentScientificNotebookView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .disabled(tutorialBlocked)
                 .accessibilityIdentifier("notebook.parameters.open.\(cellID)")
+                .accessibilityValue(tutorialBlocked ? "blocked until tutorial datasets are ready" : "ready")
+
+                if tutorialBlocked {
+                    Text("Acquire and verify this section's datasets before loading its task parameters.")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 if let latest = receipts.first {
                     Button {
@@ -269,6 +504,15 @@ struct PersistentScientificNotebookView: View {
             Text(fallback)
                 .font(.system(size: 12, design: .monospaced))
                 .textSelection(.enabled)
+        }
+    }
+
+    private func tutorialTaskIsBlocked(_ cellID: String) -> Bool {
+        guard let tutorial = store.state.activeTutorialProject?.tutorial,
+              let section = tutorial.sections.first(where: { $0.cellIds.contains(cellID) })
+        else { return false }
+        return section.datasetIds.contains { datasetID in
+            tutorial.datasets.first(where: { $0.id == datasetID })?.staged != true
         }
     }
 

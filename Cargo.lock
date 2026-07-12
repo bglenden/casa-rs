@@ -702,13 +702,16 @@ dependencies = [
 name = "casa-notebook"
 version = "0.24.1"
 dependencies = [
+ "flate2",
  "fs2",
  "serde",
  "serde_json",
  "sha2",
+ "tar",
  "tempfile",
  "thiserror 2.0.18",
  "toml 0.8.23",
+ "ureq",
  "uuid",
 ]
 

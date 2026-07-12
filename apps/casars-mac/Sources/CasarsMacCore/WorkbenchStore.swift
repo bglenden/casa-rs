@@ -802,6 +802,7 @@ private enum WorkbenchRuntimeKind {
     case production
     case notebookPrototype
     case pythonPrototype
+    case tutorialPrototype
 }
 
 public final class WorkbenchStore: ObservableObject {
@@ -818,6 +819,7 @@ public final class WorkbenchStore: ObservableObject {
     private let surfaceParameterClient: SurfaceParameterClient
     private let taskExecutionMatrixClient: TaskExecutionMatrixClient
     private var notebookPersistenceClient: NotebookPersistenceClient
+    private var tutorialPersistenceClient: TutorialPersistenceClient
     private let imagerProgressSource: ImagerProgressSource
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private let tableBrowserQueue = DispatchQueue(label: "casars.mac.tablebrowser-cell-window", qos: .userInitiated)
@@ -868,7 +870,9 @@ public final class WorkbenchStore: ObservableObject {
             }
         }
         self.state = initialState
-        if initialState.isNotebookPrototype {
+        if initialState.isTutorialPrototype {
+            runtimeKind = .tutorialPrototype
+        } else if initialState.isNotebookPrototype {
             runtimeKind = .notebookPrototype
         } else if initialState.isPythonPrototype {
             runtimeKind = .pythonPrototype
@@ -885,11 +889,16 @@ public final class WorkbenchStore: ObservableObject {
         self.surfaceParameterClient = surfaceParameterClient
         self.taskExecutionMatrixClient = taskExecutionMatrixClient
         notebookPersistenceClient = UniFFINotebookPersistenceClient()
+        tutorialPersistenceClient = UniFFITutorialPersistenceClient()
         self.imagerProgressSource = imagerProgressSource
     }
 
     package func installNotebookPersistenceClientForTesting(_ client: NotebookPersistenceClient) {
         notebookPersistenceClient = client
+    }
+
+    package func installTutorialPersistenceClientForTesting(_ client: TutorialPersistenceClient) {
+        tutorialPersistenceClient = client
     }
 
     package func installPythonExecutableForTesting(_ path: String) {
@@ -956,12 +965,37 @@ public final class WorkbenchStore: ObservableObject {
         )
     }
 
+    package static func tutorialPrototype(
+        scenario: TutorialNotebookPrototypeScenario = .happyPath,
+        dependencies: NotebookPrototypeRuntimeDependencies = .denied
+    ) -> WorkbenchStore {
+        NotebookPrototypeBoundaryAudit.reset()
+        return WorkbenchStore(
+            state: tutorialPrototypeState(scenario: scenario),
+            probeClient: dependencies.probeClient,
+            demoProjectClient: dependencies.demoProjectClient,
+            plotClient: dependencies.plotClient,
+            imageExplorerClient: dependencies.imageExplorerClient,
+            tableBrowserClient: dependencies.tableBrowserClient,
+            genericTaskClient: dependencies.genericTaskClient,
+            taskCatalogClient: PrototypeTaskCatalogClient(),
+            taskUISchemaClient: dependencies.taskUISchemaClient,
+            surfaceParameterClient: dependencies.surfaceParameterClient,
+            taskExecutionMatrixClient: PrototypeTaskExecutionMatrixClient(),
+            imagerProgressSource: EmptyImagerProgressSource()
+        )
+    }
+
     package var isNotebookPrototypeRuntime: Bool {
         runtimeKind == .notebookPrototype
     }
 
     package var isPythonPrototypeRuntime: Bool {
         runtimeKind == .pythonPrototype
+    }
+
+    package var isTutorialPrototypeRuntime: Bool {
+        runtimeKind == .tutorialPrototype
     }
 
     package var isPrototypeRuntime: Bool {
@@ -1048,6 +1082,32 @@ public final class WorkbenchStore: ObservableObject {
             )
         ]
         state.activeTabID = "tab-python-prototype"
+        return state
+    }
+
+    private static func tutorialPrototypeState(
+        scenario: TutorialNotebookPrototypeScenario,
+        interfaceFontSize: Double = WorkbenchState.defaultInterfaceFontSize
+    ) -> WorkbenchState {
+        var state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+        state.project = ProjectFixture(
+            name: "TW Hya First Look",
+            rootPath: "/PrototypeProjects/tw-hya-first-look",
+            datasets: [],
+            source: .fixture
+        )
+        state.prototypeTutorial = TutorialNotebookPrototypeFixtureAdapter.make(scenario: scenario)
+        state.dockMode = .notebooks
+        state.leftDockCollapsed = false
+        state.inspectorCollapsed = true
+        state.tabs = [
+            WorkbenchTab(
+                id: "tab-tutorial-prototype",
+                title: "Tutorial · TW Hya First Look",
+                kind: .notebook
+            )
+        ]
+        state.activeTabID = "tab-tutorial-prototype"
         return state
     }
 
@@ -1190,47 +1250,68 @@ public final class WorkbenchStore: ObservableObject {
         )
     }
 
-    public func openTutorialPack(path: String) {
-        guard !rejectPrototypeProductionAction("Tutorial packs") else { return }
-        let interfaceFontSize = state.interfaceFontSize
-        let taskCatalog = state.taskCatalog
-        cleanupTemporaryDemoProject()
+    public func openTutorialTemplate(path: String) {
+        guard !rejectPrototypeProductionAction("Tutorial templates") else { return }
+        guard state.hasProject else {
+            state.lastErrors.append("Open a project before forking a tutorial template")
+            return
+        }
         do {
-            let context = try TutorialPackContext.load(path: path)
-            let tutorialDatasets = tutorialPackDatasetSummaries(context: context)
-            state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
-            state.taskCatalog = taskCatalog
-            state.project = ProjectFixture(
-                name: context.title,
-                rootPath: context.rootPath,
-                datasets: tutorialDatasets.datasets,
-                source: .tutorialPack
+            let supplied = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+                .standardizedFileURL
+            let suppliedIsDirectory = ((try? supplied.resourceValues(forKeys: [.isDirectoryKey]))?
+                .isDirectory) == true
+            let root = suppliedIsDirectory ? supplied : supplied.deletingLastPathComponent()
+            let v1Manifest = root.appendingPathComponent("tutorial.toml")
+            let v0Manifest = root.appendingPathComponent("pack.json")
+            let templateRoot: URL
+            if FileManager.default.fileExists(atPath: v1Manifest.path) {
+                templateRoot = root
+            } else if FileManager.default.fileExists(atPath: v0Manifest.path) {
+                let migrationRoot = URL(fileURLWithPath: state.project.rootPath)
+                    .appendingPathComponent(".casa-rs/tutorial-templates", isDirectory: true)
+                    .appendingPathComponent("\(root.lastPathComponent)-v1", isDirectory: true)
+                if !FileManager.default.fileExists(atPath: migrationRoot.path) {
+                    try tutorialPersistenceClient.migrate(
+                        packPath: root.path,
+                        destination: migrationRoot.path
+                    )
+                }
+                templateRoot = migrationRoot
+            } else {
+                throw TutorialTemplateLoadError.missingManifest(v1Manifest.path)
+            }
+            let existing = Set(state.scientificNotebooks?.notebooks.map(\.filename) ?? [])
+            let base = root.lastPathComponent.isEmpty ? "Tutorial" : root.lastPathComponent
+            var filename = "\(base).md"
+            var suffix = 2
+            while existing.contains(filename) {
+                filename = "\(base)-\(suffix).md"
+                suffix += 1
+            }
+            let forked = try tutorialPersistenceClient.fork(
+                projectRoot: state.project.rootPath,
+                templatePath: templateRoot.path,
+                filename: filename
             )
-            state.tutorialPack = context
-            state.probeDiagnostics = tutorialDatasets.diagnostics
-            state.selectedDatasetID = state.project.datasets.first?.id
-            state.dockMode = .datasets
+            loadScientificNotebooks()
+            selectScientificNotebook(forked.tutorial.notebookId)
+            state.dockMode = .notebooks
             state.leftDockCollapsed = false
-            state.inspectorCollapsed = false
-            openTab(
-                WorkbenchTab(
-                    id: "tab-tutorial-pack",
-                    title: "Tutorial",
-                    kind: .tutorial
-                )
-            )
+            state.inspectorCollapsed = true
+            openDefaultTab(kind: .notebook)
             state.history.append(
                 ProcessingHistoryEvent(
-                    id: "hist-tutorial-pack-open",
-                    timestamp: "loaded",
-                    title: "Tutorial pack opened",
-                    reason: "Loaded \(context.tutorialID) from pack.json without creating a durable project history.",
-                    affectedPaths: [context.manifestPath],
+                    id: "hist-tutorial-fork-\(state.history.count + 1)",
+                    timestamp: "forked",
+                    title: "Tutorial notebook created",
+                    reason: "Forked immutable tutorial \(forked.tutorial.tutorialId) into editable project Markdown.",
+                    affectedPaths: ["notebooks/\(filename)"],
                     approval: "user"
                 )
             )
         } catch {
-            state.lastErrors.append("Open tutorial pack \(path): \(error)")
+            state.lastErrors.append("Open tutorial template \(path): \(error)")
         }
     }
 
@@ -1241,7 +1322,7 @@ public final class WorkbenchStore: ObservableObject {
         guard state.hasProject, !state.project.rootPath.isEmpty else {
             return
         }
-        guard state.project.source == .probed || state.tutorialPack != nil else {
+        guard state.project.source == .probed else {
             return
         }
         guard now.timeIntervalSince(lastProjectDiskRefresh) >= 1.0 else {
@@ -1256,24 +1337,19 @@ public final class WorkbenchStore: ObservableObject {
         guard state.hasProject, !state.project.rootPath.isEmpty else {
             return
         }
-        guard state.project.source == .probed || state.tutorialPack != nil else {
+        guard state.project.source == .probed else {
             return
         }
         let selectedPath = state.selectedDataset?.path
         do {
-            let refreshed: (datasets: [DatasetSummary], diagnostics: [String])
-            if let context = state.tutorialPack {
-                refreshed = tutorialPackDatasetSummaries(context: context)
-            } else {
-                let probe = try probeClient.probeProject(path: state.project.rootPath)
-                refreshed = (
-                    datasets: projectDatasetsWithLooseFiles(
-                        recognizedDatasets: probe.project.datasets,
-                        rootPath: state.project.rootPath
-                    ),
-                    diagnostics: probe.diagnostics
-                )
-            }
+            let probe = try probeClient.probeProject(path: state.project.rootPath)
+            let refreshed = (
+                datasets: projectDatasetsWithLooseFiles(
+                    recognizedDatasets: probe.project.datasets,
+                    rootPath: state.project.rootPath
+                ),
+                diagnostics: probe.diagnostics
+            )
             state.project.datasets = deduplicatedDatasets(refreshed.datasets)
             state.probeDiagnostics = refreshed.diagnostics
             if let selectedPath,
@@ -1284,57 +1360,6 @@ public final class WorkbenchStore: ObservableObject {
             }
         } catch {
             state.lastErrors.append("Refresh project \(state.project.rootPath): \(error)")
-        }
-    }
-
-    private func tutorialPackDatasetSummaries(
-        context: TutorialPackContext
-    ) -> (datasets: [DatasetSummary], diagnostics: [String]) {
-        let manifestDatasets = context.datasetSummaries()
-        var diagnostics = context.inputs.map { input in
-            "Tutorial input \(input.filename): \(input.status.rawValue)"
-        }
-        do {
-            let probe = try probeClient.probeProject(path: context.rootPath)
-            diagnostics.append(contentsOf: probe.diagnostics)
-            let probedByPath = Dictionary(uniqueKeysWithValues: probe.project.datasets.map { dataset in
-                (Self.standardizedDatasetPath(dataset.path), dataset)
-            })
-            var datasets = manifestDatasets.map { dataset in
-                let standardizedPath = Self.standardizedDatasetPath(dataset.path)
-                guard var enriched = probedByPath[standardizedPath] else {
-                    guard context.inputs.contains(where: {
-                        $0.status == .staged && Self.standardizedDatasetPath($0.resolvedPath) == standardizedPath
-                    }) else {
-                        return dataset
-                    }
-                    var unrecognized = dataset
-                    unrecognized.diagnostics.append(
-                        "Image validation failed: cannot open or read CASA image '\(dataset.path)' as a valid casacore image."
-                    )
-                    return unrecognized
-                }
-                enriched.notes = "\(dataset.notes)\n\(enriched.notes)"
-                enriched.diagnostics = dataset.diagnostics + enriched.diagnostics
-                return enriched
-            }
-            datasets.append(contentsOf: tutorialPackRegionDatasetSummaries(context: context))
-            datasets = projectDatasetsWithLooseFiles(
-                recognizedDatasets: datasets,
-                rootPath: context.rootPath
-            )
-            return (deduplicatedDatasets(datasets), diagnostics)
-        } catch {
-            diagnostics.append("Tutorial input metadata probe failed: \(error)")
-            return (
-                deduplicatedDatasets(
-                    projectDatasetsWithLooseFiles(
-                        recognizedDatasets: manifestDatasets + tutorialPackRegionDatasetSummaries(context: context),
-                        rootPath: context.rootPath
-                    )
-                ),
-                diagnostics
-            )
         }
     }
 
@@ -1514,55 +1539,6 @@ public final class WorkbenchStore: ObservableObject {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 
-    private func tutorialPackRegionDatasetSummaries(context: TutorialPackContext) -> [DatasetSummary] {
-        let regionDirectories = [
-            URL(fileURLWithPath: context.rootPath, isDirectory: true)
-                .standardizedFileURL,
-            URL(fileURLWithPath: context.rootPath, isDirectory: true)
-                .appendingPathComponent("regions", isDirectory: true),
-            URL(fileURLWithPath: context.nativeWorkspacePath, isDirectory: true)
-                .standardizedFileURL,
-            URL(fileURLWithPath: context.nativeWorkspacePath, isDirectory: true)
-                .appendingPathComponent("regions", isDirectory: true),
-        ].map(\.standardizedFileURL)
-        var files: [URL] = []
-        var preferredNames = Set<String>()
-        for (index, regionsURL) in regionDirectories.enumerated() {
-            let directoryFiles = ((try? FileManager.default.contentsOfDirectory(
-                at: regionsURL,
-                includingPropertiesForKeys: [.fileSizeKey],
-                options: [.skipsHiddenFiles]
-            )) ?? [])
-                .filter { $0.pathExtension == "crtf" }
-            if index == 0 {
-                preferredNames.formUnion(directoryFiles.map(\.lastPathComponent))
-                files.append(contentsOf: directoryFiles)
-            } else {
-                files.append(contentsOf: directoryFiles.filter { !preferredNames.contains($0.lastPathComponent) })
-            }
-        }
-        return files
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-            .map { file in
-                let path = Self.standardizedDatasetPath(file.path)
-                let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(UInt64.init) ?? 0
-                return DatasetSummary(
-                    id: path,
-                    name: file.lastPathComponent,
-                    path: path,
-                    kind: .region,
-                    size: "region file",
-                    units: "pixels",
-                    sizeBytes: size,
-                    notes: "Tutorial workspace region file.",
-                    diagnostics: [
-                        "Region parameter syntax: --region \(projectRelativePath(path))",
-                        "Inline region syntax: box[[x0pix,y0pix],[x1pix,y1pix]] or world-coordinate CRTF"
-                    ]
-                )
-            }
-    }
-
     private static func standardizedDatasetPath(_ path: String) -> String {
         URL(fileURLWithPath: path).standardizedFileURL.path
     }
@@ -1570,95 +1546,6 @@ public final class WorkbenchStore: ObservableObject {
     private func fileSize(path: String) -> UInt64 {
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
         return (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
-    }
-
-    public func selectTutorialSection(_ sectionID: String) {
-        guard !rejectPrototypeProductionAction("Tutorial navigation") else { return }
-        guard var context = state.tutorialPack else {
-            state.lastErrors.append("No tutorial pack is open")
-            return
-        }
-        guard context.sections.contains(where: { $0.id == sectionID }) else {
-            state.lastErrors.append("Unknown tutorial section \(sectionID)")
-            return
-        }
-        context.selectedSectionID = sectionID
-        state.tutorialPack = context
-        selectFirstTutorialInputDataset(context.selectedSection, context: context)
-    }
-
-    private func selectFirstTutorialInputDataset(
-        _ section: TutorialPackSection?,
-        context: TutorialPackContext
-    ) {
-        guard let inputRef = section?.inputRefs.first,
-              let input = context.inputs.first(where: { $0.id == inputRef })
-        else {
-            return
-        }
-        let inputPath = Self.standardizedDatasetPath(input.resolvedPath)
-        if let dataset = state.project.datasets.first(where: { Self.standardizedDatasetPath($0.path) == inputPath }) {
-            state.selectedDatasetID = dataset.id
-        }
-    }
-
-    public func openTutorialSectionTask(_ sectionID: String) {
-        guard !rejectPrototypeProductionAction("Tutorial task navigation") else { return }
-        selectTutorialSection(sectionID)
-        guard let context = state.tutorialPack,
-              let section = context.selectedSection
-        else {
-            return
-        }
-        guard let guiStep = section.steps.first(where: { $0.surface == "gui" && $0.providerKind == "native-rust" }) else {
-            state.lastErrors.append("Tutorial section \(sectionID) does not define a native GUI step")
-            return
-        }
-        applyTutorialPackParameters(guiStep.parameters, taskID: guiStep.taskID, packRoot: context.rootPath)
-        if openTutorialExplorerTask(guiStep.taskID) {
-            return
-        }
-        selectTask(guiStep.taskID)
-        let tabID = nextTaskTabID()
-        openTab(
-            WorkbenchTab(
-                id: tabID,
-                title: taskTitle(guiStep.taskID),
-                kind: .task,
-                datasetID: state.selectedDatasetID,
-                taskID: guiStep.taskID
-            )
-        )
-    }
-
-    private func openTutorialExplorerTask(_ taskID: String) -> Bool {
-        switch taskID {
-        case "msexplore":
-            if let dataset = selectedOrFirstDataset(kind: .measurementSet) {
-                openDatasetExplorer(dataset.id)
-            } else {
-                state.lastErrors.append("Tutorial msexplore step has no MeasurementSet dataset")
-            }
-            return true
-        case "imexplore":
-            if let dataset = selectedOrFirstDataset(kind: .imageCube) {
-                openDatasetExplorer(dataset.id)
-            } else {
-                state.lastErrors.append("Tutorial imexplore step has no image dataset")
-            }
-            return true
-        case "tablebrowser":
-            if let selected = state.selectedDataset, canBrowseAsTable(selected) {
-                openDatasetTableBrowser(selected.id)
-            } else if let dataset = state.project.datasets.first(where: canBrowseAsTable) {
-                openDatasetTableBrowser(dataset.id)
-            } else {
-                state.lastErrors.append("Tutorial tablebrowser step has no casacore table dataset")
-            }
-            return true
-        default:
-            return false
-        }
     }
 
     private func selectedOrFirstDataset(kind: DatasetKind) -> DatasetSummary? {
@@ -2222,7 +2109,12 @@ public final class WorkbenchStore: ObservableObject {
     @discardableResult
     private func rejectPrototypeProductionAction(_ action: String) -> Bool {
         guard runtimeKind != .production else { return false }
-        let prototypeName = runtimeKind == .notebookPrototype ? "notebook" : "Python"
+        let prototypeName = switch runtimeKind {
+        case .notebookPrototype: "notebook"
+        case .pythonPrototype: "Python"
+        case .tutorialPrototype: "tutorial"
+        case .production: "production"
+        }
         state.lastErrors.append("\(action) are unavailable in the in-memory \(prototypeName) prototype")
         return true
     }
@@ -2234,6 +2126,11 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
         if runtimeKind == .pythonPrototype, tab.kind != .python {
+            _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
+            return
+        }
+        if runtimeKind == .tutorialPrototype,
+           tab.kind != .notebook && !(tab.kind == .task && tab.prototypeReceiptID != nil) {
             _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
             return
         }
@@ -2309,12 +2206,18 @@ public final class WorkbenchStore: ObservableObject {
             openDatasetTableBrowser(dataset.id)
         case .tutorial:
             guard !rejectPrototypeProductionAction("Tutorial tabs") else { return }
-            guard state.tutorialPack != nil else {
-                state.lastErrors.append("No tutorial pack is open")
+            guard let tutorial = state.tutorialProjects.first else {
+                state.lastErrors.append("No tutorial notebook is open")
                 return
             }
-            openTab(WorkbenchTab(id: "tab-tutorial-pack", title: "Tutorial", kind: .tutorial))
+            selectScientificNotebook(tutorial.tutorial.notebookId)
+            openDefaultTab(kind: .notebook)
         case .task:
+            if state.isTutorialPrototype,
+               let task = state.prototypeTutorial?.fixtureTask {
+                openPrototypeTutorialTask(taskID: task.id)
+                return
+            }
             if state.isNotebookPrototype {
                 guard let receiptID = state.prototypeNotebook?.selectedReceiptID else {
                     state.lastErrors.append("No prototype notebook task is selected")
@@ -2329,6 +2232,14 @@ public final class WorkbenchStore: ObservableObject {
                 openTab(WorkbenchTab(id: nextTaskTabID(), title: "Tasks", kind: .task, datasetID: state.selectedDatasetID))
             }
         case .notebook:
+            if state.isTutorialPrototype {
+                openTab(WorkbenchTab(
+                    id: "tab-tutorial-prototype",
+                    title: "Tutorial · TW Hya First Look",
+                    kind: .notebook
+                ))
+                return
+            }
             if let notebook = state.prototypeNotebook {
                 openTab(WorkbenchTab(id: "tab-scientific-notebook", title: notebook.filename, kind: .notebook))
                 return
@@ -2391,9 +2302,172 @@ public final class WorkbenchStore: ObservableObject {
                 pythonNotebookRuntime.status = pythonKernelStatuses[notebookID]
                     ?? projectPythonEnvironmentStatus
             }
+            state.tutorialProjects = try tutorialPersistenceClient.list(
+                projectRoot: state.project.rootPath
+            )
         } catch {
             state.lastErrors.append("Load project notebooks: \(error)")
         }
+    }
+
+    package func reviewTutorialAcquisition(datasetID: String, sourceOverride: String? = nil) {
+        guard let tutorial = state.activeTutorialProject else { return }
+        do {
+            state.pendingTutorialAcquisitionPlan = try tutorialPersistenceClient.plan(
+                projectRoot: state.project.rootPath,
+                notebookID: tutorial.tutorial.notebookId,
+                datasetID: datasetID,
+                sourceOverride: sourceOverride
+            )
+        } catch {
+            state.lastErrors.append("Review tutorial acquisition: \(error)")
+        }
+    }
+
+    public func selectTutorialSection(_ sectionID: String) {
+        guard state.activeTutorialProject?.tutorial.sections.contains(where: {
+            $0.id == sectionID
+        }) == true else {
+            state.lastErrors.append("Unknown tutorial section \(sectionID)")
+            return
+        }
+    }
+
+    public func openTutorialSectionTask(_ sectionID: String) {
+        guard let section = state.activeTutorialProject?.tutorial.sections.first(where: {
+            $0.id == sectionID
+        }), let cellID = section.cellIds.first else {
+            state.lastErrors.append("Tutorial section \(sectionID) has no task cell")
+            return
+        }
+        openScientificNotebookTask(cellID: cellID)
+    }
+
+    package func dismissTutorialAcquisitionApproval() {
+        state.pendingTutorialAcquisitionPlan = nil
+    }
+
+    package func approveTutorialAcquisition(skippedCheckIDs: [String] = []) {
+        guard let plan = state.pendingTutorialAcquisitionPlan else { return }
+        do {
+            let dataset = try tutorialPersistenceClient.begin(
+                projectRoot: state.project.rootPath,
+                plan: plan,
+                approval: TutorialAcquisitionApprovalState(
+                    approvalSha256: plan.approvalSha256,
+                    allowMissingDigest: plan.missingDigest,
+                    skippedCheckIds: skippedCheckIDs
+                )
+            )
+            state.pendingTutorialAcquisitionPlan = nil
+            replaceTutorialDataset(dataset)
+            advanceTutorialAcquisition(datasetID: dataset.id, generation: dataset.currentGeneration)
+        } catch {
+            state.lastErrors.append("Start tutorial acquisition: \(error)")
+        }
+    }
+
+    package func cancelTutorialAcquisition(datasetID: String) {
+        guard let tutorial = state.activeTutorialProject,
+              let dataset = tutorial.tutorial.datasets.first(where: { $0.id == datasetID })
+        else { return }
+        performTutorialAction(.cancel, dataset: dataset)
+    }
+
+    package func resumeTutorialAcquisition(datasetID: String) {
+        performTutorialAction(.resume, datasetID: datasetID)
+    }
+
+    package func restartTutorialAcquisition(datasetID: String) {
+        performTutorialAction(.restart, datasetID: datasetID)
+    }
+
+    package func retryTutorialAcquisition(datasetID: String) {
+        performTutorialAction(.retry, datasetID: datasetID)
+    }
+
+    private func performTutorialAction(
+        _ action: TutorialPersistenceAction,
+        datasetID: String
+    ) {
+        guard let tutorial = state.activeTutorialProject,
+              let dataset = tutorial.tutorial.datasets.first(where: { $0.id == datasetID })
+        else { return }
+        performTutorialAction(action, dataset: dataset)
+    }
+
+    private func performTutorialAction(
+        _ action: TutorialPersistenceAction,
+        dataset: TutorialDatasetState
+    ) {
+        guard let tutorial = state.activeTutorialProject else { return }
+        do {
+            let updated = try tutorialPersistenceClient.action(
+                action,
+                projectRoot: state.project.rootPath,
+                notebookID: tutorial.tutorial.notebookId,
+                datasetID: dataset.id,
+                generation: action == .cancel ? dataset.currentGeneration : nil
+            )
+            replaceTutorialDataset(updated)
+            if updated.phase.isRunning {
+                advanceTutorialAcquisition(datasetID: updated.id, generation: updated.currentGeneration)
+            }
+        } catch {
+            state.lastErrors.append("Update tutorial acquisition: \(error)")
+            loadScientificNotebooks()
+        }
+    }
+
+    private func advanceTutorialAcquisition(datasetID: String, generation: UInt64) {
+        guard let tutorial = state.activeTutorialProject else { return }
+        let projectRoot = state.project.rootPath
+        let notebookID = tutorial.tutorial.notebookId
+        let persistenceClient = tutorialPersistenceClient
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result {
+                try persistenceClient.action(
+                    .advance,
+                    projectRoot: projectRoot,
+                    notebookID: notebookID,
+                    datasetID: datasetID,
+                    generation: generation
+                )
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard let current = self.state.activeTutorialProject?.tutorial.datasets.first(
+                    where: { $0.id == datasetID }
+                ), current.currentGeneration == generation, current.phase.isRunning else {
+                    return
+                }
+                switch result {
+                case let .success(dataset):
+                    self.replaceTutorialDataset(dataset)
+                    if dataset.phase.isRunning {
+                        self.advanceTutorialAcquisition(
+                            datasetID: dataset.id,
+                            generation: dataset.currentGeneration
+                        )
+                    } else {
+                        self.loadScientificNotebooks()
+                        self.refreshProjectFromDisk()
+                    }
+                case let .failure(error):
+                    self.state.lastErrors.append("Advance tutorial acquisition: \(error)")
+                    self.loadScientificNotebooks()
+                }
+            }
+        }
+    }
+
+    private func replaceTutorialDataset(_ dataset: TutorialDatasetState) {
+        guard let tutorialIndex = state.tutorialProjects.firstIndex(where: {
+            $0.tutorial.notebookId == state.scientificNotebooks?.activeNotebookID
+        }), let datasetIndex = state.tutorialProjects[tutorialIndex].tutorial.datasets.firstIndex(
+            where: { $0.id == dataset.id }
+        ) else { return }
+        state.tutorialProjects[tutorialIndex].tutorial.datasets[datasetIndex] = dataset
     }
 
     package func createScientificNotebook(filename: String? = nil, title: String = "CASA-RS notebook") {
@@ -3079,6 +3153,17 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("Notebook task \(intent.surface) is not in the current task catalog")
             return
         }
+        if let tutorial = state.activeTutorialProject?.tutorial,
+           let section = tutorial.sections.first(where: { $0.cellIds.contains(cellID) }),
+           section.datasetIds.contains(where: { datasetID in
+               tutorial.datasets.first(where: { $0.id == datasetID })?.staged != true
+           })
+        {
+            state.lastErrors.append(
+                "Acquire and verify tutorial section datasets before opening task cell \(cellID)"
+            )
+            return
+        }
         let receipt = document.receipts
             .filter({ $0.cellId == cellID })
             .max(by: { $0.revision < $1.revision })
@@ -3468,6 +3553,169 @@ public final class WorkbenchStore: ObservableObject {
         }
         projection.documents[documentIndex].tasks[receiptIndex].revisions[revisionIndex] = revision
         state.prototypeNotebook = projection
+    }
+
+    package func selectTutorialPrototypeSection(_ sectionID: String) {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              tutorial.selectSection(id: sectionID)
+        else { return }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func setTutorialPrototypeDraft(_ markdown: String) {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial
+        else { return }
+        updateTutorialLearnerDocument(in: &tutorial) { document in
+            document.draftMarkdown = markdown
+            PrototypeScientificNotebookFixtureAdapter.synchronizeTaskCells(in: &document)
+        }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func setTutorialPrototypeViewMode(_ viewMode: PrototypeNotebookViewMode) {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial
+        else { return }
+        updateTutorialLearnerDocument(in: &tutorial) { $0.viewMode = viewMode }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func saveTutorialPrototypeDraft() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial
+        else { return }
+        updateTutorialLearnerDocument(in: &tutorial) { $0.savedMarkdown = $0.draftMarkdown }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func showTutorialPrototypeApproval() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              tutorial.showApproval()
+        else { return }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func dismissTutorialPrototypeApproval() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              tutorial.dismissApproval()
+        else { return }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func approveTutorialPrototypeAcquisition() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              let generation = tutorial.approve()
+        else { return }
+        state.prototypeTutorial = tutorial
+        scheduleTutorialPrototypeAdvance(generation: generation)
+    }
+
+    package func cancelTutorialPrototypeAcquisition() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              tutorial.cancel()
+        else { return }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func resumeTutorialPrototypeAcquisition() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              let generation = tutorial.resume()
+        else { return }
+        state.prototypeTutorial = tutorial
+        scheduleTutorialPrototypeAdvance(generation: generation)
+    }
+
+    package func restartTutorialPrototypeAcquisition() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              let generation = tutorial.restart()
+        else { return }
+        state.prototypeTutorial = tutorial
+        scheduleTutorialPrototypeAdvance(generation: generation)
+    }
+
+    package func retryTutorialPrototypeAcquisition() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              let generation = tutorial.retry()
+        else { return }
+        state.prototypeTutorial = tutorial
+        scheduleTutorialPrototypeAdvance(generation: generation)
+    }
+
+    package func makeSpaceAndRetryTutorialPrototypeAcquisition() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              let generation = tutorial.makeSpaceAndRetry()
+        else { return }
+        state.prototypeTutorial = tutorial
+        scheduleTutorialPrototypeAdvance(generation: generation)
+    }
+
+    /// Deterministic hook used by core tests and attempt-bound delayed fixture
+    /// callbacks. Obsolete generations are ignored by the projection.
+    @discardableResult
+    package func advanceTutorialPrototypeAcquisition(generation: Int) -> Bool {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              tutorial.advance(generation: generation)
+        else { return false }
+        let shouldContinue = tutorial.dataset.phase.isRunning
+        state.prototypeTutorial = tutorial
+        if shouldContinue {
+            scheduleTutorialPrototypeAdvance(generation: generation)
+        }
+        return true
+    }
+
+    package func openPrototypeTutorialTask(taskID: String) {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              tutorial.dataset.isReady,
+              tutorial.fixtureTask.id == taskID
+        else {
+            state.lastErrors.append("Tutorial task parameters are unavailable until the fixture dataset is ready")
+            return
+        }
+        if let documentIndex = tutorial.learnerNotebook.documents.firstIndex(where: {
+            $0.id == tutorial.learnerNotebook.activeNotebookID
+        }) {
+            tutorial.learnerNotebook.documents[documentIndex].selectedReceiptID = taskID
+        }
+        state.prototypeTutorial = tutorial
+        var tab = WorkbenchTab(
+            id: "tab-prototype-task-\(taskID)",
+            title: tutorial.fixtureTask.title,
+            kind: .task,
+            taskID: tutorial.fixtureTask.taskID
+        )
+        tab.prototypeReceiptID = taskID
+        openTab(tab)
+    }
+
+    private func scheduleTutorialPrototypeAdvance(generation: Int) {
+        // Leave enough time for a launched-app user or XCUITest to observe and
+        // act on each deterministic state before the next fixture callback.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+            _ = self?.advanceTutorialPrototypeAcquisition(generation: generation)
+        }
+    }
+
+    private func updateTutorialLearnerDocument(
+        in tutorial: inout TutorialNotebookPrototypeProjection,
+        _ update: (inout PrototypeNotebookDocumentProjection) -> Void
+    ) {
+        let activeID = tutorial.learnerNotebook.activeNotebookID
+        guard let index = tutorial.learnerNotebook.documents.firstIndex(where: { $0.id == activeID })
+        else { return }
+        update(&tutorial.learnerNotebook.documents[index])
     }
 
     public func openImagerProgressMockup() {
@@ -4371,10 +4619,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func defaultRegionExportPath(for dataset: DatasetSummary) -> String {
-        let baseURL = URL(
-            fileURLWithPath: state.tutorialPack?.rootPath ?? state.project.rootPath,
-            isDirectory: true
-        )
+        let baseURL = URL(fileURLWithPath: state.project.rootPath, isDirectory: true)
         let name = Self.sanitizedRegionFilenameComponent(dataset.name)
         return baseURL
             .appendingPathComponent("\(name)-region.crtf")
@@ -6644,51 +6889,6 @@ public final class WorkbenchStore: ObservableObject {
             return String(absolutePath.dropFirst(prefix.count))
         }
         return path
-    }
-
-    private func applyTutorialPackParameters(
-        _ parameters: [String: TutorialPackValue],
-        taskID: String,
-        packRoot: String
-    ) {
-        let schema = state.taskUISchemas[taskID]
-        let argumentsByID = Dictionary(uniqueKeysWithValues: (schema?.arguments ?? []).map { ($0.id, $0) })
-        for (argumentID, value) in parameters {
-            if let boolValue = value.boolValue,
-               (argumentsByID[argumentID]?.parser.kind == "toggle" || argumentsByID[argumentID] == nil) {
-                setGenericTaskToggle(taskID: taskID, argumentID: argumentID, value: boolValue)
-                continue
-            }
-            guard var textValue = value.stringValue else {
-                continue
-            }
-            if shouldResolveTutorialPath(taskID: taskID, argumentID: argumentID, value: textValue) {
-                textValue = URL(fileURLWithPath: packRoot, isDirectory: true)
-                    .appendingPathComponent(textValue)
-                    .standardizedFileURL
-                    .path
-            }
-            setGenericTaskValue(taskID: taskID, argumentID: argumentID, value: textValue)
-        }
-    }
-
-    private func shouldResolveTutorialPath(taskID: String, argumentID: String, value: String) -> Bool {
-        guard !value.isEmpty,
-              !value.hasPrefix("/"),
-              !value.hasPrefix("~"),
-              !value.hasPrefix("http://"),
-              !value.hasPrefix("https://"),
-              !Self.isInlineRegionSyntax(value)
-        else {
-            return false
-        }
-        guard let domain = parameterSession(
-            surfaceID: taskID,
-            instanceID: state.activeTabID
-        )?.bundle.concept(for: argumentID)?.valueDomain else {
-            return false
-        }
-        return domain.isPathLike
     }
 
     private static func isInlineRegionSyntax(_ value: String) -> Bool {

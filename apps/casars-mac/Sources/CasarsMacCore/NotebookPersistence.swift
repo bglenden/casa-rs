@@ -99,8 +99,7 @@ package enum JSONValue: Codable, Equatable {
     package var tomlLiteral: String {
         switch self {
         case let .string(value):
-            let data = try? JSONEncoder().encode(value)
-            return data.map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
+            return Self.tomlBasicString(value)
         case let .number(value): return value.rounded() == value ? String(Int(value)) : String(value)
         case let .bool(value): return value ? "true" : "false"
         case let .array(values): return "[" + values.map(\.tomlLiteral).joined(separator: ", ") + "]"
@@ -110,6 +109,27 @@ package enum JSONValue: Codable, Equatable {
             }.joined(separator: ", ") + " }"
         case .null: return "\"\""
         }
+    }
+
+    private static func tomlBasicString(_ value: String) -> String {
+        var encoded = "\""
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x08: encoded += "\\b"
+            case 0x09: encoded += "\\t"
+            case 0x0A: encoded += "\\n"
+            case 0x0C: encoded += "\\f"
+            case 0x0D: encoded += "\\r"
+            case 0x22: encoded += "\\\""
+            case 0x5C: encoded += "\\\\"
+            case 0x00...0x1F, 0x7F:
+                encoded += String(format: "\\u%04X", scalar.value)
+            default:
+                encoded.unicodeScalars.append(scalar)
+            }
+        }
+        encoded += "\""
+        return encoded
     }
 }
 

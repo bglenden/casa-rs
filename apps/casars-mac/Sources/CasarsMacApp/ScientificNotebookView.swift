@@ -427,12 +427,14 @@ struct PrototypeNotebookTaskView: View {
     }
 
     private var taskProjection: PrototypeNotebookTaskProjection? {
-        guard let receiptID = tab.prototypeReceiptID,
-              let notebook = store.state.prototypeNotebook
-        else { return nil }
-        return notebook.documents.lazy.compactMap { document in
-            document.tasks.first { $0.id == receiptID }
-        }.first
+        guard let receiptID = tab.prototypeReceiptID else { return nil }
+        if let notebook = store.state.prototypeNotebook {
+            return notebook.documents.lazy.compactMap { document in
+                document.tasks.first { $0.id == receiptID }
+            }.first
+        }
+        let tutorialTask = store.state.prototypeTutorial?.fixtureTask
+        return tutorialTask?.id == receiptID ? tutorialTask : nil
     }
 
     private func taskWorkspace(_ task: PrototypeNotebookTaskProjection) -> some View {
@@ -441,18 +443,22 @@ struct PrototypeNotebookTaskView: View {
                 HStack(alignment: .top) {
                     PanelHeader(
                         title: task.title,
-                        subtitle: "\(task.taskID) · parameters loaded from the notebook block"
+                        subtitle: store.state.isTutorialPrototype
+                            ? "\(task.taskID) · parameters loaded from the tutorial notebook"
+                            : "\(task.taskID) · parameters loaded from the notebook block"
                     )
                     .accessibilityIdentifier("prototypeTask.identity.\(task.id)")
                     Spacer()
-                    Button {
-                        store.restartPrototypeNotebookTask(receiptID: task.id)
-                    } label: {
-                        Label("Restart Fixture", systemImage: "arrow.clockwise")
+                    if !store.state.isTutorialPrototype {
+                        Button {
+                            store.restartPrototypeNotebookTask(receiptID: task.id)
+                        } label: {
+                            Label("Restart Fixture", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(task.revisions.contains { $0.status == .running })
+                        .accessibilityIdentifier("prototypeTask.restart")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(task.revisions.contains { $0.status == .running })
-                    .accessibilityIdentifier("prototypeTask.restart")
                 }
 
                 HStack(spacing: 8) {
@@ -477,6 +483,15 @@ struct PrototypeNotebookTaskView: View {
                                 Text(parameter.parameterID)
                                     .workbenchFont(.caption, design: .monospaced)
                                     .foregroundStyle(.secondary)
+                                if store.state.isTutorialPrototype {
+                                    Label("Tutorial override", systemImage: "arrow.down.right.circle.fill")
+                                        .workbenchFont(.caption2, weight: .semibold)
+                                        .foregroundStyle(Color.accentColor)
+                                        .accessibilityIdentifier(
+                                            "prototypeTask.parameterSource.\(parameter.parameterID)"
+                                        )
+                                        .accessibilityValue("tutorial override")
+                                }
                             }
                             .frame(width: 180, alignment: .leading)
 
@@ -487,6 +502,20 @@ struct PrototypeNotebookTaskView: View {
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 13, design: .monospaced))
                             .accessibilityIdentifier("prototypeTask.parameter.\(parameter.parameterID)")
+                        }
+                        .padding(.horizontal, store.state.isTutorialPrototype ? 10 : 0)
+                        .padding(.vertical, store.state.isTutorialPrototype ? 8 : 0)
+                        .background(
+                            store.state.isTutorialPrototype
+                                ? Color.accentColor.opacity(0.07)
+                                : Color.clear
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay {
+                            if store.state.isTutorialPrototype {
+                                RoundedRectangle(cornerRadius: 7)
+                                    .stroke(Color.accentColor.opacity(0.22), lineWidth: 1)
+                            }
                         }
                     }
                 }
