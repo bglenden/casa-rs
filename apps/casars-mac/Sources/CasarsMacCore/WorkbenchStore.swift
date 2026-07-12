@@ -802,6 +802,7 @@ private enum WorkbenchRuntimeKind {
     case production
     case notebookPrototype
     case pythonPrototype
+    case tutorialPrototype
 }
 
 public final class WorkbenchStore: ObservableObject {
@@ -868,7 +869,9 @@ public final class WorkbenchStore: ObservableObject {
             }
         }
         self.state = initialState
-        if initialState.isNotebookPrototype {
+        if initialState.isTutorialPrototype {
+            runtimeKind = .tutorialPrototype
+        } else if initialState.isNotebookPrototype {
             runtimeKind = .notebookPrototype
         } else if initialState.isPythonPrototype {
             runtimeKind = .pythonPrototype
@@ -956,12 +959,37 @@ public final class WorkbenchStore: ObservableObject {
         )
     }
 
+    package static func tutorialPrototype(
+        scenario: TutorialNotebookPrototypeScenario = .happyPath,
+        dependencies: NotebookPrototypeRuntimeDependencies = .denied
+    ) -> WorkbenchStore {
+        NotebookPrototypeBoundaryAudit.reset()
+        return WorkbenchStore(
+            state: tutorialPrototypeState(scenario: scenario),
+            probeClient: dependencies.probeClient,
+            demoProjectClient: dependencies.demoProjectClient,
+            plotClient: dependencies.plotClient,
+            imageExplorerClient: dependencies.imageExplorerClient,
+            tableBrowserClient: dependencies.tableBrowserClient,
+            genericTaskClient: dependencies.genericTaskClient,
+            taskCatalogClient: PrototypeTaskCatalogClient(),
+            taskUISchemaClient: dependencies.taskUISchemaClient,
+            surfaceParameterClient: dependencies.surfaceParameterClient,
+            taskExecutionMatrixClient: PrototypeTaskExecutionMatrixClient(),
+            imagerProgressSource: EmptyImagerProgressSource()
+        )
+    }
+
     package var isNotebookPrototypeRuntime: Bool {
         runtimeKind == .notebookPrototype
     }
 
     package var isPythonPrototypeRuntime: Bool {
         runtimeKind == .pythonPrototype
+    }
+
+    package var isTutorialPrototypeRuntime: Bool {
+        runtimeKind == .tutorialPrototype
     }
 
     package var isPrototypeRuntime: Bool {
@@ -1048,6 +1076,32 @@ public final class WorkbenchStore: ObservableObject {
             )
         ]
         state.activeTabID = "tab-python-prototype"
+        return state
+    }
+
+    private static func tutorialPrototypeState(
+        scenario: TutorialNotebookPrototypeScenario,
+        interfaceFontSize: Double = WorkbenchState.defaultInterfaceFontSize
+    ) -> WorkbenchState {
+        var state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+        state.project = ProjectFixture(
+            name: "TW Hya First Look",
+            rootPath: "/PrototypeProjects/tw-hya-first-look",
+            datasets: [],
+            source: .fixture
+        )
+        state.prototypeTutorial = TutorialNotebookPrototypeFixtureAdapter.make(scenario: scenario)
+        state.dockMode = .notebooks
+        state.leftDockCollapsed = false
+        state.inspectorCollapsed = true
+        state.tabs = [
+            WorkbenchTab(
+                id: "tab-tutorial-prototype",
+                title: "Tutorial · TW Hya First Look",
+                kind: .notebook
+            )
+        ]
+        state.activeTabID = "tab-tutorial-prototype"
         return state
     }
 
@@ -2222,7 +2276,12 @@ public final class WorkbenchStore: ObservableObject {
     @discardableResult
     private func rejectPrototypeProductionAction(_ action: String) -> Bool {
         guard runtimeKind != .production else { return false }
-        let prototypeName = runtimeKind == .notebookPrototype ? "notebook" : "Python"
+        let prototypeName = switch runtimeKind {
+        case .notebookPrototype: "notebook"
+        case .pythonPrototype: "Python"
+        case .tutorialPrototype: "tutorial"
+        case .production: "production"
+        }
         state.lastErrors.append("\(action) are unavailable in the in-memory \(prototypeName) prototype")
         return true
     }
@@ -2234,6 +2293,11 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
         if runtimeKind == .pythonPrototype, tab.kind != .python {
+            _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
+            return
+        }
+        if runtimeKind == .tutorialPrototype,
+           tab.kind != .notebook && !(tab.kind == .task && tab.prototypeReceiptID != nil) {
             _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
             return
         }
@@ -2315,6 +2379,11 @@ public final class WorkbenchStore: ObservableObject {
             }
             openTab(WorkbenchTab(id: "tab-tutorial-pack", title: "Tutorial", kind: .tutorial))
         case .task:
+            if state.isTutorialPrototype,
+               let task = state.prototypeTutorial?.fixtureTask {
+                openPrototypeTutorialTask(taskID: task.id)
+                return
+            }
             if state.isNotebookPrototype {
                 guard let receiptID = state.prototypeNotebook?.selectedReceiptID else {
                     state.lastErrors.append("No prototype notebook task is selected")
@@ -2329,6 +2398,14 @@ public final class WorkbenchStore: ObservableObject {
                 openTab(WorkbenchTab(id: nextTaskTabID(), title: "Tasks", kind: .task, datasetID: state.selectedDatasetID))
             }
         case .notebook:
+            if state.isTutorialPrototype {
+                openTab(WorkbenchTab(
+                    id: "tab-tutorial-prototype",
+                    title: "Tutorial · TW Hya First Look",
+                    kind: .notebook
+                ))
+                return
+            }
             if let notebook = state.prototypeNotebook {
                 openTab(WorkbenchTab(id: "tab-scientific-notebook", title: notebook.filename, kind: .notebook))
                 return
@@ -3468,6 +3545,167 @@ public final class WorkbenchStore: ObservableObject {
         }
         projection.documents[documentIndex].tasks[receiptIndex].revisions[revisionIndex] = revision
         state.prototypeNotebook = projection
+    }
+
+    package func selectTutorialPrototypeSection(_ sectionID: String) {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              tutorial.selectSection(id: sectionID)
+        else { return }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func setTutorialPrototypeDraft(_ markdown: String) {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial
+        else { return }
+        updateTutorialLearnerDocument(in: &tutorial) { document in
+            document.draftMarkdown = markdown
+            PrototypeScientificNotebookFixtureAdapter.synchronizeTaskCells(in: &document)
+        }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func setTutorialPrototypeViewMode(_ viewMode: PrototypeNotebookViewMode) {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial
+        else { return }
+        updateTutorialLearnerDocument(in: &tutorial) { $0.viewMode = viewMode }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func saveTutorialPrototypeDraft() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial
+        else { return }
+        updateTutorialLearnerDocument(in: &tutorial) { $0.savedMarkdown = $0.draftMarkdown }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func showTutorialPrototypeApproval() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              tutorial.showApproval()
+        else { return }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func dismissTutorialPrototypeApproval() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              tutorial.dismissApproval()
+        else { return }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func approveTutorialPrototypeAcquisition() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              let generation = tutorial.approve()
+        else { return }
+        state.prototypeTutorial = tutorial
+        scheduleTutorialPrototypeAdvance(generation: generation)
+    }
+
+    package func cancelTutorialPrototypeAcquisition() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              tutorial.cancel()
+        else { return }
+        state.prototypeTutorial = tutorial
+    }
+
+    package func resumeTutorialPrototypeAcquisition() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              let generation = tutorial.resume()
+        else { return }
+        state.prototypeTutorial = tutorial
+        scheduleTutorialPrototypeAdvance(generation: generation)
+    }
+
+    package func restartTutorialPrototypeAcquisition() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              let generation = tutorial.restart()
+        else { return }
+        state.prototypeTutorial = tutorial
+        scheduleTutorialPrototypeAdvance(generation: generation)
+    }
+
+    package func retryTutorialPrototypeAcquisition() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              let generation = tutorial.retry()
+        else { return }
+        state.prototypeTutorial = tutorial
+        scheduleTutorialPrototypeAdvance(generation: generation)
+    }
+
+    package func makeSpaceAndRetryTutorialPrototypeAcquisition() {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              let generation = tutorial.makeSpaceAndRetry()
+        else { return }
+        state.prototypeTutorial = tutorial
+        scheduleTutorialPrototypeAdvance(generation: generation)
+    }
+
+    /// Deterministic hook used by core tests and attempt-bound delayed fixture
+    /// callbacks. Obsolete generations are ignored by the projection.
+    @discardableResult
+    package func advanceTutorialPrototypeAcquisition(generation: Int) -> Bool {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              tutorial.advance(generation: generation)
+        else { return false }
+        let shouldContinue = tutorial.dataset.phase.isRunning
+        state.prototypeTutorial = tutorial
+        if shouldContinue {
+            scheduleTutorialPrototypeAdvance(generation: generation)
+        }
+        return true
+    }
+
+    package func openPrototypeTutorialTask(taskID: String) {
+        guard runtimeKind == .tutorialPrototype,
+              var tutorial = state.prototypeTutorial,
+              tutorial.dataset.isReady,
+              tutorial.fixtureTask.id == taskID
+        else {
+            state.lastErrors.append("Tutorial task parameters are unavailable until the fixture dataset is ready")
+            return
+        }
+        if let documentIndex = tutorial.learnerNotebook.documents.firstIndex(where: {
+            $0.id == tutorial.learnerNotebook.activeNotebookID
+        }) {
+            tutorial.learnerNotebook.documents[documentIndex].selectedReceiptID = taskID
+        }
+        state.prototypeTutorial = tutorial
+        var tab = WorkbenchTab(
+            id: "tab-prototype-task-\(taskID)",
+            title: tutorial.fixtureTask.title,
+            kind: .task,
+            taskID: tutorial.fixtureTask.taskID
+        )
+        tab.prototypeReceiptID = taskID
+        openTab(tab)
+    }
+
+    private func scheduleTutorialPrototypeAdvance(generation: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            _ = self?.advanceTutorialPrototypeAcquisition(generation: generation)
+        }
+    }
+
+    private func updateTutorialLearnerDocument(
+        in tutorial: inout TutorialNotebookPrototypeProjection,
+        _ update: (inout PrototypeNotebookDocumentProjection) -> Void
+    ) {
+        let activeID = tutorial.learnerNotebook.activeNotebookID
+        guard let index = tutorial.learnerNotebook.documents.firstIndex(where: { $0.id == activeID })
+        else { return }
+        update(&tutorial.learnerNotebook.documents[index])
     }
 
     public func openImagerProgressMockup() {

@@ -2769,6 +2769,8 @@ public struct WorkbenchState: Codable, Equatable {
     package var prototypeNotebook: PrototypeScientificNotebookProjection?
     /// Ephemeral fixture projection present only for the Wave 2 Python interaction prototype.
     package var prototypePython: PrototypePythonNotebookProjection?
+    /// Ephemeral fixture projection present only for the Wave 3 tutorial interaction prototype.
+    package var prototypeTutorial: TutorialNotebookPrototypeProjection?
     public var activeTaskID: String
     public var taskUISchemas: [String: TaskUISchema]
     public var parameterSessions: [String: SurfaceParameterSession]
@@ -2842,6 +2844,7 @@ public struct WorkbenchState: Codable, Equatable {
         scientificNotebooks = nil
         prototypeNotebook = nil
         prototypePython = nil
+        prototypeTutorial = nil
         self.activeTaskID = activeTaskID
         self.taskUISchemas = taskUISchemas
         self.parameterSessions = parameterSessions
@@ -2914,8 +2917,12 @@ public struct WorkbenchState: Codable, Equatable {
         prototypePython != nil
     }
 
+    package var isTutorialPrototype: Bool {
+        prototypeTutorial != nil
+    }
+
     package var isPrototype: Bool {
-        isNotebookPrototype || isPythonPrototype
+        isNotebookPrototype || isPythonPrototype || isTutorialPrototype
     }
 
     public var isDemoProject: Bool {
@@ -2972,6 +2979,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var tutorialPack: DebugTutorialPackSnapshot?
     package var prototypeNotebook: DebugPrototypeScientificNotebookSnapshot?
     package var prototypePython: DebugPrototypePythonNotebookSnapshot?
+    package var prototypeTutorial: DebugTutorialNotebookPrototypeSnapshot?
     public var scientificNotebook: DebugScientificNotebookSnapshot?
     public var discoveredDatasets: [String]
     public var probeDiagnostics: [String]
@@ -3010,6 +3018,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         tutorialPack = state.tutorialPack.map(DebugTutorialPackSnapshot.init(context:))
         prototypeNotebook = state.prototypeNotebook.map(DebugPrototypeScientificNotebookSnapshot.init(state:))
         prototypePython = state.prototypePython.map(DebugPrototypePythonNotebookSnapshot.init(state:))
+        prototypeTutorial = state.prototypeTutorial.map(DebugTutorialNotebookPrototypeSnapshot.init(state:))
         scientificNotebook = state.scientificNotebooks.map(DebugScientificNotebookSnapshot.init(state:))
         activeLeftDockMode = state.dockMode
         leftDockCollapsed = state.leftDockCollapsed
@@ -3178,6 +3187,46 @@ package struct DebugPrototypePythonNotebookSnapshot: Codable, Equatable {
             uniqueKeysWithValues: state.savedVisualizations.map { ($0.id, $0.revisions.count) }
         )
         cells = state.cells.map(DebugPrototypePythonCellSnapshot.init(cell:))
+    }
+}
+
+package struct DebugTutorialNotebookPrototypeSnapshot: Codable, Equatable {
+    package var prototypeKind: WorkbenchPrototypeKind
+    package var scenario: TutorialNotebookPrototypeScenario
+    package var title: String
+    package var learnerNotebookID: String
+    package var learnerNotebookDirty: Bool
+    package var selectedSectionID: String
+    package var sectionStatuses: [String: TutorialNotebookSectionStatus]
+    package var datasetID: String
+    package var datasetPhase: TutorialNotebookAcquisitionPhase
+    package var datasetIsStaged: Bool
+    package var datasetProgress: Double
+    package var resumeOffsetBytes: UInt64
+    package var currentGeneration: Int
+    package var attemptCount: Int
+    package var activeApproval: Bool
+    package var fixtureTaskID: String
+
+    package init(state: TutorialNotebookPrototypeProjection) {
+        prototypeKind = state.prototypeKind
+        scenario = state.scenario
+        title = state.title
+        learnerNotebookID = state.learnerNotebook.notebookID
+        learnerNotebookDirty = state.learnerNotebook.isDirty
+        selectedSectionID = state.selectedSectionID
+        sectionStatuses = Dictionary(
+            uniqueKeysWithValues: state.sections.map { ($0.id, $0.status) }
+        )
+        datasetID = state.dataset.id
+        datasetPhase = state.dataset.phase
+        datasetIsStaged = state.dataset.isStaged
+        datasetProgress = state.dataset.currentAttempt?.progress ?? 0
+        resumeOffsetBytes = state.dataset.currentAttempt?.resumeOffsetBytes ?? 0
+        currentGeneration = state.currentGeneration
+        attemptCount = state.dataset.attempts.count
+        activeApproval = state.activeApproval != nil
+        fixtureTaskID = state.fixtureTask.id
     }
 }
 

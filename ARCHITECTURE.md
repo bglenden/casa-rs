@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-07-11
+Last reality check: 2026-07-12
 Verification: just docs-check
 
 ## System purpose
@@ -141,13 +141,20 @@ persisted contracts. Explicit MS/image snapshots are copied and versioned by
 `casa-notebook`; canonical typed explorer parameters are retained solely as
 reopen intent, never inserted as input forms or live links in Markdown.
 
-The planned later-wave tutorial-manifest support and `casars-assistant`
-TypeScript sidecar are isolated behind a
+Wave 3 has a package-internal Swift tutorial interaction prototype that reuses
+the isolated notebook fixture runtime. Its learner, section, acquisition, and
+approval projections are deterministic review state only; they never read the
+obsolete tutorial-pack v0 surface, invoke frontend services, or define a
+persisted manifest or acquisition protocol. The production tutorial-template,
+handler, verified-materialization, and lock contracts remain accepted later
+Wave 3 work behind the prototype approval gate.
+
+The planned `casars-assistant` TypeScript sidecar is isolated behind a
 CASA-RS-owned JSONL/stdio protocol and may use Pi as a replaceable model/auth
 adapter. Swift remains the native interaction layer, and
 `casars-frontend-services` remains a projection layer rather than a persistence
-implementation. The assistant and later-wave tutorial modules remain accepted
-architecture but do not exist until their implementation waves land.
+implementation. The assistant modules remain accepted architecture but do not
+exist until their implementation wave lands.
 
 Every notebook-program wave starts with a launchable deterministic GUI
 prototype and an explicit approval gate before real adapters are connected.

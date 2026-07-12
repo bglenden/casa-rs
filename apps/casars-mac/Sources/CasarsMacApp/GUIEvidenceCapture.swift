@@ -29,10 +29,11 @@ private struct GUIEvidenceCaptureRequest {
         case imageExplorer = "image-explorer"
         case notebookPrototype = "notebook-prototype"
         case pythonPrototype = "python-prototype"
+        case tutorialPrototype = "tutorial-prototype"
 
         var requiresTutorialPack: Bool {
             switch self {
-            case .imagerProgressMockup, .notebookPrototype, .pythonPrototype:
+            case .imagerProgressMockup, .notebookPrototype, .pythonPrototype, .tutorialPrototype:
                 false
             default:
                 true
@@ -59,6 +60,7 @@ private struct GUIEvidenceCaptureRequest {
     var iterationAxis: MeasurementSetPlotIterationAxis?
     var prototypeScenario: NotebookPrototypeScenario
     var pythonPrototypeScenario: PythonPrototypeScenario
+    var tutorialPrototypeScenario: TutorialNotebookPrototypeScenario
     var outputPath: String
     var width: CGFloat
     var height: CGFloat
@@ -96,6 +98,9 @@ private struct GUIEvidenceCaptureRequest {
         self.iterationAxis = Self.iterationAxis(Self.argumentValue(after: "--iteraxis", in: arguments))
         self.prototypeScenario = try Self.prototypeScenario(Self.argumentValue(after: "--prototype-state", in: arguments))
         self.pythonPrototypeScenario = try Self.pythonPrototypeScenario(
+            Self.argumentValue(after: "--prototype-state", in: arguments)
+        )
+        self.tutorialPrototypeScenario = try Self.tutorialPrototypeScenario(
             Self.argumentValue(after: "--prototype-state", in: arguments)
         )
         self.outputPath = outputPath
@@ -149,12 +154,8 @@ private struct GUIEvidenceCaptureRequest {
         switch value {
         case "external-conflict":
             .externalConflict
-        case nil, "happy-path":
-            .primary
         default:
-            throw GUIEvidenceCaptureError.invalidArgument(
-                "--prototype-state requires: happy-path or external-conflict"
-            )
+            .primary
         }
     }
 
@@ -162,11 +163,19 @@ private struct GUIEvidenceCaptureRequest {
         switch value {
         case "failure": .failure
         case "nonresponsive": .nonresponsive
-        case nil, "happy-path", "external-conflict": .primary
-        default:
-            throw GUIEvidenceCaptureError.invalidArgument(
-                "--prototype-state for python requires: happy-path, failure, or nonresponsive"
-            )
+        default: .primary
+        }
+    }
+
+    private static func tutorialPrototypeScenario(
+        _ value: String?
+    ) throws -> TutorialNotebookPrototypeScenario {
+        switch value {
+        case "checksum-failure": .checksumFailure
+        case "disk-failure": .diskFailure
+        case "offline": .offline
+        case "unsafe-archive": .unsafeArchive
+        default: .happyPath
         }
     }
 }
@@ -210,6 +219,8 @@ private enum GUIEvidenceCaptureRenderer {
             WorkbenchStore.notebookPrototype(scenario: request.prototypeScenario)
         case .pythonPrototype:
             WorkbenchStore.pythonPrototype(scenario: request.pythonPrototypeScenario)
+        case .tutorialPrototype:
+            WorkbenchStore.tutorialPrototype(scenario: request.tutorialPrototypeScenario)
         default:
             WorkbenchStore.empty()
         }
@@ -241,6 +252,8 @@ private enum GUIEvidenceCaptureRenderer {
             try renderNotebookPrototype(request: request, store: store)
         case .pythonPrototype:
             try renderPythonPrototype(request: request, store: store)
+        case .tutorialPrototype:
+            try renderTutorialPrototype(request: request, store: store)
         }
     }
 
@@ -264,6 +277,24 @@ private enum GUIEvidenceCaptureRenderer {
 
     @MainActor
     private static func renderPythonPrototype(
+        request: GUIEvidenceCaptureRequest,
+        store: WorkbenchStore
+    ) throws {
+        let view = WorkbenchView(store: store)
+            .environment(\.workbenchFontSize, WorkbenchState.defaultInterfaceFontSize)
+            .preferredColorScheme(.dark)
+            .frame(width: request.width, height: request.height)
+        let png = try renderPNGWithHostingView(
+            view: view,
+            width: request.width,
+            height: request.height,
+            scale: 2.0
+        )
+        try writePNG(png, outputPath: request.outputPath)
+    }
+
+    @MainActor
+    private static func renderTutorialPrototype(
         request: GUIEvidenceCaptureRequest,
         store: WorkbenchStore
     ) throws {

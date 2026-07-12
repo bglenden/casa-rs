@@ -427,12 +427,14 @@ struct PrototypeNotebookTaskView: View {
     }
 
     private var taskProjection: PrototypeNotebookTaskProjection? {
-        guard let receiptID = tab.prototypeReceiptID,
-              let notebook = store.state.prototypeNotebook
-        else { return nil }
-        return notebook.documents.lazy.compactMap { document in
-            document.tasks.first { $0.id == receiptID }
-        }.first
+        guard let receiptID = tab.prototypeReceiptID else { return nil }
+        if let notebook = store.state.prototypeNotebook {
+            return notebook.documents.lazy.compactMap { document in
+                document.tasks.first { $0.id == receiptID }
+            }.first
+        }
+        let tutorialTask = store.state.prototypeTutorial?.fixtureTask
+        return tutorialTask?.id == receiptID ? tutorialTask : nil
     }
 
     private func taskWorkspace(_ task: PrototypeNotebookTaskProjection) -> some View {
@@ -441,18 +443,22 @@ struct PrototypeNotebookTaskView: View {
                 HStack(alignment: .top) {
                     PanelHeader(
                         title: task.title,
-                        subtitle: "\(task.taskID) · parameters loaded from the notebook block"
+                        subtitle: store.state.isTutorialPrototype
+                            ? "\(task.taskID) · tutorial parameter preview"
+                            : "\(task.taskID) · parameters loaded from the notebook block"
                     )
                     .accessibilityIdentifier("prototypeTask.identity.\(task.id)")
                     Spacer()
-                    Button {
-                        store.restartPrototypeNotebookTask(receiptID: task.id)
-                    } label: {
-                        Label("Restart Fixture", systemImage: "arrow.clockwise")
+                    if !store.state.isTutorialPrototype {
+                        Button {
+                            store.restartPrototypeNotebookTask(receiptID: task.id)
+                        } label: {
+                            Label("Restart Fixture", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(task.revisions.contains { $0.status == .running })
+                        .accessibilityIdentifier("prototypeTask.restart")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(task.revisions.contains { $0.status == .running })
-                    .accessibilityIdentifier("prototypeTask.restart")
                 }
 
                 HStack(spacing: 8) {

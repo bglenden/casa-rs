@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-07-11
+Last reality check: 2026-07-12
 Verification: just verify
 
 ## Test categories
@@ -197,6 +197,16 @@ For each wave:
   executes a production Python cell from a disposable project and verifies its
   on-disk receipt and reloaded output; the fixture XCUITests remain the
   deterministic interaction evidence for explorer New/Update/Open behavior.
+- Wave 3 Phase A uses only package-internal deterministic tutorial fixtures.
+  Core tests cover explicit approval, legal Download/Verify/Unpack/Ready
+  transitions, generation-bound cancellation/resume/restart, stale completion
+  rejection, offline/checksum/unsafe-archive/disk failures, retry recovery,
+  section progress, learner annotations, and the rule that only Ready is
+  staged. XCUITests cover the launched learner-notebook flow, complete approval
+  facts, compact failures, cancellation/resume, recovery, typed task-parameter
+  preview/loading, accessibility, and zero production-boundary calls. Opening
+  or selecting a tutorial never starts acquisition, and Phase A does not claim
+  a v1 manifest, persistence, network, checksum, extraction, or task adapter.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review

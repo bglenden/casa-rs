@@ -71,6 +71,7 @@ struct CentralWorkspaceView: View {
                 }
                 .disabled(
                     store.state.prototypeNotebook == nil
+                        && store.state.prototypeTutorial == nil
                         && store.state.scientificNotebooks?.activeNotebook == nil
                 )
                 .accessibilityIdentifier("central.tab.openNotebook")
@@ -135,7 +136,11 @@ struct CentralWorkspaceView: View {
                         .id(tab.id)
                 }
             case .notebook:
-                ScientificNotebookView(store: store)
+                if store.state.prototypeTutorial != nil {
+                    TutorialNotebookPrototypeView(store: store)
+                } else {
+                    ScientificNotebookView(store: store)
+                }
             case .plotSamples:
                 PlotSamplesPanel(store: store)
             case .aiChat:

@@ -1,8 +1,8 @@
 # casars-mac
 
 Truth class: current descriptive
-Last reality check: 2026-07-11
-Verification: swift test; just gui-test; swift run casars-mac --dump-debug-state --simulate-main-flow; swift run casars-mac --dump-debug-state --show-prototype notebook; swift run casars-mac --dump-debug-state --show-prototype python; ./script/build_and_run.sh --verify
+Last reality check: 2026-07-12
+Verification: swift test; just gui-test; swift run casars-mac --dump-debug-state --simulate-main-flow; swift run casars-mac --dump-debug-state --show-prototype notebook; swift run casars-mac --dump-debug-state --show-prototype python; swift run casars-mac --dump-debug-state --show-prototype tutorial; ./script/build_and_run.sh --verify
 
 `casars-mac` is the SwiftUI prototype for the native macOS `casa-rs`
 workbench. The app keeps a synthetic demo fixture for layout and dry-run
@@ -22,9 +22,11 @@ swift run casars-mac --dump-debug-state --open-tutorial-pack /path/to/tutorial.p
 swift run casars-mac --dump-debug-state --open-imager-ms /path/to/input.ms
 swift run casars-mac --dump-debug-state --show-prototype notebook --prototype-state happy-path
 swift run casars-mac --dump-debug-state --show-prototype python --prototype-state happy-path
+swift run casars-mac --dump-debug-state --show-prototype tutorial --prototype-state happy-path
 swift run casars-mac --capture-gui-evidence --capture-kind imager-progress-mockup --output /tmp/imager-progress.png
 swift run casars-mac --capture-gui-evidence --capture-kind notebook-prototype --prototype-state external-conflict --output /tmp/notebook-conflict.png
 swift run casars-mac --capture-gui-evidence --capture-kind python-prototype --prototype-state happy-path --output /tmp/python-notebook.png
+swift run casars-mac --capture-gui-evidence --capture-kind tutorial-prototype --prototype-state happy-path --output /tmp/tutorial-notebook.png
 ./script/build_and_run.sh
 ./script/build_and_run.sh --verify
 ./script/install-local-gui.sh --force
@@ -33,6 +35,7 @@ swift run casars-mac --capture-gui-evidence --capture-kind python-prototype --pr
 ./script/build_and_run.sh --tutorial-pack /path/to/tutorial.pack
 ./script/build_and_run.sh --show-prototype notebook --prototype-state happy-path
 ./script/build_and_run.sh --show-prototype python --prototype-state happy-path
+./script/build_and_run.sh --show-prototype tutorial --prototype-state happy-path
 ./script/build_and_run.sh --empty
 ```
 
@@ -61,8 +64,8 @@ app; clear any active system-authentication prompt before retrying. The tests
 use the system pasteboard plus keyboard events for complete-document edits, so
 the runner needs normal GUI focus and pasteboard access. No user project,
 dataset, provider, task process, network service, Python process, or notebook
-file is opened or written: prototype tests launch `--show-prototype notebook`
-or `--show-prototype python` with deterministic fixture state and assert that
+file is opened or written: prototype tests launch `--show-prototype notebook`,
+`--show-prototype python`, or `--show-prototype tutorial` with deterministic fixture state and assert that
 the production-boundary audit remains zero. Production notebook tests use only
 unique test-owned temporary projects and remove them after each test.
 
@@ -128,8 +131,17 @@ regeneration, notebook insertion, explicit saved MeasurementSet/Image Explorer
 snapshots, enlargement, parameter restoration, New plot/immutable Update
 actions, and exact-code approval for AI-proposed cells. The `happy-path`, `failure`, and
 `nonresponsive` states are also accepted by `--capture-kind python-prototype`.
-No Python process, project file, task, provider, or network is touched; the
-Wave 2 production adapters remain blocked until explicit interaction approval.
+The fixture launch touches no Python process, project file, task, provider, or
+network; production Python and plotting adapters are tested separately.
+Pass `--show-prototype tutorial` for the Wave 3 fixture-only learner notebook.
+It keeps notes primary, shows compact section progress, requires an explicit
+source/checksum/disk/extraction approval, and simulates Download, Verify,
+Unpack, Ready, cancellation, resume, retry, offline, checksum, unsafe-archive,
+and insufficient-disk states. A ready fixture dataset enables a typed
+parameter-diff preview and the existing fixture task tab. Accepted states are
+`happy-path`, `checksum-failure`, `disk-failure`, `offline`, and
+`unsafe-archive`. No file, network, archive, task, provider, or durable project
+adapter is invoked before Phase A interaction approval.
 `swift run casars-mac` is reserved for non-interactive debug-state commands and
 low-level executable diagnosis.
 
