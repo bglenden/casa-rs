@@ -2998,6 +2998,8 @@ public enum FrontendServiceError: Swift.Error {
     )
     case Notebook(reason: String
     )
+    case Tutorial(reason: String
+    )
 }
 
 
@@ -3036,6 +3038,9 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
             reason: try FfiConverterString.read(from: &buf)
             )
         case 8: return .Notebook(
+            reason: try FfiConverterString.read(from: &buf)
+            )
+        case 9: return .Tutorial(
             reason: try FfiConverterString.read(from: &buf)
             )
 
@@ -3087,6 +3092,11 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
 
         case let .Notebook(reason):
             writeInt(&buf, Int32(8))
+            FfiConverterString.write(reason, into: &buf)
+
+
+        case let .Tutorial(reason):
+            writeInt(&buf, Int32(9))
             FfiConverterString.write(reason, into: &buf)
 
         }
@@ -4224,9 +4234,117 @@ public func taskUiSchemaJson(taskId: String)throws  -> String  {
     )
 })
 }
+/**
+ * Advance one bounded chunk/phase so the GUI can remain responsive and cancellation-aware.
+ */
+public func tutorialAdvanceAcquisitionJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_advance_acquisition_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * Begin one exact explicitly approved acquisition generation.
+ */
+public func tutorialBeginAcquisitionJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_begin_acquisition_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+public func tutorialCancelAcquisitionJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_cancel_acquisition_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * Fork one immutable template into an editable learner notebook and managed lock.
+ */
+public func tutorialForkJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_fork_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * One-shot conversion of `tutorial-pack.v0` into a portable v1 template.
+ */
+public func tutorialMigrateV0Json(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_migrate_v0_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * Resolve the exact source, redirect, integrity, disk, and extraction approval facts.
+ */
+public func tutorialPlanAcquisitionJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_plan_acquisition_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * Reopen one learner tutorial entirely from Rust-owned project state.
+ */
+public func tutorialProjectJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_project_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * List every Rust-owned learner tutorial in one project.
+ */
+public func tutorialProjectListJson(projectRoot: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_project_list_json(
+        FfiConverterString.lower(projectRoot),$0
+    )
+})
+}
+public func tutorialRestartAcquisitionJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_restart_acquisition_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+public func tutorialResumeAcquisitionJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_resume_acquisition_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+public func tutorialRetryAcquisitionJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_retry_acquisition_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
 public func tutorialTaskParameterAuditJson() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_casars_frontend_services_fn_func_tutorial_task_parameter_audit_json($0
+    )
+})
+}
+/**
+ * Validate and preview one immutable portable tutorial template.
+ */
+public func tutorialTemplateJson(templatePath: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_template_json(
+        FfiConverterString.lower(templatePath),$0
     )
 })
 }
@@ -4360,7 +4478,43 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_task_ui_schema_json() != 63431) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_advance_acquisition_json() != 4234) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_begin_acquisition_json() != 26041) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_cancel_acquisition_json() != 24226) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_fork_json() != 50317) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_migrate_v0_json() != 19951) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_plan_acquisition_json() != 45282) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_project_json() != 61175) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_project_list_json() != 23138) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_restart_acquisition_json() != 34501) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_resume_acquisition_json() != 39062) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_retry_acquisition_json() != 15683) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_casars_frontend_services_checksum_func_tutorial_task_parameter_audit_json() != 21445) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_template_json() != 59443) {
         return InitializationResult.apiChecksumMismatch
     }
 

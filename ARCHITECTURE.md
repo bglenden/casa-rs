@@ -141,13 +141,15 @@ persisted contracts. Explicit MS/image snapshots are copied and versioned by
 `casa-notebook`; canonical typed explorer parameters are retained solely as
 reopen intent, never inserted as input forms or live links in Markdown.
 
-Wave 3 has a package-internal Swift tutorial interaction prototype that reuses
-the isolated notebook fixture runtime. Its learner, section, acquisition, and
-approval projections are deterministic review state only; they never read the
-obsolete tutorial-pack v0 surface, invoke frontend services, or define a
-persisted manifest or acquisition protocol. The production tutorial-template,
-handler, verified-materialization, and lock contracts remain accepted later
-Wave 3 work behind the prototype approval gate.
+`casa-notebook` owns portable tutorial-template v1, immutable template forking,
+the versioned URI-handler registry, exact acquisition approvals, integrity and
+bounded extraction, and `.casa-rs/tutorials/<notebook-id>/lock.toml`.
+`casars-frontend-services` projects those Rust contracts as JSON through
+UniFFI; Swift owns interaction and asynchronous orchestration only. The
+package-internal Wave 3 prototype remains deterministic review state and never
+becomes a persisted or public contract. `tutorial-pack.v0` has no runtime
+reader or GUI state; an explicit Rust one-shot migrator converts its prose,
+native GUI task steps, and regression overlay into v1.
 
 The planned `casars-assistant` TypeScript sidecar is isolated behind a
 CASA-RS-owned JSONL/stdio protocol and may use Pi as a replaceable model/auth

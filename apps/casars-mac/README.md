@@ -18,7 +18,7 @@ From this directory:
 swift test
 swift build
 swift run casars-mac --dump-debug-state --simulate-main-flow
-swift run casars-mac --dump-debug-state --open-tutorial-pack /path/to/tutorial.pack
+swift run casars-mac --dump-debug-state --project /path/to/project --open-tutorial-pack /path/to/tutorial-template
 swift run casars-mac --dump-debug-state --open-imager-ms /path/to/input.ms
 swift run casars-mac --dump-debug-state --show-prototype notebook --prototype-state happy-path
 swift run casars-mac --dump-debug-state --show-prototype python --prototype-state happy-path
@@ -32,7 +32,7 @@ swift run casars-mac --capture-gui-evidence --capture-kind tutorial-prototype --
 ./script/install-local-gui.sh --force
 ./script/build_and_run.sh --project /path/to/project
 ./script/build_and_run.sh --imager-ms /path/to/input.ms --run-active-task
-./script/build_and_run.sh --tutorial-pack /path/to/tutorial.pack
+./script/build_and_run.sh --project /path/to/project --tutorial-pack /path/to/tutorial-template
 ./script/build_and_run.sh --show-prototype notebook --prototype-state happy-path
 ./script/build_and_run.sh --show-prototype python --prototype-state happy-path
 ./script/build_and_run.sh --show-prototype tutorial --prototype-state happy-path
@@ -114,10 +114,13 @@ project directory, `--imager-ms` to open a MeasurementSet directly on the
 imager task, `--run-active-task` to start the selected task after launch,
 imager launch overrides such as `--image-size`, `--cell-arcsec`,
 `--spectral-mode`, `--channel-count`, and `--niter` to tune the schema task,
-`--tutorial-pack` to inspect a generated tutorial learning pack, or `--empty` to
-start without opening a project. Tutorial packs open on the Tutorial tab
-with input staging status, section checkpoints, learner docs, and an action
-that applies each section's GUI parameters to the task panel.
+`--tutorial-pack` together with `--project` to fork a portable tutorial template
+into that project, or `--empty` to start without opening a project. A legacy
+`pack.json` is accepted only as explicit one-shot migration input; the
+resulting learner notebook and every subsequent reopen use v1
+`tutorial.md`/`tutorial.toml`. The notebook keeps learner notes primary, shows
+compact dataset state, requires exact acquisition approval, and loads typed
+tutorial task cells directly into normal task tabs.
 Pass `--show-prototype notebook` to open the Wave 1 scientific-notebook
 prototype without staging a project. `--prototype-state happy-path` selects the
 normal fixture-only task-recording and annotation flow; `external-conflict` shows the
@@ -142,7 +145,9 @@ parameter block that opens the existing fixture task tab directly, where
 tutorial overrides are visibly and accessibly identified. Accepted states are
 `happy-path`, `checksum-failure`, `disk-failure`, `offline`, and
 `unsafe-archive`. No file, network, archive, task, provider, or durable project
-adapter is invoked before Phase A interaction approval.
+adapter is invoked by that prototype. The normal production runtime now forks
+portable v1 templates into Rust-backed learner notebooks and uses the accepted
+interaction for explicitly approved verified acquisition.
 `swift run casars-mac` is reserved for non-interactive debug-state commands and
 low-level executable diagnosis.
 

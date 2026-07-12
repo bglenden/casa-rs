@@ -78,7 +78,7 @@ struct CentralWorkspaceView: View {
                 Button("Tutorial") {
                     store.openDefaultTab(kind: .tutorial)
                 }
-                .disabled(store.state.tutorialPack == nil)
+                .disabled(store.state.tutorialProjects.isEmpty)
                 Button("Plot Samples") {
                     store.openDefaultTab(kind: .plotSamples)
                 }
@@ -126,7 +126,7 @@ struct CentralWorkspaceView: View {
                     initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
                 )
             case .tutorial:
-                TutorialPackPanel(store: store)
+                ScientificNotebookView(store: store)
             case .task:
                 if tab.prototypeReceiptID != nil {
                     PrototypeNotebookTaskView(store: store, tab: tab)
@@ -198,10 +198,10 @@ struct EmptyWorkbenchPanel: View {
                         store.openTutorialPack(path: url.path)
                     }
                 } label: {
-                    Label("Open Tutorial Pack", systemImage: "book")
+                    Label("Fork Tutorial Template", systemImage: "book")
                 }
                 .accessibilityIdentifier("empty.openTutorialPack")
-                .disabled(store.isPrototypeRuntime)
+                .disabled(store.isPrototypeRuntime || !store.state.hasProject)
 
                 Button {
                     store.openFixtureProject()
@@ -219,141 +219,6 @@ struct EmptyWorkbenchPanel: View {
         .frame(maxWidth: 560, alignment: .leading)
         .padding(28)
         .accessibilityIdentifier("panel.emptyWorkbench")
-    }
-}
-
-struct TutorialPackPanel: View {
-    @ObservedObject var store: WorkbenchStore
-
-    var body: some View {
-        ScrollView {
-            if let context = store.state.tutorialPack {
-                VStack(alignment: .leading, spacing: 18) {
-                    PanelHeader(
-                        title: context.title,
-                        subtitle: "\(context.tutorialID) - CASA \(context.declaredCasaVersion)"
-                    )
-
-                    HStack(alignment: .top, spacing: 16) {
-                        SummaryBox(
-                            title: "Pack",
-                            values: [
-                                "pack_id=\(context.packID)",
-                                "root=\(context.rootPath)",
-                                "workspace=\(context.workspaceRoot)",
-                                "review=\(context.reviewPath)"
-                            ]
-                        )
-                        SummaryBox(
-                            title: "Learner",
-                            values: [
-                                "docs=\(context.learnerDocsIndex)",
-                                "sections=\(context.sections.count)"
-                            ]
-                        )
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Inputs")
-                            .workbenchFont(.headline)
-                        ForEach(context.inputs) { input in
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Image(systemName: input.status == .staged ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                                    .foregroundStyle(input.status == .staged ? .green : .orange)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(input.filename)
-                                        .workbenchFont(.subheadline, weight: .semibold)
-                                    Text(input.displayName)
-                                        .workbenchFont(.caption)
-                                        .foregroundStyle(.secondary)
-                                    Text(input.packPath)
-                                        .workbenchFont(.caption, design: .monospaced)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Text(input.status.rawValue)
-                                    .workbenchFont(.caption, weight: .semibold)
-                                    .foregroundStyle(input.status == .staged ? .green : .orange)
-                            }
-                            .accessibilityIdentifier("tutorial.input.\(input.id)")
-                        }
-                    }
-                    .taskCard()
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Sections")
-                            .workbenchFont(.headline)
-                        ForEach(context.sections) { section in
-                            tutorialSectionRow(section, context: context)
-                        }
-                    }
-                    .taskCard()
-                }
-                .padding(20)
-            } else {
-                VStack(alignment: .leading, spacing: 18) {
-                    PanelHeader(title: "Tutorial Pack", subtitle: "Open a tutorial pack directory or pack.json")
-                    Button {
-                        if let url = TutorialPackOpenPanel.choosePack() {
-                            store.openTutorialPack(path: url.path)
-                        }
-                    } label: {
-                        Label("Open Tutorial Pack", systemImage: "book")
-                    }
-                    .accessibilityIdentifier("tutorial.openPack")
-                }
-                .padding(28)
-                .frame(maxWidth: 560, alignment: .leading)
-            }
-        }
-        .accessibilityIdentifier("panel.tutorialPack")
-    }
-
-    private func tutorialSectionRow(_ section: TutorialPackSection, context: TutorialPackContext) -> some View {
-        let isSelected = context.selectedSection?.id == section.id
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(section.sequence). \(section.title)")
-                        .workbenchFont(.subheadline, weight: .semibold)
-                    Text(section.observableResult)
-                        .workbenchFont(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text(section.reviewCheckpoint.status)
-                    .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            HStack(spacing: 8) {
-                ForEach(section.tasks, id: \.self) { task in
-                    Text(task)
-                        .workbenchFont(.caption, design: .monospaced)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Color.secondary.opacity(0.10))
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
-                }
-                Spacer()
-                Button {
-                    store.selectTutorialSection(section.id)
-                } label: {
-                    Label(isSelected ? "Selected" : "Select", systemImage: isSelected ? "checkmark.circle" : "circle")
-                }
-                .accessibilityIdentifier("tutorial.section.select.\(section.id)")
-
-                Button {
-                    store.openTutorialSectionTask(section.id)
-                } label: {
-                    Label("Open Task", systemImage: "slider.horizontal.3")
-                }
-                .accessibilityIdentifier("tutorial.section.openTask.\(section.id)")
-            }
-        }
-        .padding(10)
-        .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .accessibilityIdentifier("tutorial.section.\(section.id)")
     }
 }
 
@@ -8618,10 +8483,28 @@ struct GenericTaskPanel: View {
 
     private func parameterOriginRow(_ parameter: String) -> some View {
         let origin = store.parameterOrigin(surfaceID: activeTaskID, instanceID: tabID, name: parameter)
+        let sourcePath = store.parameterSession(
+            surfaceID: activeTaskID,
+            instanceID: tabID
+        )?.baseProfilePath ?? ""
+        let isTutorialOverride = origin != "default" && store.state.tutorialProjects.contains {
+            sourcePath.contains("/notebooks/\($0.tutorial.notebookFilename)#")
+        }
         return HStack(spacing: 4) {
-            Text(origin.replacingOccurrences(of: "_", with: " ").capitalized)
-                .workbenchFont(.caption)
-                .foregroundStyle(.secondary)
+            if isTutorialOverride {
+                Label("Tutorial override", systemImage: "arrow.down.right.circle.fill")
+                    .workbenchFont(.caption, weight: .semibold)
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.08), in: Capsule())
+                    .accessibilityIdentifier("task.parameterSource.\(parameter)")
+                    .accessibilityValue("tutorial override")
+            } else {
+                Text(origin.replacingOccurrences(of: "_", with: " ").capitalized)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if origin != "default" {
                 Button {
                     store.resetParameter(surfaceID: activeTaskID, instanceID: tabID, name: parameter)

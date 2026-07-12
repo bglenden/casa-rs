@@ -23,7 +23,8 @@ use casa_ms::{
 use casa_notebook::{
     AttemptHandle, ConflictResolution, ExecutionReceipt, ExportMode, NotebookDocument,
     NotebookStore, ReceiptFinalization, RecordingPolicy, RecordingRequest, SaveResult,
-    SaveVisualizationRequest, TaskCellIntent, VisualizationSnapshot,
+    SaveVisualizationRequest, TaskCellIntent, TutorialAcquisitionApproval, TutorialProject,
+    TutorialTemplate, VisualizationSnapshot,
 };
 use casa_provider_contracts::{
     ParameterValue, ProviderInvocationAdaptation, RunSafetyClass, SurfaceContractBundle,
@@ -671,6 +672,8 @@ pub enum FrontendServiceError {
     Parameters { reason: String },
     #[error("notebook service failed: {reason}")]
     Notebook { reason: String },
+    #[error("tutorial service failed: {reason}")]
+    Tutorial { reason: String },
 }
 
 type FrontendResult<T> = Result<T, FrontendServiceError>;
@@ -843,10 +846,95 @@ struct NotebookSaveVisualizationRequest {
     request: SaveVisualizationRequest,
 }
 
+#[derive(Debug, Deserialize)]
+struct TutorialForkRequest {
+    project_root: String,
+    template_path: String,
+    filename: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TutorialMigrateRequest {
+    pack_path: String,
+    destination: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TutorialNotebookRequest {
+    project_root: String,
+    notebook_id: casa_notebook::NotebookId,
+}
+
+#[derive(Debug, Deserialize)]
+struct TutorialPlanRequest {
+    project_root: String,
+    notebook_id: casa_notebook::NotebookId,
+    dataset_id: String,
+    source_override: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TutorialBeginRequest {
+    project_root: String,
+    plan: casa_notebook::TutorialAcquisitionPlan,
+    approval: TutorialAcquisitionApproval,
+}
+
+#[derive(Debug, Deserialize)]
+struct TutorialActionRequest {
+    project_root: String,
+    notebook_id: casa_notebook::NotebookId,
+    dataset_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TutorialGenerationActionRequest {
+    project_root: String,
+    notebook_id: casa_notebook::NotebookId,
+    dataset_id: String,
+    generation: u64,
+    #[serde(default = "default_tutorial_download_chunk")]
+    max_download_bytes: u64,
+}
+
+const fn default_tutorial_download_chunk() -> u64 {
+    1024 * 1024
+}
+
+#[derive(Serialize)]
+struct TutorialTemplateProjection<'a> {
+    root: String,
+    content_sha256: &'a str,
+    manifest: &'a casa_notebook::TutorialManifest,
+}
+
+#[derive(Serialize)]
+struct TutorialForkProjection {
+    notebook: NotebookProjection,
+    tutorial: casa_notebook::TutorialLock,
+}
+
 fn notebook_error(action: &str, error: impl std::fmt::Display) -> FrontendServiceError {
     FrontendServiceError::Notebook {
         reason: format!("{action}: {error}"),
     }
+}
+
+fn tutorial_error(action: &str, error: impl std::fmt::Display) -> FrontendServiceError {
+    FrontendServiceError::Tutorial {
+        reason: format!("{action}: {error}"),
+    }
+}
+
+fn parse_tutorial_request<T: for<'de> Deserialize<'de>>(
+    action: &str,
+    request_json: &str,
+) -> FrontendResult<T> {
+    serde_json::from_str(request_json).map_err(|error| tutorial_error(action, error))
+}
+
+fn serialize_tutorial<T: Serialize>(action: &str, value: &T) -> FrontendResult<String> {
+    serde_json::to_string(value).map_err(|error| tutorial_error(action, error))
 }
 
 fn notebook_projection(
@@ -1019,6 +1107,203 @@ pub fn notebook_export(request_json: String) -> FrontendResult<()> {
     store
         .export(Path::new(&request.destination), request.mode.into())
         .map_err(|error| notebook_error("export notebooks", error))
+}
+
+fn tutorial_template_projection(template: &TutorialTemplate) -> TutorialTemplateProjection<'_> {
+    TutorialTemplateProjection {
+        root: template.root.to_string_lossy().into_owned(),
+        content_sha256: &template.content_sha256,
+        manifest: &template.manifest,
+    }
+}
+
+/// Validate and preview one immutable portable tutorial template.
+#[uniffi::export]
+pub fn tutorial_template_json(template_path: String) -> FrontendResult<String> {
+    let template = TutorialProject::load_template(&template_path)
+        .map_err(|error| tutorial_error("load tutorial template", error))?;
+    serialize_tutorial(
+        "serialize tutorial template",
+        &tutorial_template_projection(&template),
+    )
+}
+
+/// One-shot conversion of `tutorial-pack.v0` into a portable v1 template.
+#[uniffi::export]
+pub fn tutorial_migrate_v0_json(request_json: String) -> FrontendResult<String> {
+    let request: TutorialMigrateRequest =
+        parse_tutorial_request("parse tutorial migration request", &request_json)?;
+    let template = TutorialProject::migrate_v0_template(&request.pack_path, &request.destination)
+        .map_err(|error| tutorial_error("migrate tutorial-pack v0", error))?;
+    serialize_tutorial(
+        "serialize migrated tutorial template",
+        &tutorial_template_projection(&template),
+    )
+}
+
+/// Fork one immutable template into an editable learner notebook and managed lock.
+#[uniffi::export]
+pub fn tutorial_fork_json(request_json: String) -> FrontendResult<String> {
+    let request: TutorialForkRequest =
+        parse_tutorial_request("parse tutorial fork request", &request_json)?;
+    let template = TutorialProject::load_template(&request.template_path)
+        .map_err(|error| tutorial_error("load tutorial template", error))?;
+    let project = TutorialProject::open(&request.project_root)
+        .map_err(|error| tutorial_error("open tutorial project", error))?;
+    let forked = project
+        .fork_template(&template, &request.filename)
+        .map_err(|error| tutorial_error("fork tutorial template", error))?;
+    let store = NotebookStore::open(&request.project_root)
+        .map_err(|error| tutorial_error("open tutorial notebook store", error))?;
+    serialize_tutorial(
+        "serialize forked tutorial",
+        &TutorialForkProjection {
+            notebook: notebook_projection(&store, &forked.notebook.entry.filename)?,
+            tutorial: forked.lock,
+        },
+    )
+}
+
+/// Reopen one learner tutorial entirely from Rust-owned project state.
+#[uniffi::export]
+pub fn tutorial_project_json(request_json: String) -> FrontendResult<String> {
+    let request: TutorialNotebookRequest =
+        parse_tutorial_request("parse tutorial project request", &request_json)?;
+    let project = TutorialProject::open(&request.project_root)
+        .map_err(|error| tutorial_error("open tutorial project", error))?;
+    let lock = project
+        .load_lock(request.notebook_id)
+        .map_err(|error| tutorial_error("load tutorial lock", error))?;
+    let store = NotebookStore::open(&request.project_root)
+        .map_err(|error| tutorial_error("open tutorial notebook store", error))?;
+    serialize_tutorial(
+        "serialize tutorial project",
+        &TutorialForkProjection {
+            notebook: notebook_projection(&store, &lock.notebook_filename)?,
+            tutorial: lock,
+        },
+    )
+}
+
+/// List every Rust-owned learner tutorial in one project.
+#[uniffi::export]
+pub fn tutorial_project_list_json(project_root: String) -> FrontendResult<String> {
+    let project = TutorialProject::open(&project_root)
+        .map_err(|error| tutorial_error("open tutorial project", error))?;
+    let store = NotebookStore::open(&project_root)
+        .map_err(|error| tutorial_error("open tutorial notebook store", error))?;
+    let tutorials = project
+        .list_locks()
+        .map_err(|error| tutorial_error("list tutorial locks", error))?
+        .into_iter()
+        .map(|lock| {
+            Ok(TutorialForkProjection {
+                notebook: notebook_projection(&store, &lock.notebook_filename)?,
+                tutorial: lock,
+            })
+        })
+        .collect::<FrontendResult<Vec<_>>>()?;
+    serialize_tutorial("serialize tutorial project list", &tutorials)
+}
+
+/// Resolve the exact source, redirect, integrity, disk, and extraction approval facts.
+#[uniffi::export]
+pub fn tutorial_plan_acquisition_json(request_json: String) -> FrontendResult<String> {
+    let request: TutorialPlanRequest =
+        parse_tutorial_request("parse tutorial acquisition plan request", &request_json)?;
+    let plan = TutorialProject::open(&request.project_root)
+        .map_err(|error| tutorial_error("open tutorial project", error))?
+        .plan_acquisition(
+            request.notebook_id,
+            &request.dataset_id,
+            request.source_override.as_deref(),
+        )
+        .map_err(|error| tutorial_error("plan tutorial acquisition", error))?;
+    serialize_tutorial("serialize tutorial acquisition plan", &plan)
+}
+
+/// Begin one exact explicitly approved acquisition generation.
+#[uniffi::export]
+pub fn tutorial_begin_acquisition_json(request_json: String) -> FrontendResult<String> {
+    let request: TutorialBeginRequest =
+        parse_tutorial_request("parse tutorial acquisition approval", &request_json)?;
+    let state = TutorialProject::open(&request.project_root)
+        .map_err(|error| tutorial_error("open tutorial project", error))?
+        .begin_acquisition(&request.plan, request.approval)
+        .map_err(|error| tutorial_error("begin tutorial acquisition", error))?;
+    serialize_tutorial("serialize tutorial acquisition state", &state)
+}
+
+fn tutorial_action(
+    request_json: &str,
+    action: &'static str,
+    apply: impl FnOnce(
+        &TutorialProject,
+        casa_notebook::NotebookId,
+        &str,
+    ) -> Result<casa_notebook::TutorialDatasetLock, casa_notebook::TutorialError>,
+) -> FrontendResult<String> {
+    let request: TutorialActionRequest = parse_tutorial_request(action, request_json)?;
+    let project = TutorialProject::open(&request.project_root)
+        .map_err(|error| tutorial_error("open tutorial project", error))?;
+    let state = apply(&project, request.notebook_id, &request.dataset_id)
+        .map_err(|error| tutorial_error(action, error))?;
+    serialize_tutorial("serialize tutorial acquisition state", &state)
+}
+
+#[uniffi::export]
+pub fn tutorial_resume_acquisition_json(request_json: String) -> FrontendResult<String> {
+    tutorial_action(
+        &request_json,
+        "resume tutorial acquisition",
+        |project, id, dataset| project.resume_acquisition(id, dataset),
+    )
+}
+
+#[uniffi::export]
+pub fn tutorial_restart_acquisition_json(request_json: String) -> FrontendResult<String> {
+    tutorial_action(
+        &request_json,
+        "restart tutorial acquisition",
+        |project, id, dataset| project.restart_acquisition(id, dataset),
+    )
+}
+
+#[uniffi::export]
+pub fn tutorial_retry_acquisition_json(request_json: String) -> FrontendResult<String> {
+    tutorial_action(
+        &request_json,
+        "retry tutorial acquisition",
+        |project, id, dataset| project.retry_acquisition(id, dataset),
+    )
+}
+
+#[uniffi::export]
+pub fn tutorial_cancel_acquisition_json(request_json: String) -> FrontendResult<String> {
+    let request: TutorialGenerationActionRequest =
+        parse_tutorial_request("parse tutorial cancellation", &request_json)?;
+    let state = TutorialProject::open(&request.project_root)
+        .map_err(|error| tutorial_error("open tutorial project", error))?
+        .cancel_acquisition(request.notebook_id, &request.dataset_id, request.generation)
+        .map_err(|error| tutorial_error("cancel tutorial acquisition", error))?;
+    serialize_tutorial("serialize tutorial acquisition state", &state)
+}
+
+/// Advance one bounded chunk/phase so the GUI can remain responsive and cancellation-aware.
+#[uniffi::export]
+pub fn tutorial_advance_acquisition_json(request_json: String) -> FrontendResult<String> {
+    let request: TutorialGenerationActionRequest =
+        parse_tutorial_request("parse tutorial acquisition advance", &request_json)?;
+    let state = TutorialProject::open(&request.project_root)
+        .map_err(|error| tutorial_error("open tutorial project", error))?
+        .advance_acquisition(
+            request.notebook_id,
+            &request.dataset_id,
+            request.generation,
+            request.max_download_bytes,
+        )
+        .map_err(|error| tutorial_error("advance tutorial acquisition", error))?;
+    serialize_tutorial("serialize tutorial acquisition state", &state)
 }
 
 #[uniffi::export]

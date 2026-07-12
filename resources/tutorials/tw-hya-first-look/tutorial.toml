@@ -1,0 +1,41 @@
+schema_version = 1
+tutorial_id = "tw-hya-first-look"
+title = "First Look at Imaging: TW Hya"
+
+[[datasets]]
+id = "twhya-calibrated"
+display_name = "TW Hya calibrated MeasurementSet"
+uri = "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.1/twhya_calibrated.ms.tar"
+destination = "data/twhya_calibrated.ms"
+expected_size_bytes = 435742720
+sha256 = "f0cfeee5b9dec09ac9ed4d3e4e048d5eb28023c11cbc8295c09ddefe6b8a97b2"
+
+[datasets.unpack]
+format = "tar"
+archive_root = "twhya_calibrated.ms"
+max_entries = 10000
+max_expanded_bytes = 3221225472
+
+[[datasets.checks]]
+id = "measurement-set"
+label = "Confirm the MeasurementSet main table"
+kind = "measurement_set"
+path = ""
+
+[[sections]]
+id = "acquire"
+title = "Acquire the calibrated observation"
+dataset_ids = ["twhya-calibrated"]
+cell_ids = []
+
+[[sections]]
+id = "inspect"
+title = "Inspect the observation"
+dataset_ids = ["twhya-calibrated"]
+cell_ids = []
+
+[[sections]]
+id = "image"
+title = "Load imaging parameters"
+dataset_ids = ["twhya-calibrated"]
+cell_ids = ["019f6666-6666-7666-8666-666666666666"]

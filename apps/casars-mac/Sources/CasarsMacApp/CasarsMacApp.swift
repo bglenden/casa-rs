@@ -132,13 +132,13 @@ struct CasarsMacApp: App {
                 .keyboardShortcut("o", modifiers: [.command])
                 .disabled(store.isPrototypeRuntime)
 
-                Button("Open Tutorial Pack...") {
+                Button("Fork Tutorial Template...") {
                     if let url = TutorialPackOpenPanel.choosePack() {
                         store.openTutorialPack(path: url.path)
                     }
                 }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
-                .disabled(store.isPrototypeRuntime)
+                .disabled(store.isPrototypeRuntime || !store.state.hasProject)
 
                 Button("Open Demo Project") {
                     store.openFixtureProject()
@@ -495,6 +495,7 @@ struct CasarsMacApp: App {
         store.setInterfaceFontSize(storedInterfaceFontSize())
         if notebookPrototypeScenario == nil, pythonPrototypeScenario == nil,
            tutorialPrototypeScenario == nil, let tutorialPackPath {
+            if let projectPath { store.openProject(path: projectPath) }
             store.openTutorialPack(path: tutorialPackPath)
             if let tutorialSectionID {
                 store.openTutorialSectionTask(tutorialSectionID)
@@ -930,6 +931,7 @@ struct CasarsMacApp: App {
             // from the normal startup flow.
             return
         } else if let startupTutorialPackPath {
+            if let startupProjectPath { store.openProject(path: startupProjectPath) }
             store.openTutorialPack(path: startupTutorialPackPath)
             if let startupTutorialSectionID {
                 store.selectTutorialSection(startupTutorialSectionID)
@@ -1063,6 +1065,10 @@ final class WorkbenchFallbackWindowController {
         if notebookPrototypeScenario == nil, pythonPrototypeScenario == nil,
            tutorialPrototypeScenario == nil,
            let tutorialPackPath = Self.argumentValue(after: "--open-tutorial-pack", in: arguments) {
+            if let projectPath = Self.argumentValue(after: "--open-project", in: arguments)
+                ?? Self.argumentValue(after: "--probe-project", in: arguments) {
+                store.openProject(path: projectPath)
+            }
             store.openTutorialPack(path: tutorialPackPath)
             if let tutorialSectionID = Self.argumentValue(after: "--open-tutorial-section", in: arguments) {
                 store.selectTutorialSection(tutorialSectionID)
@@ -1230,7 +1236,7 @@ enum TutorialPackOpenPanel {
         panel.canChooseDirectories = true
         panel.treatsFilePackagesAsDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "Open Tutorial Pack"
+        panel.prompt = "Fork Tutorial Template"
         return panel.runModal() == .OK ? panel.url : nil
     }
 }

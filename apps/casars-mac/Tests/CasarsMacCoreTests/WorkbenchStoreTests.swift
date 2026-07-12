@@ -246,198 +246,6 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(store.state.lastErrors.contains { $0.contains("in-memory notebook prototype") })
     }
 
-    func testTutorialPackContextLoadsTemplateAndInputStatus() throws {
-        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["twhya_cont.image"])
-        defer { removeTemporaryTutorialPack(packURL) }
-
-        let context = try TutorialPackContext.load(path: packURL.path)
-
-        XCTAssertEqual(context.packID, "alma-first-look-image-analysis")
-        XCTAssertEqual(context.title, "ALMA First Look: Image Analysis")
-        XCTAssertEqual(context.selectedSection?.id, "01-imhead-continuum-header")
-        XCTAssertEqual(context.inputs.map(\.status), [.staged, .missing])
-        XCTAssertEqual(context.datasetSummaries().map(\.name), ["twhya_cont.image"])
-        XCTAssertEqual(
-            context.learnerDocsIndex,
-            packURL.appendingPathComponent("README.md").standardizedFileURL.path
-        )
-    }
-
-    func testTutorialPackMeasurementSetInputKeepsMeasurementSetKind() throws {
-        let packURL = try makeTemporaryTutorialPack(
-            stagedInputPaths: ["twhya_calibrated.ms"],
-            templateName: "alma-first-look-imaging.template.json"
-        )
-        defer { removeTemporaryTutorialPack(packURL) }
-
-        let context = try TutorialPackContext.load(path: packURL.path)
-        let dataset = try XCTUnwrap(context.datasetSummaries().first { $0.name == "twhya_calibrated.ms" })
-
-        XCTAssertEqual(dataset.kind, .measurementSet)
-        XCTAssertEqual(dataset.path, packURL.appendingPathComponent("twhya_calibrated.ms").standardizedFileURL.path)
-    }
-
-    func testOpenTutorialPackPopulatesGuiDebugSnapshot() throws {
-        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["twhya_cont.image"])
-        defer { removeTemporaryTutorialPack(packURL) }
-        let store = WorkbenchStore(
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImheadTaskCatalogEntry()]),
-            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
-        )
-
-        store.openTutorialPack(path: packURL.path)
-        let snapshot = store.debugSnapshot()
-
-        XCTAssertEqual(snapshot.activeProject, "ALMA First Look: Image Analysis")
-        XCTAssertEqual(snapshot.activeProjectSource, .tutorialPack)
-        XCTAssertEqual(snapshot.activeProjectRoot, packURL.standardizedFileURL.path)
-        XCTAssertEqual(snapshot.openTabs, ["Tutorial"])
-        XCTAssertEqual(snapshot.activeTab, "Tutorial")
-        XCTAssertEqual(snapshot.selectedDataset, "twhya_cont.image")
-        XCTAssertEqual(snapshot.tutorialPack?.packID, "alma-first-look-image-analysis")
-        XCTAssertEqual(snapshot.tutorialPack?.selectedSectionID, "01-imhead-continuum-header")
-        XCTAssertEqual(snapshot.tutorialPack?.inputs.map(\.status), [.staged, .missing])
-        XCTAssertEqual(
-            snapshot.tutorialPack.map { Array($0.sections.map(\.id).prefix(4)) },
-            [
-                "01-imhead-continuum-header",
-                "02-imstat-continuum-statistics",
-                "03-immoments-n2hp-moment-map",
-                "04-exportfits-products"
-            ]
-        )
-        XCTAssertTrue(snapshot.probeDiagnostics.contains("Tutorial input twhya_cont.image: staged"))
-        XCTAssertTrue(snapshot.probeDiagnostics.contains("Tutorial input twhya_n2hp.image: missing"))
-    }
-
-    func testOpenTutorialPackUsesImageProbeMetadataForInspector() throws {
-        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["twhya_cont.image"])
-        defer { removeTemporaryTutorialPack(packURL) }
-        let imageURL = packURL.appendingPathComponent("twhya_cont.image").standardizedFileURL
-        let probedDataset = DatasetSummary(
-            id: imageURL.path,
-            name: "twhya_cont.image",
-            path: imageURL.path,
-            kind: .imageCube,
-            size: "250 x 250 x 1 x 1",
-            units: "Jy/beam",
-            sizeBytes: 369_373,
-            fields: [],
-            spectralWindows: [],
-            scans: [],
-            arrays: [],
-            observations: [],
-            antennas: [],
-            intents: [],
-            feeds: [],
-            correlations: [],
-            columns: ["map"],
-            dataColumns: [],
-            subtables: [],
-            shape: [250, 250, 1, 1],
-            notes: "Recognized by opening the path as a casa-rs image.",
-            diagnostics: [
-                "Pixel type: float32",
-                "Direction ref=J2000 axes=Right Ascension/Declination",
-                "Beam 0: major=0.5 arcsec minor=0.4 arcsec pa=75 deg"
-            ]
-        )
-        let store = WorkbenchStore(
-            probeClient: StubProjectProbeClient(
-                result: ProjectFixtureProbe(
-                    project: ProjectFixture(
-                        name: "inputs",
-                        rootPath: packURL.path,
-                        datasets: [probedDataset],
-                        source: .probed
-                    ),
-                    diagnostics: ["probed tutorial inputs"]
-                )
-            ),
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImheadTaskCatalogEntry()]),
-            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
-        )
-
-        store.openTutorialPack(path: packURL.path)
-
-        let dataset = try XCTUnwrap(store.state.selectedDataset)
-        XCTAssertEqual(dataset.name, "twhya_cont.image")
-        XCTAssertEqual(dataset.size, "250 x 250 x 1 x 1")
-        XCTAssertEqual(dataset.shape, [250, 250, 1, 1])
-        XCTAssertEqual(dataset.units, "Jy/beam")
-        XCTAssertTrue(dataset.notes.contains("Tutorial pack input: TW Hya continuum image"))
-        XCTAssertTrue(dataset.notes.contains("Recognized by opening the path as a casa-rs image."))
-        XCTAssertTrue(dataset.diagnostics.contains("registry_key=alma/first-look/twhya/continuum-image"))
-        XCTAssertTrue(dataset.diagnostics.contains("Pixel type: float32"))
-        XCTAssertTrue(store.state.probeDiagnostics.contains("probed tutorial inputs"))
-    }
-
-    func testOpenTutorialPackMarksUnrecognizedStagedImageForInspector() throws {
-        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["twhya_cont.image"])
-        defer { removeTemporaryTutorialPack(packURL) }
-        let store = WorkbenchStore(
-            probeClient: StubProjectProbeClient(
-                result: ProjectFixtureProbe(
-                    project: ProjectFixture(
-                        name: "inputs",
-                        rootPath: packURL.path,
-                        datasets: [],
-                        source: .probed
-                    ),
-                    diagnostics: ["input probe completed without recognized datasets"]
-                )
-            ),
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImheadTaskCatalogEntry()]),
-            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
-        )
-
-        store.openTutorialPack(path: packURL.path)
-
-        let dataset = try XCTUnwrap(store.state.selectedDataset)
-        XCTAssertEqual(dataset.name, "twhya_cont.image")
-        XCTAssertTrue(
-            dataset.diagnostics.contains {
-                $0.contains("Image validation failed: cannot open or read CASA image")
-            }
-        )
-        XCTAssertTrue(store.state.probeDiagnostics.contains("input probe completed without recognized datasets"))
-    }
-
-    func testOpenTutorialSectionTaskAppliesGuiImheadParameters() throws {
-        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["twhya_cont.image"])
-        defer { removeTemporaryTutorialPack(packURL) }
-        let store = WorkbenchStore(
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImheadTaskCatalogEntry()]),
-            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
-        )
-
-        store.openTutorialPack(path: packURL.path)
-        store.openTutorialSectionTask("01-imhead-continuum-header")
-
-        let snapshot = store.debugSnapshot()
-        XCTAssertEqual(store.state.activeTaskID, "imhead")
-        XCTAssertEqual(snapshot.activeTab, "Image Header")
-        XCTAssertEqual(snapshot.activeTaskID, "imhead")
-        XCTAssertEqual(store.state.tabs.last?.taskID, "imhead")
-        XCTAssertEqual(
-            store.state.genericTaskValues["imhead"]?["imagename"],
-            "twhya_cont.image"
-        )
-        XCTAssertEqual(store.state.genericTaskValues["imhead"]?["mode"], "summary")
-        XCTAssertEqual(store.state.genericTaskValues["imhead"]?["hdkey"], "none")
-        XCTAssertEqual(store.state.genericTaskValues["imhead"]?["hdvalue"], "none")
-        XCTAssertEqual(snapshot.activeTaskValues["mode"], "summary")
-        XCTAssertEqual(
-            store.state.taskRun.requestSummary,
-            "imagename=twhya_cont.image, mode=summary, hdkey=none, hdvalue=none"
-        )
-        XCTAssertTrue(store.state.lastErrors.isEmpty)
-    }
-
     func testTaskTabsCanOpenMultiplePanesAndRenameToSelectedTask() throws {
         let store = WorkbenchStore(
             state: EmptyWorkbench.makeState(),
@@ -500,7 +308,7 @@ final class WorkbenchStoreTests: XCTestCase {
                     notes: "region"
                 )
             ],
-            source: .tutorialPack
+            source: .probed
         )
         state.selectedDatasetID = regionURL.path
         state.taskCatalog = [
@@ -568,7 +376,7 @@ final class WorkbenchStoreTests: XCTestCase {
             name: "Tutorial",
             rootPath: rootURL.path,
             datasets: [imageDataset, regionDataset],
-            source: .tutorialPack
+            source: .probed
         )
         state.selectedDatasetID = regionDataset.id
         let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
@@ -951,7 +759,7 @@ final class WorkbenchStoreTests: XCTestCase {
                     notes: "test image"
                 )
             ],
-            source: .tutorialPack
+            source: .probed
         )
         state.selectedDatasetID = imageURL.path
         state.taskCatalog = [makeImheadTaskCatalogEntry()]
@@ -6577,33 +6385,6 @@ private struct StubTaskExecutionMatrixClient: TaskExecutionMatrixClient {
             rows: rows
         )
     }
-}
-
-private func makeTemporaryTutorialPack(
-    stagedInputPaths: Set<String> = [],
-    templateName: String = "alma-first-look-image-analysis.template.json"
-) throws -> URL {
-    let fileManager = FileManager.default
-    let packURL = fileManager.temporaryDirectory
-        .appendingPathComponent("casars-tutorial-pack-\(UUID().uuidString).pack", isDirectory: true)
-    try fileManager.createDirectory(at: packURL, withIntermediateDirectories: true)
-    let templateURL = repositoryRootURL()
-        .appendingPathComponent("resources/tutorial-packs/\(templateName)")
-    try fileManager.copyItem(at: templateURL, to: packURL.appendingPathComponent("pack.json"))
-    for relativePath in stagedInputPaths {
-        let inputURL = packURL.appendingPathComponent(relativePath, isDirectory: true)
-        try fileManager.createDirectory(at: inputURL, withIntermediateDirectories: true)
-        try "stub tutorial input\n".write(
-            to: inputURL.appendingPathComponent("table.dat"),
-            atomically: true,
-            encoding: .utf8
-        )
-    }
-    return packURL
-}
-
-private func removeTemporaryTutorialPack(_ url: URL) {
-    try? FileManager.default.removeItem(at: url)
 }
 
 private func repositoryRootURL() -> URL {

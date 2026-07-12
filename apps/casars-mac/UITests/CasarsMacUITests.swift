@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import XCTest
 
 final class CasarsMacUITests: XCTestCase {
@@ -151,7 +152,7 @@ final class CasarsMacUITests: XCTestCase {
         let workbenchMenu = app.menuBars.menuBarItems["Workbench"]
         XCTAssertTrue(workbenchMenu.exists)
         workbenchMenu.click()
-        for prefix in ["Open Project Directory", "Open Tutorial Pack", "Open Demo Project"] {
+        for prefix in ["Open Project Directory", "Fork Tutorial Template", "Open Demo Project"] {
             let item = app.menuItems.matching(NSPredicate(format: "title BEGINSWITH %@", prefix)).firstMatch
             XCTAssertTrue(item.exists, "Missing menu item beginning with \(prefix)")
             XCTAssertFalse(item.isEnabled, "\(prefix) must be disabled in the isolated prototype runtime")
@@ -753,6 +754,89 @@ final class CasarsMacUITests: XCTestCase {
         )
     }
 
+    func testProductionTutorialForkApprovalReadyAndTaskLoading() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-gui-tutorial-\(UUID().uuidString)", isDirectory: true)
+        let project = root.appendingPathComponent("project", isDirectory: true)
+        let template = root.appendingPathComponent("template", isDirectory: true)
+        productionProjectURL = root
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: template, withIntermediateDirectories: true)
+        let bytes = Data("production GUI tutorial source".utf8)
+        let source = template.appendingPathComponent("source.bin")
+        try bytes.write(to: source)
+        let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        try """
+        # Production GUI tutorial
+
+        Editable learner notes.
+
+        <!-- casa-rs-cell:v1 id=019f7777-7777-7777-8777-777777777777 kind=task -->
+        ```toml
+        [casars]
+        format = 1
+        surface = "imager"
+        kind = "task"
+        contract = 1
+
+        [parameters]
+        vis = "data/science.bin"
+        robust = 0.5
+        ```
+        <!-- /casa-rs-cell -->
+        """.write(to: template.appendingPathComponent("tutorial.md"), atomically: true, encoding: .utf8)
+        try """
+        schema_version = 1
+        tutorial_id = "production-gui"
+        title = "Production GUI tutorial"
+
+        [[datasets]]
+        id = "science"
+        display_name = "Science input"
+        uri = "file://\(source.path)"
+        destination = "data/science.bin"
+        expected_size_bytes = \(bytes.count)
+        sha256 = "\(digest)"
+
+        [[sections]]
+        id = "run"
+        title = "Run"
+        dataset_ids = ["science"]
+        cell_ids = ["019f7777-7777-7777-8777-777777777777"]
+        """.write(to: template.appendingPathComponent("tutorial.toml"), atomically: true, encoding: .utf8)
+
+        app = XCUIApplication()
+        ensureStoppedBeforeLaunch()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "--open-project", project.path,
+            "--open-tutorial-pack", template.path,
+        ]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
+        XCTAssertEqual(try accessibilityValue("tutorial.dataset.science"), "missing")
+
+        try clickIdentified("tutorial.dataset.review.science")
+        XCTAssertTrue(try require("tutorial.approval.sheet").waitForExistence(timeout: 5))
+        try clickIdentified("tutorial.approval.approve")
+        XCTAssertTrue(
+            waitForAccessibilityValue("tutorial.dataset.science", containing: "ready"),
+            app.debugDescription
+        )
+
+        let cellID = "019f7777-7777-7777-8777-777777777777"
+        try bringIntoView(
+            "notebook.parameters.open.\(cellID)",
+            in: "notebook.document.scroll",
+            deltaY: -420
+        )
+        try clickIdentified("notebook.parameters.open.\(cellID)")
+        XCTAssertTrue(try require("task.parameter.vis").waitForExistence(timeout: 5))
+        XCTAssertEqual(try accessibilityValue("task.parameterSource.vis"), "tutorial override")
+        XCTAssertEqual(try accessibilityValue("task.parameterSource.robust"), "tutorial override")
+    }
+
     func testTutorialPrototypeCancellationResumeAndAttemptIdentity() throws {
         launchTutorialPrototype()
         let datasetID = "tutorial-dataset-twhya-calibrated"
@@ -895,7 +979,7 @@ final class CasarsMacUITests: XCTestCase {
         let workbenchMenu = app.menuBars.menuBarItems["Workbench"]
         XCTAssertTrue(workbenchMenu.exists)
         workbenchMenu.click()
-        for prefix in ["Open Project Directory", "Open Tutorial Pack", "Open Demo Project"] {
+        for prefix in ["Open Project Directory", "Fork Tutorial Template", "Open Demo Project"] {
             let item = app.menuItems.matching(NSPredicate(format: "title BEGINSWITH %@", prefix)).firstMatch
             XCTAssertTrue(item.exists)
             XCTAssertFalse(item.isEnabled)

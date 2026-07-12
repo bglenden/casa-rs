@@ -208,6 +208,15 @@ For each wave:
   production-boundary calls. Opening or selecting a tutorial never starts
   acquisition, and Phase A does not claim
   a v1 manifest, persistence, network, checksum, extraction, or task adapter.
+- Wave 3 Phase B uses Rust contract tests for immutable template forking,
+  one-shot v0 migration, URI registry policy, exact approvals, digest pinning,
+  receipt recording, file and loopback-HTTP redirect/range acquisition,
+  cancellation/resume/restart generations, offline reopen, disk/checksum/
+  network/destination failures, optional checks, and bounded archive rejection.
+  Swift/UniFFI tests reopen the same Rust-owned state. One production XCUITest
+  forks a test-owned template into a disposable project, approves a local file
+  acquisition, waits for Ready, and opens the normal task tab with accessible
+  tutorial-override markers; it uses no user data or external network.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review
