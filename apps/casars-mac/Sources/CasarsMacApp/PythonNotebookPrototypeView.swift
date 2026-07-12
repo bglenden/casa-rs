@@ -35,7 +35,7 @@ struct PythonNotebookPrototypeView: View {
                     Text("Calibrated visibility inspection")
                         .workbenchFont(.title2, weight: .semibold)
                     Text("Use Python to inspect the calibrated MeasurementSet, preserve ordered output, and keep every plot revision reproducible beside the surrounding scientific notes.")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
                 }
 
                 savedVisualizations
@@ -79,7 +79,7 @@ struct PythonNotebookPrototypeView: View {
                 Spacer()
                 Text("\(projection?.savedVisualizations.count ?? 0) explicit snapshots · not live explorer views")
                     .workbenchFont(.caption)
-                    .prototypeSecondaryForeground()
+                    .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
                     .accessibilityIdentifier("pythonPrototype.savedVisualizationCount")
                     .accessibilityValue("\(projection?.savedVisualizations.count ?? 0)")
             }
@@ -149,6 +149,7 @@ struct PythonNotebookPrototypeView: View {
 
     private func notebookNote(_ text: String) -> some View {
         Text(text)
+            .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
             .frame(maxWidth: .infinity, alignment: .leading)
             .textSelection(.enabled)
     }
@@ -765,6 +766,7 @@ struct PythonNotebookPrototypeView: View {
 }
 
 private struct DeterministicScientificPlot: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
 
     private let points: [(Double, Double)] = [
@@ -779,7 +781,7 @@ private struct DeterministicScientificPlot: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .workbenchFont(.subheadline, weight: .semibold)
-                .foregroundStyle(Color(nsColor: .labelColor))
+                .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
             Canvas { context, size in
                 let inset: CGFloat = 28
                 let frame = CGRect(
@@ -830,13 +832,14 @@ private struct DeterministicScientificPlot: View {
 }
 
 private struct DeterministicScientificImage: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .workbenchFont(.subheadline, weight: .semibold)
-                .foregroundStyle(Color(nsColor: .labelColor))
+                .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
             Canvas { context, size in
                 let center = CGPoint(x: size.width * 0.5, y: size.height * 0.52)
                 let maximum = min(size.width, size.height) * 0.42

@@ -253,6 +253,11 @@ final class CasarsMacUITests: XCTestCase {
             "collapsed"
         )
         try require("pythonPrototype.executionDetails.python-execution-1").click()
+        try bringIntoView(
+            "pythonPrototype.artifact.png",
+            in: "pythonPrototype.documentScroll",
+            deltaY: -220
+        )
         XCTAssertTrue(try require("pythonPrototype.artifact.png").exists)
         XCTAssertTrue(try require("pythonPrototype.artifact.svg").exists)
         XCTAssertEqual(try accessibilityValue("pythonPrototype.revisionCount"), "1")
@@ -577,7 +582,10 @@ final class CasarsMacUITests: XCTestCase {
         try FileManager.default.createDirectory(at: pythonBin, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(
             at: pythonBin.appendingPathComponent("python3"),
-            withDestinationURL: URL(fileURLWithPath: "/usr/bin/python3")
+            withDestinationURL: URL(fileURLWithPath:
+                ProcessInfo.processInfo.environment["CASA_RS_GUI_TEST_PYTHON"]
+                    ?? "/usr/bin/python3"
+            )
         )
         let notebookFile = notebooks.appendingPathComponent("python.md")
         let source = """
