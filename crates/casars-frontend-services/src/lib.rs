@@ -15,14 +15,15 @@ use casa_ms::plot::{
 };
 use casa_ms::{
     MeasurementSet, MeasurementSetPlotPayload, MeasurementSetSummary,
-    MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotPayload,
-    MsPlotPreset, MsPlotSpec, MsScatterGridPayload, MsScatterPagePayload, MsScatterPlotPayload,
-    MsScatterSeries, MsSelectionSpec, VisibilityDataColumn, build_msexplore_payload_from_spec,
+    MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotData,
+    MsPlotDataPanel, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsScatterGridPayload,
+    MsScatterPagePayload, MsScatterPlotPayload, MsScatterSeries, MsSelectionSpec,
+    VisibilityDataColumn, build_msexplore_payload_from_spec,
 };
 use casa_notebook::{
     AttemptHandle, ConflictResolution, ExecutionReceipt, ExportMode, NotebookDocument,
     NotebookStore, ReceiptFinalization, RecordingPolicy, RecordingRequest, SaveResult,
-    TaskCellIntent,
+    SaveVisualizationRequest, TaskCellIntent, VisualizationSnapshot,
 };
 use casa_provider_contracts::{
     ParameterValue, ProviderInvocationAdaptation, RunSafetyClass, SurfaceContractBundle,
@@ -722,13 +723,29 @@ struct NotebookProjection {
     source: String,
     content_hash: String,
     cells: Vec<NotebookCellProjection>,
-    receipts: Vec<ExecutionReceipt>,
+    receipts: Vec<NotebookReceiptProjection>,
+    visualizations: Vec<VisualizationSnapshot>,
+}
+
+#[derive(Debug, Serialize)]
+struct NotebookReceiptProjection {
+    #[serde(flatten)]
+    receipt: ExecutionReceipt,
+    ordered_outputs: Vec<NotebookOutputProjection>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct NotebookOutputProjection {
+    order: usize,
+    channel: String,
+    text: String,
 }
 
 #[derive(Debug, Serialize)]
 struct NotebookCellProjection {
     id: String,
     kind: String,
+    body: String,
     task_intent: Option<TaskCellIntent>,
 }
 
@@ -739,6 +756,7 @@ fn notebook_cell_projections(document: &NotebookDocument) -> Vec<NotebookCellPro
         .map(|cell| NotebookCellProjection {
             id: cell.id.to_string(),
             kind: cell.kind.as_str().to_owned(),
+            body: document.source()[cell.body_range.clone()].to_owned(),
             task_intent: cell.task.clone(),
         })
         .collect()
@@ -819,6 +837,12 @@ struct NotebookExportRequest {
     mode: NotebookExportMode,
 }
 
+#[derive(Debug, Deserialize)]
+struct NotebookSaveVisualizationRequest {
+    project_root: String,
+    request: SaveVisualizationRequest,
+}
+
 fn notebook_error(action: &str, error: impl std::fmt::Display) -> FrontendServiceError {
     FrontendServiceError::Notebook {
         reason: format!("{action}: {error}"),
@@ -834,7 +858,25 @@ fn notebook_projection(
         .map_err(|error| notebook_error("open notebook", error))?;
     let receipts = store
         .receipts_for_notebook(snapshot.entry.id)
-        .map_err(|error| notebook_error("load notebook receipts", error))?;
+        .map_err(|error| notebook_error("load notebook receipts", error))?
+        .into_iter()
+        .map(|receipt| {
+            let ordered_outputs = receipt
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.role == "ordered_output")
+                .and_then(|artifact| fs::read(store.project_root().join(&artifact.path)).ok())
+                .and_then(|contents| serde_json::from_slice(&contents).ok())
+                .unwrap_or_default();
+            NotebookReceiptProjection {
+                receipt,
+                ordered_outputs,
+            }
+        })
+        .collect();
+    let visualizations = store
+        .visualizations_for_notebook(snapshot.entry.id)
+        .map_err(|error| notebook_error("load notebook visualizations", error))?;
     Ok(NotebookProjection {
         id: snapshot.entry.id.to_string(),
         filename: snapshot.entry.filename,
@@ -842,6 +884,7 @@ fn notebook_projection(
         content_hash: snapshot.content_hash,
         cells: notebook_cell_projections(&snapshot.document),
         receipts,
+        visualizations,
     })
 }
 
@@ -950,6 +993,20 @@ pub fn notebook_finalize_recording_json(request_json: String) -> FrontendResult<
         .map_err(|error| notebook_error("finalize notebook receipt", error))?;
     serde_json::to_string(&receipt)
         .map_err(|error| notebook_error("serialize notebook receipt", error))
+}
+
+/// Copy one explicit explorer visualization into a new immutable notebook revision.
+#[uniffi::export]
+pub fn notebook_save_visualization_json(request_json: String) -> FrontendResult<String> {
+    let request: NotebookSaveVisualizationRequest = serde_json::from_str(&request_json)
+        .map_err(|error| notebook_error("parse notebook visualization request", error))?;
+    let store = NotebookStore::open(PathBuf::from(&request.project_root))
+        .map_err(|error| notebook_error("open notebook project", error))?;
+    let snapshot = store
+        .save_visualization(request.request)
+        .map_err(|error| notebook_error("save notebook visualization", error))?;
+    serde_json::to_string(&snapshot)
+        .map_err(|error| notebook_error("serialize notebook visualization", error))
 }
 
 /// Export portable Markdown/assets or explicitly include managed receipts.
@@ -3288,6 +3345,13 @@ fn scatter_plot_document(
     metadata: &PayloadMetadata,
     preset: MeasurementSetPlotPreset,
 ) -> PlotDocumentPayload {
+    if payload.secondary_y_axis.is_none() {
+        return shared_scatter_plot_document(
+            &MsPlotPayload::Scatter(payload.clone()),
+            metadata,
+            preset,
+        );
+    }
     let axes = scatter_axes(
         "x",
         &payload.x_label,
@@ -3373,40 +3437,10 @@ fn scatter_grid_plot_document(
     metadata: &PayloadMetadata,
     preset: MeasurementSetPlotPreset,
 ) -> PlotDocumentPayload {
-    let panels = payload
-        .panels
-        .iter()
-        .enumerate()
-        .map(|(index, panel)| {
-            let axes = scatter_axes(
-                "x",
-                &payload.x_label,
-                "y",
-                &payload.y_label,
-                payload.fixed_x_bounds,
-                payload.fixed_y_bounds,
-                panel
-                    .series
-                    .iter()
-                    .flat_map(|series| series.points.iter().copied()),
-            );
-            PlotDocumentPanel {
-                id: format!("panel-{index}"),
-                title: panel.label.clone(),
-                axes,
-                layers: scatter_layers(&panel.series, "x", "y", payload.symbol_size_px),
-                annotations: Vec::new(),
-            }
-        })
-        .collect();
-    base_document(
-        preset,
+    shared_scatter_plot_document(
+        &MsPlotPayload::ScatterGrid(payload.clone()),
         metadata,
-        payload.header_lines.clone(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        panels,
+        preset,
     )
 }
 
@@ -3415,40 +3449,104 @@ fn scatter_page_plot_document(
     metadata: &PayloadMetadata,
     preset: MeasurementSetPlotPreset,
 ) -> PlotDocumentPayload {
-    let panels = payload
-        .items
+    shared_scatter_plot_document(
+        &MsPlotPayload::ScatterPage(payload.clone()),
+        metadata,
+        preset,
+    )
+}
+
+fn shared_scatter_plot_document(
+    payload: &MsPlotPayload,
+    metadata: &PayloadMetadata,
+    preset: MeasurementSetPlotPreset,
+) -> PlotDocumentPayload {
+    let shared = MsPlotData::from_payload(payload)
+        .expect("scatter payloads always project into the shared plot-data contract");
+    let mut panels = shared
+        .panels
         .iter()
-        .map(|item| {
-            let axes = scatter_axes(
-                "x",
-                &item.plot.x_label,
-                "y",
-                &item.plot.y_label,
-                item.plot.fixed_x_bounds,
-                item.plot.fixed_y_bounds,
-                item.plot
-                    .series
-                    .iter()
-                    .flat_map(|series| series.points.iter().copied()),
-            );
-            PlotDocumentPanel {
-                id: format!("plot-{}", item.plotindex),
-                title: item.plot.title.clone(),
-                axes,
-                layers: scatter_layers(&item.plot.series, "x", "y", item.plot.symbol_size_px),
-                annotations: Vec::new(),
-            }
-        })
-        .collect();
+        .map(shared_plot_panel)
+        .collect::<Vec<_>>();
+    if matches!(payload, MsPlotPayload::Scatter(_)) {
+        let panel = panels.remove(0);
+        return base_document(
+            preset,
+            metadata,
+            shared.header_lines,
+            panel.axes,
+            panel.layers,
+            panel.annotations,
+            Vec::new(),
+        );
+    }
     base_document(
         preset,
         metadata,
-        payload.header_lines.clone(),
+        shared.header_lines,
         Vec::new(),
         Vec::new(),
         Vec::new(),
         panels,
     )
+}
+
+fn shared_plot_panel(panel: &MsPlotDataPanel) -> PlotDocumentPanel {
+    PlotDocumentPanel {
+        id: panel.id.clone(),
+        title: panel.title.clone(),
+        axes: panel
+            .axes
+            .iter()
+            .map(|axis| {
+                document_axis(
+                    &axis.id,
+                    &axis.label,
+                    &axis.unit,
+                    axis.lower,
+                    axis.upper,
+                    PlotAxisScale::Linear,
+                )
+            })
+            .collect(),
+        layers: panel
+            .series
+            .iter()
+            .enumerate()
+            .map(|(index, series)| {
+                point_layer(PointLayerSpec {
+                    id: format!("series-{index}"),
+                    title: series.label.clone(),
+                    x_axis_id: "x",
+                    y_axis_id: &series.y_axis_id,
+                    x_values: series.x.clone(),
+                    y_values: series.y.clone(),
+                    point_labels: Vec::new(),
+                    point_symbol_sizes: Vec::new(),
+                    provenance: if series.x.len() <= FRONTEND_POINT_PROVENANCE_LIMIT {
+                        series
+                            .provenance
+                            .iter()
+                            .map(|point| PlotPointProvenance {
+                                row: point.row as u64,
+                                corr: point.corr as u64,
+                                chan_start: point.chan_start as u64,
+                                chan_end: point.chan_end as u64,
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    },
+                    color_group: series.color_group.clone(),
+                    symbol_size: panel.symbol_size,
+                    line_width: 1.0,
+                    provenance_summary: "Visibility samples from shared casa-ms plot data"
+                        .to_owned(),
+                })
+            })
+            .collect(),
+        annotations: Vec::new(),
+    }
 }
 
 fn base_document(
@@ -6395,6 +6493,11 @@ mod tests {
         assert_eq!(notebook["receipts"].as_array().unwrap().len(), 0);
         assert_eq!(notebook["cells"][0]["id"], cell_id.to_string());
         assert_eq!(notebook["cells"][0]["kind"], "task");
+        assert!(
+            notebook["cells"][0]["body"]
+                .as_str()
+                .is_some_and(|body| body.contains("[parameters]"))
+        );
         assert_eq!(notebook["cells"][0]["task_intent"]["surface"], "imhead");
         assert_eq!(
             notebook["cells"][0]["task_intent"]["parameters"]["mode"],

@@ -128,6 +128,7 @@ impl NotebookRecording {
             notebook_id: None,
             cell_id: None,
             task_intent: None,
+            execution_input: None,
             provider_contract_version: 1,
             resolved_parameters,
             run_safety: RunSafetyRecord {
@@ -275,6 +276,7 @@ fn recording_request(
             contract: profile.header.contract,
             parameters,
         }),
+        execution_input: None,
         provider_contract_version: profile.header.contract,
         resolved_parameters,
         run_safety: RunSafetyRecord {

@@ -37,7 +37,7 @@ Planning/read-only mode. Do not edit code.
 9. Check wave suitability: one review boundary, one verification path, one main area, no unresolved architecture split.
 10. Write falsifiable acceptance checks.
 11. Identify architecture/test impact and stop conditions.
-12. Identify the verification path: `quick`, `verify` before `In Progress -> Review`, `gui-test` for user-visible native macOS GUI changes once #368 lands, and any release-only checks.
+12. Identify the verification path: `quick`, `verify` before `In Progress -> Review`, `gui-test` for user-visible native macOS GUI changes once #368 lands, and any release-only checks. For each required gate, designate one authoritative local or hosted execution; do not plan duplicate cross-environment runs unless platform-specific risk or the user requires them.
 13. Draft closeout expectations and follow-up hooks for adjacent work. Do not use follow-up hooks to weaken the approved outcome or acceptance checks.
 14. State that once approved, outcome, included issues, and acceptance checks cannot be deferred or descoped without explicit user signoff.
 15. State that code waves must record a bounded refactor pass before review, or a not-applicable rationale when the wave has no code surface.

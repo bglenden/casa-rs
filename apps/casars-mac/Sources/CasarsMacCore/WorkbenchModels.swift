@@ -1278,6 +1278,60 @@ public enum ImageExplorerColorMap: String, CaseIterable, Codable, Equatable, Ide
     }
 }
 
+package func imagePlaneRGB(
+    _ value: UInt8,
+    colorMap: ImageExplorerColorMap
+) -> (red: UInt8, green: UInt8, blue: UInt8) {
+    switch colorMap {
+    case .grayscale:
+        return (value, value, value)
+    case .viridis:
+        return interpolateImagePlaneColorStops(
+            value,
+            stops: [(68, 1, 84), (59, 82, 139), (33, 145, 140), (94, 201, 98), (253, 231, 37)]
+        )
+    case .inferno:
+        return interpolateImagePlaneColorStops(
+            value,
+            stops: [(0, 0, 4), (87, 15, 109), (187, 55, 84), (249, 142, 8), (252, 255, 164)]
+        )
+    case .magma:
+        return interpolateImagePlaneColorStops(
+            value,
+            stops: [(0, 0, 4), (74, 16, 107), (179, 53, 88), (251, 135, 97), (252, 253, 191)]
+        )
+    case .coolWarm:
+        return interpolateImagePlaneColorStops(
+            value,
+            stops: [(59, 76, 192), (180, 205, 232), (245, 245, 245), (221, 132, 105), (180, 4, 38)]
+        )
+    }
+}
+
+private func interpolateImagePlaneColorStops(
+    _ value: UInt8,
+    stops: [(red: UInt8, green: UInt8, blue: UInt8)]
+) -> (red: UInt8, green: UInt8, blue: UInt8) {
+    guard stops.count > 1 else { return stops.first ?? (value, value, value) }
+    let segmentCount = stops.count - 1
+    let scaled = Int(value) * segmentCount * 256 / 255
+    let segment = min(scaled / 256, segmentCount - 1)
+    let fraction = scaled % 256
+    let start = stops[segment]
+    let end = stops[segment + 1]
+    return (
+        interpolateImagePlaneChannel(start.red, end.red, fraction: fraction),
+        interpolateImagePlaneChannel(start.green, end.green, fraction: fraction),
+        interpolateImagePlaneChannel(start.blue, end.blue, fraction: fraction)
+    )
+}
+
+private func interpolateImagePlaneChannel(_ start: UInt8, _ end: UInt8, fraction: Int) -> UInt8 {
+    let startValue = Int(start)
+    let delta = Int(end) - startValue
+    return UInt8(clamping: startValue + (delta * fraction + 128) / 256)
+}
+
 public struct ImageExplorerSnapshotRequest: Codable, Equatable {
     public var datasetPath: String
     public var selectedView: String
@@ -2713,6 +2767,8 @@ public struct WorkbenchState: Codable, Equatable {
     package var scientificNotebooks: ScientificNotebookProjectState?
     /// Ephemeral fixture projection present only for the notebook interaction prototype.
     package var prototypeNotebook: PrototypeScientificNotebookProjection?
+    /// Ephemeral fixture projection present only for the Wave 2 Python interaction prototype.
+    package var prototypePython: PrototypePythonNotebookProjection?
     public var activeTaskID: String
     public var taskUISchemas: [String: TaskUISchema]
     public var parameterSessions: [String: SurfaceParameterSession]
@@ -2785,6 +2841,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.tutorialPack = tutorialPack
         scientificNotebooks = nil
         prototypeNotebook = nil
+        prototypePython = nil
         self.activeTaskID = activeTaskID
         self.taskUISchemas = taskUISchemas
         self.parameterSessions = parameterSessions
@@ -2853,8 +2910,16 @@ public struct WorkbenchState: Codable, Equatable {
         prototypeNotebook != nil
     }
 
+    package var isPythonPrototype: Bool {
+        prototypePython != nil
+    }
+
+    package var isPrototype: Bool {
+        isNotebookPrototype || isPythonPrototype
+    }
+
     public var isDemoProject: Bool {
-        project.source.isDemo && !isNotebookPrototype
+        project.source.isDemo && !isPrototype
     }
 }
 
@@ -2906,6 +2971,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var activeProjectSource: ProjectSource
     public var tutorialPack: DebugTutorialPackSnapshot?
     package var prototypeNotebook: DebugPrototypeScientificNotebookSnapshot?
+    package var prototypePython: DebugPrototypePythonNotebookSnapshot?
     public var scientificNotebook: DebugScientificNotebookSnapshot?
     public var discoveredDatasets: [String]
     public var probeDiagnostics: [String]
@@ -2943,6 +3009,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         activeProjectSource = state.project.source
         tutorialPack = state.tutorialPack.map(DebugTutorialPackSnapshot.init(context:))
         prototypeNotebook = state.prototypeNotebook.map(DebugPrototypeScientificNotebookSnapshot.init(state:))
+        prototypePython = state.prototypePython.map(DebugPrototypePythonNotebookSnapshot.init(state:))
         scientificNotebook = state.scientificNotebooks.map(DebugScientificNotebookSnapshot.init(state:))
         activeLeftDockMode = state.dockMode
         leftDockCollapsed = state.leftDockCollapsed
@@ -3058,6 +3125,59 @@ package struct DebugPrototypeScientificNotebookSnapshot: Codable, Equatable {
             }
         )
         selectedReceiptID = state.selectedReceiptID
+    }
+}
+
+package struct DebugPrototypePythonCellSnapshot: Codable, Equatable {
+    package var id: String
+    package var owner: PythonOwner
+    package var behavior: PrototypePythonCellBehavior
+    package var sourceDigest: String
+    package var approvalIsValid: Bool
+    package var revisionStatuses: [PrototypePythonCellStatus]
+    package var plotRevisionIDs: [String]
+    package var insertedPlotRevisionIDs: [String]
+
+    package init(cell: PrototypePythonCell) {
+        id = cell.id
+        owner = cell.owner
+        behavior = cell.behavior
+        sourceDigest = cell.sourceDigest
+        approvalIsValid = cell.approvalIsValid
+        revisionStatuses = cell.revisions.map(\.status)
+        let plots = cell.revisions.compactMap(\.plot)
+        plotRevisionIDs = plots.map(\.id)
+        insertedPlotRevisionIDs = plots.filter(\.insertedInNotebook).map(\.id)
+    }
+}
+
+package struct DebugPrototypePythonNotebookSnapshot: Codable, Equatable {
+    package var prototypeKind: WorkbenchPrototypeKind
+    package var scenario: PythonPrototypeScenario
+    package var notebookTitle: String
+    package var selectedCellID: String
+    package var kernelState: PrototypePythonKernelState
+    package var runningCellID: String?
+    package var insertedPlotCount: Int
+    package var savedVisualizationCount: Int
+    package var activeExplorerTargetID: String?
+    package var visualizationRevisionCounts: [String: Int]
+    package var cells: [DebugPrototypePythonCellSnapshot]
+
+    package init(state: PrototypePythonNotebookProjection) {
+        prototypeKind = state.prototypeKind
+        scenario = state.scenario
+        notebookTitle = state.notebookTitle
+        selectedCellID = state.selectedCellID
+        kernelState = state.kernelState
+        runningCellID = state.runningCellID
+        insertedPlotCount = state.insertedPlotCount
+        savedVisualizationCount = state.savedVisualizations.count
+        activeExplorerTargetID = state.activeExplorer?.targetVisualizationID
+        visualizationRevisionCounts = Dictionary(
+            uniqueKeysWithValues: state.savedVisualizations.map { ($0.id, $0.revisions.count) }
+        )
+        cells = state.cells.map(DebugPrototypePythonCellSnapshot.init(cell:))
     }
 }
 

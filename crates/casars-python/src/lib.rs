@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_images::{AnyPagedImage, ImageError, ImagePixelType};
+use casa_ms::{MsPlotSpec, MsSelectionSpec, build_msexplore_plot_data_from_path};
 use casa_provider_contracts::{
     ParameterValue, SurfaceContractBundle, SurfaceKind, builtin_surface_bundle,
     builtin_surface_catalog,
@@ -101,6 +102,17 @@ impl PyImage {
             AnyPagedImage::Complex64(image) => image.misc_info(),
         };
         record_to_py(py, &info)
+    }
+
+    #[getter]
+    fn coordinate_system(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let coordinates = match &self.inner {
+            AnyPagedImage::Float32(image) => image.coordinates(),
+            AnyPagedImage::Float64(image) => image.coordinates(),
+            AnyPagedImage::Complex32(image) => image.coordinates(),
+            AnyPagedImage::Complex64(image) => image.coordinates(),
+        };
+        record_to_py(py, &coordinates.to_record())
     }
 
     #[getter]
@@ -1201,12 +1213,29 @@ fn write_parameter_profile(path: &Path, contents: &str) -> PyResult<()> {
         .map_err(|error| parameter_runtime_error("save parameter profile", error))
 }
 
+#[pyfunction]
+fn msexplore_plot_data_json(
+    path: PathBuf,
+    selection_json: &str,
+    plot_json: &str,
+) -> PyResult<String> {
+    let selection: MsSelectionSpec = serde_json::from_str(selection_json)
+        .map_err(|error| PyValueError::new_err(format!("invalid msexplore selection: {error}")))?;
+    let plot: MsPlotSpec = serde_json::from_str(plot_json)
+        .map_err(|error| PyValueError::new_err(format!("invalid msexplore plot: {error}")))?;
+    let data = build_msexplore_plot_data_from_path(&path, &selection, &plot)
+        .map_err(PyRuntimeError::new_err)?;
+    serde_json::to_string(&data)
+        .map_err(|error| PyRuntimeError::new_err(format!("serialize msexplore plot data: {error}")))
+}
+
 #[pymodule]
 fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyImage>()?;
     module.add_class::<PyTable>()?;
     module.add_function(wrap_pyfunction!(data_protocol_info_json, module)?)?;
     module.add_function(wrap_pyfunction!(data_schema_bundle_json, module)?)?;
+    module.add_function(wrap_pyfunction!(msexplore_plot_data_json, module)?)?;
     module.add_function(wrap_pyfunction!(parameter_catalog_json, module)?)?;
     module.add_function(wrap_pyfunction!(parameter_surface_definition_json, module)?)?;
     module.add_function(wrap_pyfunction!(parameter_surface_bundle_json, module)?)?;

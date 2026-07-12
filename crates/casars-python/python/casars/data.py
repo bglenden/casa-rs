@@ -105,6 +105,12 @@ class Image:
         return self._inner.misc_info
 
     @property
+    def coordinate_system(self) -> RecordLike:
+        """Renderer-neutral coordinate metadata, including celestial WCS."""
+
+        return self._inner.coordinate_system
+
+    @property
     def mask_names(self) -> list[str]:
         """Names of persisted masks attached to the image."""
 

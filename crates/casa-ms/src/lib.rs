@@ -54,6 +54,7 @@ mod metadata;
 pub mod ms;
 pub mod msexplore;
 pub mod plot;
+mod plot_data;
 mod plot_visibility;
 pub mod schema;
 pub mod selection;
@@ -115,6 +116,10 @@ pub use plot::{
     export_listobs_plot as export_measurement_set_plot,
     render_listobs_plot_image as render_measurement_set_plot_image,
     render_listobs_plot_image_with_style as render_measurement_set_plot_image_with_style,
+};
+pub use plot_data::{
+    MS_PLOT_DATA_SCHEMA_VERSION, MsPlotData, MsPlotDataAxis, MsPlotDataPanel,
+    MsPlotDataPointProvenance, MsPlotDataSeries, build_msexplore_plot_data_from_path,
 };
 pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};

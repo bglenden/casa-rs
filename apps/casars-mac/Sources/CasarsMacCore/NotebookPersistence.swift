@@ -91,6 +91,11 @@ package enum JSONValue: Codable, Equatable {
         }
     }
 
+    package var objectValue: [String: JSONValue]? {
+        guard case let .object(value) = self else { return nil }
+        return value
+    }
+
     package var tomlLiteral: String {
         switch self {
         case let .string(value):
@@ -120,6 +125,8 @@ package struct NotebookExecutionReceipt: Codable, Equatable, Identifiable {
     package var finishedAt: UInt64
     package var status: String
     package var sparseIntent: NotebookTaskIntent?
+    package var executionInput: NotebookExecutionInput?
+    package var orderedOutputs: [NotebookPythonOutputEvent]?
     package var resolvedParameters: [String: JSONValue]
     package var providerContractVersion: UInt32
     package var affectedPaths: [String]
@@ -134,7 +141,54 @@ package struct NotebookExecutionReceipt: Codable, Equatable, Identifiable {
 package struct NotebookCellState: Codable, Equatable, Identifiable {
     package var id: String
     package var kind: String
+    package var body: String
     package var taskIntent: NotebookTaskIntent?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, body, taskIntent
+    }
+
+    package init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        kind = try values.decode(String.self, forKey: .kind)
+        body = try values.decodeIfPresent(String.self, forKey: .body) ?? ""
+        taskIntent = try values.decodeIfPresent(NotebookTaskIntent.self, forKey: .taskIntent)
+    }
+}
+
+package struct NotebookExecutionInput: Codable, Equatable {
+    package var kind: String
+    package var details: NotebookPythonExecutionInput
+}
+
+package struct NotebookPythonExecutionInput: Codable, Equatable {
+    package var source: String
+    package var sourceSHA256: String
+    package var authority: String
+    package var inputReferences: [String]
+    package var environment: NotebookPythonEnvironmentIdentity
+
+    private enum CodingKeys: String, CodingKey {
+        case source
+        case sourceSHA256 = "sourceSha256"
+        case authority, inputReferences, environment
+    }
+}
+
+package struct NotebookPythonEnvironmentIdentity: Codable, Equatable {
+    package var environmentId: String
+    package var interpreter: String
+    package var implementation: String
+    package var version: String
+    package var casaRsVersion: String?
+    package var packages: [String: String]
+    package var fingerprintSHA256: String
+
+    private enum CodingKeys: String, CodingKey {
+        case environmentId, interpreter, implementation, version, casaRsVersion, packages
+        case fingerprintSHA256 = "fingerprintSha256"
+    }
 }
 
 package struct NotebookTaskReplacementDiff: Codable, Equatable, Identifiable {
@@ -163,12 +217,13 @@ package struct NotebookDocumentState: Codable, Equatable, Identifiable {
     package var contentHash: String
     package var cells: [NotebookCellState]
     package var receipts: [NotebookExecutionReceipt]
+    package var visualizations: [NotebookVisualizationSnapshot]
     package var draftSource: String
     package var viewMode: NotebookDocumentViewMode
     package var conflict: NotebookConflictState?
 
     private enum CodingKeys: String, CodingKey {
-        case id, filename, source, contentHash, cells, receipts
+        case id, filename, source, contentHash, cells, receipts, visualizations
     }
 
     package init(from decoder: Decoder) throws {
@@ -179,6 +234,10 @@ package struct NotebookDocumentState: Codable, Equatable, Identifiable {
         contentHash = try values.decode(String.self, forKey: .contentHash)
         cells = try values.decodeIfPresent([NotebookCellState].self, forKey: .cells) ?? []
         receipts = try values.decode([NotebookExecutionReceipt].self, forKey: .receipts)
+        visualizations = try values.decodeIfPresent(
+            [NotebookVisualizationSnapshot].self,
+            forKey: .visualizations
+        ) ?? []
         draftSource = source
         viewMode = .rich
         conflict = nil
@@ -207,9 +266,10 @@ package struct NotebookExternalDocument: Codable, Equatable {
     package var contentHash: String
     package var cells: [NotebookCellState]
     package var receipts: [NotebookExecutionReceipt]
+    package var visualizations: [NotebookVisualizationSnapshot]
 
     private enum CodingKeys: String, CodingKey {
-        case id, filename, source, contentHash, cells, receipts
+        case id, filename, source, contentHash, cells, receipts, visualizations
     }
 
     package init(from decoder: Decoder) throws {
@@ -220,7 +280,45 @@ package struct NotebookExternalDocument: Codable, Equatable {
         contentHash = try values.decode(String.self, forKey: .contentHash)
         cells = try values.decodeIfPresent([NotebookCellState].self, forKey: .cells) ?? []
         receipts = try values.decode([NotebookExecutionReceipt].self, forKey: .receipts)
+        visualizations = try values.decodeIfPresent(
+            [NotebookVisualizationSnapshot].self,
+            forKey: .visualizations
+        ) ?? []
     }
+}
+
+package struct NotebookVisualizationSnapshot: Codable, Equatable, Identifiable {
+    package var schemaVersion: UInt32
+    package var id: String
+    package var notebookId: String
+    package var cellId: String
+    package var title: String
+    package var revisions: [NotebookVisualizationRevision]
+}
+
+package struct NotebookVisualizationRevision: Codable, Equatable, Identifiable {
+    package var revision: UInt64
+    package var createdAt: UInt64
+    package var assetPath: String
+    package var sourceReferences: [String]
+    package var reopen: NotebookVisualizationReopenIntent
+    package var render: NotebookVisualizationRenderMetadata
+    package var id: UInt64 { revision }
+}
+
+package struct NotebookVisualizationReopenIntent: Codable, Equatable {
+    package var surface: String
+    package var contractVersion: UInt32
+    package var parameters: [String: JSONValue]
+    package var profileTOML: String?
+}
+
+package struct NotebookVisualizationRenderMetadata: Codable, Equatable {
+    package var renderer: String
+    package var mediaType: String
+    package var width: UInt32
+    package var height: UInt32
+    package var settings: [String: JSONValue]
 }
 
 package struct ScientificNotebookProjectState: Codable, Equatable {
@@ -269,6 +367,7 @@ package protocol NotebookPersistenceClient {
     ) throws -> NotebookSaveResult
     func beginRecording(request: NotebookBeginRecordingRequest) throws -> NotebookBeginRecordingResult
     func finalizeRecording(request: NotebookFinalizeRecordingRequest) throws
+    func saveVisualization(request: NotebookSaveVisualizationEnvelope) throws -> NotebookVisualizationSnapshot
 }
 
 package struct NotebookBeginRecordingRequest: Encodable {
@@ -283,6 +382,7 @@ package struct NotebookRecordingRequest: Encodable {
     package var notebookId: String?
     package var cellId: String?
     package var taskIntent: NotebookTaskIntent?
+    package var executionInput: NotebookExecutionInput?
     package var providerContractVersion: UInt32
     package var resolvedParameters: [String: JSONValue]
     package var runSafety: NotebookRunSafetyRecord
@@ -330,6 +430,21 @@ package struct NotebookReceiptFinalization: Encodable {
     package var stdout: [UInt8]
     package var stderr: [UInt8]
     package var casaLog: String?
+}
+
+package struct NotebookSaveVisualizationEnvelope: Encodable {
+    package var projectRoot: String
+    package var request: NotebookSaveVisualizationRequest
+}
+
+package struct NotebookSaveVisualizationRequest: Encodable {
+    package var notebookId: String?
+    package var visualizationId: String?
+    package var title: String
+    package var sourceAsset: String
+    package var sourceReferences: [String]
+    package var reopen: NotebookVisualizationReopenIntent
+    package var render: NotebookVisualizationRenderMetadata
 }
 
 package struct UniFFINotebookPersistenceClient: NotebookPersistenceClient {
@@ -409,6 +524,15 @@ package struct UniFFINotebookPersistenceClient: NotebookPersistenceClient {
         _ = try CasarsFrontendServices.notebookFinalizeRecordingJson(
             requestJson: String(decoding: try encoder.encode(request), as: UTF8.self)
         )
+    }
+
+    package func saveVisualization(
+        request: NotebookSaveVisualizationEnvelope
+    ) throws -> NotebookVisualizationSnapshot {
+        let json = try CasarsFrontendServices.notebookSaveVisualizationJson(
+            requestJson: String(decoding: try encoder.encode(request), as: UTF8.self)
+        )
+        return try decoder.decode(NotebookVisualizationSnapshot.self, from: Data(json.utf8))
     }
 }
 

@@ -31,14 +31,19 @@ Implementation is allowed only after the wave is approved. Invoking this skill a
 7. Run `quick` during the edit loop.
 8. Add or update tests for the stated acceptance checks.
 9. For user-visible native macOS GUI changes, add or update launched-app
-   XCTest/XCUIAutomation coverage and run `just gui-test`. Issue #368 must be
+   XCTest/XCUIAutomation coverage and obtain one green `just gui-test` result
+   from either the consolidated local run or the hosted macOS job. Do not
+   require both. Issue #368 must be
    implemented and green before the current notebook wave enters production
    integration, and lands with the completed wave PR. If the test target or
    supported runner is unavailable, stop and record the blocker;
    screenshots, debug JSON, or manual/computer-use evidence do not waive it.
 10. Run the `refactor` skill on the code involved in the current wave before finalizing the PR. If the wave has no code refactor surface, record why it is not applicable.
 11. Keep the refactor pass bounded to touched or directly exposed code. If `refactor` identifies a larger coherent refactor, produce the brief and ask before expanding the wave.
-12. Run `verify` before moving the wave into `Review`.
+12. Obtain one current green `verify` result before moving the wave into
+   `Review`: run it locally, or use documented hosted coverage that is genuinely
+   equivalent to the full gate. Prefer the faster available path and do not wait
+   for a duplicate result from the other environment.
 13. If an approved outcome, included issue, or acceptance check cannot be completed, stop and ask for explicit user signoff before creating a deferral, follow-up, non-goal, or out-of-scope classification for that approved work.
 14. Update issue closeout and PR material so they match the actual implementation, refactor pass, verification result, and any approved-scope deferral and the user signoff location.
 15. Commit the finished wave changes on the wave branch.

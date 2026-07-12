@@ -58,12 +58,33 @@ Verification: just verify
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test plus editable Python package checks
 - GitHub tag CI: PR CI plus smoke, suite-install, and CI-like coverage
+
+## Evidence source and turnaround
+
+At the current project stage, prefer fast feedback over duplicate
+cross-environment verification. A required gate needs one current green result
+from either a local run or a hosted run of the same command or documented
+equivalent coverage; it does not need both. Once one accepted environment is
+green, do not wait for or repair the other solely to duplicate the result.
+Use the second environment only to diagnose a failure, resolve genuine
+platform-specific uncertainty, or satisfy an explicit user request. A narrower
+hosted job cannot stand in for a broader required gate such as `just verify`.
+
+Recent green evidence remains valid until a code, test, build, dependency, or
+runtime-configuration change could affect that gate. Final review must inspect
+the commits after the tested revision and reuse the result when they contain
+only documentation, planning, or workflow-policy changes. Do not rerun a gate
+solely because review started; if executable changes intervened, rerun only the
+affected gate.
 - Native macOS GUI prototype and frontend services:
   `cargo test -p casa-notebook --test wave1_contract`,
   `cargo test -p casars-frontend-services`,
   `cargo test -p casars-imager dirty_imaging_json_request_accepts_gui_selection_fields`,
   `scripts/test-frontend-services-python.sh`, `swift test` from
-  `apps/casars-mac`, and
+  `apps/casars-mac`,
+  `swift run casars-mac --dump-debug-state --show-prototype python
+  --prototype-state happy-path` for the fixture-only Wave 2 Python projection,
+  and
   `CASARS_IMAGER_BIN=target/debug/casars-imager swift run casars-mac
   --dump-debug-state --simulate-main-flow --open-project <fixture-or-project>`
   for the headless debug-state smoke path that includes the dirty-imaging task
@@ -71,6 +92,15 @@ Verification: just verify
 - Native macOS launched-app interaction gate: `just gui-test` from the
   repository root. Its disposable DerivedData and retained `.xcresult` bundle
   live under `apps/casars-mac/.gui-test/`.
+
+Local native GUI automation owns an exclusive foreground window. `just
+gui-test` performs all compilation first, announces a countdown, then runs the
+complete XCUITest suite in one `test-without-building` batch. Do not use the
+Mac during that window. During implementation, prefer core Swift tests,
+debug-state assertions, and deterministic capture; batch user-visible
+interaction changes and run the GUI suite at coherent prototype-handoff and
+pre-Review checkpoints. Use isolated focused XCUITest runs only to diagnose a
+failure found by a consolidated run, not as the normal edit loop.
 
 ## Coverage / confidence policy
 
@@ -104,9 +134,12 @@ The executable GUI layer follows these rules:
   not use screenshot review as the only assertion that an interaction works.
 - Keep Core/store tests as the broad, fast base of the pyramid. UI tests prove
   only behavior that requires the launched application boundary.
-- Run the same `just gui-test` command locally and in the supported macOS CI
-  job. If the runner cannot support UI automation, stop and record evidence
-  rather than replacing the gate with manual or computer-use testing.
+- Keep the same `just gui-test` command available locally and in the supported
+  macOS CI job. One green consolidated run in either environment satisfies the
+  interaction gate; the other is optional unless needed for diagnosis or
+  platform-specific evidence. If neither environment can support UI automation,
+  stop and record the blocker rather than replacing the gate with manual or
+  computer-use testing.
 - Pin the CI job's Xcode selection explicitly; the current gate uses the
   `macos-15` image with Xcode 26.2, matching the locally established compiler.
 - Run locally from a logged-in GUI session with Xcode automation permission and
@@ -127,7 +160,8 @@ For each wave:
   evidence are recorded; and explicit interaction approval precedes real
   adapter integration
 - user-visible native macOS GUI changes identify critical XCUITest workflows
-  during shaping and record a green `just gui-test` result before Review; for
+  during shaping and record a green local or hosted `just gui-test` result
+  before Review; for
   Wave 1, #368 must be implemented and green before Phase B begins and lands
   with the completed wave
 - after prototype approval, real adapters must match the accepted interaction
@@ -141,6 +175,28 @@ For each wave:
   boundaries, GUI/TUI/CLI/Python recording and one-run bypasses, production
   debug state, authored task cells without receipts, clean/dirty task-tab
   parameter replacement, and launched-app persistence/task-tab interaction
+- Wave 2 Phase A XCUITests cover plot regeneration and insertion, latest-first
+  execution status with routine streams, paths, failures, and prior revisions
+  collapsed by default, explicit producer-declared plot/image aspect behavior,
+  explorer snapshot
+  enlargement and parameter restoration, no live notebook mutation, New plot
+  and immutable Update actions, observable running state, ordered failure
+  output and retry, a nonresponsive cell's interrupt/restart path, exact-source
+  AI approval invalidation after editing, accessibility audit, and zero
+  production-boundary calls. Core tests cover the same fixture state
+  transitions and exact source digests. These tests do not claim that Python,
+  project persistence, matplotlib, or production explorer integration exists.
+- Wave 2 Phase B adds production evidence for exact-source receipt-v2 Python
+  execution, compact-by-default ordered output and immutable artifacts
+  surviving a fresh notebook
+  load, persistent namespace plus interrupt/restart recovery, independent
+  Seatbelt AI-worker denial of network/outside writes/symlink escape/credential
+  inheritance, tutorial-backed native MeasurementSet and image-plane data with
+  editable Matplotlib/WCSAxes objects, and Rust-owned explorer snapshot New,
+  Update, immutable history, and exact reopen intent. Launched-app coverage
+  executes a production Python cell from a disposable project and verifies its
+  on-disk receipt and reloaded output; the fixture XCUITests remain the
+  deterministic interaction evidence for explorer New/Update/Open behavior.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review
@@ -160,7 +216,8 @@ A wave is not done until:
 
 - `just verify` passes or any intentional exclusion is called out explicitly
 - tests cover the claimed behavior
-- native macOS GUI waves pass `just gui-test` for changed critical interactions
+- native macOS GUI waves pass `just gui-test` locally or in hosted CI for
+  changed critical interactions
   once the #368 test target is present
 - code-wave refactor evidence is recorded, or a no-code not-applicable
   rationale exists

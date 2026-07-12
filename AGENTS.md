@@ -136,12 +136,19 @@ Use `Closes #N` only for issues that should auto-close on merge.
   Thereafter, every user-visible `casars-mac` wave must identify its critical
   workflows during shaping, add or update stable accessibility identifiers and
   XCUITest coverage during implementation, and record a green `just gui-test`
-  result before Review. Core/store tests, debug JSON, accessibility inspection,
-  screenshots, and manual/computer-use sessions remain complementary evidence;
+  result from either the consolidated local run or the hosted macOS job before
+  Review; both are not required. Core/store tests, debug JSON, accessibility
+  inspection, screenshots, and manual/computer-use sessions remain complementary evidence;
   they do not substitute for executable UI tests when claimed interaction
   behavior changes. If the UI-test target or supported macOS runner is
   unavailable, stop and record the blocker instead of silently waiving the
   gate.
+- Batch local native GUI automation into exclusive foreground windows. Finish
+  compilation before the window, announce it before focus is taken, and run
+  the complete suite as one uninterrupted batch. During normal implementation
+  use core tests, debug-state checks, and deterministic capture; accumulate
+  interaction changes for prototype-handoff and pre-Review GUI gates. Use a
+  focused XCUITest run only to diagnose a failure from the consolidated gate.
 - Before implementing behavior that exists in CASA/casacore C++, inspect the
   relevant upstream task/tool/library path first and preserve its semantics
   unless there is an explicit reason to diverge.
@@ -188,6 +195,19 @@ Use `Closes #N` only for issues that should auto-close on merge.
 
 ## Verification Policy
 
+- At the current project stage, fast turnaround takes precedence over duplicate
+  cross-environment assurance. For each required gate, one current green run in
+  either the local or hosted environment is sufficient when it executes the
+  same command or documented equivalent coverage. Do not wait for, rerun, or
+  repair the other environment solely to obtain a second green result. Use the
+  second environment only for diagnosis, unresolved platform-specific risk, or
+  when the user explicitly requests it. A lighter hosted job does not substitute
+  for a broader required gate such as `just verify`.
+- Reuse recent green gate evidence when no intervening code, test, build,
+  dependency, or runtime-configuration change could affect it. Starting final
+  review, rebasing without content changes, or adding documentation/process-only
+  commits does not by itself require a rerun. If relevant executable changes
+  intervened, rerun only the affected gate.
 - `just quick` is the normal local iteration gate.
 - `just verify` is the default full wave gate.
 - `just smoke`, `scripts/test-install-suite.sh`, and
@@ -204,8 +224,9 @@ Use `Closes #N` only for issues that should auto-close on merge.
 
 ## Done
 
-A wave is done only after relevant tests pass, `just verify` passes or exclusions
-are recorded, code-wave refactor evidence is recorded or no-code
+A wave is done only after relevant tests pass; one current `just verify` result
+is recorded from a local run or documented equivalent hosted coverage, or
+exclusions are recorded; code-wave refactor evidence is recorded or no-code
 not-applicable rationale exists, issue closeout records the actual result,
 docs/ADRs are updated when reality changed, any approved-scope deferral records
 explicit user signoff, and medium/high-risk work gets the needed architecture,

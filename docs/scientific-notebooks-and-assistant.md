@@ -78,6 +78,34 @@ Recognized v1 cell kinds are `task`, `python`, `tutorial`, `assistant-pin`, and
 `output`. Notes need no typed wrapper. Unknown comments, fences, Markdown, and
 future cell kinds are preserved without interpretation.
 
+Execution cells render only their latest revision at normal prominence.
+Earlier immutable revisions remain available under a collapsed **Previous
+revisions** disclosure; they do not repeat full-width output in the normal
+reading flow.
+
+## Explorer visualization snapshots
+
+Explorer inputs and control panels are not notebook content. MeasurementSet
+plots and image views enter a notebook only when the user selects **Save to
+Notebook** beside the rendered visualization. The notebook stores a stable
+image/plot asset plus the source explorer kind and the parameters required to
+recreate the view; it does not embed the explorer's input form.
+
+Selecting a saved visualization enlarges the stable snapshot. **Open in
+Explorer** restores its generating parameters into the corresponding explorer,
+where the user can make a new preview. Explorer edits never update the notebook
+implicitly. **New plot** creates a new notebook visualization, while **Update**
+appends an immutable revision to the selected visualization. The prior
+revisions remain available through a collapsed disclosure. Table-browser input
+forms are never recorded automatically; a separately shaped table excerpt or
+other rendered artifact may use this same explicit snapshot boundary later.
+
+Saved artifacts keep the producer-declared pixel aspect recorded in rendering
+metadata when shown as a compact preview or enlarged view. Image and equal-axis
+scientific renderers therefore choose square output when appropriate, while
+ordinary plots may choose another stable aspect. The notebook does not inspect
+axis labels or compare units at display time.
+
 The rich editor provides bounded WYSIWYG editing for prose throughout the
 complete document, including text before, between, and after typed cells, and
 always offers raw Markdown mode over that same complete source. Unsupported
@@ -154,6 +182,28 @@ interrupts, and environment identity are retained.
 Matplotlib figures are captured as PNG and SVG under the execution asset
 directory. The code and input references remain in the cell, so **Regenerate**
 creates a new execution and artifact revision without destroying the old one.
+
+Receipt schema v2 stores the exact Python source and SHA-256, `user` or
+`ai_worker` authority, selected input references, interpreter identity, Python
+implementation/version, installed CASA-RS and plotting package versions, and a
+validated environment fingerprint. Schema-v1 task receipts remain readable.
+Ordered stream events are retained as an immutable JSON execution artifact in
+addition to stdout/stderr sidecars.
+
+The normal reading view shows the latest status and scientific figures. Routine
+stdout, stderr, environment identity, source hashes, diagnostics, and artifact
+paths remain available under **Details**. A failed run is therefore a compact
+status row until expanded instead of displacing the surrounding notes.
+
+Python-native explorer data does not round-trip through screenshots. Use
+`casars.tasks.msexplore.data(...)` for the shared Rust `casa-ms` numeric plot
+document (NumPy series and point provenance), then
+`msexplore.plot_matplotlib(...)` for editable figure/axes objects. Use
+`casars.imexplore.data(...)` for image planes, masks, coordinate/WCS records,
+beam metadata, and overlays, then `casars.imexplore.imshow(...)` for editable
+Matplotlib/WCSAxes objects. The optional dependencies are installed with
+`casa-rs-python[plot]`; executable-rendered exports remain appropriate for
+GUI/TUI parity and regression images.
 
 AI Python is separate. The exact proposed code and expected artifact paths are
 shown before approval. Approval is bound to a content hash; any code change
@@ -293,12 +343,37 @@ filename or stable ID explicitly; otherwise recording routes to `default.md`.
 
 ### Wave 2: Python and plots
 
-Prototype: live editor, Run/Stop/Restart/Run All, ordered output, errors,
-deterministic matplotlib-style PNG/SVG figures, regeneration, and notebook
-insertion.
+Prototype: a full-width continuous notes-first notebook with inline expandable
+Python cells, live editor, Run/Stop/Restart/Run All, ordered stdout/stderr/error
+output behind compact execution details, latest-first execution history with
+collapsed prior revisions and failures,
+deterministic matplotlib-style PNG/SVG figures, regeneration, notebook
+insertion, explicit MeasurementSet/Image Explorer visualization snapshots,
+enlargement, parameter restoration, New plot/immutable Update actions, and
+producer-declared stable visualization aspects without display-time unit
+inference, plus exact-source approval for AI-proposed code. Deterministic
+`happy-path`, `failure`, and `nonresponsive` fixture states exercise retry,
+interrupt, forced restart, immutable revisions, and approval invalidation.
 
-Production: project environment, persistent per-notebook user kernel,
-CASA-RS bindings, receipts, plot capture, and the restricted AI-worker boundary.
+Current reality: Wave 2 Phase A was accepted on issues #227 and #370. Phase B
+now uses an explicit project environment and one supervised persistent user
+kernel per notebook; records exact schema-v2 Python receipts and ordered
+output; captures immutable PNG/SVG execution assets; and presents environment
+creation and plotting-package installation only as explicit user actions.
+`casa-ms` owns the shared numeric MS plot-data contract consumed by both the
+UniFFI GUI projection and PyO3. Python-native image planes include WCS, masks,
+beam metadata, and overlays. The separate macOS AI worker uses Seatbelt with
+network denial, scrubbed credentials, read-only science inputs, one writable
+staging root, exact-source approval, symlink-escape coverage, and inherited
+subprocess restrictions.
+
+Production explorer snapshots are Rust-owned `casa-notebook` records. MS and
+image explorers expose **Save to Notebook**; **New** creates a new identity and
+**Update** appends an immutable asset revision. Markdown contains only the
+quiet latest image link and identity marker. Managed metadata retains source
+references, canonical typed reopen parameters, contract and renderer identity,
+and every prior revision. Notebook previews enlarge without launching an
+explorer; **Open in Explorer** restores the saved parameters.
 
 ### Wave 3: tutorials and acquisition
 

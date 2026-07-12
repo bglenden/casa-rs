@@ -1,8 +1,8 @@
 # casars-mac
 
 Truth class: current descriptive
-Last reality check: 2026-07-10
-Verification: swift test; just gui-test; swift run casars-mac --dump-debug-state --simulate-main-flow; swift run casars-mac --dump-debug-state --show-prototype notebook; ./script/build_and_run.sh --verify
+Last reality check: 2026-07-11
+Verification: swift test; just gui-test; swift run casars-mac --dump-debug-state --simulate-main-flow; swift run casars-mac --dump-debug-state --show-prototype notebook; swift run casars-mac --dump-debug-state --show-prototype python; ./script/build_and_run.sh --verify
 
 `casars-mac` is the SwiftUI prototype for the native macOS `casa-rs`
 workbench. The app keeps a synthetic demo fixture for layout and dry-run
@@ -21,8 +21,10 @@ swift run casars-mac --dump-debug-state --simulate-main-flow
 swift run casars-mac --dump-debug-state --open-tutorial-pack /path/to/tutorial.pack
 swift run casars-mac --dump-debug-state --open-imager-ms /path/to/input.ms
 swift run casars-mac --dump-debug-state --show-prototype notebook --prototype-state happy-path
+swift run casars-mac --dump-debug-state --show-prototype python --prototype-state happy-path
 swift run casars-mac --capture-gui-evidence --capture-kind imager-progress-mockup --output /tmp/imager-progress.png
 swift run casars-mac --capture-gui-evidence --capture-kind notebook-prototype --prototype-state external-conflict --output /tmp/notebook-conflict.png
+swift run casars-mac --capture-gui-evidence --capture-kind python-prototype --prototype-state happy-path --output /tmp/python-notebook.png
 ./script/build_and_run.sh
 ./script/build_and_run.sh --verify
 ./script/install-local-gui.sh --force
@@ -30,6 +32,7 @@ swift run casars-mac --capture-gui-evidence --capture-kind notebook-prototype --
 ./script/build_and_run.sh --imager-ms /path/to/input.ms --run-active-task
 ./script/build_and_run.sh --tutorial-pack /path/to/tutorial.pack
 ./script/build_and_run.sh --show-prototype notebook --prototype-state happy-path
+./script/build_and_run.sh --show-prototype python --prototype-state happy-path
 ./script/build_and_run.sh --empty
 ```
 
@@ -57,9 +60,24 @@ local run may require macOS permission for Xcode's test runner to control the
 app; clear any active system-authentication prompt before retrying. The tests
 use the system pasteboard plus keyboard events for complete-document edits, so
 the runner needs normal GUI focus and pasteboard access. No user project,
-dataset, provider, task process, network service, or notebook file is opened or
-written: every test launches `--show-prototype notebook` with deterministic
-fixture state and asserts that the production-boundary audit remains zero.
+dataset, provider, task process, network service, Python process, or notebook
+file is opened or written: prototype tests launch `--show-prototype notebook`
+or `--show-prototype python` with deterministic fixture state and assert that
+the production-boundary audit remains zero. Production notebook tests use only
+unique test-owned temporary projects and remove them after each test.
+
+Local execution is deliberately batched into one exclusive foreground window.
+The harness completes Rust and Xcode `build-for-testing` work first, then shows
+a notification and ten-second countdown before running the whole suite with
+`test-without-building`. Do not use the keyboard, mouse, or switch applications
+until the completion notification. Set
+`CASA_RS_GUI_TEST_COUNTDOWN_SECONDS=<seconds>` to change the countdown, or
+`CASA_RS_GUI_TEST_EXCLUSIVE_NOTICE=0` only for an already isolated session.
+Normal edit loops should use `swift test`, debug-state checks, and deterministic
+evidence capture; accumulate interaction changes and run GUI tests together at
+a prototype-review checkpoint rather than interleaving focused XCUITest runs
+throughout development. A focused run remains appropriate when diagnosing a
+failure from the consolidated gate.
 
 Disposable build and test output lives under `apps/casars-mac/.gui-test/`.
 The retained result bundle is
@@ -102,6 +120,16 @@ prototype without staging a project. `--prototype-state happy-path` selects the
 normal fixture-only task-recording and annotation flow; `external-conflict` shows the
 third-party-edit conflict state. The same state selector works with
 `--capture-kind notebook-prototype` for deterministic GUI evidence.
+Pass `--show-prototype python` for the Wave 2 fixture-only Python notebook.
+Its continuous notes-first document supports inline cell expansion, editing,
+Run/Run All/Stop/Restart, ordered output, failure and retry, deterministic
+PNG/SVG-style plot revisions, latest-first output with collapsed history,
+regeneration, notebook insertion, explicit saved MeasurementSet/Image Explorer
+snapshots, enlargement, parameter restoration, New plot/immutable Update
+actions, and exact-code approval for AI-proposed cells. The `happy-path`, `failure`, and
+`nonresponsive` states are also accepted by `--capture-kind python-prototype`.
+No Python process, project file, task, provider, or network is touched; the
+Wave 2 production adapters remain blocked until explicit interaction approval.
 `swift run casars-mac` is reserved for non-interactive debug-state commands and
 low-level executable diagnosis.
 

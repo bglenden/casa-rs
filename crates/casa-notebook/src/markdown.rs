@@ -197,6 +197,21 @@ impl NotebookDocument {
         *self = Self::parse(std::mem::take(&mut self.source))?;
         Ok(())
     }
+
+    /// Replace one managed cell body while preserving its identity and neighbors.
+    pub fn replace_cell_body(&mut self, id: CellId, body: &str) -> Result<(), NotebookParseError> {
+        let cell = self
+            .cell(id)
+            .ok_or(NotebookParseError::CellNotFound { id })?;
+        let mut replacement = body.to_owned();
+        if !replacement.ends_with('\n') {
+            replacement.push('\n');
+        }
+        self.source
+            .replace_range(cell.body_range.clone(), &replacement);
+        *self = Self::parse(std::mem::take(&mut self.source))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]
@@ -213,6 +228,8 @@ pub enum NotebookParseError {
     UnclosedCell { id: CellId },
     #[error("cell id {id} occurs more than once")]
     DuplicateCellId { id: CellId },
+    #[error("cell {id} is not present")]
+    CellNotFound { id: CellId },
     #[error("invalid cell id {value:?}: {source}")]
     InvalidCellId { value: String, source: uuid::Error },
     #[error("task cell has no fenced TOML block")]

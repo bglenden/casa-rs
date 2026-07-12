@@ -1,5 +1,7 @@
 import Foundation
+import AppKit
 import CasarsFrontendServices
+import CryptoKit
 import OSLog
 
 private let datasetSelectionLogger = Logger(
@@ -799,10 +801,12 @@ private struct SessionLastDestination: Hashable {
 private enum WorkbenchRuntimeKind {
     case production
     case notebookPrototype
+    case pythonPrototype
 }
 
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
+    @Published package private(set) var pythonNotebookRuntime = NotebookPythonRuntimeState()
     private let runtimeKind: WorkbenchRuntimeKind
     private let probeClient: ProjectProbeClient
     private let demoProjectClient: DemoProjectClient
@@ -820,6 +824,9 @@ public final class WorkbenchStore: ObservableObject {
     private var activeTaskExecutions: [String: TaskExecution] = [:]
     private var taskParameterAttempts: [String: TaskParameterAttempt] = [:]
     private var notebookAttemptHandles: [String: NotebookAttemptHandle] = [:]
+    private var pythonKernels: [String: PersistentPythonKernel] = [:]
+    private var pythonKernelStatuses: [String: NotebookPythonKernelStatus] = [:]
+    private var pythonExecutableOverride: String?
     private var measurementSetParameterAttempts: [String: TaskParameterAttempt] = [:]
     private var acceptedSessionParameterValues: [String: [String: SurfaceParameterValue]] = [:]
     private var acceptedSessionParameterSequence: [String: UInt64] = [:]
@@ -861,7 +868,13 @@ public final class WorkbenchStore: ObservableObject {
             }
         }
         self.state = initialState
-        runtimeKind = initialState.isNotebookPrototype ? .notebookPrototype : .production
+        if initialState.isNotebookPrototype {
+            runtimeKind = .notebookPrototype
+        } else if initialState.isPythonPrototype {
+            runtimeKind = .pythonPrototype
+        } else {
+            runtimeKind = .production
+        }
         self.probeClient = probeClient
         self.demoProjectClient = demoProjectClient
         self.plotClient = plotClient
@@ -879,7 +892,12 @@ public final class WorkbenchStore: ObservableObject {
         notebookPersistenceClient = client
     }
 
+    package func installPythonExecutableForTesting(_ path: String) {
+        pythonExecutableOverride = path
+    }
+
     deinit {
+        pythonKernels.values.forEach { $0.terminate() }
         guard runtimeKind == .production else { return }
         sessionLastWrites.values.forEach { $0.cancel() }
         for sessionKey in acceptedSessionParameterValues.keys {
@@ -917,12 +935,41 @@ public final class WorkbenchStore: ObservableObject {
         )
     }
 
+    package static func pythonPrototype(
+        scenario: PythonPrototypeScenario = .primary,
+        dependencies: NotebookPrototypeRuntimeDependencies = .denied
+    ) -> WorkbenchStore {
+        NotebookPrototypeBoundaryAudit.reset()
+        return WorkbenchStore(
+            state: pythonPrototypeState(scenario: scenario),
+            probeClient: dependencies.probeClient,
+            demoProjectClient: dependencies.demoProjectClient,
+            plotClient: dependencies.plotClient,
+            imageExplorerClient: dependencies.imageExplorerClient,
+            tableBrowserClient: dependencies.tableBrowserClient,
+            genericTaskClient: dependencies.genericTaskClient,
+            taskCatalogClient: PrototypeTaskCatalogClient(),
+            taskUISchemaClient: dependencies.taskUISchemaClient,
+            surfaceParameterClient: dependencies.surfaceParameterClient,
+            taskExecutionMatrixClient: PrototypeTaskExecutionMatrixClient(),
+            imagerProgressSource: EmptyImagerProgressSource()
+        )
+    }
+
     package var isNotebookPrototypeRuntime: Bool {
         runtimeKind == .notebookPrototype
     }
 
+    package var isPythonPrototypeRuntime: Bool {
+        runtimeKind == .pythonPrototype
+    }
+
+    package var isPrototypeRuntime: Bool {
+        runtimeKind != .production
+    }
+
     package var prototypeProductionBoundaryInvocationCount: Int {
-        runtimeKind == .notebookPrototype ? NotebookPrototypeBoundaryAudit.count : 0
+        isPrototypeRuntime ? NotebookPrototypeBoundaryAudit.count : 0
     }
 
     private static func notebookPrototypeState(
@@ -962,6 +1009,45 @@ public final class WorkbenchStore: ObservableObject {
             )
         ]
         state.activeTabID = "tab-scientific-notebook"
+        return state
+    }
+
+    private static func pythonPrototypeState(
+        scenario: PythonPrototypeScenario,
+        interfaceFontSize: Double = WorkbenchState.defaultInterfaceFontSize
+    ) -> WorkbenchState {
+        var state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+        state.project = ProjectFixture(
+            name: "TW Hya Reduction",
+            rootPath: "/PrototypeProjects/tw-hya-reduction",
+            datasets: [
+                DatasetSummary(
+                    id: "prototype-twhya-ms",
+                    name: "twhya_calibrated.ms",
+                    path: "data/twhya_calibrated.ms",
+                    kind: .measurementSet,
+                    size: "2.1 GB fixture",
+                    units: "Jy, Hz, seconds",
+                    fields: ["TW Hya"],
+                    spectralWindows: ["spw 0: continuum", "spw 1: line"],
+                    dataColumns: ["DATA", "CORRECTED_DATA"],
+                    notes: "Deterministic Python prototype metadata; no data are opened."
+                )
+            ],
+            source: .fixture
+        )
+        state.selectedDatasetID = "prototype-twhya-ms"
+        state.prototypePython = PrototypePythonFixtureAdapter.make(scenario: scenario)
+        state.leftDockCollapsed = true
+        state.inspectorCollapsed = true
+        state.tabs = [
+            WorkbenchTab(
+                id: "tab-python-prototype",
+                title: "Python · TW Hya analysis",
+                kind: .python
+            )
+        ]
+        state.activeTabID = "tab-python-prototype"
         return state
     }
 
@@ -2135,14 +2221,19 @@ public final class WorkbenchStore: ObservableObject {
     /// explorer, task, schema, parameter, or process adapter.
     @discardableResult
     private func rejectPrototypeProductionAction(_ action: String) -> Bool {
-        guard runtimeKind == .notebookPrototype else { return false }
-        state.lastErrors.append("\(action) are unavailable in the in-memory notebook prototype")
+        guard runtimeKind != .production else { return false }
+        let prototypeName = runtimeKind == .notebookPrototype ? "notebook" : "Python"
+        state.lastErrors.append("\(action) are unavailable in the in-memory \(prototypeName) prototype")
         return true
     }
 
     public func openTab(_ tab: WorkbenchTab) {
         if runtimeKind == .notebookPrototype,
            tab.kind != .notebook && !(tab.kind == .task && tab.prototypeReceiptID != nil) {
+            _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
+            return
+        }
+        if runtimeKind == .pythonPrototype, tab.kind != .python {
             _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
             return
         }
@@ -2295,6 +2386,11 @@ public final class WorkbenchStore: ObservableObject {
             state.scientificNotebooks = try notebookPersistenceClient.loadProject(
                 projectRoot: state.project.rootPath
             )
+            pythonNotebookRuntime.notebookID = state.scientificNotebooks?.activeNotebookID
+            if let notebookID = state.scientificNotebooks?.activeNotebookID {
+                pythonNotebookRuntime.status = pythonKernelStatuses[notebookID]
+                    ?? projectPythonEnvironmentStatus
+            }
         } catch {
             state.lastErrors.append("Load project notebooks: \(error)")
         }
@@ -2332,11 +2428,591 @@ public final class WorkbenchStore: ObservableObject {
         else { return }
         project.activeNotebookID = notebookID
         state.scientificNotebooks = project
+        pythonNotebookRuntime.notebookID = notebookID
+        pythonNotebookRuntime.status = pythonKernelStatuses[notebookID]
+            ?? projectPythonEnvironmentStatus
         if let tabIndex = state.tabs.firstIndex(where: { $0.kind == .notebook }) {
             state.tabs[tabIndex].title = project.activeNotebook?.filename ?? "Notebook"
             state.activeTabID = state.tabs[tabIndex].id
         } else {
             openDefaultTab(kind: .notebook)
+        }
+    }
+
+    package var projectPythonEnvironmentStatus: NotebookPythonKernelStatus {
+        guard let root = state.scientificNotebooks?.projectRoot else { return .unavailable }
+        return FileManager.default.isExecutableFile(atPath: pythonExecutable(root: root))
+            ? .ready
+            : .unavailable
+    }
+
+    package func createOrRepairProjectPythonEnvironment() {
+        guard let root = state.scientificNotebooks?.projectRoot else { return }
+        pythonNotebookRuntime.status = .starting
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Self.createPythonEnvironment(projectRoot: root)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.pythonNotebookRuntime.status = .ready
+                case let .failure(error):
+                    self.pythonNotebookRuntime.status = .unavailable
+                    self.state.lastErrors.append("Create project Python environment: \(error)")
+                }
+            }
+        }
+    }
+
+    package func installProjectPythonPlottingPackages() {
+        guard let root = state.scientificNotebooks?.projectRoot else { return }
+        let executable = pythonExecutable(root: root)
+        guard FileManager.default.isExecutableFile(atPath: executable) else {
+            state.lastErrors.append("Create or repair the project Python environment first")
+            return
+        }
+        pythonNotebookRuntime.status = .starting
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Self.runPythonProcess(
+                executable: executable,
+                arguments: ["-m", "pip", "install", "--upgrade", "casa-rs-python[plot]"],
+                currentDirectory: root
+            )
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.pythonNotebookRuntime.status = .ready
+                case let .failure(error):
+                    self.pythonNotebookRuntime.status = .unavailable
+                    self.state.lastErrors.append("Install project Python plotting packages: \(error)")
+                }
+            }
+        }
+    }
+
+    package func runScientificPythonCell(_ cellID: String) {
+        runScientificPythonCell(cellID, completion: nil)
+    }
+
+    package func runAllScientificPythonCells() {
+        let cells = state.scientificNotebooks?.activeNotebook?.cells
+            .filter { $0.kind == "python" }
+            .map(\.id) ?? []
+        runScientificPythonCells(cells[...])
+    }
+
+    package func interruptScientificPythonKernel() {
+        guard let notebookID = state.scientificNotebooks?.activeNotebookID,
+              let kernel = pythonKernels[notebookID]
+        else { return }
+        kernel.interrupt()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self, weak kernel] in
+            guard let self, let kernel,
+                  self.pythonKernelStatuses[notebookID] == .interrupting
+            else { return }
+            kernel.terminate()
+            self.pythonKernelStatuses[notebookID] = .restartRequired
+            if self.state.scientificNotebooks?.activeNotebookID == notebookID {
+                self.pythonNotebookRuntime.status = .restartRequired
+                self.pythonNotebookRuntime.runningCellID = nil
+            }
+        }
+    }
+
+    package func restartScientificPythonKernel() {
+        guard let notebookID = state.scientificNotebooks?.activeNotebookID,
+              let kernel = pythonKernels[notebookID]
+        else { return }
+        kernel.restart()
+        pythonNotebookRuntime.runningCellID = nil
+    }
+
+    package func saveMeasurementSetPlotToNotebook(
+        datasetID: String,
+        updating visualizationID: String? = nil
+    ) {
+        guard let project = state.scientificNotebooks,
+              var plotState = state.measurementSetPlots[datasetID],
+              let result = plotState.result,
+              !result.imageBytes.isEmpty
+        else {
+            state.lastErrors.append("Generate a MeasurementSet plot before saving it to a notebook")
+            return
+        }
+        plotState.result = nil
+        plotState.status = .idle
+        plotState.lastError = nil
+        saveVisualizationData(
+            result.imageBytes,
+            extension: result.imageFormat.lowercased() == "svg" ? "svg" : "png",
+            title: result.title,
+            notebookID: project.activeNotebookID,
+            visualizationID: visualizationID,
+            sourceReferences: [result.datasetPath],
+            surface: "msexplore",
+            parameters: Self.jsonValue(plotState).objectValue ?? [:],
+            renderer: result.renderer,
+            mediaType: result.imageFormat.lowercased() == "svg" ? "image/svg+xml" : "image/png",
+            width: result.imageWidth,
+            height: result.imageHeight,
+            settings: ["selection_summary": .string(result.selectionSummary)]
+        )
+    }
+
+    package func saveImageExplorerToNotebook(
+        datasetID: String,
+        updating visualizationID: String? = nil
+    ) {
+        guard let project = state.scientificNotebooks,
+              let dataset = state.project.datasets.first(where: { $0.id == datasetID }),
+              let explorer = state.imageExplorers[datasetID],
+              let snapshot = explorer.snapshot,
+              let plane = snapshot.plane,
+              let png = Self.imagePlanePNG(plane, colorMap: explorer.planeColorMap)
+        else {
+            state.lastErrors.append("Display an image plane before saving it to a notebook")
+            return
+        }
+        let request = explorer.snapshotRequest(datasetPath: dataset.path)
+        saveVisualizationData(
+            png,
+            extension: "png",
+            title: "\(dataset.name) · image plane",
+            notebookID: project.activeNotebookID,
+            visualizationID: visualizationID,
+            sourceReferences: [dataset.path],
+            surface: "imexplore",
+            parameters: Self.jsonValue(request).objectValue ?? [:],
+            renderer: "casa-rs image plane",
+            mediaType: "image/png",
+            width: UInt32(clamping: plane.width),
+            height: UInt32(clamping: plane.height),
+            settings: [
+                "color_map": .string(explorer.planeColorMap.rawValue),
+                "clip_min": .number(plane.clipMin),
+                "clip_max": .number(plane.clipMax),
+            ]
+        )
+    }
+
+    package func openNotebookVisualization(_ visualizationID: String) {
+        guard let visualization = state.scientificNotebooks?.activeNotebook?.visualizations
+            .first(where: { $0.id == visualizationID }),
+              let revision = visualization.revisions.last,
+              let source = revision.sourceReferences.first
+        else { return }
+        switch revision.reopen.surface {
+        case "msexplore":
+            if !state.project.datasets.contains(where: { $0.id == source }),
+               let dataset = try? probeClient.probePath(path: source)
+            {
+                state.project.datasets.append(dataset)
+            }
+            guard let restored: MeasurementSetExplorerPlotState = Self.decodeJSONValue(
+                .object(revision.reopen.parameters)
+            ) else { return }
+            state.measurementSetPlots[restored.datasetID] = restored
+            openDatasetExplorer(restored.datasetID)
+        case "imexplore":
+            openImageExplorerPath(source)
+            guard let request: ImageExplorerSnapshotRequest = Self.decodeJSONValue(
+                .object(revision.reopen.parameters)
+            ) else { return }
+            if var explorer = state.imageExplorers[source] {
+                explorer.selectedView = request.selectedView
+                explorer.focus = request.focus
+                explorer.planeContentMode = request.planeContentMode
+                explorer.parameters = request.parameters
+                explorer.cursorX = request.cursorX
+                explorer.cursorY = request.cursorY
+                explorer.selectedProfileAxis = request.selectedProfileAxis
+                explorer.nonDisplayIndices = request.nonDisplayIndices
+                state.imageExplorers[source] = explorer
+                refreshImageExplorer(datasetID: source)
+            }
+        default:
+            state.lastErrors.append("Unknown notebook visualization surface \(revision.reopen.surface)")
+        }
+    }
+
+    private func saveVisualizationData(
+        _ data: Data,
+        extension fileExtension: String,
+        title: String,
+        notebookID: String?,
+        visualizationID: String?,
+        sourceReferences: [String],
+        surface: String,
+        parameters: [String: JSONValue],
+        renderer: String,
+        mediaType: String,
+        width: UInt32,
+        height: UInt32,
+        settings: [String: JSONValue]
+    ) {
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-visualization-\(UUID().uuidString).\(fileExtension)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        do {
+            try data.write(to: temporary, options: .atomic)
+            _ = try notebookPersistenceClient.saveVisualization(request: NotebookSaveVisualizationEnvelope(
+                projectRoot: state.project.rootPath,
+                request: NotebookSaveVisualizationRequest(
+                    notebookId: notebookID,
+                    visualizationId: visualizationID,
+                    title: title,
+                    sourceAsset: temporary.path,
+                    sourceReferences: sourceReferences,
+                    reopen: NotebookVisualizationReopenIntent(
+                        surface: surface,
+                        contractVersion: 1,
+                        parameters: parameters,
+                        profileTOML: nil
+                    ),
+                    render: NotebookVisualizationRenderMetadata(
+                        renderer: renderer,
+                        mediaType: mediaType,
+                        width: width,
+                        height: height,
+                        settings: settings
+                    )
+                )
+            ))
+            loadScientificNotebooks()
+        } catch {
+            state.lastErrors.append("Save visualization to notebook: \(error)")
+        }
+    }
+
+    private static func imagePlanePNG(
+        _ plane: ImageExplorerSnapshot.Plane,
+        colorMap: ImageExplorerColorMap
+    ) -> Data? {
+        guard plane.width > 0,
+              plane.height > 0,
+              plane.pixelsU8.count == plane.width * plane.height,
+              let bitmap = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: plane.width,
+                pixelsHigh: plane.height,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: plane.width * 4,
+                bitsPerPixel: 32
+              ),
+              let bytes = bitmap.bitmapData
+        else { return nil }
+        for (index, value) in plane.pixelsU8.enumerated() {
+            let offset = index * 4
+            let rgb = imagePlaneRGB(value, colorMap: colorMap)
+            bytes[offset] = rgb.red
+            bytes[offset + 1] = rgb.green
+            bytes[offset + 2] = rgb.blue
+            bytes[offset + 3] = 255
+        }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+
+    private static func jsonValue<T: Encodable>(_ value: T) -> JSONValue {
+        let encoder = JSONEncoder()
+        return (try? encoder.encode(value))
+            .flatMap { try? JSONDecoder().decode(JSONValue.self, from: $0) }
+            ?? .object([:])
+    }
+
+    private static func decodeJSONValue<T: Decodable>(_ value: JSONValue) -> T? {
+        try? JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
+    }
+
+    private func runScientificPythonCells(_ cellIDs: ArraySlice<String>) {
+        guard let first = cellIDs.first else { return }
+        runScientificPythonCell(first) { [weak self] in
+            self?.runScientificPythonCells(cellIDs.dropFirst())
+        }
+    }
+
+    private func runScientificPythonCell(_ cellID: String, completion: (() -> Void)?) {
+        guard runtimeKind == .production,
+              let project = state.scientificNotebooks,
+              let document = project.activeNotebook,
+              let cell = document.cells.first(where: { $0.id == cellID && $0.kind == "python" })
+        else { return }
+        let source = Self.pythonSource(from: cell.body)
+        guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            state.lastErrors.append("Python cell \(cellID) has no executable source")
+            completion?()
+            return
+        }
+        guard let kernel = pythonKernel(notebookID: document.id, projectRoot: project.projectRoot)
+        else {
+            state.lastErrors.append("Create or repair the project Python environment before running this cell")
+            completion?()
+            return
+        }
+        pythonNotebookRuntime.runningCellID = cellID
+        kernel.prepare { [weak self, weak kernel] result in
+            guard let self, let kernel else { return }
+            switch result {
+            case let .failure(error):
+                self.state.lastErrors.append("Start notebook Python kernel: \(error)")
+                self.pythonNotebookRuntime.runningCellID = nil
+                completion?()
+            case let .success(environment):
+                self.beginScientificPythonExecution(
+                    cellID: cellID,
+                    source: source,
+                    environment: environment,
+                    project: project,
+                    kernel: kernel,
+                    completion: completion
+                )
+            }
+        }
+    }
+
+    private func beginScientificPythonExecution(
+        cellID: String,
+        source: String,
+        environment: NotebookPythonEnvironmentIdentity,
+        project: ScientificNotebookProjectState,
+        kernel: PersistentPythonKernel,
+        completion: (() -> Void)?
+    ) {
+        let sourceHash = Self.sha256(source)
+        let inputs = state.selectedDataset.map { [$0.path] } ?? []
+        let executionInput = NotebookExecutionInput(
+            kind: "python",
+            details: NotebookPythonExecutionInput(
+                source: source,
+                sourceSHA256: sourceHash,
+                authority: "user",
+                inputReferences: inputs,
+                environment: environment
+            )
+        )
+        do {
+            let result = try notebookPersistenceClient.beginRecording(request: NotebookBeginRecordingRequest(
+                projectRoot: project.projectRoot,
+                policy: "record",
+                request: NotebookRecordingRequest(
+                    initiatingSurface: "macos_gui",
+                    operationId: "python.execute",
+                    notebookId: project.activeNotebookID,
+                    cellId: cellID,
+                    taskIntent: nil,
+                    executionInput: executionInput,
+                    providerContractVersion: 1,
+                    resolvedParameters: [:],
+                    runSafety: NotebookRunSafetyRecord(
+                        classification: "potentially_mutating_user_python",
+                        affectedPaths: [project.projectRoot]
+                    ),
+                    approvals: [NotebookApprovalRecord(
+                        kind: "user_action",
+                        actor: "user",
+                        timestamp: Self.unixMilliseconds(),
+                        contentHash: sourceHash
+                    )]
+                )
+            ))
+            guard let handle = result.handle else {
+                throw PythonKernelError.protocolFailure(result.warning ?? "recording did not start")
+            }
+            let assetDirectory = URL(fileURLWithPath: project.projectRoot)
+                .appendingPathComponent(".casa-rs/notebook-runs/\(handle.runId)/assets", isDirectory: true)
+            kernel.execute(
+                executionID: handle.runId,
+                source: source,
+                artifactDirectory: assetDirectory.path
+            ) { [weak self] executionResult in
+                self?.finalizeScientificPythonExecution(
+                    handle: handle,
+                    projectRoot: project.projectRoot,
+                    executionResult: executionResult,
+                    completion: completion
+                )
+            }
+        } catch {
+            state.lastErrors.append("Record notebook Python execution: \(error)")
+            pythonNotebookRuntime.runningCellID = nil
+            completion?()
+        }
+    }
+
+    private func finalizeScientificPythonExecution(
+        handle: NotebookAttemptHandle,
+        projectRoot: String,
+        executionResult: Result<NotebookPythonCompletion, Error>,
+        completion: (() -> Void)?
+    ) {
+        let execution: NotebookPythonCompletion
+        switch executionResult {
+        case let .success(value):
+            execution = value
+        case let .failure(error):
+            execution = NotebookPythonCompletion(
+                executionID: handle.runId,
+                status: "interrupted",
+                outputs: [],
+                artifacts: [],
+                diagnostic: error.localizedDescription
+            )
+        }
+        let runRoot = URL(fileURLWithPath: projectRoot)
+            .appendingPathComponent(".casa-rs/notebook-runs/\(handle.runId)", isDirectory: true)
+        let outputPath = runRoot.appendingPathComponent("assets/ordered-output.json")
+        var artifacts = execution.artifacts.map {
+            NotebookReceiptArtifact(
+                role: $0.role,
+                path: Self.projectRelativePath($0.path, projectRoot: projectRoot),
+                mediaType: $0.mediaType
+            )
+        }
+        if let data = try? JSONEncoder().encode(execution.outputs) {
+            try? FileManager.default.createDirectory(
+                at: outputPath.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try? data.write(to: outputPath, options: .atomic)
+            artifacts.append(NotebookReceiptArtifact(
+                role: "ordered_output",
+                path: Self.projectRelativePath(outputPath.path, projectRoot: projectRoot),
+                mediaType: "application/json"
+            ))
+        }
+        do {
+            try notebookPersistenceClient.finalizeRecording(request: NotebookFinalizeRecordingRequest(
+                projectRoot: projectRoot,
+                handle: handle,
+                finalization: NotebookReceiptFinalization(
+                    status: execution.status,
+                    finishedAt: Self.unixMilliseconds(),
+                    affectedPaths: artifacts.map(\.path),
+                    products: [],
+                    artifacts: artifacts,
+                    diagnostics: execution.diagnostic.map { [$0] } ?? [],
+                    stdout: Array(execution.outputs.filter { $0.channel == "stdout" }.map(\.text).joined().utf8),
+                    stderr: Array(execution.outputs.filter { $0.channel == "stderr" }.map(\.text).joined().utf8),
+                    casaLog: nil
+                )
+            ))
+            loadScientificNotebooks()
+        } catch {
+            state.lastErrors.append("Finalize notebook Python execution: \(error)")
+        }
+        pythonNotebookRuntime.runningCellID = nil
+        completion?()
+    }
+
+    private func pythonKernel(notebookID: String, projectRoot: String) -> PersistentPythonKernel? {
+        if let kernel = pythonKernels[notebookID] { return kernel }
+        let executable = pythonExecutable(root: projectRoot)
+        guard FileManager.default.isExecutableFile(atPath: executable) else { return nil }
+        let kernel = PersistentPythonKernel(pythonExecutable: executable, workspace: projectRoot)
+        kernel.onStateChange { [weak self] status in
+            guard let self else { return }
+            self.pythonKernelStatuses[notebookID] = status
+            if self.state.scientificNotebooks?.activeNotebookID == notebookID {
+                self.pythonNotebookRuntime.notebookID = notebookID
+                self.pythonNotebookRuntime.status = status
+            }
+        }
+        pythonKernels[notebookID] = kernel
+        return kernel
+    }
+
+    private func pythonExecutable(root: String) -> String {
+        pythonExecutableOverride
+            ?? URL(fileURLWithPath: root)
+                .appendingPathComponent(".casa-rs/python/bin/python3")
+                .path
+    }
+
+    private static func pythonSource(from body: String) -> String {
+        var lines = body.split(separator: "\n", omittingEmptySubsequences: false)
+        while lines.last?.isEmpty == true { lines.removeLast() }
+        guard let first = lines.first,
+              first.trimmingCharacters(in: .whitespaces).hasPrefix("```python"),
+              let last = lines.last,
+              last.trimmingCharacters(in: .whitespaces).hasPrefix("```")
+        else { return body }
+        return lines.dropFirst().dropLast().joined(separator: "\n") + "\n"
+    }
+
+    private static func sha256(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func projectRelativePath(_ path: String, projectRoot: String) -> String {
+        let prefix = projectRoot.hasSuffix("/") ? projectRoot : projectRoot + "/"
+        return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
+    }
+
+    private static func createPythonEnvironment(projectRoot: String) -> Result<Void, Error> {
+        let xcrun = Process()
+        let stdout = Pipe()
+        xcrun.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        xcrun.arguments = ["-f", "python3"]
+        xcrun.standardOutput = stdout
+        do {
+            try xcrun.run()
+            xcrun.waitUntilExit()
+            guard xcrun.terminationStatus == 0 else {
+                return .failure(PythonKernelError.exited(xcrun.terminationStatus))
+            }
+            let base = String(
+                decoding: stdout.fileHandleForReading.readDataToEndOfFile(),
+                as: UTF8.self
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            let environment = URL(fileURLWithPath: projectRoot)
+                .appendingPathComponent(".casa-rs/python")
+                .path
+            return runPythonProcess(
+                executable: base,
+                arguments: ["-m", "venv", "--upgrade-deps", environment],
+                currentDirectory: projectRoot
+            )
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    private static func runPythonProcess(
+        executable: String,
+        arguments: [String],
+        currentDirectory: String
+    ) -> Result<Void, Error> {
+        let process = Process()
+        let stderrURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-python-\(UUID().uuidString).stderr")
+        FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
+        defer { try? FileManager.default.removeItem(at: stderrURL) }
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.currentDirectoryURL = URL(fileURLWithPath: currentDirectory)
+        process.standardOutput = FileHandle.nullDevice
+        do {
+            let stderr = try FileHandle(forWritingTo: stderrURL)
+            defer { try? stderr.close() }
+            process.standardError = stderr
+            try process.run()
+            process.waitUntilExit()
+            try stderr.synchronize()
+            let stderrData = (try? Data(contentsOf: stderrURL)) ?? Data()
+            guard process.terminationStatus == 0 else {
+                let message = String(
+                    decoding: stderrData,
+                    as: UTF8.self
+                )
+                return .failure(PythonKernelError.protocolFailure(message))
+            }
+            return .success(())
+        } catch {
+            return .failure(error)
         }
     }
 
@@ -2347,6 +3023,17 @@ public final class WorkbenchStore: ObservableObject {
             document.cells = projectedCells ?? []
             document.conflict = nil
         }
+    }
+
+    package func setScientificPythonSource(cellID: String, source: String) {
+        guard let document = state.scientificNotebooks?.activeNotebook,
+              let cell = document.cells.first(where: { $0.id == cellID && $0.kind == "python" })
+        else { return }
+        let replacement = "```python\n\(source)\(source.hasSuffix("\n") ? "" : "\n")```\n"
+        guard let bodyRange = document.draftSource.range(of: cell.body) else { return }
+        var markdown = document.draftSource
+        markdown.replaceSubrange(bodyRange, with: replacement)
+        setScientificNotebookDraft(markdown)
     }
 
     package func setScientificNotebookViewMode(_ mode: NotebookDocumentViewMode) {
@@ -4596,6 +5283,7 @@ public final class WorkbenchStore: ObservableObject {
                     notebookId: state.scientificNotebooks?.activeNotebookID,
                     cellId: nil,
                     taskIntent: intent,
+                    executionInput: nil,
                     providerContractVersion: UInt32(clamping: session.bundle.surface.contractVersion),
                     resolvedParameters: resolvedParameters,
                     runSafety: NotebookRunSafetyRecord(
@@ -4636,6 +5324,7 @@ public final class WorkbenchStore: ObservableObject {
                     notebookId: state.scientificNotebooks?.activeNotebookID,
                     cellId: nil,
                     taskIntent: nil,
+                    executionInput: nil,
                     providerContractVersion: 1,
                     resolvedParameters: parameters,
                     runSafety: NotebookRunSafetyRecord(
@@ -4763,6 +5452,322 @@ public final class WorkbenchStore: ObservableObject {
             affectedPaths: state.taskRun.outputPaths,
             approval: "user"
         ))
+    }
+
+    package func selectPrototypePythonCell(_ cellID: String) {
+        guard runtimeKind == .pythonPrototype,
+              state.prototypePython?.cells.contains(where: { $0.id == cellID }) == true
+        else { return }
+        state.prototypePython?.selectedCellID = cellID
+        republishPrototypePythonState()
+    }
+
+    package func setPrototypePythonSource(cellID: String, source: String) {
+        guard runtimeKind == .pythonPrototype,
+              var prototype = state.prototypePython,
+              let index = prototype.cells.firstIndex(where: { $0.id == cellID })
+        else { return }
+        prototype.cells[index].source = source
+        state.prototypePython = prototype
+    }
+
+    package func approvePrototypePythonSource(cellID: String) {
+        guard runtimeKind == .pythonPrototype,
+              var prototype = state.prototypePython,
+              let index = prototype.cells.firstIndex(where: { $0.id == cellID }),
+              prototype.cells[index].owner == .ai
+        else { return }
+        prototype.cells[index].approvedSourceDigest = prototype.cells[index].sourceDigest
+        state.prototypePython = prototype
+    }
+
+    package func runPrototypePythonCell(_ cellID: String) {
+        guard runtimeKind == .pythonPrototype,
+              var prototype = state.prototypePython,
+              prototype.kernelState == .ready,
+              let index = prototype.cells.firstIndex(where: { $0.id == cellID }),
+              prototype.cells[index].approvalIsValid
+        else { return }
+
+        let sequence = prototype.nextExecutionSequence
+        prototype.nextExecutionSequence = sequence + 1
+        prototype.selectedCellID = cellID
+        prototype.kernelState = .running
+        prototype.runningCellID = cellID
+        let digest = prototype.cells[index].sourceDigest
+        prototype.cells[index].revisions.append(
+            PrototypePythonExecutionRevision(
+                id: "python-execution-\(sequence)",
+                sequence: sequence,
+                status: .running,
+                sourceDigest: digest,
+                outputs: [PrototypePythonOutputEvent(
+                    id: "python-output-\(sequence)-1",
+                    order: 1,
+                    channel: .stdout,
+                    text: "Fixture kernel accepted cell \(cellID)."
+                )]
+            )
+        )
+        let nonresponsive = prototype.cells[index].behavior == .nonresponsive
+        publishPrototypePythonState(prototype)
+
+        guard !nonresponsive else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.completePrototypePythonCell(cellID: cellID, sequence: sequence)
+        }
+    }
+
+    package func runAllPrototypePythonCells() {
+        guard runtimeKind == .pythonPrototype,
+              state.prototypePython?.kernelState == .ready
+        else { return }
+        let cellIDs = state.prototypePython?.cells
+            .filter { $0.behavior != .nonresponsive && $0.approvalIsValid }
+            .map(\.id) ?? []
+        for cellID in cellIDs {
+            let sequence = state.prototypePython?.nextExecutionSequence ?? 1
+            state.prototypePython?.nextExecutionSequence = sequence + 1
+            appendCompletedPrototypePythonRevision(cellID: cellID, sequence: sequence)
+        }
+        state.prototypePython?.selectedCellID = cellIDs.last ?? state.prototypePython?.selectedCellID ?? ""
+        republishPrototypePythonState()
+    }
+
+    package func interruptPrototypePythonKernel() {
+        guard runtimeKind == .pythonPrototype,
+              state.prototypePython?.kernelState == .running,
+              let cellID = state.prototypePython?.runningCellID,
+              let cellIndex = state.prototypePython?.cells.firstIndex(where: { $0.id == cellID }),
+              let revisionIndex = state.prototypePython?.cells[cellIndex].revisions.lastIndex(where: { $0.status == .running })
+        else { return }
+
+        state.prototypePython?.cells[cellIndex].revisions[revisionIndex].status = .interrupted
+        state.prototypePython?.cells[cellIndex].revisions[revisionIndex].outputs.append(
+            PrototypePythonOutputEvent(
+                id: "python-output-interrupt-\(state.prototypePython?.cells[cellIndex].revisions[revisionIndex].sequence ?? 0)",
+                order: 2,
+                channel: .stderr,
+                text: state.prototypePython?.cells[cellIndex].behavior == .nonresponsive
+                    ? "Interrupt was ignored; restart is required."
+                    : "KeyboardInterrupt"
+            )
+        )
+        let requiresRestart = state.prototypePython?.cells[cellIndex].behavior == .nonresponsive
+        state.prototypePython?.kernelState = requiresRestart ? .restartRequired : .ready
+        state.prototypePython?.runningCellID = nil
+        republishPrototypePythonState()
+    }
+
+    package func restartPrototypePythonKernel() {
+        guard runtimeKind == .pythonPrototype else { return }
+        if state.prototypePython?.kernelState == .running {
+            interruptPrototypePythonKernel()
+        }
+        state.prototypePython?.kernelState = .ready
+        state.prototypePython?.runningCellID = nil
+        republishPrototypePythonState()
+    }
+
+    package func regeneratePrototypePythonPlot(cellID: String) {
+        guard runtimeKind == .pythonPrototype,
+              var prototype = state.prototypePython,
+              prototype.kernelState == .ready,
+              let cell = prototype.cells.first(where: { $0.id == cellID }),
+              cell.behavior == .plot,
+              cell.approvalIsValid
+        else { return }
+        let sequence = prototype.nextExecutionSequence
+        prototype.nextExecutionSequence = sequence + 1
+        publishPrototypePythonState(prototype)
+        appendCompletedPrototypePythonRevision(cellID: cellID, sequence: sequence)
+    }
+
+    package func insertPrototypePythonPlot(cellID: String, plotID: String) {
+        guard runtimeKind == .pythonPrototype,
+              let cellIndex = state.prototypePython?.cells.firstIndex(where: { $0.id == cellID }),
+              let revisionIndex = state.prototypePython?.cells[cellIndex].revisions.firstIndex(where: { $0.plot?.id == plotID })
+        else { return }
+        state.prototypePython?.cells[cellIndex].revisions[revisionIndex].plot?.insertedInNotebook = true
+        republishPrototypePythonState()
+    }
+
+    package func openPrototypeExplorer(visualizationID: String) {
+        guard runtimeKind == .pythonPrototype,
+              let visualization = state.prototypePython?.savedVisualizations.first(where: { $0.id == visualizationID }),
+              let revision = visualization.latestRevision
+        else { return }
+        state.prototypePython?.activeExplorer = PrototypeExplorerSession(
+            kind: revision.kind,
+            title: revision.title,
+            parameters: revision.parameters,
+            presentationAspect: revision.presentationAspect,
+            targetVisualizationID: visualizationID
+        )
+        republishPrototypePythonState()
+    }
+
+    package func closePrototypeExplorer() {
+        guard runtimeKind == .pythonPrototype else { return }
+        state.prototypePython?.activeExplorer = nil
+        republishPrototypePythonState()
+    }
+
+    package func setPrototypeExplorerParameter(id: String, value: String) {
+        guard runtimeKind == .pythonPrototype,
+              let index = state.prototypePython?.activeExplorer?.parameters.firstIndex(where: { $0.id == id })
+        else { return }
+        state.prototypePython?.activeExplorer?.parameters[index].value = value
+        republishPrototypePythonState()
+    }
+
+    package func saveNewPrototypeExplorerVisualization() {
+        guard runtimeKind == .pythonPrototype,
+              let session = state.prototypePython?.activeExplorer
+        else { return }
+        let sequence = state.prototypePython?.nextVisualizationSequence ?? 1
+        state.prototypePython?.nextVisualizationSequence = sequence + 1
+        let visualizationID = "saved-explorer-\(sequence)"
+        state.prototypePython?.savedVisualizations.append(PrototypeNotebookVisualization(
+            id: visualizationID,
+            revisions: [prototypeVisualizationRevision(
+                visualizationID: visualizationID,
+                sequence: 1,
+                session: session
+            )]
+        ))
+        state.prototypePython?.activeExplorer?.targetVisualizationID = visualizationID
+        republishPrototypePythonState()
+    }
+
+    package func updatePrototypeExplorerVisualization() {
+        guard runtimeKind == .pythonPrototype,
+              let session = state.prototypePython?.activeExplorer,
+              let visualizationID = session.targetVisualizationID,
+              let visualizationIndex = state.prototypePython?.savedVisualizations.firstIndex(where: {
+                  $0.id == visualizationID
+              })
+        else { return }
+        let sequence = (state.prototypePython?.savedVisualizations[visualizationIndex]
+            .latestRevision?.sequence ?? 0) + 1
+        state.prototypePython?.savedVisualizations[visualizationIndex].revisions.append(
+            prototypeVisualizationRevision(
+                visualizationID: visualizationID,
+                sequence: sequence,
+                session: session
+            )
+        )
+        republishPrototypePythonState()
+    }
+
+    package func setPrototypeEnlargedVisualization(_ visualizationID: String?) {
+        guard runtimeKind == .pythonPrototype else { return }
+        state.prototypePython?.enlargedVisualizationID = visualizationID
+        republishPrototypePythonState()
+    }
+
+    private func prototypeVisualizationRevision(
+        visualizationID: String,
+        sequence: Int,
+        session: PrototypeExplorerSession
+    ) -> PrototypeNotebookVisualizationRevision {
+        PrototypeNotebookVisualizationRevision(
+            id: "\(visualizationID)-r\(sequence)",
+            sequence: sequence,
+            title: session.title,
+            kind: session.kind,
+            parameters: session.parameters,
+            assetPath: "notebooks/assets/explorers/\(visualizationID)/r\(sequence).png",
+            presentationAspect: session.presentationAspect
+        )
+    }
+
+    private func completePrototypePythonCell(cellID: String, sequence: Int) {
+        guard runtimeKind == .pythonPrototype,
+              let prototype = state.prototypePython,
+              prototype.kernelState == .running,
+              prototype.runningCellID == cellID
+        else { return }
+        appendCompletedPrototypePythonRevision(cellID: cellID, sequence: sequence, replacingRunning: true)
+        guard var completedPrototype = state.prototypePython else { return }
+        completedPrototype.kernelState = .ready
+        completedPrototype.runningCellID = nil
+        publishPrototypePythonState(completedPrototype)
+    }
+
+    private func appendCompletedPrototypePythonRevision(
+        cellID: String,
+        sequence: Int,
+        replacingRunning: Bool = false
+    ) {
+        guard var prototype = state.prototypePython,
+              let cellIndex = prototype.cells.firstIndex(where: { $0.id == cellID })
+        else { return }
+        let cell = prototype.cells[cellIndex]
+        let fails = cell.behavior == .failure && cell.source.contains("raise RuntimeError")
+        let status: PrototypePythonCellStatus = fails ? .failed : .succeeded
+        var outputs = [
+            PrototypePythonOutputEvent(
+                id: "python-output-\(sequence)-1",
+                order: 1,
+                channel: .stdout,
+                text: fails ? "checking continuum selection" : "Completed deterministic fixture execution."
+            )
+        ]
+        if fails {
+            outputs.append(PrototypePythonOutputEvent(
+                id: "python-output-\(sequence)-2",
+                order: 2,
+                channel: .error,
+                text: "RuntimeError: fixture: channel selection is empty"
+            ))
+        } else {
+            outputs.append(PrototypePythonOutputEvent(
+                id: "python-output-\(sequence)-2",
+                order: 2,
+                channel: .stderr,
+                text: "Fixture environment: casa-rs-python / matplotlib"
+            ))
+        }
+        let plot = cell.behavior == .plot && !fails
+            ? PrototypePythonPlotRevision(
+                id: "python-plot-\(sequence)",
+                sequence: sequence,
+                title: cellID == "python-cell-ai"
+                    ? "AI proposal · radial profile"
+                    : "TW Hya · amplitude vs UV distance",
+                pngPath: "notebooks/assets/\(cellID)/execution-\(sequence)/figure-1.png",
+                svgPath: "notebooks/assets/\(cellID)/execution-\(sequence)/figure-1.svg",
+                presentationAspect: .standardFourThree
+            )
+            : nil
+        let revision = PrototypePythonExecutionRevision(
+            id: "python-execution-\(sequence)",
+            sequence: sequence,
+            status: status,
+            sourceDigest: cell.sourceDigest,
+            outputs: outputs,
+            plot: plot
+        )
+        if replacingRunning,
+           let revisionIndex = prototype.cells[cellIndex].revisions.lastIndex(where: { $0.sequence == sequence })
+        {
+            prototype.cells[cellIndex].revisions[revisionIndex] = revision
+        } else {
+            prototype.cells[cellIndex].revisions.append(revision)
+        }
+        publishPrototypePythonState(prototype)
+    }
+
+    private func republishPrototypePythonState() {
+        guard let prototype = state.prototypePython else { return }
+        publishPrototypePythonState(prototype)
+    }
+
+    private func publishPrototypePythonState(_ prototype: PrototypePythonNotebookProjection) {
+        var updatedState = state
+        updatedState.prototypePython = prototype
+        state = updatedState
     }
 
     public func setPythonOwner(_ owner: PythonOwner) {

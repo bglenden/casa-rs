@@ -527,8 +527,7 @@ mod tests {
             std::env::set_var("CASARS_BROWSER_REQUEST_TIMEOUT_MS", "50");
         }
 
-        let client =
-            BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn browser client");
+        let client = spawn_test_browser(script);
 
         let error = client
             .request(BrowserCommand::GetSnapshot { viewport: None })
@@ -556,8 +555,7 @@ mod tests {
             temp.path(),
             "#!/bin/sh\nwhile IFS= read -r _line; do\n  printf '{not-json}\\n'\ndone\n",
         );
-        let client =
-            BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn browser client");
+        let client = spawn_test_browser(script);
 
         let error = client
             .request(BrowserCommand::GetSnapshot { viewport: None })
@@ -574,8 +572,7 @@ mod tests {
             temp.path(),
             "#!/bin/sh\nwhile IFS= read -r _line; do\n  echo 'backend exploded' >&2\n  exit 7\ndone\n",
         );
-        let client =
-            BrowserClient::spawn(&ResolvedCommand::direct(script)).expect("spawn browser client");
+        let client = spawn_test_browser(script);
 
         let error = client
             .request(BrowserCommand::GetSnapshot { viewport: None })
@@ -611,6 +608,19 @@ mod tests {
             response
         );
         write_browser_script(root, &script)
+    }
+
+    fn spawn_test_browser(script: PathBuf) -> BrowserClient {
+        for attempt in 0..3 {
+            match BrowserClient::spawn(&ResolvedCommand::direct(script.clone())) {
+                Ok(client) => return client,
+                Err(error) if error.contains("Text file busy") && attempt < 2 => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("spawn browser client: {error}"),
+            }
+        }
+        unreachable!("test browser spawn loop always returns or panics")
     }
 
     fn write_browser_script(root: &Path, script: &str) -> PathBuf {

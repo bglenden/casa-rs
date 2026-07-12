@@ -6,6 +6,16 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 export CARGO_INCREMENTAL=0
 
+extras="test"
+case "${1:-}" in
+  "") ;;
+  --plot) extras="test,plot" ;;
+  *)
+    echo "usage: $0 [--plot]" >&2
+    exit 2
+    ;;
+esac
+
 python_bin="$("$repo_root/scripts/resolve-python.sh" 3.10)"
 tmp_root="$(mktemp -d)"
 cleanup() {
@@ -20,6 +30,6 @@ editable_venv="$tmp_root/editable-venv"
 echo "==> Installing editable casars package and running Python tests"
 "$python_bin" -m venv "$editable_venv"
 source "$editable_venv/bin/activate"
-python -m pip install -e 'crates/casars-python[test]'
+python -m pip install -e "crates/casars-python[$extras]"
 pytest crates/casars-python/python/tests -q
 deactivate

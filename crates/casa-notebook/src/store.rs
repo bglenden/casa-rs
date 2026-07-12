@@ -16,7 +16,9 @@ use thiserror::Error;
 
 use crate::{
     CellId, CellKind, ExecutionReceipt, ExecutionStatus, LogReferences, NotebookDocument,
-    NotebookId, NotebookParseError, ReceiptFinalization, RecordingRequest, RunId, Timestamp,
+    NotebookId, NotebookParseError, ReceiptFinalization, RecordingRequest, RunId,
+    SaveVisualizationRequest, Timestamp, VISUALIZATION_SCHEMA_VERSION, VisualizationRevision,
+    VisualizationSnapshot,
     receipt::{AttemptEvent, AttemptEventKind, RECEIPT_SCHEMA_VERSION},
 };
 
@@ -95,6 +97,12 @@ pub struct NotebookStore {
 }
 
 impl NotebookStore {
+    /// Explicit project root that owns notebook Markdown and managed receipts.
+    #[must_use]
+    pub fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+
     pub fn open(project_root: impl AsRef<Path>) -> Result<Self, StoreError> {
         let project_root = project_root.as_ref();
         if !project_root.is_absolute() {
@@ -220,6 +228,13 @@ impl NotebookStore {
     }
 
     pub fn begin_attempt(&self, request: RecordingRequest) -> Result<AttemptHandle, StoreError> {
+        if let Some(message) = request
+            .execution_input
+            .as_ref()
+            .and_then(crate::ExecutionInput::validation_error)
+        {
+            return Err(StoreError::InvalidExecutionInput { message });
+        }
         let _lock = self.lock_project()?;
         let mut snapshot = match request.notebook_id {
             Some(id) => self.open_notebook_id(id)?,
@@ -330,6 +345,7 @@ impl NotebookStore {
             finished_at: finalization.finished_at,
             status: finalization.status,
             sparse_intent: pending.request.task_intent,
+            execution_input: pending.request.execution_input,
             resolved_parameters: pending.request.resolved_parameters,
             provider_contract_version: pending.request.provider_contract_version,
             run_safety: pending.request.run_safety,
@@ -437,6 +453,159 @@ impl NotebookStore {
         receipts.retain(|receipt| receipt.notebook_id == notebook_id);
         receipts.sort_by_key(|receipt| (receipt.cell_id, receipt.revision));
         Ok(receipts)
+    }
+
+    pub fn save_visualization(
+        &self,
+        request: SaveVisualizationRequest,
+    ) -> Result<VisualizationSnapshot, StoreError> {
+        let _lock = self.lock_project()?;
+        let mut notebook = match request.notebook_id {
+            Some(id) => self.open_notebook_id(id)?,
+            None => self.ensure_default_notebook_locked()?,
+        };
+        let (mut snapshot, revision) = match request.visualization_id {
+            Some(id) => {
+                let path = self.visualizations_dir().join(format!("{id}.json"));
+                let snapshot: VisualizationSnapshot = read_json(&path).map_err(|error| {
+                    if path.exists() {
+                        error
+                    } else {
+                        StoreError::VisualizationNotFound { id }
+                    }
+                })?;
+                if snapshot.notebook_id != notebook.entry.id {
+                    return Err(StoreError::VisualizationNotebookMismatch { id });
+                }
+                let revision = snapshot.revisions.len() as u64 + 1;
+                (snapshot, revision)
+            }
+            None => {
+                let id = uuid::Uuid::now_v7();
+                let cell_id = CellId::new();
+                (
+                    VisualizationSnapshot {
+                        schema_version: VISUALIZATION_SCHEMA_VERSION,
+                        id,
+                        notebook_id: notebook.entry.id,
+                        cell_id,
+                        title: request.title.clone(),
+                        revisions: Vec::new(),
+                    },
+                    1,
+                )
+            }
+        };
+        let extension = match request.render.media_type.as_str() {
+            "image/png" => "png",
+            "image/svg+xml" => "svg",
+            other => {
+                return Err(StoreError::UnsupportedVisualizationMediaType(
+                    other.to_owned(),
+                ));
+            }
+        };
+        let relative_asset = PathBuf::from(format!(
+            "notebooks/assets/explorers/{}/r{revision}.{extension}",
+            snapshot.id
+        ));
+        let destination = self.project_root.join(&relative_asset);
+        if destination.exists() {
+            return Err(StoreError::VisualizationRevisionAlreadyExists {
+                id: snapshot.id,
+                revision,
+            });
+        }
+        fs::create_dir_all(destination.parent().expect("visualization asset parent")).map_err(
+            |source| StoreError::Io {
+                action: "create visualization asset directory",
+                path: destination.clone(),
+                source,
+            },
+        )?;
+        copy_regular_file(&request.source_asset, &destination)?;
+        snapshot.title = request.title;
+        snapshot.revisions.push(VisualizationRevision {
+            revision,
+            created_at: Timestamp::now(),
+            asset_path: relative_asset.clone(),
+            source_references: request.source_references,
+            reopen: request.reopen,
+            render: request.render,
+        });
+        let markdown_asset = relative_asset
+            .strip_prefix("notebooks/")
+            .expect("notebook visualization asset")
+            .to_string_lossy();
+        let body = format!(
+            "<!-- casa-rs-visualization:v1 id={} -->\n![{}]({markdown_asset})\n",
+            snapshot.id, snapshot.title
+        );
+        if revision == 1 {
+            notebook
+                .document
+                .append_cell(snapshot.cell_id, CellKind::Output, &body)?;
+        } else {
+            notebook
+                .document
+                .replace_cell_body(snapshot.cell_id, &body)?;
+        }
+        atomic_write(
+            &self.notebooks_dir().join(&notebook.entry.filename),
+            notebook.document.source().as_bytes(),
+        )?;
+        fs::create_dir_all(self.visualizations_dir()).map_err(|source| StoreError::Io {
+            action: "create visualization metadata directory",
+            path: self.visualizations_dir(),
+            source,
+        })?;
+        atomic_json(
+            &self
+                .visualizations_dir()
+                .join(format!("{}.json", snapshot.id)),
+            &snapshot,
+        )?;
+        Ok(snapshot)
+    }
+
+    pub fn visualizations_for_notebook(
+        &self,
+        notebook_id: NotebookId,
+    ) -> Result<Vec<VisualizationSnapshot>, StoreError> {
+        let directory = match fs::read_dir(self.visualizations_dir()) {
+            Ok(directory) => directory,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(source) => {
+                return Err(StoreError::Io {
+                    action: "list notebook visualizations",
+                    path: self.visualizations_dir(),
+                    source,
+                });
+            }
+        };
+        let mut snapshots = Vec::new();
+        for entry in directory {
+            let path = entry
+                .map_err(|source| StoreError::Io {
+                    action: "read notebook visualization entry",
+                    path: self.visualizations_dir(),
+                    source,
+                })?
+                .path();
+            if path.extension().and_then(|value| value.to_str()) == Some("json") {
+                let snapshot: VisualizationSnapshot = read_json(&path)?;
+                if snapshot.notebook_id == notebook_id {
+                    snapshots.push(snapshot);
+                }
+            }
+        }
+        snapshots.sort_by_key(|snapshot| {
+            snapshot
+                .revisions
+                .last()
+                .map(|revision| revision.created_at)
+        });
+        Ok(snapshots)
     }
 
     fn all_receipts(&self) -> Result<Vec<ExecutionReceipt>, StoreError> {
@@ -661,6 +830,10 @@ impl NotebookStore {
         self.project_root.join(".casa-rs/notebook-runs")
     }
 
+    fn visualizations_dir(&self) -> PathBuf {
+        self.project_root.join(".casa-rs/notebook-visualizations")
+    }
+
     fn run_dir(&self, run_id: RunId) -> PathBuf {
         self.runs_dir().join(run_id.to_string())
     }
@@ -692,6 +865,16 @@ pub enum StoreError {
     ReceiptAlreadyFinalized { run_id: RunId },
     #[error("attempt state does not match handle {run_id}")]
     AttemptIdentityMismatch { run_id: RunId },
+    #[error("visualization {id} was not found")]
+    VisualizationNotFound { id: uuid::Uuid },
+    #[error("visualization {id} belongs to another notebook")]
+    VisualizationNotebookMismatch { id: uuid::Uuid },
+    #[error("visualization {id} revision {revision} already exists")]
+    VisualizationRevisionAlreadyExists { id: uuid::Uuid, revision: u64 },
+    #[error("unsupported visualization media type {0:?}")]
+    UnsupportedVisualizationMediaType(String),
+    #[error("invalid execution input: {message}")]
+    InvalidExecutionInput { message: &'static str },
     #[error("active notebook-attempt lease registry is unavailable")]
     AttemptLeaseRegistryUnavailable,
     #[error("export destination already exists: {path}", path = .path.display())]
@@ -991,6 +1174,7 @@ mod tests {
                     contract: 1,
                     parameters: BTreeMap::new(),
                 }),
+                execution_input: None,
                 provider_contract_version: 1,
                 resolved_parameters: BTreeMap::new(),
                 run_safety: RunSafetyRecord {

@@ -7,10 +7,145 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::{CellId, NotebookId, RunId, TaskCellIntent};
 
-pub(crate) const RECEIPT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const RECEIPT_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PythonExecutionAuthority {
+    User,
+    AiWorker,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PythonEnvironmentIdentity {
+    pub environment_id: String,
+    pub interpreter: PathBuf,
+    pub implementation: String,
+    pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub casa_rs_version: Option<String>,
+    #[serde(default)]
+    pub packages: BTreeMap<String, String>,
+    pub fingerprint_sha256: String,
+}
+
+impl PythonEnvironmentIdentity {
+    #[must_use]
+    pub fn new(
+        environment_id: impl Into<String>,
+        interpreter: PathBuf,
+        implementation: impl Into<String>,
+        version: impl Into<String>,
+        casa_rs_version: Option<String>,
+        packages: BTreeMap<String, String>,
+    ) -> Self {
+        let mut identity = Self {
+            environment_id: environment_id.into(),
+            interpreter,
+            implementation: implementation.into(),
+            version: version.into(),
+            casa_rs_version,
+            packages,
+            fingerprint_sha256: String::new(),
+        };
+        identity.fingerprint_sha256 = identity.computed_fingerprint();
+        identity
+    }
+
+    #[must_use]
+    pub fn has_valid_fingerprint(&self) -> bool {
+        self.fingerprint_sha256 == self.computed_fingerprint()
+    }
+
+    fn computed_fingerprint(&self) -> String {
+        let mut digest = Sha256::new();
+        hash_field(&mut digest, self.environment_id.as_bytes());
+        hash_field(&mut digest, self.interpreter.as_os_str().as_encoded_bytes());
+        hash_field(&mut digest, self.implementation.as_bytes());
+        hash_field(&mut digest, self.version.as_bytes());
+        match &self.casa_rs_version {
+            Some(version) => {
+                digest.update([1]);
+                hash_field(&mut digest, version.as_bytes());
+            }
+            None => digest.update([0]),
+        }
+        for (name, version) in &self.packages {
+            hash_field(&mut digest, name.as_bytes());
+            hash_field(&mut digest, version.as_bytes());
+        }
+        format!("{:x}", digest.finalize())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PythonExecutionInput {
+    pub source: String,
+    pub source_sha256: String,
+    pub authority: PythonExecutionAuthority,
+    #[serde(default)]
+    pub input_references: Vec<PathBuf>,
+    pub environment: PythonEnvironmentIdentity,
+}
+
+impl PythonExecutionInput {
+    #[must_use]
+    pub fn new(
+        source: impl Into<String>,
+        authority: PythonExecutionAuthority,
+        input_references: Vec<PathBuf>,
+        environment: PythonEnvironmentIdentity,
+    ) -> Self {
+        let source = source.into();
+        let source_sha256 = sha256(source.as_bytes());
+        Self {
+            source,
+            source_sha256,
+            authority,
+            input_references,
+            environment,
+        }
+    }
+
+    #[must_use]
+    pub fn has_valid_source_hash(&self) -> bool {
+        self.source_sha256 == sha256(self.source.as_bytes())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "details", rename_all = "snake_case")]
+pub enum ExecutionInput {
+    Python(PythonExecutionInput),
+}
+
+impl ExecutionInput {
+    #[must_use]
+    pub fn validation_error(&self) -> Option<&'static str> {
+        match self {
+            Self::Python(input) if !input.has_valid_source_hash() => {
+                Some("Python source SHA-256 does not match the exact source")
+            }
+            Self::Python(input) if !input.environment.has_valid_fingerprint() => {
+                Some("Python environment fingerprint does not match its identity fields")
+            }
+            Self::Python(_) => None,
+        }
+    }
+}
+
+fn hash_field(digest: &mut Sha256, value: &[u8]) {
+    digest.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_le_bytes());
+    digest.update(value);
+}
+
+fn sha256(value: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(value))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -82,6 +217,8 @@ pub struct RecordingRequest {
     pub cell_id: Option<CellId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_intent: Option<TaskCellIntent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_input: Option<ExecutionInput>,
     pub provider_contract_version: u32,
     #[serde(default)]
     pub resolved_parameters: BTreeMap<String, serde_json::Value>,
@@ -123,6 +260,8 @@ pub struct ExecutionReceipt {
     pub finished_at: Timestamp,
     pub status: ExecutionStatus,
     pub sparse_intent: Option<TaskCellIntent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_input: Option<ExecutionInput>,
     pub resolved_parameters: BTreeMap<String, serde_json::Value>,
     pub provider_contract_version: u32,
     pub run_safety: RunSafetyRecord,

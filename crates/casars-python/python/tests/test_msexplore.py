@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import os
 import stat
 import textwrap
 
 import pytest
+import numpy as np
 
 from casars import _task_runtime
 from casars.tasks import msexplore
@@ -169,6 +172,79 @@ def test_plot_wrapper_uses_preset_axes_when_axes_are_omitted(tmp_path: Path) -> 
     assert plot["preset"] == "amplitude_vs_uv_distance"
     assert plot["x_axis"] == "uv_distance"
     assert plot["y_axes"] == ["amplitude"]
+
+
+def test_native_data_returns_numpy_without_reading_a_rendered_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[tuple[str, dict[str, object], dict[str, object]]] = []
+
+    def fake_data(path: str, selection_json: str, plot_json: str) -> str:
+        captured.append((path, json.loads(selection_json), json.loads(plot_json)))
+        return json.dumps({
+            "schema_version": 1,
+            "title": "Amplitude vs time",
+            "summary": "2 selected visibility samples",
+            "header_lines": [],
+            "show_legend": True,
+            "panels": [{
+                "id": "main",
+                "title": "Amplitude vs time",
+                "axes": [
+                    {"id": "x", "label": "Time (s)", "unit": "s", "lower": 1.0, "upper": 2.0},
+                    {"id": "y", "label": "Amplitude (Jy)", "unit": "Jy", "lower": 3.0, "upper": 4.0},
+                ],
+                "series": [{
+                    "label": "field 0",
+                    "color_group": "field-0",
+                    "y_axis_id": "y",
+                    "x": [1.0, 2.0],
+                    "y": [3.0, 4.0],
+                    "provenance": [
+                        {"row": 4, "corr": 0, "chan_start": 0, "chan_end": 1},
+                        {"row": 5, "corr": 0, "chan_start": 0, "chan_end": 1},
+                    ],
+                }],
+            }],
+        })
+
+    monkeypatch.setattr(msexplore._core, "msexplore_plot_data_json", fake_data)
+    result = msexplore.data(
+        "tutorial.ms",
+        preset="amplitude_vs_time",
+        selection={"field": "0"},
+    )
+
+    assert result.measurement_set == "tutorial.ms"
+    assert np.array_equal(result.panels[0].series[0].x, np.array([1.0, 2.0]))
+    assert np.array_equal(result.panels[0].series[0].y, np.array([3.0, 4.0]))
+    assert result.panels[0].series[0].provenance[1]["row"] == 5
+    assert captured[0][1]["field"] == "0"
+    assert captured[0][2]["preset"] == "amplitude_vs_time"
+
+
+def test_tutorial_measurement_set_returns_native_numeric_plot_data() -> None:
+    root = Path(os.environ.get("CASA_RS_TUTORIAL_DATA_ROOT", "~/SoftwareProjects/casa-tutorial-data")).expanduser()
+    measurement_set = root / "tutorial-parity/alma/first-look/twhya/imaging/alma-first-look-imaging.pack/twhya_calibrated.ms"
+    if not measurement_set.is_dir():
+        pytest.skip("local ALMA first-look tutorial MeasurementSet is unavailable")
+
+    result = msexplore.data(
+        measurement_set,
+        preset="amplitude_vs_time",
+        selection={"field": "0", "spw": "0"},
+    )
+
+    assert result.panels
+    assert result.panels[0].series
+    series = result.panels[0].series[0]
+    assert series.x.size == series.y.size > 0
+    assert np.isfinite(series.x).any()
+    assert np.isfinite(series.y).any()
+    pytest.importorskip("matplotlib")
+    figure, axes = msexplore.plot_matplotlib(result)
+    assert figure is not None
+    assert axes.collections
 
 
 def _write_stub_binary(

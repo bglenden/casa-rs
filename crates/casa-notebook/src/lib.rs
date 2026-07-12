@@ -11,14 +11,20 @@ mod ids;
 mod markdown;
 mod receipt;
 mod store;
+mod visualization;
 
 pub use ids::{CellId, NotebookId, RunId};
 pub use markdown::{CellKind, NotebookCell, NotebookDocument, NotebookParseError, TaskCellIntent};
 pub use receipt::{
-    ApprovalRecord, ArtifactReference, ExecutionReceipt, ExecutionStatus, LogReferences,
+    ApprovalRecord, ArtifactReference, ExecutionInput, ExecutionReceipt, ExecutionStatus,
+    LogReferences, PythonEnvironmentIdentity, PythonExecutionAuthority, PythonExecutionInput,
     ReceiptFinalization, RecordingRequest, ReplayAssessment, RunSafetyRecord, Timestamp,
 };
 pub use store::{
     AttemptHandle, ConflictResolution, ExportMode, NotebookConflict, NotebookEntry,
     NotebookSnapshot, NotebookStore, RecordingPolicy, SaveResult, StoreError,
+};
+pub use visualization::{
+    SaveVisualizationRequest, VISUALIZATION_SCHEMA_VERSION, VisualizationRenderMetadata,
+    VisualizationReopenIntent, VisualizationRevision, VisualizationSnapshot,
 };
