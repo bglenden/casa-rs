@@ -43,9 +43,11 @@ package final class PersistentPythonKernel {
     package typealias Completion = (Result<NotebookPythonCompletion, Error>) -> Void
     package typealias Ready = (NotebookPythonEnvironmentIdentity) -> Void
     package typealias StateChange = (NotebookPythonKernelStatus) -> Void
+    package typealias CommandWriter = (FileHandle, Data) throws -> Void
 
     private let pythonExecutable: String
     private let workspace: String
+    private let commandWriter: CommandWriter
     private let queue = DispatchQueue(label: "casars.mac.python-kernel")
     private let readQueue = DispatchQueue(
         label: "casars.mac.python-kernel.read",
@@ -61,9 +63,16 @@ package final class PersistentPythonKernel {
     private var stateHandler: StateChange?
     private var currentEnvironment: NotebookPythonEnvironmentIdentity?
 
-    package init(pythonExecutable: String, workspace: String) {
+    package init(
+        pythonExecutable: String,
+        workspace: String,
+        commandWriter: @escaping CommandWriter = { handle, data in
+            try handle.write(contentsOf: data)
+        }
+    ) {
         self.pythonExecutable = pythonExecutable
         self.workspace = workspace
+        self.commandWriter = commandWriter
     }
 
     deinit { terminate() }
@@ -94,17 +103,19 @@ package final class PersistentPythonKernel {
     ) {
         queue.async { [weak self] in
             guard let self else { return }
+            var registered = false
             do {
                 try self.ensureStarted()
-                self.lock.withLock {
-                    self.pending[executionID] = completion
-                    self.outputs[executionID] = []
-                }
-                self.publishState(.running)
                 try FileManager.default.createDirectory(
                     atPath: artifactDirectory,
                     withIntermediateDirectories: true
                 )
+                self.lock.withLock {
+                    self.pending[executionID] = completion
+                    self.outputs[executionID] = []
+                }
+                registered = true
+                self.publishState(.running)
                 try self.writeCommand([
                     "kind": "execute",
                     "execution_id": executionID,
@@ -112,7 +123,11 @@ package final class PersistentPythonKernel {
                     "artifact_directory": artifactDirectory,
                 ])
             } catch {
-                DispatchQueue.main.async { completion(.failure(error)) }
+                if registered {
+                    self.rollbackExecution(executionID: executionID, error: error)
+                } else {
+                    DispatchQueue.main.async { completion(.failure(error)) }
+                }
             }
         }
     }
@@ -270,7 +285,16 @@ package final class PersistentPythonKernel {
     private func writeCommand(_ command: [String: Any]) throws {
         let data = try JSONSerialization.data(withJSONObject: command)
         guard let stdin else { throw PythonKernelError.notRunning }
-        try stdin.write(contentsOf: data + Data([0x0A]))
+        try commandWriter(stdin, data + Data([0x0A]))
+    }
+
+    private func rollbackExecution(executionID: String, error: Error) {
+        let completion = lock.withLock {
+            outputs.removeValue(forKey: executionID)
+            return pending.removeValue(forKey: executionID)
+        }
+        publishState(process?.isRunning == true ? .ready : .restartRequired)
+        DispatchQueue.main.async { completion?(.failure(error)) }
     }
 
     private func terminateLocked() {

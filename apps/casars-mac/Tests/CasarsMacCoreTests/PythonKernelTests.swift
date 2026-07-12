@@ -3,6 +3,70 @@ import XCTest
 @testable import CasarsMacCore
 
 final class PythonKernelTests: XCTestCase {
+    func testArtifactDirectoryFailureDoesNotPublishRunningOrDoubleComplete() throws {
+        let root = try temporaryWorkspace(named: "casars-kernel-directory-failure")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blockingFile = root.appendingPathComponent("not-a-directory")
+        try Data("file".utf8).write(to: blockingFile)
+        let kernel = PersistentPythonKernel(
+            pythonExecutable: try resolvedPython(),
+            workspace: root.path
+        )
+        var states: [NotebookPythonKernelStatus] = []
+        kernel.onStateChange { states.append($0) }
+        let failed = expectation(description: "directory failure")
+        var completions = 0
+        kernel.execute(
+            executionID: "directory-failure",
+            source: "print('not run')\n",
+            artifactDirectory: blockingFile.appendingPathComponent("assets").path
+        ) { result in
+            completions += 1
+            if case .success = result {
+                XCTFail("directory setup failure unexpectedly executed")
+            }
+            failed.fulfill()
+        }
+        wait(for: [failed], timeout: 15)
+        kernel.terminate()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(completions, 1)
+        XCTAssertFalse(states.contains(.running))
+    }
+
+    func testCommandWriteFailureRollsBackPendingStateAndCompletesOnce() throws {
+        let root = try temporaryWorkspace(named: "casars-kernel-write-failure")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let kernel = PersistentPythonKernel(
+            pythonExecutable: try resolvedPython(),
+            workspace: root.path,
+            commandWriter: { _, _ in throw PythonKernelError.notRunning }
+        )
+        var states: [NotebookPythonKernelStatus] = []
+        kernel.onStateChange { states.append($0) }
+        let failed = expectation(description: "write failure")
+        var completions = 0
+        kernel.execute(
+            executionID: "write-failure",
+            source: "print('not run')\n",
+            artifactDirectory: root.appendingPathComponent("assets").path
+        ) { result in
+            completions += 1
+            if case let .failure(error) = result {
+                XCTAssertEqual(error as? PythonKernelError, .notRunning)
+            } else {
+                XCTFail("failed command write unexpectedly completed")
+            }
+            failed.fulfill()
+        }
+        wait(for: [failed], timeout: 15)
+        kernel.terminate()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(completions, 1)
+        XCTAssertTrue(states.contains(.running))
+        XCTAssertTrue(states.contains(.ready))
+    }
+
     func testKernelCapturesEveryOpenFigureAsPNGAndSVG() throws {
         let root = try temporaryWorkspace(named: "casars-kernel-figures")
         defer { try? FileManager.default.removeItem(at: root) }

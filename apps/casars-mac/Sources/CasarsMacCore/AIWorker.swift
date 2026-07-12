@@ -75,6 +75,7 @@ package struct SeatbeltAIWorker {
         let staging = try absoluteURL(configuration.stagingRoot)
         let roots = try configuration.readableScienceRoots.map(absoluteURL)
         let deniedReadRoots = try configuration.deniedReadRoots.map(absoluteURL)
+        let runtimeRoots = try pythonRuntimeRoots(configuration.pythonExecutable)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         let home = staging.appendingPathComponent("home", isDirectory: true)
         let temporary = staging.appendingPathComponent("tmp", isDirectory: true)
@@ -89,6 +90,7 @@ package struct SeatbeltAIWorker {
             "-p", profile(
                 staging: seatbeltCanonicalURL(staging),
                 readableRoots: roots,
+                runtimeRoots: runtimeRoots,
                 deniedReadRoots: deniedReadRoots
             ),
             configuration.pythonExecutable,
@@ -115,17 +117,24 @@ package struct SeatbeltAIWorker {
         } catch {
             throw AIWorkerError.launchFailed(error.localizedDescription)
         }
+        let stdoutDrain = AIWorkerPipeDrain(stdout.fileHandleForReading)
+        let stderrDrain = AIWorkerPipeDrain(stderr.fileHandleForReading)
+        let drains = DispatchGroup()
+        stdoutDrain.start(in: drains)
+        stderrDrain.start(in: drains)
         process.waitUntilExit()
+        drains.wait()
         return AIWorkerResult(
             terminationStatus: process.terminationStatus,
-            stdout: String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self),
-            stderr: String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            stdout: String(decoding: stdoutDrain.data, as: UTF8.self),
+            stderr: String(decoding: stderrDrain.data, as: UTF8.self)
         )
     }
 
     private func profile(
         staging: URL,
         readableRoots: [URL],
+        runtimeRoots: [URL],
         deniedReadRoots: [URL]
     ) -> String {
         let deniedReadRules = deniedReadRoots.flatMap { root in
@@ -135,20 +144,27 @@ package struct SeatbeltAIWorker {
                 "(deny file-read-data (subpath \"\(path)\"))",
             ]
         }.joined(separator: "\n")
-        let scienceRoots = readableRoots
+        let readableRules = ([staging] + runtimeRoots + readableRoots)
             .map { seatbeltCanonicalURL($0).path }
             .map(seatbeltLiteral)
-            .joined(separator: ":")
+            .map { "(allow file-read-data (subpath \"\($0)\"))" }
+            .joined(separator: "\n")
+        let runtimeDeviceRules = ["/dev/null", "/dev/random", "/dev/urandom"]
+            .map(seatbeltLiteral)
+            .map { "(allow file-read-data (literal \"\($0)\"))" }
+            .joined(separator: "\n")
         return """
         (version 1)
         (deny default)
         (allow process-exec)
         (allow process-fork)
         (allow signal (target self))
-        ; macOS Python requires runtime reads outside its executable prefix.
-        ; Science roots are read-only because all writes remain denied except staging.
-        ; Configured science roots: \(scienceRoots)
-        (allow file-read*)
+        ; Dyld and realpath need path metadata and root traversal, but file contents
+        ; remain deny-by-default outside runtime, staging, and science roots.
+        (allow file-read-metadata)
+        (allow file-read-data (literal "/"))
+        \(readableRules)
+        \(runtimeDeviceRules)
         \(deniedReadRules)
         (allow mach-lookup)
         (allow sysctl-read)
@@ -156,6 +172,36 @@ package struct SeatbeltAIWorker {
         (allow file-write* (subpath "\(seatbeltLiteral(staging.path))"))
         (deny network*)
         """
+    }
+
+    private func pythonRuntimeRoots(_ executable: String) throws -> [URL] {
+        let configured = try standardizedAbsoluteURL(executable)
+        let resolved = configured.resolvingSymlinksInPath()
+        var roots = [runtimePrefix(for: configured), runtimePrefix(for: resolved)]
+        for candidate in [configured, resolved] {
+            if let developerRoot = developerRuntimeRoot(for: candidate) {
+                roots.append(developerRoot)
+            }
+        }
+        roots.append(contentsOf: [
+            URL(fileURLWithPath: "/System/Library", isDirectory: true),
+            URL(fileURLWithPath: "/usr/lib", isDirectory: true),
+        ])
+        var seen: Set<String> = []
+        return roots.filter { seen.insert(seatbeltCanonicalURL($0).path).inserted }
+    }
+
+    private func runtimePrefix(for executable: URL) -> URL {
+        executable.deletingLastPathComponent().deletingLastPathComponent()
+    }
+
+    private func developerRuntimeRoot(for executable: URL) -> URL? {
+        let marker = "/Contents/Developer/"
+        guard let range = executable.path.range(of: marker) else { return nil }
+        return URL(
+            fileURLWithPath: String(executable.path[..<range.upperBound].dropLast()),
+            isDirectory: true
+        )
     }
 
     private func absoluteURL(_ path: String) throws -> URL {
@@ -180,5 +226,32 @@ package struct SeatbeltAIWorker {
     private func seatbeltLiteral(_ value: String) -> String {
         value.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+}
+
+private final class AIWorkerPipeDrain: @unchecked Sendable {
+    private let handle: FileHandle
+    private let lock = NSLock()
+    private var collected = Data()
+
+    init(_ handle: FileHandle) {
+        self.handle = handle
+    }
+
+    var data: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return collected
+    }
+
+    func start(in group: DispatchGroup) {
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            let value = handle.readDataToEndOfFile()
+            lock.lock()
+            collected = value
+            lock.unlock()
+            group.leave()
+        }
     }
 }
