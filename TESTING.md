@@ -69,6 +69,13 @@ green, do not wait for or repair the other solely to duplicate the result.
 Use the second environment only to diagnose a failure, resolve genuine
 platform-specific uncertainty, or satisfy an explicit user request. A narrower
 hosted job cannot stand in for a broader required gate such as `just verify`.
+
+Recent green evidence remains valid until a code, test, build, dependency, or
+runtime-configuration change could affect that gate. Final review must inspect
+the commits after the tested revision and reuse the result when they contain
+only documentation, planning, or workflow-policy changes. Do not rerun a gate
+solely because review started; if executable changes intervened, rerun only the
+affected gate.
 - Native macOS GUI prototype and frontend services:
   `cargo test -p casa-notebook --test wave1_contract`,
   `cargo test -p casars-frontend-services`,

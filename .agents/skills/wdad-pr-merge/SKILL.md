@@ -30,7 +30,12 @@ This is a write-capable housekeeping skill. Invoking it authorizes final review,
 4. Confirm that a bounded `refactor` pass ran on the code involved in the wave, or that the PR records a credible not-applicable rationale for a no-code wave.
 5. Confirm one current green `verify` result and any release-only evidence
    required for this wave. Accept local or genuinely equivalent hosted evidence;
-   do not require both or wait for duplicate cross-environment assurance.
+   do not require both or wait for duplicate cross-environment assurance. Reuse
+   recent green results when no intervening code, test, build, dependency, or
+   runtime-configuration change could affect the gate. Do not rerun tests merely
+   because final review started or documentation/process-only commits followed
+   the tested commit. If relevant executable changes did intervene, rerun only
+   the affected gate.
 6. Decide whether deeper review is warranted:
    - architecture-review style checks for boundaries, dependencies, contracts, or public surfaces
    - test-adversary style checks when test evidence looks thin or the wave is medium/high risk
@@ -57,6 +62,7 @@ This is a write-capable housekeeping skill. Invoking it authorizes final review,
 ## Do not
 
 - merge if acceptance checks, verification, or closeout evidence is missing
+- rerun a recently green gate when no relevant executable change has invalidated its evidence
 - merge if the refactor pass is missing for a code wave
 - merge if approved outcome, included issues, or acceptance checks were moved to follow-up, deferral, non-goal, or out-of-scope language without explicit user signoff
 - delete issues

@@ -203,6 +203,11 @@ Use `Closes #N` only for issues that should auto-close on merge.
   second environment only for diagnosis, unresolved platform-specific risk, or
   when the user explicitly requests it. A lighter hosted job does not substitute
   for a broader required gate such as `just verify`.
+- Reuse recent green gate evidence when no intervening code, test, build,
+  dependency, or runtime-configuration change could affect it. Starting final
+  review, rebasing without content changes, or adding documentation/process-only
+  commits does not by itself require a rerun. If relevant executable changes
+  intervened, rerun only the affected gate.
 - `just quick` is the normal local iteration gate.
 - `just verify` is the default full wave gate.
 - `just smoke`, `scripts/test-install-suite.sh`, and
