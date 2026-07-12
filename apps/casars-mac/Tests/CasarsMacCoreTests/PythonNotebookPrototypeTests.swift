@@ -101,6 +101,12 @@ final class PythonNotebookPrototypeTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(cell(store, id: cellID).revisions.first?.plot).insertedInNotebook)
         XCTAssertTrue(try XCTUnwrap(cell(store, id: cellID).latestRevision?.plot).insertedInNotebook)
         XCTAssertEqual(store.state.prototypePython?.insertedPlotCount, 1)
+
+        store.runPrototypePythonCell(cellID)
+        waitUntil { store.state.prototypePython?.kernelState == .ready }
+        let cellAfterRun = try cell(store, id: cellID)
+        XCTAssertEqual(cellAfterRun.revisions.map(\.sequence), [1, 3, 4])
+        XCTAssertTrue(cellAfterRun.revisions[1].plot?.insertedInNotebook == true)
     }
 
     func testExplorerRestoresParametersWithoutLiveNotebookMutation() throws {

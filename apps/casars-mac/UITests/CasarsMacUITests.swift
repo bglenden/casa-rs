@@ -21,7 +21,13 @@ final class CasarsMacUITests: XCTestCase {
             hierarchy.lifetime = .keepAlways
             add(hierarchy)
         }
-        app?.terminate()
+        if app != nil {
+            app.terminate()
+            XCTAssertTrue(
+                app.wait(for: .notRunning, timeout: 5),
+                "The tested app did not terminate before the next GUI workflow"
+            )
+        }
         app = nil
         if let productionProjectURL {
             try? FileManager.default.removeItem(at: productionProjectURL)
@@ -39,13 +45,23 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertEqual(originalTaskCells.count, 3)
 
         selectViewMode("Rich")
-        let documentScroll = app.scrollViews["notebook.document.scroll"]
-        XCTAssertTrue(documentScroll.exists)
-        documentScroll.scroll(byDeltaX: 0, deltaY: -1_500)
+        try bringIntoView(
+            "notebook.richElement.rich-element-9",
+            in: "notebook.document.scroll",
+            deltaY: -500
+        )
         replaceText("notebook.richElement.rich-element-9", with: "After the final task cell — edited by XCUITest.")
-        documentScroll.scroll(byDeltaX: 0, deltaY: 600)
+        try bringIntoView(
+            "notebook.richElement.rich-element-5",
+            in: "notebook.document.scroll",
+            deltaY: 400
+        )
         replaceText("notebook.richElement.rich-element-5", with: "Between task cells — this is deliberately not the first note.")
-        documentScroll.scroll(byDeltaX: 0, deltaY: 900)
+        try bringIntoView(
+            "notebook.richElement.rich-element-3",
+            in: "notebook.document.scroll",
+            deltaY: 400
+        )
         replaceText("notebook.richElement.rich-element-3", with: "Before the first task cell — edited by XCUITest.")
 
         XCTAssertEqual(try accessibilityValue("notebook.dirtyState"), "dirty")
@@ -255,8 +271,16 @@ final class CasarsMacUITests: XCTestCase {
         try require("pythonPrototype.insert").click()
         XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.insertedPlotCount", containing: "1"))
 
-        try require("pythonPrototype.run").click()
-        XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.kernelState", containing: "running"))
+        try bringIntoView(
+            "pythonPrototype.run",
+            in: "pythonPrototype.documentScroll",
+            deltaY: 400
+        )
+        try clickUntilAccessibilityValue(
+            control: "pythonPrototype.run",
+            state: "pythonPrototype.revisionCount",
+            contains: "3"
+        )
         XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.kernelState", containing: "ready"))
         XCTAssertTrue(waitForAccessibilityValue("pythonPrototype.revisionCount", containing: "3"))
         assertZeroPythonProductionBoundaryCalls()
@@ -337,11 +361,6 @@ final class CasarsMacUITests: XCTestCase {
         }
         XCTAssertEqual(try accessibilityValue("pythonPrototype.approvalState"), "required")
         XCTAssertFalse(try require("pythonPrototype.run").isEnabled)
-        try bringIntoView(
-            "pythonPrototype.approve",
-            in: "pythonPrototype.documentScroll",
-            deltaY: -260
-        )
         try clickUntilAccessibilityValue(
             control: "pythonPrototype.approve",
             state: "pythonPrototype.approvalState",
@@ -635,6 +654,7 @@ final class CasarsMacUITests: XCTestCase {
 
     private func launchPrototype(scenario: String = "happy-path") {
         app = XCUIApplication()
+        ensureStoppedBeforeLaunch()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
             "--show-prototype", "notebook",
@@ -651,6 +671,7 @@ final class CasarsMacUITests: XCTestCase {
 
     private func launchPythonPrototype(scenario: String = "happy-path") {
         app = XCUIApplication()
+        ensureStoppedBeforeLaunch()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
             "--show-prototype", "python",
@@ -663,6 +684,15 @@ final class CasarsMacUITests: XCTestCase {
             app.debugDescription
         )
         XCTAssertTrue(element("pythonPrototype.kernelState").waitForExistence(timeout: 5))
+    }
+
+    private func ensureStoppedBeforeLaunch() {
+        guard app.state != .notRunning else { return }
+        app.terminate()
+        XCTAssertTrue(
+            app.wait(for: .notRunning, timeout: 5),
+            "A previous tested app instance remained alive before launch"
+        )
     }
 
     private func require(_ identifier: String, timeout: TimeInterval = 5) throws -> XCUIElement {
@@ -688,17 +718,19 @@ final class CasarsMacUITests: XCTestCase {
         attempts: Int = 8
     ) throws {
         let target = element(identifier)
-        if target.exists && target.isHittable {
-            return
-        }
         let scroll = app.scrollViews[scrollIdentifier]
         XCTAssertTrue(scroll.waitForExistence(timeout: 5), "Missing scroll view \(scrollIdentifier)")
         XCTAssertTrue(scroll.isHittable, "Scroll view is not hittable: \(scrollIdentifier)")
-        for _ in 0..<attempts where !target.exists || !target.isHittable {
+        let isComfortablyVisible = {
+            guard target.exists, target.isHittable else { return false }
+            let viewport = scroll.frame.insetBy(dx: 8, dy: 40)
+            return viewport.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
+        }
+        for _ in 0..<attempts where !isComfortablyVisible() {
             scroll.scroll(byDeltaX: 0, deltaY: deltaY)
         }
         XCTAssertTrue(
-            target.exists && target.isHittable,
+            isComfortablyVisible(),
             "Unable to bring \(identifier) into view\n\(app.debugDescription)"
         )
     }

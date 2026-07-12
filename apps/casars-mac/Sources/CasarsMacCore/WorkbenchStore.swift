@@ -5459,6 +5459,7 @@ public final class WorkbenchStore: ObservableObject {
               state.prototypePython?.cells.contains(where: { $0.id == cellID }) == true
         else { return }
         state.prototypePython?.selectedCellID = cellID
+        republishPrototypePythonState()
     }
 
     package func setPrototypePythonSource(cellID: String, source: String) {
@@ -5482,18 +5483,19 @@ public final class WorkbenchStore: ObservableObject {
 
     package func runPrototypePythonCell(_ cellID: String) {
         guard runtimeKind == .pythonPrototype,
-              state.prototypePython?.kernelState == .ready,
-              let index = state.prototypePython?.cells.firstIndex(where: { $0.id == cellID }),
-              state.prototypePython?.cells[index].approvalIsValid == true
+              var prototype = state.prototypePython,
+              prototype.kernelState == .ready,
+              let index = prototype.cells.firstIndex(where: { $0.id == cellID }),
+              prototype.cells[index].approvalIsValid
         else { return }
 
-        let sequence = state.prototypePython?.nextExecutionSequence ?? 1
-        state.prototypePython?.nextExecutionSequence = sequence + 1
-        state.prototypePython?.selectedCellID = cellID
-        state.prototypePython?.kernelState = .running
-        state.prototypePython?.runningCellID = cellID
-        let digest = state.prototypePython?.cells[index].sourceDigest ?? ""
-        state.prototypePython?.cells[index].revisions.append(
+        let sequence = prototype.nextExecutionSequence
+        prototype.nextExecutionSequence = sequence + 1
+        prototype.selectedCellID = cellID
+        prototype.kernelState = .running
+        prototype.runningCellID = cellID
+        let digest = prototype.cells[index].sourceDigest
+        prototype.cells[index].revisions.append(
             PrototypePythonExecutionRevision(
                 id: "python-execution-\(sequence)",
                 sequence: sequence,
@@ -5507,8 +5509,10 @@ public final class WorkbenchStore: ObservableObject {
                 )]
             )
         )
+        let nonresponsive = prototype.cells[index].behavior == .nonresponsive
+        publishPrototypePythonState(prototype)
 
-        guard state.prototypePython?.cells[index].behavior != .nonresponsive else { return }
+        guard !nonresponsive else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             self?.completePrototypePythonCell(cellID: cellID, sequence: sequence)
         }
@@ -5527,6 +5531,7 @@ public final class WorkbenchStore: ObservableObject {
             appendCompletedPrototypePythonRevision(cellID: cellID, sequence: sequence)
         }
         state.prototypePython?.selectedCellID = cellIDs.last ?? state.prototypePython?.selectedCellID ?? ""
+        republishPrototypePythonState()
     }
 
     package func interruptPrototypePythonKernel() {
@@ -5551,6 +5556,7 @@ public final class WorkbenchStore: ObservableObject {
         let requiresRestart = state.prototypePython?.cells[cellIndex].behavior == .nonresponsive
         state.prototypePython?.kernelState = requiresRestart ? .restartRequired : .ready
         state.prototypePython?.runningCellID = nil
+        republishPrototypePythonState()
     }
 
     package func restartPrototypePythonKernel() {
@@ -5560,17 +5566,20 @@ public final class WorkbenchStore: ObservableObject {
         }
         state.prototypePython?.kernelState = .ready
         state.prototypePython?.runningCellID = nil
+        republishPrototypePythonState()
     }
 
     package func regeneratePrototypePythonPlot(cellID: String) {
         guard runtimeKind == .pythonPrototype,
-              state.prototypePython?.kernelState == .ready,
-              let cell = state.prototypePython?.cells.first(where: { $0.id == cellID }),
+              var prototype = state.prototypePython,
+              prototype.kernelState == .ready,
+              let cell = prototype.cells.first(where: { $0.id == cellID }),
               cell.behavior == .plot,
               cell.approvalIsValid
         else { return }
-        let sequence = state.prototypePython?.nextExecutionSequence ?? 1
-        state.prototypePython?.nextExecutionSequence = sequence + 1
+        let sequence = prototype.nextExecutionSequence
+        prototype.nextExecutionSequence = sequence + 1
+        publishPrototypePythonState(prototype)
         appendCompletedPrototypePythonRevision(cellID: cellID, sequence: sequence)
     }
 
@@ -5580,6 +5589,7 @@ public final class WorkbenchStore: ObservableObject {
               let revisionIndex = state.prototypePython?.cells[cellIndex].revisions.firstIndex(where: { $0.plot?.id == plotID })
         else { return }
         state.prototypePython?.cells[cellIndex].revisions[revisionIndex].plot?.insertedInNotebook = true
+        republishPrototypePythonState()
     }
 
     package func openPrototypeExplorer(visualizationID: String) {
@@ -5593,11 +5603,13 @@ public final class WorkbenchStore: ObservableObject {
             parameters: revision.parameters,
             targetVisualizationID: visualizationID
         )
+        republishPrototypePythonState()
     }
 
     package func closePrototypeExplorer() {
         guard runtimeKind == .pythonPrototype else { return }
         state.prototypePython?.activeExplorer = nil
+        republishPrototypePythonState()
     }
 
     package func setPrototypeExplorerParameter(id: String, value: String) {
@@ -5605,6 +5617,7 @@ public final class WorkbenchStore: ObservableObject {
               let index = state.prototypePython?.activeExplorer?.parameters.firstIndex(where: { $0.id == id })
         else { return }
         state.prototypePython?.activeExplorer?.parameters[index].value = value
+        republishPrototypePythonState()
     }
 
     package func saveNewPrototypeExplorerVisualization() {
@@ -5623,6 +5636,7 @@ public final class WorkbenchStore: ObservableObject {
             )]
         ))
         state.prototypePython?.activeExplorer?.targetVisualizationID = visualizationID
+        republishPrototypePythonState()
     }
 
     package func updatePrototypeExplorerVisualization() {
@@ -5642,11 +5656,13 @@ public final class WorkbenchStore: ObservableObject {
                 session: session
             )
         )
+        republishPrototypePythonState()
     }
 
     package func setPrototypeEnlargedVisualization(_ visualizationID: String?) {
         guard runtimeKind == .pythonPrototype else { return }
         state.prototypePython?.enlargedVisualizationID = visualizationID
+        republishPrototypePythonState()
     }
 
     private func prototypeVisualizationRevision(
@@ -5666,12 +5682,15 @@ public final class WorkbenchStore: ObservableObject {
 
     private func completePrototypePythonCell(cellID: String, sequence: Int) {
         guard runtimeKind == .pythonPrototype,
-              state.prototypePython?.kernelState == .running,
-              state.prototypePython?.runningCellID == cellID
+              let prototype = state.prototypePython,
+              prototype.kernelState == .running,
+              prototype.runningCellID == cellID
         else { return }
         appendCompletedPrototypePythonRevision(cellID: cellID, sequence: sequence, replacingRunning: true)
-        state.prototypePython?.kernelState = .ready
-        state.prototypePython?.runningCellID = nil
+        guard var completedPrototype = state.prototypePython else { return }
+        completedPrototype.kernelState = .ready
+        completedPrototype.runningCellID = nil
+        publishPrototypePythonState(completedPrototype)
     }
 
     private func appendCompletedPrototypePythonRevision(
@@ -5679,9 +5698,11 @@ public final class WorkbenchStore: ObservableObject {
         sequence: Int,
         replacingRunning: Bool = false
     ) {
-        guard let cellIndex = state.prototypePython?.cells.firstIndex(where: { $0.id == cellID }) else { return }
-        let cell = state.prototypePython?.cells[cellIndex]
-        let fails = cell?.behavior == .failure && cell?.source.contains("raise RuntimeError") == true
+        guard var prototype = state.prototypePython,
+              let cellIndex = prototype.cells.firstIndex(where: { $0.id == cellID })
+        else { return }
+        let cell = prototype.cells[cellIndex]
+        let fails = cell.behavior == .failure && cell.source.contains("raise RuntimeError")
         let status: PrototypePythonCellStatus = fails ? .failed : .succeeded
         var outputs = [
             PrototypePythonOutputEvent(
@@ -5706,7 +5727,7 @@ public final class WorkbenchStore: ObservableObject {
                 text: "Fixture environment: casa-rs-python / matplotlib"
             ))
         }
-        let plot = cell?.behavior == .plot && !fails
+        let plot = cell.behavior == .plot && !fails
             ? PrototypePythonPlotRevision(
                 id: "python-plot-\(sequence)",
                 sequence: sequence,
@@ -5721,17 +5742,29 @@ public final class WorkbenchStore: ObservableObject {
             id: "python-execution-\(sequence)",
             sequence: sequence,
             status: status,
-            sourceDigest: cell?.sourceDigest ?? "",
+            sourceDigest: cell.sourceDigest,
             outputs: outputs,
             plot: plot
         )
         if replacingRunning,
-           let revisionIndex = state.prototypePython?.cells[cellIndex].revisions.lastIndex(where: { $0.sequence == sequence })
+           let revisionIndex = prototype.cells[cellIndex].revisions.lastIndex(where: { $0.sequence == sequence })
         {
-            state.prototypePython?.cells[cellIndex].revisions[revisionIndex] = revision
+            prototype.cells[cellIndex].revisions[revisionIndex] = revision
         } else {
-            state.prototypePython?.cells[cellIndex].revisions.append(revision)
+            prototype.cells[cellIndex].revisions.append(revision)
         }
+        publishPrototypePythonState(prototype)
+    }
+
+    private func republishPrototypePythonState() {
+        guard let prototype = state.prototypePython else { return }
+        publishPrototypePythonState(prototype)
+    }
+
+    private func publishPrototypePythonState(_ prototype: PrototypePythonNotebookProjection) {
+        var updatedState = state
+        updatedState.prototypePython = prototype
+        state = updatedState
     }
 
     public func setPythonOwner(_ owner: PythonOwner) {
