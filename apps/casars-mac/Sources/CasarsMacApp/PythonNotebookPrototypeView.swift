@@ -188,6 +188,13 @@ struct PythonNotebookPrototypeView: View {
                 }
 
                 if cell.id == projection?.selectedCellID {
+                    if cell.owner == .ai {
+                        Button("Approve exact code") {
+                            store.approvePrototypePythonSource(cellID: cell.id)
+                        }
+                        .disabled(cell.approvalIsValid)
+                        .accessibilityIdentifier("pythonPrototype.approve")
+                    }
                     Button {
                         store.runPrototypePythonCell(cell.id)
                     } label: {
@@ -314,14 +321,6 @@ struct PythonNotebookPrototypeView: View {
             Text("Approval binds only to source hash \(cell.sourceDigest). Any edit invalidates it.")
                 .workbenchFont(.caption, design: .monospaced)
                 .prototypeSecondaryForeground()
-            Button("Approve exact code") {
-                store.approvePrototypePythonSource(cellID: cell.id)
-            }
-            .simultaneousGesture(TapGesture().onEnded {
-                store.approvePrototypePythonSource(cellID: cell.id)
-            })
-            .disabled(cell.approvalIsValid)
-            .accessibilityIdentifier("pythonPrototype.approve")
         }
         .padding(12)
         .background(Color.purple.opacity(0.08))
