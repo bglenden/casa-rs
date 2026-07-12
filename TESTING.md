@@ -58,6 +58,17 @@ Verification: just verify
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test plus editable Python package checks
 - GitHub tag CI: PR CI plus smoke, suite-install, and CI-like coverage
+
+## Evidence source and turnaround
+
+At the current project stage, prefer fast feedback over duplicate
+cross-environment verification. A required gate needs one current green result
+from either a local run or a hosted run of the same command or documented
+equivalent coverage; it does not need both. Once one accepted environment is
+green, do not wait for or repair the other solely to duplicate the result.
+Use the second environment only to diagnose a failure, resolve genuine
+platform-specific uncertainty, or satisfy an explicit user request. A narrower
+hosted job cannot stand in for a broader required gate such as `just verify`.
 - Native macOS GUI prototype and frontend services:
   `cargo test -p casa-notebook --test wave1_contract`,
   `cargo test -p casars-frontend-services`,
@@ -116,9 +127,12 @@ The executable GUI layer follows these rules:
   not use screenshot review as the only assertion that an interaction works.
 - Keep Core/store tests as the broad, fast base of the pyramid. UI tests prove
   only behavior that requires the launched application boundary.
-- Run the same `just gui-test` command locally and in the supported macOS CI
-  job. If the runner cannot support UI automation, stop and record evidence
-  rather than replacing the gate with manual or computer-use testing.
+- Keep the same `just gui-test` command available locally and in the supported
+  macOS CI job. One green consolidated run in either environment satisfies the
+  interaction gate; the other is optional unless needed for diagnosis or
+  platform-specific evidence. If neither environment can support UI automation,
+  stop and record the blocker rather than replacing the gate with manual or
+  computer-use testing.
 - Pin the CI job's Xcode selection explicitly; the current gate uses the
   `macos-15` image with Xcode 26.2, matching the locally established compiler.
 - Run locally from a logged-in GUI session with Xcode automation permission and
@@ -139,7 +153,8 @@ For each wave:
   evidence are recorded; and explicit interaction approval precedes real
   adapter integration
 - user-visible native macOS GUI changes identify critical XCUITest workflows
-  during shaping and record a green `just gui-test` result before Review; for
+  during shaping and record a green local or hosted `just gui-test` result
+  before Review; for
   Wave 1, #368 must be implemented and green before Phase B begins and lands
   with the completed wave
 - after prototype approval, real adapters must match the accepted interaction
@@ -194,7 +209,8 @@ A wave is not done until:
 
 - `just verify` passes or any intentional exclusion is called out explicitly
 - tests cover the claimed behavior
-- native macOS GUI waves pass `just gui-test` for changed critical interactions
+- native macOS GUI waves pass `just gui-test` locally or in hosted CI for
+  changed critical interactions
   once the #368 test target is present
 - code-wave refactor evidence is recorded, or a no-code not-applicable
   rationale exists

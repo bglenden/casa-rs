@@ -28,7 +28,9 @@ This is a write-capable housekeeping skill. Invoking it authorizes final review,
 2. Review the PR against the wave outcome, non-goals, acceptance checks, and stop conditions.
 3. Confirm that any follow-up, deferral, non-goal, or out-of-scope classification is either newly discovered adjacent work or has explicit user signoff when it moves approved outcome, included issues, or acceptance checks out of the wave.
 4. Confirm that a bounded `refactor` pass ran on the code involved in the wave, or that the PR records a credible not-applicable rationale for a no-code wave.
-5. Confirm the latest `verify` result and any release-only evidence required for this wave.
+5. Confirm one current green `verify` result and any release-only evidence
+   required for this wave. Accept local or genuinely equivalent hosted evidence;
+   do not require both or wait for duplicate cross-environment assurance.
 6. Decide whether deeper review is warranted:
    - architecture-review style checks for boundaries, dependencies, contracts, or public surfaces
    - test-adversary style checks when test evidence looks thin or the wave is medium/high risk
