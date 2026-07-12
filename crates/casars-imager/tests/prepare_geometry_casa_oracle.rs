@@ -9,7 +9,7 @@ use casa_imaging::{Deconvolver, HogbomIterationMode, RestoringBeamMode, WTermMod
 use casa_ms::CubeAxisConfig;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier, discover_casa_python};
 use casars_imager::{
-    CliConfig, ImagingFftPrecisionPolicy, SelectedRowTrace, SpectralMode,
+    CliConfig, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, SelectedRowTrace, SpectralMode,
     build_prepare_geometry_trace_from_config,
 };
 use serde::Deserialize;
@@ -313,6 +313,9 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     }
 }

@@ -25,9 +25,9 @@ use casa_test_support::{
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, ScalarValue};
 use casars_imager::{
-    CliConfig, ImagerRunTaskRequest, ImagingFftPrecisionPolicy, RunSummary,
-    StandardMfsAccelerationPolicy, build_prepare_plane_trace_from_config, run_from_config,
-    trace_cube_channel_residual_refresh_from_config,
+    CliConfig, ImagerRunTaskRequest, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy,
+    RunSummary, StandardMfsAccelerationPolicy, build_prepare_plane_trace_from_config,
+    run_from_config, trace_cube_channel_residual_refresh_from_config,
     trace_cube_channel_residual_refresh_from_config_with_model_cube,
     trace_cube_channel_residual_refresh_from_config_with_model_cube_model_channel_lambda,
 };
@@ -739,6 +739,9 @@ fn hogbom_mfs_nmajor_fullsummary_task_return_tracks_casa_on_refim_twochan() {
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     };
 
@@ -5872,6 +5875,9 @@ fn hogbom_cube_nsigma_late_block_inputs_track_casa_minor_cycle_snapshots() {
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     };
 
@@ -6126,6 +6132,9 @@ fn hogbom_cube_nsigma_same_model_residual_refresh_tracks_casa_restart() {
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     };
 
@@ -6275,6 +6284,9 @@ fn hogbom_cube_nsigma_internal_model_residual_refresh_matches_captured_state() {
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     };
 
@@ -6443,6 +6455,9 @@ fn hogbom_cube_nsigma_full_cube_model_context_explains_late_restart_gap() {
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     };
 
@@ -6697,6 +6712,9 @@ fn hogbom_cube_nsigma_block0_channel9_nearest_vs_linear_dirty_against_casa() {
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+            chanchunks: None,
+            imaging_read_ahead_blocks: None,
+            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: false,
         }
     };
@@ -6878,6 +6896,9 @@ fn hogbom_cube_nsigma_block0_channel9_casa_regridded_ms_isolates_spectral_seam()
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     };
     let _ = run_from_config(&cubedata_config).expect("run rust cubedata dirty cube");
@@ -9338,6 +9359,9 @@ fn run_rust_imager(ms_path: &Path, prefix: &Path, dirty_only: bool) -> Result<()
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
     .map(|_| ())
@@ -9432,6 +9456,9 @@ fn run_rust_imager_outlierfile_with_niter(
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
 }
@@ -9505,6 +9532,9 @@ fn run_rust_imager_savemodel(ms_path: &Path, prefix: &Path) -> Result<(), String
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
     .map(|_| ())
@@ -9584,6 +9614,9 @@ fn run_rust_imager_startmodel(
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
     .map(|_| ())
@@ -9740,6 +9773,9 @@ fn run_rust_imager_case_with_explicit_phasecenter_and_w_term_mode(
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
     .map(|_| ())
@@ -9824,6 +9860,9 @@ fn run_rust_imager_case_with_solver_and_w_term_mode(
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
     .map(|_| ())
@@ -9905,6 +9944,9 @@ fn run_rust_imager_case_with_mtmfs(
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
     .map(|_| ())
@@ -10061,6 +10103,9 @@ fn run_rust_imager_cube_task_default_case_with_clean_controls(
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
 }
@@ -10192,6 +10237,9 @@ fn run_rust_imager_cube_case_with_solver_and_w_term_mode(
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
 }
@@ -10373,6 +10421,9 @@ fn run_rust_imager_spectral_cube_case_with_options_and_weighting(
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
         imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+        chanchunks: None,
+        imaging_read_ahead_blocks: None,
+        imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
 }
