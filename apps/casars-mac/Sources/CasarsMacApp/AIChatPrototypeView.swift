@@ -2,8 +2,14 @@ import CasarsMacCore
 import SwiftUI
 
 struct AIChatPrototypeView: View {
+    private static let fixtureQuestions = [
+        "Compare the current plot with the paper and suggest a safe next step.",
+        "Explain how the current plot is implemented in CASA-RS.",
+        "Propose a reproducible follow-up calculation for the notebook.",
+    ]
+
     @ObservedObject var store: WorkbenchStore
-    @State private var draft = "Compare the current plot with the paper and suggest a safe next step."
+    @State private var draft = Self.fixtureQuestions[0]
     @State private var selectedCitationID: String?
 
     private var projection: PrototypeAIChatProjection? {
@@ -372,9 +378,12 @@ struct AIChatPrototypeView: View {
 
     private func composer(_ projection: PrototypeAIChatProjection) -> some View {
         HStack(spacing: 9) {
-            TextField("Ask about this project", text: $draft)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit { sendDraft() }
+            Picker("Question", selection: $draft) {
+                ForEach(Self.fixtureQuestions, id: \.self) { question in
+                    Text(question).tag(question)
+                }
+            }
+                .labelsHidden()
                 .disabled(projection.responseState == .streaming || projection.corpusState != .ready)
                 .accessibilityIdentifier("aiPrototype.input")
 
