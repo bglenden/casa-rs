@@ -650,7 +650,7 @@ final class CasarsMacUITests: XCTestCase {
             try accessibilityValue("notebook.python.latestDetails.\(cellID)"),
             "collapsed"
         )
-        try require("notebook.python.latestDetails.\(cellID)").click()
+        try expandExecutionStatus("notebook.python.latestDetails.\(cellID)")
         XCTAssertTrue(
             visibleOutput.waitForExistence(timeout: 5),
             app.debugDescription
