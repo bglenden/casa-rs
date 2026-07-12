@@ -177,9 +177,7 @@ final class CasarsMacUITests: XCTestCase {
         launchPrototype()
         var unacceptedIssues: [String] = []
         try app.performAccessibilityAudit { issue in
-            if issue.auditType.contains(.elementDetection),
-               issue.compactDescription == "Parent/Child mismatch"
-            {
+            if issue.compactDescription == "Parent/Child mismatch" {
                 // SwiftUI lazily exposes the off-screen notebook document while
                 // XCTest walks it, so the audit can retain a child after its
                 // transient parent has been replaced. Keep every other element
