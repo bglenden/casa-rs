@@ -1013,7 +1013,7 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(try require("aiPrototype.message.ai-assistant-1", timeout: 5).exists)
 
         let taskApply = try require("aiPrototype.proposal.proposal-task.apply")
-        let conversationScroll = app.scrollViews.firstMatch
+        let conversationScroll = app.scrollViews.element(boundBy: 1)
         XCTAssertTrue(conversationScroll.exists)
         for _ in 0..<3 where !taskApply.isHittable {
             conversationScroll.scroll(byDeltaX: 0, deltaY: -240)
@@ -1112,6 +1112,7 @@ final class CasarsMacUITests: XCTestCase {
         ensureStoppedBeforeLaunch()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
+            "-NSAutomaticTextCompletionEnabled", "NO",
             "--show-prototype", "ai",
             "--prototype-state", scenario,
         ]

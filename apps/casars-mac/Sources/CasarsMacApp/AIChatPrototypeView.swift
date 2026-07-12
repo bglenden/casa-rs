@@ -5,7 +5,6 @@ struct AIChatPrototypeView: View {
     @ObservedObject var store: WorkbenchStore
     @State private var draft = "Compare the current plot with the paper and suggest a safe next step."
     @State private var selectedCitationID: String?
-    @FocusState private var composerFocused: Bool
 
     private var projection: PrototypeAIChatProjection? {
         store.state.prototypeAI
@@ -25,9 +24,6 @@ struct AIChatPrototypeView: View {
                 Text("AI prototype fixture unavailable")
                     .foregroundStyle(.secondary)
             }
-        }
-        .onAppear {
-            DispatchQueue.main.async { composerFocused = false }
         }
     }
 
@@ -378,7 +374,6 @@ struct AIChatPrototypeView: View {
         HStack(spacing: 9) {
             TextField("Ask about this project", text: $draft)
                 .textFieldStyle(.roundedBorder)
-                .focused($composerFocused)
                 .onSubmit { sendDraft() }
                 .disabled(projection.responseState == .streaming || projection.corpusState != .ready)
                 .accessibilityIdentifier("aiPrototype.input")
