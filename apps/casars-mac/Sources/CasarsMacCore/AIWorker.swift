@@ -21,15 +21,28 @@ package struct AIWorkerConfiguration {
     package var pythonExecutable: String
     package var readableScienceRoots: [String]
     package var stagingRoot: String
+    package var deniedReadRoots: [String]
 
     package init(
         pythonExecutable: String,
         readableScienceRoots: [String],
-        stagingRoot: String
+        stagingRoot: String,
+        deniedReadRoots: [String]? = nil
     ) {
         self.pythonExecutable = pythonExecutable
         self.readableScienceRoots = readableScienceRoots
         self.stagingRoot = stagingRoot
+        self.deniedReadRoots = deniedReadRoots ?? Self.defaultCredentialRoots()
+    }
+
+    private static func defaultCredentialRoots() -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return [
+            ".ssh", ".aws", ".azure", ".config", ".codex", ".netrc",
+            "Library/Keychains",
+            "Library/Application Support/Google/Chrome",
+            "Library/Application Support/OpenAI",
+        ].map { home.appendingPathComponent($0).path }
     }
 }
 
@@ -61,6 +74,7 @@ package struct SeatbeltAIWorker {
         }
         let staging = try absoluteURL(configuration.stagingRoot)
         let roots = try configuration.readableScienceRoots.map(absoluteURL)
+        let deniedReadRoots = try configuration.deniedReadRoots.map(absoluteURL)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         let home = staging.appendingPathComponent("home", isDirectory: true)
         let temporary = staging.appendingPathComponent("tmp", isDirectory: true)
@@ -72,7 +86,11 @@ package struct SeatbeltAIWorker {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
         process.arguments = [
-            "-p", profile(staging: seatbeltCanonicalURL(staging), readableRoots: roots),
+            "-p", profile(
+                staging: seatbeltCanonicalURL(staging),
+                readableRoots: roots,
+                deniedReadRoots: deniedReadRoots
+            ),
             configuration.pythonExecutable,
             "-I", "-c", exactSource,
         ]
@@ -105,29 +123,48 @@ package struct SeatbeltAIWorker {
         )
     }
 
-    private func profile(staging: URL, readableRoots: [URL]) -> String {
-        let readRules = readableRoots.map {
-            "(allow file-read* (subpath \"\(seatbeltLiteral($0.path))\"))"
+    private func profile(
+        staging: URL,
+        readableRoots: [URL],
+        deniedReadRoots: [URL]
+    ) -> String {
+        let deniedReadRules = deniedReadRoots.flatMap { root in
+            let path = seatbeltLiteral(seatbeltCanonicalURL(root).path)
+            return [
+                "(deny file-read-data (literal \"\(path)\"))",
+                "(deny file-read-data (subpath \"\(path)\"))",
+            ]
         }.joined(separator: "\n")
+        let scienceRoots = readableRoots
+            .map { seatbeltCanonicalURL($0).path }
+            .map(seatbeltLiteral)
+            .joined(separator: ":")
         return """
         (version 1)
         (deny default)
         (allow process-exec)
         (allow process-fork)
         (allow signal (target self))
+        ; macOS Python requires runtime reads outside its executable prefix.
+        ; Science roots are read-only because all writes remain denied except staging.
+        ; Configured science roots: \(scienceRoots)
         (allow file-read*)
+        \(deniedReadRules)
         (allow mach-lookup)
         (allow sysctl-read)
         (allow ipc-posix-shm)
-        \(readRules)
         (allow file-write* (subpath "\(seatbeltLiteral(staging.path))"))
         (deny network*)
         """
     }
 
     private func absoluteURL(_ path: String) throws -> URL {
+        try standardizedAbsoluteURL(path).resolvingSymlinksInPath()
+    }
+
+    private func standardizedAbsoluteURL(_ path: String) throws -> URL {
         guard path.hasPrefix("/") else { throw AIWorkerError.invalidAbsolutePath(path) }
-        return URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        return URL(fileURLWithPath: path).standardizedFileURL
     }
 
     private func seatbeltCanonicalURL(_ url: URL) -> URL {

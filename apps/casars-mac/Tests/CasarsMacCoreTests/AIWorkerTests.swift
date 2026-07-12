@@ -25,6 +25,7 @@ final class AIWorkerTests: XCTestCase {
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         try Data("science".utf8).write(to: science.appendingPathComponent("input.txt"))
+        try Data("credential".utf8).write(to: outside.appendingPathComponent("secret.txt"))
         try FileManager.default.createSymbolicLink(
             at: staging.appendingPathComponent("escape"),
             withDestinationURL: outside
@@ -43,6 +44,7 @@ final class AIWorkerTests: XCTestCase {
         result = {}
         attempt("network", lambda: socket.create_connection(("127.0.0.1", 9), timeout=0.1))
         attempt("outside_write", lambda: pathlib.Path(\(String(reflecting: outside.appendingPathComponent("denied.txt").path))).write_text("no"))
+        attempt("outside_read", lambda: pathlib.Path(\(String(reflecting: outside.appendingPathComponent("secret.txt").path))).read_text())
         attempt("symlink_write", lambda: (pathlib.Path(os.environ["CASARS_ARTIFACT_STAGING"]) / "escape" / "denied.txt").write_text("no"))
         attempt("staging_write", lambda: (pathlib.Path(os.environ["CASARS_ARTIFACT_STAGING"]) / "allowed.txt").write_text("yes"))
         result["staging_path"] = os.environ["CASARS_ARTIFACT_STAGING"]
@@ -55,7 +57,8 @@ final class AIWorkerTests: XCTestCase {
         let worker = SeatbeltAIWorker(configuration: AIWorkerConfiguration(
             pythonExecutable: try resolvedPython(),
             readableScienceRoots: [science.path],
-            stagingRoot: staging.path
+            stagingRoot: staging.path,
+            deniedReadRoots: [outside.path]
         ))
         let result = try worker.execute(
             exactSource: source,
@@ -68,6 +71,7 @@ final class AIWorkerTests: XCTestCase {
         )
         XCTAssertEqual(payload["network"] as? String, "PermissionError")
         XCTAssertEqual(payload["outside_write"] as? String, "PermissionError")
+        XCTAssertEqual(payload["outside_read"] as? String, "PermissionError")
         XCTAssertEqual(payload["symlink_write"] as? String, "PermissionError")
         XCTAssertEqual(payload["staging_write"] as? String, "allowed", "\(payload)")
         XCTAssertEqual(payload["child_network_denied"] as? Bool, true)
