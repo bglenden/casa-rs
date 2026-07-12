@@ -3701,7 +3701,9 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func scheduleTutorialPrototypeAdvance(generation: Int) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+        // Leave enough time for a launched-app user or XCUITest to observe and
+        // act on each deterministic state before the next fixture callback.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
             _ = self?.advanceTutorialPrototypeAcquisition(generation: generation)
         }
     }

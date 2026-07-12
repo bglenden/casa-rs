@@ -724,7 +724,8 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(
             waitForAccessibilityValue(
                 "tutorialPrototype.dataset.status.\(datasetID)",
-                containing: "ready"
+                containing: "ready",
+                timeout: 8
             ),
             app.debugDescription
         )
@@ -781,7 +782,9 @@ final class CasarsMacUITests: XCTestCase {
 
         [parameters]
         vis = "data/science.bin"
-        robust = 0.5
+        imagename = "products/science"
+        weighting = "briggs"
+        robust = -0.5
         ```
         <!-- /casa-rs-cell -->
         """.write(to: template.appendingPathComponent("tutorial.md"), atomically: true, encoding: .utf8)
@@ -826,14 +829,18 @@ final class CasarsMacUITests: XCTestCase {
         )
 
         let cellID = "019f7777-7777-7777-8777-777777777777"
-        try bringIntoView(
-            "notebook.parameters.open.\(cellID)",
-            in: "notebook.document.scroll",
-            deltaY: -420
-        )
         try clickIdentified("notebook.parameters.open.\(cellID)")
         XCTAssertTrue(try require("task.parameter.vis").waitForExistence(timeout: 5))
         XCTAssertEqual(try accessibilityValue("task.parameterSource.vis"), "tutorial override")
+        let taskScroll = try XCTUnwrap(
+            app.scrollViews.allElementsBoundByIndex.max {
+                $0.frame.width < $1.frame.width
+            },
+            app.debugDescription
+        )
+        for _ in 0..<6 {
+            taskScroll.scroll(byDeltaX: 0, deltaY: -420)
+        }
         XCTAssertEqual(try accessibilityValue("task.parameterSource.robust"), "tutorial override")
     }
 
@@ -869,7 +876,8 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(
             waitForAccessibilityValue(
                 "tutorialPrototype.dataset.status.\(datasetID)",
-                containing: "ready"
+                containing: "ready",
+                timeout: 8
             )
         )
         assertZeroTutorialProductionBoundaryCalls()
@@ -884,7 +892,8 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(
             waitForAccessibilityValue(
                 "tutorialPrototype.dataset.status.\(datasetID)",
-                containing: "checksum-failed"
+                containing: "checksum-failed",
+                timeout: 8
             )
         )
         XCTAssertEqual(
@@ -895,7 +904,8 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(
             waitForAccessibilityValue(
                 "tutorialPrototype.dataset.status.\(datasetID)",
-                containing: "ready"
+                containing: "ready",
+                timeout: 8
             )
         )
         assertZeroTutorialProductionBoundaryCalls()
@@ -924,7 +934,8 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(
             waitForAccessibilityValue(
                 "tutorialPrototype.dataset.status.\(datasetID)",
-                containing: "ready"
+                containing: "ready",
+                timeout: 8
             )
         )
         assertZeroTutorialProductionBoundaryCalls()
@@ -1071,9 +1082,17 @@ final class CasarsMacUITests: XCTestCase {
         attempts: Int = 8
     ) throws {
         let target = element(identifier)
-        let scroll = app.scrollViews[scrollIdentifier]
+        let scroll = element(scrollIdentifier)
         XCTAssertTrue(scroll.waitForExistence(timeout: 5), "Missing scroll view \(scrollIdentifier)")
-        XCTAssertTrue(scroll.isHittable, "Scroll view is not hittable: \(scrollIdentifier)")
+        let hittable = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"),
+            object: scroll
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [hittable], timeout: 5),
+            .completed,
+            "Scroll view is not hittable: \(scrollIdentifier)"
+        )
         let isComfortablyVisible = {
             guard target.exists, target.isHittable else { return false }
             let viewport = scroll.frame.insetBy(dx: 8, dy: 40)
@@ -1167,10 +1186,17 @@ final class CasarsMacUITests: XCTestCase {
         try textValue(try require(identifier))
     }
 
-    private func waitForValue(_ identifier: String, containing substring: String) -> Bool {
+    private func waitForValue(
+        _ identifier: String,
+        containing substring: String,
+        timeout: TimeInterval = 5
+    ) -> Bool {
         let element = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
         let predicate = NSPredicate(format: "value CONTAINS %@", substring)
-        return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: element)], timeout: 5) == .completed
+        return XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: predicate, object: element)],
+            timeout: timeout
+        ) == .completed
     }
 
     private func waitForTextValue(_ element: XCUIElement, equalTo expected: String) -> Bool {
@@ -1223,8 +1249,12 @@ final class CasarsMacUITests: XCTestCase {
         return false
     }
 
-    private func waitForAccessibilityValue(_ identifier: String, containing substring: String) -> Bool {
-        waitForValue(identifier, containing: substring)
+    private func waitForAccessibilityValue(
+        _ identifier: String,
+        containing substring: String,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        waitForValue(identifier, containing: substring, timeout: timeout)
     }
 
     private func waitForPositivePercentage(_ identifier: String) -> Bool {

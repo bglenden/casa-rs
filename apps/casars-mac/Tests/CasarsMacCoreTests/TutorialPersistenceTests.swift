@@ -31,7 +31,9 @@ final class TutorialPersistenceTests: XCTestCase {
 
         [parameters]
         vis = "data/science.bin"
-        robust = 0.5
+        imagename = "products/science"
+        weighting = "briggs"
+        robust = -0.5
         ```
         <!-- /casa-rs-cell -->
         """.write(to: template.appendingPathComponent("tutorial.md"), atomically: true, encoding: .utf8)
@@ -102,6 +104,18 @@ final class TutorialPersistenceTests: XCTestCase {
         XCTAssertTrue(state.staged)
         XCTAssertEqual(try Data(contentsOf: project.appendingPathComponent("data/science.bin")), bytes)
         XCTAssertEqual(state.currentAttempt?.checks.first?.status, "passed")
+
+        let taskIntent = try XCTUnwrap(forked.notebook.cells.first?.taskIntent)
+        let taskSnapshot = try UniFFISurfaceParameterClient().load(
+            surfaceID: taskIntent.surface,
+            profileTOML: taskIntent.profileTOML,
+            sourcePath: "\(project.path)/notebooks/Learner.md#\(forked.notebook.cells[0].id)"
+        )
+        XCTAssertEqual(
+            taskSnapshot.states["vis"]?.value,
+            .array([.string("data/science.bin")])
+        )
+        XCTAssertEqual(taskSnapshot.states["robust"]?.value, .float(-0.5))
 
         try FileManager.default.removeItem(at: source)
         let reopened = try client.list(projectRoot: project.path)

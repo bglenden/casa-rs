@@ -229,6 +229,7 @@ struct PersistentScientificNotebookView: View {
         .background(Color.accentColor.opacity(0.045))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.accentColor.opacity(0.16)))
         .clipShape(RoundedRectangle(cornerRadius: 7))
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("tutorial.project.\(project.tutorial.tutorialId)")
     }
 
@@ -243,6 +244,8 @@ struct PersistentScientificNotebookView: View {
                     Text("\(tutorialPhaseLabel(dataset.phase)) · \(dataset.destination)")
                         .workbenchFont(.caption, design: .monospaced)
                         .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("tutorial.dataset.\(dataset.id)")
+                        .accessibilityValue(dataset.phase.rawValue)
                 }
                 Spacer()
                 tutorialDatasetActions(dataset)
@@ -289,8 +292,6 @@ struct PersistentScientificNotebookView: View {
             }
         }
         .padding(.vertical, 3)
-        .accessibilityIdentifier("tutorial.dataset.\(dataset.id)")
-        .accessibilityValue(dataset.phase.rawValue)
     }
 
     @ViewBuilder
