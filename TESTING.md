@@ -162,6 +162,16 @@ For each wave:
   production-boundary calls. Core tests cover the same fixture state
   transitions and exact source digests. These tests do not claim that Python,
   project persistence, matplotlib, or production explorer integration exists.
+- Wave 2 Phase B adds production evidence for exact-source receipt-v2 Python
+  execution, ordered output and immutable artifacts surviving a fresh notebook
+  load, persistent namespace plus interrupt/restart recovery, independent
+  Seatbelt AI-worker denial of network/outside writes/symlink escape/credential
+  inheritance, tutorial-backed native MeasurementSet and image-plane data with
+  editable Matplotlib/WCSAxes objects, and Rust-owned explorer snapshot New,
+  Update, immutable history, and exact reopen intent. Launched-app coverage
+  executes a production Python cell from a disposable project and verifies its
+  on-disk receipt and reloaded output; the fixture XCUITests remain the
+  deterministic interaction evidence for explorer New/Update/Open behavior.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review

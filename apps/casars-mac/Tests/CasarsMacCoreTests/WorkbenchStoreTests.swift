@@ -1571,8 +1571,24 @@ final class WorkbenchStoreTests: XCTestCase {
             .appendingPathComponent("casars-python-notebook-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: rootURL) }
+        let selectedInput = rootURL.appendingPathComponent("selected.ms").path
+        let dataset = DatasetSummary(
+            id: selectedInput,
+            name: "selected.ms",
+            path: selectedInput,
+            kind: .measurementSet,
+            size: "test",
+            units: "Jy",
+            notes: "selected Python input"
+        )
         var state = EmptyWorkbench.makeState()
-        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [], source: .probed)
+        state.project = ProjectFixture(
+            name: "Project",
+            rootPath: rootURL.path,
+            datasets: [dataset],
+            source: .probed
+        )
+        state.selectedDatasetID = selectedInput
         let store = WorkbenchStore(state: state)
         store.installPythonExecutableForTesting(try resolvedTestPython())
         store.createScientificNotebook(filename: "Python.md", title: "Python")
@@ -1602,6 +1618,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(receipt.executionInput?.kind, "python")
         XCTAssertEqual(receipt.executionInput?.details.source, source)
         XCTAssertEqual(receipt.executionInput?.details.authority, "user")
+        XCTAssertEqual(receipt.executionInput?.details.inputReferences, [selectedInput])
         XCTAssertTrue(receipt.executionInput?.details.environment.fingerprintSHA256.isEmpty == false)
         XCTAssertTrue(receipt.orderedOutputs?.map(\.text).joined().contains("42") == true)
         XCTAssertTrue(receipt.artifacts.contains { $0.role == "ordered_output" })
