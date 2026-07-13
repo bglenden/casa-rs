@@ -114,6 +114,12 @@ final class CasarsMacUITests: XCTestCase {
     func testTaskNavigationExecutionGesturesAndNeutralTaskCell() throws {
         launchPrototype()
 
+        try bringIntoView(
+            "notebook.parameters.open.receipt-imager-mfs",
+            in: "notebook.document.scroll",
+            deltaY: -220
+        )
+
         let parameterBlock = try require("notebook.parameters.open.receipt-imager-mfs")
         let status = try require("notebook.executionStatus.receipt-imager-mfs")
         XCTAssertGreaterThan(parameterBlock.frame.width, status.frame.width * 2, "Status color/label must remain a compact affordance, not task-cell decoration.")
@@ -1122,7 +1128,15 @@ final class CasarsMacUITests: XCTestCase {
                 // and background pair to evaluate at this scroll position.
                 return true
             }
-            unacceptedIssues.append(issue.compactDescription)
+            let element = issue.element
+            unacceptedIssues.append(
+                "\(issue.compactDescription)"
+                    + " [type=\(issue.auditType), identifier=\(element?.identifier ?? "<none>"),"
+                    + " elementType=\(String(describing: element?.elementType)),"
+                    + " frame=\(String(describing: element?.frame)),"
+                    + " label=\(element?.label ?? "<none>"),"
+                    + " value=\(String(describing: element?.value))]"
+            )
             return true
         }
         XCTAssertTrue(unacceptedIssues.isEmpty, unacceptedIssues.joined(separator: "\n"))

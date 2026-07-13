@@ -3,6 +3,37 @@ import Foundation
 import XCTest
 
 final class AssistantDiscussionTests: XCTestCase {
+    func testHostExecutableVersionUsesBundleMetadataWithoutLaunchingTheApp() {
+        let executable = "/Applications/casars-mac.app/Contents/MacOS/casars-mac"
+
+        XCTAssertEqual(
+            WorkbenchStore.assistantHostVersionOverride(
+                executablePath: executable,
+                hostExecutablePath: executable,
+                shortVersion: "1.2.3",
+                buildVersion: "45"
+            ),
+            "1.2.3 (45)"
+        )
+        XCTAssertEqual(
+            WorkbenchStore.assistantHostVersionOverride(
+                executablePath: executable,
+                hostExecutablePath: executable,
+                shortVersion: nil,
+                buildVersion: nil
+            ),
+            "unreported"
+        )
+        XCTAssertNil(
+            WorkbenchStore.assistantHostVersionOverride(
+                executablePath: "/usr/bin/python3",
+                hostExecutablePath: executable,
+                shortVersion: "1.2.3",
+                buildVersion: "45"
+            )
+        )
+    }
+
     func testProviderEgressNeverSerializesDeselectedHostContext() throws {
         let visible = AssistantContextItemState(
             id: "visible",

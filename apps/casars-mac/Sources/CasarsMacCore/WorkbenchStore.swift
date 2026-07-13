@@ -5395,15 +5395,31 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func assistantExecutableIdentity(_ path: String) throws -> AssistantExecutableState {
-        let data = try Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe)
+        let canonicalPath = URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        let data = try Data(
+            contentsOf: URL(fileURLWithPath: canonicalPath),
+            options: .mappedIfSafe
+        )
         return AssistantExecutableState(
-            path: URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path,
-            version: assistantExecutableVersion(path),
+            path: canonicalPath,
+            version: assistantExecutableVersion(canonicalPath),
             sha256: Self.assistantSHA256(data)
         )
     }
 
     private func assistantExecutableVersion(_ path: String) -> String {
+        if let hostVersion = Self.assistantHostVersionOverride(
+            executablePath: path,
+            hostExecutablePath: Bundle.main.executableURL?.path,
+            shortVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+            buildVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        ) {
+            return hostVersion
+        }
+
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: path)
@@ -5416,6 +5432,37 @@ public final class WorkbenchStore: ObservableObject {
         let value = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? "unreported" : Self.boundedAssistantExcerpt(value, limit: 256)
+    }
+
+    package static func assistantHostVersionOverride(
+        executablePath: String,
+        hostExecutablePath: String?,
+        shortVersion: String?,
+        buildVersion: String?
+    ) -> String? {
+        guard let hostExecutablePath else { return nil }
+        let canonicalExecutable = URL(fileURLWithPath: executablePath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        let canonicalHost = URL(fileURLWithPath: hostExecutablePath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        guard canonicalExecutable == canonicalHost else { return nil }
+
+        let short = shortVersion?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let build = buildVersion?.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch (short?.isEmpty == false ? short : nil, build?.isEmpty == false ? build : nil) {
+        case let (.some(short), .some(build)):
+            return "\(short) (\(build))"
+        case let (.some(short), nil):
+            return short
+        case let (nil, .some(build)):
+            return build
+        case (nil, nil):
+            return "unreported"
+        }
     }
 
     private func assistantHostExecutable() throws -> String {
