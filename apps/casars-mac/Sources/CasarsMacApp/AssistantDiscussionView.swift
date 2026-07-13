@@ -97,7 +97,10 @@ struct AssistantDiscussionView: View {
     private func conversation(_ discussion: AssistantDiscussionState) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                // Chat transcripts are modest in size and update rapidly while a turn streams.
+                // A LazyVStack can repeatedly invalidate its view-list layout when the streaming
+                // row follows citation disclosure groups, driving AttributeGraph into a hot loop.
+                VStack(alignment: .leading, spacing: 12) {
                     if discussion.activeConversation?.messages.isEmpty != false {
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Ask about this project", systemImage: "bubble.left.and.text.bubble.right")

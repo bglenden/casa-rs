@@ -837,6 +837,8 @@ public final class WorkbenchStore: ObservableObject {
     private var assistantPendingCitations: [AssistantCitationState] = []
     private var assistantPendingActivities: [AssistantActivityState] = []
     private var assistantPendingTaskSuggestions: [AssistantTaskSuggestionState] = []
+    private var assistantPendingStreamText = ""
+    private var assistantStreamFlushWorkItem: DispatchWorkItem?
     private var assistantSuggestedParameters: [String: Set<String>] = [:]
     private var assistantDraftSaveWorkItem: DispatchWorkItem?
     private let imagerProgressSource: ImagerProgressSource
@@ -944,6 +946,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     deinit {
+        assistantStreamFlushWorkItem?.cancel()
         pythonKernels.values.forEach { $0.terminate() }
         agentSession?.terminate()
         guard runtimeKind == .production else { return }
@@ -3959,6 +3962,9 @@ public final class WorkbenchStore: ObservableObject {
         discussion.streamingText = ""
         discussion.lastError = nil
         state.assistantDiscussion = discussion
+        assistantStreamFlushWorkItem?.cancel()
+        assistantStreamFlushWorkItem = nil
+        assistantPendingStreamText = ""
         assistantPendingCitations = []
         assistantPendingActivities = []
         assistantPendingTaskSuggestions = []
@@ -4123,7 +4129,7 @@ public final class WorkbenchStore: ObservableObject {
             let params = event["params"] as? [String: Any] ?? [:]
             switch method {
             case "item/agentMessage/delta":
-                state.assistantDiscussion?.streamingText += params["delta"] as? String ?? ""
+                enqueueAssistantStreamDelta(params["delta"] as? String ?? "")
             case "turn/started":
                 if let turn = params["turn"] as? [String: Any] {
                     state.assistantDiscussion?.activeTurnID = turn["id"] as? String
@@ -4328,6 +4334,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func finishAssistantTurn(_ params: [String: Any]) {
+        flushAssistantStreamTextNow()
         let text = state.assistantDiscussion?.streamingText ?? ""
         let turn = params["turn"] as? [String: Any]
         let status = turn?["status"] as? String ?? "completed"
@@ -4370,6 +4377,31 @@ public final class WorkbenchStore: ObservableObject {
         if status == "failed" {
             recordAssistantError(errorMessage ?? "Agent turn failed")
         }
+    }
+
+    private func enqueueAssistantStreamDelta(_ delta: String) {
+        guard !delta.isEmpty else { return }
+        assistantPendingStreamText += delta
+        guard assistantStreamFlushWorkItem == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.assistantStreamFlushWorkItem = nil
+            self.flushAssistantStreamText()
+        }
+        assistantStreamFlushWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+    }
+
+    private func flushAssistantStreamTextNow() {
+        assistantStreamFlushWorkItem?.cancel()
+        assistantStreamFlushWorkItem = nil
+        flushAssistantStreamText()
+    }
+
+    private func flushAssistantStreamText() {
+        guard !assistantPendingStreamText.isEmpty else { return }
+        state.assistantDiscussion?.streamingText += assistantPendingStreamText
+        assistantPendingStreamText = ""
     }
 
     private func refreshAssistantAccount() {

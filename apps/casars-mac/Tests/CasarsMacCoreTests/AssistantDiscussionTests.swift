@@ -231,6 +231,50 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertEqual(agent.turns.last?.effort, "low")
     }
 
+    func testRapidStreamingDeltasAreFlushedIntoTheCompletedAnswer() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        var conversation = try client.createConversation(
+            projectRoot: project.path,
+            title: "Analysis",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
+        )
+        conversation.backendSession = AssistantBackendSessionState(
+            backendId: "codex_app_server",
+            sessionId: "thread-existing"
+        )
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+        let agent = FixtureAgentSession()
+        store.installAgentSessionForTesting(agent)
+
+        let chunks = (0..<500).map { "chunk-\($0);" }
+        for chunk in chunks {
+            agent.emit(["method": "item/agentMessage/delta", "params": ["delta": chunk]])
+        }
+        XCTAssertEqual(store.state.assistantDiscussion?.streamingText, "")
+
+        agent.emit(["method": "turn/completed", "params": ["turn": ["status": "completed"]]])
+
+        XCTAssertEqual(
+            store.state.assistantDiscussion?.activeConversation?.messages.last?.content,
+            chunks.joined()
+        )
+        XCTAssertEqual(store.state.assistantDiscussion?.streamingText, "")
+    }
+
     func testAccountLogoutClearsVisibleSubscriptionStateAfterBackendConfirmation() {
         var discussion = AssistantDiscussionState()
         discussion.account = AssistantAccountState(

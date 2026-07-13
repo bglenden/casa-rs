@@ -739,6 +739,18 @@ final class CasarsMacUITests: XCTestCase {
             app.debugDescription
         )
 
+        replaceText("assistant.input", with: "What should I check next?")
+        try clickIdentified("assistant.send")
+        let twoAnswers = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count == 2"),
+            object: app.links.matching(NSPredicate(format: "label == %@", "Add to notebook"))
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [twoAnswers], timeout: 15),
+            .completed,
+            "A second streamed assistant answer did not remain interactive"
+        )
+
         pinToNotebook.click()
         XCTAssertTrue(app.staticTexts["Added to notebook"].firstMatch.waitForExistence(timeout: 5))
 
