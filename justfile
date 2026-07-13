@@ -60,6 +60,10 @@ assistant-test:
 assistant-live-smoke:
     CASA_RS_CODEX_LIVE_SMOKE=1 swift test --package-path apps/casars-mac --filter AssistantDiscussionTests/testOptInCodexSubscriptionSmoke
 
+# Opt-in launched-app acceptance using the installed Codex CLI's ChatGPT subscription.
+assistant-live-gui:
+    bash apps/casars-mac/script/test_assistant_live_gui.sh
+
 graph:
     bash scripts/generate-graphs.sh
 

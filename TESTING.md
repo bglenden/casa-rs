@@ -102,6 +102,19 @@ interaction changes and run the GUI suite at coherent prototype-handoff and
 pre-Review checkpoints. Use isolated focused XCUITest runs only to diagnose a
 failure found by a consolidated run, not as the normal edit loop.
 
+`just assistant-live-gui` is the opt-in real-account acceptance exception. It
+uses the installed Codex CLI's existing ChatGPT subscription, an isolated
+temporary project, and the user-selected Python; API-key environment variables
+are removed before launch. It verifies a real exact-identity CASA MCP call,
+in-flight cancellation, durable transcript state, full app restart, and either
+same-backend-session resume or an honest visible handoff followed by a fresh
+backend turn. The command is agent-pre-runnable, retains
+`apps/casars-mac/.gui-test/AssistantLiveGUI.xcresult`, and is not part of CI or
+the deterministic `just gui-test` contract. On failure it retains and
+production-decodes the disposable transcript for diagnosis. The local
+foreground harness hides and later restores Codex during the exclusive test
+window.
+
 ## Coverage / confidence policy
 
 - CI enforces 75% line coverage.
@@ -124,7 +137,10 @@ The executable GUI layer follows these rules:
 - Launch deterministic fixture states with `XCUIApplication.launchArguments`.
   Production-boundary persistence tests may create and remove a unique
   test-owned temporary project; never open user projects, contact providers or
-  networks, run scientific tasks, or leave project/notebook data behind.
+  networks, run scientific tasks, or leave project/notebook data behind. The
+  separately invoked `just assistant-live-gui` acceptance may contact the
+  subscribed provider only under its explicit opt-in environment gate and
+  still uses and removes a unique temporary project.
 - Select normal controls through stable accessibility identifiers. Coordinate-
   only automation is not an acceptable default path.
 - Cover the smallest critical set of complete user workflows: editing and

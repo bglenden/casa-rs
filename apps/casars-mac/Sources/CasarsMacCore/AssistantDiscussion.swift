@@ -118,6 +118,25 @@ package struct AssistantContextItemState: Codable, Equatable, Identifiable {
     package var contentSha256: String
     package var untrustedEvidence: Bool
     package var selected: Bool = true
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, label, summary, excerpt, byteCount, contentSha256, untrustedEvidence, selected
+    }
+}
+
+extension AssistantContextItemState {
+    package init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        kind = try values.decode(String.self, forKey: .kind)
+        label = try values.decode(String.self, forKey: .label)
+        summary = try values.decode(String.self, forKey: .summary)
+        excerpt = try values.decode(String.self, forKey: .excerpt)
+        byteCount = try values.decode(UInt64.self, forKey: .byteCount)
+        contentSha256 = try values.decode(String.self, forKey: .contentSha256)
+        untrustedEvidence = try values.decode(Bool.self, forKey: .untrustedEvidence)
+        selected = try values.decodeIfPresent(Bool.self, forKey: .selected) ?? true
+    }
 }
 
 /// Deterministically shares one bounded context window across every open tab.

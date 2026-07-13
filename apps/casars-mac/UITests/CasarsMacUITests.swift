@@ -763,6 +763,141 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertEqual(try accessibilityValue("task.parameterSource.robust"), "AI-suggested non-default")
     }
 
+    func testOptInProductionAssistantSubscriptionGUIResume() throws {
+        let liveArtifactDirectory = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent(".gui-test", isDirectory: true)
+        let liveGate = liveArtifactDirectory.appendingPathComponent("assistant-live-gui.enabled")
+        guard FileManager.default.fileExists(atPath: liveGate.path) else {
+            throw XCTSkip("run `just assistant-live-gui` to exercise production GUI subscription chat")
+        }
+        let liveGateObject = try PropertyListSerialization.propertyList(
+            from: Data(contentsOf: liveGate),
+            options: [],
+            format: nil
+        )
+        let liveEnvironment = try XCTUnwrap(liveGateObject as? [String: String])
+        let notebookID = "019f0000-0000-7000-8000-000000000501"
+        let project = URL(
+            fileURLWithPath: try XCTUnwrap(liveEnvironment["projectRoot"]),
+            isDirectory: true
+        )
+        let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
+        try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
+        try "<!-- casa-rs-notebook:v1 id=\(notebookID) -->\n\n# Wave 5A live acceptance\n\nUnique production GUI project.\n"
+            .write(to: notebooks.appendingPathComponent("Analysis.md"), atomically: true, encoding: .utf8)
+
+        let firstMarker = "WAVE5A-FIRST-\(UUID().uuidString.prefix(8))"
+        let cancelMarker = "WAVE5A-CANCEL-\(UUID().uuidString.prefix(8))"
+        let resumeMarker = "WAVE5A-RESUME-\(UUID().uuidString.prefix(8))"
+        print("CASA_RS_LIVE_GUI_PROJECT \(project.path)")
+        print("CASA_RS_LIVE_GUI_MARKERS first=\(firstMarker) cancel=\(cancelMarker) resume=\(resumeMarker)")
+
+        launchLiveAssistantProject(project, environment: liveEnvironment)
+        try openProductionAssistant(notebookID: notebookID)
+        let usage = try require("assistant.usage", timeout: 25)
+        let model = try require("assistant.model")
+        let effort = try require("assistant.effort")
+        print("CASA_RS_LIVE_GUI_CONTROLS model=\(model.label) effort=\(effort.label) usage=\(usage.label)")
+
+        try sendLiveAssistantPrompt(
+            "Use the CASA project MCP task.catalog tool. Do not use shell or network. Reply with \(firstMarker) and the number of cataloged tasks."
+        )
+        let firstTranscript = try waitForLiveAssistantTranscript(in: project, timeout: 90) { transcript in
+            transcript.messages.contains { $0.role == "assistant" && $0.content.contains(firstMarker) }
+                && transcript.messages.contains { message in
+                    message.activities.contains {
+                        $0.label == "CASA task.catalog" && $0.state == "succeeded"
+                    }
+                }
+                && transcript.profile.pythonProvenance != nil
+        }
+        let backendSessionID = try XCTUnwrap(firstTranscript.backendSession?.sessionId)
+        let python = try XCTUnwrap(firstTranscript.profile.pythonProvenance)
+        print(
+            "CASA_RS_LIVE_GUI_STATE backend=present model=\(firstTranscript.profile.model) "
+                + "effort=\(firstTranscript.profile.effort) python=\(python.resolvedPath) "
+                + "python_version=\(python.version)"
+        )
+
+        replaceText(
+            "assistant.input",
+            with: "Use task.catalog, then write a long detailed explanation with 100 numbered items. End with \(cancelMarker)."
+        )
+        try clickIdentified("assistant.send")
+        let cancel = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10), app.debugDescription)
+        cancel.click()
+        _ = try waitForLiveAssistantTranscript(in: project, timeout: 30) { transcript in
+            transcript.messages.contains { message in
+                message.role == "assistant"
+                    && (message.content.contains("cancelled") || message.content.contains(cancelMarker))
+            }
+        }
+
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 8), "Production app did not terminate")
+        launchLiveAssistantProject(project, environment: liveEnvironment)
+        try openProductionAssistant(notebookID: notebookID)
+        _ = try require("assistant.usage", timeout: 25)
+        let durableAfterRestart = try waitForLiveAssistantTranscript(in: project, timeout: 5) {
+            $0.backendSession?.sessionId == backendSessionID
+                && $0.messages.contains { $0.content.contains(firstMarker) }
+        }
+        print("CASA_RS_LIVE_GUI_DURABLE_AFTER_RESTART messages=\(durableAfterRestart.messages.count)")
+        let priorResponseVisible = app.staticTexts.matching(
+            NSPredicate(format: "value CONTAINS %@", firstMarker)
+        ).firstMatch.waitForExistence(timeout: 3)
+        let visibleHandoff = app.staticTexts.matching(
+            NSPredicate(format: "value BEGINSWITH %@", "Previous Codex ses")
+        ).firstMatch.waitForExistence(timeout: priorResponseVisible ? 0.1 : 12)
+        XCTAssertTrue(
+            priorResponseVisible || visibleHandoff,
+            "Relaunch must show the prior transcript or an honest session handoff\n\(app.debugDescription)"
+        )
+        let taskActivityCountBeforeResume = durableAfterRestart.messages.filter { message in
+            message.activities.contains { $0.label == "CASA task.catalog" }
+        }.count
+        try sendLiveAssistantPrompt(
+            "Use the CASA project MCP task.catalog tool again. Reply with \(resumeMarker) and confirm this is the resumed Wave 5A conversation."
+        )
+        let resumedTranscript = try waitForLiveAssistantTranscript(in: project, timeout: 90) { transcript in
+            transcript.messages.contains {
+                    $0.role == "assistant" && $0.content.contains(resumeMarker)
+                }
+                && transcript.messages.filter { message in
+                    message.activities.contains { $0.label == "CASA task.catalog" }
+                }.count > taskActivityCountBeforeResume
+        }
+        let sameBackend = resumedTranscript.backendSession?.sessionId == backendSessionID
+        let handoff = resumedTranscript.messages.first {
+            $0.role == "activity" && $0.content.contains("could not be resumed")
+        }
+        XCTAssertTrue(
+            sameBackend || handoff != nil,
+            "The real Codex thread must either resume or record a visible session handoff"
+        )
+        if handoff != nil {
+            let handoffVisible = visibleHandoff || app.staticTexts.matching(
+                NSPredicate(format: "value BEGINSWITH %@", "Previous Codex ses")
+            ).firstMatch.waitForExistence(timeout: 5)
+            XCTAssertTrue(handoffVisible, app.debugDescription)
+        }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Wave 5A live subscription conversation resumed"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        try Data().write(
+            to: URL(fileURLWithPath: try XCTUnwrap(liveEnvironment["passReceipt"])),
+            options: .atomic
+        )
+        print(
+            "CASA_RS_LIVE_GUI_RESUME same_backend=\(sameBackend) "
+                + "visible_handoff=\(handoff != nil) messages=\(resumedTranscript.messages.count)"
+        )
+    }
+
     func testTutorialPrototypeLearnerNotesApprovalAndTaskLoading() throws {
         launchTutorialPrototype()
         let datasetID = "tutorial-dataset-twhya-calibrated"
@@ -1323,6 +1458,81 @@ final class CasarsMacUITests: XCTestCase {
         )
     }
 
+    private func launchLiveAssistantProject(_ project: URL, environment: [String: String]) {
+        app = XCUIApplication()
+        ensureStoppedBeforeLaunch()
+        app.launchEnvironment["PATH"] = environment["path"] ?? "/usr/bin:/bin"
+        app.launchEnvironment["HOME"] = environment["home"] ?? FileManager.default.homeDirectoryForCurrentUser.path
+        app.launchEnvironment["CODEX_HOME"] = environment["codexHome"] ?? ""
+        app.launchEnvironment["CASA_RS_AGENT_COMMAND"] = environment["agentCommand"] ?? "codex"
+        app.launchEnvironment["CASA_RS_GUI_TEST_PYTHON"] = environment["pythonCommand"] ?? "python3"
+        app.launchEnvironment["OPENAI_API_KEY"] = ""
+        app.launchEnvironment["AZURE_OPENAI_API_KEY"] = ""
+        app.launchEnvironment["OPENAI_BASE_URL"] = ""
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "-NSAutomaticTextCompletionEnabled", "NO",
+            "--open-project", project.path,
+        ]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 15), app.debugDescription)
+    }
+
+    private func openProductionAssistant(notebookID: String) throws {
+        try clickIdentified("dock.mode.notebooks")
+        XCTAssertTrue(notebookSelector(notebookID).waitForExistence(timeout: 5), app.debugDescription)
+        try clickIdentified("notebook.selector.open")
+        if element("inspector.collapse").isHittable { try clickIdentified("inspector.collapse") }
+        try clickIdentified("assistant.openDrawer")
+        XCTAssertTrue(element("assistant.discussion").waitForExistence(timeout: 8), app.debugDescription)
+    }
+
+    private func sendLiveAssistantPrompt(_ prompt: String) throws {
+        replaceText("assistant.input", with: prompt)
+        let send = try require("assistant.send")
+        let sendReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"),
+            object: send
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [sendReady], timeout: 25),
+            .completed,
+            "Assistant sidecar did not become ready to send"
+        )
+        try clickIdentified("assistant.send")
+    }
+
+    private func waitForLiveAssistantTranscript(
+        in project: URL,
+        timeout: TimeInterval,
+        matching predicate: (LiveAssistantTranscript) -> Bool
+    ) throws -> LiveAssistantTranscript {
+        let directory = project.appendingPathComponent(".casa-rs/conversations", isDirectory: true)
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let urls = (try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil
+            )) ?? []
+            for url in urls where url.pathExtension == "json" {
+                if let data = try? Data(contentsOf: url),
+                   let transcript = try? JSONDecoder.liveAssistant.decode(
+                       LiveAssistantTranscript.self,
+                       from: data
+                   ),
+                   predicate(transcript)
+                {
+                    return transcript
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline
+        let message = "Timed out waiting for the real assistant transcript condition at \(directory.path)"
+        XCTFail(message)
+        throw LiveAssistantAcceptanceError.transcriptTimeout(message)
+    }
+
     private func require(_ identifier: String, timeout: TimeInterval = 5) throws -> XCUIElement {
         let result = element(identifier)
         XCTAssertTrue(result.waitForExistence(timeout: timeout), "Missing accessibility identifier \(identifier)\n\(app.debugDescription)")
@@ -1623,5 +1833,43 @@ final class CasarsMacUITests: XCTestCase {
             || value == "Code"
             || value == "88d14db8cc92074d"
             || value.hasPrefix("from casars import msexplore\n")
+    }
+}
+
+private struct LiveAssistantTranscript: Decodable {
+    struct BackendSession: Decodable { var sessionId: String }
+    struct PythonProvenance: Decodable {
+        var resolvedPath: String
+        var version: String
+    }
+    struct Profile: Decodable {
+        var model: String
+        var effort: String
+        var pythonProvenance: PythonProvenance?
+    }
+    struct Activity: Decodable {
+        var label: String
+        var state: String
+    }
+    struct Message: Decodable {
+        var role: String
+        var content: String
+        var activities: [Activity]
+    }
+
+    var backendSession: BackendSession?
+    var profile: Profile
+    var messages: [Message]
+}
+
+private enum LiveAssistantAcceptanceError: Error {
+    case transcriptTimeout(String)
+}
+
+private extension JSONDecoder {
+    static var liveAssistant: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
     }
 }

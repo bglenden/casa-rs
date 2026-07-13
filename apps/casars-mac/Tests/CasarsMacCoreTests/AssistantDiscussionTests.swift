@@ -3,6 +3,29 @@ import Foundation
 import XCTest
 
 final class AssistantDiscussionTests: XCTestCase {
+    func testPersistedUsedContextDefaultsMissingTransientSelectionToSelected() throws {
+        let data = Data(#"{"id":"context-1","kind":"notebook","label":"Analysis","summary":"Open notebook","excerpt":"notes","byte_count":5,"content_sha256":"hash","untrusted_evidence":false}"#.utf8)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        let context = try decoder.decode(AssistantContextItemState.self, from: data)
+
+        XCTAssertTrue(context.selected)
+        XCTAssertEqual(context.byteCount, 5)
+    }
+
+    func testOptInRetainedLiveTranscriptLoadsThroughProductionBoundary() throws {
+        guard let project = ProcessInfo.processInfo.environment["CASA_RS_LIVE_TRANSCRIPT_PROJECT"] else {
+            throw XCTSkip("set by the opt-in live GUI acceptance harness after a failure")
+        }
+        let conversations = try UniFFIAssistantPersistenceClient().conversations(projectRoot: project)
+        print(
+            "CASA_RS_RETAINED_LIVE_TRANSCRIPT conversations=\(conversations.count) "
+                + "messages=\(conversations.map { $0.messages.count })"
+        )
+        XCTAssertFalse(conversations.isEmpty)
+    }
+
     func testContextBudgetScalesAcrossOpenTabsAndCountsUTF8Bytes() {
         XCTAssertEqual(AssistantContextBudgetPolicy.excerptLimits(openTabCount: 1), [16 * 1_024])
         XCTAssertEqual(AssistantContextBudgetPolicy.excerptLimits(openTabCount: 4), Array(repeating: 16 * 1_024, count: 4))
@@ -152,6 +175,65 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertFalse(serialized.contains("credential"))
         XCTAssertFalse(serialized.contains("provider_envelope"))
         XCTAssertFalse(serialized.contains("proposal"))
+    }
+
+    func testOpeningClosedDiscussionReloadsDurableConversationBeforeResume() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        var durable = try client.createConversation(
+            projectRoot: project.path,
+            title: "Project discussion",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
+        )
+        durable.backendSession = AssistantBackendSessionState(
+            backendId: "codex_app_server",
+            sessionId: "thread-durable"
+        )
+        durable.messages.append(AssistantMessageState(
+            id: UUID().uuidString.lowercased(),
+            role: "assistant",
+            content: "Durable answer",
+            createdAt: 1,
+            agentId: "codex_app_server",
+            model: nil,
+            citations: [],
+            usedContext: [],
+            activities: [],
+            taskSuggestions: [],
+            pins: []
+        ))
+        try client.saveConversation(projectRoot: project.path, transcript: durable)
+
+        var stale = durable
+        stale.id = UUID().uuidString.lowercased()
+        stale.backendSession = nil
+        stale.messages = []
+        var discussion = AssistantDiscussionState()
+        discussion.presentation = .closed
+        discussion.conversations = [stale]
+        discussion.activeConversationID = stale.id
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+        let agent = FixtureAgentSession()
+        store.installAgentSessionForTesting(agent)
+
+        store.openAssistantDiscussion()
+
+        XCTAssertEqual(store.state.assistantDiscussion?.activeConversation?.id, durable.id)
+        XCTAssertEqual(
+            store.state.assistantDiscussion?.activeConversation?.messages.last?.content,
+            "Durable answer"
+        )
+        XCTAssertEqual(agent.conversations.last?.resumeThreadID, "thread-durable")
     }
 
     func testCorpusIngestionLayersBaselineProjectDocumentsAndReleaseSource() throws {
@@ -414,6 +496,19 @@ final class AssistantDiscussionTests: XCTestCase {
             backendId: "codex_app_server",
             sessionId: "missing-thread"
         )
+        conversation.messages.append(AssistantMessageState(
+            id: UUID().uuidString.lowercased(),
+            role: "assistant",
+            content: "Earlier durable answer",
+            createdAt: 1,
+            agentId: "codex_app_server",
+            model: nil,
+            citations: [],
+            usedContext: [],
+            activities: [],
+            taskSuggestions: [],
+            pins: []
+        ))
         var discussion = AssistantDiscussionState()
         discussion.conversations = [conversation]
         discussion.activeConversationID = conversation.id
@@ -431,6 +526,8 @@ final class AssistantDiscussionTests: XCTestCase {
 
         let updated = try XCTUnwrap(store.state.assistantDiscussion?.activeConversation)
         XCTAssertNil(updated.backendSession)
+        XCTAssertEqual(updated.messages.first?.content, "Earlier durable answer")
+        XCTAssertEqual(updated.messages.count, 2)
         XCTAssertEqual(updated.messages.last?.role, "activity")
         XCTAssertTrue(updated.messages.last?.content.contains("new backend session") == true)
         XCTAssertEqual(agent.conversations.last?.resumeThreadID, nil)

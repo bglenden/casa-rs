@@ -217,4 +217,8 @@ smoke using a user's existing ChatGPT subscription. Acceptance covers:
 - fixture-only GUI review state proving zero production boundary calls
 
 `just gui-test` remains the native interaction gate. Live account/model tests
-are opt-in and never require a metered API key.
+are opt-in and never require a metered API key. `just assistant-live-gui`
+preflights the installed Codex CLI subscription and selected Python, then uses
+a disposable project to verify exact CASA MCP activity, cancellation, app
+restart, and either same-session resume or a visible handoff before a fresh
+backend continues; it is never a default CI gate.

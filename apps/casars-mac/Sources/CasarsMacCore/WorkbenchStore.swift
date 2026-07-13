@@ -3715,7 +3715,10 @@ public final class WorkbenchStore: ObservableObject {
             discussion.contexts = assistantOpenTabContexts()
             state.assistantDiscussion = discussion
         } catch {
-            state.lastErrors.append("Load assistant conversations: \(error)")
+            let message = "Load assistant conversations: \(error)"
+            state.lastErrors.append(message)
+            if state.assistantDiscussion == nil { state.assistantDiscussion = AssistantDiscussionState() }
+            state.assistantDiscussion?.lastError = message
         }
     }
 
@@ -3723,7 +3726,11 @@ public final class WorkbenchStore: ObservableObject {
         presentation: AssistantDiscussionPresentation = .drawer
     ) {
         guard state.hasProject else { return }
-        if state.assistantDiscussion == nil { loadAssistantDiscussions() }
+        if state.assistantDiscussion == nil
+            || state.assistantDiscussion?.presentation == .closed
+        {
+            loadAssistantDiscussions()
+        }
         if state.assistantDiscussion?.activeConversation == nil { newAssistantConversation() }
         state.assistantDiscussion?.presentation = presentation
         if state.assistantDiscussion?.corpusStatus == "Not indexed" { refreshAssistantCorpus() }
