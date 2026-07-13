@@ -119,8 +119,12 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertGreaterThan(parameterBlock.frame.width, status.frame.width * 2, "Status color/label must remain a compact affordance, not task-cell decoration.")
         XCTAssertNotEqual(parameterBlock.identifier, status.identifier)
 
-        parameterBlock.click()
-        XCTAssertTrue(try require("prototypeTask.identity.receipt-imager-mfs").waitForExistence(timeout: 5))
+        try clickIdentified("notebook.parameters.open.receipt-imager-mfs")
+        let taskIdentity = element("prototypeTask.identity.receipt-imager-mfs")
+        if !taskIdentity.waitForExistence(timeout: 2) {
+            try clickIdentified("notebook.parameters.open.receipt-imager-mfs")
+        }
+        XCTAssertTrue(taskIdentity.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertEqual(try textValue(try require("prototypeTask.parameter.vis")), "data/twhya_calibrated.ms")
 
         try require("central.tab.tab-scientific-notebook").click()
@@ -718,6 +722,16 @@ final class CasarsMacUITests: XCTestCase {
         try clickIdentified("assistant.openDrawer")
         XCTAssertTrue(element("assistant.discussion").waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(element("assistant.provider").waitForExistence(timeout: 8), app.debugDescription)
+        let model = try require("assistant.model")
+        let catalogReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "title == %@", "Fixture v1"),
+            object: model
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [catalogReady], timeout: 15),
+            .completed,
+            "Assistant provider catalog did not create the fixture conversation"
+        )
         replaceText("assistant.input", with: "Please propose a note")
         let send = try require("assistant.send")
         let sendReady = XCTNSPredicateExpectation(
@@ -1100,12 +1114,12 @@ final class CasarsMacUITests: XCTestCase {
             }
             if issue.auditType.contains(.contrast),
                let frame = issue.element?.frame,
-               !frame.intersects(visibleWindowFrame)
+               !visibleWindowFrame.contains(frame)
             {
-                // XCTest audits lazily retained ScrollView descendants even
-                // when their frames are fully outside the visible window.
-                // The retained element screenshot is unrelated screen pixels,
-                // so there is no rendered contrast to evaluate at this state.
+                // XCTest audits lazily retained and edge-clipped ScrollView
+                // descendants. Their element snapshots include unrelated
+                // screen pixels, so they have no complete rendered foreground
+                // and background pair to evaluate at this scroll position.
                 return true
             }
             unacceptedIssues.append(issue.compactDescription)

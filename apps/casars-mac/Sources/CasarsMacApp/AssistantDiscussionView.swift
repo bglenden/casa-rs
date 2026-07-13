@@ -330,6 +330,10 @@ struct AssistantDiscussionView: View {
                         accessibilityID: "assistant.input",
                         onSubmit: store.sendAssistantPrompt
                     )
+                    .disabled(
+                        discussion.activeConversation == nil
+                            || ![.ready, .completed].contains(discussion.activity)
+                    )
                 }
                 .frame(minHeight: 58, maxHeight: layout == .expanded ? 100 : 74)
                 .background(Color(nsColor: .controlBackgroundColor))
