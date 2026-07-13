@@ -229,8 +229,9 @@ For each wave:
   free-form composer, expand and dock the same fixture conversation without
   losing its draft or state, inspect context available through the trusted CASA
   MCP fixture, expand otherwise-collapsed agent activity, add a selected answer
-  once at the notebook tail, and open task parameters directly in the canonical
-  task tab with non-defaults highlighted. The fixture does not claim an exact
+  once at the notebook tail without a redundant dialog, and open task
+  parameters directly in the canonical task tab with non-defaults highlighted.
+  The fixture does not claim an exact
   model-prompt or provider-egress manifest. It also covers always-visible model,
   reasoning-effort, and compact usage-remaining controls; consolidated
   agent/subscription/access/Python settings; stable accessibility identifiers;

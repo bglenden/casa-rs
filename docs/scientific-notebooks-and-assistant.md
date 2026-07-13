@@ -303,12 +303,14 @@ Citations attach to the claims they support. A lightweight preview shows the
 relevant document excerpt, page/section, source path/lines/commit, notebook
 block, or run provenance; opening it uses a normal central preview tab. Pins
 may add a conclusion, code, task intent, plot, citations, or a transcript link
-to the chronological end of the notebook after preview and one confirmation.
+directly to the chronological end of the notebook from the explicit
+**Add to notebook** action.
 
 Answers and suggested actions remain ordinary chat messages until the user
-chooses a destination action. **Add to notebook** previews one append at the
-chronological tail; after confirmation the notebook opens and scrolls to the
-new block. Task parameters open directly in the normal task tab with suggested
+chooses a destination action. **Add to notebook** immediately appends once at
+the chronological tail, then the notebook opens and scrolls to the new block;
+there is no redundant destination or preview dialog. Task parameters open
+directly in the normal task tab with suggested
 non-defaults visibly marked; running the task uses its ordinary Run workflow.
 Plots use the notebook's explicit import/update workflow and downloads use the
 acquisition surface. Routine agent steps, commands, and logs stay collapsed by

@@ -179,7 +179,9 @@ name and nonce-bearing profile handshake prevent a user-configured server from
 shadowing it. Generic command, file, network, and Python approval stays with
 App Server. CASA owns only canonical semantic actions such as notebook append,
 task Run, typed data mutation, and tutorial acquisition, avoiding duplicate
-prompts.
+prompts. An explicit **Add to notebook** click is itself sufficient authority
+for one idempotent append at the chronological tail; it does not trigger a
+second confirmation.
 
 `casa-notebook` continues to own durable agent-neutral visible conversations,
 citations, immutable pins, context-use records, and scientific receipts.

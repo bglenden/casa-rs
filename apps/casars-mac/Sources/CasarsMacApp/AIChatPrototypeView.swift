@@ -15,7 +15,6 @@ struct AIChatPrototypeView: View {
 
     @State private var selectedCitationID: String?
     @State private var sourceCitation: PrototypeAICitation?
-    @State private var messageForNotebook: PrototypeAIMessage?
     @State private var contextOpen = false
     @State private var confirmingFullAccess = false
     @State private var settingsOpen = false
@@ -49,11 +48,6 @@ struct AIChatPrototypeView: View {
         .background(Color(nsColor: .textBackgroundColor))
         .sheet(item: $sourceCitation) { citation in
             sourceSheet(citation)
-        }
-        .sheet(item: $messageForNotebook) { message in
-            PrototypeAINotebookSheet(store: store, message: message) {
-                messageForNotebook = nil
-            }
         }
         .sheet(isPresented: $confirmingFullAccess) {
             fullAccessSheet
@@ -286,7 +280,7 @@ struct AIChatPrototypeView: View {
                 if message.role == .assistant {
                     HStack(spacing: 10) {
                         Button(message.pinned ? "Added to Analysis.md" : "Add to notebook") {
-                            messageForNotebook = message
+                            store.pinAIPrototypeMessage(message.id)
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(aiPrototypePurple)
@@ -925,49 +919,5 @@ private final class UserActivatedTextView: NSTextView {
             return
         }
         super.insertText(insertString, replacementRange: replacementRange)
-    }
-}
-
-private struct PrototypeAINotebookSheet: View {
-    @ObservedObject var store: WorkbenchStore
-    let message: PrototypeAIMessage
-    let dismiss: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("Add to notebook", systemImage: "text.append")
-                .workbenchFont(.title2, weight: .semibold)
-                .foregroundStyle(aiPrototypePurple)
-                .accessibilityIdentifier("aiPrototype.pinSheet")
-
-            LabeledContent("Destination", value: "Analysis.md · end of notebook")
-                .accessibilityIdentifier("aiPrototype.pin.destination")
-
-            GroupBox("Append preview") {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("AI note").workbenchFont(.headline)
-                    Text(message.text)
-                    Text("Citations and conversation provenance retained.")
-                        .workbenchFont(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            Spacer()
-            HStack {
-                Button("Cancel", action: dismiss)
-                Spacer()
-                Button("Add at end") {
-                    store.pinAIPrototypeMessage(message.id)
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(aiPrototypePurple)
-                .accessibilityIdentifier("aiPrototype.pin.confirm")
-            }
-        }
-        .padding(24)
-        .frame(width: 620, height: 390)
     }
 }
