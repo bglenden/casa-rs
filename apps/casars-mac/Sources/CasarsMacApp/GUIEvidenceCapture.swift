@@ -337,6 +337,14 @@ private enum GUIEvidenceCaptureRenderer {
         store: WorkbenchStore
     ) throws {
         store.openAIPrototypeDrawer()
+        store.sendAIPrototypePrompt("Compare the current plot with the TW Hya paper.")
+        let responseDeadline = Date().addingTimeInterval(2.0)
+        while Date() < responseDeadline,
+              store.state.prototypeAI?.messages.contains(where: { $0.role == .assistant }) != true
+        {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        store.showAIPrototypeNotebookSuggestions()
         let view = WorkbenchView(store: store)
             .environment(\.workbenchFontSize, WorkbenchState.defaultInterfaceFontSize)
             .preferredColorScheme(.dark)

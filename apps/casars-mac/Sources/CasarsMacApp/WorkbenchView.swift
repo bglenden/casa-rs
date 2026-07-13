@@ -26,14 +26,24 @@ struct WorkbenchView: View {
                 LeftDockView(store: store)
                     .frame(width: leftDockWidth)
 
-                HorizontalResizeHandle(width: $leftDockWidth, range: 190...420)
+                HorizontalResizeHandle(
+                    width: $leftDockWidth,
+                    range: 190...420,
+                    anchor: .left,
+                    accessibilityID: "split.resizeHandle"
+                )
             }
 
             if !store.state.inspectorCollapsed {
                 InspectorView(store: store)
                     .frame(width: inspectorWidth)
 
-                HorizontalResizeHandle(width: $inspectorWidth, range: 220...520)
+                HorizontalResizeHandle(
+                    width: $inspectorWidth,
+                    range: 220...520,
+                    anchor: .left,
+                    accessibilityID: "split.resizeHandle"
+                )
             }
 
             CentralWorkspaceView(
@@ -45,7 +55,12 @@ struct WorkbenchView: View {
             if store.isAIPrototypeRuntime,
                store.state.prototypeAI?.presentation == .drawer
             {
-                HorizontalResizeHandle(width: $aiDrawerWidth, range: 340...520)
+                HorizontalResizeHandle(
+                    width: $aiDrawerWidth,
+                    range: 340...520,
+                    anchor: .right,
+                    accessibilityID: "aiPrototype.resizeHandle"
+                )
 
                 AIChatPrototypeView(store: store, layout: .drawer)
                     .frame(width: aiDrawerWidth)
@@ -798,8 +813,19 @@ private enum DatasetOrder: String, CaseIterable, Identifiable {
 }
 
 private struct HorizontalResizeHandle: View {
+    enum Anchor {
+        case left
+        case right
+
+        var dragMultiplier: CGFloat {
+            self == .left ? 1 : -1
+        }
+    }
+
     @Binding var width: CGFloat
     let range: ClosedRange<CGFloat>
+    let anchor: Anchor
+    let accessibilityID: String
     @State private var dragStartWidth: CGFloat?
 
     var body: some View {
@@ -808,11 +834,13 @@ private struct HorizontalResizeHandle: View {
             .frame(width: 5)
             .contentShape(Rectangle())
             .gesture(
-                DragGesture(minimumDistance: 0)
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
                     .onChanged { value in
                         let startingWidth = dragStartWidth ?? width
                         dragStartWidth = startingWidth
-                        width = min(max(startingWidth + value.translation.width, range.lowerBound), range.upperBound)
+                        let proposedWidth = startingWidth
+                            + anchor.dragMultiplier * value.translation.width
+                        width = min(max(proposedWidth, range.lowerBound), range.upperBound)
                     }
                     .onEnded { _ in
                         dragStartWidth = nil
@@ -826,7 +854,7 @@ private struct HorizontalResizeHandle: View {
                 }
             }
             .accessibilityLabel("Resize panel")
-            .accessibilityIdentifier("split.resizeHandle")
+            .accessibilityIdentifier(accessibilityID)
     }
 }
 

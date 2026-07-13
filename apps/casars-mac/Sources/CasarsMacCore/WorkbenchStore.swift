@@ -3505,7 +3505,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func selectPrototypeNotebookReceipt(_ receiptID: String) {
-        guard runtimeKind == .notebookPrototype else { return }
+        guard runtimeKind == .notebookPrototype || runtimeKind == .aiPrototype else { return }
         updateActivePrototypeNotebook { document in
             guard document.tasks.contains(where: { $0.id == receiptID }) else { return }
             document.selectedReceiptID = receiptID
@@ -3515,7 +3515,7 @@ public final class WorkbenchStore: ObservableObject {
     /// Opens an interactive task-shaped tab using only the fixture projection.
     /// No provider schema, parameter, dataset, or task adapter is consulted.
     package func openPrototypeNotebookTask(receiptID: String) {
-        guard runtimeKind == .notebookPrototype,
+        guard runtimeKind == .notebookPrototype || runtimeKind == .aiPrototype,
               let receipt = state.prototypeNotebook?.receipts.first(where: { $0.id == receiptID })
         else {
             state.lastErrors.append("Unknown prototype notebook task \(receiptID)")
@@ -3705,6 +3705,27 @@ public final class WorkbenchStore: ObservableObject {
 
     package func dockAIPrototypeConversation() {
         openAIPrototypeDrawer()
+    }
+
+    package func showAIPrototypeNotebookSuggestions() {
+        openAIPrototypeDrawer()
+        state.activeTabID = state.tabs.first { $0.kind == .notebook }?.id
+            ?? state.tabs.first?.id
+            ?? ""
+    }
+
+    package func openAIPrototypeTaskProposal(_ proposalID: String) {
+        guard runtimeKind == .aiPrototype,
+              state.prototypeAI?.proposals.first(where: { $0.id == proposalID })?.kind == .task
+        else { return }
+        let receiptID = "receipt-imager-cancelled"
+        selectPrototypeNotebookReceipt(receiptID)
+        if let tabIndex = state.tabs.firstIndex(where: { $0.kind == .task && $0.taskID == "imager" }) {
+            state.tabs[tabIndex].prototypeReceiptID = receiptID
+            state.activeTabID = state.tabs[tabIndex].id
+        } else {
+            openPrototypeNotebookTask(receiptID: receiptID)
+        }
     }
 
     package func selectAIPrototypeModel(_ model: String) {

@@ -1007,6 +1007,15 @@ final class CasarsMacUITests: XCTestCase {
         try clickIdentified("aiPrototype.openDrawer")
         XCTAssertTrue(try require("aiPrototype.drawer").exists)
 
+        let resizeHandle = try require("aiPrototype.resizeHandle")
+        let drawerScroll = try require("aiPrototype.conversationScroll")
+        let initialHandleX = resizeHandle.frame.midX
+        let initialDrawerWidth = drawerScroll.frame.width
+        let dragStart = resizeHandle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        dragStart.press(forDuration: 0.1, thenDragTo: dragStart.withOffset(CGVector(dx: -60, dy: 0)))
+        XCTAssertLessThan(try require("aiPrototype.resizeHandle").frame.midX, initialHandleX - 35)
+        XCTAssertGreaterThan(try require("aiPrototype.conversationScroll").frame.width, initialDrawerWidth + 35)
+
         XCTAssertTrue(try require("aiPrototype.boundaryStatus").label.contains("0 production calls"))
         try clickIdentified("aiPrototype.egressPreview")
         XCTAssertTrue(try require("aiPrototype.workspaceSource.tab-task").exists)
@@ -1031,33 +1040,33 @@ final class CasarsMacUITests: XCTestCase {
         try clickIdentified("aiPrototype.pin.confirm")
         XCTAssertFalse(try require("aiPrototype.message.ai-assistant-1.pin").isEnabled)
 
-        try clickIdentified("aiPrototype.moreProposals")
-        XCTAssertTrue(try require("aiPrototype.expanded").exists)
+        try clickIdentified("aiPrototype.openNotebookSuggestions")
+        XCTAssertTrue(try require("notebook.aiSuggestions").exists)
 
-        try bringIntoView(
-            "aiPrototype.proposal.proposal-task.review",
-            in: "aiPrototype.conversationScroll",
-            deltaY: -240
-        )
-        try clickIdentified("aiPrototype.proposal.proposal-task.review")
-        XCTAssertTrue(try require("aiPrototype.proposalSheet").exists)
-        try clickIdentified("aiPrototype.proposal.proposal-task.apply")
+        try clickIdentified("notebook.aiProposal.proposal-task.review")
+        try clickIdentified("notebook.aiProposal.proposal-task.openTask")
+        XCTAssertTrue(try require("prototypeTask.parameterSource.robust").exists)
+        XCTAssertTrue(try require("prototypeTask.parameter.robust").value as? String == "-0.5")
+        try clickIdentified("central.tab.tab-scientific-notebook")
+        try clickIdentified("notebook.aiProposal.proposal-task.review")
+        try clickIdentified("notebook.aiProposal.proposal-task.apply")
         XCTAssertTrue(
             waitForAccessibilityValue(
-                "aiPrototype.proposal.proposal-task.state",
+                "notebook.aiProposal.proposal-task.state",
                 containing: "Succeeded",
                 timeout: 5
             )
         )
         try bringIntoView(
-            "aiPrototype.proposal.proposal-python.reject",
-            in: "aiPrototype.conversationScroll",
+            "notebook.aiProposal.proposal-python.review",
+            in: "notebook.document.scroll",
             deltaY: -220
         )
-        try clickIdentified("aiPrototype.proposal.proposal-python.reject")
+        try clickIdentified("notebook.aiProposal.proposal-python.review")
+        try clickIdentified("notebook.aiProposal.proposal-python.reject")
         XCTAssertTrue(
             waitForAccessibilityValue(
-                "aiPrototype.proposal.proposal-python.state",
+                "notebook.aiProposal.proposal-python.state",
                 containing: "Rejected"
             )
         )

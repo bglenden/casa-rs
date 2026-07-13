@@ -9,7 +9,7 @@ final class AIChatPrototypeTests: XCTestCase {
         XCTAssertTrue(store.isAIPrototypeRuntime)
         XCTAssertEqual(projection.providers.map(\.id), ["fixture-openai", "fixture-zen"])
         XCTAssertEqual(Set(projection.providers.map { $0.models.isEmpty }), [false])
-        XCTAssertEqual(projection.proposals.map(\.kind), PrototypeAIProposalKind.allCases)
+        XCTAssertEqual(projection.proposals.map(\.kind), [.task, .python, .plot, .download])
         XCTAssertEqual(projection.presentation, .closed)
         XCTAssertEqual(store.state.activeTabID, "tab-scientific-notebook")
         XCTAssertEqual(projection.openTabSources.count, 5)
@@ -56,6 +56,27 @@ final class AIChatPrototypeTests: XCTestCase {
         XCTAssertEqual(projection.selectedModel, "GLM-4.5")
         XCTAssertEqual(projection.selectedContexts.map(\.id), ["project", "source", "plot"])
         XCTAssertTrue(projection.selectedContexts.allSatisfy { !$0.egressSummary.isEmpty })
+        XCTAssertEqual(store.prototypeProductionBoundaryInvocationCount, 0)
+    }
+
+    func testSuggestionsReturnToNotebookAndTaskProposalOpensCanonicalTaskTab() throws {
+        let store = WorkbenchStore.aiPrototype()
+        store.expandAIPrototypeConversation()
+
+        store.showAIPrototypeNotebookSuggestions()
+        XCTAssertEqual(store.state.prototypeAI?.presentation, .drawer)
+        XCTAssertEqual(store.state.activeTabID, "tab-scientific-notebook")
+
+        store.openAIPrototypeTaskProposal("proposal-task")
+        let taskTab = try XCTUnwrap(store.state.tabs.first { $0.id == "tab-ai-context-task" })
+        XCTAssertEqual(taskTab.kind, .task)
+        XCTAssertEqual(taskTab.taskID, "imager")
+        XCTAssertEqual(taskTab.prototypeReceiptID, "receipt-imager-cancelled")
+        XCTAssertEqual(store.state.activeTabID, "tab-ai-context-task")
+        let proposalTask = try XCTUnwrap(
+            store.state.prototypeNotebook?.receipts.first { $0.id == "receipt-imager-cancelled" }
+        )
+        XCTAssertEqual(proposalTask.parameterRows.first { $0.parameterID == "robust" }?.value, "-0.5")
         XCTAssertEqual(store.prototypeProductionBoundaryInvocationCount, 0)
     }
 
@@ -110,7 +131,7 @@ final class AIChatPrototypeTests: XCTestCase {
         let store = WorkbenchStore.aiPrototype()
         store.setAIPrototypeDraft("Explain the open tabs")
         store.openAIPrototypeDrawer()
-        store.rejectAIPrototypeProposal("proposal-note")
+        store.rejectAIPrototypeProposal("proposal-plot")
 
         let debug = try XCTUnwrap(store.debugSnapshot().prototypeAI)
         XCTAssertEqual(debug.scenario, .primary)
@@ -121,7 +142,7 @@ final class AIChatPrototypeTests: XCTestCase {
         XCTAssertTrue(debug.workspaceSourceIDs.contains("schema-casars"))
         XCTAssertEqual(debug.provider, "OpenAI subscription")
         XCTAssertEqual(debug.pinnedMessageCount, 0)
-        XCTAssertEqual(debug.proposalStates["proposal-note"], .rejected)
+        XCTAssertEqual(debug.proposalStates["proposal-plot"], .rejected)
         XCTAssertEqual(debug.productionBoundaryCalls, 0)
     }
 }

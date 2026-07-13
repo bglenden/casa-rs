@@ -13,7 +13,6 @@ struct AIChatPrototypeView: View {
 
     @State private var selectedCitationID: String?
     @State private var sourceCitation: PrototypeAICitation?
-    @State private var proposalForReview: PrototypeAIProposal?
     @State private var messageForPin: PrototypeAIMessage?
     @State private var contextOpen = false
 
@@ -45,9 +44,6 @@ struct AIChatPrototypeView: View {
         .background(Color(nsColor: .textBackgroundColor))
         .sheet(item: $sourceCitation) { citation in
             sourceSheet(citation)
-        }
-        .sheet(item: $proposalForReview) { proposal in
-            proposalReviewSheet(proposal)
         }
         .sheet(item: $messageForPin) { message in
             pinSheet(message)
@@ -184,7 +180,7 @@ struct AIChatPrototypeView: View {
                 responseNotice(projection)
 
                 if projection.messages.contains(where: { $0.role == .assistant }) {
-                    proposalList(projection)
+                    notebookSuggestionSummary(projection)
                 }
             }
             .frame(maxWidth: layout == .expanded ? 760 : .infinity, alignment: .leading)
@@ -192,6 +188,37 @@ struct AIChatPrototypeView: View {
             .frame(maxWidth: .infinity)
         }
         .accessibilityIdentifier("aiPrototype.conversationScroll")
+    }
+
+    private func notebookSuggestionSummary(_ projection: PrototypeAIChatProjection) -> some View {
+        let unresolvedCount = projection.proposals.filter { proposal in
+            proposal.state == .pending || proposal.state == .running
+        }.count
+
+        return Button {
+            store.showAIPrototypeNotebookSuggestions()
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "doc.badge.ellipsis")
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Suggestions are in Analysis.md")
+                        .workbenchFont(.subheadline, weight: .semibold)
+                    Text("\(unresolvedCount) pending · review each change where it will be applied")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "arrow.up.forward.app")
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(Color.accentColor.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("aiPrototype.openNotebookSuggestions")
     }
 
     private func emptyConversation(_ projection: PrototypeAIChatProjection) -> some View {
@@ -297,89 +324,6 @@ struct AIChatPrototypeView: View {
 
             if message.role == .assistant { Spacer(minLength: layout == .expanded ? 70 : 0) }
         }
-    }
-
-    @ViewBuilder
-    private func proposalList(_ projection: PrototypeAIChatProjection) -> some View {
-        let proposals = layout == .drawer
-            ? Array(projection.proposals.prefix(1))
-            : projection.proposals
-
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Proposed actions")
-                .workbenchFont(.subheadline, weight: .semibold)
-
-            ForEach(proposals) { proposal in
-                compactProposal(proposal)
-            }
-
-            if layout == .drawer, projection.proposals.count > proposals.count {
-                Button("Review \(projection.proposals.count - proposals.count) more in AI tab") {
-                    store.expandAIPrototypeConversation()
-                }
-                .buttonStyle(.link)
-                .accessibilityIdentifier("aiPrototype.moreProposals")
-            }
-        }
-    }
-
-    private func compactProposal(_ proposal: PrototypeAIProposal) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Label(proposal.kind.label, systemImage: proposalIcon(proposal.kind))
-                    .workbenchFont(.caption, weight: .semibold)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(proposal.state.rawValue.capitalized)
-                    .workbenchFont(.caption)
-                    .foregroundStyle(proposalStateColor(proposal.state))
-                    .accessibilityIdentifier("aiPrototype.proposal.\(proposal.id).state")
-            }
-            Text(proposal.title)
-                .workbenchFont(.subheadline, weight: .semibold)
-            Text(proposal.summary)
-                .workbenchFont(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-
-            if let result = proposal.result {
-                Text(result)
-                    .workbenchFont(.caption)
-                    .foregroundStyle(proposal.state == .failed ? .orange : .secondary)
-            }
-
-            HStack {
-                Button("Review") {
-                    proposalForReview = proposal
-                }
-                .controlSize(.small)
-                .accessibilityIdentifier("aiPrototype.proposal.\(proposal.id).review")
-
-                if proposal.state == .pending {
-                    Button("Dismiss") {
-                        store.rejectAIPrototypeProposal(proposal.id)
-                    }
-                    .controlSize(.small)
-                    .accessibilityIdentifier("aiPrototype.proposal.\(proposal.id).reject")
-                } else if proposal.state == .running {
-                    Button("Cancel") {
-                        store.cancelAIPrototypeProposal(proposal.id)
-                    }
-                    .controlSize(.small)
-                    .accessibilityIdentifier("aiPrototype.proposal.\(proposal.id).cancel")
-                } else if proposal.state == .failed || proposal.state == .cancelled {
-                    Button("Retry") {
-                        store.retryAIPrototypeProposal(proposal.id)
-                    }
-                    .controlSize(.small)
-                    .accessibilityIdentifier("aiPrototype.proposal.\(proposal.id).retry")
-                }
-            }
-        }
-        .padding(10)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.secondary.opacity(0.16)))
     }
 
     @ViewBuilder
@@ -596,42 +540,6 @@ struct AIChatPrototypeView: View {
         .frame(width: 620, height: 360)
     }
 
-    private func proposalReviewSheet(_ proposal: PrototypeAIProposal) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("Review in canonical \(proposal.kind.label) surface", systemImage: proposalIcon(proposal.kind))
-                .workbenchFont(.title2, weight: .semibold)
-                .accessibilityIdentifier("aiPrototype.proposalSheet")
-            Text(proposal.title).workbenchFont(.headline)
-            Text(proposal.exactPayload)
-                .workbenchFont(.body, design: .monospaced)
-                .textSelection(.enabled)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.secondary.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            Text(proposal.authority).workbenchFont(.subheadline, weight: .semibold)
-            ForEach(proposal.affectedPaths, id: \.self) { path in
-                Text(path).workbenchFont(.caption, design: .monospaced)
-            }
-            Spacer()
-            HStack {
-                Button("Dismiss") {
-                    store.rejectAIPrototypeProposal(proposal.id)
-                    proposalForReview = nil
-                }
-                Spacer()
-                Button("Approve fixture action") {
-                    store.approveAIPrototypeProposal(proposal.id)
-                    proposalForReview = nil
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("aiPrototype.proposal.\(proposal.id).apply")
-            }
-        }
-        .padding(24)
-        .frame(width: 680, height: 460)
-    }
-
     private func pinSheet(_ message: PrototypeAIMessage) -> some View {
         PrototypeAIPinSheet(store: store, message: message) {
             messageForPin = nil
@@ -677,26 +585,6 @@ struct AIChatPrototypeView: View {
         case .offline, .failed, .rateLimited, .restartRequired: .orange
         case .cancelled: .secondary
         default: .secondary
-        }
-    }
-
-    private func proposalStateColor(_ state: PrototypeAIProposalState) -> Color {
-        switch state {
-        case .succeeded: .green
-        case .failed: .orange
-        case .running: .blue
-        case .rejected, .cancelled: .secondary
-        case .pending: .primary
-        }
-    }
-
-    private func proposalIcon(_ kind: PrototypeAIProposalKind) -> String {
-        switch kind {
-        case .task: "slider.horizontal.3"
-        case .python: "chevron.left.forwardslash.chevron.right"
-        case .plot: "chart.xyaxis.line"
-        case .download: "arrow.down.circle"
-        case .note: "note.text"
         }
     }
 

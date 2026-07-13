@@ -291,12 +291,16 @@ block, or run provenance; opening it uses a normal central preview tab. Pins
 may snapshot a conclusion, code, task intent, plot, citations, or a transcript
 link into a user-chosen notebook location after preview and confirmation.
 
-Mutations appear as compact typed proposal cards in the conversation. Detailed
-diffs, code, parameters, commands, and logs stay collapsed until **Review**
-opens the existing notebook diff, normal task tab, Python/run review, or
-file/network approval surface. Insertion, execution, download, and file-write
-authority are separate approvals. Ordinary prose and read-only answers remain
-ordinary chat messages rather than action cards.
+Mutations are destination-first rather than duplicated as proposal cards in
+the conversation. Chat shows only a compact status/link such as **Suggestions
+are in Analysis.md**. Pending notes, Python cells, plots, and parameter blocks
+appear at their intended notebook location and are reviewed there; task
+parameters open directly in the normal task tab with AI-suggested non-defaults
+visibly marked; downloads use the acquisition surface. Detailed diffs, code,
+parameters, commands, and logs stay collapsed until **Review** at that
+destination. Insertion, execution, download, and file-write authority remain
+separate approvals. Ordinary prose and read-only answers remain ordinary chat
+messages.
 
 ### Interaction precedents
 
@@ -306,11 +310,13 @@ conversation model:
 
 - [Jupyter AI](https://jupyter-ai.readthedocs.io/en/v3/users/) uses a persistent
   side-panel conversation with notebook/cell context and explicit code
-  insertion.
+  insertion into the active notebook rather than a second action workspace in
+  chat.
 - [VS Code Chat](https://code.visualstudio.com/docs/agents/chat-view)
   permits one chat session to move between the secondary side bar, editor, and
   window, while [notebook AI](https://code.visualstudio.com/docs/agents/guides/notebooks-with-ai)
-  keeps inline chat scoped to targeted cell work.
+  keeps inline chat scoped to targeted cell work and reviews proposed changes
+  in the notebook/editor with Keep/Undo controls.
 - [Databricks Genie Code](https://docs.databricks.com/aws/en/genie-code/use-genie-code)
   uses a contextual side pane and can [maximize the same work into a full-page
   chat](https://docs.databricks.com/aws/en/genie-code/full-page).
@@ -502,12 +508,16 @@ zero-production-call boundary. A bounded in-drawer context panel lists every
 open tab plus the standing radio astronomy corpus, project papers, CASA-RS
 source, and CASA-RS task/parameter/data-type semantics, while separately
 showing the selected provider-egress payload. Suggested prompts only fill the
-composer. Answers use claim-local citations and source previews; proposals stay
-compact until explicit review; pinning previews the notebook representation and
-location before confirmation. Deterministic rate-limit, cancellation, restart,
-accessibility, debug-state, and zero-production-boundary fixtures remain live.
-The two focused AI XCUITests passed together on 2026-07-12; explicit user
-interaction approval is still required before Phase B begins.
+composer. Answers use claim-local citations and source previews. Chat links to
+pending suggestions in `Analysis.md`; review and Apply/Discard controls live in
+the notebook, while task suggestions open the normal Imager tab with the
+non-default parameter marked. Pinning previews the notebook representation and
+location before confirmation. The right-anchored drawer uses stable global
+drag coordinates so its divider tracks the pointer in the expected direction.
+Deterministic rate-limit, cancellation, restart, accessibility, debug-state,
+and zero-production-boundary fixtures remain live. Explicit user interaction
+approval is still required after this destination-first revision and before
+Phase B begins.
 
 Production: Pi sidecar, secure authentication, local corpus, source overlays,
 web/retrieval/data tools, restricted AI Python, canonical task proposals,
