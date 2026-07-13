@@ -44,8 +44,9 @@ struct TutorialNotebookPrototypeView: View {
                 Text(tutorial?.title ?? "Tutorial notebook")
                     .workbenchFont(.title3, weight: .semibold)
                 Text(learnerNotebook?.displayPath ?? "notebooks/TW Hya First Look.md")
-                    .workbenchFont(.caption, design: .monospaced)
-                    .foregroundStyle(.secondary)
+                    .workbenchFont(.caption, weight: .semibold, design: .monospaced)
+                    .foregroundStyle(Color(nsColor: .labelColor))
+                    .accessibilityIdentifier("tutorialPrototype.notebook.path")
             }
 
             Spacer()
@@ -90,7 +91,11 @@ struct TutorialNotebookPrototypeView: View {
 
             Text(learnerNotebook?.isDirty == true ? "Edited" : "Saved")
                 .workbenchFont(.caption, weight: .semibold)
-                .foregroundStyle(learnerNotebook?.isDirty == true ? .orange : .secondary)
+                .foregroundStyle(
+                    learnerNotebook?.isDirty == true
+                        ? Color.orange
+                        : Color(nsColor: .labelColor)
+                )
                 .accessibilityIdentifier("notebook.dirtyState")
                 .accessibilityValue(learnerNotebook?.isDirty == true ? "dirty" : "saved")
         }
@@ -286,8 +291,11 @@ struct TutorialNotebookPrototypeView: View {
                         Text(dataset.name)
                             .workbenchFont(.subheadline, weight: .semibold)
                         Text(dataset.destination)
-                            .workbenchFont(.caption, design: .monospaced)
-                            .foregroundStyle(.primary)
+                            .workbenchFont(.caption, weight: .semibold, design: .monospaced)
+                            .foregroundStyle(Color(nsColor: .labelColor))
+                            .accessibilityIdentifier(
+                                "tutorialPrototype.dataset.destination.\(dataset.id)"
+                            )
                     }
                     Spacer()
                     Text(dataset.phase.label)

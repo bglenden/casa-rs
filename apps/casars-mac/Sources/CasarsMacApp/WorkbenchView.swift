@@ -213,9 +213,10 @@ struct LeftDockView: View {
                 }
 
                 Text(store.state.project.rootPath)
-                    .workbenchFont(.caption)
-                    .foregroundStyle(.primary)
+                    .workbenchFont(.caption, weight: .semibold)
+                    .foregroundStyle(Color(nsColor: .labelColor))
                     .lineLimit(1)
+                    .accessibilityIdentifier("project.rootPath")
 
                 Text(projectSourceLabel)
                     .workbenchFont(.caption2, weight: .semibold)

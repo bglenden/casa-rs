@@ -750,12 +750,13 @@ final class CasarsMacUITests: XCTestCase {
             "Assistant sidecar did not become ready to send"
         )
         try clickIdentified("assistant.send")
+        let pinToNotebook = app.links["Pin to notebook"].firstMatch
         XCTAssertTrue(
-            app.buttons["Pin to notebook"].firstMatch.waitForExistence(timeout: 15),
+            pinToNotebook.waitForExistence(timeout: 15),
             app.debugDescription
         )
 
-        app.buttons["Pin to notebook"].firstMatch.click()
+        pinToNotebook.click()
         XCTAssertTrue(element("assistant.pin.confirm").waitForExistence(timeout: 5))
         try clickIdentified("assistant.pin.confirm")
         XCTAssertTrue(element("assistant.openNotebookSuggestions").waitForExistence(timeout: 5))
