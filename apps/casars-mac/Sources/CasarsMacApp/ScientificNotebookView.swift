@@ -55,16 +55,18 @@ struct ScientificNotebookView: View {
                                 .padding(.bottom, 20)
                         }
 
+                        notebookDocument(notebook)
+
                         if let ai = store.state.prototypeAI,
                            ai.messages.contains(where: { $0.role == .assistant })
                         {
                             aiSuggestionSection(ai)
                                 .id("notebook.aiSuggestions.anchor")
-                                .padding(.bottom, 28)
+                                .padding(.top, 28)
                         }
 
-                        notebookDocument(notebook)
-                            .padding(.bottom, 80)
+                        Color.clear
+                            .frame(height: 80)
                     }
                     .padding(.horizontal, 44)
                     .padding(.top, 30)

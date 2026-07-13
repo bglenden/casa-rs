@@ -1047,7 +1047,7 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertFalse(try require("aiPrototype.message.ai-assistant-1.pin").isEnabled)
 
         try clickIdentified("aiPrototype.openNotebookSuggestions")
-        XCTAssertTrue(try require("notebook.aiSuggestions").exists)
+        XCTAssertTrue(try require("notebook.aiSuggestions").isHittable)
 
         try clickIdentified("notebook.aiProposal.proposal-task.review")
         try clickIdentified("notebook.aiProposal.proposal-task.openTask")

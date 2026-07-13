@@ -301,8 +301,10 @@ the conversation. Chat shows only a compact status/link such as **Suggestions
 are in Analysis.md**. Pending notes, Python cells, plots, and parameter blocks
 appear at their intended notebook location and are reviewed there. The link
 retains a stable destination block or proposal identifier and switches to the
-notebook before scrolling and focusing that exact insertion; task
-parameters open directly in the normal task tab with AI-suggested non-defaults
+notebook before scrolling and focusing that exact insertion. By default, a new
+suggestion is appended at the notebook's chronological tail; an explicit
+user-selected insertion target may override that default. Task parameters open
+directly in the normal task tab with AI-suggested non-defaults
 visibly marked; downloads use the acquisition surface. Detailed diffs, code,
 parameters, commands, and logs stay collapsed until **Review** at that
 destination. Insertion, execution, download, and file-write authority remain
@@ -514,12 +516,13 @@ The compact header identifies the attached notebook and the zero-production-
 call boundary. Subscription and model selectors sit below the composer, with
 Return-to-send and Shift-Return-for-newline behavior. A bounded in-drawer
 context panel lists every open tab plus the standing radio astronomy corpus,
-project papers, CASA-RS
-source, and CASA-RS task/parameter/data-type semantics, while separately
+project papers, CASA-RS source, and CASA-RS task/parameter/data-type semantics,
+while separately
 showing the selected provider-egress payload. Suggested prompts only fill the
 composer. Answers use claim-local citations and source previews. Chat links to
 pending suggestions in `Analysis.md` and focuses their stable notebook
-destination; review and Apply/Discard controls live in the notebook, while task
+destination at the chronological end of the document by default; review and
+Apply/Discard controls live in the notebook, while task
 suggestions open the normal Imager tab with the
 non-default parameter marked. Pinning previews the notebook representation and
 location before confirmation. The right-anchored drawer uses stable global
