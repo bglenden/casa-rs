@@ -24,6 +24,19 @@ package enum PrototypeAIActivityState: String, Codable, Equatable {
     case restartRequired = "restart-required"
 }
 
+package enum PrototypeAIChatPresentation: String, Codable, Equatable {
+    case closed
+    case drawer
+    case tab
+}
+
+package struct PrototypeAIWorkspaceSource: Identifiable, Codable, Equatable {
+    package let id: String
+    package var label: String
+    package var detail: String
+    package var openTab: Bool
+}
+
 package struct PrototypeAIProvider: Identifiable, Codable, Equatable {
     package let id: String
     package var label: String
@@ -104,6 +117,11 @@ package struct PrototypeAIProposal: Identifiable, Codable, Equatable {
 package struct PrototypeAIChatProjection: Codable, Equatable {
     package var prototypeKind: WorkbenchPrototypeKind = .ai
     package var scenario: AIChatPrototypeScenario
+    package var presentation: PrototypeAIChatPresentation
+    package var primaryAttachment: String
+    package var draft: String
+    package var suggestedPrompts: [String]
+    package var workspaceSources: [PrototypeAIWorkspaceSource]
     package var providers: [PrototypeAIProvider]
     package var selectedProviderID: String
     package var selectedModel: String
@@ -118,6 +136,10 @@ package struct PrototypeAIChatProjection: Codable, Equatable {
     package var pinnedMessageCount: Int
     package var insertedPlotCount: Int
     package var productionBoundaryCalls: Int
+
+    package var openTabSources: [PrototypeAIWorkspaceSource] {
+        workspaceSources.filter(\.openTab)
+    }
 
     package var selectedProvider: PrototypeAIProvider? {
         providers.first { $0.id == selectedProviderID }
@@ -141,6 +163,14 @@ package struct PrototypeAIChatProjection: Codable, Equatable {
     package mutating func toggleContext(_ id: String) {
         guard let index = contexts.firstIndex(where: { $0.id == id }) else { return }
         contexts[index].selected.toggle()
+    }
+
+    package mutating func setPresentation(_ presentation: PrototypeAIChatPresentation) {
+        self.presentation = presentation
+    }
+
+    package mutating func setDraft(_ draft: String) {
+        self.draft = draft
     }
 
     package mutating func beginIndexing() -> Int {
@@ -312,6 +342,25 @@ package enum PrototypeAIChatFixtureAdapter {
     package static func make(scenario: AIChatPrototypeScenario) -> PrototypeAIChatProjection {
         PrototypeAIChatProjection(
             scenario: scenario,
+            presentation: .closed,
+            primaryAttachment: "notebooks/Analysis.md",
+            draft: "",
+            suggestedPrompts: [
+                "Compare the current plot with the TW Hya paper.",
+                "Explain how the open Imager task parameters affect this result.",
+                "How does CASA-RS represent this MeasurementSet on disk?",
+            ],
+            workspaceSources: [
+                PrototypeAIWorkspaceSource(id: "tab-notebook", label: "default.md", detail: "Complete notebook, current section, and selection", openTab: true),
+                PrototypeAIWorkspaceSource(id: "tab-task", label: "Imager task", detail: "Schema, current values, and non-default parameters", openTab: true),
+                PrototypeAIWorkspaceSource(id: "tab-explorer", label: "TW Hya explorer", detail: "Selected dataset, plot configuration, and bounded preview", openTab: true),
+                PrototypeAIWorkspaceSource(id: "tab-python", label: "Python output 17", detail: "Cell source, environment identity, result, and figure", openTab: true),
+                PrototypeAIWorkspaceSource(id: "tab-history", label: "Processing history", detail: "Receipts, products, statuses, and diagnostics", openTab: true),
+                PrototypeAIWorkspaceSource(id: "corpus-radio", label: "Radio astronomy corpus", detail: "4,812 fixture documents with page/section retrieval", openTab: false),
+                PrototypeAIWorkspaceSource(id: "corpus-project", label: "Project papers", detail: "2 copied papers plus notebook references", openTab: false),
+                PrototypeAIWorkspaceSource(id: "source-casars", label: "CASA-RS source", detail: "Release source plus live-checkout overlay at fixture commit 597da3f", openTab: false),
+                PrototypeAIWorkspaceSource(id: "schema-casars", label: "CASA-RS semantics", detail: "Tasks, parameters, tables, MeasurementSets, images, coordinates, and measures", openTab: false),
+            ],
             providers: [
                 PrototypeAIProvider(id: "fixture-openai", label: "OpenAI subscription", models: ["GPT-5", "GPT-5 mini"]),
                 PrototypeAIProvider(id: "fixture-zen", label: "OpenCode Zen", models: ["Qwen3 Coder", "GLM-4.5"]),
@@ -325,11 +374,8 @@ package enum PrototypeAIChatFixtureAdapter {
                 PrototypeAIContext(id: "plot", label: "Current plot", detail: "Downsampled plot summary and preview", selected: false, egressSummary: "1 bounded plot summary; arrays excluded"),
             ],
             corpusState: scenario == .offline ? .offline : .ready,
-            responseState: .completed,
-            messages: [
-                PrototypeAIMessage(id: "ai-user-initial", role: .user, text: "What does the continuum plot suggest, and how is it implemented?", providerLabel: nil, modelLabel: nil, citations: [], usedContextIDs: [], pinned: false),
-                PrototypeAIMessage(id: "ai-assistant-initial", role: .assistant, text: "The compact emission is consistent with a nearly face-on disk. The plot is built from Rust-owned MeasurementSet series and projected to the native GUI.", providerLabel: "OpenAI subscription", modelLabel: "GPT-5", citations: answerCitations, usedContextIDs: ["project", "paper", "source"], pinned: false),
-            ],
+            responseState: .idle,
+            messages: [],
             proposals: proposalFixtures(),
             generation: 0,
             activePrompt: nil,

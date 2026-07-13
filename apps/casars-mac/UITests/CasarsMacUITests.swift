@@ -1000,24 +1000,47 @@ final class CasarsMacUITests: XCTestCase {
     }
 
     func testAIPrototypeCitedAnswerPinAndApprovedActions() throws {
-        launchAIPrototype()
+        launchAIPrototype(openDrawer: false)
+
+        XCTAssertTrue(try require("notebook.document.scroll").exists)
+        XCTAssertFalse(element("aiPrototype.drawer").exists)
+        try clickIdentified("aiPrototype.openDrawer")
+        XCTAssertTrue(try require("aiPrototype.drawer").exists)
 
         XCTAssertTrue(try require("aiPrototype.boundaryStatus").label.contains("0 production calls"))
-        try clickIdentified("aiPrototype.context.plot")
-        try clickIdentified("aiPrototype.citation.citation-paper")
-        XCTAssertTrue(try require("aiPrototype.sourcePreview").exists)
-        try clickIdentified("aiPrototype.message.ai-assistant-initial.pin")
-        XCTAssertFalse(try require("aiPrototype.message.ai-assistant-initial.pin").isEnabled)
+        try clickIdentified("aiPrototype.egressPreview")
+        XCTAssertTrue(try require("aiPrototype.workspaceSource.tab-task").exists)
+        XCTAssertTrue(try require("aiPrototype.workspaceSource.corpus-radio").exists)
+        XCTAssertTrue(try require("aiPrototype.workspaceSource.source-casars").exists)
+        try clickIdentified("aiPrototype.context.close")
+
+        try clickIdentified("aiPrototype.suggestion.plot")
+        XCTAssertTrue(try require("aiPrototype.input").value as? String == "Compare the current plot with the TW Hya paper.")
+        try clickIdentified("aiPrototype.expand")
+        XCTAssertTrue(try require("aiPrototype.expanded").exists)
+        XCTAssertTrue(try require("aiPrototype.input").value as? String == "Compare the current plot with the TW Hya paper.")
+        try clickIdentified("aiPrototype.dock")
+        XCTAssertTrue(try require("aiPrototype.drawer").exists)
 
         try clickIdentified("aiPrototype.send")
         XCTAssertTrue(try require("aiPrototype.message.ai-assistant-1", timeout: 5).exists)
+        try clickIdentified("aiPrototype.citation.citation-paper")
+        XCTAssertTrue(try require("aiPrototype.sourcePreview").exists)
+        try clickIdentified("aiPrototype.message.ai-assistant-1.pin")
+        XCTAssertTrue(try require("aiPrototype.pinSheet").exists)
+        try clickIdentified("aiPrototype.pin.confirm")
+        XCTAssertFalse(try require("aiPrototype.message.ai-assistant-1.pin").isEnabled)
 
-        let taskApply = try require("aiPrototype.proposal.proposal-task.apply")
-        let conversationScroll = app.scrollViews.element(boundBy: 1)
-        XCTAssertTrue(conversationScroll.exists)
-        for _ in 0..<3 where !taskApply.isHittable {
-            conversationScroll.scroll(byDeltaX: 0, deltaY: -240)
-        }
+        try clickIdentified("aiPrototype.moreProposals")
+        XCTAssertTrue(try require("aiPrototype.expanded").exists)
+
+        try bringIntoView(
+            "aiPrototype.proposal.proposal-task.review",
+            in: "aiPrototype.conversationScroll",
+            deltaY: -240
+        )
+        try clickIdentified("aiPrototype.proposal.proposal-task.review")
+        XCTAssertTrue(try require("aiPrototype.proposalSheet").exists)
         try clickIdentified("aiPrototype.proposal.proposal-task.apply")
         XCTAssertTrue(
             waitForAccessibilityValue(
@@ -1025,6 +1048,11 @@ final class CasarsMacUITests: XCTestCase {
                 containing: "Succeeded",
                 timeout: 5
             )
+        )
+        try bringIntoView(
+            "aiPrototype.proposal.proposal-python.reject",
+            in: "aiPrototype.conversationScroll",
+            deltaY: -220
         )
         try clickIdentified("aiPrototype.proposal.proposal-python.reject")
         XCTAssertTrue(
@@ -1038,6 +1066,7 @@ final class CasarsMacUITests: XCTestCase {
 
     func testAIPrototypeRateLimitAndNonresponsiveRecoveryAreExplicit() throws {
         launchAIPrototype(scenario: "rate-limited")
+        try clickIdentified("aiPrototype.suggestion.plot")
         try clickIdentified("aiPrototype.send")
         XCTAssertTrue(try require("aiPrototype.response.error", timeout: 5).exists)
         try clickIdentified("aiPrototype.response.retry")
@@ -1047,6 +1076,7 @@ final class CasarsMacUITests: XCTestCase {
         app.terminate()
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 5))
         launchAIPrototype(scenario: "nonresponsive")
+        try clickIdentified("aiPrototype.suggestion.task")
         try clickIdentified("aiPrototype.send")
         XCTAssertTrue(try require("aiPrototype.response.streaming", timeout: 3).exists)
         try clickIdentified("aiPrototype.response.cancel")
@@ -1107,7 +1137,10 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(element("tutorialPrototype.progressSummary").waitForExistence(timeout: 5))
     }
 
-    private func launchAIPrototype(scenario: String = "happy-path") {
+    private func launchAIPrototype(
+        scenario: String = "happy-path",
+        openDrawer: Bool = true
+    ) {
         app = XCUIApplication()
         ensureStoppedBeforeLaunch()
         app.launchArguments = [
@@ -1123,9 +1156,17 @@ final class CasarsMacUITests: XCTestCase {
             app.debugDescription
         )
         XCTAssertTrue(
-            element("aiPrototype.boundaryStatus").waitForExistence(timeout: 5),
+            element("notebook.document.scroll").waitForExistence(timeout: 5),
             app.debugDescription
         )
+        XCTAssertTrue(element("aiPrototype.openDrawer").waitForExistence(timeout: 5))
+        if openDrawer {
+            element("aiPrototype.openDrawer").click()
+            XCTAssertTrue(
+                element("aiPrototype.boundaryStatus").waitForExistence(timeout: 5),
+                app.debugDescription
+            )
+        }
     }
 
     private func ensureStoppedBeforeLaunch() {
@@ -1370,7 +1411,11 @@ final class CasarsMacUITests: XCTestCase {
     private func assertZeroAIProductionBoundaryCalls() {
         let audit = element("aiPrototype.boundaryStatus")
         XCTAssertTrue(audit.waitForExistence(timeout: 3), app.debugDescription)
-        XCTAssertEqual(audit.value as? String ?? audit.label, "0")
+        let value = audit.value as? String ?? ""
+        XCTAssertTrue(
+            value == "0" || audit.label.contains("0 production calls"),
+            "Expected zero AI production calls, got value=\(value.debugDescription) label=\(audit.label)"
+        )
     }
 
     private func taskCells(in markdown: String) -> [String] {

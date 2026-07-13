@@ -9566,7 +9566,7 @@ struct AIChatPanel: View {
 
     var body: some View {
         if store.isAIPrototypeRuntime {
-            AIChatPrototypeView(store: store)
+            AIChatPrototypeView(store: store, layout: .expanded)
         } else {
             legacyFixturePanel
         }

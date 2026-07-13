@@ -107,6 +107,19 @@ struct ScientificNotebookView: View {
 
             Spacer()
 
+            if store.isAIPrototypeRuntime {
+                Button {
+                    store.openAIPrototypeDrawer()
+                } label: {
+                    Label(
+                        store.state.prototypeAI?.presentation == .drawer ? "AI open" : "Discuss",
+                        systemImage: "sparkles"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("aiPrototype.openDrawer")
+            }
+
             Picker("View", selection: Binding(
                 get: { notebook.viewMode },
                 set: { mode in

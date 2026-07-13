@@ -1145,7 +1145,7 @@ public final class WorkbenchStore: ObservableObject {
     ) -> WorkbenchState {
         var state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
         state.project = ProjectFixture(
-            name: "TW Hya Assistant Review",
+            name: "TW Hya Reduction",
             rootPath: "/PrototypeProjects/tw-hya-assistant",
             datasets: [
                 DatasetSummary(
@@ -1162,17 +1162,34 @@ public final class WorkbenchStore: ObservableObject {
             source: .fixture
         )
         state.selectedDatasetID = "prototype-twhya-ms"
+        state.prototypeNotebook = PrototypeScientificNotebookFixtureAdapter.make(scenario: .primary)
         state.prototypeAI = PrototypeAIChatFixtureAdapter.make(scenario: scenario)
-        state.leftDockCollapsed = true
+        state.dockMode = .notebooks
+        state.leftDockCollapsed = false
         state.inspectorCollapsed = true
         state.tabs = [
             WorkbenchTab(
-                id: "tab-ai-prototype",
-                title: "AI · TW Hya discussion",
-                kind: .aiChat
-            )
+                id: "tab-scientific-notebook",
+                title: state.prototypeNotebook?.filename ?? "default.md",
+                kind: .notebook
+            ),
+            WorkbenchTab(
+                id: "tab-ai-context-task",
+                title: "Imager",
+                kind: .task,
+                datasetID: "prototype-twhya-ms",
+                taskID: "imager"
+            ),
+            WorkbenchTab(
+                id: "tab-ai-context-explorer",
+                title: "MS: TW Hya",
+                kind: .datasetExplorer,
+                datasetID: "prototype-twhya-ms"
+            ),
+            WorkbenchTab(id: "tab-ai-context-python", title: "Python", kind: .python),
+            WorkbenchTab(id: "tab-ai-context-history", title: "History", kind: .history),
         ]
-        state.activeTabID = "tab-ai-prototype"
+        state.activeTabID = "tab-scientific-notebook"
         return state
     }
 
@@ -2230,6 +2247,13 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
 
+        if runtimeKind == .aiPrototype, tabID == "tab-ai-prototype",
+           var projection = state.prototypeAI
+        {
+            projection.setPresentation(.closed)
+            state.prototypeAI = projection
+        }
+
         let closingSessionKeys = state.parameterSessions.keys.filter { $0.hasPrefix("\(tabID)::") }
         for sessionKey in closingSessionKeys {
             sessionLastWrites[sessionKey]?.cancel()
@@ -2327,11 +2351,7 @@ public final class WorkbenchStore: ObservableObject {
             openTab(WorkbenchTab(id: "tab-plot-samples", title: "Plot Samples", kind: .plotSamples))
         case .aiChat:
             if state.isAIPrototype {
-                openTab(WorkbenchTab(
-                    id: "tab-ai-prototype",
-                    title: "AI · TW Hya discussion",
-                    kind: .aiChat
-                ))
+                expandAIPrototypeConversation()
                 return
             }
             guard !rejectPrototypeProductionAction("AI chat") else { return }
@@ -3639,6 +3659,54 @@ public final class WorkbenchStore: ObservableObject {
         state.prototypeAI = projection
     }
 
+    package func setAIPrototypeDraft(_ draft: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.setDraft(draft)
+        state.prototypeAI = projection
+    }
+
+    package func openAIPrototypeDrawer() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.setPresentation(.drawer)
+        state.prototypeAI = projection
+        if state.activeTabID == "tab-ai-prototype" {
+            state.activeTabID = state.tabs.first { $0.kind == .notebook }?.id
+                ?? state.tabs.first?.id
+                ?? ""
+        }
+        state.tabs.removeAll { $0.id == "tab-ai-prototype" }
+    }
+
+    package func closeAIPrototypeConversation() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.setPresentation(.closed)
+        state.prototypeAI = projection
+        if state.activeTabID == "tab-ai-prototype" {
+            state.activeTabID = state.tabs.first { $0.kind == .notebook }?.id
+                ?? state.tabs.first?.id
+                ?? ""
+        }
+        state.tabs.removeAll { $0.id == "tab-ai-prototype" }
+    }
+
+    package func expandAIPrototypeConversation() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.setPresentation(.tab)
+        state.prototypeAI = projection
+        if !state.tabs.contains(where: { $0.id == "tab-ai-prototype" }) {
+            state.tabs.append(WorkbenchTab(
+                id: "tab-ai-prototype",
+                title: "AI · TW Hya discussion",
+                kind: .aiChat
+            ))
+        }
+        state.activeTabID = "tab-ai-prototype"
+    }
+
+    package func dockAIPrototypeConversation() {
+        openAIPrototypeDrawer()
+    }
+
     package func selectAIPrototypeModel(_ model: String) {
         guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
         projection.selectModel(model)
@@ -3674,6 +3742,7 @@ public final class WorkbenchStore: ObservableObject {
         guard runtimeKind == .aiPrototype, var projection = state.prototypeAI,
               let generation = projection.beginResponse(prompt: prompt)
         else { return }
+        projection.setDraft("")
         state.prototypeAI = projection
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self, self.runtimeKind == .aiPrototype,

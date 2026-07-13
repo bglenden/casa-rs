@@ -493,17 +493,21 @@ full-width action-heavy layout and predetermined-question workaround were not
 accepted. That presentation is superseded interaction evidence and must not
 unlock Phase B.
 
-The revised Phase A prototype must begin from a full-width notebook with no AI
-pane, open a conventional free-form chat in a collapsible contextual drawer,
-and expand or dock the same fixture conversation into or from a central AI tab.
-It must preserve draft, scroll, context, and proposal state across that
-transition; show a compact attachment/context/egress summary; use claim-local
-citations and source previews; keep proposal detail collapsed until review;
-and support explicit pinning into the notebook. Suggested prompts may fill the
-composer but never create or submit predetermined messages. Existing failure,
-cancellation, retry, restart, accessibility, debug-state, and zero-production-
-boundary coverage remains required. Explicit interaction approval is still
-outstanding after this material redesign.
+The revised `casars-mac --show-prototype ai` Phase A prototype now begins from
+a full-width notebook with no AI pane. **AI open** reveals a conventional
+free-form chat in a resizable contextual drawer; the same fixture conversation
+expands into a central AI tab and docks back without losing its draft or state.
+The compact header identifies the attached notebook, provider/model, and the
+zero-production-call boundary. A bounded in-drawer context panel lists every
+open tab plus the standing radio astronomy corpus, project papers, CASA-RS
+source, and CASA-RS task/parameter/data-type semantics, while separately
+showing the selected provider-egress payload. Suggested prompts only fill the
+composer. Answers use claim-local citations and source previews; proposals stay
+compact until explicit review; pinning previews the notebook representation and
+location before confirmation. Deterministic rate-limit, cancellation, restart,
+accessibility, debug-state, and zero-production-boundary fixtures remain live.
+The two focused AI XCUITests passed together on 2026-07-12; explicit user
+interaction approval is still required before Phase B begins.
 
 Production: Pi sidecar, secure authentication, local corpus, source overlays,
 web/retrieval/data tools, restricted AI Python, canonical task proposals,

@@ -3002,6 +3002,11 @@ package struct DebugTutorialProjectSnapshot: Codable, Equatable {
 
 package struct DebugPrototypeAIChatSnapshot: Codable, Equatable {
     package var scenario: AIChatPrototypeScenario
+    package var presentation: PrototypeAIChatPresentation
+    package var primaryAttachment: String
+    package var draft: String
+    package var workspaceSourceIDs: [String]
+    package var openTabSourceIDs: [String]
     package var provider: String
     package var model: String
     package var corpusState: PrototypeAIActivityState
@@ -3015,6 +3020,11 @@ package struct DebugPrototypeAIChatSnapshot: Codable, Equatable {
 
     package init(state: PrototypeAIChatProjection) {
         scenario = state.scenario
+        presentation = state.presentation
+        primaryAttachment = state.primaryAttachment
+        draft = state.draft
+        workspaceSourceIDs = state.workspaceSources.map(\.id)
+        openTabSourceIDs = state.openTabSources.map(\.id)
         provider = state.selectedProvider?.label ?? state.selectedProviderID
         model = state.selectedModel
         corpusState = state.corpusState

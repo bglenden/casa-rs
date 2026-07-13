@@ -18,6 +18,7 @@ struct WorkbenchView: View {
     var initialMeasurementSetExplorerMode: MeasurementSetExplorerMode = .summary
     @State private var leftDockWidth: CGFloat = 250
     @State private var inspectorWidth: CGFloat = 250
+    @State private var aiDrawerWidth: CGFloat = 400
 
     var body: some View {
         HStack(spacing: 0) {
@@ -40,7 +41,18 @@ struct WorkbenchView: View {
                 initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
             )
                 .frame(minWidth: 560)
+
+            if store.isAIPrototypeRuntime,
+               store.state.prototypeAI?.presentation == .drawer
+            {
+                HorizontalResizeHandle(width: $aiDrawerWidth, range: 340...520)
+
+                AIChatPrototypeView(store: store, layout: .drawer)
+                    .frame(width: aiDrawerWidth)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
         }
+        .animation(.easeInOut(duration: 0.18), value: store.state.prototypeAI?.presentation)
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {

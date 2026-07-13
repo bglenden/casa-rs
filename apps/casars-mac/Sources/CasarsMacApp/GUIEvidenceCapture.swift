@@ -336,6 +336,7 @@ private enum GUIEvidenceCaptureRenderer {
         request: GUIEvidenceCaptureRequest,
         store: WorkbenchStore
     ) throws {
+        store.openAIPrototypeDrawer()
         let view = WorkbenchView(store: store)
             .environment(\.workbenchFontSize, WorkbenchState.defaultInterfaceFontSize)
             .preferredColorScheme(.dark)

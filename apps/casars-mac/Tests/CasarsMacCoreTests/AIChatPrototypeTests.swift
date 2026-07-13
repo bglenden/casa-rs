@@ -10,8 +10,37 @@ final class AIChatPrototypeTests: XCTestCase {
         XCTAssertEqual(projection.providers.map(\.id), ["fixture-openai", "fixture-zen"])
         XCTAssertEqual(Set(projection.providers.map { $0.models.isEmpty }), [false])
         XCTAssertEqual(projection.proposals.map(\.kind), PrototypeAIProposalKind.allCases)
+        XCTAssertEqual(projection.presentation, .closed)
+        XCTAssertEqual(store.state.activeTabID, "tab-scientific-notebook")
+        XCTAssertEqual(projection.openTabSources.count, 5)
+        XCTAssertTrue(projection.workspaceSources.contains { $0.id == "corpus-radio" })
+        XCTAssertTrue(projection.workspaceSources.contains { $0.id == "source-casars" })
         XCTAssertEqual(store.prototypeProductionBoundaryInvocationCount, 0)
         XCTAssertEqual(projection.productionBoundaryCalls, 0)
+    }
+
+    func testDrawerAndExpandedTabShareDraftAndConversationState() throws {
+        let store = WorkbenchStore.aiPrototype()
+        store.setAIPrototypeDraft("Explain the current Imager parameters")
+        store.openAIPrototypeDrawer()
+        XCTAssertEqual(store.state.prototypeAI?.presentation, .drawer)
+        XCTAssertFalse(store.state.tabs.contains { $0.id == "tab-ai-prototype" })
+
+        store.expandAIPrototypeConversation()
+        XCTAssertEqual(store.state.prototypeAI?.presentation, .tab)
+        XCTAssertEqual(store.state.activeTabID, "tab-ai-prototype")
+        XCTAssertEqual(store.state.prototypeAI?.draft, "Explain the current Imager parameters")
+
+        store.dockAIPrototypeConversation()
+        XCTAssertEqual(store.state.prototypeAI?.presentation, .drawer)
+        XCTAssertEqual(store.state.activeTabID, "tab-scientific-notebook")
+        XCTAssertEqual(store.state.prototypeAI?.draft, "Explain the current Imager parameters")
+
+        store.closeAIPrototypeConversation()
+        XCTAssertEqual(store.state.prototypeAI?.presentation, .closed)
+        XCTAssertEqual(store.state.prototypeAI?.draft, "Explain the current Imager parameters")
+        XCTAssertTrue(store.state.prototypeAI?.messages.isEmpty == true)
+        XCTAssertEqual(store.prototypeProductionBoundaryInvocationCount, 0)
     }
 
     func testProviderContextAndEgressSelectionRemainExplicit() throws {
@@ -35,7 +64,7 @@ final class AIChatPrototypeTests: XCTestCase {
         let firstGeneration = try XCTUnwrap(projection.beginResponse(prompt: "Explain the plot"))
         projection.completeResponse(generation: firstGeneration)
         XCTAssertEqual(projection.responseState, .rateLimited)
-        XCTAssertEqual(projection.messages.count, 3)
+        XCTAssertEqual(projection.messages.count, 1)
 
         let prompt = try XCTUnwrap(projection.activePrompt)
         projection.restartResponse()
@@ -79,13 +108,19 @@ final class AIChatPrototypeTests: XCTestCase {
 
     func testDebugSnapshotExposesPrototypeReviewState() throws {
         let store = WorkbenchStore.aiPrototype()
-        store.pinAIPrototypeMessage("ai-assistant-initial")
+        store.setAIPrototypeDraft("Explain the open tabs")
+        store.openAIPrototypeDrawer()
         store.rejectAIPrototypeProposal("proposal-note")
 
         let debug = try XCTUnwrap(store.debugSnapshot().prototypeAI)
         XCTAssertEqual(debug.scenario, .primary)
+        XCTAssertEqual(debug.presentation, .drawer)
+        XCTAssertEqual(debug.primaryAttachment, "notebooks/Analysis.md")
+        XCTAssertEqual(debug.draft, "Explain the open tabs")
+        XCTAssertEqual(debug.openTabSourceIDs.count, 5)
+        XCTAssertTrue(debug.workspaceSourceIDs.contains("schema-casars"))
         XCTAssertEqual(debug.provider, "OpenAI subscription")
-        XCTAssertEqual(debug.pinnedMessageCount, 1)
+        XCTAssertEqual(debug.pinnedMessageCount, 0)
         XCTAssertEqual(debug.proposalStates["proposal-note"], .rejected)
         XCTAssertEqual(debug.productionBoundaryCalls, 0)
     }
