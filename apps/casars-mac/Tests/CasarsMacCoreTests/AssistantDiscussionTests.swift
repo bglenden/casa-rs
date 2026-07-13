@@ -3,14 +3,171 @@ import Foundation
 import XCTest
 
 final class AssistantDiscussionTests: XCTestCase {
+    func testProviderEgressNeverSerializesDeselectedHostContext() throws {
+        let visible = AssistantContextItemState(
+            id: "visible",
+            kind: "notebook",
+            label: "Visible",
+            summary: "selected",
+            excerpt: "selected excerpt",
+            providerVisible: true,
+            untrustedEvidence: true
+        )
+        let hidden = AssistantContextItemState(
+            id: "hidden",
+            kind: "source",
+            label: "Hidden",
+            summary: "local only",
+            excerpt: "must not cross stdin",
+            providerVisible: false,
+            untrustedEvidence: true
+        )
+
+        let egress = AssistantEgressState.providerBound(
+            provider: "fixture",
+            model: "fixture-v1",
+            destination: "fixture",
+            contexts: [visible, hidden]
+        )
+        let encoded = String(decoding: try JSONEncoder().encode(egress), as: UTF8.self)
+
+        XCTAssertEqual(egress.items.map(\.id), ["visible"])
+        XCTAssertEqual(egress.estimatedBytes, visible.byteCount)
+        XCTAssertFalse(encoded.contains("must not cross stdin"))
+    }
+
+    func testProviderEgressAppliesOneUnicodeSafeGlobalBudget() {
+        let contexts = (0..<6).map { index in
+            AssistantContextItemState(
+                id: "context-\(index)",
+                kind: "notebook",
+                label: "Context \(index)",
+                summary: "selected",
+                excerpt: String(repeating: "🔭science", count: 4_000),
+                providerVisible: true,
+                untrustedEvidence: true
+            )
+        }
+
+        let egress = AssistantEgressState.providerBound(
+            provider: "fixture",
+            model: "fixture-v1",
+            destination: "fixture",
+            contexts: contexts
+        )
+
+        XCTAssertLessThanOrEqual(egress.estimatedBytes, 65_536)
+        XCTAssertEqual(egress.estimatedBytes, UInt64(egress.items.reduce(0) { $0 + $1.excerpt.utf8.count }))
+        XCTAssertTrue(egress.items.allSatisfy { String(data: Data($0.excerpt.utf8), encoding: .utf8) != nil })
+        XCTAssertTrue(egress.items.allSatisfy { $0.contentSha256.count == 64 })
+    }
+
+    func testProviderTranscriptProjectionExcludesHostOnlyReceiptsAndContext() throws {
+        let message = AssistantMessageState(
+            id: "message-1",
+            role: "assistant",
+            content: "Visible answer",
+            createdAt: 1,
+            provider: "fixture",
+            model: "fixture-v1",
+            citations: [AssistantCitationState(
+                id: "citation",
+                kind: "source",
+                label: "Private source",
+                locator: "line 1",
+                excerpt: "host-only citation excerpt",
+                sourcePath: "source.rs",
+                page: nil,
+                section: nil,
+                lineStart: 1,
+                lineEnd: 2,
+                release: nil,
+                commit: nil
+            )],
+            egress: AssistantEgressState.providerBound(
+                provider: "fixture",
+                model: "fixture-v1",
+                destination: "fixture",
+                contexts: []
+            ),
+            proposals: [],
+            pins: []
+        )
+
+        let encoded = String(
+            decoding: try JSONEncoder().encode(AssistantProviderMessageState(message: message)),
+            as: UTF8.self
+        )
+
+        XCTAssertTrue(encoded.contains("Visible answer"))
+        XCTAssertFalse(encoded.contains("host-only citation excerpt"))
+        XCTAssertFalse(encoded.contains("citations"))
+        XCTAssertFalse(encoded.contains("egress"))
+        XCTAssertFalse(encoded.contains("proposals"))
+        XCTAssertFalse(encoded.contains("pins"))
+    }
+
+    func testProviderTranscriptProjectionKeepsNewestMessagesWithinGlobalBudget() {
+        let messages = (0..<140).map { index in
+            AssistantMessageState(
+                id: "message-\(index)",
+                role: index.isMultiple(of: 2) ? "user" : "assistant",
+                content: "\(index):" + String(repeating: "🔭", count: 4_000),
+                createdAt: UInt64(index),
+                provider: nil,
+                model: nil,
+                citations: [],
+                egress: nil,
+                proposals: [],
+                pins: []
+            )
+        }
+
+        let projection = AssistantProviderMessageState.providerBound(messages)
+        XCTAssertLessThanOrEqual(projection.count, 128)
+        XCTAssertEqual(projection.last?.id, "message-139")
+        XCTAssertFalse(projection.contains { $0.id == "message-0" })
+        XCTAssertLessThanOrEqual(projection.reduce(0) { $0 + $1.content.utf8.count }, 262_144)
+        XCTAssertTrue(projection.allSatisfy { String(data: Data($0.content.utf8), encoding: .utf8) != nil })
+    }
+
     func testWebResearchRejectsLocalAndCredentialBearingURLsBeforeNetwork() {
         XCTAssertFalse(AssistantWebResearchClient.isPublicHTTPS(URL(string: "http://example.com")!))
         XCTAssertFalse(AssistantWebResearchClient.isPublicHTTPS(URL(string: "https://localhost/data")!))
         XCTAssertFalse(AssistantWebResearchClient.isPublicHTTPS(URL(string: "https://127.0.0.1/data")!))
         XCTAssertFalse(AssistantWebResearchClient.isPublicHTTPS(URL(string: "https://user:secret@example.com")!))
+        XCTAssertTrue(AssistantWebResearchClient.isPublicIPAddress("8.8.8.8"))
+        XCTAssertTrue(AssistantWebResearchClient.isPublicIPAddress("2001:4860:4860::8888"))
+        XCTAssertFalse(AssistantWebResearchClient.isPublicIPAddress("127.0.0.1"))
+        XCTAssertFalse(AssistantWebResearchClient.isPublicIPAddress("192.168.1.4"))
+        XCTAssertFalse(AssistantWebResearchClient.isPublicIPAddress("100.64.0.1"))
+        XCTAssertFalse(AssistantWebResearchClient.isPublicIPAddress("fc00::1"))
+        XCTAssertFalse(AssistantWebResearchClient.isPublicIPAddress("::ffff:127.0.0.1"))
+        XCTAssertFalse(AssistantWebResearchClient.isPublicIPAddress("2001:db8::1"))
         XCTAssertThrowsError(try AssistantApprovedDownloadClient().download(
             URL(string: "https://127.0.0.1/private")!,
             isCancelled: { false }
+        ))
+    }
+
+    func testAssistantProjectWritesRejectTraversalAndSymlinkAncestors() throws {
+        let project = try temporaryProject()
+        let outside = try temporaryProject()
+        let safe = try WorkbenchStore.assistantProjectDestination(
+            projectRoot: project.path,
+            relativePath: "documents/paper.pdf"
+        )
+        XCTAssertEqual(safe.path, project.appendingPathComponent("documents/paper.pdf").path)
+        XCTAssertThrowsError(try WorkbenchStore.assistantProjectDestination(
+            projectRoot: project.path,
+            relativePath: "../outside.txt"
+        ))
+
+        let link = project.appendingPathComponent("linked", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        XCTAssertThrowsError(try WorkbenchStore.assistantProjectDestination(
+            projectRoot: project.path,
+            relativePath: "linked/escaped.txt"
         ))
     }
 
@@ -206,9 +363,13 @@ final class AssistantDiscussionTests: XCTestCase {
         }
         let complete = expectation(description: "live provider response")
         let ready = expectation(description: "live sidecar ready")
+        var response = ""
         let sidecar = AssistantSidecar(configuration: try .discover())
         sidecar.onEvent { event in
-            if event["event"] as? String == "turn_complete" { complete.fulfill() }
+            if event["event"] as? String == "turn_complete" {
+                response = (event["message"] as? [String: Any])?["content"] as? String ?? ""
+                complete.fulfill()
+            }
             if event["event"] as? String == "error" { XCTFail("live smoke failed: \(event)") }
         }
         sidecar.prepare { result in
@@ -239,6 +400,10 @@ final class AssistantDiscussionTests: XCTestCase {
             "credential": try JSONSerialization.jsonObject(with: JSONEncoder().encode(credential)),
         ])
         wait(for: [complete], timeout: 90)
+        XCTAssertEqual(
+            response.trimmingCharacters(in: .whitespacesAndNewlines),
+            "CASA-RS assistant live smoke OK"
+        )
         sidecar.terminate()
     }
 
@@ -265,6 +430,8 @@ final class AssistantDiscussionTests: XCTestCase {
             .write(to: source.appendingPathComponent("ARCHITECTURE.md"), atomically: true, encoding: .utf8)
         try "MeasurementSet source semantics."
             .write(to: source.appendingPathComponent("docs/source.md"), atomically: true, encoding: .utf8)
+        try #"{"schema_version":1,"release":"0.24.1","commit":"abc123"}"#
+            .write(to: source.appendingPathComponent("casars-source.json"), atomically: true, encoding: .utf8)
         addTeardownBlock { try? FileManager.default.removeItem(at: source) }
 
         let result = AssistantCorpusIngestor().collect(
@@ -277,12 +444,33 @@ final class AssistantDiscussionTests: XCTestCase {
         })
         XCTAssertFalse(result.documents.contains { $0.content.contains("must not enter the corpus") })
         XCTAssertTrue(result.documents.contains {
-            $0.layer == "release_source" && $0.sourceIdentity == "ARCHITECTURE.md"
+            $0.layer == "release_source"
+                && $0.sourceIdentity == "ARCHITECTURE.md"
+                && $0.citation.release == "0.24.1"
+                && $0.citation.commit == "abc123"
         })
         XCTAssertEqual(
             result.documents.filter { $0.layer == "baseline" }.allSatisfy(\.redistributionCleared),
             true
         )
+    }
+
+    func testCorpusIngestorRejectsSymlinkedProjectDocumentRoot() throws {
+        let project = try temporaryProject()
+        let outside = try temporaryProject()
+        try "must remain outside".write(
+            to: outside.appendingPathComponent("paper.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.createSymbolicLink(
+            at: project.appendingPathComponent("documents"),
+            withDestinationURL: outside
+        )
+
+        let result = AssistantCorpusIngestor().collect(projectRoot: project.path, environment: [:])
+        XCTAssertFalse(result.documents.contains { $0.content.contains("must remain outside") })
+        XCTAssertTrue(result.diagnostics.contains { $0.contains("symbolic-link or invalid corpus root") })
     }
 
     private func temporaryProject() throws -> URL {

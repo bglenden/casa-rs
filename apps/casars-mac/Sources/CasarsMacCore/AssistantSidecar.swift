@@ -243,10 +243,20 @@ package final class AssistantSidecar {
         stdin = input.fileHandleForWriting
         readQueue.async { [weak self] in self?.readProtocol(stdout.fileHandleForReading) }
         readQueue.async { [weak self] in
-            let data = stderr.fileHandleForReading.readDataToEndOfFile()
+            let handle = stderr.fileHandleForReading
+            var data = Data()
+            var truncated = false
+            while true {
+                let chunk = handle.availableData
+                if chunk.isEmpty { break }
+                let remaining = max(0, 1_048_576 - data.count)
+                if remaining > 0 { data.append(chunk.prefix(remaining)) }
+                if chunk.count > remaining { truncated = true }
+            }
             guard !data.isEmpty else { return }
             self?.publishFailure(AssistantSidecarError.protocolFailure(
                 String(decoding: data, as: UTF8.self)
+                    + (truncated ? "\n[sidecar stderr truncated]" : "")
             ))
         }
         try write([
@@ -281,14 +291,29 @@ package final class AssistantSidecar {
     }
 
     private func readProtocol(_ handle: FileHandle) {
+        let maximumLineBytes = 1_048_576
         var buffer = Data()
         while true {
             let data = handle.availableData
             if data.isEmpty { break }
             buffer.append(data)
+            if buffer.count > maximumLineBytes, !buffer.contains(0x0A) {
+                publishFailure(AssistantSidecarError.protocolFailure(
+                    "sidecar protocol line exceeded \(maximumLineBytes) bytes"
+                ))
+                restart()
+                return
+            }
             while let newline = buffer.firstIndex(of: 0x0A) {
                 let line = buffer[..<newline]
                 buffer.removeSubrange(...newline)
+                guard line.count <= maximumLineBytes else {
+                    publishFailure(AssistantSidecarError.protocolFailure(
+                        "sidecar protocol line exceeded \(maximumLineBytes) bytes"
+                    ))
+                    restart()
+                    return
+                }
                 handleProtocolLine(Data(line))
             }
         }
@@ -371,19 +396,32 @@ package final class AssistantSidecar {
     private func profile(node: URL, adapterRoot: URL, runtime: URL) -> String {
         let readableRoots = Self.nodeRuntimeReadRoots(node) + [
             adapterRoot,
+            runtime,
             URL(fileURLWithPath: "/System/Library", isDirectory: true),
             URL(fileURLWithPath: "/usr/lib", isDirectory: true),
         ]
         let readableRules = readableRoots.map { root in
-            "(allow file-read-data (subpath \"\(seatbeltLiteral(root.path))\"))"
+            let path = seatbeltLiteral(root.path)
+            return """
+            (allow file-read-data (subpath "\(path)"))
+            (allow file-read-metadata (subpath "\(path)"))
+            """
         }.joined(separator: "\n")
+        let traversalRules = readableRoots
+            .flatMap(Self.metadataTraversalPaths)
+            .map(seatbeltLiteral)
+            .map { "(allow file-read-metadata (literal \"\($0)\"))" }
+            .joined(separator: "\n")
         return """
         (version 1)
         (deny default)
         (allow process-exec (literal "\(seatbeltLiteral(node.path))"))
         (allow signal (target self))
-        (allow file-read-metadata)
-        (allow file-read-data (literal "/"))
+        \(traversalRules)
+        (allow file-read-metadata (literal "/dev"))
+        (allow file-read-metadata (literal "/dev/null"))
+        (allow file-read-metadata (literal "/dev/random"))
+        (allow file-read-metadata (literal "/dev/urandom"))
         (allow file-read-data (literal "/dev/null"))
         (allow file-read-data (literal "/dev/random"))
         (allow file-read-data (literal "/dev/urandom"))
@@ -418,6 +456,17 @@ package final class AssistantSidecar {
         }
         var seen: Set<String> = []
         return roots.filter { seen.insert($0.path).inserted }
+    }
+
+    private static func metadataTraversalPaths(for url: URL) -> [String] {
+        var current = url.standardizedFileURL
+        var paths: [String] = []
+        while true {
+            paths.append(current.path)
+            guard current.path != "/" else { break }
+            current.deleteLastPathComponent()
+        }
+        return paths
     }
 
     private static func linkedLibraries(of binary: URL) -> [URL] {

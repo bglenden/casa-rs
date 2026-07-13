@@ -4,6 +4,20 @@ import Darwin
 import Foundation
 import Security
 
+private func assistantUTF8Prefix(_ value: String, maximumBytes: Int) -> String {
+    guard value.utf8.count > maximumBytes else { return value }
+    var byteCount = 0
+    var end = value.startIndex
+    while end < value.endIndex {
+        let next = value.index(after: end)
+        let bytes = value[end..<next].utf8.count
+        guard byteCount + bytes <= maximumBytes else { break }
+        byteCount += bytes
+        end = next
+    }
+    return String(value[..<end])
+}
+
 package enum AssistantDiscussionPresentation: String, Codable, Equatable {
     case closed
     case drawer
@@ -105,6 +119,52 @@ package struct AssistantEgressState: Codable, Equatable {
     package var destination: String
     package var items: [AssistantContextItemState]
     package var estimatedBytes: UInt64
+
+    package static func providerBound(
+        provider: String,
+        model: String,
+        destination: String,
+        contexts: [AssistantContextItemState]
+    ) -> Self {
+        let items = boundedProviderItems(contexts)
+        return Self(
+            provider: provider,
+            model: model,
+            destination: destination,
+            items: items,
+            estimatedBytes: items.reduce(0) { $0 + $1.byteCount }
+        )
+    }
+
+    /// Applies one host-owned budget before context crosses the provider
+    /// boundary. The per-item floor preserves a useful excerpt when many tabs
+    /// are open, while the ceiling prevents one surface from consuming the
+    /// whole turn budget.
+    package static func boundedProviderItems(
+        _ contexts: [AssistantContextItemState],
+        maximumBytes: Int = 65_536
+    ) -> [AssistantContextItemState] {
+        let visible = contexts.filter(\.providerVisible)
+        guard !visible.isEmpty, maximumBytes > 0 else { return [] }
+        let perItem = min(16_384, max(512, maximumBytes / visible.count))
+        var remaining = maximumBytes
+        return visible.compactMap { item in
+            guard remaining > 0 else { return nil }
+            let budget = min(perItem, remaining)
+            let excerpt = assistantUTF8Prefix(item.excerpt, maximumBytes: budget)
+            remaining -= excerpt.utf8.count
+            return AssistantContextItemState(
+                id: item.id,
+                kind: item.kind,
+                label: item.label,
+                summary: item.summary,
+                excerpt: excerpt,
+                providerVisible: true,
+                untrustedEvidence: item.untrustedEvidence
+            )
+        }
+    }
+
 }
 
 package struct AssistantApprovalState: Codable, Equatable {
@@ -180,6 +240,44 @@ package struct AssistantMessageState: Codable, Equatable, Identifiable {
     package var egress: AssistantEgressState?
     package var proposals: [AssistantProposalState]
     package var pins: [AssistantPinState]
+}
+
+/// Minimal visible transcript projection allowed to cross into the untrusted
+/// provider sidecar. Durable receipts, context manifests, proposals, and pins
+/// remain host-only.
+package struct AssistantProviderMessageState: Encodable, Equatable {
+    package var id: String
+    package var role: String
+    package var content: String
+    package var createdAt: UInt64
+    package var provider: String?
+    package var model: String?
+
+    package init(message: AssistantMessageState) {
+        id = message.id
+        role = message.role
+        content = message.content
+        createdAt = message.createdAt
+        provider = message.provider
+        model = message.model
+    }
+
+    package static func providerBound(
+        _ messages: [AssistantMessageState],
+        maximumBytes: Int = 262_144,
+        maximumMessages: Int = 128
+    ) -> [Self] {
+        var remaining = maximumBytes
+        var projected: [Self] = []
+        for message in messages.suffix(maximumMessages).reversed() {
+            guard remaining > 0 else { break }
+            var item = Self(message: message)
+            item.content = assistantUTF8Prefix(message.content, maximumBytes: min(65_536, remaining))
+            remaining -= item.content.utf8.count
+            projected.append(item)
+        }
+        return Array(projected.reversed())
+    }
 }
 
 package struct AssistantConversationState: Codable, Equatable, Identifiable {

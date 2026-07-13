@@ -3,6 +3,66 @@ import XCTest
 @testable import CasarsMacCore
 
 final class WorkbenchStoreTests: XCTestCase {
+    func testAssistantContextsUseEachTaskTabSessionAndPreserveEgressSelection() throws {
+        let parameters = RecordingSurfaceParameterClient()
+        let bundle = try parameters.loadBundle(surfaceID: "imager")
+        let snapshot = try parameters.defaults(surfaceID: "imager")
+        var first = SurfaceParameterSession(
+            bundle: bundle,
+            snapshot: snapshot,
+            selectedSource: .defaults,
+            baseProfileTOML: nil,
+            baseProfilePath: nil,
+            workspace: "/project"
+        )
+        var second = first
+        first.draftText["robust"] = "0.25"
+        second.draftText["robust"] = "-1.0"
+
+        var discussion = AssistantDiscussionState()
+        discussion.contexts = [
+            AssistantContextItemState(
+                id: "tab:task-a",
+                kind: "task",
+                label: "First",
+                summary: "previous",
+                excerpt: "previous",
+                providerVisible: false,
+                untrustedEvidence: true
+            ),
+            AssistantContextItemState(
+                id: "tab:task-b",
+                kind: "task",
+                label: "Second",
+                summary: "previous",
+                excerpt: "previous",
+                providerVisible: true,
+                untrustedEvidence: true
+            ),
+        ]
+        var state = EmptyWorkbench.makeState()
+        state.tabs = [
+            WorkbenchTab(id: "task-a", title: "First", kind: .task, taskID: "imager"),
+            WorkbenchTab(id: "task-b", title: "Second", kind: .task, taskID: "imager"),
+        ]
+        state.parameterSessions = [
+            "task-a::imager": first,
+            "task-b::imager": second,
+        ]
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+
+        store.refreshAssistantDiscussionContexts()
+
+        let contexts = try XCTUnwrap(store.state.assistantDiscussion?.contexts)
+        let firstContext = try XCTUnwrap(contexts.first { $0.id == "tab:task-a" })
+        let secondContext = try XCTUnwrap(contexts.first { $0.id == "tab:task-b" })
+        XCTAssertTrue(firstContext.excerpt.contains("robust = 0.25"))
+        XCTAssertTrue(secondContext.excerpt.contains("robust = -1.0"))
+        XCTAssertFalse(firstContext.providerVisible)
+        XCTAssertTrue(secondContext.providerVisible)
+    }
+
     func testLocalTWHyaMeasurementSetPlotTimingDiagnostic() throws {
         guard ProcessInfo.processInfo.environment["CASA_RS_RUN_LOCAL_TIMING"] == "1" else {
             throw XCTSkip("Set CASA_RS_RUN_LOCAL_TIMING=1 to run local TW Hya plot timing diagnostics.")

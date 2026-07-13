@@ -840,6 +840,9 @@ public final class WorkbenchStore: ObservableObject {
     private var activeAssistantRequestID: String?
     private var assistantCitationsByRequest: [String: [AssistantCitationState]] = [:]
     private var assistantProposalsByRequest: [String: [AssistantProposalState]] = [:]
+    private var assistantInitialEgressByRequest: [String: AssistantEgressState] = [:]
+    private var assistantConversationIDByRequest: [String: String] = [:]
+    private var assistantAuthenticationRequests: [String: String] = [:]
     private var assistantDynamicContextsByRequest: [String: [AssistantContextItemState]] = [:]
     private var assistantActionCancellations: [String: AssistantActionCancellation] = [:]
     private var assistantDraftSaveWorkItem: DispatchWorkItem?
@@ -3719,7 +3722,13 @@ public final class WorkbenchStore: ObservableObject {
             if !conversations.contains(where: { $0.id == discussion.activeConversationID }) {
                 discussion.activeConversationID = conversations.last?.id
             }
-            discussion.contexts = assistantOpenTabContexts()
+            if let conversation = discussion.activeConversation {
+                discussion.contexts = assistantOpenTabContexts(
+                    selectedContextIDs: conversation.selectedContextIds
+                )
+            } else {
+                discussion.contexts = assistantOpenTabContexts()
+            }
             discussion.corpusStatus = "Corpus refresh pending"
             state.assistantDiscussion = discussion
             rebuildAssistantSuggestedTaskSources(conversations)
@@ -3759,7 +3768,9 @@ public final class WorkbenchStore: ObservableObject {
         if state.assistantDiscussion == nil { loadAssistantDiscussions() }
         guard var discussion = state.assistantDiscussion else { return }
         discussion.presentation = presentation
-        discussion.contexts = assistantOpenTabContexts()
+        discussion.contexts = assistantOpenTabContexts(
+            preservingSelectionFrom: discussion.contexts
+        )
         discussion.lastError = nil
         state.assistantDiscussion = discussion
         if presentation == .tab {
@@ -3863,9 +3874,12 @@ public final class WorkbenchStore: ObservableObject {
 
     package func selectAssistantConversation(_ id: String) {
         guard var discussion = state.assistantDiscussion,
-              discussion.conversations.contains(where: { $0.id == id })
+              let conversation = discussion.conversations.first(where: { $0.id == id })
         else { return }
         discussion.activeConversationID = id
+        discussion.contexts = assistantOpenTabContexts(
+            selectedContextIDs: conversation.selectedContextIds
+        )
         discussion.lastError = nil
         state.assistantDiscussion = discussion
     }
@@ -3877,12 +3891,19 @@ public final class WorkbenchStore: ObservableObject {
         else { return }
         do {
             let attachment = assistantPrimaryAttachment()
-            let conversation = try assistantPersistenceClient.createConversation(
+            var conversation = try assistantPersistenceClient.createConversation(
                 projectRoot: state.project.rootPath,
                 title: "Project discussion",
                 attachment: attachment,
                 provider: provider.id,
                 model: model.id
+            )
+            conversation.selectedContextIds = discussion.contexts
+                .filter(\.providerVisible)
+                .map(\.id)
+            try assistantPersistenceClient.saveConversation(
+                projectRoot: state.project.rootPath,
+                transcript: conversation
             )
             discussion.conversations.append(conversation)
             discussion.activeConversationID = conversation.id
@@ -3930,6 +3951,14 @@ public final class WorkbenchStore: ObservableObject {
         }
         state.assistantDiscussion = discussion
         persistActiveAssistantConversation()
+    }
+
+    package func refreshAssistantDiscussionContexts() {
+        guard var discussion = state.assistantDiscussion else { return }
+        discussion.contexts = assistantOpenTabContexts(
+            preservingSelectionFrom: discussion.contexts
+        )
+        state.assistantDiscussion = discussion
     }
 
     package func assistantPinPreview(
@@ -4113,6 +4142,9 @@ public final class WorkbenchStore: ObservableObject {
             approved.state = "running"
             replaceAssistantProposal(approved)
             persistActiveAssistantConversation()
+            if let handle = beginAssistantProposalRecording(approved) {
+                notebookAttemptHandles[proposalID] = handle
+            }
             let projectRoot = state.project.rootPath
             let cancellation = AssistantActionCancellation()
             assistantActionCancellations[proposalID] = cancellation
@@ -4147,23 +4179,20 @@ public final class WorkbenchStore: ObservableObject {
                 guard let source = proposal.execution.exactSource else {
                     throw AssistantProposalHostError.invalidPayload("Python source")
                 }
-                let readRoots = proposal.execution.inputPaths.map { path -> String in
-                    let url = path.hasPrefix("/")
-                        ? URL(fileURLWithPath: path)
-                        : URL(fileURLWithPath: projectRoot).appendingPathComponent(path)
-                    var isDirectory: ObjCBool = false
-                    if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-                       !isDirectory.boolValue
-                    {
-                        return url.deletingLastPathComponent().path
-                    }
-                    return url.path
-                }
                 let worker = SeatbeltAIWorker(configuration: AIWorkerConfiguration(
                     pythonExecutable: proposal.execution.executable.path,
-                    readableScienceRoots: readRoots,
+                    readableScienceRoots: proposal.execution.inputPaths,
                     stagingRoot: proposal.execution.workingDirectory
                 ))
+                guard try assistantProjectDestination(
+                    projectRoot: projectRoot,
+                    relativePath: ".casa-rs/ai-staging/\(Self.assistantSHA256(Data(source.utf8)).prefix(16))"
+                ).path == proposal.execution.workingDirectory,
+                    proposal.execution.inputPaths.allSatisfy({ input in
+                        URL(fileURLWithPath: input).standardizedFileURL
+                            .resolvingSymlinksInPath().path == input
+                    })
+                else { throw AIWorkerError.approvalInvalidated }
                 let result = try worker.execute(
                     exactSource: source,
                     approval: AIWorkerApproval(exactSource: source),
@@ -4175,10 +4204,18 @@ public final class WorkbenchStore: ObservableObject {
                     proposal: proposal,
                     stdout: result.stdout
                 )
-                finishAssistantProposal(proposal.id, outcome: outcome, result:
-                    result.terminationStatus == 0
+                finishAssistantProposal(
+                    proposal.id,
+                    outcome: outcome,
+                    result: result.terminationStatus == 0
                         ? successSummary
-                        : Self.boundedAssistantExcerpt(result.stderr, limit: 8_000))
+                        : Self.boundedAssistantExcerpt(result.stderr, limit: 8_000),
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    products: proposal.execution.outputPaths.filter {
+                        FileManager.default.fileExists(atPath: $0)
+                    }
+                )
             case "download":
                 runApprovedAssistantDownload(
                     proposal,
@@ -4212,13 +4249,12 @@ public final class WorkbenchStore: ObservableObject {
                 result: "Only an exact HTTPS URL and project-relative destination are permitted.")
             return
         }
-        let destination = URL(fileURLWithPath: projectRoot)
-            .appendingPathComponent(destinationText)
-            .standardizedFileURL
-        let projectPrefix = URL(fileURLWithPath: projectRoot).standardizedFileURL.path + "/"
-        guard destination.path.hasPrefix(projectPrefix) else {
+        guard let destination = try? assistantProjectDestination(
+            projectRoot: projectRoot,
+            relativePath: destinationText
+        ), proposal.execution.outputPaths == [destination.path] else {
             finishAssistantProposal(proposal.id, outcome: "failed",
-                result: "Download destination escapes the project root.")
+                result: "Download destination is no longer the exact approved symlink-free project path.")
             return
         }
         do {
@@ -4238,8 +4274,12 @@ public final class WorkbenchStore: ObservableObject {
                 withIntermediateDirectories: true
             )
             try data.write(to: destination, options: .atomic)
-            finishAssistantProposal(proposal.id, outcome: "succeeded",
-                result: "Downloaded \(data.count) bytes to \(destinationText).")
+            finishAssistantProposal(
+                proposal.id,
+                outcome: "succeeded",
+                result: "Downloaded \(data.count) bytes to \(destinationText).",
+                products: [destination.path]
+            )
         } catch {
             finishAssistantProposal(
                 proposal.id,
@@ -4317,7 +4357,14 @@ public final class WorkbenchStore: ObservableObject {
         return lines.isEmpty ? "Completed without textual or file output." : lines.joined(separator: "\n")
     }
 
-    private func finishAssistantProposal(_ id: String, outcome: String, result: String) {
+    private func finishAssistantProposal(
+        _ id: String,
+        outcome: String,
+        result: String,
+        stdout: String = "",
+        stderr: String = "",
+        products: [String] = []
+    ) {
         DispatchQueue.main.async { [weak self] in
             guard let self, var proposal = self.assistantProposal(id: id) else { return }
             proposal.state = outcome
@@ -4325,6 +4372,118 @@ public final class WorkbenchStore: ObservableObject {
             self.assistantActionCancellations.removeValue(forKey: id)
             self.replaceAssistantProposal(proposal)
             self.persistActiveAssistantConversation()
+            self.finalizeAssistantProposalRecording(
+                proposal: proposal,
+                outcome: outcome,
+                result: result,
+                stdout: stdout,
+                stderr: stderr,
+                products: products
+            )
+        }
+    }
+
+    private func beginAssistantProposalRecording(
+        _ proposal: AssistantProposalState
+    ) -> NotebookAttemptHandle? {
+        guard state.hasProject else { return nil }
+        let executionInput: NotebookExecutionInput?
+        if ["python", "plot"].contains(proposal.kind),
+           let source = proposal.execution.exactSource
+        {
+            let executable = proposal.execution.executable
+            executionInput = NotebookExecutionInput(
+                kind: "python",
+                details: NotebookPythonExecutionInput(
+                    source: source,
+                    sourceSHA256: Self.assistantSHA256(Data(source.utf8)),
+                    authority: "ai_worker",
+                    inputReferences: proposal.execution.inputPaths,
+                    environment: NotebookPythonEnvironmentIdentity.make(
+                        environmentID: "ai-worker:\(executable.sha256)",
+                        interpreter: executable.path,
+                        implementation: "python",
+                        version: executable.version,
+                        casaRsVersion: nil,
+                        packages: [:]
+                    )
+                )
+            )
+        } else {
+            executionInput = nil
+        }
+        let resolvedParameters = proposal.execution.canonicalParameters.objectValue
+            ?? ["proposal": proposal.execution.canonicalParameters]
+        let cellID = Self.assistantCellID(in: proposal.insertion.exactContent)
+        let approvals = [proposal.insertionApproval, proposal.approval].compactMap { approval in
+            approval.map {
+                NotebookApprovalRecord(
+                    kind: "assistant_exact_approval",
+                    actor: $0.authority,
+                    timestamp: $0.approvedAt,
+                    contentHash: $0.proposalSha256
+                )
+            }
+        }
+        do {
+            let result = try notebookPersistenceClient.beginRecording(request: NotebookBeginRecordingRequest(
+                projectRoot: state.project.rootPath,
+                policy: "record",
+                request: NotebookRecordingRequest(
+                    initiatingSurface: "macos_gui_assistant",
+                    operationId: proposal.execution.operationType,
+                    notebookId: proposal.insertion.destination.identifier,
+                    cellId: cellID,
+                    taskIntent: nil,
+                    executionInput: executionInput,
+                    providerContractVersion: 1,
+                    resolvedParameters: resolvedParameters,
+                    runSafety: NotebookRunSafetyRecord(
+                        classification: "approved_ai_\(proposal.kind)",
+                        affectedPaths: proposal.execution.outputPaths
+                    ),
+                    approvals: approvals
+                )
+            ))
+            if let warning = result.warning { presentNotebookRecordingWarning(warning) }
+            return result.handle
+        } catch {
+            presentNotebookRecordingWarning("could not start assistant action: \(error)")
+            return nil
+        }
+    }
+
+    private func finalizeAssistantProposalRecording(
+        proposal: AssistantProposalState,
+        outcome: String,
+        result: String,
+        stdout: String,
+        stderr: String,
+        products: [String]
+    ) {
+        guard let handle = notebookAttemptHandles.removeValue(forKey: proposal.id) else { return }
+        let diagnostics = outcome == "succeeded" ? [] : [result]
+        do {
+            try notebookPersistenceClient.finalizeRecording(request: NotebookFinalizeRecordingRequest(
+                projectRoot: state.project.rootPath,
+                handle: handle,
+                finalization: NotebookReceiptFinalization(
+                    status: outcome,
+                    finishedAt: Self.unixMilliseconds(),
+                    affectedPaths: proposal.execution.outputPaths,
+                    products: products.map {
+                        NotebookReceiptArtifact(role: "product", path: $0, mediaType: nil)
+                    },
+                    artifacts: [],
+                    diagnostics: diagnostics,
+                    stdout: Array(stdout.utf8),
+                    stderr: Array(stderr.utf8),
+                    casaLog: nil
+                )
+            ))
+            loadScientificNotebooks()
+        } catch {
+            presentNotebookRecordingWarning("could not finalize assistant action: \(error)")
         }
     }
 
@@ -4333,9 +4492,11 @@ public final class WorkbenchStore: ObservableObject {
         discussion.activity = .authenticating
         discussion.lastError = nil
         state.assistantDiscussion = discussion
+        let requestID = "auth-\(UUID().uuidString)"
+        assistantAuthenticationRequests[requestID] = providerID
         assistantSidecar?.send([
             "command": "authenticate",
-            "request_id": "auth-\(UUID().uuidString)",
+            "request_id": requestID,
             "provider": providerID,
         ])
     }
@@ -4345,6 +4506,10 @@ public final class WorkbenchStore: ObservableObject {
         promptID: String,
         value: String
     ) {
+        guard assistantAuthenticationRequests[requestID] != nil else {
+            recordAssistantError("Rejected an authentication response outside the active login request")
+            return
+        }
         assistantSidecar?.send([
             "command": "authentication_response",
             "request_id": requestID,
@@ -4359,6 +4524,12 @@ public final class WorkbenchStore: ObservableObject {
 
     package func dismissAssistantAuthenticationPrompt() {
         guard var discussion = state.assistantDiscussion else { return }
+        if let requestID = discussion.pendingAuthenticationPrompt?.requestID {
+            assistantSidecar?.send([
+                "command": "cancel_authentication",
+                "request_id": requestID,
+            ])
+        }
         discussion.pendingAuthenticationPrompt = nil
         state.assistantDiscussion = discussion
     }
@@ -4399,14 +4570,11 @@ public final class WorkbenchStore: ObservableObject {
         discussion.streamingText = ""
         discussion.lastError = nil
         let conversation = discussion.conversations[conversationIndex]
-        let egress = AssistantEgressState(
+        let egress = AssistantEgressState.providerBound(
             provider: conversation.provider,
             model: conversation.model,
             destination: assistantProviderDestination(conversation.provider),
-            items: discussion.contexts,
-            estimatedBytes: discussion.contexts.filter(\.providerVisible).reduce(0) {
-                $0 + $1.byteCount
-            }
+            contexts: discussion.contexts
         )
         state.assistantDiscussion = discussion
         assistantDraftSaveWorkItem?.cancel()
@@ -4415,6 +4583,8 @@ public final class WorkbenchStore: ObservableObject {
         activeAssistantRequestID = requestID
         assistantCitationsByRequest[requestID] = []
         assistantProposalsByRequest[requestID] = []
+        assistantInitialEgressByRequest[requestID] = egress
+        assistantConversationIDByRequest[requestID] = conversation.id
         assistantDynamicContextsByRequest[requestID] = []
         do {
             var command: [String: Any] = [
@@ -4423,7 +4593,9 @@ public final class WorkbenchStore: ObservableObject {
                 "conversation_id": conversation.id,
                 "provider": conversation.provider,
                 "model": conversation.model,
-                "messages": try assistantJSONObject(conversation.messages),
+                "messages": try assistantJSONObject(
+                    AssistantProviderMessageState.providerBound(conversation.messages)
+                ),
                 "egress": try assistantJSONObject(egress),
                 "tools": assistantToolDefinitions(),
             ]
@@ -4487,44 +4659,77 @@ public final class WorkbenchStore: ObservableObject {
         case "catalog":
             handleAssistantCatalog(event)
         case "authentication_url":
-            guard var discussion = state.assistantDiscussion else { return }
-            discussion.pendingAuthenticationURL = event["url"] as? String
-            discussion.pendingAuthenticationInstructions = event["instructions"] as? String
+            guard let requestID = event["request_id"] as? String,
+                  assistantAuthenticationRequests[requestID] != nil,
+                  var discussion = state.assistantDiscussion
+            else { return }
+            discussion.pendingAuthenticationURL = (event["url"] as? String).flatMap { value in
+                guard let url = URL(string: value), url.scheme?.lowercased() == "https" else { return nil }
+                return Self.boundedAssistantExcerpt(value, limit: 4_096)
+            }
+            discussion.pendingAuthenticationInstructions = (event["instructions"] as? String).map {
+                Self.boundedAssistantExcerpt($0, limit: 8_192)
+            }
             state.assistantDiscussion = discussion
         case "authentication_prompt":
             guard var discussion = state.assistantDiscussion,
                   let requestID = event["request_id"] as? String,
+                  assistantAuthenticationRequests[requestID] != nil,
                   let promptID = event["prompt_id"] as? String,
                   let message = event["message"] as? String
             else { return }
             discussion.pendingAuthenticationPrompt = AssistantAuthenticationPromptState(
                 requestID: requestID,
                 promptID: promptID,
-                message: message,
+                message: Self.boundedAssistantExcerpt(message, limit: 8_192),
                 secret: event["secret"] as? Bool ?? false
             )
             state.assistantDiscussion = discussion
         case "authentication_complete", "credential_updated":
             handleAssistantCredential(event)
+        case "authentication_cancelled":
+            guard let requestID = event["request_id"] as? String,
+                  assistantAuthenticationRequests.removeValue(forKey: requestID) != nil,
+                  var discussion = state.assistantDiscussion
+            else { return }
+            discussion.activity = .ready
+            discussion.pendingAuthenticationURL = nil
+            discussion.pendingAuthenticationInstructions = nil
+            discussion.pendingAuthenticationPrompt = nil
+            state.assistantDiscussion = discussion
         case "turn_started":
             break
         case "text_delta":
-            guard var discussion = state.assistantDiscussion else { return }
-            discussion.streamingText += event["delta"] as? String ?? ""
+            guard event["request_id"] as? String == activeAssistantRequestID,
+                  var discussion = state.assistantDiscussion else { return }
+            discussion.streamingText = Self.boundedAssistantExcerpt(
+                discussion.streamingText + (event["delta"] as? String ?? ""),
+                limit: 262_144
+            )
             state.assistantDiscussion = discussion
         case "tool_call":
             handleAssistantToolCall(event)
         case "turn_complete":
             handleAssistantTurnComplete(event)
         case "cancelled":
-            guard var discussion = state.assistantDiscussion else { return }
+            guard let requestID = event["request_id"] as? String,
+                  requestID == activeAssistantRequestID,
+                  var discussion = state.assistantDiscussion else { return }
             discussion.activity = .cancelled
             discussion.streamingText = ""
             state.assistantDiscussion = discussion
+            assistantCitationsByRequest.removeValue(forKey: requestID)
+            assistantProposalsByRequest.removeValue(forKey: requestID)
+            assistantInitialEgressByRequest.removeValue(forKey: requestID)
+            assistantConversationIDByRequest.removeValue(forKey: requestID)
+            assistantDynamicContextsByRequest.removeValue(forKey: requestID)
             activeAssistantRequestID = nil
         case "error":
             let details = event["error"] as? [String: Any]
-            recordAssistantError(details?["message"] as? String ?? "Assistant request failed")
+            recordAssistantError(Self.boundedAssistantExcerpt(
+                details?["message"] as? String ?? "Assistant request failed",
+                limit: 8_192
+            ))
         default:
             break
         }
@@ -4550,13 +4755,23 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func handleAssistantCredential(_ event: [String: Any]) {
-        guard let credentialValue = event["credential"],
+        guard let requestID = event["request_id"] as? String,
+              let credentialValue = event["credential"],
               let data = try? JSONSerialization.data(withJSONObject: credentialValue),
               let credential = try? assistantDecoder().decode(
                   AssistantCredentialLeaseState.self,
                   from: data
               )
         else { return }
+        let turnProvider = assistantConversationIDByRequest[requestID].flatMap { conversationID in
+            state.assistantDiscussion?.conversations.first { $0.id == conversationID }?.provider
+        }
+        let expectedProvider = assistantAuthenticationRequests[requestID] ?? turnProvider
+        guard expectedProvider == credential.provider, credential.secret.utf8.count <= 65_536 else {
+            recordAssistantError("Rejected an unbound or oversized assistant credential update")
+            return
+        }
+        assistantAuthenticationRequests.removeValue(forKey: requestID)
         do {
             try assistantCredentialVault.save(credential)
             guard var discussion = state.assistantDiscussion else { return }
@@ -4574,12 +4789,19 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func handleAssistantToolCall(_ event: [String: Any]) {
+        guard let requestID = event["request_id"] as? String,
+              requestID == activeAssistantRequestID,
+              assistantConversationIDByRequest[requestID] != nil
+        else {
+            recordAssistantError("Rejected an assistant tool call outside the active request")
+            assistantSidecar?.restart()
+            return
+        }
         if let name = event["name"] as? String, name.hasPrefix("proposal.") {
             handleAssistantProposalToolCall(event, name: name)
             return
         }
         guard let name = event["name"] as? String,
-              let requestID = event["request_id"] as? String,
               let callID = event["call_id"] as? String,
               let arguments = event["arguments"] as? [String: Any]
         else {
@@ -4627,9 +4849,11 @@ public final class WorkbenchStore: ObservableObject {
                 })
                 encoded = try assistantJSONObject(hits)
             case "context.open_tabs":
-                encoded = try assistantJSONObject(assistantOpenTabContexts(
-                    preservingSelectionFrom: state.assistantDiscussion?.contexts ?? []
-                ))
+                encoded = try assistantJSONObject(
+                    AssistantEgressState.boundedProviderItems(assistantOpenTabContexts(
+                        preservingSelectionFrom: state.assistantDiscussion?.contexts ?? []
+                    ))
+                )
             case "task.schema":
                 let taskID = arguments["task_id"] as? String ?? state.activeTaskID
                 let schema = try state.taskUISchemas[taskID]
@@ -4637,27 +4861,32 @@ public final class WorkbenchStore: ObservableObject {
                 encoded = try assistantJSONObject(schema)
             case "data.describe":
                 let requested = arguments["dataset_id"] as? String
-                guard let dataset = requested.flatMap({ id in state.project.datasets.first { $0.id == id } })
-                    ?? state.selectedDataset
-                else { throw AssistantProposalHostError.invalidPayload("dataset identity") }
-                encoded = try assistantJSONObject(dataset)
+                let dataset: DatasetSummary?
+                if let requested {
+                    dataset = state.project.datasets.first { $0.id == requested }
+                } else {
+                    dataset = state.selectedDataset
+                }
+                guard let dataset else {
+                    throw AssistantProposalHostError.invalidPayload("dataset identity")
+                }
+                encoded = assistantDatasetDescription(dataset)
             default:
                 throw AssistantProposalHostError.invalidPayload("unknown read-only tool \(name)")
             }
-            if name != "context.open_tabs" {
-                recordAssistantDynamicContext(
-                    requestID: requestID,
-                    name: name,
-                    arguments: arguments,
-                    result: encoded
-                )
-            }
+            let bounded = assistantBoundedToolResult(encoded, requestID: requestID)
+            recordAssistantDynamicContext(
+                requestID: requestID,
+                name: name,
+                arguments: arguments,
+                result: bounded.result
+            )
             assistantSidecar?.send([
                 "command": "tool_result",
                 "request_id": requestID,
                 "call_id": callID,
-                "result": encoded,
-                "is_error": false,
+                "result": bounded.result,
+                "is_error": bounded.isError,
             ])
         } catch {
             sendAssistantToolError(event: event, message: "Read-only tool \(name) failed: \(error)")
@@ -4691,11 +4920,13 @@ public final class WorkbenchStore: ObservableObject {
         }
         assistantActionQueue.async { [weak self] in
             do {
-                let page = try AssistantWebResearchClient().fetch(url)
+                var page = try AssistantWebResearchClient().fetch(url)
+                page.text = Self.boundedAssistantExcerpt(page.text, limit: 48_000)
                 DispatchQueue.main.async {
                     guard let self else { return }
                     do {
                         let encoded = try self.assistantJSONObject(page)
+                        let bounded = self.assistantBoundedToolResult(encoded, requestID: requestID)
                         self.assistantCitationsByRequest[requestID, default: []].append(
                             AssistantCitationState(
                                 id: "web:\(page.contentSha256)",
@@ -4716,14 +4947,14 @@ public final class WorkbenchStore: ObservableObject {
                             requestID: requestID,
                             name: name,
                             arguments: arguments,
-                            result: encoded
+                            result: bounded.result
                         )
                         self.assistantSidecar?.send([
                             "command": "tool_result",
                             "request_id": requestID,
                             "call_id": callID,
-                            "result": encoded,
-                            "is_error": false,
+                            "result": bounded.result,
+                            "is_error": bounded.isError,
                         ])
                     } catch {
                         self.sendAssistantToolError(event: event, message: "Encode web evidence: \(error)")
@@ -4746,7 +4977,7 @@ public final class WorkbenchStore: ObservableObject {
         guard let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
               let argumentData = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys])
         else { return }
-        let excerpt = Self.boundedAssistantExcerpt(String(decoding: data, as: UTF8.self), limit: 64_000)
+        let excerpt = String(decoding: data, as: UTF8.self)
         let argumentText = Self.boundedAssistantExcerpt(String(decoding: argumentData, as: UTF8.self), limit: 4_000)
         assistantDynamicContextsByRequest[requestID, default: []].append(AssistantContextItemState(
             id: "tool:\(requestID):\(assistantDynamicContextsByRequest[requestID, default: []].count)",
@@ -4759,15 +4990,41 @@ public final class WorkbenchStore: ObservableObject {
         ))
     }
 
+    private func assistantBoundedToolResult(
+        _ result: Any,
+        requestID: String,
+        maximumResultBytes: Int = 65_536,
+        maximumTurnBytes: Int = 262_144
+    ) -> (result: Any, isError: Bool) {
+        guard let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) else {
+            return (["error": "Host tool result was not valid JSON."], true)
+        }
+        let used = assistantDynamicContextsByRequest[requestID, default: []]
+            .reduce(0) { $0 + Int($1.byteCount) }
+        guard data.count <= maximumResultBytes, used + data.count <= maximumTurnBytes else {
+            return ([
+                "error": "Host tool result exceeded the bounded provider-egress budget; narrow the request.",
+            ], true)
+        }
+        return (result, false)
+    }
+
     private func sendAssistantToolError(event: [String: Any], message: String) {
         guard let requestID = event["request_id"] as? String,
               let callID = event["call_id"] as? String
         else { return }
+        let result = ["error": message]
+        recordAssistantDynamicContext(
+            requestID: requestID,
+            name: event["name"] as? String ?? "tool.error",
+            arguments: event["arguments"] as? [String: Any] ?? [:],
+            result: result
+        )
         assistantSidecar?.send([
             "command": "tool_result",
             "request_id": requestID,
             "call_id": callID,
-            "result": ["error": message],
+            "result": result,
             "is_error": true,
         ])
     }
@@ -4817,19 +5074,26 @@ public final class WorkbenchStore: ObservableObject {
                     payload: payload,
                     execution: execution,
                     insertion: insertion,
-                    affectedPaths: affectedPaths
+                    affectedPaths: execution.outputPaths.isEmpty ? affectedPaths : execution.outputPaths
                 )
             )
             assistantProposalsByRequest[requestID, default: []].append(proposal)
+            let result: [String: Any] = [
+                "proposal_id": proposal.id,
+                "status": "pending_user_review",
+                "destination": try assistantJSONObject(proposal.insertion.destination),
+            ]
+            recordAssistantDynamicContext(
+                requestID: requestID,
+                name: name,
+                arguments: arguments,
+                result: result
+            )
             assistantSidecar?.send([
                 "command": "tool_result",
                 "request_id": requestID,
                 "call_id": callID,
-                "result": [
-                    "proposal_id": proposal.id,
-                    "status": "pending_user_review",
-                    "destination": try assistantJSONObject(proposal.insertion.destination),
-                ],
+                "result": result,
                 "is_error": false,
             ])
         } catch {
@@ -5043,6 +5307,7 @@ public final class WorkbenchStore: ObservableObject {
         let operationType: String
         var workingDirectory = state.project.rootPath
         var boundOutputPaths = affectedPaths
+        var boundInputPaths = arguments["input_paths"] as? [String] ?? []
         switch kind {
         case "task":
             let taskID = arguments["task_id"] as? String ?? state.activeTaskID
@@ -5064,10 +5329,21 @@ public final class WorkbenchStore: ObservableObject {
             exactSource = arguments["source"] as? String
             operationType = kind == "plot" ? "python.plot" : "python.execute"
             let sourceHash = Self.assistantSHA256(Data((exactSource ?? "").utf8))
-            let staging = URL(fileURLWithPath: state.project.rootPath)
-                .appendingPathComponent(".casa-rs/ai-staging/\(sourceHash.prefix(16))", isDirectory: true)
-                .standardizedFileURL
+            let staging = try assistantProjectDestination(
+                projectRoot: state.project.rootPath,
+                relativePath: ".casa-rs/ai-staging/\(sourceHash.prefix(16))"
+            )
             workingDirectory = staging.path
+            boundInputPaths = try boundInputPaths.map { path in
+                let candidate = path.hasPrefix("/")
+                    ? URL(fileURLWithPath: path)
+                    : URL(fileURLWithPath: state.project.rootPath).appendingPathComponent(path)
+                let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
+                guard FileManager.default.fileExists(atPath: resolved.path) else {
+                    throw AssistantProposalHostError.invalidPayload("input path does not exist")
+                }
+                return resolved.path
+            }
             let requestedOutputs = arguments["output_paths"] as? [String] ?? []
             boundOutputPaths = try requestedOutputs.map { requested in
                 guard !requested.hasPrefix("/") else {
@@ -5083,6 +5359,13 @@ public final class WorkbenchStore: ObservableObject {
             executablePath = try assistantHostExecutable()
             exactSource = arguments["url"] as? String
             operationType = "download.public"
+            guard let destination = arguments["destination"] as? String else {
+                throw AssistantProposalHostError.invalidPayload("download destination")
+            }
+            boundOutputPaths = [try assistantProjectDestination(
+                projectRoot: state.project.rootPath,
+                relativePath: destination
+            ).path]
         case "note":
             executablePath = try assistantHostExecutable()
             exactSource = arguments["markdown"] as? String
@@ -5095,7 +5378,7 @@ public final class WorkbenchStore: ObservableObject {
             operationType: operationType,
             canonicalParameters: canonical,
             exactSource: exactSource,
-            inputPaths: arguments["input_paths"] as? [String] ?? [],
+            inputPaths: boundInputPaths,
             outputPaths: boundOutputPaths,
             workingDirectory: workingDirectory,
             executable: try assistantExecutableIdentity(executablePath)
@@ -5151,26 +5434,40 @@ public final class WorkbenchStore: ObservableObject {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
+    private static func assistantCellID(in content: String) -> String? {
+        guard let range = content.range(
+            of: #"casa-rs-cell:v1 id=([^ ]+)"#,
+            options: .regularExpression
+        ) else { return nil }
+        let marker = String(content[range])
+        guard let separator = marker.firstIndex(of: "=") else { return nil }
+        return String(marker[marker.index(after: separator)...])
+    }
+
     private func handleAssistantTurnComplete(_ event: [String: Any]) {
         guard let requestID = event["request_id"] as? String,
+              let conversationID = assistantConversationIDByRequest.removeValue(forKey: requestID),
               let value = event["message"],
               let data = try? JSONSerialization.data(withJSONObject: value),
               var message = try? assistantDecoder().decode(AssistantMessageState.self, from: data),
               var discussion = state.assistantDiscussion,
               let index = discussion.conversations.firstIndex(where: {
-                  $0.id == discussion.activeConversationID
+                  $0.id == conversationID
               })
         else { return }
         message.citations = assistantCitationsByRequest.removeValue(forKey: requestID) ?? []
         message.proposals = assistantProposalsByRequest.removeValue(forKey: requestID) ?? []
-        let contexts = discussion.contexts
+        message.content = Self.boundedAssistantExcerpt(message.content, limit: 262_144)
+        let initial = assistantInitialEgressByRequest.removeValue(forKey: requestID)
+        let items = (initial?.items ?? [])
             + (assistantDynamicContextsByRequest.removeValue(forKey: requestID) ?? [])
         message.egress = AssistantEgressState(
-            provider: discussion.conversations[index].provider,
-            model: discussion.conversations[index].model,
-            destination: assistantProviderDestination(discussion.conversations[index].provider),
-            items: contexts,
-            estimatedBytes: contexts.filter(\.providerVisible).reduce(0) { $0 + $1.byteCount }
+            provider: initial?.provider ?? discussion.conversations[index].provider,
+            model: initial?.model ?? discussion.conversations[index].model,
+            destination: initial?.destination
+                ?? assistantProviderDestination(discussion.conversations[index].provider),
+            items: items,
+            estimatedBytes: items.reduce(0) { $0 + $1.byteCount }
         )
         discussion.conversations[index].messages.append(message)
         discussion.conversations[index].scrollAnchorMessageId = message.id
@@ -5178,8 +5475,15 @@ public final class WorkbenchStore: ObservableObject {
         discussion.activity = .completed
         discussion.streamingText = ""
         state.assistantDiscussion = discussion
-        activeAssistantRequestID = nil
-        persistActiveAssistantConversation()
+        if activeAssistantRequestID == requestID { activeAssistantRequestID = nil }
+        do {
+            try assistantPersistenceClient.saveConversation(
+                projectRoot: state.project.rootPath,
+                transcript: discussion.conversations[index]
+            )
+        } catch {
+            recordAssistantError("Save assistant conversation: \(error)")
+        }
     }
 
     private func assistantOpenTabContexts(
@@ -5201,17 +5505,15 @@ public final class WorkbenchStore: ObservableObject {
                     untrustedEvidence: true
                 ))
             case .task:
-                let values = state.genericTaskValues[state.activeTaskID] ?? [:]
-                let summary = values.sorted { $0.key < $1.key }
-                    .map { "\($0.key) = \($0.value)" }
-                    .joined(separator: "\n")
+                let taskID = tab.taskID ?? state.activeTaskID
+                let summary = assistantParameterSummary(surfaceID: taskID, instanceID: tab.id)
                 contexts.append(AssistantContextItemState(
                     id: "tab:\(tab.id)",
                     kind: "task",
                     label: tab.title,
-                    summary: "Typed task \(state.activeTaskID) and current values",
+                    summary: "Typed task \(taskID) and current values",
                     excerpt: Self.boundedAssistantExcerpt(
-                        "task = \(state.activeTaskID)\n\(summary)",
+                        "task = \(taskID)\n\(summary)",
                         limit: 24_000
                     ),
                     providerVisible: selection["tab:\(tab.id)"] ?? true,
@@ -5230,6 +5532,8 @@ public final class WorkbenchStore: ObservableObject {
                 spectral windows: \(dataset.spectralWindows.joined(separator: ", "))
                 columns: \(dataset.columns.joined(separator: ", "))
                 shape: \(dataset.shape.map(String.init).joined(separator: " × "))
+                parameters:
+                \(assistantExplorerParameterSummary(tab: tab, dataset: dataset))
                 """
                 contexts.append(AssistantContextItemState(
                     id: "tab:\(tab.id)",
@@ -5278,6 +5582,77 @@ public final class WorkbenchStore: ObservableObject {
             }
         }
         return contexts
+    }
+
+    private func assistantOpenTabContexts(
+        selectedContextIDs: [String]
+    ) -> [AssistantContextItemState] {
+        let selected = Set(selectedContextIDs)
+        return assistantOpenTabContexts().map { context in
+            var context = context
+            context.providerVisible = selected.contains(context.id)
+            return context
+        }
+    }
+
+    private func assistantParameterSummary(surfaceID: String, instanceID: String) -> String {
+        guard let session = parameterSession(surfaceID: surfaceID, instanceID: instanceID) else {
+            return "No typed parameter session is loaded."
+        }
+        var values = session.snapshot.states.compactMapValues { $0.value?.displayText }
+        session.draftText.forEach { values[$0.key] = $0.value }
+        return values.sorted { $0.key < $1.key }
+            .map { "\($0.key) = \($0.value)" }
+            .joined(separator: "\n")
+    }
+
+    private func assistantExplorerParameterSummary(
+        tab: WorkbenchTab,
+        dataset: DatasetSummary
+    ) -> String {
+        let surfaceID: String
+        switch tab.kind {
+        case .tableBrowser:
+            surfaceID = "tablebrowser"
+        case .datasetExplorer where dataset.kind == .measurementSet:
+            surfaceID = "msexplore"
+        case .datasetExplorer where dataset.kind == .imageCube:
+            surfaceID = "imexplore"
+        case .datasetExplorer:
+            surfaceID = "tablebrowser"
+        default:
+            return "No explorer parameter surface."
+        }
+        return assistantParameterSummary(surfaceID: surfaceID, instanceID: tab.id)
+    }
+
+    private func assistantDatasetDescription(_ dataset: DatasetSummary) -> [String: Any] {
+        func bounded(_ values: [String], limit: Int = 128) -> [String] {
+            Array(values.prefix(limit)).map {
+                Self.boundedAssistantExcerpt($0, limit: 1_024)
+            }
+        }
+        return [
+            "id": dataset.id,
+            "name": Self.boundedAssistantExcerpt(dataset.name, limit: 1_024),
+            "project_relative_path": Self.projectRelativePath(
+                dataset.path,
+                projectRoot: state.project.rootPath
+            ),
+            "kind": dataset.kind.rawValue,
+            "size": dataset.size,
+            "size_bytes": dataset.sizeBytes,
+            "units": dataset.units,
+            "shape": dataset.shape,
+            "fields": bounded(dataset.fields),
+            "spectral_windows": bounded(dataset.spectralWindows),
+            "scans": bounded(dataset.scans),
+            "antennas": bounded(dataset.antennas),
+            "correlations": bounded(dataset.correlations),
+            "columns": bounded(dataset.columns),
+            "data_columns": bounded(dataset.dataColumns),
+            "untrusted_evidence": true,
+        ]
     }
 
     private func assistantPrimaryAttachment() -> AssistantAttachmentState {
@@ -5367,7 +5742,65 @@ public final class WorkbenchStore: ObservableObject {
         discussion.lastError = message
         discussion.streamingText = ""
         state.assistantDiscussion = discussion
+        if let requestID = activeAssistantRequestID {
+            assistantCitationsByRequest.removeValue(forKey: requestID)
+            assistantProposalsByRequest.removeValue(forKey: requestID)
+            assistantInitialEgressByRequest.removeValue(forKey: requestID)
+            assistantConversationIDByRequest.removeValue(forKey: requestID)
+            assistantDynamicContextsByRequest.removeValue(forKey: requestID)
+        }
         activeAssistantRequestID = nil
+    }
+
+    /// Resolves a project-owned write destination without allowing an existing
+    /// symbolic-link component to change the location approved by the user.
+    package static func assistantProjectDestination(
+        projectRoot: String,
+        relativePath: String,
+        fileManager: FileManager = .default
+    ) throws -> URL {
+        guard !relativePath.hasPrefix("/") else {
+            throw AssistantProposalHostError.invalidPayload("absolute project destination")
+        }
+        let components = relativePath.split(separator: "/", omittingEmptySubsequences: false)
+        guard !components.isEmpty,
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
+        else { throw AssistantProposalHostError.invalidPayload("unsafe project destination") }
+
+        let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        var destination = root
+        for (index, component) in components.enumerated() {
+            destination.appendPathComponent(String(component), isDirectory: index < components.count - 1)
+            if let attributes = try? fileManager.attributesOfItem(atPath: destination.path),
+               let type = attributes[.type] as? FileAttributeType
+            {
+                guard type != .typeSymbolicLink else {
+                    throw AssistantProposalHostError.invalidPayload("symbolic-link project destination")
+                }
+                if index < components.count - 1, type != .typeDirectory {
+                    throw AssistantProposalHostError.invalidPayload("non-directory destination ancestor")
+                }
+                if index == components.count - 1, type == .typeDirectory {
+                    throw AssistantProposalHostError.invalidPayload("destination is a directory")
+                }
+            }
+        }
+        let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        guard destination.standardizedFileURL.path.hasPrefix(rootPrefix) else {
+            throw AssistantProposalHostError.invalidPayload("project destination escape")
+        }
+        return destination.standardizedFileURL
+    }
+
+    private func assistantProjectDestination(
+        projectRoot: String,
+        relativePath: String
+    ) throws -> URL {
+        try Self.assistantProjectDestination(
+            projectRoot: projectRoot,
+            relativePath: relativePath
+        )
     }
 
     private func assistantProviderDestination(_ provider: String) -> String {

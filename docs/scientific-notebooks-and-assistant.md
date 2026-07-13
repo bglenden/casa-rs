@@ -546,7 +546,9 @@ authority. The CASA-RS-owned corpus combines its cleared baseline primer,
 project `documents/`, release source/docs, and a commit-keyed live overlay.
 Task, note, Python, plot, and download requests become notebook-tail proposals;
 AI Python uses a separate no-network Seatbelt worker and plot assets require an
-explicit notebook import. Deterministic fake-provider coverage is part of
+explicit notebook import. Approved AI Python, plot, and download attempts use
+the shared immutable notebook receipt path in addition to their conversation
+proposal state. Deterministic fake-provider coverage is part of
 `just quick`; the Keychain-backed OpenAI/OpenCode smoke remains opt-in through
 `just assistant-live-smoke <provider> <model>`. See
 [`assistant-security.md`](assistant-security.md) for the executable boundary.

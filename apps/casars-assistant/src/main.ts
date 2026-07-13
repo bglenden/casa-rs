@@ -25,7 +25,10 @@ interface PendingToolBatch {
 
 class JsonLineHost implements AdapterHost {
   private readonly toolBatches = new Map<string, PendingToolBatch>();
-  private readonly promptResolvers = new Map<string, (value: string) => void>();
+  private readonly promptResolvers = new Map<
+    string,
+    { resolve(value: string): void; reject(error: Error): void }
+  >();
 
   emit(event: ProtocolEvent): void {
     process.stdout.write(`${JSON.stringify(event)}\n`);
@@ -56,7 +59,7 @@ class JsonLineHost implements AdapterHost {
   waitForPrompt(requestId: string, promptId: string, signal?: AbortSignal): Promise<string> {
     return new Promise((resolve, reject) => {
       const key = `${requestId}:${promptId}`;
-      this.promptResolvers.set(key, resolve);
+      this.promptResolvers.set(key, { resolve, reject });
       signal?.addEventListener(
         "abort",
         () => {
@@ -70,10 +73,18 @@ class JsonLineHost implements AdapterHost {
 
   acceptPrompt(requestId: string, promptId: string, value: string): void {
     const key = `${requestId}:${promptId}`;
-    const resolve = this.promptResolvers.get(key);
-    if (resolve === undefined) throw new Error(`unexpected authentication response ${promptId}`);
+    const pending = this.promptResolvers.get(key);
+    if (pending === undefined) throw new Error(`unexpected authentication response ${promptId}`);
     this.promptResolvers.delete(key);
-    resolve(value);
+    pending.resolve(value);
+  }
+
+  cancelPrompts(requestId: string): void {
+    for (const [key, pending] of this.promptResolvers) {
+      if (!key.startsWith(`${requestId}:`)) continue;
+      this.promptResolvers.delete(key);
+      pending.reject(new Error("authentication cancelled by user"));
+    }
   }
 }
 
@@ -82,6 +93,7 @@ const adapter: AssistantAdapter = process.env["CASARS_ASSISTANT_FAKE"] === "1"
   ? new FakeAdapter(host)
   : new PiAdapter(host);
 const activeTurns = new Map<string, AbortController>();
+const cancelledAuthentications = new Set<string>();
 
 function fail(requestId: string, error: unknown, retryable = false): void {
   host.emit({
@@ -126,11 +138,16 @@ async function dispatch(line: string): Promise<boolean> {
         break;
       case "authenticate":
         void adapter.authenticate(request.request_id, request.provider).catch((error: unknown) => {
-          fail(request.request_id, error);
+          if (!cancelledAuthentications.delete(request.request_id)) fail(request.request_id, error);
         });
         break;
       case "authentication_response":
         host.acceptPrompt(request.request_id, request.prompt_id, request.value);
+        break;
+      case "cancel_authentication":
+        cancelledAuthentications.add(request.request_id);
+        host.cancelPrompts(request.request_id);
+        host.emit({ event: "authentication_cancelled", request_id: request.request_id });
         break;
       case "turn": {
         if (request.egress.provider !== request.provider || request.egress.model !== request.model) {

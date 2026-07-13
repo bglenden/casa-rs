@@ -10,6 +10,7 @@ package struct AssistantWebPageState: Codable, Equatable {
     package var mediaType: String
     package var text: String
     package var contentSha256: String
+    package var untrustedEvidence: Bool
 }
 
 package enum AssistantWebResearchError: Error, Equatable {
@@ -61,6 +62,7 @@ package struct AssistantApprovedDownloadClient {
         }
         session.finishTasksAndInvalidate()
         if let error = collector.error { throw error }
+        guard collector.connectionWasPublic else { throw AssistantWebResearchError.unsafeURL }
         guard let response = collector.response as? HTTPURLResponse,
               (200..<300).contains(response.statusCode),
               response.url == url
@@ -95,6 +97,7 @@ package struct AssistantWebResearchClient {
         }
         session.finishTasksAndInvalidate()
         if let error = collector.error { throw error }
+        guard collector.connectionWasPublic else { throw AssistantWebResearchError.unsafeURL }
         guard let response = collector.response as? HTTPURLResponse,
               (200..<300).contains(response.statusCode),
               let finalURL = response.url,
@@ -118,7 +121,8 @@ package struct AssistantWebResearchClient {
             mediaType: mediaType,
             text: bounded,
             contentSha256: SHA256.hash(data: collector.data)
-                .map { String(format: "%02x", $0) }.joined()
+                .map { String(format: "%02x", $0) }.joined(),
+            untrustedEvidence: true
         )
     }
 
@@ -149,6 +153,32 @@ package struct AssistantWebResearchClient {
         return found
     }
 
+    package static func isPublicIPAddress(_ value: String) -> Bool {
+        var ipv4 = in_addr()
+        if value.withCString({ inet_pton(AF_INET, $0, &ipv4) }) == 1 {
+            var address = sockaddr_in()
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_addr = ipv4
+            return withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Self.isPublicAddress($0)
+                }
+            }
+        }
+        var ipv6 = in6_addr()
+        if value.withCString({ inet_pton(AF_INET6, $0, &ipv6) }) == 1 {
+            var address = sockaddr_in6()
+            address.sin6_family = sa_family_t(AF_INET6)
+            address.sin6_addr = ipv6
+            return withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Self.isPublicAddress($0)
+                }
+            }
+        }
+        return false
+    }
+
     private static func isPublicAddress(_ address: UnsafePointer<sockaddr>) -> Bool {
         switch Int32(address.pointee.sa_family) {
         case AF_INET:
@@ -157,20 +187,27 @@ package struct AssistantWebResearchClient {
             }
             let first = ipv4 >> 24
             let second = (ipv4 >> 16) & 0xff
+            let third = (ipv4 >> 8) & 0xff
             return first != 0 && first != 10 && first != 127 && first < 224
                 && !(first == 169 && second == 254)
                 && !(first == 172 && (16...31).contains(second))
                 && !(first == 192 && second == 168)
+                && !(first == 100 && (64...127).contains(second))
+                && !(first == 192 && second == 0 && [0, 2].contains(third))
+                && !(first == 192 && second == 88 && third == 99)
+                && !(first == 198 && [18, 19, 51].contains(second))
+                && !(first == 203 && second == 0 && third == 113)
         case AF_INET6:
             let bytes = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { pointer in
                 withUnsafeBytes(of: pointer.pointee.sin6_addr) { Array($0) }
             }
-            let allZero = bytes.allSatisfy { $0 == 0 }
-            let loopback = bytes.dropLast().allSatisfy { $0 == 0 } && bytes.last == 1
-            let uniqueLocal = (bytes[0] & 0xfe) == 0xfc
-            let linkLocal = bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80
-            let multicast = bytes[0] == 0xff
-            return !allZero && !loopback && !uniqueLocal && !linkLocal && !multicast
+            let globalUnicast = (bytes[0] & 0xe0) == 0x20
+            let teredo = bytes[0...3] == [0x20, 0x01, 0x00, 0x00]
+            let documentation = bytes[0...3] == [0x20, 0x01, 0x0d, 0xb8]
+            let sixToFour = bytes[0] == 0x20 && bytes[1] == 0x02
+            let orchid = bytes[0] == 0x20 && bytes[1] == 0x01
+                && (bytes[2] & 0xf0) == 0x20
+            return globalUnicast && !teredo && !documentation && !sixToFour && !orchid
         default:
             return false
         }
@@ -204,6 +241,9 @@ private final class AssistantWebCollector: NSObject, URLSessionDataDelegate, URL
     private var capturedResponse: URLResponse?
     private var capturedError: AssistantWebResearchError?
     private let allowsRedirects: Bool
+    private var observedRemoteAddresses: [String] = []
+    private var observedProxy = false
+    private var observedMetrics = false
 
     init(maximumBytes: Int, allowsRedirects: Bool = true) {
         self.maximumBytes = maximumBytes
@@ -213,6 +253,12 @@ private final class AssistantWebCollector: NSObject, URLSessionDataDelegate, URL
     var data: Data { lock.withLock { collected } }
     var response: URLResponse? { lock.withLock { capturedResponse } }
     var error: AssistantWebResearchError? { lock.withLock { capturedError } }
+    var connectionWasPublic: Bool {
+        lock.withLock {
+            observedMetrics && !observedProxy && !observedRemoteAddresses.isEmpty
+                && observedRemoteAddresses.allSatisfy(AssistantWebResearchClient.isPublicIPAddress)
+        }
+    }
     func wait(timeout: TimeInterval) -> Bool {
         semaphore.wait(timeout: .now() + timeout) == .success
     }
@@ -260,6 +306,18 @@ private final class AssistantWebCollector: NSObject, URLSessionDataDelegate, URL
             return
         }
         completionHandler(request)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didFinishCollecting metrics: URLSessionTaskMetrics
+    ) {
+        lock.withLock {
+            observedMetrics = true
+            observedProxy = metrics.transactionMetrics.contains(\.isProxyConnection)
+            observedRemoteAddresses = metrics.transactionMetrics.compactMap(\.remoteAddress)
+        }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {

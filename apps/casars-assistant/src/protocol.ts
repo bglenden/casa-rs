@@ -69,6 +69,7 @@ export type ProtocolRequest =
   | { command: "catalog"; request_id: string }
   | { command: "authenticate"; request_id: string; provider: string }
   | { command: "authentication_response"; request_id: string; prompt_id: string; value: string }
+  | { command: "cancel_authentication"; request_id: string }
   | {
       command: "turn";
       request_id: string;

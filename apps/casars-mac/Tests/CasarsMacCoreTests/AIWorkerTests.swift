@@ -10,7 +10,7 @@ final class AIWorkerTests: XCTestCase {
         XCTAssertFalse(approval.approves(source + "# edit\n"))
     }
 
-    func testSeatbeltDeniesNetworkOutsideWritesSymlinkEscapeAndSecrets() throws {
+    func testSeatbeltDeniesNetworkSubprocessesOutsideWritesSymlinkEscapeAndSecrets() throws {
         guard FileManager.default.isExecutableFile(atPath: "/usr/bin/sandbox-exec") else {
             throw XCTSkip("sandbox-exec is unavailable on this macOS runner")
         }
@@ -27,6 +27,7 @@ final class AIWorkerTests: XCTestCase {
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: denied, withIntermediateDirectories: true)
         try Data("science".utf8).write(to: science.appendingPathComponent("input.txt"))
+        try Data("sibling".utf8).write(to: science.appendingPathComponent("sibling.txt"))
         try Data("unlisted".utf8).write(to: outside.appendingPathComponent("unlisted.txt"))
         try Data("credential".utf8).write(to: denied.appendingPathComponent("secret.txt"))
         try FileManager.default.createSymbolicLink(
@@ -48,19 +49,20 @@ final class AIWorkerTests: XCTestCase {
         attempt("network", lambda: socket.create_connection(("127.0.0.1", 9), timeout=0.1))
         attempt("outside_write", lambda: pathlib.Path(\(String(reflecting: outside.appendingPathComponent("denied.txt").path))).write_text("no"))
         attempt("outside_read", lambda: pathlib.Path(\(String(reflecting: outside.appendingPathComponent("unlisted.txt").path))).read_text())
+        attempt("outside_list", lambda: list(pathlib.Path(\(String(reflecting: outside.path))).iterdir()))
         attempt("credential_read", lambda: pathlib.Path(\(String(reflecting: denied.appendingPathComponent("secret.txt").path))).read_text())
+        attempt("unapproved_sibling_read", lambda: pathlib.Path(\(String(reflecting: science.appendingPathComponent("sibling.txt").path))).read_text())
         attempt("symlink_write", lambda: (pathlib.Path(os.environ["CASARS_ARTIFACT_STAGING"]) / "escape" / "denied.txt").write_text("no"))
         attempt("staging_write", lambda: (pathlib.Path(os.environ["CASARS_ARTIFACT_STAGING"]) / "allowed.txt").write_text("yes"))
+        attempt("subprocess", lambda: subprocess.run([sys.executable, "-I", "-c", "print('no')"], capture_output=True))
         result["staging_path"] = os.environ["CASARS_ARTIFACT_STAGING"]
-        child = subprocess.run([sys.executable, "-I", "-c", "import socket; socket.create_connection(('127.0.0.1', 9), timeout=.1)"], capture_output=True)
-        result["child_network_denied"] = child.returncode != 0
         result["secret_present"] = "OPENAI_API_KEY" in os.environ
         result["science"] = pathlib.Path(\(String(reflecting: science.appendingPathComponent("input.txt").path))).read_text()
         print(json.dumps(result, sort_keys=True))
         """
         let worker = SeatbeltAIWorker(configuration: AIWorkerConfiguration(
             pythonExecutable: try resolvedPython(),
-            readableScienceRoots: [science.path],
+            readableScienceRoots: [science.appendingPathComponent("input.txt").path],
             stagingRoot: staging.path,
             deniedReadRoots: [denied.path]
         ))
@@ -76,10 +78,12 @@ final class AIWorkerTests: XCTestCase {
         XCTAssertEqual(payload["network"] as? String, "PermissionError")
         XCTAssertEqual(payload["outside_write"] as? String, "PermissionError")
         XCTAssertEqual(payload["outside_read"] as? String, "PermissionError")
+        XCTAssertEqual(payload["outside_list"] as? String, "PermissionError")
         XCTAssertEqual(payload["credential_read"] as? String, "PermissionError")
+        XCTAssertEqual(payload["unapproved_sibling_read"] as? String, "PermissionError")
         XCTAssertEqual(payload["symlink_write"] as? String, "PermissionError")
         XCTAssertEqual(payload["staging_write"] as? String, "allowed", "\(payload)")
-        XCTAssertEqual(payload["child_network_denied"] as? Bool, true)
+        XCTAssertEqual(payload["subprocess"] as? String, "PermissionError")
         XCTAssertEqual(payload["secret_present"] as? Bool, false)
         XCTAssertEqual(payload["science"] as? String, "science")
     }

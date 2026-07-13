@@ -20,12 +20,16 @@ Credentials are stored as device-only Keychain items and are leased to the
 adapter over stdin for the selected provider. They are excluded from projects,
 transcripts, notebooks, indexes, process environments, logs, and Python.
 
-The installed application bundles the built adapter and its exactly locked
-production dependencies. The sidecar searches for a compatible Node runtime in
-the application bundle, an explicit override, `PATH`, and common user package-
-manager and version-manager locations. It requires Node 22.19 or later.
+The installed application bundles the built adapter, its exactly locked
+production dependencies, and a release/commit-identified projection of tracked
+CASA-RS source and maintained documentation. The sidecar searches for a
+compatible Node runtime in the application bundle, an explicit override,
+`PATH`, and common user package-manager and version-manager locations. It
+requires Node 22.19 or later.
 Seatbelt read rules are derived from the resolved runtime and its linked
-libraries; security does not depend on a Homebrew path.
+libraries; security does not depend on a Homebrew path. Only literal ancestor
+metadata needed for path traversal is exposed; directory enumeration outside
+adapter/runtime or explicitly approved science roots remains denied.
 
 ## CASA-RS-owned corpus
 
@@ -62,13 +66,21 @@ explorer, plot, Python, and history tab. Separate read-only tools expose task
 schemas, persistent-data metadata, corpus/source retrieval, and credential-free
 public scholarly research. `web.search` uses Crossref discovery;
 `web.fetch` accepts one explicit public HTTPS URL, resolves and rejects local
-or private addresses and unsafe redirects, sends no cookies or credentials,
-accepts text responses only, and caps the body at 1 MiB.
+or private addresses and unsafe redirects, verifies the actual URLSession
+remote address after connection to close DNS-rebinding gaps, rejects proxy
+connections, sends no cookies or credentials,
+accepts text responses only, caps the fetched body at 1 MiB, and sends at most
+48 KiB of its extracted text to the provider. Initial tab context is capped at
+64 KiB; each host-tool result is capped at 64 KiB and dynamic tool context at
+256 KiB per turn. The stored egress manifest is the exact bounded projection
+sent, including tool failures and proposal receipts.
 
 The model receives only selected bounded tab projections and tool results.
 Raw arrays, visibilities, full datasets, unrestricted files, and secrets are
-excluded. Every visible assistant message retains the provider/model and a
-manifest of initial plus dynamically retrieved context sent on that turn.
+excluded. Visible transcript history is limited to the newest 128 messages and
+256 KiB per turn; sidecar protocol lines are limited to 1 MiB. Every visible
+assistant message retains the provider/model and a manifest of initial plus
+dynamically retrieved context sent on that turn.
 Document, source, run, and web evidence becomes a claim-local citation.
 
 ## Proposals, execution, and pins
@@ -90,10 +102,27 @@ worker with no network, read-only approved scientific inputs, and one
 content-addressed staging directory. Plot files enter notebook visualization
 history only after a separate explicit import action.
 
+Project-owned write destinations reject absolute paths, traversal, and every
+existing symbolic-link ancestor both when the proposal is bound and again at
+execution. AI-worker input paths are canonicalized before approval. The worker
+grants literal reads for approved files and subtree reads only for explicitly
+approved directories. It cannot fork subprocesses, so cancellation terminates
+the complete isolated execution authority rather than leaving descendants
+behind. Worker stdout and
+stderr are drained continuously and retained up to 16 MiB each, with explicit
+truncation markers beyond that bound.
+
 Failure and cancellation are recorded honestly and do not retry. An explicit
 retry creates a new execution approval. A notebook pin is an immutable,
 user-previewed Markdown snapshot containing conversation/message provenance
 and a content SHA-256; later transcript changes never update it.
+
+Approved AI Python, plot, and download attempts also enter the shared notebook
+receipt path. Receipt v2 records AI-worker authority and exact source for
+Python, the approved hashes, resolved operation parameters, affected paths,
+products, stdout/stderr, diagnostics, and the terminal success, failure, or
+cancellation state. Conversation proposals remain the review surface; they do
+not replace scientific execution provenance.
 
 ## Verification
 

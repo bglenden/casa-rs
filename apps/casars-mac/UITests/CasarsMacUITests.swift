@@ -683,6 +683,12 @@ final class CasarsMacUITests: XCTestCase {
             .write(to: notebooks.appendingPathComponent("Analysis.md"), atomically: true, encoding: .utf8)
         try "# Fixture source\nTyped CASA-RS provider contracts.\n"
             .write(to: project.appendingPathComponent("ARCHITECTURE.md"), atomically: true, encoding: .utf8)
+        let pythonDirectory = project.appendingPathComponent(".casa-rs/python/bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: pythonDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: pythonDirectory.appendingPathComponent("python3"),
+            withDestinationURL: URL(fileURLWithPath: "/usr/bin/python3")
+        )
         productionProjectURL = project
 
         let node = ["/opt/homebrew/bin/node", "/usr/local/bin/node"]
@@ -732,6 +738,32 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(saved.contains("A deterministic proposed note."))
         let conversations = project.appendingPathComponent(".casa-rs/conversations", isDirectory: true)
         XCTAssertFalse((try FileManager.default.contentsOfDirectory(atPath: conversations.path)).isEmpty)
+
+        replaceText("assistant.input", with: "Please propose Python")
+        try clickIdentified("assistant.send")
+        XCTAssertTrue(app.buttons["Insert at notebook tail"].firstMatch.waitForExistence(timeout: 8))
+        app.buttons["Insert at notebook tail"].firstMatch.click()
+        XCTAssertTrue(app.buttons["Approve isolated run"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["Approve isolated run"].firstMatch.click()
+
+        let receiptRoot = project.appendingPathComponent(".casa-rs/notebook-runs", isDirectory: true)
+        let deadline = Date().addingTimeInterval(12)
+        var receiptText = ""
+        while Date() < deadline, !receiptText.contains(#""authority":"ai_worker""#) {
+            if let enumerator = FileManager.default.enumerator(at: receiptRoot, includingPropertiesForKeys: nil) {
+                for case let url as URL in enumerator where url.lastPathComponent == "receipt.json" {
+                    receiptText += (try? String(contentsOf: url)) ?? ""
+                }
+            }
+            if !receiptText.contains(#""authority":"ai_worker""#) {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+        }
+        XCTAssertTrue(receiptText.contains(#""authority":"ai_worker""#), receiptText)
+        XCTAssertTrue(receiptText.contains("CASARS_ARTIFACT_STAGING"), receiptText)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: project.appendingPathComponent(".casa-rs/ai-staging").path
+        ))
     }
 
     func testTutorialPrototypeLearnerNotesApprovalAndTaskLoading() throws {

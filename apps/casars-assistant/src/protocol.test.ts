@@ -58,6 +58,16 @@ test("fixture adapter handshakes and advertises the constrained policy", async (
   await harness.close();
 });
 
+test("authentication cancellation is explicit and does not fabricate a credential", async () => {
+  const harness = startFixture();
+  harness.send({ command: "cancel_authentication", request_id: "auth-cancelled" });
+  const cancelled = await harness.next();
+  assert.equal(cancelled["event"], "authentication_cancelled");
+  assert.equal(cancelled["request_id"], "auth-cancelled");
+  harness.send({ command: "shutdown", request_id: "shutdown-auth-cancelled" });
+  await harness.close();
+});
+
 test("fixture requests corpus search through the host and never opens SQLite", async () => {
   const harness = startFixture();
   harness.send({ command: "hello", request_id: "hello-2", protocol_version: 1, policy });
@@ -185,5 +195,49 @@ test("fixture can request a proposal but cannot insert or execute it", async () 
   });
   assert.equal((await harness.next())["event"], "turn_complete");
   harness.send({ command: "shutdown", request_id: "shutdown-proposal" });
+  await harness.close();
+});
+
+test("fixture Python requests remain pending host proposals", async () => {
+  const harness = startFixture();
+  harness.send({
+    command: "turn",
+    request_id: "turn-python-proposal",
+    conversation_id: "01900000-0000-7000-8000-000000000000",
+    provider: "fixture",
+    model: "fixture-v1",
+    messages: [{
+      id: "01900000-0000-7000-8000-000000000003",
+      role: "user",
+      content: "Please propose Python",
+      created_at: 1,
+    }],
+    egress: {
+      provider: "fixture",
+      model: "fixture-v1",
+      destination: "fixture",
+      items: [],
+      estimated_bytes: 0,
+    },
+    tools: [{
+      name: "proposal.python",
+      description: "Create a pending isolated Python proposal",
+      input_schema: { type: "object" },
+      read_only: false,
+    }],
+  });
+  assert.equal((await harness.next())["event"], "turn_started");
+  const call = await harness.next();
+  assert.equal(call["name"], "proposal.python");
+  assert.match(JSON.stringify(call["arguments"]), /CASARS_ARTIFACT_STAGING/);
+  harness.send({
+    command: "tool_result",
+    request_id: "turn-python-proposal",
+    call_id: call["call_id"],
+    result: { proposal_id: "proposal-python", status: "pending_user_review" },
+    is_error: false,
+  });
+  assert.equal((await harness.next())["event"], "turn_complete");
+  harness.send({ command: "shutdown", request_id: "shutdown-python-proposal" });
   await harness.close();
 });

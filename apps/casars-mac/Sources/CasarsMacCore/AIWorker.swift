@@ -77,7 +77,7 @@ package struct SeatbeltAIWorker {
             throw AIWorkerError.sandboxUnavailable
         }
         let staging = try absoluteURL(configuration.stagingRoot)
-        let roots = try configuration.readableScienceRoots.map(absoluteURL)
+        let sciencePaths = try configuration.readableScienceRoots.map(absoluteURL)
         let deniedReadRoots = try configuration.deniedReadRoots.map(absoluteURL)
         let runtimeRoots = try pythonRuntimeRoots(configuration.pythonExecutable)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
@@ -92,8 +92,9 @@ package struct SeatbeltAIWorker {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
         process.arguments = [
             "-p", profile(
+                pythonExecutable: try standardizedAbsoluteURL(configuration.pythonExecutable),
                 staging: seatbeltCanonicalURL(staging),
-                readableRoots: roots,
+                readableSciencePaths: sciencePaths,
                 runtimeRoots: runtimeRoots,
                 deniedReadRoots: deniedReadRoots
             ),
@@ -137,14 +138,17 @@ package struct SeatbeltAIWorker {
         drains.wait()
         return AIWorkerResult(
             terminationStatus: process.terminationStatus,
-            stdout: String(decoding: stdoutDrain.data, as: UTF8.self),
+            stdout: String(decoding: stdoutDrain.data, as: UTF8.self)
+                + (stdoutDrain.wasTruncated ? "\n[stdout truncated at 16 MiB]" : ""),
             stderr: String(decoding: stderrDrain.data, as: UTF8.self)
+                + (stderrDrain.wasTruncated ? "\n[stderr truncated at 16 MiB]" : "")
         )
     }
 
     private func profile(
+        pythonExecutable: URL,
         staging: URL,
-        readableRoots: [URL],
+        readableSciencePaths: [URL],
         runtimeRoots: [URL],
         deniedReadRoots: [URL]
     ) -> String {
@@ -155,26 +159,55 @@ package struct SeatbeltAIWorker {
                 "(deny file-read-data (subpath \"\(path)\"))",
             ]
         }.joined(separator: "\n")
-        let readableRules = ([staging] + runtimeRoots + readableRoots)
+        let readableDirectoryURLs = [staging] + runtimeRoots
+        let readableDirectoryRules = readableDirectoryURLs
             .map { seatbeltCanonicalURL($0).path }
             .map(seatbeltLiteral)
-            .map { "(allow file-read-data (subpath \"\($0)\"))" }
+            .flatMap {
+                [
+                    "(allow file-read-data (subpath \"\($0)\"))",
+                    "(allow file-read-metadata (subpath \"\($0)\"))",
+                ]
+            }
+            .joined(separator: "\n")
+        let scienceRules = readableSciencePaths.flatMap { url -> [String] in
+            let canonical = seatbeltCanonicalURL(url)
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: canonical.path, isDirectory: &isDirectory) else {
+                return []
+            }
+            let path = seatbeltLiteral(canonical.path)
+            let filter = isDirectory.boolValue ? "subpath" : "literal"
+            return [
+                "(allow file-read-data (\(filter) \"\(path)\"))",
+                "(allow file-read-metadata (\(filter) \"\(path)\"))",
+            ]
+        }.joined(separator: "\n")
+        let metadataTraversalRules = (readableDirectoryURLs + readableSciencePaths)
+            .flatMap { metadataTraversalPaths(for: seatbeltCanonicalURL($0)) }
+            .map(seatbeltLiteral)
+            .map { "(allow file-read-metadata (literal \"\($0)\"))" }
             .joined(separator: "\n")
         let runtimeDeviceRules = ["/dev/null", "/dev/random", "/dev/urandom"]
             .map(seatbeltLiteral)
-            .map { "(allow file-read-data (literal \"\($0)\"))" }
+            .flatMap {
+                [
+                    "(allow file-read-data (literal \"\($0)\"))",
+                    "(allow file-read-metadata (literal \"\($0)\"))",
+                ]
+            }
             .joined(separator: "\n")
         return """
         (version 1)
         (deny default)
-        (allow process-exec)
-        (allow process-fork)
+        (allow process-exec (literal "\(seatbeltLiteral(pythonExecutable.path))"))
         (allow signal (target self))
-        ; Dyld and realpath need path metadata and root traversal, but file contents
-        ; remain deny-by-default outside runtime, staging, and science roots.
-        (allow file-read-metadata)
-        (allow file-read-data (literal "/"))
-        \(readableRules)
+        ; Dyld and realpath need ancestor traversal, but directory enumeration
+        ; and file contents remain deny-by-default outside approved roots.
+        \(metadataTraversalRules)
+        (allow file-read-metadata (literal "/dev"))
+        \(readableDirectoryRules)
+        \(scienceRules)
         \(runtimeDeviceRules)
         \(deniedReadRules)
         (allow mach-lookup)
@@ -238,12 +271,25 @@ package struct SeatbeltAIWorker {
         value.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
     }
+
+    private func metadataTraversalPaths(for url: URL) -> [String] {
+        var current = url.standardizedFileURL
+        var paths: [String] = []
+        while true {
+            paths.append(current.path)
+            guard current.path != "/" else { break }
+            current.deleteLastPathComponent()
+        }
+        return paths
+    }
 }
 
 private final class AIWorkerPipeDrain: @unchecked Sendable {
     private let handle: FileHandle
     private let lock = NSLock()
     private var collected = Data()
+    private var truncated = false
+    private let maximumBytes = 16 * 1_048_576
 
     init(_ handle: FileHandle) {
         self.handle = handle
@@ -255,13 +301,24 @@ private final class AIWorkerPipeDrain: @unchecked Sendable {
         return collected
     }
 
+    var wasTruncated: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return truncated
+    }
+
     func start(in group: DispatchGroup) {
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async { [self] in
-            let value = handle.readDataToEndOfFile()
-            lock.lock()
-            collected = value
-            lock.unlock()
+            while true {
+                let value = handle.availableData
+                if value.isEmpty { break }
+                lock.lock()
+                let remaining = max(0, maximumBytes - collected.count)
+                if remaining > 0 { collected.append(value.prefix(remaining)) }
+                if value.count > remaining { truncated = true }
+                lock.unlock()
+            }
             group.leave()
         }
     }

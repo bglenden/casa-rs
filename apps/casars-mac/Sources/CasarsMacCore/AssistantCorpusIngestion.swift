@@ -11,9 +11,10 @@ package struct AssistantCorpusIngestionResult {
 
 package struct AssistantCorpusIngestor {
     private let fileManager = FileManager.default
-    private let maximumFileBytes = 100 * 1024 * 1024
+    private let maximumFileBytes = 64 * 1024 * 1024
     private let maximumTotalBytes = 64 * 1024 * 1024
     private let maximumDocuments = 5_000
+    private let maximumPDFPages = 2_000
 
     package init() {}
 
@@ -54,9 +55,12 @@ package struct AssistantCorpusIngestor {
         }
 
         if let source = sourceRoot(environment: environment) {
-            let commit = gitValue(source, arguments: ["rev-parse", "HEAD"])
+            let gitCommit = gitValue(source, arguments: ["rev-parse", "HEAD"])
+            let manifest = sourceManifest(source)
+            let commit = gitCommit ?? manifest?.commit
             let release = gitValue(source, arguments: ["describe", "--tags", "--always"])
-            let layer = commit == nil ? "release_source" : "live_source"
+                ?? manifest?.release
+            let layer = gitCommit == nil ? "release_source" : "live_source"
             collectSourceTree(
                 root: source,
                 layer: layer,
@@ -85,8 +89,18 @@ package struct AssistantCorpusIngestor {
         diagnostics: inout [String],
         totalBytes: inout Int
     ) {
+        guard let rootValues = try? root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+              rootValues.isDirectory == true,
+              rootValues.isSymbolicLink != true
+        else {
+            diagnostics.append("Skipped symbolic-link or invalid baseline root \(root.path)")
+            return
+        }
         let manifestURL = root.appendingPathComponent("corpus-pack.json")
-        guard let data = try? Data(contentsOf: manifestURL),
+        guard let manifestValues = try? manifestURL.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey]),
+              manifestValues.isSymbolicLink != true,
+              (manifestValues.fileSize ?? Int.max) <= 1_048_576,
+              let data = try? Data(contentsOf: manifestURL),
               let manifest = try? JSONDecoder().decode(AssistantBaselineManifest.self, from: data),
               manifest.schemaVersion == 1
         else {
@@ -99,9 +113,12 @@ package struct AssistantCorpusIngestor {
                 continue
             }
             let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
-            let url = root.appendingPathComponent(entry.path).standardizedFileURL
-                .resolvingSymlinksInPath()
+            let unresolvedURL = root.appendingPathComponent(entry.path).standardizedFileURL
+            let url = unresolvedURL.resolvingSymlinksInPath()
+            let values = try? unresolvedURL.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey])
             guard url.path.hasPrefix(canonicalRoot.path + "/"),
+                  values?.isSymbolicLink != true,
+                  (values?.fileSize ?? Int.max) <= maximumFileBytes,
                   fileManager.isReadableFile(atPath: url.path),
                   supportedExtension(url.pathExtension)
             else {
@@ -199,6 +216,13 @@ package struct AssistantCorpusIngestor {
         diagnostics: inout [String],
         totalBytes: inout Int
     ) {
+        guard let rootValues = try? root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+              rootValues.isDirectory == true,
+              rootValues.isSymbolicLink != true
+        else {
+            diagnostics.append("Skipped symbolic-link or invalid corpus root \(root.path)")
+            return
+        }
         let keys: [URLResourceKey] = [
             .isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey,
         ]
@@ -215,9 +239,14 @@ package struct AssistantCorpusIngestor {
                 continue
             }
             guard documents.count < maximumDocuments, totalBytes < maximumTotalBytes else { return }
-            guard let values = try? url.resourceValues(forKeys: Set(keys)),
+            guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
+            if values.isSymbolicLink == true {
+                enumerator.skipDescendants()
+                diagnostics.append("Skipped symbolic-link corpus entry \(relativePath(url, root: identityRoot))")
+                continue
+            }
+            guard
                   values.isRegularFile == true,
-                  values.isSymbolicLink != true,
                   let fileSize = values.fileSize,
                   fileSize <= maximumFileBytes,
                   supportedExtension(url.pathExtension)
@@ -251,7 +280,9 @@ package struct AssistantCorpusIngestor {
                 diagnostics.append("No UTF-8 text extracted from \(relative)")
                 continue
             }
-            totalBytes += content.utf8.count
+            let bytes = content.utf8.count
+            guard totalBytes + bytes <= maximumTotalBytes else { return }
+            totalBytes += bytes
             documents.append(document(
                 id: "\(layer):\(relative)",
                 layer: layer,
@@ -276,7 +307,10 @@ package struct AssistantCorpusIngestor {
             return []
         }
         var pages: [(Int, String)] = []
-        for index in 0..<pdf.pageCount {
+        if pdf.pageCount > maximumPDFPages {
+            diagnostics.append("Limited PDF \(relative) to the first \(maximumPDFPages) pages")
+        }
+        for index in 0..<min(pdf.pageCount, maximumPDFPages) {
             guard let page = pdf.page(at: index) else { continue }
             var text = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if text.isEmpty {
@@ -293,8 +327,9 @@ package struct AssistantCorpusIngestor {
 
     private func recognizeText(page: PDFPage) -> String {
         let bounds = page.bounds(for: .mediaBox)
+        let scale = min(2, 4_000 / max(max(bounds.width, bounds.height), 1))
         let thumbnail = page.thumbnail(
-            of: NSSize(width: max(1_200, bounds.width * 2), height: max(1_200, bounds.height * 2)),
+            of: NSSize(width: max(1, bounds.width * scale), height: max(1, bounds.height * scale)),
             for: .mediaBox
         )
         guard let data = thumbnail.tiffRepresentation,
@@ -383,7 +418,8 @@ package struct AssistantCorpusIngestor {
     }
 
     private func supportedExtension(_ value: String) -> Bool {
-        ["md", "txt", "rst", "toml", "rs", "swift", "py", "pdf"].contains(value.lowercased())
+        ["md", "txt", "rst", "toml", "rs", "swift", "ts", "py", "pdf"]
+            .contains(value.lowercased())
     }
 
     private func shouldSkipDirectory(_ url: URL) -> Bool {
@@ -393,6 +429,29 @@ package struct AssistantCorpusIngestor {
     private func relativePath(_ value: URL, root: URL) -> String {
         let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
         return value.path.hasPrefix(prefix) ? String(value.path.dropFirst(prefix.count)) : value.lastPathComponent
+    }
+
+    private func sourceManifest(_ root: URL) -> AssistantSourceManifest? {
+        let url = root.appendingPathComponent("casars-source.json")
+        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey]),
+              values.isSymbolicLink != true,
+              (values.fileSize ?? Int.max) <= 1_048_576,
+              let data = try? Data(contentsOf: url),
+              let manifest = try? JSONDecoder().decode(AssistantSourceManifest.self, from: data),
+              manifest.schemaVersion == 1
+        else { return nil }
+        return manifest
+    }
+}
+
+private struct AssistantSourceManifest: Decodable {
+    var schemaVersion: Int
+    var release: String
+    var commit: String
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case release, commit
     }
 }
 
