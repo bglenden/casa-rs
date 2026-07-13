@@ -697,7 +697,10 @@ final class CasarsMacUITests: XCTestCase {
         try FileManager.default.createDirectory(at: pythonDirectory, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(
             at: pythonDirectory.appendingPathComponent("python3"),
-            withDestinationURL: URL(fileURLWithPath: "/usr/bin/python3")
+            withDestinationURL: URL(fileURLWithPath:
+                ProcessInfo.processInfo.environment["CASA_RS_GUI_TEST_PYTHON"]
+                    ?? "/usr/bin/python3"
+            )
         )
         productionProjectURL = project
 
