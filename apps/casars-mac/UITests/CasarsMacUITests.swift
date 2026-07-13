@@ -797,6 +797,11 @@ final class CasarsMacUITests: XCTestCase {
         )
         XCTAssertEqual(try accessibilityValue("notebook.dirtyState"), "dirty")
 
+        try bringIntoView(
+            "tutorialPrototype.dataset.review.\(datasetID)",
+            in: "notebook.document.scroll",
+            deltaY: -260
+        )
         try clickIdentified("tutorialPrototype.dataset.review.\(datasetID)")
         XCTAssertTrue(try require("tutorialPrototype.approval.sheet").exists)
         XCTAssertEqual(try accessibilityValue("tutorialPrototype.approval.scheme"), "https")
@@ -940,6 +945,11 @@ final class CasarsMacUITests: XCTestCase {
     func testTutorialPrototypeCancellationResumeAndAttemptIdentity() throws {
         launchTutorialPrototype()
         let datasetID = "tutorial-dataset-twhya-calibrated"
+        try bringIntoView(
+            "tutorialPrototype.dataset.review.\(datasetID)",
+            in: "notebook.document.scroll",
+            deltaY: -260
+        )
         try clickIdentified("tutorialPrototype.dataset.review.\(datasetID)")
         try clickIdentified("tutorialPrototype.approval.approve")
 
@@ -979,6 +989,11 @@ final class CasarsMacUITests: XCTestCase {
     func testTutorialPrototypeChecksumFailureStaysCompactAndRetryRecovers() throws {
         launchTutorialPrototype(scenario: "checksum-failure")
         let datasetID = "tutorial-dataset-twhya-calibrated"
+        try bringIntoView(
+            "tutorialPrototype.dataset.review.\(datasetID)",
+            in: "notebook.document.scroll",
+            deltaY: -260
+        )
         try clickIdentified("tutorialPrototype.dataset.review.\(datasetID)")
         try clickIdentified("tutorialPrototype.approval.approve")
 
@@ -1007,6 +1022,11 @@ final class CasarsMacUITests: XCTestCase {
     func testTutorialPrototypeDiskFailureShowsPlanAndRecoversExplicitly() throws {
         launchTutorialPrototype(scenario: "disk-failure")
         let datasetID = "tutorial-dataset-twhya-calibrated"
+        try bringIntoView(
+            "tutorialPrototype.dataset.review.\(datasetID)",
+            in: "notebook.document.scroll",
+            deltaY: -260
+        )
         try clickIdentified("tutorialPrototype.dataset.review.\(datasetID)")
         let diskPlan = try accessibilityValue("tutorialPrototype.approval.diskRequirement")
         XCTAssertTrue(diskPlan.contains("required"))
@@ -1036,6 +1056,12 @@ final class CasarsMacUITests: XCTestCase {
 
     func testTutorialPrototypeAccessibilityAndIsolation() throws {
         launchTutorialPrototype()
+
+        try bringIntoView(
+            "tutorialPrototype.dataset.review.tutorial-dataset-twhya-calibrated",
+            in: "notebook.document.scroll",
+            deltaY: -260
+        )
 
         let visibleWindowFrame = app.windows.firstMatch.frame
         var unacceptedIssues: [String] = []

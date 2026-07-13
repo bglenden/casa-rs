@@ -41,7 +41,6 @@ struct AssistantDiscussionView: View {
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
-        .accessibilityIdentifier("assistant.discussion")
         .sheet(item: Binding(
             get: { discussion?.pendingAuthenticationPrompt },
             set: { value in
@@ -62,6 +61,7 @@ struct AssistantDiscussionView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(layout == .drawer ? "Notebook chat" : discussion.activeConversation?.title ?? "AI discussion")
                     .workbenchFont(.headline)
+                    .accessibilityIdentifier("assistant.discussion")
                 Text(primaryAttachmentLabel(discussion))
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)

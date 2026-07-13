@@ -19,63 +19,90 @@ struct WorkbenchView: View {
     @State private var leftDockWidth: CGFloat = 250
     @State private var inspectorWidth: CGFloat = 250
     @State private var aiDrawerWidth: CGFloat = 400
+    @State private var autoCollapsedLeftDockForDrawer = false
+    @State private var autoCollapsedInspectorForDrawer = false
+
+    private var isAIDrawerPresented: Bool {
+        (store.isAIPrototypeRuntime && store.state.prototypeAI?.presentation == .drawer)
+            || store.state.assistantDiscussion?.presentation == .drawer
+    }
 
     var body: some View {
-        HStack(spacing: 0) {
-            if !store.state.leftDockCollapsed {
-                LeftDockView(store: store)
-                    .frame(width: leftDockWidth)
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                if !store.state.leftDockCollapsed {
+                    LeftDockView(store: store)
+                        .frame(width: leftDockWidth)
 
-                HorizontalResizeHandle(
-                    width: $leftDockWidth,
-                    range: 190...420,
-                    anchor: .left,
-                    accessibilityID: "split.resizeHandle"
+                    HorizontalResizeHandle(
+                        width: $leftDockWidth,
+                        range: 190...420,
+                        anchor: .left,
+                        accessibilityID: "split.resizeHandle"
+                    )
+                }
+
+                if !store.state.inspectorCollapsed {
+                    InspectorView(store: store)
+                        .frame(width: inspectorWidth)
+
+                    HorizontalResizeHandle(
+                        width: $inspectorWidth,
+                        range: 220...520,
+                        anchor: .left,
+                        accessibilityID: "split.resizeHandle"
+                    )
+                }
+
+                CentralWorkspaceView(
+                    store: store,
+                    initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
+                )
+                    .frame(minWidth: isAIDrawerPresented ? 360 : 560)
+
+                if store.isAIPrototypeRuntime,
+                   store.state.prototypeAI?.presentation == .drawer
+                {
+                    HorizontalResizeHandle(
+                        width: $aiDrawerWidth,
+                        range: 340...520,
+                        anchor: .right,
+                        accessibilityID: "aiPrototype.resizeHandle"
+                    )
+
+                    AIChatPrototypeView(store: store, layout: .drawer)
+                        .frame(width: aiDrawerWidth)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                } else if store.state.assistantDiscussion?.presentation == .drawer {
+                    HorizontalResizeHandle(
+                        width: $aiDrawerWidth,
+                        range: 340...520,
+                        anchor: .right,
+                        accessibilityID: "assistant.resizeHandle"
+                    )
+
+                    AssistantDiscussionView(store: store, layout: .drawer)
+                        .frame(width: aiDrawerWidth)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .onAppear {
+                reconcilePanelsForDrawer(
+                    containerWidth: geometry.size.width,
+                    drawerPresented: isAIDrawerPresented
                 )
             }
-
-            if !store.state.inspectorCollapsed {
-                InspectorView(store: store)
-                    .frame(width: inspectorWidth)
-
-                HorizontalResizeHandle(
-                    width: $inspectorWidth,
-                    range: 220...520,
-                    anchor: .left,
-                    accessibilityID: "split.resizeHandle"
+            .onChange(of: isAIDrawerPresented) { presented in
+                reconcilePanelsForDrawer(
+                    containerWidth: geometry.size.width,
+                    drawerPresented: presented
                 )
             }
-
-            CentralWorkspaceView(
-                store: store,
-                initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
-            )
-                .frame(minWidth: 560)
-
-            if store.isAIPrototypeRuntime,
-               store.state.prototypeAI?.presentation == .drawer
-            {
-                HorizontalResizeHandle(
-                    width: $aiDrawerWidth,
-                    range: 340...520,
-                    anchor: .right,
-                    accessibilityID: "aiPrototype.resizeHandle"
+            .onChange(of: geometry.size.width) { width in
+                reconcilePanelsForDrawer(
+                    containerWidth: width,
+                    drawerPresented: isAIDrawerPresented
                 )
-
-                AIChatPrototypeView(store: store, layout: .drawer)
-                    .frame(width: aiDrawerWidth)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else if store.state.assistantDiscussion?.presentation == .drawer {
-                HorizontalResizeHandle(
-                    width: $aiDrawerWidth,
-                    range: 340...520,
-                    anchor: .right,
-                    accessibilityID: "assistant.resizeHandle"
-                )
-
-                AssistantDiscussionView(store: store, layout: .drawer)
-                    .frame(width: aiDrawerWidth)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .animation(.easeInOut(duration: 0.18), value: store.state.prototypeAI?.presentation)
@@ -99,6 +126,34 @@ struct WorkbenchView: View {
         }
         .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { date in
             store.refreshProjectFromDiskIfNeeded(now: date)
+        }
+    }
+
+    private func reconcilePanelsForDrawer(containerWidth: CGFloat, drawerPresented: Bool) {
+        guard drawerPresented else {
+            if autoCollapsedInspectorForDrawer, store.state.inspectorCollapsed {
+                store.toggleInspector()
+            }
+            if autoCollapsedLeftDockForDrawer, store.state.leftDockCollapsed {
+                store.toggleLeftDock()
+            }
+            autoCollapsedInspectorForDrawer = false
+            autoCollapsedLeftDockForDrawer = false
+            return
+        }
+
+        var requiredWidth: CGFloat = 360 + 5 + aiDrawerWidth
+        if !store.state.leftDockCollapsed { requiredWidth += leftDockWidth + 5 }
+        if !store.state.inspectorCollapsed { requiredWidth += inspectorWidth + 5 }
+
+        if requiredWidth > containerWidth, !store.state.inspectorCollapsed {
+            autoCollapsedInspectorForDrawer = true
+            store.toggleInspector()
+            requiredWidth -= inspectorWidth + 5
+        }
+        if requiredWidth > containerWidth, !store.state.leftDockCollapsed {
+            autoCollapsedLeftDockForDrawer = true
+            store.toggleLeftDock()
         }
     }
 }
