@@ -231,6 +231,35 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertEqual(agent.turns.last?.effort, "low")
     }
 
+    func testAccountLogoutClearsVisibleSubscriptionStateAfterBackendConfirmation() {
+        var discussion = AssistantDiscussionState()
+        discussion.account = AssistantAccountState(
+            email: "scientist@example.invalid",
+            plan: "pro",
+            requiresLogin: false
+        )
+        discussion.usage = AssistantUsageState(primaryPercentUsed: 31)
+        discussion.pendingAuthenticationURL = "https://example.invalid/auth"
+        var state = FixtureWorkbench.makeState()
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+        let agent = FixtureAgentSession()
+        store.installAgentSessionForTesting(agent)
+
+        store.logoutAssistantAccount()
+
+        XCTAssertEqual(agent.accountLogoutCount, 1)
+        XCTAssertFalse(store.state.assistantDiscussion?.account.requiresLogin ?? true)
+
+        agent.emit(["method": "casa/accountLogout/completed", "params": [:]])
+
+        XCTAssertTrue(store.state.assistantDiscussion?.account.requiresLogin ?? false)
+        XCTAssertNil(store.state.assistantDiscussion?.account.email)
+        XCTAssertNil(store.state.assistantDiscussion?.account.plan)
+        XCTAssertNil(store.state.assistantDiscussion?.usage.primaryPercentUsed)
+        XCTAssertNil(store.state.assistantDiscussion?.pendingAuthenticationURL)
+    }
+
     func testRuntimeProfileChangeRestartsBeforeStartingReplacementConversation() throws {
         let project = try temporaryProject()
         defer { try? FileManager.default.removeItem(at: project) }
@@ -828,6 +857,7 @@ private final class FixtureAgentSession: AgentSession {
     var conversations: [AgentConversationRequest] = []
     var turns: [AgentTurnRequest] = []
     var restartCount = 0
+    var accountLogoutCount = 0
     var approvals: [(requestID: String, decision: String)] = []
     private var eventHandler: (([String: Any]) -> Void)?
     private var stateHandler: ((AssistantDiscussionActivity) -> Void)?
@@ -845,6 +875,7 @@ private final class FixtureAgentSession: AgentSession {
         approvals.append((requestID, decision))
     }
     func requestAccountLogin() {}
+    func requestAccountLogout() { accountLogoutCount += 1 }
     func refreshAccount() {}
     func restart() { restartCount += 1 }
     func terminate() {}

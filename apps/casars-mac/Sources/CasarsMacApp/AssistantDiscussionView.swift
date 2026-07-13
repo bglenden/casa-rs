@@ -264,6 +264,7 @@ struct AssistantDiscussionView: View {
                     accessibilityID: "assistant.input",
                     onSubmit: store.sendAssistantPrompt
                 )
+                .disabled(discussion.account.requiresLogin)
                 .frame(minHeight: 58, maxHeight: layout == .expanded ? 100 : 74)
                 .background(Color(nsColor: .controlBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -273,7 +274,11 @@ struct AssistantDiscussionView: View {
                 } else {
                     Button { store.sendAssistantPrompt() } label: { Image(systemName: "arrow.up") }
                         .buttonStyle(.borderedProminent)
-                        .disabled(discussion.activeConversation?.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false)
+                        .disabled(
+                            discussion.account.requiresLogin
+                                || discussion.activeConversation?.draft
+                                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+                        )
                         .accessibilityLabel("Send")
                         .accessibilityIdentifier("assistant.send")
                 }
@@ -315,6 +320,7 @@ struct AssistantDiscussionView: View {
             if discussion.account.requiresLogin {
                 Button("Sign in to ChatGPT") { store.authenticateAssistantAccount() }
                     .controlSize(.small)
+                    .accessibilityIdentifier("assistant.account.login")
             } else {
                 Text(accountAndUsage(discussion))
                     .workbenchFont(.caption2)
@@ -395,7 +401,17 @@ struct AssistantDiscussionView: View {
                 }
             }
             Divider()
-            LabeledContent("Account", value: discussion.account.email ?? "ChatGPT subscription")
+            HStack {
+                LabeledContent("Account", value: discussion.account.email ?? "ChatGPT subscription")
+                if !discussion.account.requiresLogin {
+                    Button("Log out") {
+                        store.logoutAssistantAccount()
+                        settingsPresented = false
+                    }
+                    .disabled(discussion.activity == .streaming)
+                    .accessibilityIdentifier("assistant.account.logout")
+                }
+            }
             LabeledContent("Plan", value: discussion.account.plan?.capitalized ?? "Unknown")
         }
         .padding(16)

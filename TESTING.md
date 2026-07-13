@@ -101,6 +101,9 @@ debug-state assertions, and deterministic capture; batch user-visible
 interaction changes and run the GUI suite at coherent prototype-handoff and
 pre-Review checkpoints. Use isolated focused XCUITest runs only to diagnose a
 failure found by a consolidated run, not as the normal edit loop.
+The deterministic assistant journey includes logout, the signed-out composer,
+and fixture reauthorization before continuing normal chat; real credentials are
+never required by `just gui-test`.
 
 `just assistant-live-gui` is the opt-in real-account acceptance exception. It
 uses the installed Codex CLI's existing ChatGPT subscription, an isolated

@@ -105,6 +105,7 @@ package protocol AgentSession: AnyObject {
     func cancel(threadID: String, turnID: String)
     func approve(requestID: String, decision: String)
     func requestAccountLogin()
+    func requestAccountLogout()
     func refreshAccount()
     func restart()
     func terminate()
@@ -196,6 +197,7 @@ package final class CodexAppServerSession: AgentSession {
     private var configuredPluginIDs: Set<String> = []
     private var activeProjectMCPServerName: String?
     private var conversationRequestWasResume: [Int: Bool] = [:]
+    private var accountLogoutRequestIDs: Set<Int> = []
 
     package init(
         configuration: AgentSessionConfiguration,
@@ -296,6 +298,19 @@ package final class CodexAppServerSession: AgentSession {
     package func requestAccountLogin() {
         queue.async { [weak self] in
             _ = try? self?.send(method: "account/login/start", params: ["type": "chatgpt"])
+        }
+    }
+
+    package func requestAccountLogout() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            do {
+                self.accountLogoutRequestIDs.insert(
+                    try self.send(method: "account/logout", params: [:])
+                )
+            } catch {
+                self.publish(error)
+            }
         }
     }
 
@@ -477,6 +492,18 @@ package final class CodexAppServerSession: AgentSession {
             readySemaphore.signal()
         }
         if let id = value["id"] as? Int,
+           accountLogoutRequestIDs.remove(id) != nil
+        {
+            if let error = value["error"] {
+                publish(AgentSessionError.protocolFailure("log out: \(error)"))
+            } else {
+                DispatchQueue.main.async { [eventHandler] in
+                    eventHandler?(["method": "casa/accountLogout/completed", "params": [:]])
+                }
+            }
+            return
+        }
+        if let id = value["id"] as? Int,
            let wasResume = conversationRequestWasResume.removeValue(forKey: id),
            let error = value["error"]
         {
@@ -519,6 +546,7 @@ package final class CodexAppServerSession: AgentSession {
         input = nil
         process = nil
         conversationRequestWasResume.removeAll()
+        accountLogoutRequestIDs.removeAll()
         if publishUnavailable { publishState(.unavailable) }
     }
 
@@ -652,6 +680,9 @@ package final class DeterministicAgentSession: AgentSession {
 
     package func approve(requestID: String, decision: String) {}
     package func requestAccountLogin() { publishAccountAndModels() }
+    package func requestAccountLogout() {
+        eventHandler?(["method": "casa/accountLogout/completed", "params": [:]])
+    }
     package func refreshAccount() { publishAccountAndModels() }
     package func restart() { stateHandler?(.ready) }
     package func terminate() { stateHandler?(.unavailable) }

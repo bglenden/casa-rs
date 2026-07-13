@@ -37,7 +37,9 @@ billing or provider picker. Model and reasoning effort remain immediately
 selectable, and compact remaining-usage state stays visible with detailed
 rate-limit windows and reset times available on demand. Agent/account,
 authority, and Python configuration are consolidated behind one secondary
-settings surface.
+settings surface. That surface delegates both sign-in and logout to App Server;
+CASA-RS only updates visible account state after the logout response and never
+handles the credential itself.
 
 ## CASA agent profile and capability contract
 

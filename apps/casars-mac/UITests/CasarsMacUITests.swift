@@ -715,6 +715,12 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(element("assistant.effort").waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(element("assistant.usage").waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(element("assistant.settings").waitForExistence(timeout: 8), app.debugDescription)
+        try clickIdentified("assistant.settings")
+        XCTAssertTrue(element("assistant.account.logout").waitForExistence(timeout: 5), app.debugDescription)
+        try clickIdentified("assistant.account.logout")
+        XCTAssertTrue(element("assistant.account.login").waitForExistence(timeout: 5), app.debugDescription)
+        try clickIdentified("assistant.account.login")
+        XCTAssertTrue(element("assistant.usage").waitForExistence(timeout: 5), app.debugDescription)
         replaceText("assistant.input", with: "How should I start weighting this image?")
         let send = try require("assistant.send")
         let sendReady = XCTNSPredicateExpectation(

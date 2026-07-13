@@ -277,8 +277,11 @@ usage summary expands to show the active rate-limit windows and reset times.
 Agent, ChatGPT subscription/account state, trust preset, and scientific Python
 live behind one secondary settings control. The account row is status, not a
 model or billing-action picker: Codex owns sign-in and CASA-RS stores no
-credential. These controls project the CASA-owned agent profile; App Server
-types do not cross into durable project formats.
+credential. Signed-in accounts expose a Log out action in that surface; after
+App Server confirms it, the composer remains disabled until the standard Codex
+subscription sign-in flow completes again. These controls project the
+CASA-owned agent profile; App Server types do not cross into durable project
+formats.
 
 When the conversation is closed, a single purple sparkle in the lower-right of
 the notebook pane opens it and exposes a descriptive tooltip/accessibility

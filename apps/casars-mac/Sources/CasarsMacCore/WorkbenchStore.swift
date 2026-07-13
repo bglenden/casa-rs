@@ -3926,6 +3926,10 @@ public final class WorkbenchStore: ObservableObject {
         agentSession?.requestAccountLogin()
     }
 
+    package func logoutAssistantAccount() {
+        agentSession?.requestAccountLogout()
+    }
+
     package func sendAssistantPrompt() {
         guard var discussion = state.assistantDiscussion,
               var conversation = discussion.activeConversation
@@ -4136,6 +4140,14 @@ public final class WorkbenchStore: ObservableObject {
                 applyAssistantUsage(params)
             case "account/login/completed":
                 refreshAssistantAccount()
+            case "casa/accountLogout/completed":
+                state.assistantDiscussion?.account = AssistantAccountState(
+                    email: nil,
+                    plan: nil,
+                    requiresLogin: true
+                )
+                state.assistantDiscussion?.usage = AssistantUsageState()
+                state.assistantDiscussion?.pendingAuthenticationURL = nil
             case "casa/error", "error":
                 assistantConversationStartPending = false
                 recordAssistantError((params["message"] as? String) ?? String(describing: params))

@@ -129,7 +129,7 @@ if NSUnbufferedIO=YES xcodebuild test-without-building \
   -destination "$DESTINATION" \
   -derivedDataPath "$DERIVED_DATA" \
   -resultBundlePath "$RESULT_BUNDLE" \
-  "${TEST_SELECTION_ARGS[@]}"
+  ${TEST_SELECTION_ARGS[@]+"${TEST_SELECTION_ARGS[@]}"}
 then
   notify_local "GUI tests passed. You can use the Mac again."
   echo "==> GUI test window complete: PASS"
