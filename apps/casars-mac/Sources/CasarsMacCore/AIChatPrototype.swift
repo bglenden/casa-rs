@@ -76,6 +76,29 @@ package struct PrototypeAIAccount: Codable, Equatable {
     package var funding: String
 }
 
+package enum PrototypeAIReasoningEffort: String, CaseIterable, Codable, Equatable, Identifiable {
+    case low
+    case medium
+    case high
+
+    package var id: String { rawValue }
+
+    package var label: String {
+        rawValue.capitalized
+    }
+}
+
+package struct PrototypeAIUsage: Codable, Equatable {
+    package var fiveHourRemainingPercent: Int
+    package var weeklyRemainingPercent: Int
+    package var fiveHourReset: String
+    package var weeklyReset: String
+
+    package var compactLabel: String {
+        "5h \(fiveHourRemainingPercent)% · week \(weeklyRemainingPercent)%"
+    }
+}
+
 package struct PrototypeAIPythonEnvironment: Identifiable, Codable, Equatable {
     package let id: String
     package var label: String
@@ -125,7 +148,9 @@ package struct PrototypeAIChatProjection: Codable, Equatable {
     package var agents: [PrototypeAIAgent]
     package var selectedAgentID: String
     package var selectedModel: String
+    package var reasoningEffort: PrototypeAIReasoningEffort
     package var account: PrototypeAIAccount
+    package var usage: PrototypeAIUsage
     package var trustPreset: PrototypeAITrustPreset
     package var pythonEnvironments: [PrototypeAIPythonEnvironment]
     package var selectedPythonEnvironmentID: String
@@ -161,6 +186,10 @@ package struct PrototypeAIChatProjection: Codable, Equatable {
     package mutating func selectModel(_ model: String) {
         guard selectedAgent?.models.contains(model) == true else { return }
         selectedModel = model
+    }
+
+    package mutating func selectReasoningEffort(_ effort: PrototypeAIReasoningEffort) {
+        reasoningEffort = effort
     }
 
     package mutating func selectTrustPreset(_ preset: PrototypeAITrustPreset) {
@@ -338,7 +367,14 @@ package enum PrototypeAIChatFixtureAdapter {
             ],
             selectedAgentID: "codex-app-server",
             selectedModel: "gpt-5.4",
-            account: PrototypeAIAccount(label: "ChatGPT Pro", status: "Connected fixture", funding: "Subscription · no API billing"),
+            reasoningEffort: .medium,
+            account: PrototypeAIAccount(label: "ChatGPT Pro", status: "Connected through Codex · fixture", funding: "Subscription · no API billing"),
+            usage: PrototypeAIUsage(
+                fiveHourRemainingPercent: 72,
+                weeklyRemainingPercent: 44,
+                fiveHourReset: "Resets in 2 h 18 m · fixture",
+                weeklyReset: "Resets Monday 6:00 PM · fixture"
+            ),
             trustPreset: .work,
             pythonEnvironments: [
                 PrototypeAIPythonEnvironment(id: "casa-python", label: "CASA 6.7 Python", detail: "~/SoftwareProjects/casa-build/venv/bin/python · fixture"),

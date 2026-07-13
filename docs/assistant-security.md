@@ -32,6 +32,13 @@ account/rate-limit status, but never receives, copies, or stores the ChatGPT
 credential. API-key authentication is not part of the initial subscription-
 funded product path.
 
+The GUI treats the ChatGPT plan as read-only account status rather than a
+billing or provider picker. Model and reasoning effort remain immediately
+selectable, and compact remaining-usage state stays visible with detailed
+rate-limit windows and reset times available on demand. Agent/account,
+authority, and Python configuration are consolidated behind one secondary
+settings surface.
+
 ## CASA agent profile and capability contract
 
 `casa-rs-agent-profile/v1` is the internal cross-agent contract. It contains:

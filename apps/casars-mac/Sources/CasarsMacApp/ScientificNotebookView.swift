@@ -35,46 +35,68 @@ struct ScientificNotebookView: View {
     }
 
     private func notebookWorkspace(_ notebook: PrototypeScientificNotebookProjection) -> some View {
-        VStack(spacing: 0) {
-            notebookToolbar(notebook)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 11)
+        ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 0) {
+                notebookToolbar(notebook)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
 
-            Divider()
+                Divider()
 
-            prototypeDisclosure
+                prototypeDisclosure
 
-            Divider()
+                Divider()
 
-            ScrollViewReader { scrollProxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        if notebook.hasExternalConflict {
-                            externalConflictBanner
-                                .padding(.bottom, 20)
+                ScrollViewReader { scrollProxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            if notebook.hasExternalConflict {
+                                externalConflictBanner
+                                    .padding(.bottom, 20)
+                            }
+
+                            notebookDocument(notebook)
+
+                            Color.clear
+                                .id("notebook.aiPin.anchor")
+                                .frame(height: 80)
                         }
-
-                        notebookDocument(notebook)
-
-                        Color.clear
-                            .id("notebook.aiPin.anchor")
-                            .frame(height: 80)
+                        .padding(.horizontal, 44)
+                        .padding(.top, 30)
+                        .frame(maxWidth: 920, alignment: .leading)
+                        .frame(maxWidth: .infinity)
                     }
-                    .padding(.horizontal, 44)
-                    .padding(.top, 30)
-                    .frame(maxWidth: 920, alignment: .leading)
-                    .frame(maxWidth: .infinity)
-                }
-                .background(Color(nsColor: .textBackgroundColor))
-                .accessibilityIdentifier("notebook.document.scroll")
-                .onChange(of: store.state.prototypeAI?.notebookPinFocusGeneration) { _ in
-                    if let projection = store.state.prototypeNotebook {
-                        loadRichDocument(projection)
-                    }
-                    withAnimation {
-                        scrollProxy.scrollTo("notebook.aiPin.anchor", anchor: .bottom)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .accessibilityIdentifier("notebook.document.scroll")
+                    .onChange(of: store.state.prototypeAI?.notebookPinFocusGeneration) { _ in
+                        if let projection = store.state.prototypeNotebook {
+                            loadRichDocument(projection)
+                        }
+                        withAnimation {
+                            scrollProxy.scrollTo("notebook.aiPin.anchor", anchor: .bottom)
+                        }
                     }
                 }
+            }
+
+            if store.isAIPrototypeRuntime,
+               store.state.prototypeAI?.presentation == .closed
+            {
+                Button {
+                    store.openAIPrototypeDrawer()
+                } label: {
+                    Image(systemName: "sparkles")
+                        .workbenchFont(.title3, weight: .semibold)
+                        .foregroundStyle(Color.purple)
+                        .padding(9)
+                        .background(Color.purple.opacity(0.12), in: Circle())
+                        .overlay(Circle().stroke(Color.purple.opacity(0.35)))
+                }
+                .buttonStyle(.plain)
+                .help("Discuss this notebook with AI")
+                .accessibilityLabel("Discuss this notebook with AI")
+                .accessibilityIdentifier("aiPrototype.openDrawer")
+                .padding(18)
             }
         }
         .onAppear {
@@ -119,27 +141,6 @@ struct ScientificNotebookView: View {
             }
 
             Spacer()
-
-            if store.isAIPrototypeRuntime,
-               store.state.prototypeAI?.presentation == .closed
-            {
-                Button {
-                    store.openAIPrototypeDrawer()
-                } label: {
-                    Label("Discuss", systemImage: "sparkles")
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("aiPrototype.openDrawer")
-            } else if store.isAIPrototypeRuntime,
-                      store.state.prototypeAI?.presentation == .tab
-            {
-                Button {
-                    store.dockAIPrototypeConversation()
-                } label: {
-                    Label("Dock chat", systemImage: "rectangle.righthalf.inset.filled")
-                }
-                .accessibilityIdentifier("aiPrototype.dockFromNotebook")
-            }
 
             Picker("View", selection: Binding(
                 get: { notebook.viewMode },
@@ -533,7 +534,7 @@ struct PrototypeNotebookTaskView: View {
                                 {
                                     Label("AI-suggested non-default", systemImage: "sparkles")
                                         .workbenchFont(.caption2, weight: .semibold)
-                                        .foregroundStyle(Color.accentColor)
+                                        .foregroundStyle(Color.purple)
                                         .accessibilityIdentifier(
                                             "prototypeTask.parameterSource.\(parameter.parameterID)"
                                         )
@@ -566,17 +567,24 @@ struct PrototypeNotebookTaskView: View {
                         )
                         .background(
                             store.state.isTutorialPrototype
-                                || (store.isAIPrototypeRuntime
+                                ? Color.accentColor.opacity(0.07)
+                                : (store.isAIPrototypeRuntime
                                     && task.id == "receipt-imager-cancelled"
                                     && parameter.parameterID == "robust")
-                                ? Color.accentColor.opacity(0.07)
-                                : Color.clear
+                                    ? Color.purple.opacity(0.08)
+                                    : Color.clear
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                         .overlay {
                             if store.state.isTutorialPrototype {
                                 RoundedRectangle(cornerRadius: 7)
                                     .stroke(Color.accentColor.opacity(0.22), lineWidth: 1)
+                            } else if store.isAIPrototypeRuntime,
+                                      task.id == "receipt-imager-cancelled",
+                                      parameter.parameterID == "robust"
+                            {
+                                RoundedRectangle(cornerRadius: 7)
+                                    .stroke(Color.purple.opacity(0.28), lineWidth: 1)
                             }
                         }
                     }

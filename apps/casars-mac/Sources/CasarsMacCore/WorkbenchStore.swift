@@ -5952,6 +5952,12 @@ public final class WorkbenchStore: ObservableObject {
         state.prototypeAI = projection
     }
 
+    package func selectAIPrototypeReasoningEffort(_ effort: PrototypeAIReasoningEffort) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.selectReasoningEffort(effort)
+        state.prototypeAI = projection
+    }
+
     package func selectAIPrototypeTrustPreset(_ preset: PrototypeAITrustPreset) {
         guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
         projection.selectTrustPreset(preset)

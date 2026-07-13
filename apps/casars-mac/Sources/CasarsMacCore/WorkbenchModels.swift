@@ -3012,7 +3012,9 @@ package struct DebugPrototypeAIChatSnapshot: Codable, Equatable {
     package var openTabSourceIDs: [String]
     package var agent: String
     package var model: String
+    package var reasoningEffort: PrototypeAIReasoningEffort
     package var account: String
+    package var usageRemaining: String
     package var trustPreset: PrototypeAITrustPreset
     package var pythonEnvironment: String
     package var corpusState: PrototypeAIActivityState
@@ -3031,7 +3033,9 @@ package struct DebugPrototypeAIChatSnapshot: Codable, Equatable {
         openTabSourceIDs = state.openTabSources.map(\.id)
         agent = state.selectedAgent?.label ?? state.selectedAgentID
         model = state.selectedModel
+        reasoningEffort = state.reasoningEffort
         account = "\(state.account.label) · \(state.account.status)"
+        usageRemaining = state.usage.compactLabel
         trustPreset = state.trustPreset
         pythonEnvironment = state.selectedPythonEnvironment?.label
             ?? state.selectedPythonEnvironmentID

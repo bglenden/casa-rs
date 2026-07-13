@@ -13,6 +13,9 @@ final class AIChatPrototypeTests: XCTestCase {
         XCTAssertEqual(projection.selectedAgentID, "codex-app-server")
         XCTAssertEqual(projection.account.label, "ChatGPT Pro")
         XCTAssertEqual(projection.account.funding, "Subscription · no API billing")
+        XCTAssertEqual(projection.reasoningEffort, .medium)
+        XCTAssertEqual(projection.usage.fiveHourRemainingPercent, 72)
+        XCTAssertEqual(projection.usage.weeklyRemainingPercent, 44)
         XCTAssertEqual(projection.trustPreset, .work)
         XCTAssertEqual(projection.selectedPythonEnvironmentID, "casa-python")
         XCTAssertEqual(projection.presentation, .closed)
@@ -46,18 +49,20 @@ final class AIChatPrototypeTests: XCTestCase {
         XCTAssertEqual(store.prototypeProductionBoundaryInvocationCount, 0)
     }
 
-    func testAgentModelTrustAndUserPythonControlsAreLiveFixtures() throws {
+    func testModelEffortAndConsolidatedSettingsAreLiveFixtures() throws {
         let store = WorkbenchStore.aiPrototype()
 
         store.selectAIPrototypeAgent("opencode-acp")
         XCTAssertEqual(store.state.prototypeAI?.selectedAgentID, "codex-app-server")
 
         store.selectAIPrototypeModel("gpt-5.3-codex")
+        store.selectAIPrototypeReasoningEffort(.high)
         store.selectAIPrototypeTrustPreset(.explore)
         store.selectAIPrototypePythonEnvironment("login-python")
 
         let projection = try XCTUnwrap(store.state.prototypeAI)
         XCTAssertEqual(projection.selectedModel, "gpt-5.3-codex")
+        XCTAssertEqual(projection.reasoningEffort, .high)
         XCTAssertEqual(projection.trustPreset, .explore)
         XCTAssertEqual(projection.selectedPythonEnvironment?.label, "Login-shell Python")
         XCTAssertEqual(projection.contexts.map(\.id), ["project", "paper", "source", "semantics"])
@@ -158,7 +163,9 @@ final class AIChatPrototypeTests: XCTestCase {
         XCTAssertEqual(debug.openTabSourceIDs.count, 5)
         XCTAssertTrue(debug.workspaceSourceIDs.contains("schema-casars"))
         XCTAssertEqual(debug.agent, "Codex")
-        XCTAssertEqual(debug.account, "ChatGPT Pro · Connected fixture")
+        XCTAssertEqual(debug.reasoningEffort, .medium)
+        XCTAssertEqual(debug.account, "ChatGPT Pro · Connected through Codex · fixture")
+        XCTAssertEqual(debug.usageRemaining, "5h 72% · week 44%")
         XCTAssertEqual(debug.trustPreset, .explore)
         XCTAssertEqual(debug.pythonEnvironment, "Login-shell Python")
         XCTAssertEqual(debug.availableContextIDs, ["project", "paper", "source", "semantics"])

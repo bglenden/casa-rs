@@ -217,20 +217,24 @@ For each wave:
   acquisition, waits for Ready, and opens the normal task tab with accessible
   tutorial-override markers; it uses no user data or external network.
 - Revised Wave 4 Phase A uses only package-internal Codex-agent, account,
-  authority, Python-environment, context, citation, activity, corpus, response,
-  and recovery fixtures. Core tests cover agent/model selection, Explore/Work/
+  usage-window, reasoning-effort, authority, Python-environment, context,
+  citation, activity, corpus, response, and recovery fixtures. Core tests cover
+  agent/model/effort selection, Explore/Work/
   Full-access transitions, explicit Full-access confirmation, user Python
   selection, cited completion, rate-limit retry, nonresponsive cancellation/
   restart, canonical task opening, chronological notebook-tail insertion,
   debug projection, and zero production calls. XCUITests start from a
-  full-width notebook, open and close the contextual chat drawer, use a normal
+  full-width notebook, activate the contextual chat drawer from the purple
+  lower-right sparkle, use a normal
   free-form composer, expand and dock the same fixture conversation without
   losing its draft or state, inspect context available through the trusted CASA
   MCP fixture, expand otherwise-collapsed agent activity, add a selected answer
   once at the notebook tail, and open task parameters directly in the canonical
   task tab with non-defaults highlighted. The fixture does not claim an exact
-  model-prompt or provider-egress manifest. It also covers subscription/account
-  presentation, stable accessibility identifiers, and zero production-boundary
+  model-prompt or provider-egress manifest. It also covers always-visible model,
+  reasoning-effort, and compact usage-remaining controls; consolidated
+  agent/subscription/access/Python settings; stable accessibility identifiers;
+  and zero production-boundary
   calls. Suggested prompts may fill but never submit the composer. Superseded
   provider-sidecar, predetermined-question, duplicate proposal-card, and exact-
   egress fixtures are not Phase A approval evidence. Phase A does not claim

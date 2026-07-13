@@ -270,16 +270,21 @@ sends it or inserts a predetermined user message. Inline AI remains a
 transient, locally scoped invocation for a selected cell or artifact; durable
 conversation stays in the separate project transcript.
 Return sends the current message; Shift-Return inserts a newline. Subscription
-account, model, trust-preset, and Python-environment selectors sit directly
-below the composer. Wave 4 initially presents a user-installed Codex agent and
-its ChatGPT subscription state. These controls project the CASA-owned agent
-profile; App Server types do not cross into durable project formats.
+model and reasoning-effort selectors remain directly available below the
+composer, alongside a compact summary of subscription usage remaining. The
+usage summary expands to show the active rate-limit windows and reset times.
+Agent, ChatGPT subscription/account state, trust preset, and scientific Python
+live behind one secondary settings control. The account row is status, not a
+model or billing-action picker: Codex owns sign-in and CASA-RS stores no
+credential. These controls project the CASA-owned agent profile; App Server
+types do not cross into durable project formats.
 
-The notebook toolbar shows **Discuss** only while the conversation is closed.
-It disappears while the drawer is visible because the drawer owns close and
-expand controls. If the conversation is expanded in a central tab and the user
-returns to the notebook, the toolbar instead offers **Dock chat**. The compact
-drawer header shows its primary attachment, history, expand, and close controls.
+When the conversation is closed, a single purple sparkle in the lower-right of
+the notebook pane opens it and exposes a descriptive tooltip/accessibility
+label. It disappears while the drawer is visible because the drawer owns close
+and expand controls. Purple consistently denotes AI invocation and AI-suggested
+state; safety warnings such as Full access remain orange. The compact drawer
+header shows its primary attachment, history, expand, and close controls.
 The assistant automatically knows the semantic state of every
 open workbench tab and has standing read-only tools for notebooks, task schemas
 and current parameters, explorers, run history, plots, persistent CASA-RS data
@@ -499,19 +504,21 @@ end-to-end walkthrough.
 
 ### Wave 4: assistant and corpus
 
-Prototype: agent/model/account selectors, Explore/Work/Full-access controls,
-user Python selection, context-availability disclosure, streaming cited
+Prototype: purple sparkle activation, persistent model/reasoning-effort and
+usage-remaining controls, consolidated agent/account/access/Python settings,
+Explore/Work/Full-access controls, context-availability disclosure, streaming cited
 answers, collapsed agent activity, direct task opening, one notebook-tail
 append, corpus/indexing states, rate limits, and cancellation/restart states.
 
 Current Phase A reality: every earlier `casars-mac --show-prototype ai`
 approval is superseded because the user authorized a complete runtime and
 authority redesign on 2026-07-13. The replacement prototype must again begin
-from a full-width notebook with no AI pane. **Discuss** reveals a conventional
+from a full-width notebook with no AI pane. A purple lower-right sparkle reveals a conventional
 free-form chat in a resizable contextual drawer; the same fixture conversation
 expands into a central AI tab and docks back without losing its draft or state.
-The footer presents Codex, model, ChatGPT subscription, trust preset, and
-scientific-Python fixture controls. A compact context panel lists open tabs and
+The footer keeps model, reasoning effort, and subscription usage remaining in
+view; a single settings popover contains Codex agent, ChatGPT subscription
+status, trust preset, and scientific-Python fixtures. A compact context panel lists open tabs and
 the standing CASA MCP/corpus/source capabilities without claiming an exact
 provider-egress manifest. Routine agent activity is collapsed. **Add to
 notebook** previews one chronological-tail append, then opens and focuses the

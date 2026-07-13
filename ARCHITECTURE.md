@@ -156,6 +156,10 @@ JSON-RPC protocol over stdio; a future ACP adapter is the extension point for
 OpenCode and other agents. The metered OpenAI Responses API and Agents SDK are
 not initial backends. The Codex adapter invokes ChatGPT subscription login and
 account state without copying credentials into CASA projects or processes.
+The native interaction keeps model, reasoning effort, and subscription usage
+remaining immediately visible. Agent/account, authority, and Python selection
+are consolidated behind one secondary settings surface; AI invocation and
+AI-suggested state use purple consistently, apart from safety-severity colors.
 
 `casa-rs-agent-profile/v1` defines invariant guidance, a bundled CASA skill,
 the verified project MCP identity, backend resume metadata, an agent-neutral

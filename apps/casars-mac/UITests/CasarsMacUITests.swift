@@ -1168,6 +1168,7 @@ final class CasarsMacUITests: XCTestCase {
 
         XCTAssertTrue(try require("notebook.document.scroll").exists)
         XCTAssertFalse(element("aiPrototype.drawer").exists)
+        XCTAssertTrue(try require("aiPrototype.openDrawer").label.contains("Discuss this notebook"))
         try clickIdentified("aiPrototype.openDrawer")
         XCTAssertTrue(try require("aiPrototype.drawer").exists)
         XCTAssertFalse(element("aiPrototype.openDrawer").exists)
@@ -1182,8 +1183,23 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertGreaterThan(try require("aiPrototype.conversationScroll").frame.width, initialDrawerWidth + 35)
 
         XCTAssertTrue(try require("aiPrototype.boundaryStatus").label.contains("0 production calls"))
-        XCTAssertTrue(try require("aiPrototype.agent").exists)
         XCTAssertTrue(try require("aiPrototype.model").exists)
+        XCTAssertTrue(try require("aiPrototype.effort").exists)
+        XCTAssertTrue(try require("aiPrototype.usage").exists)
+        XCTAssertTrue(try require("aiPrototype.settings").exists)
+
+        try clickIdentified("aiPrototype.effort")
+        XCTAssertTrue(app.menuItems["High"].waitForExistence(timeout: 3))
+        app.menuItems["High"].click()
+        XCTAssertTrue(try require("aiPrototype.effort").value as? String == "High")
+
+        try clickIdentified("aiPrototype.usage")
+        XCTAssertTrue(try require("aiPrototype.usagePanel").exists)
+        app.typeKey(.escape, modifierFlags: [])
+
+        try clickIdentified("aiPrototype.settings")
+        XCTAssertTrue(try require("aiPrototype.settingsPanel").exists)
+        XCTAssertTrue(try require("aiPrototype.agent").exists)
         XCTAssertTrue(try require("aiPrototype.account").exists)
         XCTAssertTrue(try require("aiPrototype.trust").exists)
         XCTAssertTrue(try require("aiPrototype.python").exists)

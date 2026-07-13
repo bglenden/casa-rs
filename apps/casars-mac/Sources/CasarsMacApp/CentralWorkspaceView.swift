@@ -8499,10 +8499,10 @@ struct GenericTaskPanel: View {
             if isAssistantSuggested {
                 Label("AI-suggested non-default", systemImage: "sparkles")
                     .workbenchFont(.caption, weight: .semibold)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color.purple)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
-                    .background(Color.accentColor.opacity(0.08), in: Capsule())
+                    .background(Color.purple.opacity(0.09), in: Capsule())
                     .accessibilityIdentifier("task.parameterSource.\(parameter)")
                     .accessibilityValue("AI-suggested non-default")
             } else if isTutorialOverride {
