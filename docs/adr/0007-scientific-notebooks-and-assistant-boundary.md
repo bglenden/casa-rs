@@ -100,6 +100,16 @@ Selected messages, code, plots, or conclusions may be pinned into Markdown.
 Every assistant turn records its provider/model label and citations, but not
 hidden reasoning or raw provider envelopes.
 
+"Shown in the notebook workspace" does not mean embedded chat cells. The same
+project-owned transcript may be presented in an on-demand contextual drawer
+beside its primary notebook attachment or expanded into a first-class central
+AI tab. Both presentations share conversation identity, draft, scroll,
+context, and pending proposals. Every presentation has a normal free-form
+multiline composer; suggested prompts may populate that composer but never
+become predetermined or automatically submitted messages. A pin is an
+explicit, immutable notebook snapshot with transcript provenance, not a live
+or synchronized copy of the conversation.
+
 Retrieval is local and layered: a versioned redistributable baseline pack,
 project documents copied under `documents/`, release-matched `casa-rs` source,
 and an optional live-checkout overlay keyed to a Git commit. SQLite stores
@@ -107,6 +117,15 @@ source/chunk metadata, citations, and FTS5 text indexes. A versioned float32
 embedding matrix provides exact cosine search behind a private vector-index
 interface. Scientific claims cite document pages or sections; implementation
 claims cite source paths, symbols, lines, and release/commit identity.
+
+The assistant orchestration has automatic semantic awareness of every open
+workbench tab and standing read-only tool access to notebook content, task
+schemas and current parameters, explorer state, run history, plots, persistent
+CASA-RS data types, the project corpus, and release/live-checkout source. Users
+do not manually attach each open tab before an ordinary question. This local
+workspace/tool visibility is distinct from provider egress: a hosted model
+receives only the retrieved excerpts, typed state, or bounded summaries used
+for the turn, recorded in its visible context manifest.
 
 Read-only public web research is available with visible queries and citations.
 Downloads, uploads, authenticated actions, and writes require separate

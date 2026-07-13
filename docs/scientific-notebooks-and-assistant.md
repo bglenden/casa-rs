@@ -244,11 +244,85 @@ escaping symlinks, device files, archive bombs, and destination collisions.
 
 ## AI discussions and local corpus
 
-The assistant appears inline in the notebook workspace but conversations are
-stored separately. A transcript contains only visible messages, citations,
-timestamps, provider/model labels, and pin references. It excludes hidden
-reasoning and raw provider envelopes. Provider/model selection may change
-within a thread.
+The normal notebook state is the full-width notes-first document with no AI
+pane. Invoking AI from a notebook, selection, task, output, plot, or source
+opens an on-demand, resizable contextual drawer beside the notebook. The drawer
+can expand into a first-class central AI tab, and the central tab can dock back
+beside the notebook. These are two presentations of the same conversation,
+not copied or synchronized transcripts. Closing either presentation preserves
+the transcript, unsent draft, scroll position, selected context, running
+read-only work, and pending proposals.
+
+Conversations are project-owned and stored separately from Markdown. A
+conversation opened from a notebook receives that notebook as its primary
+attachment and default pin destination, but may explicitly attach other
+notebooks, datasets, task tabs, outputs, history entries, documents, or source
+trees. A transcript contains only visible messages, citations, timestamps,
+provider/model labels, attachment/context manifests, proposal states, and pin
+references. It excludes hidden reasoning and raw provider envelopes.
+Provider/model selection may change within a thread.
+
+Both drawer and central-tab presentations use a conventional free-form
+multiline composer fixed at the bottom. Optional suggested questions are
+empty-state aids only: selecting one fills editable composer text and never
+sends it or inserts a predetermined user message. Inline AI remains a
+transient, locally scoped invocation for a selected cell or artifact; durable
+conversation stays in the separate project transcript.
+
+The compact drawer header shows its primary attachment, history, expand, and
+close controls. The assistant automatically knows the semantic state of every
+open workbench tab and has standing read-only tools for notebooks, task schemas
+and current parameters, explorers, run history, plots, persistent CASA-RS data
+types, the radio-astronomy and project-document corpus, and release/live-
+checkout source. Users do not manually attach each open tab or corpus before
+ordinary questions.
+
+Automatic workspace awareness and local read-only retrieval do not imply bulk
+provider disclosure. One compact row above the composer summarizes the precise
+per-message provider payload and destination, for example `current section +
+plot + 2 papers -> OpenAI`. Opening that row shows retrieved excerpts, typed
+state, bounded summaries, estimated egress, include/exclude overrides, and tool
+authority. Every sent turn retains an expandable manifest of what was
+disclosed and to which provider.
+
+Citations attach to the claims they support. A lightweight preview shows the
+relevant document excerpt, page/section, source path/lines/commit, notebook
+block, or run provenance; opening it uses a normal central preview tab. Pins
+may snapshot a conclusion, code, task intent, plot, citations, or a transcript
+link into a user-chosen notebook location after preview and confirmation.
+
+Mutations appear as compact typed proposal cards in the conversation. Detailed
+diffs, code, parameters, commands, and logs stay collapsed until **Review**
+opens the existing notebook diff, normal task tab, Python/run review, or
+file/network approval surface. Insertion, execution, download, and file-write
+authority are separate approvals. Ordinary prose and read-only answers remain
+ordinary chat messages rather than action cards.
+
+### Interaction precedents
+
+The 2026-07-12 interaction review selected this hybrid from established
+notebook and document-chat behavior rather than inventing a CASA-RS-only
+conversation model:
+
+- [Jupyter AI](https://jupyter-ai.readthedocs.io/en/v3/users/) uses a persistent
+  side-panel conversation with notebook/cell context and explicit code
+  insertion.
+- [VS Code Chat](https://code.visualstudio.com/docs/agents/chat-view)
+  permits one chat session to move between the secondary side bar, editor, and
+  window, while [notebook AI](https://code.visualstudio.com/docs/agents/guides/notebooks-with-ai)
+  keeps inline chat scoped to targeted cell work.
+- [Databricks Genie Code](https://docs.databricks.com/aws/en/genie-code/use-genie-code)
+  uses a contextual side pane and can [maximize the same work into a full-page
+  chat](https://docs.databricks.com/aws/en/genie-code/full-page).
+- [Deepnote Agent](https://deepnote.com/docs/deepnote-agent) separates
+  notebook-level side chat from [block-local AI editing](https://deepnote.com/docs/ai-code-editing).
+- [NotebookLM](https://support.google.com/notebooklm/answer/16179559?hl=en)
+  establishes explicit source selection, claim-local citation preview, and
+  promotion of selected chat results into durable notes.
+
+These references are interaction precedent only. CASA-RS retains its own
+project-owned transcripts, typed scientific context, provider-egress manifest,
+canonical task/Python review surfaces, and approval boundaries.
 
 The `casars-assistant` sidecar speaks a versioned CASA-RS JSONL/stdio protocol
 and uses Pi only as an adapter layer. Initial supported authentication is an
@@ -279,6 +353,15 @@ Web queries and citations are visible. Uploads, downloads, logins, writes,
 Python, and tasks cross explicit approval boundaries. Hosted models may receive
 selected excerpts and bounded summaries or plots, but never bulk arrays,
 visibilities, full datasets, secrets, or unrestricted project files by default.
+
+The standing read-only surface includes all open tab projections: notebook
+source and selection, task identity/schema/current values/default differences,
+explorer configuration and selected data products, Python cells and retained
+outputs, plots, and processing history. It also includes task and parameter
+documentation plus persistent table, MeasurementSet, image, coordinate, and
+measures semantics. The assistant may retrieve from these sources as needed
+without per-read approval; the resulting provider payload remains bounded and
+visible per turn.
 
 Task proposals show the typed parameter diff, run-safety class, affected paths,
 and expected products. Approval launches the canonical task path so normal
@@ -403,20 +486,24 @@ Prototype: provider/model selector, context chips, streaming cited answers,
 corpus/indexing states, source links, approval cards, plot insertion,
 pin-to-notebook, redaction preview, rate limits, and offline/error states.
 
-Current Phase A reality: `casars-mac --show-prototype ai` launches a compact
-full-width project discussion backed only by deterministic package-internal
-fixtures. Two fake providers share the same interaction contract. Users can
-select the model and bounded context, preview exactly what may leave the Mac,
-re-index or cancel a fixture corpus, inspect cited paper/source excerpts, pin
-answers, and explicitly apply or reject task, Python, plot, download, and note
-proposals after reviewing their exact payload, authority, and affected paths.
-`provider-error`, `rate-limited`, `offline`, `tool-failure`, and
-`nonresponsive` launch states exercise explicit retry, cancellation, and worker
-restart without silent retry or authority expansion. Debug state and the live
-header report zero production-boundary calls. This prototype does not perform
-authentication, network access, retrieval, Python, tasks, downloads, notebook
-writes, or transcript persistence and does not define a provider or persisted
-assistant contract.
+Current Phase A reality: the first `casars-mac --show-prototype ai`
+implementation proved the deterministic provider, context, citation, corpus,
+proposal, recovery, accessibility, and zero-production-call fixtures, but its
+full-width action-heavy layout and predetermined-question workaround were not
+accepted. That presentation is superseded interaction evidence and must not
+unlock Phase B.
+
+The revised Phase A prototype must begin from a full-width notebook with no AI
+pane, open a conventional free-form chat in a collapsible contextual drawer,
+and expand or dock the same fixture conversation into or from a central AI tab.
+It must preserve draft, scroll, context, and proposal state across that
+transition; show a compact attachment/context/egress summary; use claim-local
+citations and source previews; keep proposal detail collapsed until review;
+and support explicit pinning into the notebook. Suggested prompts may fill the
+composer but never create or submit predetermined messages. Existing failure,
+cancellation, retry, restart, accessibility, debug-state, and zero-production-
+boundary coverage remains required. Explicit interaction approval is still
+outstanding after this material redesign.
 
 Production: Pi sidecar, secure authentication, local corpus, source overlays,
 web/retrieval/data tools, restricted AI Python, canonical task proposals,

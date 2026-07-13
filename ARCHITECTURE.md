@@ -156,7 +156,14 @@ CASA-RS-owned JSONL/stdio protocol and may use Pi as a replaceable model/auth
 adapter. Swift remains the native interaction layer, and
 `casars-frontend-services` remains a projection layer rather than a persistence
 implementation. The assistant modules remain accepted architecture but do not
-exist until their implementation wave lands.
+exist until their implementation wave lands. Swift presents one project-owned
+conversation state either in an on-demand contextual drawer or in an expanded
+central AI tab; presentation changes do not copy transcripts or establish a
+second persistence boundary. Swift supplies the sidecar with typed read-only
+projections for every open tab, while Rust/provider contracts and the local
+corpus expose task schemas, parameters, persistent data semantics, project
+documents, and release/live source. Provider egress remains a bounded,
+per-turn manifest rather than a dump of that locally available context.
 
 Every notebook-program wave starts with a launchable deterministic GUI
 prototype and an explicit approval gate before real adapters are connected.

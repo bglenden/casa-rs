@@ -217,16 +217,29 @@ For each wave:
   forks a test-owned template into a disposable project, approves a local file
   acquisition, waits for Ready, and opens the normal task tab with accessible
   tutorial-override markers; it uses no user data or external network.
-- Wave 4 Phase A uses two package-internal fake providers and deterministic
-  context, citation, corpus, response, and proposal fixtures. Core tests cover
+- Revised Wave 4 Phase A uses two package-internal fake providers and
+  deterministic context, citation, corpus, response, and proposal fixtures.
+  Core tests cover
   provider-neutral selection, explicit egress context, cited completion,
   rate-limit retry, nonresponsive cancellation/restart, proposal rejection,
   tool failure/cancellation/retry, debug projection, and zero production calls.
-  XCUITests cover the launched cited-answer/pin flow, explicit task approval and
-  Python rejection, conversation scrolling, rate-limit recovery,
-  nonresponsive worker restart, stable accessibility identifiers, and zero
-  production-boundary calls. Phase A does not claim authentication, network,
-  retrieval, Python, task, download, notebook-write, or transcript persistence.
+  XCUITests start from a full-width notebook, open and close the contextual chat
+  drawer, use a normal free-form composer, expand and dock the same fixture
+  conversation without losing draft/scroll/context/proposal state, inspect the
+  context/egress manifest and claim-local citation preview, pin a selected
+  result, and review compact task/Python proposals in their canonical surfaces.
+  Cross-tab fixtures prove that the assistant can discover and read the typed
+  state of every open notebook, task, explorer, plot, Python, and history tab
+  without manual attachment. Corpus/source fixtures prove on-demand retrieval
+  of radio-astronomy documents, task/parameter semantics, persistent data-type
+  documentation, and release/live source, while assertions constrain the
+  hosted-provider request to the visible bounded per-turn payload.
+  They also cover rate-limit recovery, nonresponsive worker restart, stable
+  accessibility identifiers, and zero production-boundary calls. Suggested
+  prompts may fill but never submit the composer. The superseded full-width,
+  predetermined-question fixture is not Phase A approval evidence. Phase A
+  does not claim authentication, network, retrieval, Python, task, download,
+  notebook-write, or transcript persistence.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review
