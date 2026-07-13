@@ -152,14 +152,50 @@ impl CorpusIndex {
                 return Err(CorpusError::DuplicateDocumentId(input.id.clone()));
             }
             let content_sha256 = sha256(input.content.as_bytes());
-            let current_hash: Option<String> = transaction
+            let chunks = chunk_content(&input.content);
+            let first_citation_json = chunk_citation_json(&input.citation, &chunks[0])?;
+            let expected_fingerprint = index_fingerprint(
+                layer_name(input.layer),
+                &input.title,
+                &input.source_identity,
+                &content_sha256,
+                input.redistribution_cleared,
+                &first_citation_json,
+            )?;
+            let current_fingerprint: Option<String> = transaction
                 .query_row(
-                    "SELECT content_sha256 FROM documents WHERE id = ?1",
+                    "SELECT d.layer, d.title, d.source_identity, d.content_sha256,
+                            d.redistribution_cleared, c.citation_json
+                     FROM documents d
+                     JOIN chunks c ON c.document_id = d.id AND c.ordinal = 0
+                     WHERE d.id = ?1",
                     [&input.id],
-                    |row| row.get(0),
+                    |row| {
+                        let layer = row.get::<_, String>(0)?;
+                        let title = row.get::<_, String>(1)?;
+                        let source_identity = row.get::<_, String>(2)?;
+                        let content_sha256 = row.get::<_, String>(3)?;
+                        let redistribution_cleared = row.get::<_, bool>(4)?;
+                        let citation_json = row.get::<_, String>(5)?;
+                        index_fingerprint(
+                            &layer,
+                            &title,
+                            &source_identity,
+                            &content_sha256,
+                            redistribution_cleared,
+                            &citation_json,
+                        )
+                        .map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                5,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        })
+                    },
                 )
                 .optional()?;
-            if current_hash.as_deref() == Some(content_sha256.as_str()) {
+            if current_fingerprint.as_deref() == Some(expected_fingerprint.as_str()) {
                 unchanged_documents += 1;
                 continue;
             }
@@ -178,15 +214,9 @@ impl CorpusIndex {
                     input.redistribution_cleared,
                 ],
             )?;
-            for (ordinal, chunk) in chunk_content(&input.content).into_iter().enumerate() {
+            for (ordinal, chunk) in chunks.into_iter().enumerate() {
                 let chunk_id = format!("{}:{ordinal}", input.id);
-                let mut citation = input.citation.clone();
-                citation.line_start.get_or_insert(chunk.line_start);
-                citation.line_end.get_or_insert(chunk.line_end);
-                if citation.section.is_none() {
-                    citation.section = section_or_symbol_hint(&chunk.text);
-                }
-                let citation_json = serde_json::to_string(&citation)?;
+                let citation_json = chunk_citation_json(&input.citation, &chunk)?;
                 transaction.execute(
                     "INSERT INTO chunks
                      (id, document_id, ordinal, text, citation_json)
@@ -428,6 +458,48 @@ fn chunk_content(content: &str) -> Vec<TextChunk> {
         });
     }
     chunks
+}
+
+fn chunk_citation_json(
+    base: &CorpusCitation,
+    chunk: &TextChunk,
+) -> Result<String, serde_json::Error> {
+    let mut citation = base.clone();
+    citation.line_start.get_or_insert(chunk.line_start);
+    citation.line_end.get_or_insert(chunk.line_end);
+    if citation.section.is_none() {
+        citation.section = section_or_symbol_hint(&chunk.text);
+    }
+    serde_json::to_string(&citation)
+}
+
+#[derive(Serialize)]
+struct DocumentIndexFingerprint<'a> {
+    layer: &'a str,
+    title: &'a str,
+    source_identity: &'a str,
+    content_sha256: &'a str,
+    redistribution_cleared: bool,
+    first_chunk_citation_json: &'a str,
+}
+
+fn index_fingerprint(
+    layer: &str,
+    title: &str,
+    source_identity: &str,
+    content_sha256: &str,
+    redistribution_cleared: bool,
+    first_chunk_citation_json: &str,
+) -> Result<String, serde_json::Error> {
+    let fingerprint = DocumentIndexFingerprint {
+        layer,
+        title,
+        source_identity,
+        content_sha256,
+        redistribution_cleared,
+        first_chunk_citation_json,
+    };
+    serde_json::to_vec(&fingerprint).map(|bytes| sha256(&bytes))
 }
 
 fn section_or_symbol_hint(text: &str) -> Option<String> {

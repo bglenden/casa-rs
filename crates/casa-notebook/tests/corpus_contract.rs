@@ -69,6 +69,51 @@ fn layered_index_is_incremental_and_searches_exact_cited_chunks() {
 }
 
 #[test]
+fn incremental_index_refreshes_provenance_when_content_is_unchanged() {
+    let project = tempdir().expect("project");
+    let index = CorpusIndex::open(project.path()).expect("open corpus");
+    let mut source = document(
+        "source",
+        CorpusLayer::LiveSource,
+        "MeasurementSet source",
+        "MeasurementSet columns include UVW and DATA.",
+    );
+    source.citation.release = Some("v1.0.0".to_owned());
+    source.citation.commit = Some("old-commit".to_owned());
+    index
+        .index_documents(&[source.clone()], &BTreeSet::new())
+        .expect("seed source index");
+    let original_content_hash = index.documents().expect("documents")[0]
+        .content_sha256
+        .clone();
+
+    source.title = "Current MeasurementSet source".to_owned();
+    source.source_identity = "identity:source@new-commit".to_owned();
+    source.citation.label = "Current source".to_owned();
+    source.citation.locator = "crates/casa-ms/src/lib.rs".to_owned();
+    source.citation.release = Some("v1.1.0".to_owned());
+    source.citation.commit = Some("new-commit".to_owned());
+    let report = index
+        .index_documents(&[source], &BTreeSet::new())
+        .expect("refresh source provenance");
+    assert_eq!(report.indexed_documents, 1);
+    assert_eq!(report.unchanged_documents, 0);
+
+    let documents = index.documents().expect("refreshed documents");
+    assert_eq!(documents[0].content_sha256, original_content_hash);
+    assert_eq!(documents[0].title, "Current MeasurementSet source");
+    assert_eq!(documents[0].source_identity, "identity:source@new-commit");
+    let hit = index
+        .search("MeasurementSet UVW DATA", 1)
+        .expect("search refreshed source")
+        .remove(0);
+    assert_eq!(hit.citation.label, "Current source");
+    assert_eq!(hit.citation.locator, "crates/casa-ms/src/lib.rs");
+    assert_eq!(hit.citation.release.as_deref(), Some("v1.1.0"));
+    assert_eq!(hit.citation.commit.as_deref(), Some("new-commit"));
+}
+
+#[test]
 fn layer_refresh_removes_only_missing_documents_in_selected_layers() {
     let project = tempdir().expect("project");
     let index = CorpusIndex::open(project.path()).expect("open corpus");
