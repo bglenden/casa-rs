@@ -593,10 +593,7 @@ final class CasarsMacUITests: XCTestCase {
         try FileManager.default.createDirectory(at: pythonBin, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(
             at: pythonBin.appendingPathComponent("python3"),
-            withDestinationURL: URL(fileURLWithPath:
-                ProcessInfo.processInfo.environment["CASA_RS_GUI_TEST_PYTHON"]
-                    ?? "/usr/bin/python3"
-            )
+            withDestinationURL: URL(fileURLWithPath: try resolvedTestPython())
         )
         let notebookFile = notebooks.appendingPathComponent("python.md")
         let source = """
@@ -697,10 +694,7 @@ final class CasarsMacUITests: XCTestCase {
         try FileManager.default.createDirectory(at: pythonDirectory, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(
             at: pythonDirectory.appendingPathComponent("python3"),
-            withDestinationURL: URL(fileURLWithPath:
-                ProcessInfo.processInfo.environment["CASA_RS_GUI_TEST_PYTHON"]
-                    ?? "/usr/bin/python3"
-            )
+            withDestinationURL: URL(fileURLWithPath: try resolvedTestPython())
         )
         productionProjectURL = project
 
@@ -1587,6 +1581,33 @@ final class CasarsMacUITests: XCTestCase {
         let audit = element("pythonPrototype.boundaryAudit")
         XCTAssertTrue(audit.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertEqual(audit.value as? String ?? audit.label, "0")
+    }
+
+    private func resolvedTestPython() throws -> String {
+        let environment = ProcessInfo.processInfo.environment
+        let pathCandidates = (environment["PATH"] ?? "")
+            .split(separator: ":")
+            .flatMap { directory in
+                ["python3", "python"].map {
+                    URL(fileURLWithPath: String(directory)).appendingPathComponent($0).path
+                }
+            }
+        let candidates = [environment["CASA_RS_GUI_TEST_PYTHON"]].compactMap { $0 }
+            + pathCandidates
+            + [
+                "/opt/homebrew/bin/python3",
+                "/usr/local/bin/python3",
+                "/opt/local/bin/python3",
+                "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+            ]
+        if let executable = candidates.first(where: {
+            FileManager.default.isExecutableFile(atPath: $0)
+                && URL(fileURLWithPath: $0).resolvingSymlinksInPath().path != "/usr/bin/python3"
+                && !$0.contains("/Xcode.app/Contents/Developer/")
+        }) {
+            return executable
+        }
+        throw XCTSkip("a standalone Python runtime is required for production GUI tests")
     }
 
     private func assertZeroTutorialProductionBoundaryCalls() {
