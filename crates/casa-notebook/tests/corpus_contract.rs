@@ -2,10 +2,7 @@
 
 use std::{collections::BTreeSet, path::PathBuf};
 
-use casa_notebook::{
-    CORPUS_EMBEDDING_DIMENSIONS, CORPUS_EMBEDDING_MODEL_VERSION, CorpusCitation,
-    CorpusDocumentInput, CorpusIndex, CorpusLayer,
-};
+use casa_notebook::{CorpusCitation, CorpusDocumentInput, CorpusIndex, CorpusLayer};
 use tempfile::tempdir;
 
 fn document(id: &str, layer: CorpusLayer, title: &str, content: &str) -> CorpusDocumentInput {
@@ -53,8 +50,7 @@ fn layered_index_is_incremental_and_searches_exact_cited_chunks() {
         .expect("first index");
     assert_eq!(first.indexed_documents, 2);
     assert_eq!(first.unchanged_documents, 0);
-    assert_eq!(first.embedding_model, CORPUS_EMBEDDING_MODEL_VERSION);
-    assert_eq!(CORPUS_EMBEDDING_DIMENSIONS, 384);
+    assert_eq!(first.retrieval_engine, "sqlite_fts5_unicode61");
 
     let second = index
         .index_documents(&documents, &BTreeSet::new())
@@ -158,4 +154,39 @@ fn source_chunks_add_symbol_and_line_provenance_when_not_predeclared() {
         Some("pub fn bounded_search(query: &str) -> Vec<String> {")
     );
     assert_eq!(hit.citation.commit.as_deref(), Some("abc123"));
+}
+
+#[test]
+fn layer_filtered_search_ranks_only_the_requested_corpus_plane() {
+    let project = tempdir().expect("project");
+    let index = CorpusIndex::open(project.path()).expect("open corpus");
+    index
+        .index_documents(
+            &[
+                document(
+                    "paper",
+                    CorpusLayer::ProjectDocument,
+                    "Paper",
+                    "Briggs weighting is discussed in this paper.",
+                ),
+                document(
+                    "source",
+                    CorpusLayer::LiveSource,
+                    "Source",
+                    "Briggs weighting is implemented by this source symbol.",
+                ),
+            ],
+            &BTreeSet::new(),
+        )
+        .expect("index layered evidence");
+
+    let hits = index
+        .search_layers(
+            "Briggs weighting",
+            1,
+            &BTreeSet::from([CorpusLayer::ReleaseSource, CorpusLayer::LiveSource]),
+        )
+        .expect("source-only search");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].document_id, "source");
 }

@@ -43,7 +43,6 @@ let package = Package(
                 .copy("Resources/assistant-corpus")
             ],
             linkerSettings: [
-                .linkedFramework("Security"),
                 .linkedFramework("PDFKit"),
                 .linkedFramework("Vision")
             ]

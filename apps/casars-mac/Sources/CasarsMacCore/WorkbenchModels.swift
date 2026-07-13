@@ -3067,10 +3067,10 @@ package struct DebugAssistantDiscussionSnapshot: Codable, Equatable {
         activeConversationID = state.activeConversationID
         conversationCount = state.conversations.count
         messageCount = state.activeConversation?.messages.count ?? 0
-        provider = state.activeConversation?.provider
-        model = state.activeConversation?.model
-        selectedContextIDs = state.contexts.filter(\.providerVisible).map(\.id)
-        estimatedEgressBytes = state.contexts.filter(\.providerVisible).reduce(0) {
+        provider = state.activeConversation?.profile.backendId
+        model = state.activeConversation?.profile.model
+        selectedContextIDs = state.contexts.filter(\.selected).map(\.id)
+        estimatedEgressBytes = state.contexts.filter(\.selected).reduce(0) {
             $0 + $1.byteCount
         }
         corpusStatus = state.corpusStatus

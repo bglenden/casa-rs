@@ -21,15 +21,13 @@ use casa_ms::{
     VisibilityDataColumn, build_msexplore_payload_from_spec,
 };
 use casa_notebook::{
-    ASSISTANT_PROTOCOL_VERSION, ASSISTANT_TRANSCRIPT_SCHEMA_VERSION, AssistantAttachment,
-    AssistantInsertionBinding, AssistantMessageId, AssistantPinReference, AssistantProposal,
-    AssistantProposalKind, AssistantSidecarPolicy, AssistantStore, AttemptHandle,
-    CORPUS_EMBEDDING_DIMENSIONS, CORPUS_EMBEDDING_MODEL_VERSION, CORPUS_SCHEMA_VERSION,
-    ConflictResolution, ConversationId, ConversationTranscript, CorpusDocumentInput, CorpusIndex,
-    CorpusLayer, ExecutionReceipt, ExportMode, NotebookDocument, NotebookId, NotebookStore,
-    ReceiptFinalization, RecordingPolicy, RecordingRequest, SaveResult, SaveVisualizationRequest,
-    TaskCellIntent, TutorialAcquisitionApproval, TutorialProject, TutorialTemplate,
-    VisualizationSnapshot,
+    ASSISTANT_PROFILE_VERSION, ASSISTANT_TRANSCRIPT_SCHEMA_VERSION, AssistantAttachment,
+    AssistantMessageId, AssistantPinReference, AssistantSessionProfile, AssistantStore,
+    AttemptHandle, CORPUS_SCHEMA_VERSION, ConflictResolution, ConversationId,
+    ConversationTranscript, CorpusDocumentInput, CorpusIndex, CorpusLayer, ExecutionReceipt,
+    ExportMode, NotebookDocument, NotebookId, NotebookStore, ReceiptFinalization, RecordingPolicy,
+    RecordingRequest, SaveResult, SaveVisualizationRequest, TaskCellIntent,
+    TutorialAcquisitionApproval, TutorialProject, TutorialTemplate, VisualizationSnapshot,
 };
 use casa_provider_contracts::{
     ParameterValue, ProviderInvocationAdaptation, RunSafetyClass, SurfaceContractBundle,
@@ -860,8 +858,7 @@ struct AssistantCreateConversationRequest {
     project_root: String,
     title: String,
     primary_attachment: AssistantAttachment,
-    provider: String,
-    model: String,
+    profile: AssistantSessionProfile,
 }
 
 #[derive(Debug, Deserialize)]
@@ -877,30 +874,11 @@ struct AssistantSaveConversationRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct AssistantCreateProposalRequest {
-    kind: AssistantProposalKind,
-    title: String,
-    authority: String,
-    payload: serde_json::Value,
-    execution: casa_notebook::AssistantExecutionBinding,
-    insertion: AssistantInsertionBinding,
-    #[serde(default)]
-    affected_paths: Vec<PathBuf>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AssistantApproveProposalRequest {
-    proposal: AssistantProposal,
-    authority: String,
-}
-
-#[derive(Debug, Deserialize)]
 struct AssistantCreatePinRequest {
     conversation_id: ConversationId,
     notebook_id: NotebookId,
     message_id: AssistantMessageId,
     representation: String,
-    destination: String,
     snapshot_content: String,
 }
 
@@ -918,6 +896,8 @@ struct AssistantCorpusSearchRequest {
     query: String,
     #[serde(default = "default_assistant_corpus_search_limit")]
     limit: usize,
+    #[serde(default)]
+    layers: BTreeSet<CorpusLayer>,
 }
 
 const fn default_assistant_corpus_search_limit() -> usize {
@@ -929,13 +909,13 @@ const MAX_ASSISTANT_CORPUS_SEARCH_RESULTS: usize = 32;
 
 #[derive(Debug, Serialize)]
 struct AssistantProtocolProjection {
-    protocol_version: u32,
+    profile_version: u32,
     transcript_schema_version: u32,
     corpus_schema_version: u32,
-    embedding_model: &'static str,
-    embedding_dimensions: usize,
-    sidecar_policy: AssistantSidecarPolicy,
-    host_mediated_tools: Vec<&'static str>,
+    retrieval_engine: &'static str,
+    backend_session_binding: &'static str,
+    authority_presets: Vec<&'static str>,
+    project_mcp_tools: Vec<&'static str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1213,17 +1193,17 @@ pub fn notebook_export(request_json: String) -> FrontendResult<()> {
         .map_err(|error| notebook_error("export notebooks", error))
 }
 
-/// Describe the versioned assistant boundary and its deny-by-default sidecar authority.
+/// Describe the versioned agent-neutral persistence and project-MCP boundary.
 #[uniffi::export]
 pub fn assistant_protocol_info_json() -> FrontendResult<String> {
     serde_json::to_string(&AssistantProtocolProjection {
-        protocol_version: ASSISTANT_PROTOCOL_VERSION,
+        profile_version: ASSISTANT_PROFILE_VERSION,
         transcript_schema_version: ASSISTANT_TRANSCRIPT_SCHEMA_VERSION,
         corpus_schema_version: CORPUS_SCHEMA_VERSION,
-        embedding_model: CORPUS_EMBEDDING_MODEL_VERSION,
-        embedding_dimensions: CORPUS_EMBEDDING_DIMENSIONS,
-        sidecar_policy: AssistantSidecarPolicy::deny_by_default(),
-        host_mediated_tools: vec![
+        retrieval_engine: "sqlite_fts5_unicode61",
+        backend_session_binding: "opaque_adapter_session_id",
+        authority_presets: vec!["explore", "work", "full_access"],
+        project_mcp_tools: vec![
             "corpus.search",
             "source.search",
             "context.open_tabs",
@@ -1236,66 +1216,6 @@ pub fn assistant_protocol_info_json() -> FrontendResult<String> {
     .map_err(|error| assistant_error("serialize assistant protocol information", error))
 }
 
-/// Construct and hash-bind one destination-first assistant proposal.
-#[uniffi::export]
-pub fn assistant_create_proposal_json(request_json: String) -> FrontendResult<String> {
-    let request: AssistantCreateProposalRequest = serde_json::from_str(&request_json)
-        .map_err(|error| assistant_error("parse assistant proposal request", error))?;
-    let proposal = AssistantProposal::new_with_insertion(
-        request.kind,
-        request.title,
-        request.authority,
-        request.payload,
-        request.execution,
-        request.insertion,
-        request.affected_paths,
-    )
-    .map_err(|error| assistant_error("create assistant proposal", error))?;
-    serde_json::to_string(&proposal)
-        .map_err(|error| assistant_error("serialize assistant proposal", error))
-}
-
-/// Bind insertion approval to the exact proposal and destination content.
-#[uniffi::export]
-pub fn assistant_approve_proposal_insertion_json(request_json: String) -> FrontendResult<String> {
-    let mut request: AssistantApproveProposalRequest = serde_json::from_str(&request_json)
-        .map_err(|error| assistant_error("parse assistant insertion approval", error))?;
-    request
-        .proposal
-        .approve_insertion(request.authority)
-        .and_then(|()| request.proposal.ensure_insertion_approved_exact())
-        .map_err(|error| assistant_error("approve assistant proposal insertion", error))?;
-    serde_json::to_string(&request.proposal)
-        .map_err(|error| assistant_error("serialize assistant insertion approval", error))
-}
-
-/// Bind execution approval separately to the same exact proposal receipt.
-#[uniffi::export]
-pub fn assistant_approve_proposal_execution_json(request_json: String) -> FrontendResult<String> {
-    let mut request: AssistantApproveProposalRequest = serde_json::from_str(&request_json)
-        .map_err(|error| assistant_error("parse assistant execution approval", error))?;
-    request
-        .proposal
-        .approve(request.authority)
-        .and_then(|()| request.proposal.ensure_approved_exact())
-        .map_err(|error| assistant_error("approve assistant proposal execution", error))?;
-    serde_json::to_string(&request.proposal)
-        .map_err(|error| assistant_error("serialize assistant execution approval", error))
-}
-
-/// Reject one pending proposal without granting insertion or execution authority.
-#[uniffi::export]
-pub fn assistant_reject_proposal_json(request_json: String) -> FrontendResult<String> {
-    let mut request: AssistantApproveProposalRequest = serde_json::from_str(&request_json)
-        .map_err(|error| assistant_error("parse assistant proposal rejection", error))?;
-    request
-        .proposal
-        .reject()
-        .map_err(|error| assistant_error("reject assistant proposal", error))?;
-    serde_json::to_string(&request.proposal)
-        .map_err(|error| assistant_error("serialize assistant proposal rejection", error))
-}
-
 /// Construct one immutable notebook pin snapshot with transcript provenance.
 #[uniffi::export]
 pub fn assistant_create_pin_json(request_json: String) -> FrontendResult<String> {
@@ -1306,7 +1226,6 @@ pub fn assistant_create_pin_json(request_json: String) -> FrontendResult<String>
         request.notebook_id,
         request.message_id,
         request.representation,
-        request.destination,
         request.snapshot_content,
     );
     serde_json::to_string(&pin).map_err(|error| assistant_error("serialize assistant pin", error))
@@ -1332,12 +1251,7 @@ pub fn assistant_create_conversation_json(request_json: String) -> FrontendResul
     let store = AssistantStore::open(&request.project_root)
         .map_err(|error| assistant_error("open assistant project", error))?;
     let conversation = store
-        .create_conversation(
-            request.title,
-            request.primary_attachment,
-            request.provider,
-            request.model,
-        )
+        .create_conversation(request.title, request.primary_attachment, request.profile)
         .map_err(|error| assistant_error("create assistant conversation", error))?;
     serde_json::to_string(&conversation)
         .map_err(|error| assistant_error("serialize assistant conversation", error))
@@ -1383,7 +1297,7 @@ pub fn assistant_corpus_index_json(request_json: String) -> FrontendResult<Strin
         .map_err(|error| corpus_error("serialize corpus index report", error))
 }
 
-/// Execute the bounded host-mediated `corpus.search` operation used by Pi.
+/// Execute the bounded `corpus.search` operation exposed through project MCP.
 #[uniffi::export]
 pub fn assistant_corpus_search_json(request_json: String) -> FrontendResult<String> {
     let request: AssistantCorpusSearchRequest = serde_json::from_str(&request_json)
@@ -1397,9 +1311,10 @@ pub fn assistant_corpus_search_json(request_json: String) -> FrontendResult<Stri
     let index = CorpusIndex::open(&request.project_root)
         .map_err(|error| corpus_error("open corpus index", error))?;
     let hits = index
-        .search(
+        .search_layers(
             &request.query,
             request.limit.min(MAX_ASSISTANT_CORPUS_SEARCH_RESULTS),
+            &request.layers,
         )
         .map_err(|error| corpus_error("search corpus", error))?;
     serde_json::to_string(&hits)
@@ -7101,8 +7016,15 @@ mod tests {
                     "label": "Analysis",
                     "primary": false
                 },
-                "provider": "openai",
-                "model": "gpt-test"
+                "profile": {
+                    "profile_version": 1,
+                    "backend_id": "codex_app_server",
+                    "authority": "work",
+                    "model": "gpt-test",
+                    "effort": "medium",
+                    "agent_command": "codex",
+                    "python_command": "python3"
+                }
             })
             .to_string(),
         )
@@ -7124,14 +7046,17 @@ mod tests {
             .expect("list assistant conversations");
         let conversations: serde_json::Value = serde_json::from_str(&conversations_json).unwrap();
         assert_eq!(conversations[0]["draft"], "continue here");
-        assert_eq!(conversations[0]["provider"], "openai");
+        assert_eq!(
+            conversations[0]["profile"]["backend_id"],
+            "codex_app_server"
+        );
         assert!(conversations[0].get("provider_envelope").is_none());
 
         let protocol_json = assistant_protocol_info_json().expect("assistant protocol info");
         let protocol: serde_json::Value = serde_json::from_str(&protocol_json).unwrap();
-        assert_eq!(protocol["sidecar_policy"]["project_filesystem"], false);
-        assert_eq!(protocol["sidecar_policy"]["shell"], false);
-        assert_eq!(protocol["host_mediated_tools"][0], "corpus.search");
+        assert_eq!(protocol["retrieval_engine"], "sqlite_fts5_unicode61");
+        assert_eq!(protocol["authority_presets"][1], "work");
+        assert_eq!(protocol["project_mcp_tools"][0], "corpus.search");
     }
 
     #[test]

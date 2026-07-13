@@ -5,14 +5,12 @@ default:
 
 setup:
     cargo fetch
-    npm --prefix apps/casars-assistant ci --ignore-scripts
 
 quick:
     ./scripts/check-spdx.sh
     cargo fmt --all -- --check
     CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings
     CARGO_INCREMENTAL=0 cargo test --workspace
-    just assistant-test
 
 verify:
     just quick
@@ -54,11 +52,13 @@ gui-test:
     bash apps/casars-mac/script/test_gui.sh
 
 assistant-test:
-    npm --prefix apps/casars-assistant test
+    CARGO_INCREMENTAL=0 cargo test -p casa-notebook --test assistant_contract --test corpus_contract
+    CARGO_INCREMENTAL=0 cargo test -p casars-frontend-services --bin casars-project-mcp
+    swift test --package-path apps/casars-mac --filter AssistantDiscussionTests
 
-# Opt-in network smoke using a credential previously stored by casars-mac in Keychain.
-assistant-live-smoke provider model:
-    CASA_RS_ASSISTANT_LIVE_SMOKE_PROVIDER='{{provider}}' CASA_RS_ASSISTANT_LIVE_SMOKE_MODEL='{{model}}' swift test --package-path apps/casars-mac --filter AssistantDiscussionTests/testOptInLiveProviderSmokeUsesHostKeychainLease
+# Opt-in smoke using the installed Codex CLI's existing ChatGPT subscription login.
+assistant-live-smoke:
+    CASA_RS_CODEX_LIVE_SMOKE=1 swift test --package-path apps/casars-mac --filter AssistantDiscussionTests/testOptInCodexSubscriptionSmoke
 
 graph:
     bash scripts/generate-graphs.sh

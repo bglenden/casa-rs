@@ -680,7 +680,7 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(visibleOutput.waitForExistence(timeout: 5))
     }
 
-    func testProductionAssistantPersistsPinAndDestinationFirstProposal() throws {
+    func testProductionAssistantPersistsCitedTailPinAndOpensSuggestedTask() throws {
         let notebookID = "019f0000-0000-7000-8000-000000000401"
         let project = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-mac-ui-assistant-\(UUID().uuidString)", isDirectory: true)
@@ -690,24 +690,11 @@ final class CasarsMacUITests: XCTestCase {
             .write(to: notebooks.appendingPathComponent("Analysis.md"), atomically: true, encoding: .utf8)
         try "# Fixture source\nTyped CASA-RS provider contracts.\n"
             .write(to: project.appendingPathComponent("ARCHITECTURE.md"), atomically: true, encoding: .utf8)
-        let pythonDirectory = project.appendingPathComponent(".casa-rs/python/bin", isDirectory: true)
-        try FileManager.default.createDirectory(at: pythonDirectory, withIntermediateDirectories: true)
-        try FileManager.default.createSymbolicLink(
-            at: pythonDirectory.appendingPathComponent("python3"),
-            withDestinationURL: URL(fileURLWithPath: try resolvedTestPython())
-        )
         productionProjectURL = project
-
-        let node = ["/opt/homebrew/bin/node", "/usr/local/bin/node"]
-            .first(where: FileManager.default.isExecutableFile(atPath:))
-        guard let node else {
-            throw XCTSkip("Node is not installed")
-        }
 
         app = XCUIApplication()
         ensureStoppedBeforeLaunch()
-        app.launchEnvironment["CASA_RS_ASSISTANT_FIXTURE"] = "1"
-        app.launchEnvironment["CASA_RS_ASSISTANT_NODE"] = node
+        app.launchEnvironment["CASA_RS_AGENT_FIXTURE"] = "1"
         app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = project.path
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
@@ -724,18 +711,11 @@ final class CasarsMacUITests: XCTestCase {
 
         try clickIdentified("assistant.openDrawer")
         XCTAssertTrue(element("assistant.discussion").waitForExistence(timeout: 8), app.debugDescription)
-        XCTAssertTrue(element("assistant.provider").waitForExistence(timeout: 8), app.debugDescription)
-        let model = try require("assistant.model")
-        let catalogReady = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "title == %@", "Fixture v1"),
-            object: model
-        )
-        XCTAssertEqual(
-            XCTWaiter.wait(for: [catalogReady], timeout: 15),
-            .completed,
-            "Assistant provider catalog did not create the fixture conversation"
-        )
-        replaceText("assistant.input", with: "Please propose a note")
+        XCTAssertTrue(element("assistant.model").waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(element("assistant.effort").waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(element("assistant.usage").waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(element("assistant.settings").waitForExistence(timeout: 8), app.debugDescription)
+        replaceText("assistant.input", with: "How should I start weighting this image?")
         let send = try require("assistant.send")
         let sendReady = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "enabled == true"),
@@ -747,60 +727,31 @@ final class CasarsMacUITests: XCTestCase {
             "Assistant sidecar did not become ready to send"
         )
         try clickIdentified("assistant.send")
-        let pinToNotebook = app.links["Pin to notebook"].firstMatch
+        let pinToNotebook = app.buttons["Add to notebook"].firstMatch
         XCTAssertTrue(
             pinToNotebook.waitForExistence(timeout: 15),
             app.debugDescription
         )
 
         pinToNotebook.click()
-        XCTAssertTrue(element("assistant.pin.confirm").waitForExistence(timeout: 5))
-        try clickIdentified("assistant.pin.confirm")
-        XCTAssertTrue(element("assistant.openNotebookSuggestions").waitForExistence(timeout: 5))
-        try clickIdentified("assistant.openNotebookSuggestions")
-        XCTAssertTrue(app.buttons["Insert at notebook tail"].firstMatch.waitForExistence(timeout: 5))
-        app.buttons["Insert at notebook tail"].firstMatch.click()
+        XCTAssertTrue(app.staticTexts["Added to notebook"].firstMatch.waitForExistence(timeout: 5))
 
         let saved = try String(contentsOf: notebooks.appendingPathComponent("Analysis.md"))
         XCTAssertTrue(saved.contains("casa-rs-ai-pin:v1"))
-        XCTAssertTrue(saved.contains("A deterministic proposed note."))
+        XCTAssertTrue(saved.contains("Use Briggs weighting with robust -0.5"))
+        XCTAssertTrue(saved.contains("CASA-RS Radio Interferometry Primer v1.0"))
+        XCTAssertTrue(saved.hasSuffix("\n"), "Notebook append should leave a normal Markdown trailing newline")
         let conversations = project.appendingPathComponent(".casa-rs/conversations", isDirectory: true)
         XCTAssertFalse((try FileManager.default.contentsOfDirectory(atPath: conversations.path)).isEmpty)
 
-        replaceText("assistant.input", with: "Please propose Python")
-        try clickIdentified("assistant.send")
-        XCTAssertTrue(app.buttons["Insert at notebook tail"].firstMatch.waitForExistence(timeout: 8))
-        app.buttons["Insert at notebook tail"].firstMatch.click()
-        XCTAssertTrue(app.buttons["Approve isolated run"].firstMatch.waitForExistence(timeout: 5))
-        app.buttons["Approve isolated run"].firstMatch.click()
-
-        let receiptRoot = project.appendingPathComponent(".casa-rs/notebook-runs", isDirectory: true)
-        let deadline = Date().addingTimeInterval(12)
-        var receiptText = ""
-        var foundWorkerReceipt = false
-        while Date() < deadline, !foundWorkerReceipt {
-            if let enumerator = FileManager.default.enumerator(at: receiptRoot, includingPropertiesForKeys: nil) {
-                for case let url as URL in enumerator where url.lastPathComponent == "receipt.json" {
-                    guard let data = try? Data(contentsOf: url),
-                          let receipt = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          let executionInput = receipt["execution_input"] as? [String: Any],
-                          let details = executionInput["details"] as? [String: Any],
-                          details["authority"] as? String == "ai_worker"
-                    else { continue }
-                    receiptText = String(decoding: data, as: UTF8.self)
-                    foundWorkerReceipt = true
-                    break
-                }
-            }
-            if !foundWorkerReceipt {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-            }
-        }
-        XCTAssertTrue(foundWorkerReceipt, receiptText)
-        XCTAssertTrue(receiptText.contains("CASARS_ARTIFACT_STAGING"), receiptText)
-        XCTAssertTrue(FileManager.default.fileExists(
-            atPath: project.appendingPathComponent(".casa-rs/ai-staging").path
-        ))
+        let openTask = app.buttons["Open imager task"].firstMatch
+        XCTAssertTrue(openTask.waitForExistence(timeout: 5), app.debugDescription)
+        openTask.click()
+        XCTAssertTrue(element("task.parameter.weighting").waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(waitForValue("task.parameter.weighting", containing: "briggs"))
+        XCTAssertTrue(waitForValue("task.parameter.robust", containing: "-0.5"))
+        XCTAssertEqual(try accessibilityValue("task.parameterSource.weighting"), "AI-suggested non-default")
+        XCTAssertEqual(try accessibilityValue("task.parameterSource.robust"), "AI-suggested non-default")
     }
 
     func testTutorialPrototypeLearnerNotesApprovalAndTaskLoading() throws {

@@ -3898,26 +3898,6 @@ fileprivate struct FfiConverterSequenceTypePlotSeriesMetadata: FfiConverterRustB
     }
 }
 /**
- * Bind execution approval separately to the same exact proposal receipt.
- */
-public func assistantApproveProposalExecutionJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_assistant_approve_proposal_execution_json(
-        FfiConverterString.lower(requestJson),$0
-    )
-})
-}
-/**
- * Bind insertion approval to the exact proposal and destination content.
- */
-public func assistantApproveProposalInsertionJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_assistant_approve_proposal_insertion_json(
-        FfiConverterString.lower(requestJson),$0
-    )
-})
-}
-/**
  * List the provider-neutral visible conversations persisted for one project.
  */
 public func assistantConversationsJson(projectRoot: String)throws  -> String  {
@@ -3938,7 +3918,7 @@ public func assistantCorpusIndexJson(requestJson: String)throws  -> String  {
 })
 }
 /**
- * Execute the bounded host-mediated `corpus.search` operation used by Pi.
+ * Execute the bounded `corpus.search` operation exposed through project MCP.
  */
 public func assistantCorpusSearchJson(requestJson: String)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
@@ -3968,16 +3948,6 @@ public func assistantCreatePinJson(requestJson: String)throws  -> String  {
 })
 }
 /**
- * Construct and hash-bind one destination-first assistant proposal.
- */
-public func assistantCreateProposalJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_assistant_create_proposal_json(
-        FfiConverterString.lower(requestJson),$0
-    )
-})
-}
-/**
  * Load one persistent visible transcript without provider-specific envelopes.
  */
 public func assistantLoadConversationJson(requestJson: String)throws  -> String  {
@@ -3988,21 +3958,11 @@ public func assistantLoadConversationJson(requestJson: String)throws  -> String 
 })
 }
 /**
- * Describe the versioned assistant boundary and its deny-by-default sidecar authority.
+ * Describe the versioned agent-neutral persistence and project-MCP boundary.
  */
 public func assistantProtocolInfoJson()throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_assistant_protocol_info_json($0
-    )
-})
-}
-/**
- * Reject one pending proposal without granting insertion or execution authority.
- */
-public func assistantRejectProposalJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_assistant_reject_proposal_json(
-        FfiConverterString.lower(requestJson),$0
     )
 })
 }
@@ -4502,19 +4462,13 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_assistant_approve_proposal_execution_json() != 29585) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_assistant_approve_proposal_insertion_json() != 31442) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_casars_frontend_services_checksum_func_assistant_conversations_json() != 59160) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_assistant_corpus_index_json() != 30464) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_assistant_corpus_search_json() != 35915) {
+    if (uniffi_casars_frontend_services_checksum_func_assistant_corpus_search_json() != 53089) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_assistant_create_conversation_json() != 58016) {
@@ -4523,16 +4477,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_assistant_create_pin_json() != 49145) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_assistant_create_proposal_json() != 13012) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_casars_frontend_services_checksum_func_assistant_load_conversation_json() != 65080) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_assistant_protocol_info_json() != 29920) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_assistant_reject_proposal_json() != 3659) {
+    if (uniffi_casars_frontend_services_checksum_func_assistant_protocol_info_json() != 59469) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_assistant_save_conversation_json() != 38934) {

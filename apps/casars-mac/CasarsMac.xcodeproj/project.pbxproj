@@ -131,7 +131,8 @@
 				000000000000000000000051 /* Frameworks */,
 				000000000000000000000052 /* Resources */,
 				000000000000000000000053 /* Stage frontend dylib */,
-				000000000000000000000054 /* Stage assistant adapter */,
+				000000000000000000000054 /* Stage project MCP */,
+				000000000000000000000055 /* Stage source corpus */,
 			);
 			buildRules = (
 			);
@@ -243,7 +244,7 @@
 			shellPath = /bin/bash;
 			shellScript = "set -euo pipefail\nsource_dylib=\"$SRCROOT/../../target/debug/libcasars_frontend_services.dylib\"\ndestination=\"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/libcasars_frontend_services.dylib\"\napp_binary=\"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\nmkdir -p \"$(dirname \"$destination\")\"\ncp \"$source_dylib\" \"$destination\"\nfrontend_dependency=\"$(otool -L \"$app_binary\" | awk '/libcasars_frontend_services\\.dylib/ {print $1; exit}')\"\nif [[ -n \"$frontend_dependency\" ]]; then\n  install_name_tool -change \"$frontend_dependency\" \"@executable_path/../Frameworks/libcasars_frontend_services.dylib\" \"$app_binary\"\nfi\ncodesign --force --sign - \"$destination\" >/dev/null\n";
 		};
-		000000000000000000000054 /* Stage assistant adapter */ = {
+		000000000000000000000054 /* Stage project MCP */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -252,18 +253,38 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(SRCROOT)/../casars-assistant/package-lock.json",
-				"$(SRCROOT)/../casars-assistant/src",
+				"$(SRCROOT)/../../crates/casars-frontend-services/src/bin/casars-project-mcp.rs",
 			);
-			name = "Stage assistant adapter";
+			name = "Stage project MCP";
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/casars-assistant/dist/main.js",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/casars-project-mcp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\nbash \"$SRCROOT/script/stage-assistant.sh\" \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\n";
+			shellScript = "set -euo pipefail\ncd \"$SRCROOT/../..\"\nCARGO_INCREMENTAL=0 cargo build -p casars-frontend-services --bin casars-project-mcp\ndestination=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/bin\"\nmkdir -p \"$destination\"\ncp target/debug/casars-project-mcp \"$destination/casars-project-mcp\"\n";
+		};
+		000000000000000000000055 /* Stage source corpus */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/script/stage-source-corpus.sh",
+			);
+			name = "Stage source corpus";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/casars-source/casars-source.json",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"$SRCROOT/script/stage-source-corpus.sh\" \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/casars-source\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

@@ -1,4 +1,3 @@
-import AppKit
 import CasarsMacCore
 import SwiftUI
 
@@ -10,17 +9,14 @@ enum AssistantDiscussionLayout {
 struct AssistantDiscussionView: View {
     @ObservedObject var store: WorkbenchStore
     let layout: AssistantDiscussionLayout
-
     @State private var contextsExpanded = false
     @State private var expandedCitationIDs: Set<String> = []
-    @State private var authenticationValue = ""
-    @State private var pendingPinMessage: AssistantMessageState?
-    @State private var pinRepresentation = "answer_with_citations"
-    @State private var pinNotebookID = ""
+    @State private var settingsPresented = false
+    @State private var agentCommandDraft = ""
+    @State private var pythonCommandDraft = ""
+    @State private var confirmFullAccess = false
 
-    private var discussion: AssistantDiscussionState? {
-        store.state.assistantDiscussion
-    }
+    private var discussion: AssistantDiscussionState? { store.state.assistantDiscussion }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,24 +36,25 @@ struct AssistantDiscussionView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .tint(.purple)
         .background(Color(nsColor: .textBackgroundColor))
-        .sheet(item: Binding(
-            get: { discussion?.pendingAuthenticationPrompt },
-            set: { value in
-                if value == nil { store.dismissAssistantAuthenticationPrompt() }
+        .confirmationDialog(
+            "Give this agent full system access?",
+            isPresented: $confirmFullAccess,
+            titleVisibility: .visible
+        ) {
+            Button("Use Full access", role: .destructive) {
+                store.selectAssistantAuthority(.fullAccess)
             }
-        )) { prompt in
-            authenticationPrompt(prompt)
-        }
-        .sheet(item: $pendingPinMessage) { message in
-            pinConfirmation(message)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The coding agent can run commands and change files without approval prompts. CASA task and notebook actions still remain explicit.")
         }
     }
 
     private func header(_ discussion: AssistantDiscussionState) -> some View {
         HStack(spacing: 9) {
-            Image(systemName: "sparkles")
-                .foregroundStyle(.tint)
+            Image(systemName: "sparkles").foregroundStyle(.purple)
             VStack(alignment: .leading, spacing: 1) {
                 Text(layout == .drawer ? "Notebook chat" : discussion.activeConversation?.title ?? "AI discussion")
                     .workbenchFont(.headline)
@@ -70,42 +67,26 @@ struct AssistantDiscussionView: View {
             Spacer()
             Menu {
                 ForEach(discussion.conversations) { conversation in
-                    Button(conversation.title) {
-                        store.selectAssistantConversation(conversation.id)
-                    }
+                    Button(conversation.title) { store.selectAssistantConversation(conversation.id) }
                 }
                 Divider()
-                Button("New discussion", systemImage: "plus") {
-                    store.newAssistantConversation()
-                }
-            } label: {
-                Image(systemName: "clock")
-            }
-            .menuStyle(.borderlessButton)
-            .help("Conversation history")
-            .accessibilityIdentifier("assistant.history")
-
+                Button("New discussion", systemImage: "plus") { store.newAssistantConversation() }
+            } label: { Image(systemName: "clock") }
+                .menuStyle(.borderlessButton)
+                .help("Conversation history")
+                .accessibilityIdentifier("assistant.history")
             if layout == .drawer {
-                Button {
-                    store.expandAssistantDiscussion()
-                } label: {
+                Button { store.expandAssistantDiscussion() } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                 }
                 .buttonStyle(.borderless)
                 .help("Open in AI tab")
-                .accessibilityIdentifier("assistant.expand")
-                Button {
-                    store.closeAssistantDiscussion()
-                } label: {
-                    Image(systemName: "xmark")
-                }
-                .buttonStyle(.borderless)
-                .help("Close chat")
-                .accessibilityIdentifier("assistant.close")
+                Button { store.closeAssistantDiscussion() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.borderless)
+                    .help("Close chat")
             } else {
                 Button("Dock beside notebook") { store.dockAssistantDiscussion() }
                     .controlSize(.small)
-                    .accessibilityIdentifier("assistant.dock")
             }
         }
         .padding(.horizontal, 12)
@@ -117,71 +98,56 @@ struct AssistantDiscussionView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                if discussion.activeConversation?.messages.isEmpty != false {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label("Ask about this project", systemImage: "bubble.left.and.text.bubble.right")
-                            .workbenchFont(.title3, weight: .semibold)
-                        Text("I can use bounded projections of every open tab and retrieve cited evidence from the radio astronomy, project-document, and CASA-RS source corpus.")
-                            .foregroundStyle(.secondary)
+                    if discussion.activeConversation?.messages.isEmpty != false {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Ask about this project", systemImage: "bubble.left.and.text.bubble.right")
+                                .workbenchFont(.title3, weight: .semibold)
+                            Text("The agent can use open tabs, CASA task schemas, cited radio-astronomy documents, project papers, and the current casa-rs source corpus.")
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(14)
+                        .background(Color.purple.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
-                    .padding(14)
-                    .background(Color.accentColor.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
-                ForEach(discussion.activeConversation?.messages ?? []) { message in
-                    messageRow(message)
-                        .id(message.id)
-                        .onAppear { store.setAssistantScrollAnchor(message.id) }
-                }
-                if !assistantProposals(discussion).isEmpty {
-                    Button {
-                        store.showAssistantNotebookSuggestions()
-                    } label: {
-                        HStack(spacing: 9) {
-                            Image(systemName: "doc.badge.ellipsis")
-                                .foregroundStyle(.tint)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Suggestions are in the notebook")
-                                    .workbenchFont(.subheadline, weight: .semibold)
-                                Text("Review insertion and execution separately at their destination")
-                                    .workbenchFont(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "arrow.up.forward.app")
+                    ForEach(discussion.activeConversation?.messages ?? []) { message in
+                        messageRow(message).id(message.id)
+                    }
+                    if discussion.activity == .streaming {
+                        HStack(alignment: .top, spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text(discussion.streamingText.isEmpty ? "Thinking…" : discussion.streamingText)
+                                .textSelection(.enabled)
                         }
                         .padding(10)
-                        .contentShape(Rectangle())
+                        .accessibilityIdentifier("assistant.streaming")
                     }
-                    .buttonStyle(.plain)
-                    .background(Color.accentColor.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .accessibilityIdentifier("assistant.openNotebookSuggestions")
-                }
-                if discussion.activity == .streaming {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text(discussion.streamingText.isEmpty ? "Reading selected context…" : discussion.streamingText)
-                            .textSelection(.enabled)
-                    }
-                    .padding(10)
-                    .accessibilityIdentifier("assistant.streaming")
-                }
-                if let error = discussion.lastError {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                        Text(error).textSelection(.enabled)
-                        Spacer()
-                        if discussion.activity == .restartRequired {
-                            Button("Restart") { store.restartAssistantSidecar() }
+                    if let approval = discussion.pendingApproval {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Agent requests approval", systemImage: "checkmark.shield")
+                                .workbenchFont(.subheadline, weight: .semibold)
+                            Text(approval.summary).workbenchFont(.caption).textSelection(.enabled)
+                            HStack {
+                                Button("Deny") { store.resolveAssistantApproval("decline") }
+                                Button("Approve") { store.resolveAssistantApproval("accept") }
+                                    .buttonStyle(.borderedProminent)
+                            }
                         }
+                        .padding(10)
+                        .background(Color.purple.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .accessibilityIdentifier("assistant.approval")
                     }
-                    .padding(10)
-                    .background(Color.orange.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .accessibilityIdentifier("assistant.error")
-                }
+                    if let error = discussion.lastError {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            Text(error).textSelection(.enabled)
+                            Spacer()
+                            Button("Restart") { store.restartAssistantAgent() }
+                        }
+                        .padding(10)
+                        .background(Color.orange.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
                 }
                 .frame(maxWidth: layout == .expanded ? 760 : .infinity, alignment: .leading)
                 .padding(layout == .expanded ? 24 : 12)
@@ -204,72 +170,56 @@ struct AssistantDiscussionView: View {
                     Text(message.role == "user" ? "You" : "Assistant")
                         .workbenchFont(.caption, weight: .semibold)
                         .foregroundStyle(.secondary)
-                    if let provider = message.provider, let model = message.model {
-                        Text("\(provider) · \(model)")
-                            .workbenchFont(.caption2)
-                            .foregroundStyle(.tertiary)
+                    if let model = message.model {
+                        Text(model).workbenchFont(.caption2).foregroundStyle(.tertiary)
                     }
                     Spacer()
                 }
-                Text(message.content)
-                    .textSelection(.enabled)
-                if !message.citations.isEmpty {
-                    ForEach(Array(message.citations.enumerated()), id: \.element.id) { index, citation in
-                        DisclosureGroup(
-                            isExpanded: Binding(
-                                get: { expandedCitationIDs.contains(citation.id) },
-                                set: { expanded in
-                                    if expanded { expandedCitationIDs.insert(citation.id) }
-                                    else { expandedCitationIDs.remove(citation.id) }
-                                }
-                            )
-                        ) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(citation.locator).workbenchFont(.caption, weight: .semibold)
-                                Text(citation.excerpt).workbenchFont(.caption).textSelection(.enabled)
+                Text(message.content).textSelection(.enabled)
+                ForEach(Array(message.citations.enumerated()), id: \.element.id) { index, citation in
+                    DisclosureGroup(
+                        isExpanded: Binding(
+                            get: { expandedCitationIDs.contains(citation.id) },
+                            set: { expanded in
+                                if expanded { expandedCitationIDs.insert(citation.id) }
+                                else { expandedCitationIDs.remove(citation.id) }
                             }
-                            .padding(.leading, 6)
-                        } label: {
-                            Text("[\(index + 1)] \(citation.label)")
-                                .workbenchFont(.caption)
-                        }
-                        .accessibilityIdentifier("assistant.citation.\(citation.id)")
+                        )
+                    ) {
+                        Text(citation.excerpt).workbenchFont(.caption).textSelection(.enabled)
+                    } label: {
+                        Text("[\(index + 1)] \(citation.label) · \(citation.locator)")
+                            .workbenchFont(.caption)
                     }
                 }
-                if let egress = message.egress {
-                    DisclosureGroup("Sent context · \(ByteCountFormatter.string(fromByteCount: Int64(egress.estimatedBytes), countStyle: .file)) → \(egress.destination)") {
-                        Text(egress.items.filter(\.providerVisible).map(\.label).joined(separator: ", "))
-                            .workbenchFont(.caption2)
-                            .foregroundStyle(.secondary)
+                ForEach(message.taskSuggestions) { suggestion in
+                    Button("Open \(suggestion.taskId) task") {
+                        store.openAssistantTaskSuggestion(
+                            messageID: message.id,
+                            suggestionID: suggestion.id
+                        )
                     }
-                    .workbenchFont(.caption)
+                    .buttonStyle(.link)
+                    .accessibilityIdentifier("assistant.message.\(message.id).task.\(suggestion.id)")
                 }
                 if message.role == "assistant" {
-                    HStack {
-                        if let pin = message.pins.first {
-                            Label("Pinned snapshot", systemImage: "pin.fill")
-                                .workbenchFont(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(String(pin.contentSha256.prefix(10)))
-                                .workbenchFont(.caption2, design: .monospaced)
-                                .foregroundStyle(.tertiary)
-                        } else {
-                            Button {
-                                pinRepresentation = message.citations.isEmpty
-                                    ? "answer_only" : "answer_with_citations"
-                                pinNotebookID = store.state.scientificNotebooks?.activeNotebookID ?? ""
-                                pendingPinMessage = message
-                            } label: {
-                                Label("Pin to notebook", systemImage: "pin")
-                            }
-                            .buttonStyle(.link)
-                            .accessibilityIdentifier("assistant.message.\(message.id).pin")
+                    if message.pins.isEmpty {
+                        Button {
+                            store.pinAssistantMessage(message.id)
+                        } label: {
+                            Label("Add to notebook", systemImage: "text.badge.plus")
                         }
+                        .buttonStyle(.link)
+                        .accessibilityIdentifier("assistant.message.\(message.id).pin")
+                    } else {
+                        Label("Added to notebook", systemImage: "checkmark")
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
             .padding(11)
-            .background(message.role == "user" ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.08))
+            .background(message.role == "user" ? Color.purple.opacity(0.12) : Color.secondary.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             if message.role != "user" { Spacer(minLength: layout == .expanded ? 70 : 0) }
         }
@@ -282,7 +232,7 @@ struct AssistantDiscussionView: View {
                 VStack(alignment: .leading, spacing: 7) {
                     ForEach(discussion.contexts) { context in
                         Toggle(isOn: Binding(
-                            get: { context.providerVisible },
+                            get: { context.selected },
                             set: { _ in store.toggleAssistantContext(context.id) }
                         )) {
                             VStack(alignment: .leading, spacing: 1) {
@@ -291,205 +241,163 @@ struct AssistantDiscussionView: View {
                             }
                         }
                         .toggleStyle(.checkbox)
-                        .accessibilityIdentifier("assistant.context.\(context.id)")
                     }
-                    Text("Bulk arrays, raw visibilities, credentials, and unrestricted files are excluded.")
-                        .workbenchFont(.caption2)
-                        .foregroundStyle(.secondary)
                     HStack {
-                        Text(discussion.corpusStatus)
-                            .workbenchFont(.caption2)
-                            .foregroundStyle(.secondary)
+                        Text(discussion.corpusStatus).workbenchFont(.caption2).foregroundStyle(.secondary)
                         Spacer()
                         Button("Refresh local corpus") { store.refreshAssistantCorpus() }
                             .controlSize(.small)
-                            .disabled(discussion.corpusStatus == "Indexing local corpus…")
-                            .accessibilityIdentifier("assistant.corpus.refresh")
                     }
                 }
                 .padding(.top, 6)
             } label: {
-                Text(egressLabel(discussion))
+                Text("Context: \(discussion.contexts.filter(\.selected).count) project items")
                     .workbenchFont(.caption)
             }
-            .accessibilityIdentifier("assistant.egress")
 
             HStack(alignment: .bottom, spacing: 8) {
-                ZStack(alignment: .topLeading) {
-                    if discussion.activeConversation?.draft.isEmpty != false {
-                        Text("Ask anything about this project…")
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 8)
-                    }
-                    AIComposerEditor(
-                        text: Binding(
-                            get: { discussion.activeConversation?.draft ?? "" },
-                            set: { store.setAssistantDraft($0) }
-                        ),
-                        accessibilityID: "assistant.input",
-                        onSubmit: store.sendAssistantPrompt
-                    )
-                    .disabled(
-                        discussion.activeConversation == nil
-                            || ![.ready, .completed].contains(discussion.activity)
-                    )
-                }
+                AIComposerEditor(
+                    text: Binding(
+                        get: { discussion.activeConversation?.draft ?? "" },
+                        set: { store.setAssistantDraft($0) }
+                    ),
+                    accessibilityID: "assistant.input",
+                    onSubmit: store.sendAssistantPrompt
+                )
                 .frame(minHeight: 58, maxHeight: layout == .expanded ? 100 : 74)
                 .background(Color(nsColor: .controlBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.24)))
                 if discussion.activity == .streaming {
                     Button("Cancel") { store.cancelAssistantResponse() }
-                        .accessibilityIdentifier("assistant.cancel")
                 } else {
-                    Button {
-                        store.sendAssistantPrompt()
-                    } label: {
-                        Image(systemName: "arrow.up")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(
-                        discussion.activeConversation?.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
-                            || ![.ready, .completed].contains(discussion.activity)
-                    )
-                    .accessibilityLabel("Send")
-                    .accessibilityIdentifier("assistant.send")
+                    Button { store.sendAssistantPrompt() } label: { Image(systemName: "arrow.up") }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(discussion.activeConversation?.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false)
+                        .accessibilityLabel("Send")
+                        .accessibilityIdentifier("assistant.send")
                 }
             }
 
-            HStack(spacing: 10) {
-                Menu {
-                    ForEach(discussion.providers) { provider in
-                        Button(provider.label) { store.selectAssistantProvider(provider.id) }
-                    }
-                } label: {
-                    Label(discussion.selectedProvider?.label ?? "Provider", systemImage: "person.crop.circle")
-                        .lineLimit(1)
-                }
-                .menuStyle(.borderlessButton)
-                .workbenchFont(.caption)
-                .accessibilityIdentifier("assistant.provider")
-
-                Menu {
-                    ForEach(discussion.selectedProvider?.models ?? []) { model in
-                        Button(model.label) { store.selectAssistantModel(model.id) }
-                    }
-                } label: {
-                    Text(selectedModelLabel(discussion)).lineLimit(1)
-                }
-                .menuStyle(.borderlessButton)
-                .workbenchFont(.caption)
-                .accessibilityIdentifier("assistant.model")
-
-                if let provider = discussion.selectedProvider, !provider.configured {
-                    Button("Sign in") { store.authenticateAssistantProvider(provider.id) }
-                        .controlSize(.small)
-                        .accessibilityIdentifier("assistant.authenticate")
-                }
-                Spacer(minLength: 0)
-                Text("Return to send · Shift-Return for newline")
-                    .workbenchFont(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let url = discussion.pendingAuthenticationURL,
-               let destination = URL(string: url)
-            {
-                HStack {
-                    Text(discussion.pendingAuthenticationInstructions ?? "Complete sign-in in your browser.")
-                        .workbenchFont(.caption)
-                    Spacer()
-                    Button("Open sign-in") { NSWorkspace.shared.open(destination) }
-                        .controlSize(.small)
-                }
-                .padding(8)
-                .background(Color.accentColor.opacity(0.07))
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-            }
+            controls(discussion)
         }
         .padding(10)
         .background(.bar)
     }
 
-    private func authenticationPrompt(_ prompt: AssistantAuthenticationPromptState) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Provider sign-in").workbenchFont(.title3, weight: .semibold)
-            Text(prompt.message)
-            if prompt.secret {
-                SecureField("Value", text: $authenticationValue)
-            } else {
-                TextField("Value", text: $authenticationValue)
-            }
-            HStack {
-                Spacer()
-                Button("Continue") {
-                    store.submitAssistantAuthenticationPrompt(
-                        requestID: prompt.requestID,
-                        promptID: prompt.promptID,
-                        value: authenticationValue
-                    )
-                    authenticationValue = ""
+    private func controls(_ discussion: AssistantDiscussionState) -> some View {
+        HStack(spacing: 10) {
+            Menu {
+                ForEach(discussion.models) { model in
+                    Button(model.label) { store.selectAssistantModel(model.id) }
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(authenticationValue.isEmpty)
+            } label: {
+                Text(selectedModelLabel(discussion)).lineLimit(1)
+            }
+            .menuStyle(.borderlessButton)
+            .workbenchFont(.caption)
+            .accessibilityIdentifier("assistant.model")
+
+            Menu {
+                ForEach(selectedEfforts(discussion), id: \.self) { effort in
+                    Button(effort.capitalized) { store.selectAssistantEffort(effort) }
+                }
+            } label: {
+                Text(discussion.activeConversation?.profile.effort.capitalized ?? "Effort")
+            }
+            .menuStyle(.borderlessButton)
+            .workbenchFont(.caption)
+            .accessibilityIdentifier("assistant.effort")
+
+            Spacer()
+            if discussion.account.requiresLogin {
+                Button("Sign in to ChatGPT") { store.authenticateAssistantAccount() }
+                    .controlSize(.small)
+            } else {
+                Text(accountAndUsage(discussion))
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("assistant.usage")
+            }
+            if discussion.activeConversation?.profile.authority == .fullAccess {
+                Label("Full access", systemImage: "exclamationmark.shield.fill")
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("assistant.full-access")
+            }
+            Button {
+                agentCommandDraft = discussion.activeConversation?.profile.agentCommand ?? "codex"
+                pythonCommandDraft = discussion.activeConversation?.profile.pythonCommand ?? "python3"
+                settingsPresented.toggle()
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.borderless)
+            .help("Agent, account, authority, and Python settings")
+            .accessibilityIdentifier("assistant.settings")
+            .popover(isPresented: $settingsPresented, arrowEdge: .bottom) {
+                assistantSettings(discussion)
             }
         }
-        .padding(22)
-        .frame(width: 460)
     }
 
-    private func pinConfirmation(_ message: AssistantMessageState) -> some View {
+    private func assistantSettings(_ discussion: AssistantDiscussionState) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Pin immutable snapshot").workbenchFont(.title3, weight: .semibold)
-            Text("Choose the representation, then confirm the exact Markdown appended to the active notebook. Later chat changes will not update it.")
-                .foregroundStyle(.secondary)
-            Picker("Representation", selection: $pinRepresentation) {
-                Text("Answer only").tag("answer_only")
-                Text("Answer with citations").tag("answer_with_citations")
-            }
-            .pickerStyle(.segmented)
-            .disabled(message.citations.isEmpty)
-            Picker("Notebook", selection: $pinNotebookID) {
-                ForEach(store.state.scientificNotebooks?.notebooks ?? []) { notebook in
-                    Text(notebook.title).tag(notebook.id)
+            Text("AI settings").workbenchFont(.headline)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Codex agent").workbenchFont(.caption, weight: .semibold)
+                HStack {
+                    TextField("codex or executable path", text: $agentCommandDraft)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Apply") { store.setAssistantAgentCommand(agentCommandDraft) }
+                        .disabled(agentCommandDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .accessibilityIdentifier("assistant.pin.notebook")
-            ScrollView {
-                Text(store.assistantPinPreview(
-                    message,
-                    representation: pinRepresentation,
-                    notebookID: pinNotebookID
-                ))
-                    .workbenchFont(.caption, design: .monospaced)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-            }
-            .frame(height: 240)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-            Text("Destination: selected notebook · chronological tail")
-                .workbenchFont(.caption)
-                .foregroundStyle(.secondary)
-            HStack {
-                Button("Cancel") { pendingPinMessage = nil }
-                Spacer()
-                Button("Pin snapshot") {
-                    store.pinAssistantMessage(
-                        message.id,
-                        representation: pinRepresentation,
-                        notebookID: pinNotebookID
-                    )
-                    pendingPinMessage = nil
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Scientific Python").workbenchFont(.caption, weight: .semibold)
+                HStack {
+                    TextField("python3 or executable path", text: $pythonCommandDraft)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Apply") { store.setAssistantPythonCommand(pythonCommandDraft) }
+                        .disabled(pythonCommandDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("assistant.pin.confirm")
+                if let python = discussion.activeConversation?.profile.pythonProvenance {
+                    Text("\(python.environmentLabel) · \(python.implementation) \(python.version)\n\(python.resolvedPath)")
+                        .workbenchFont(.caption2)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                } else {
+                    Text("Environment identity will be recorded after the interpreter is inspected.")
+                        .workbenchFont(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Authority").workbenchFont(.caption, weight: .semibold)
+                HStack {
+                    ForEach(AssistantAuthorityState.allCases) { authority in
+                        Button(authority.label) {
+                            if authority == .fullAccess {
+                                confirmFullAccess = true
+                            } else {
+                                store.selectAssistantAuthority(authority)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .background(
+                            discussion.activeConversation?.profile.authority == authority
+                                ? Color.purple.opacity(0.14) : Color.clear
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+            }
+            Divider()
+            LabeledContent("Account", value: discussion.account.email ?? "ChatGPT subscription")
+            LabeledContent("Plan", value: discussion.account.plan?.capitalized ?? "Unknown")
         }
-        .padding(22)
-        .frame(width: 620, height: 470)
+        .padding(16)
+        .frame(width: 390)
     }
 
     private func primaryAttachmentLabel(_ discussion: AssistantDiscussionState) -> String {
@@ -499,29 +407,22 @@ struct AssistantDiscussionView: View {
         return "Attached to \(attachment.label)"
     }
 
-    private func egressLabel(_ discussion: AssistantDiscussionState) -> String {
-        let visible = discussion.contexts.filter(\.providerVisible)
-        let bytes = visible.reduce(UInt64(0)) { $0 + $1.byteCount }
-        let destination = discussion.activeConversation.map { providerDestination($0.provider) } ?? "provider"
-        return "Context: \(visible.count) items · \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)) → \(destination)"
-    }
-
-    private func providerDestination(_ provider: String) -> String {
-        switch provider {
-        case "openai-codex": "chatgpt.com"
-        case "openai": "api.openai.com"
-        case "opencode": "opencode.ai"
-        default: provider
-        }
-    }
-
     private func selectedModelLabel(_ discussion: AssistantDiscussionState) -> String {
-        guard let conversation = discussion.activeConversation else { return "Model" }
-        return discussion.selectedProvider?.models.first(where: { $0.id == conversation.model })?.label
-            ?? conversation.model
+        let id = discussion.activeConversation?.profile.model ?? ""
+        return discussion.models.first(where: { $0.id == id })?.label ?? (id.isEmpty ? "Model" : id)
     }
 
-    private func assistantProposals(_ discussion: AssistantDiscussionState) -> [AssistantProposalState] {
-        discussion.activeConversation?.messages.flatMap(\.proposals) ?? []
+    private func selectedEfforts(_ discussion: AssistantDiscussionState) -> [String] {
+        let id = discussion.activeConversation?.profile.model ?? ""
+        return discussion.models.first(where: { $0.id == id })?.supportedEfforts
+            ?? ["low", "medium", "high"]
+    }
+
+    private func accountAndUsage(_ discussion: AssistantDiscussionState) -> String {
+        let plan = discussion.account.plan?.capitalized ?? "ChatGPT"
+        if let used = discussion.usage.primaryPercentUsed {
+            return "\(plan) · \(Int(max(0, 100 - used)))% remaining"
+        }
+        return plan
     }
 }

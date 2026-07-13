@@ -84,9 +84,9 @@ load its normal agent instructions.
 
 Each adapter declares how it maps the vector to its actual primitives and must
 fail visibly if it cannot honor a required dimension. Conformance is behavioral,
-not a catalog check: startup invokes the nonce-bearing profile tool, exercises
-a harmless resource read, verifies permission denial/escalation behavior, and
-proves cancellation and resume with the MCP server reattached.
+not a catalog check: startup locally validates the ephemeral profile, exercises
+a harmless nonce-bound MCP resource read, verifies permission denial/escalation
+behavior, and proves cancellation and resume with the MCP server reattached.
 
 ## Approval ownership
 
@@ -99,7 +99,7 @@ single-source:
 | opening a task with suggested parameters | no mutation; CASA opens the canonical task tab and highlights non-defaults |
 | running a task from that tab | the ordinary CASA task Run workflow |
 | typed CASA data mutation requested through MCP | the canonical CASA operation and its normal scientific receipt path |
-| adding an answer, code, or plot to a notebook | one explicit CASA notebook insertion confirmation |
+| adding an answer to a notebook | the explicit **Add to notebook** click appends once at the chronological tail; no second confirmation |
 | tutorial data acquisition | the existing CASA tutorial acquisition workflow |
 
 The bundled skill tells the agent to prefer typed CASA MCP operations for
@@ -138,15 +138,18 @@ The project-scoped CASA MCP server is the typed boundary for:
 - all open notebook, task, explorer, plot, Python, and history tabs
 - task schemas, defaults, current parameters, and canonical task opening
 - persistent data-type metadata and immutable run receipts
-- notebook reading, explicit append/pin, plot import, and explorer reopening
+- notebook reading, receipts, typed task suggestions, and a catalog of host-owned notebook/plot/tutorial actions
 - local radio-astronomy, project-document, release/live-source, and CASA
   semantics retrieval with exact citations
 - tutorial acquisition and other canonical CASA workflows
 
-The MCP server name is unique per backend session. Its required profile tool
-returns the profile version and one-time nonce so a user-configured server
-cannot shadow it. CASA treats only that verified server as trusted domain
-authority; MCP annotations and every other server remain untrusted hints.
+The MCP server name is unique per backend session and includes a nonce-derived
+suffix. The host replaces any inherited registration at that name, launches
+the known bundled executable with the exact project root and nonce, and
+requires that nonce on every tool call. Explore additionally disables all
+inherited MCP servers and plugins. CASA treats only the active nonce-bound
+server as trusted domain authority; MCP annotations and every other server
+remain untrusted hints.
 
 "Full context" means the agent can query complete typed semantic projections
 and local retrieval tools as needed. It does not mean raw visibility arrays or
@@ -184,9 +187,9 @@ skills, or grant approval.
 CASA owns the visible durable transcript, citations, pins, context-use records,
 agent/model labels, authority preset, and backend-session mapping. Hidden
 reasoning and raw App Server envelopes are not project data. The Codex thread is
-resumed when compatible; every resume re-verifies profile version/nonce,
-authority, MCP registration, and current agent capabilities before accepting a
-new turn.
+resumed with a newly generated ephemeral `casa-rs-agent-profile/v1`; every
+resume re-verifies its nonce, authority, nonce-derived MCP registration, and
+required adapter capabilities before accepting a new turn.
 
 If a backend session is missing or incompatible, CASA starts a new one and
 shows a visible handoff boundary with a bounded conversation summary. It does

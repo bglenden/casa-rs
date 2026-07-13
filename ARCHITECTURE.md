@@ -173,10 +173,11 @@ profile/MCP identity, cancellation, and resume rather than merely checking a
 capability list.
 
 The project-scoped CASA MCP server exposes typed open-tab state, task schemas
-and parameters, persistent-data semantics, receipts, notebook/plot actions,
-tutorial acquisition, and cited corpus/source retrieval. Its unique session
-name and nonce-bearing profile handshake prevent a user-configured server from
-shadowing it. Generic command, file, network, and Python approval stays with
+and parameters, persistent-data semantics, receipts, typed task suggestions,
+host-action descriptions, and cited corpus/source retrieval. Its unique
+nonce-derived session name, host-owned executable registration, and nonce on
+every tool call prevent a user-configured server from shadowing it. Generic
+command, file, network, and Python approval stays with
 App Server. CASA owns only canonical semantic actions such as notebook append,
 task Run, typed data mutation, and tutorial acquisition, avoiding duplicate
 prompts. An explicit **Add to notebook** click is itself sufficient authority

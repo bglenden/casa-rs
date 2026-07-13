@@ -11,10 +11,6 @@ package struct AssistantCorpusIngestionResult {
 
 package struct AssistantCorpusIngestor {
     private let fileManager = FileManager.default
-    private let maximumFileBytes = 64 * 1024 * 1024
-    private let maximumTotalBytes = 64 * 1024 * 1024
-    private let maximumDocuments = 5_000
-    private let maximumPDFPages = 2_000
 
     package init() {}
 
@@ -25,14 +21,12 @@ package struct AssistantCorpusIngestor {
         let project = URL(fileURLWithPath: projectRoot).standardizedFileURL
         var documents: [AssistantCorpusDocumentRequest] = []
         var diagnostics: [String] = []
-        var totalBytes = 0
         var refreshedLayers: Set<String> = ["project_document", "release_source", "live_source"]
         if let baseline = baselineRoot(environment: environment) {
             collectBaseline(
                 root: baseline,
                 documents: &documents,
-                diagnostics: &diagnostics,
-                totalBytes: &totalBytes
+                diagnostics: &diagnostics
             )
             refreshedLayers.insert("baseline")
         } else {
@@ -49,8 +43,7 @@ package struct AssistantCorpusIngestor {
                 commit: nil,
                 redistributionCleared: false,
                 documents: &documents,
-                diagnostics: &diagnostics,
-                totalBytes: &totalBytes
+                diagnostics: &diagnostics
             )
         }
 
@@ -67,8 +60,7 @@ package struct AssistantCorpusIngestor {
                 release: release,
                 commit: commit,
                 documents: &documents,
-                diagnostics: &diagnostics,
-                totalBytes: &totalBytes
+                diagnostics: &diagnostics
             )
         } else {
             diagnostics.append(
@@ -77,7 +69,7 @@ package struct AssistantCorpusIngestor {
         }
 
         return AssistantCorpusIngestionResult(
-            documents: Array(documents.prefix(maximumDocuments)),
+            documents: documents,
             diagnostics: diagnostics,
             refreshedLayers: refreshedLayers
         )
@@ -86,8 +78,7 @@ package struct AssistantCorpusIngestor {
     private func collectBaseline(
         root: URL,
         documents: inout [AssistantCorpusDocumentRequest],
-        diagnostics: inout [String],
-        totalBytes: inout Int
+        diagnostics: inout [String]
     ) {
         guard let rootValues = try? root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
               rootValues.isDirectory == true,
@@ -97,9 +88,8 @@ package struct AssistantCorpusIngestor {
             return
         }
         let manifestURL = root.appendingPathComponent("corpus-pack.json")
-        guard let manifestValues = try? manifestURL.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey]),
+        guard let manifestValues = try? manifestURL.resourceValues(forKeys: [.isSymbolicLinkKey]),
               manifestValues.isSymbolicLink != true,
-              (manifestValues.fileSize ?? Int.max) <= 1_048_576,
               let data = try? Data(contentsOf: manifestURL),
               let manifest = try? JSONDecoder().decode(AssistantBaselineManifest.self, from: data),
               manifest.schemaVersion == 1
@@ -115,10 +105,9 @@ package struct AssistantCorpusIngestor {
             let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
             let unresolvedURL = root.appendingPathComponent(entry.path).standardizedFileURL
             let url = unresolvedURL.resolvingSymlinksInPath()
-            let values = try? unresolvedURL.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey])
+            let values = try? unresolvedURL.resourceValues(forKeys: [.isSymbolicLinkKey])
             guard url.path.hasPrefix(canonicalRoot.path + "/"),
                   values?.isSymbolicLink != true,
-                  (values?.fileSize ?? Int.max) <= maximumFileBytes,
                   fileManager.isReadableFile(atPath: url.path),
                   supportedExtension(url.pathExtension)
             else {
@@ -128,9 +117,6 @@ package struct AssistantCorpusIngestor {
             let citationPath = "baseline/\(manifest.id)/\(entry.path)"
             if url.pathExtension.lowercased() == "pdf" {
                 for (page, content) in extractPDF(url, relative: citationPath, diagnostics: &diagnostics) {
-                    let bytes = content.utf8.count
-                    guard totalBytes + bytes <= maximumTotalBytes else { return }
-                    totalBytes += bytes
                     documents.append(AssistantCorpusDocumentRequest(
                         id: "baseline:\(manifest.id):\(manifest.version):\(entry.path)#page=\(page)",
                         layer: "baseline",
@@ -155,9 +141,6 @@ package struct AssistantCorpusIngestor {
                       let content = String(data: data, encoding: .utf8),
                       !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             {
-                let bytes = content.utf8.count
-                guard totalBytes + bytes <= maximumTotalBytes else { return }
-                totalBytes += bytes
                 documents.append(AssistantCorpusDocumentRequest(
                     id: "baseline:\(manifest.id):\(manifest.version):\(entry.path)",
                     layer: "baseline",
@@ -187,8 +170,7 @@ package struct AssistantCorpusIngestor {
         release: String?,
         commit: String?,
         documents: inout [AssistantCorpusDocumentRequest],
-        diagnostics: inout [String],
-        totalBytes: inout Int
+        diagnostics: inout [String]
     ) {
         collectTree(
             root: root,
@@ -199,8 +181,7 @@ package struct AssistantCorpusIngestor {
             commit: commit,
             redistributionCleared: true,
             documents: &documents,
-            diagnostics: &diagnostics,
-            totalBytes: &totalBytes
+            diagnostics: &diagnostics
         )
     }
 
@@ -213,8 +194,7 @@ package struct AssistantCorpusIngestor {
         commit: String?,
         redistributionCleared: Bool,
         documents: inout [AssistantCorpusDocumentRequest],
-        diagnostics: inout [String],
-        totalBytes: inout Int
+        diagnostics: inout [String]
     ) {
         guard let rootValues = try? root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
               rootValues.isDirectory == true,
@@ -238,7 +218,6 @@ package struct AssistantCorpusIngestor {
                 enumerator.skipDescendants()
                 continue
             }
-            guard documents.count < maximumDocuments, totalBytes < maximumTotalBytes else { return }
             guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
             if values.isSymbolicLink == true {
                 enumerator.skipDescendants()
@@ -247,8 +226,6 @@ package struct AssistantCorpusIngestor {
             }
             guard
                   values.isRegularFile == true,
-                  let fileSize = values.fileSize,
-                  fileSize <= maximumFileBytes,
                   supportedExtension(url.pathExtension)
             else { continue }
             let treeRelative = relativePath(url, root: identityRoot)
@@ -256,9 +233,6 @@ package struct AssistantCorpusIngestor {
             if url.pathExtension.lowercased() == "pdf" {
                 let pages = extractPDF(url, relative: relative, diagnostics: &diagnostics)
                 for (page, content) in pages {
-                    let bytes = content.utf8.count
-                    guard totalBytes + bytes <= maximumTotalBytes else { return }
-                    totalBytes += bytes
                     documents.append(document(
                         id: "\(layer):\(relative)#page=\(page)",
                         layer: layer,
@@ -280,9 +254,6 @@ package struct AssistantCorpusIngestor {
                 diagnostics.append("No UTF-8 text extracted from \(relative)")
                 continue
             }
-            let bytes = content.utf8.count
-            guard totalBytes + bytes <= maximumTotalBytes else { return }
-            totalBytes += bytes
             documents.append(document(
                 id: "\(layer):\(relative)",
                 layer: layer,
@@ -307,10 +278,7 @@ package struct AssistantCorpusIngestor {
             return []
         }
         var pages: [(Int, String)] = []
-        if pdf.pageCount > maximumPDFPages {
-            diagnostics.append("Limited PDF \(relative) to the first \(maximumPDFPages) pages")
-        }
-        for index in 0..<min(pdf.pageCount, maximumPDFPages) {
+        for index in 0..<pdf.pageCount {
             guard let page = pdf.page(at: index) else { continue }
             var text = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if text.isEmpty {
@@ -380,12 +348,16 @@ package struct AssistantCorpusIngestor {
 
     private func sourceRoot(environment: [String: String]) -> URL? {
         let current = URL(fileURLWithPath: fileManager.currentDirectoryPath)
+        let checkoutRoots = sequence(first: current) { url in
+            let parent = url.deletingLastPathComponent()
+            return parent.path == url.path ? nil : parent
+        }
+        .prefix(6)
+        .filter { fileManager.fileExists(atPath: $0.appendingPathComponent("Cargo.toml").path) }
         let candidates = [
             environment["CASA_RS_SOURCE_ROOT"].map(URL.init(fileURLWithPath:)),
             Bundle.main.resourceURL?.appendingPathComponent("casars-source", isDirectory: true),
-            fileManager.fileExists(atPath: current.appendingPathComponent("Cargo.toml").path)
-                ? current : nil,
-        ].compactMap { $0?.standardizedFileURL }
+        ].compactMap { $0?.standardizedFileURL } + checkoutRoots
         return candidates.first(where: {
             fileManager.fileExists(atPath: $0.appendingPathComponent("ARCHITECTURE.md").path)
         })

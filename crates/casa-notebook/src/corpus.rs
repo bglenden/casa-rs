@@ -1,25 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Local layered assistant corpus with SQLite FTS and exact vector search.
+//! Local layered assistant corpus with SQLite FTS5 retrieval and exact citations.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs::{self, File},
-    io::{Read, Write},
+    collections::BTreeSet,
+    fs,
     path::{Component, Path, PathBuf},
 };
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tempfile::NamedTempFile;
 use thiserror::Error;
 
-pub const CORPUS_SCHEMA_VERSION: u32 = 1;
-pub const CORPUS_EMBEDDING_MODEL_VERSION: &str = "casa-rs-feature-hash-v1";
-pub const CORPUS_EMBEDDING_DIMENSIONS: usize = 384;
-
-const EMBEDDING_MAGIC: &[u8; 8] = b"CASAEMB1";
+pub const CORPUS_SCHEMA_VERSION: u32 = 2;
 const MAX_CHUNK_BYTES: usize = 2_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -76,7 +70,7 @@ pub struct CorpusDocument {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CorpusIndexReport {
     pub schema_version: u32,
-    pub embedding_model: String,
+    pub retrieval_engine: String,
     pub indexed_documents: usize,
     pub unchanged_documents: usize,
     pub removed_documents: usize,
@@ -91,8 +85,6 @@ pub struct CorpusSearchHit {
     pub title: String,
     pub text: String,
     pub score: f32,
-    pub cosine_score: f32,
-    pub keyword_score: f32,
     pub citation: CorpusCitation,
     pub untrusted_evidence: bool,
 }
@@ -194,8 +186,8 @@ impl CorpusIndex {
                 let citation_json = serde_json::to_string(&citation)?;
                 transaction.execute(
                     "INSERT INTO chunks
-                     (id, document_id, ordinal, text, citation_json, embedding_row)
-                     VALUES (?1, ?2, ?3, ?4, ?5, -1)",
+                     (id, document_id, ordinal, text, citation_json)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![
                         chunk_id,
                         input.id,
@@ -226,11 +218,13 @@ impl CorpusIndex {
                 }
             }
         }
+        let chunk_count = transaction.query_row("SELECT COUNT(*) FROM chunks", [], |row| {
+            row.get::<_, u64>(0)
+        })? as usize;
         transaction.commit()?;
-        let chunk_count = self.rebuild_embedding_matrix()?;
         Ok(CorpusIndexReport {
             schema_version: CORPUS_SCHEMA_VERSION,
-            embedding_model: CORPUS_EMBEDDING_MODEL_VERSION.to_owned(),
+            retrieval_engine: "sqlite_fts5_unicode61".to_owned(),
             indexed_documents,
             unchanged_documents,
             removed_documents,
@@ -269,21 +263,41 @@ impl CorpusIndex {
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<CorpusSearchHit>, CorpusError> {
+        self.search_layers(query, limit, &BTreeSet::new())
+    }
+
+    pub fn search_layers(
+        &self,
+        query: &str,
+        limit: usize,
+        layers: &BTreeSet<CorpusLayer>,
+    ) -> Result<Vec<CorpusSearchHit>, CorpusError> {
         let query = query.trim();
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
-        let query_embedding = embed(query);
-        let matrix = self.read_embedding_matrix()?;
         let connection = self.connection()?;
-        let keyword_scores = keyword_scores(&connection, query, limit.saturating_mul(8))?;
+        let expression = fts_expression(query);
+        if expression.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut statement = connection.prepare(
             "SELECT c.id, c.document_id, d.layer, d.title, c.text, c.citation_json,
-                    c.embedding_row
-             FROM chunks c JOIN documents d ON d.id = c.document_id
-             ORDER BY c.embedding_row",
+                    bm25(chunks_fts)
+             FROM chunks_fts
+             JOIN chunks c ON c.id = chunks_fts.chunk_id
+             JOIN documents d ON d.id = c.document_id
+             WHERE chunks_fts MATCH ?1
+               AND (?3 = '' OR instr(',' || ?3 || ',', ',' || d.layer || ',') > 0)
+             ORDER BY bm25(chunks_fts), c.id
+             LIMIT ?2",
         )?;
-        let rows = statement.query_map([], |row| {
+        let layer_filter = layers
+            .iter()
+            .map(|layer| layer_name(*layer))
+            .collect::<Vec<_>>()
+            .join(",");
+        let rows = statement.query_map(params![expression, limit as u64, layer_filter], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -291,42 +305,23 @@ impl CorpusIndex {
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
-                row.get::<_, i64>(6)?,
+                row.get::<_, f64>(6)?,
             ))
         })?;
         let mut hits = Vec::new();
         for row in rows {
-            let (chunk_id, document_id, layer, title, text, citation_json, embedding_row) = row?;
-            let row = usize::try_from(embedding_row)
-                .map_err(|_| CorpusError::InvalidEmbeddingRow(embedding_row))?;
-            let start = row.saturating_mul(CORPUS_EMBEDDING_DIMENSIONS);
-            let end = start.saturating_add(CORPUS_EMBEDDING_DIMENSIONS);
-            let embedding = matrix
-                .get(start..end)
-                .ok_or(CorpusError::InvalidEmbeddingRow(embedding_row))?;
-            let cosine_score = dot(&query_embedding, embedding);
-            let keyword_score = keyword_scores.get(&chunk_id).copied().unwrap_or(0.0);
-            let score = 0.72 * cosine_score + 0.28 * keyword_score;
+            let (chunk_id, document_id, layer, title, text, citation_json, rank) = row?;
             hits.push(CorpusSearchHit {
                 chunk_id,
                 document_id,
                 layer: parse_layer(&layer)?,
                 title,
                 text,
-                score,
-                cosine_score,
-                keyword_score,
+                score: (1.0 / (1.0 + rank.abs())) as f32,
                 citation: serde_json::from_str(&citation_json)?,
                 untrusted_evidence: true,
             });
         }
-        hits.sort_by(|left, right| {
-            right
-                .score
-                .total_cmp(&left.score)
-                .then_with(|| left.chunk_id.cmp(&right.chunk_id))
-        });
-        hits.truncate(limit);
         Ok(hits)
     }
 
@@ -352,7 +347,6 @@ impl CorpusIndex {
                  ordinal INTEGER NOT NULL,
                  text TEXT NOT NULL,
                  citation_json TEXT NOT NULL,
-                 embedding_row INTEGER NOT NULL,
                  UNIQUE(document_id, ordinal)
              );
              CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
@@ -377,10 +371,6 @@ impl CorpusIndex {
             "INSERT OR REPLACE INTO corpus_meta (key, value) VALUES ('schema_version', ?1)",
             [CORPUS_SCHEMA_VERSION.to_string()],
         )?;
-        connection.execute(
-            "INSERT OR REPLACE INTO corpus_meta (key, value) VALUES ('embedding_model', ?1)",
-            [CORPUS_EMBEDDING_MODEL_VERSION],
-        )?;
         Ok(())
     }
 
@@ -388,124 +378,6 @@ impl CorpusIndex {
         let connection = Connection::open(self.managed_dir.join("index.sqlite3"))?;
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         Ok(connection)
-    }
-
-    fn rebuild_embedding_matrix(&self) -> Result<usize, CorpusError> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction()?;
-        let rows: Vec<(String, String)> = {
-            let mut statement = transaction.prepare("SELECT id, text FROM chunks ORDER BY id")?;
-            statement
-                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .collect::<Result<_, _>>()?
-        };
-        let mut temporary =
-            NamedTempFile::new_in(&self.managed_dir).map_err(|source| CorpusError::Io {
-                action: "create embedding matrix temporary file",
-                path: self.managed_dir.clone(),
-                source,
-            })?;
-        temporary
-            .write_all(EMBEDDING_MAGIC)
-            .map_err(|source| CorpusError::Io {
-                action: "write embedding matrix header",
-                path: temporary.path().to_owned(),
-                source,
-            })?;
-        temporary
-            .write_all(&(CORPUS_EMBEDDING_DIMENSIONS as u32).to_le_bytes())
-            .and_then(|()| temporary.write_all(&(rows.len() as u64).to_le_bytes()))
-            .map_err(|source| CorpusError::Io {
-                action: "write embedding matrix shape",
-                path: temporary.path().to_owned(),
-                source,
-            })?;
-        for (row, (id, text)) in rows.iter().enumerate() {
-            transaction.execute(
-                "UPDATE chunks SET embedding_row = ?1 WHERE id = ?2",
-                params![row as u64, id],
-            )?;
-            for value in embed(text) {
-                temporary
-                    .write_all(&value.to_le_bytes())
-                    .map_err(|source| CorpusError::Io {
-                        action: "write embedding matrix row",
-                        path: temporary.path().to_owned(),
-                        source,
-                    })?;
-            }
-        }
-        temporary
-            .as_file()
-            .sync_all()
-            .map_err(|source| CorpusError::Io {
-                action: "sync embedding matrix",
-                path: temporary.path().to_owned(),
-                source,
-            })?;
-        temporary
-            .persist(self.managed_dir.join("embeddings-v1.f32"))
-            .map_err(|error| CorpusError::Io {
-                action: "persist embedding matrix",
-                path: self.managed_dir.join("embeddings-v1.f32"),
-                source: error.error,
-            })?;
-        transaction.commit()?;
-        Ok(rows.len())
-    }
-
-    fn read_embedding_matrix(&self) -> Result<Vec<f32>, CorpusError> {
-        let path = self.managed_dir.join("embeddings-v1.f32");
-        let mut file = File::open(&path).map_err(|source| CorpusError::Io {
-            action: "open embedding matrix",
-            path: path.clone(),
-            source,
-        })?;
-        let mut header = [0_u8; 20];
-        file.read_exact(&mut header)
-            .map_err(|source| CorpusError::Io {
-                action: "read embedding matrix header",
-                path: path.clone(),
-                source,
-            })?;
-        if &header[..8] != EMBEDDING_MAGIC {
-            return Err(CorpusError::InvalidEmbeddingMatrix(
-                "invalid magic".to_owned(),
-            ));
-        }
-        let dimensions = u32::from_le_bytes(header[8..12].try_into().expect("dimension bytes"));
-        let rows = u64::from_le_bytes(header[12..20].try_into().expect("row bytes"));
-        if dimensions as usize != CORPUS_EMBEDDING_DIMENSIONS {
-            return Err(CorpusError::InvalidEmbeddingMatrix(
-                "embedding dimension does not match model".to_owned(),
-            ));
-        }
-        let value_count = usize::try_from(rows)
-            .ok()
-            .and_then(|rows| rows.checked_mul(CORPUS_EMBEDDING_DIMENSIONS))
-            .ok_or_else(|| CorpusError::InvalidEmbeddingMatrix("matrix is too large".to_owned()))?;
-        let mut bytes = vec![0_u8; value_count.saturating_mul(4)];
-        file.read_exact(&mut bytes)
-            .map_err(|source| CorpusError::Io {
-                action: "read embedding matrix values",
-                path: path.clone(),
-                source,
-            })?;
-        let mut trailing = [0_u8; 1];
-        if file.read(&mut trailing).map_err(|source| CorpusError::Io {
-            action: "check embedding matrix length",
-            path,
-            source,
-        })? != 0
-        {
-            return Err(CorpusError::InvalidEmbeddingMatrix(
-                "matrix has trailing bytes".to_owned(),
-            ));
-        }
-        Ok(bytes
-            .chunks_exact(4)
-            .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("f32 bytes")))
-            .collect())
     }
 }
 
@@ -590,59 +462,13 @@ fn section_or_symbol_hint(text: &str) -> Option<String> {
     None
 }
 
-fn keyword_scores(
-    connection: &Connection,
-    query: &str,
-    limit: usize,
-) -> Result<BTreeMap<String, f32>, CorpusError> {
-    let terms: Vec<String> = tokens(query)
+fn fts_expression(query: &str) -> String {
+    tokens(query)
         .into_iter()
         .take(16)
         .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
-        .collect();
-    if terms.is_empty() {
-        return Ok(BTreeMap::new());
-    }
-    let expression = terms.join(" OR ");
-    let mut statement = connection.prepare(
-        "SELECT chunk_id, bm25(chunks_fts) FROM chunks_fts
-         WHERE chunks_fts MATCH ?1 ORDER BY bm25(chunks_fts) LIMIT ?2",
-    )?;
-    let pairs: Vec<(String, f64)> = statement
-        .query_map(params![expression, limit as u64], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
-        .collect::<Result<_, _>>()?;
-    Ok(pairs
-        .into_iter()
-        .map(|(id, rank)| (id, (1.0 / (1.0 + rank.abs())) as f32))
-        .collect())
-}
-
-fn embed(text: &str) -> Vec<f32> {
-    let mut vector = vec![0.0_f32; CORPUS_EMBEDDING_DIMENSIONS];
-    let terms = tokens(text);
-    for term in &terms {
-        add_feature(&mut vector, term, 1.0);
-    }
-    for pair in terms.windows(2) {
-        add_feature(&mut vector, &format!("{} {}", pair[0], pair[1]), 0.65);
-    }
-    let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
-    if norm > 0.0 {
-        for value in &mut vector {
-            *value /= norm;
-        }
-    }
-    vector
-}
-
-fn add_feature(vector: &mut [f32], feature: &str, weight: f32) {
-    let digest = Sha256::digest(feature.as_bytes());
-    let index = u64::from_le_bytes(digest[..8].try_into().expect("feature index bytes")) as usize
-        % vector.len();
-    let sign = if digest[8] & 1 == 0 { 1.0 } else { -1.0 };
-    vector[index] += sign * weight;
+        .collect::<Vec<_>>()
+        .join(" OR ")
 }
 
 fn tokens(text: &str) -> Vec<String> {
@@ -650,13 +476,6 @@ fn tokens(text: &str) -> Vec<String> {
         .filter(|term| term.len() > 1)
         .map(str::to_lowercase)
         .collect()
-}
-
-fn dot(left: &[f32], right: &[f32]) -> f32 {
-    left.iter()
-        .zip(right)
-        .map(|(left, right)| left * right)
-        .sum()
 }
 
 fn delete_document(connection: &Connection, id: &str) -> Result<(), rusqlite::Error> {
@@ -739,10 +558,6 @@ pub enum CorpusError {
     UnsupportedSchemaVersion(String),
     #[error("invalid corpus layer {0}")]
     InvalidLayer(String),
-    #[error("invalid embedding row {0}")]
-    InvalidEmbeddingRow(i64),
-    #[error("invalid embedding matrix: {0}")]
-    InvalidEmbeddingMatrix(String),
     #[error("corpus SQLite operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("corpus JSON operation failed: {0}")]

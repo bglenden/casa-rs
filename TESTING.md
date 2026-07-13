@@ -248,8 +248,9 @@ For each wave:
   opt-in ChatGPT subscription login/account state, cancellation, process
   failure, rate limits, and session resume without exposing credentials to
   CASA-RS. Conformance tests verify `casa-rs-agent-profile/v1`, nonce-bearing
-  CASA MCP identity and collision resistance, capability mapping, Explore
-  denial of project instructions/write/exec/network, Work native approval
+  nonce-derived CASA MCP identity and collision resistance, capability mapping,
+  Explore denial of project instructions/write/exec/network and inherited
+  MCP/plugin tools, Work native approval
   events without a duplicate CASA prompt, and visible failure when an authority
   dimension cannot be honored. Python tests use the user-selected or inherited
   executable and record identity changes without path or executable-hash

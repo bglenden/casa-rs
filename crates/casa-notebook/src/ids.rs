@@ -57,5 +57,4 @@ stable_id!(CellId);
 stable_id!(RunId);
 stable_id!(ConversationId);
 stable_id!(AssistantMessageId);
-stable_id!(AssistantProposalId);
 stable_id!(AssistantPinId);

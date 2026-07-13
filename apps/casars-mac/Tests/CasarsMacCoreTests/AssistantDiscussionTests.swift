@@ -3,540 +3,551 @@ import Foundation
 import XCTest
 
 final class AssistantDiscussionTests: XCTestCase {
-    func testHostExecutableVersionUsesBundleMetadataWithoutLaunchingTheApp() {
-        let executable = "/Applications/casars-mac.app/Contents/MacOS/casars-mac"
-
-        XCTAssertEqual(
-            WorkbenchStore.assistantHostVersionOverride(
-                executablePath: executable,
-                hostExecutablePath: executable,
-                shortVersion: "1.2.3",
-                buildVersion: "45"
-            ),
-            "1.2.3 (45)"
-        )
-        XCTAssertEqual(
-            WorkbenchStore.assistantHostVersionOverride(
-                executablePath: executable,
-                hostExecutablePath: executable,
-                shortVersion: nil,
-                buildVersion: nil
-            ),
-            "unreported"
-        )
-        XCTAssertNil(
-            WorkbenchStore.assistantHostVersionOverride(
-                executablePath: "/usr/bin/python3",
-                hostExecutablePath: executable,
-                shortVersion: "1.2.3",
-                buildVersion: "45"
-            )
-        )
+    func testAuthorityPresetsMapToNativeCodexControls() {
+        XCTAssertEqual(AssistantAuthorityState.explore.codexSettings.sandbox, "read-only")
+        XCTAssertEqual(AssistantAuthorityState.explore.codexSettings.approvalPolicy, "never")
+        XCTAssertEqual(AssistantAuthorityState.work.codexSettings.sandbox, "workspace-write")
+        XCTAssertEqual(AssistantAuthorityState.work.codexSettings.approvalPolicy, "on-request")
+        XCTAssertEqual(AssistantAuthorityState.fullAccess.codexSettings.sandbox, "danger-full-access")
+        XCTAssertEqual(AssistantAuthorityState.fullAccess.codexSettings.approvalPolicy, "never")
     }
 
-    func testProviderEgressNeverSerializesDeselectedHostContext() throws {
-        let visible = AssistantContextItemState(
-            id: "visible",
-            kind: "notebook",
-            label: "Visible",
-            summary: "selected",
-            excerpt: "selected excerpt",
-            providerVisible: true,
-            untrustedEvidence: true
+    func testAgentAndPythonCommandsAreUserSelectableNotHashPinned() throws {
+        var profile = AssistantSessionProfileState()
+        profile.agentCommand = "/opt/local/bin/codex"
+        profile.pythonCommand = "/Users/scientist/.venv/bin/python"
+        profile.pythonProvenance = AssistantPythonProvenanceState(
+            selectedCommand: profile.pythonCommand,
+            resolvedPath: profile.pythonCommand,
+            implementation: "CPython",
+            version: "3.13.5",
+            environmentLabel: "science-venv",
+            casaRsVersion: "0.24.1",
+            packages: ["casatools": "6.6.6"]
         )
-        let hidden = AssistantContextItemState(
-            id: "hidden",
-            kind: "source",
-            label: "Hidden",
-            summary: "local only",
-            excerpt: "must not cross stdin",
-            providerVisible: false,
-            untrustedEvidence: true
-        )
-
-        let egress = AssistantEgressState.providerBound(
-            provider: "fixture",
-            model: "fixture-v1",
-            destination: "fixture",
-            contexts: [visible, hidden]
-        )
-        let encoded = String(decoding: try JSONEncoder().encode(egress), as: UTF8.self)
-
-        XCTAssertEqual(egress.items.map(\.id), ["visible"])
-        XCTAssertEqual(egress.estimatedBytes, visible.byteCount)
-        XCTAssertFalse(encoded.contains("must not cross stdin"))
+        let encoded = try JSONEncoder().encode(profile)
+        let decoded = try JSONDecoder().decode(AssistantSessionProfileState.self, from: encoded)
+        let json = String(decoding: encoded, as: UTF8.self)
+        XCTAssertEqual(decoded.agentCommand, "/opt/local/bin/codex")
+        XCTAssertEqual(decoded.pythonCommand, "/Users/scientist/.venv/bin/python")
+        XCTAssertEqual(decoded.pythonProvenance?.packages["casatools"], "6.6.6")
+        XCTAssertFalse(json.contains("sha256"))
     }
 
-    func testProviderEgressAppliesOneUnicodeSafeGlobalBudget() {
-        let contexts = (0..<6).map { index in
-            AssistantContextItemState(
-                id: "context-\(index)",
-                kind: "notebook",
-                label: "Context \(index)",
-                summary: "selected",
-                excerpt: String(repeating: "🔭science", count: 4_000),
-                providerVisible: true,
-                untrustedEvidence: true
-            )
-        }
+    func testConfigurationDiscoveryAcceptsUserSelectedExecutableLocations() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-agent-config-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let codex = directory.appendingPathComponent("custom-codex")
+        let mcp = directory.appendingPathComponent("custom-mcp")
+        let python = directory.appendingPathComponent("scientific-python")
+        try "#!/bin/sh\n".write(to: codex, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\n".write(to: mcp, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\n".write(to: python, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: codex.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: mcp.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: python.path)
 
-        let egress = AssistantEgressState.providerBound(
-            provider: "fixture",
-            model: "fixture-v1",
-            destination: "fixture",
-            contexts: contexts
-        )
-
-        XCTAssertLessThanOrEqual(egress.estimatedBytes, 65_536)
-        XCTAssertEqual(egress.estimatedBytes, UInt64(egress.items.reduce(0) { $0 + $1.excerpt.utf8.count }))
-        XCTAssertTrue(egress.items.allSatisfy { String(data: Data($0.excerpt.utf8), encoding: .utf8) != nil })
-        XCTAssertTrue(egress.items.allSatisfy { $0.contentSha256.count == 64 })
-    }
-
-    func testProviderTranscriptProjectionExcludesHostOnlyReceiptsAndContext() throws {
-        let message = AssistantMessageState(
-            id: "message-1",
-            role: "assistant",
-            content: "Visible answer",
-            createdAt: 1,
-            provider: "fixture",
-            model: "fixture-v1",
-            citations: [AssistantCitationState(
-                id: "citation",
-                kind: "source",
-                label: "Private source",
-                locator: "line 1",
-                excerpt: "host-only citation excerpt",
-                sourcePath: "source.rs",
-                page: nil,
-                section: nil,
-                lineStart: 1,
-                lineEnd: 2,
-                release: nil,
-                commit: nil
-            )],
-            egress: AssistantEgressState.providerBound(
-                provider: "fixture",
-                model: "fixture-v1",
-                destination: "fixture",
-                contexts: []
-            ),
-            proposals: [],
-            pins: []
-        )
-
-        let encoded = String(
-            decoding: try JSONEncoder().encode(AssistantProviderMessageState(message: message)),
-            as: UTF8.self
-        )
-
-        XCTAssertTrue(encoded.contains("Visible answer"))
-        XCTAssertFalse(encoded.contains("host-only citation excerpt"))
-        XCTAssertFalse(encoded.contains("citations"))
-        XCTAssertFalse(encoded.contains("egress"))
-        XCTAssertFalse(encoded.contains("proposals"))
-        XCTAssertFalse(encoded.contains("pins"))
-    }
-
-    func testProviderTranscriptProjectionKeepsNewestMessagesWithinGlobalBudget() {
-        let messages = (0..<140).map { index in
-            AssistantMessageState(
-                id: "message-\(index)",
-                role: index.isMultiple(of: 2) ? "user" : "assistant",
-                content: "\(index):" + String(repeating: "🔭", count: 4_000),
-                createdAt: UInt64(index),
-                provider: nil,
-                model: nil,
-                citations: [],
-                egress: nil,
-                proposals: [],
-                pins: []
-            )
-        }
-
-        let projection = AssistantProviderMessageState.providerBound(messages)
-        XCTAssertLessThanOrEqual(projection.count, 128)
-        XCTAssertEqual(projection.last?.id, "message-139")
-        XCTAssertFalse(projection.contains { $0.id == "message-0" })
-        XCTAssertLessThanOrEqual(projection.reduce(0) { $0 + $1.content.utf8.count }, 262_144)
-        XCTAssertTrue(projection.allSatisfy { String(data: Data($0.content.utf8), encoding: .utf8) != nil })
-    }
-
-    func testWebResearchRejectsLocalAndCredentialBearingURLsBeforeNetwork() {
-        XCTAssertFalse(AssistantWebResearchClient.isPublicHTTPS(URL(string: "http://example.com")!))
-        XCTAssertFalse(AssistantWebResearchClient.isPublicHTTPS(URL(string: "https://localhost/data")!))
-        XCTAssertFalse(AssistantWebResearchClient.isPublicHTTPS(URL(string: "https://127.0.0.1/data")!))
-        XCTAssertFalse(AssistantWebResearchClient.isPublicHTTPS(URL(string: "https://user:secret@example.com")!))
-        XCTAssertTrue(AssistantWebResearchClient.isPublicIPAddress("8.8.8.8"))
-        XCTAssertTrue(AssistantWebResearchClient.isPublicIPAddress("2001:4860:4860::8888"))
-        XCTAssertFalse(AssistantWebResearchClient.isPublicIPAddress("127.0.0.1"))
-        XCTAssertFalse(AssistantWebResearchClient.isPublicIPAddress("192.168.1.4"))
-        XCTAssertFalse(AssistantWebResearchClient.isPublicIPAddress("100.64.0.1"))
-        XCTAssertFalse(AssistantWebResearchClient.isPublicIPAddress("fc00::1"))
-        XCTAssertFalse(AssistantWebResearchClient.isPublicIPAddress("::ffff:127.0.0.1"))
-        XCTAssertFalse(AssistantWebResearchClient.isPublicIPAddress("2001:db8::1"))
-        XCTAssertThrowsError(try AssistantApprovedDownloadClient().download(
-            URL(string: "https://127.0.0.1/private")!,
-            isCancelled: { false }
-        ))
-    }
-
-    func testAssistantProjectWritesRejectTraversalAndSymlinkAncestors() throws {
-        let project = try temporaryProject()
-        let outside = try temporaryProject()
-        let safe = try WorkbenchStore.assistantProjectDestination(
-            projectRoot: project.path,
-            relativePath: "documents/paper.pdf"
-        )
-        XCTAssertEqual(safe.path, project.appendingPathComponent("documents/paper.pdf").path)
-        XCTAssertThrowsError(try WorkbenchStore.assistantProjectDestination(
-            projectRoot: project.path,
-            relativePath: "../outside.txt"
-        ))
-
-        let link = project.appendingPathComponent("linked", isDirectory: true)
-        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
-        XCTAssertThrowsError(try WorkbenchStore.assistantProjectDestination(
-            projectRoot: project.path,
-            relativePath: "linked/escaped.txt"
-        ))
-    }
-
-    func testDiscoveredFixtureModeIsOwnedByTheHostConfiguration() throws {
-        let root = try temporaryProject()
-        let node = root.appendingPathComponent("node")
-        let entrypoint = root.appendingPathComponent("main.js")
-        try "#!/bin/sh\necho v22.19.0\n".write(to: node, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: node.path)
-        try "// fixture\n".write(to: entrypoint, atomically: true, encoding: .utf8)
-
-        let configuration = try AssistantSidecarConfiguration.discover(environment: [
-            "CASA_RS_ASSISTANT_NODE": node.path,
-            "CASA_RS_ASSISTANT_ENTRYPOINT": entrypoint.path,
-            "CASA_RS_ASSISTANT_FIXTURE": "1",
+        let configuration = try AgentSessionConfiguration.discover(environment: [
+            "CASA_RS_AGENT_COMMAND": codex.path,
+            "CASA_RS_PROJECT_MCP": mcp.path,
             "PATH": "",
         ])
-
-        XCTAssertEqual(configuration.nodeExecutable, node.path)
-        XCTAssertEqual(configuration.entrypoint, entrypoint.path)
-        XCTAssertTrue(configuration.fixtureMode)
+        XCTAssertEqual(configuration.agentExecutable, codex.path)
+        XCTAssertEqual(configuration.projectMCPExecutable, mcp.path)
+        XCTAssertEqual(
+            AgentSessionConfiguration.resolveExecutable(
+                "scientific-python",
+                environment: ["PATH": directory.path]
+            ),
+            python.path
+        )
     }
 
-    func testRustPersistenceAndCorpusBridgeStayProviderNeutral() throws {
+    func testExploreLaunchAndThreadConfigRemoveGenericAuthority() {
+        let arguments = CodexAppServerSession.launchArguments(exploreRestricted: true)
+        for feature in ["shell_tool", "unified_exec", "code_mode_host", "browser_use", "apps"] {
+            XCTAssertTrue(arguments.contains(feature), "missing denied feature \(feature)")
+        }
+        XCTAssertTrue(arguments.contains("mcp_servers={}"))
+        XCTAssertEqual(
+            CodexAppServerSession.launchArguments(exploreRestricted: false),
+            ["app-server"]
+        )
+
+        let session = CodexAppServerSession(configuration: AgentSessionConfiguration(
+            agentExecutable: "/usr/bin/false",
+            projectMCPExecutable: "/project/bin/casars-project-mcp"
+        ))
+        let request = AgentConversationRequest(
+            projectRoot: "/project",
+            model: "",
+            effort: "low",
+            resumeThreadID: "opaque-thread",
+            runtimeProfile: CasaAgentRuntimeProfile(
+                authority: .explore,
+                sessionNonce: String(repeating: "n", count: 32),
+                pythonCommand: "python3"
+            )
+        )
+        let config = session.threadConfig(request)
+        let features = config["features"] as? [String: Bool]
+        XCTAssertEqual(features?["shell_tool"], false)
+        XCTAssertEqual(features?["browser_use"], false)
+        XCTAssertEqual(config["project_doc_max_bytes"] as? Int, 0)
+        let servers = config["mcp_servers"] as? [String: [String: Any]]
+        let serverName = request.runtimeProfile.mcpServerName
+        XCTAssertEqual(servers?[serverName]?["required"] as? Bool, true)
+        XCTAssertEqual(
+            servers?[serverName]?["args"] as? [String],
+            ["--project-root", "/project", "--nonce", String(repeating: "n", count: 32)]
+        )
+    }
+
+    func testPersistenceRoundTripStoresAgentNeutralProfileAndOpaqueResumeID() throws {
         let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
         let client = UniFFIAssistantPersistenceClient()
+        var profile = AssistantSessionProfileState()
+        profile.model = "fixture-model"
         var conversation = try client.createConversation(
             projectRoot: project.path,
-            title: "Calibration",
+            title: "Analysis",
             attachment: AssistantAttachmentState(
                 kind: "notebook",
                 identifier: "Analysis.md",
                 label: "Analysis",
                 primary: true
             ),
-            provider: "openai-codex",
-            model: "gpt-5.4"
+            profile: profile
+        )
+        conversation.backendSession = AssistantBackendSessionState(
+            backendId: "codex_app_server",
+            sessionId: "thread-123"
         )
         conversation.draft = "Continue this discussion"
-        let toolResult = AssistantContextItemState(
-            id: "tool:turn-1:0",
-            kind: "tool_result",
-            label: "proposal.note",
-            summary: #"{"title":"Add a note"}"#,
-            excerpt: #"{"proposal_id":"proposal-1","status":"pending_user_review"}"#,
-            providerVisible: true,
-            untrustedEvidence: true
-        )
-        conversation.messages.append(AssistantMessageState(
-            id: UUID().uuidString.lowercased(),
-            role: "assistant",
-            content: "I prepared a notebook proposal.",
-            createdAt: 1,
-            provider: "openai-codex",
-            model: "gpt-5.4",
-            citations: [],
-            egress: AssistantEgressState(
-                provider: "openai-codex",
-                model: "gpt-5.4",
-                destination: "provider",
-                items: [toolResult],
-                estimatedBytes: toolResult.byteCount
-            ),
-            proposals: [],
-            pins: []
-        ))
         try client.saveConversation(projectRoot: project.path, transcript: conversation)
-        let reloaded = try client.conversations(projectRoot: project.path)
-        XCTAssertEqual(reloaded.first?.draft, "Continue this discussion")
-        XCTAssertEqual(reloaded.first?.provider, "openai-codex")
-        XCTAssertEqual(reloaded.first?.messages.first?.egress?.items.first?.kind, "tool_result")
 
-        let messageID = UUID().uuidString.lowercased()
-        let snapshot = "### AI discussion snapshot\nA cited answer."
-        let pin = try client.createPin(AssistantCreatePinEnvelope(
-            conversationId: conversation.id,
-            notebookId: UUID().uuidString.lowercased(),
-            messageId: messageID,
-            representation: "answer_with_citations",
-            destination: "Analysis.md#chronological-tail",
-            snapshotContent: snapshot
-        ))
-        XCTAssertEqual(pin.conversationId, conversation.id)
-        XCTAssertEqual(pin.messageId, messageID)
-        XCTAssertEqual(pin.snapshotContent, snapshot)
-        XCTAssertEqual(pin.contentSha256.count, 64)
-
-        _ = try client.indexCorpus(
-            projectRoot: project.path,
-            documents: [
-                AssistantCorpusDocumentRequest(
-                    id: "radio:gain",
-                    layer: "baseline",
-                    title: "Gain calibration",
-                    sourceIdentity: "radio/gain.md",
-                    content: "Gain calibration solves antenna amplitude and phase corrections.",
-                    citation: AssistantCorpusCitationRequest(
-                        label: "Radio guide",
-                        locator: "section 3",
-                        sourcePath: "radio/gain.md",
-                        page: nil,
-                        section: "Gain calibration",
-                        lineStart: nil,
-                        lineEnd: nil,
-                        release: nil,
-                        commit: nil
-                    ),
-                    redistributionCleared: true
-                ),
-            ],
-            removeMissingLayers: ["baseline"]
-        )
-        let hits = try client.searchCorpus(
-            projectRoot: project.path,
-            query: "antenna phase gain",
-            limit: 4
-        )
-        XCTAssertEqual(hits.first?.citation.section, "Gain calibration")
-        XCTAssertEqual(hits.first?.untrustedEvidence, true)
+        let reloaded = try XCTUnwrap(client.conversations(projectRoot: project.path).first)
+        XCTAssertEqual(reloaded.profile.backendId, "codex_app_server")
+        XCTAssertEqual(reloaded.backendSession?.sessionId, "thread-123")
+        XCTAssertEqual(reloaded.draft, "Continue this discussion")
+        let serialized = String(decoding: try JSONEncoder().encode(reloaded), as: UTF8.self)
+        XCTAssertFalse(serialized.contains("credential"))
+        XCTAssertFalse(serialized.contains("provider_envelope"))
+        XCTAssertFalse(serialized.contains("proposal"))
     }
 
-    func testSeatbeltSidecarUsesHostMediatedCorpusTool() throws {
-        let repository = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let entrypoint = repository.appendingPathComponent("apps/casars-assistant/dist/main.js").path
-        let node = ["/opt/homebrew/bin/node", "/usr/local/bin/node"]
-            .first(where: FileManager.default.isExecutableFile(atPath:))
-        guard let node, FileManager.default.fileExists(atPath: entrypoint) else {
-            throw XCTSkip("assistant adapter or Node is not built")
-        }
-        let ready = expectation(description: "sidecar ready")
-        let catalog = expectation(description: "catalog")
-        let toolCall = expectation(description: "corpus tool call")
-        let completed = expectation(description: "turn complete")
-        var startupResult: Result<Void, Error>?
-        let sidecar = AssistantSidecar(configuration: AssistantSidecarConfiguration(
-            nodeExecutable: node,
-            entrypoint: entrypoint,
-            fixtureMode: true
-        ))
-        sidecar.onEvent { event in
-            switch event["event"] as? String {
-            case "catalog":
-                catalog.fulfill()
-            case "tool_call":
-                XCTAssertEqual(event["name"] as? String, "corpus.search")
-                toolCall.fulfill()
-                sidecar.send([
-                    "command": "tool_result",
-                    "request_id": "turn-test",
-                    "call_id": event["call_id"] as? String ?? "",
-                    "result": [[
-                        "text": "Use a gain calibrator",
-                        "citation": ["locator": "section 3"],
-                    ]],
-                    "is_error": false,
-                ])
-            case "turn_complete":
-                completed.fulfill()
-            case "error":
-                XCTFail("sidecar error: \(event)")
-            default:
-                break
-            }
-        }
-        sidecar.prepare { result in
-            startupResult = result
-            ready.fulfill()
-        }
-        wait(for: [ready], timeout: 12)
-        guard case .success = startupResult else {
-            XCTFail("sidecar startup failed: \(String(describing: startupResult))")
-            sidecar.terminate()
-            return
-        }
-        sidecar.send(["command": "catalog", "request_id": "catalog-test"])
-        wait(for: [catalog], timeout: 5)
-        sidecar.send([
-            "command": "turn",
-            "request_id": "turn-test",
-            "conversation_id": UUID().uuidString,
-            "provider": "fixture",
-            "model": "fixture-v1",
-            "messages": [[
-                "id": UUID().uuidString,
-                "role": "user",
-                "content": "Please search the corpus",
-                "created_at": 1,
-            ]],
-            "egress": [
-                "provider": "fixture",
-                "model": "fixture-v1",
-                "destination": "fixture",
-                "items": [],
-                "estimated_bytes": 0,
-            ],
-            "tools": [[
-                "name": "corpus.search",
-                "description": "Search host corpus",
-                "input_schema": [
-                    "type": "object",
-                    "properties": ["query": ["type": "string"]],
-                    "required": ["query"],
-                ],
-                "read_only": true,
-            ]],
-        ])
-        wait(for: [toolCall, completed], timeout: 8)
-        sidecar.terminate()
-    }
-
-    func testOptInLiveProviderSmokeUsesHostKeychainLease() throws {
-        let environment = ProcessInfo.processInfo.environment
-        guard let provider = environment["CASA_RS_ASSISTANT_LIVE_SMOKE_PROVIDER"],
-              let model = environment["CASA_RS_ASSISTANT_LIVE_SMOKE_MODEL"]
-        else { throw XCTSkip("set live smoke provider and model to opt in") }
-        guard let credential = try KeychainAssistantCredentialVault().load(provider: provider) else {
-            XCTFail("No host Keychain credential is stored for \(provider); authenticate in casars-mac first")
-            return
-        }
-        let complete = expectation(description: "live provider response")
-        let ready = expectation(description: "live sidecar ready")
-        var response = ""
-        let sidecar = AssistantSidecar(configuration: try .discover())
-        sidecar.onEvent { event in
-            if event["event"] as? String == "turn_complete" {
-                response = (event["message"] as? [String: Any])?["content"] as? String ?? ""
-                complete.fulfill()
-            }
-            if event["event"] as? String == "error" { XCTFail("live smoke failed: \(event)") }
-        }
-        sidecar.prepare { result in
-            if case let .failure(error) = result { XCTFail("live sidecar startup: \(error)") }
-            ready.fulfill()
-        }
-        wait(for: [ready], timeout: 15)
-        sidecar.send([
-            "command": "turn",
-            "request_id": "live-smoke-\(UUID().uuidString)",
-            "conversation_id": UUID().uuidString,
-            "provider": provider,
-            "model": model,
-            "messages": [[
-                "id": UUID().uuidString,
-                "role": "user",
-                "content": "Reply with exactly CASA-RS assistant live smoke OK.",
-                "created_at": 1,
-            ]],
-            "egress": [
-                "provider": provider,
-                "model": model,
-                "destination": provider,
-                "items": [],
-                "estimated_bytes": 0,
-            ],
-            "tools": [],
-            "credential": try JSONSerialization.jsonObject(with: JSONEncoder().encode(credential)),
-        ])
-        wait(for: [complete], timeout: 90)
-        XCTAssertEqual(
-            response.trimmingCharacters(in: .whitespacesAndNewlines),
-            "CASA-RS assistant live smoke OK"
-        )
-        sidecar.terminate()
-    }
-
-    func testCorpusIngestorLayersBaselineProjectDocumentsAndReleaseSource() throws {
+    func testCorpusIngestionLayersBaselineProjectDocumentsAndReleaseSource() throws {
         let project = try temporaryProject()
-        let documents = project.appendingPathComponent("documents", isDirectory: true)
-        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
-        try "TW Hya has a nearly face-on disk."
-            .write(to: documents.appendingPathComponent("twhya.md"), atomically: true, encoding: .utf8)
-        let outside = project.appendingPathComponent("outside-secret.md")
-        try "must not enter the corpus".write(to: outside, atomically: true, encoding: .utf8)
-        try FileManager.default.createSymbolicLink(
-            at: documents.appendingPathComponent("linked-secret.md"),
-            withDestinationURL: outside
-        )
-
-        let source = FileManager.default.temporaryDirectory
-            .appendingPathComponent("casars-source-tests-\(UUID().uuidString)", isDirectory: true)
+        let source = try temporaryProject()
+        defer {
+            try? FileManager.default.removeItem(at: project)
+            try? FileManager.default.removeItem(at: source)
+        }
         try FileManager.default.createDirectory(
-            at: source.appendingPathComponent("docs", isDirectory: true),
+            at: project.appendingPathComponent("documents"),
             withIntermediateDirectories: true
         )
-        try "# Architecture\nCASA-RS tasks use typed provider contracts."
-            .write(to: source.appendingPathComponent("ARCHITECTURE.md"), atomically: true, encoding: .utf8)
-        try "MeasurementSet source semantics."
-            .write(to: source.appendingPathComponent("docs/source.md"), atomically: true, encoding: .utf8)
-        try #"{"schema_version":1,"release":"0.24.1","commit":"abc123"}"#
-            .write(to: source.appendingPathComponent("casars-source.json"), atomically: true, encoding: .utf8)
-        addTeardownBlock { try? FileManager.default.removeItem(at: source) }
-
+        try "A cited project paper.".write(
+            to: project.appendingPathComponent("documents/paper.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "# Architecture".write(
+            to: source.appendingPathComponent("ARCHITECTURE.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"schema_version":1,"release":"v1.2.3","commit":"abc123"}"#.write(
+            to: source.appendingPathComponent("casars-source.json"),
+            atomically: true,
+            encoding: .utf8
+        )
         let result = AssistantCorpusIngestor().collect(
             projectRoot: project.path,
             environment: ["CASA_RS_SOURCE_ROOT": source.path]
         )
-        XCTAssertTrue(result.documents.contains { $0.layer == "baseline" })
+
+        XCTAssertTrue(result.documents.contains { $0.layer == "baseline" && $0.redistributionCleared })
         XCTAssertTrue(result.documents.contains {
-            $0.layer == "project_document" && $0.sourceIdentity == "documents/twhya.md"
+            $0.layer == "project_document" && $0.citation.sourcePath == "documents/paper.md"
         })
-        XCTAssertFalse(result.documents.contains { $0.content.contains("must not enter the corpus") })
         XCTAssertTrue(result.documents.contains {
-            $0.layer == "release_source"
-                && $0.sourceIdentity == "ARCHITECTURE.md"
-                && $0.citation.release == "0.24.1"
+            $0.layer == "release_source" && $0.citation.release == "v1.2.3"
                 && $0.citation.commit == "abc123"
         })
-        XCTAssertEqual(
-            result.documents.filter { $0.layer == "baseline" }.allSatisfy(\.redistributionCleared),
-            true
+        XCTAssertEqual(result.refreshedLayers, ["baseline", "project_document", "release_source", "live_source"])
+    }
+
+    func testPinDestinationIsAlwaysChronologicalTail() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        let conversationID = UUID().uuidString.lowercased()
+        let notebookID = UUID().uuidString.lowercased()
+        let messageID = UUID().uuidString.lowercased()
+        let pin = try client.createPin(AssistantCreatePinEnvelope(
+            conversationId: conversationID,
+            notebookId: notebookID,
+            messageId: messageID,
+            representation: "answer_with_citations",
+            snapshotContent: "### AI snapshot\nAnswer [1]"
+        ))
+        XCTAssertEqual(pin.destination, "chronological_tail")
+        XCTAssertEqual(pin.messageId, messageID)
+    }
+
+    func testTypedTaskSuggestionOpensCanonicalTaskWithHighlightedValues() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        var conversation = try client.createConversation(
+            projectRoot: project.path,
+            title: "Analysis",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
+        )
+        conversation.messages.append(AssistantMessageState(
+            id: "answer",
+            role: "assistant",
+            content: "Try Briggs weighting.",
+            createdAt: 1,
+            agentId: "fixture",
+            model: "fixture",
+            citations: [],
+            usedContext: [],
+            activities: [],
+            taskSuggestions: [AssistantTaskSuggestionState(
+                id: "suggestion",
+                taskId: "imager",
+                parameters: ["robust": "-0.5", "weighting": "briggs"]
+            )],
+            pins: []
+        ))
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+
+        store.openAssistantTaskSuggestion(messageID: "answer", suggestionID: "suggestion")
+
+        let tab = try XCTUnwrap(store.state.tabs.first { $0.id == store.state.activeTabID })
+        XCTAssertEqual(tab.kind, .task)
+        XCTAssertEqual(tab.taskID, "imager")
+        XCTAssertEqual(store.parameterText(surfaceID: "imager", instanceID: tab.id, name: "robust"), "-0.5")
+        XCTAssertTrue(store.parameterIsAssistantSuggested(
+            surfaceID: "imager",
+            instanceID: tab.id,
+            name: "robust"
+        ))
+    }
+
+    func testCompletedCasaCorpusToolProducesDurableCitationAndActivity() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        let conversation = try client.createConversation(
+            projectRoot: project.path,
+            title: "Analysis",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
+        )
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+        let agent = FixtureAgentSession()
+        store.installAgentSessionForTesting(agent)
+        let hits = """
+        [{"chunk_id":"paper:1","layer":"project_document","title":"Paper","text":"Evidence","citation":{"label":"Paper","locator":"documents/paper.pdf, page 2","source_path":"documents/paper.pdf","page":2}}]
+        """
+
+        agent.emit(["method": "item/completed", "params": ["item": [
+            "id": "tool-1", "type": "mcpToolCall", "server": "casa_rs_fixture",
+            "tool": "corpus.search", "result": ["content": [["type": "text", "text": hits]]],
+        ]]])
+        agent.emit(["method": "item/agentMessage/delta", "params": ["delta": "Cited answer"]])
+        agent.emit(["method": "turn/completed", "params": ["turn": ["status": "completed"]]])
+
+        let answer = try XCTUnwrap(store.state.assistantDiscussion?.activeConversation?.messages.last)
+        XCTAssertEqual(answer.citations.first?.locator, "documents/paper.pdf, page 2")
+        XCTAssertEqual(answer.citations.first?.kind, "document")
+        XCTAssertEqual(answer.activities.first?.label, "CASA corpus.search")
+        XCTAssertEqual(answer.activities.first?.state, "succeeded")
+        try UniFFIAssistantPersistenceClient().saveConversation(
+            projectRoot: project.path,
+            transcript: try XCTUnwrap(store.state.assistantDiscussion?.activeConversation)
         )
     }
 
-    func testCorpusIngestorRejectsSymlinkedProjectDocumentRoot() throws {
+    func testIncompatibleResumeCreatesVisibleHandoffBeforeFreshSession() throws {
         let project = try temporaryProject()
-        let outside = try temporaryProject()
-        try "must remain outside".write(
-            to: outside.appendingPathComponent("paper.md"),
-            atomically: true,
-            encoding: .utf8
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        var conversation = try client.createConversation(
+            projectRoot: project.path,
+            title: "Analysis",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
         )
-        try FileManager.default.createSymbolicLink(
-            at: project.appendingPathComponent("documents"),
-            withDestinationURL: outside
+        conversation.backendSession = AssistantBackendSessionState(
+            backendId: "codex_app_server",
+            sessionId: "missing-thread"
         )
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+        let agent = FixtureAgentSession()
+        store.installAgentSessionForTesting(agent)
 
-        let result = AssistantCorpusIngestor().collect(projectRoot: project.path, environment: [:])
-        XCTAssertFalse(result.documents.contains { $0.content.contains("must remain outside") })
-        XCTAssertTrue(result.diagnostics.contains { $0.contains("symbolic-link or invalid corpus root") })
+        agent.emit([
+            "method": "casa/resumeFailed",
+            "params": ["message": "thread not found"],
+        ])
+
+        let updated = try XCTUnwrap(store.state.assistantDiscussion?.activeConversation)
+        XCTAssertNil(updated.backendSession)
+        XCTAssertEqual(updated.messages.last?.role, "activity")
+        XCTAssertTrue(updated.messages.last?.content.contains("new backend session") == true)
+        XCTAssertEqual(agent.conversations.last?.resumeThreadID, nil)
+    }
+
+    func testFixtureAgentImplementsSameSessionBoundary() {
+        let fixture = FixtureAgentSession()
+        let ready = expectation(description: "ready")
+        fixture.prepare { result in
+            if case let .failure(error) = result { XCTFail("fixture failed: \(error)") }
+            ready.fulfill()
+        }
+        fixture.startConversation(AgentConversationRequest(
+            projectRoot: "/tmp/project",
+            model: "fixture-model",
+            effort: "medium",
+            resumeThreadID: nil,
+            runtimeProfile: CasaAgentRuntimeProfile(
+                authority: .work,
+                sessionNonce: String(repeating: "n", count: 24),
+                pythonCommand: "python3"
+            )
+        ))
+        XCTAssertEqual(fixture.conversations.count, 1)
+        wait(for: [ready], timeout: 1)
+    }
+
+    func testOptInCodexSubscriptionSmoke() throws {
+        guard ProcessInfo.processInfo.environment["CASA_RS_CODEX_LIVE_SMOKE"] == "1" else {
+            throw XCTSkip("set CASA_RS_CODEX_LIVE_SMOKE=1 to exercise the installed Codex App Server subscription login")
+        }
+        let session = CodexAppServerSession(configuration: try .discover())
+        defer { session.terminate() }
+        let ready = expectation(description: "Codex App Server ready")
+        let account = expectation(description: "ChatGPT subscription account")
+        let casaMCP = expectation(description: "CASA project MCP ready")
+        let casaTool = expectation(description: "CASA project MCP called")
+        let completed = expectation(description: "Codex turn completed")
+        let resumed = expectation(description: "Codex thread resumed with the CASA profile reattached")
+        let workApproval = expectation(description: "Work surfaces one native Codex approval")
+        let workCompleted = expectation(description: "Work continues after the approval is declined")
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let forbiddenMarker = project.appendingPathComponent("explore-must-not-write")
+        let workMarker = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".casars-work-approval-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: workMarker) }
+        let nonce = String(repeating: "n", count: 32)
+        let profile = CasaAgentRuntimeProfile(
+            authority: .explore,
+            sessionNonce: nonce,
+            pythonCommand: "python3"
+        )
+        var threadID: String?
+        var observedAccount = false
+        var observedGenericAuthority = false
+        var resumeRequested = false
+        var workRequested = false
+        var workThreadID: String?
+        var workApprovalCount = 0
+        var observedCasaMCPReady = false
+        var observedCasaTool = false
+        session.onEvent { event in
+            if ProcessInfo.processInfo.environment["CASA_RS_CODEX_LIVE_TRACE"] == "1",
+               JSONSerialization.isValidJSONObject(event),
+               let data = try? JSONSerialization.data(withJSONObject: event, options: [.sortedKeys])
+            {
+                print("CODEX_EVENT \(String(decoding: data, as: UTF8.self))")
+            }
+            if let result = event["result"] as? [String: Any] {
+                if !observedAccount,
+                   result.keys.contains("requiresOpenaiAuth"), result["account"] != nil
+                {
+                    observedAccount = true
+                    account.fulfill()
+                }
+                if let thread = result["thread"] as? [String: Any],
+                   let id = thread["id"] as? String
+                {
+                    if threadID == nil {
+                        threadID = id
+                        session.sendTurn(AgentTurnRequest(
+                            threadID: id,
+                            text: """
+                            Call \(profile.mcpServerName) task.catalog with the required nonce. Then try to run the generic shell command touch \(forbiddenMarker.path) and try a generic internet search. If those tools are unavailable, continue. Reply only OK.
+                            """,
+                            model: "",
+                            effort: "low"
+                        ))
+                    } else if resumeRequested, !workRequested, id == threadID {
+                        resumed.fulfill()
+                        workRequested = true
+                        session.startConversation(AgentConversationRequest(
+                            projectRoot: project.path,
+                            model: "",
+                            effort: "low",
+                            resumeThreadID: nil,
+                            runtimeProfile: CasaAgentRuntimeProfile(
+                                authority: .work,
+                                sessionNonce: String(repeating: "w", count: 32),
+                                pythonCommand: "python3"
+                            )
+                        ))
+                    } else if workRequested, id != threadID, workThreadID == nil {
+                        workThreadID = id
+                        session.sendTurn(AgentTurnRequest(
+                            threadID: id,
+                            text: "Try exactly once to run the generic shell command touch \(workMarker.path). It is outside the project. Do not use a CASA tool. If approval is declined, reply only DECLINED and finish.",
+                            model: "",
+                            effort: "low"
+                        ))
+                    }
+                }
+            }
+            guard let method = event["method"] as? String,
+                  let params = event["params"] as? [String: Any]
+            else { return }
+            if method == "mcpServer/startupStatus/updated",
+               let name = params["name"] as? String,
+               let status = params["status"] as? String,
+               ["starting", "ready"].contains(status)
+            {
+                if name.hasPrefix("casa_rs_"), status == "ready", !observedCasaMCPReady {
+                    observedCasaMCPReady = true
+                    casaMCP.fulfill()
+                }
+            }
+            if method == "item/completed",
+               let item = params["item"] as? [String: Any],
+               let type = item["type"] as? String
+            {
+                if type == "mcpToolCall",
+                   (item["server"] as? String)?.hasPrefix("casa_rs_") == true,
+                   !observedCasaTool
+                {
+                    observedCasaTool = true
+                    casaTool.fulfill()
+                } else if !workRequested
+                    && (["commandExecution", "webSearch", "computerUse"].contains(type)
+                    || (type == "mcpToolCall"
+                        && (item["server"] as? String)?.hasPrefix("casa_rs_") != true))
+                {
+                    observedGenericAuthority = true
+                }
+            }
+            if method == "turn/completed", !resumeRequested {
+                completed.fulfill()
+                resumeRequested = true
+                session.startConversation(AgentConversationRequest(
+                    projectRoot: project.path,
+                    model: "",
+                    effort: "low",
+                    resumeThreadID: threadID,
+                    runtimeProfile: profile
+                ))
+            } else if method == "turn/completed", workRequested, workThreadID != nil {
+                workCompleted.fulfill()
+            }
+            if method == "item/commandExecution/requestApproval", workRequested,
+               let requestID = event["id"]
+            {
+                workApprovalCount += 1
+                if workApprovalCount == 1 { workApproval.fulfill() }
+                session.approve(requestID: String(describing: requestID), decision: "decline")
+            }
+        }
+        session.prepare { result in
+            if case let .failure(error) = result { XCTFail("Codex failed: \(error)") }
+            ready.fulfill()
+        }
+        wait(for: [ready, account], timeout: 20)
+        session.startConversation(AgentConversationRequest(
+            projectRoot: project.path,
+            model: "",
+            effort: "low",
+            resumeThreadID: nil,
+            runtimeProfile: profile
+        ))
+        wait(
+            for: [casaMCP, casaTool, completed, resumed, workApproval, workCompleted],
+            timeout: 55
+        )
+        XCTAssertFalse(observedGenericAuthority)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: forbiddenMarker.path))
+        XCTAssertEqual(workApprovalCount, 1, "CASA must relay one Codex-native approval without duplicating it")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: workMarker.path))
     }
 
     private func temporaryProject() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
+        let project = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-assistant-tests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
-        return url
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        return project
     }
+}
+
+private final class FixtureAgentSession: AgentSession {
+    var conversations: [AgentConversationRequest] = []
+    private var eventHandler: (([String: Any]) -> Void)?
+    private var stateHandler: ((AssistantDiscussionActivity) -> Void)?
+
+    func onEvent(_ handler: @escaping ([String: Any]) -> Void) { eventHandler = handler }
+    func onStateChange(_ handler: @escaping (AssistantDiscussionActivity) -> Void) { stateHandler = handler }
+    func prepare(_ completion: @escaping (Result<Void, Error>) -> Void) {
+        stateHandler?(.ready)
+        completion(.success(()))
+    }
+    func startConversation(_ request: AgentConversationRequest) { conversations.append(request) }
+    func sendTurn(_ request: AgentTurnRequest) {}
+    func cancel(threadID: String, turnID: String) {}
+    func approve(requestID: String, decision: String) {}
+    func requestAccountLogin() {}
+    func refreshAccount() {}
+    func restart() {}
+    func terminate() {}
+    func emit(_ event: [String: Any]) { eventHandler?(event) }
 }
