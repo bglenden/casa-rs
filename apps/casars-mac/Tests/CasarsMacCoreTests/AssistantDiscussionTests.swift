@@ -177,6 +177,106 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertFalse(serialized.contains("proposal"))
     }
 
+    func testModelAndEffortSelectionStayOnBackendAndApplyToNextTurn() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        var conversation = try client.createConversation(
+            projectRoot: project.path,
+            title: "Analysis",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
+        )
+        conversation.backendSession = AssistantBackendSessionState(
+            backendId: "codex_app_server",
+            sessionId: "thread-existing"
+        )
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        discussion.models = [AssistantModelState(
+            id: "alternate-model",
+            label: "Alternate model",
+            defaultEffort: "high",
+            supportedEfforts: ["low", "high"],
+            isDefault: false
+        )]
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+        let agent = FixtureAgentSession()
+        store.installAgentSessionForTesting(agent)
+
+        store.selectAssistantModel("alternate-model")
+        store.selectAssistantEffort("low")
+
+        XCTAssertEqual(agent.restartCount, 0)
+        XCTAssertTrue(agent.conversations.isEmpty)
+        XCTAssertEqual(
+            store.state.assistantDiscussion?.activeConversation?.backendSession?.sessionId,
+            "thread-existing"
+        )
+
+        store.setAssistantDraft("Use the selected model")
+        store.sendAssistantPrompt()
+
+        XCTAssertEqual(agent.turns.last?.threadID, "thread-existing")
+        XCTAssertEqual(agent.turns.last?.model, "alternate-model")
+        XCTAssertEqual(agent.turns.last?.effort, "low")
+    }
+
+    func testRuntimeProfileChangeRestartsBeforeStartingReplacementConversation() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        var conversation = try client.createConversation(
+            projectRoot: project.path,
+            title: "Analysis",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
+        )
+        conversation.backendSession = AssistantBackendSessionState(
+            backendId: "codex_app_server",
+            sessionId: "thread-existing"
+        )
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+        let agent = FixtureAgentSession()
+        store.installAgentSessionForTesting(agent)
+
+        store.selectAssistantAuthority(.explore)
+
+        XCTAssertEqual(agent.restartCount, 1)
+        XCTAssertEqual(agent.conversations.count, 1)
+        XCTAssertNil(agent.conversations.last?.resumeThreadID)
+        XCTAssertEqual(agent.conversations.last?.runtimeProfile.authority, .explore)
+
+        store.setAssistantDraft("Wait for the replacement thread")
+        store.sendAssistantPrompt()
+        XCTAssertEqual(agent.conversations.count, 1)
+        XCTAssertTrue(agent.turns.isEmpty)
+
+        agent.emit(["result": ["thread": ["id": "thread-replacement"]]])
+        XCTAssertEqual(agent.turns.last?.threadID, "thread-replacement")
+        XCTAssertEqual(agent.turns.last?.text, "Wait for the replacement thread")
+    }
+
     func testOpeningClosedDiscussionReloadsDurableConversationBeforeResume() throws {
         let project = try temporaryProject()
         defer { try? FileManager.default.removeItem(at: project) }
@@ -726,6 +826,8 @@ final class AssistantDiscussionTests: XCTestCase {
 
 private final class FixtureAgentSession: AgentSession {
     var conversations: [AgentConversationRequest] = []
+    var turns: [AgentTurnRequest] = []
+    var restartCount = 0
     var approvals: [(requestID: String, decision: String)] = []
     private var eventHandler: (([String: Any]) -> Void)?
     private var stateHandler: ((AssistantDiscussionActivity) -> Void)?
@@ -737,14 +839,14 @@ private final class FixtureAgentSession: AgentSession {
         completion(.success(()))
     }
     func startConversation(_ request: AgentConversationRequest) { conversations.append(request) }
-    func sendTurn(_ request: AgentTurnRequest) {}
+    func sendTurn(_ request: AgentTurnRequest) { turns.append(request) }
     func cancel(threadID: String, turnID: String) {}
     func approve(requestID: String, decision: String) {
         approvals.append((requestID, decision))
     }
     func requestAccountLogin() {}
     func refreshAccount() {}
-    func restart() {}
+    func restart() { restartCount += 1 }
     func terminate() {}
     func emit(_ event: [String: Any]) { eventHandler?(event) }
 }

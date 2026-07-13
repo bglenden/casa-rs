@@ -833,6 +833,7 @@ public final class WorkbenchStore: ObservableObject {
     private var agentSession: AgentSession?
     private var activeAgentCommand: String?
     private var assistantProjectNonce = UUID().uuidString + UUID().uuidString
+    private var assistantConversationStartPending = false
     private var assistantPendingCitations: [AssistantCitationState] = []
     private var assistantPendingActivities: [AssistantActivityState] = []
     private var assistantPendingTaskSuggestions: [AssistantTaskSuggestionState] = []
@@ -3764,7 +3765,7 @@ public final class WorkbenchStore: ObservableObject {
         }
         state.assistantDiscussion?.activeConversationID = id
         state.assistantDiscussion?.contexts = assistantOpenTabContexts()
-        startActiveAgentConversation()
+        restartActiveAgentConversation()
     }
 
     package func newAssistantConversation() {
@@ -3786,7 +3787,7 @@ public final class WorkbenchStore: ObservableObject {
             state.assistantDiscussion?.conversations.append(conversation)
             state.assistantDiscussion?.activeConversationID = conversation.id
             state.assistantDiscussion?.contexts = assistantOpenTabContexts()
-            startActiveAgentConversation()
+            restartActiveAgentConversation()
         } catch {
             recordAssistantError("Create discussion: \(error)")
         }
@@ -3798,19 +3799,13 @@ public final class WorkbenchStore: ObservableObject {
             if let model = state.assistantDiscussion?.models.first(where: { $0.id == modelID }) {
                 conversation.profile.effort = model.defaultEffort
             }
-            conversation.backendSession = nil
         }
         persistActiveAssistantConversation()
-        startActiveAgentConversation()
     }
 
     package func selectAssistantEffort(_ effort: String) {
-        updateActiveAssistantConversation {
-            $0.profile.effort = effort
-            $0.backendSession = nil
-        }
+        updateActiveAssistantConversation { $0.profile.effort = effort }
         persistActiveAssistantConversation()
-        startActiveAgentConversation()
     }
 
     package func selectAssistantAuthority(_ authority: AssistantAuthorityState) {
@@ -3819,7 +3814,7 @@ public final class WorkbenchStore: ObservableObject {
             $0.backendSession = nil
         }
         persistActiveAssistantConversation()
-        startActiveAgentConversation()
+        restartActiveAgentConversation()
     }
 
     package func setAssistantAgentCommand(_ command: String) {
@@ -3835,6 +3830,7 @@ public final class WorkbenchStore: ObservableObject {
         agentSession?.terminate()
         agentSession = nil
         activeAgentCommand = nil
+        assistantConversationStartPending = false
         prepareAgentSession()
     }
 
@@ -3850,7 +3846,7 @@ public final class WorkbenchStore: ObservableObject {
         }
         persistActiveAssistantConversation()
         probeAssistantPythonIfNeeded()
-        startActiveAgentConversation()
+        restartActiveAgentConversation()
     }
 
     package func toggleAssistantContext(_ contextID: String) {
@@ -3995,14 +3991,14 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func restartAssistantAgent() {
-        agentSession?.restart()
-        startActiveAgentConversation()
+        restartActiveAgentConversation()
     }
 
     private func prepareAgentSession() {
         let command = state.assistantDiscussion?.activeConversation?.profile.agentCommand ?? "codex"
         if agentSession == nil || activeAgentCommand != command {
             agentSession?.terminate()
+            assistantConversationStartPending = false
             do {
                 let configuration = try AgentSessionConfiguration.discover(
                     preferredAgentCommand: command
@@ -4036,12 +4032,16 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func startActiveAgentConversation() {
-        guard let conversation = state.assistantDiscussion?.activeConversation else { return }
+        guard !assistantConversationStartPending,
+              let conversation = state.assistantDiscussion?.activeConversation,
+              let agentSession
+        else { return }
+        assistantConversationStartPending = true
         probeAssistantPythonIfNeeded()
         assistantProjectNonce = UUID().uuidString + UUID().uuidString
         state.assistantDiscussion?.contexts = assistantOpenTabContexts()
         writeAssistantContextProjection()
-        agentSession?.startConversation(AgentConversationRequest(
+        agentSession.startConversation(AgentConversationRequest(
             projectRoot: state.project.rootPath,
             model: conversation.profile.model,
             effort: conversation.profile.effort,
@@ -4052,6 +4052,15 @@ public final class WorkbenchStore: ObservableObject {
                 pythonCommand: conversation.profile.pythonCommand
             )
         ))
+    }
+
+    /// App Server retains project MCP processes for its live threads. Restart it
+    /// before changing the nonce-bound runtime profile so only one project MCP
+    /// helper is alive for this Workbench session.
+    private func restartActiveAgentConversation() {
+        assistantConversationStartPending = false
+        agentSession?.restart()
+        startActiveAgentConversation()
     }
 
     private func probeAssistantPythonIfNeeded() {
@@ -4128,8 +4137,10 @@ public final class WorkbenchStore: ObservableObject {
             case "account/login/completed":
                 refreshAssistantAccount()
             case "casa/error", "error":
+                assistantConversationStartPending = false
                 recordAssistantError((params["message"] as? String) ?? String(describing: params))
             case "casa/resumeFailed":
+                assistantConversationStartPending = false
                 let detail = (params["message"] as? String) ?? "backend session is incompatible"
                 let message = AssistantMessageState(
                     id: UUID().uuidString.lowercased(),
@@ -4154,7 +4165,7 @@ public final class WorkbenchStore: ObservableObject {
                     $0.backendSession = nil
                 }
                 persistActiveAssistantConversation()
-                startActiveAgentConversation()
+                restartActiveAgentConversation()
             case "item/commandExecution/requestApproval",
                  "item/fileChange/requestApproval",
                  "item/permissions/requestApproval",
@@ -4175,6 +4186,7 @@ public final class WorkbenchStore: ObservableObject {
         if let thread = result["thread"] as? [String: Any],
            let threadID = thread["id"] as? String
         {
+            assistantConversationStartPending = false
             updateActiveAssistantConversation {
                 $0.backendSession = AssistantBackendSessionState(
                     backendId: "codex_app_server",

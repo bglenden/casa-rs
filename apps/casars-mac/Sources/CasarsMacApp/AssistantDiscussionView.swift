@@ -290,12 +290,14 @@ struct AssistantDiscussionView: View {
             Menu {
                 ForEach(discussion.models) { model in
                     Button(model.label) { store.selectAssistantModel(model.id) }
+                        .accessibilityIdentifier("assistant.model.option.\(model.id)")
                 }
             } label: {
                 Text(selectedModelLabel(discussion)).lineLimit(1)
             }
             .menuStyle(.borderlessButton)
             .workbenchFont(.caption)
+            .accessibilityLabel(selectedModelLabel(discussion))
             .accessibilityIdentifier("assistant.model")
 
             Menu {

@@ -801,6 +801,36 @@ final class CasarsMacUITests: XCTestCase {
         let effort = try require("assistant.effort")
         print("CASA_RS_LIVE_GUI_CONTROLS model=\(model.label) effort=\(effort.label) usage=\(usage.label)")
 
+        let beforeModelChange = try waitForLiveAssistantTranscript(in: project, timeout: 30) {
+            $0.backendSession != nil
+        }
+        let initialBackendSessionID = try XCTUnwrap(beforeModelChange.backendSession?.sessionId)
+        let initialModelID = beforeModelChange.profile.model
+        model.click()
+        let optionPrefix = "assistant.model.option."
+        let modelOption = app.menuItems.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", optionPrefix)
+        ).firstMatch
+        XCTAssertTrue(modelOption.waitForExistence(timeout: 5), app.debugDescription)
+        let selectedModelID = String(modelOption.identifier.dropFirst(optionPrefix.count))
+        XCTAssertFalse(selectedModelID.isEmpty)
+        modelOption.click()
+        let afterModelChange = try waitForLiveAssistantTranscript(in: project, timeout: 10) { transcript in
+            transcript.backendSession?.sessionId == initialBackendSessionID
+                && transcript.profile.model == selectedModelID
+        }
+        XCTAssertEqual(afterModelChange.backendSession?.sessionId, initialBackendSessionID)
+        XCTAssertNotEqual(afterModelChange.profile.model, initialModelID)
+        XCTAssertFalse(
+            app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "required MCP servers failed"))
+                .firstMatch.exists,
+            app.debugDescription
+        )
+        print(
+            "CASA_RS_LIVE_GUI_MODEL_CHANGE from=\(initialModelID) to=\(afterModelChange.profile.model) "
+                + "backend_unchanged=true"
+        )
+
         try sendLiveAssistantPrompt(
             "Use the CASA project MCP task.catalog tool. Do not use shell or network. Reply with \(firstMarker) and the number of cataloged tasks."
         )
