@@ -3709,6 +3709,10 @@ public final class WorkbenchStore: ObservableObject {
 
     package func showAIPrototypeNotebookSuggestions() {
         openAIPrototypeDrawer()
+        if var projection = state.prototypeAI {
+            projection.requestNotebookSuggestionFocus()
+            state.prototypeAI = projection
+        }
         state.activeTabID = state.tabs.first { $0.kind == .notebook }?.id
             ?? state.tabs.first?.id
             ?? ""

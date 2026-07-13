@@ -268,6 +268,11 @@ empty-state aids only: selecting one fills editable composer text and never
 sends it or inserts a predetermined user message. Inline AI remains a
 transient, locally scoped invocation for a selected cell or artifact; durable
 conversation stays in the separate project transcript.
+Return sends the current message; Shift-Return inserts a newline. Subscription
+and model selectors sit directly below the composer. The production options
+come from the CASA-RS sidecar's provider-neutral catalog projection; its Pi
+adapter may reuse Pi authentication and model discovery internally, but Pi
+types do not cross into the GUI or durable project formats.
 
 The compact drawer header shows its primary attachment, history, expand, and
 close controls. The assistant automatically knows the semantic state of every
@@ -294,7 +299,9 @@ link into a user-chosen notebook location after preview and confirmation.
 Mutations are destination-first rather than duplicated as proposal cards in
 the conversation. Chat shows only a compact status/link such as **Suggestions
 are in Analysis.md**. Pending notes, Python cells, plots, and parameter blocks
-appear at their intended notebook location and are reviewed there; task
+appear at their intended notebook location and are reviewed there. The link
+retains a stable destination block or proposal identifier and switches to the
+notebook before scrolling and focusing that exact insertion; task
 parameters open directly in the normal task tab with AI-suggested non-defaults
 visibly marked; downloads use the acquisition surface. Detailed diffs, code,
 parameters, commands, and logs stay collapsed until **Review** at that
@@ -503,14 +510,17 @@ The revised `casars-mac --show-prototype ai` Phase A prototype now begins from
 a full-width notebook with no AI pane. **AI open** reveals a conventional
 free-form chat in a resizable contextual drawer; the same fixture conversation
 expands into a central AI tab and docks back without losing its draft or state.
-The compact header identifies the attached notebook, provider/model, and the
-zero-production-call boundary. A bounded in-drawer context panel lists every
-open tab plus the standing radio astronomy corpus, project papers, CASA-RS
+The compact header identifies the attached notebook and the zero-production-
+call boundary. Subscription and model selectors sit below the composer, with
+Return-to-send and Shift-Return-for-newline behavior. A bounded in-drawer
+context panel lists every open tab plus the standing radio astronomy corpus,
+project papers, CASA-RS
 source, and CASA-RS task/parameter/data-type semantics, while separately
 showing the selected provider-egress payload. Suggested prompts only fill the
 composer. Answers use claim-local citations and source previews. Chat links to
-pending suggestions in `Analysis.md`; review and Apply/Discard controls live in
-the notebook, while task suggestions open the normal Imager tab with the
+pending suggestions in `Analysis.md` and focuses their stable notebook
+destination; review and Apply/Discard controls live in the notebook, while task
+suggestions open the normal Imager tab with the
 non-default parameter marked. Pinning previews the notebook representation and
 location before confirmation. The right-anchored drawer uses stable global
 drag coordinates so its divider tracks the pointer in the expected direction.

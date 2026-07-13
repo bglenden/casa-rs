@@ -47,30 +47,38 @@ struct ScientificNotebookView: View {
 
             Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if notebook.hasExternalConflict {
-                        externalConflictBanner
-                            .padding(.bottom, 20)
-                    }
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if notebook.hasExternalConflict {
+                            externalConflictBanner
+                                .padding(.bottom, 20)
+                        }
 
-                    if let ai = store.state.prototypeAI,
-                       ai.messages.contains(where: { $0.role == .assistant })
-                    {
-                        aiSuggestionSection(ai)
-                            .padding(.bottom, 28)
-                    }
+                        if let ai = store.state.prototypeAI,
+                           ai.messages.contains(where: { $0.role == .assistant })
+                        {
+                            aiSuggestionSection(ai)
+                                .id("notebook.aiSuggestions.anchor")
+                                .padding(.bottom, 28)
+                        }
 
-                    notebookDocument(notebook)
-                        .padding(.bottom, 80)
+                        notebookDocument(notebook)
+                            .padding(.bottom, 80)
+                    }
+                    .padding(.horizontal, 44)
+                    .padding(.top, 30)
+                    .frame(maxWidth: 920, alignment: .leading)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.horizontal, 44)
-                .padding(.top, 30)
-                .frame(maxWidth: 920, alignment: .leading)
-                .frame(maxWidth: .infinity)
+                .background(Color(nsColor: .textBackgroundColor))
+                .accessibilityIdentifier("notebook.document.scroll")
+                .onChange(of: store.state.prototypeAI?.notebookSuggestionFocusGeneration) { _ in
+                    withAnimation {
+                        scrollProxy.scrollTo("notebook.aiSuggestions.anchor", anchor: .top)
+                    }
+                }
             }
-            .background(Color(nsColor: .textBackgroundColor))
-            .accessibilityIdentifier("notebook.document.scroll")
         }
         .onAppear {
             loadRichDocument(notebook)

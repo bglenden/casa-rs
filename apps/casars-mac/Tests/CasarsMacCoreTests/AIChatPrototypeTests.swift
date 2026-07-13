@@ -63,9 +63,16 @@ final class AIChatPrototypeTests: XCTestCase {
         let store = WorkbenchStore.aiPrototype()
         store.expandAIPrototypeConversation()
 
+        let focusGeneration = try XCTUnwrap(
+            store.state.prototypeAI?.notebookSuggestionFocusGeneration
+        )
         store.showAIPrototypeNotebookSuggestions()
         XCTAssertEqual(store.state.prototypeAI?.presentation, .drawer)
         XCTAssertEqual(store.state.activeTabID, "tab-scientific-notebook")
+        XCTAssertEqual(
+            store.state.prototypeAI?.notebookSuggestionFocusGeneration,
+            focusGeneration + 1
+        )
 
         store.openAIPrototypeTaskProposal("proposal-task")
         let taskTab = try XCTUnwrap(store.state.tabs.first { $0.id == "tab-ai-context-task" })

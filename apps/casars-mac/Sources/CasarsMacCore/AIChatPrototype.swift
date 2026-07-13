@@ -136,6 +136,7 @@ package struct PrototypeAIChatProjection: Codable, Equatable {
     package var pinnedMessageCount: Int
     package var insertedPlotCount: Int
     package var productionBoundaryCalls: Int
+    package var notebookSuggestionFocusGeneration: Int
 
     package var openTabSources: [PrototypeAIWorkspaceSource] {
         workspaceSources.filter(\.openTab)
@@ -171,6 +172,10 @@ package struct PrototypeAIChatProjection: Codable, Equatable {
 
     package mutating func setDraft(_ draft: String) {
         self.draft = draft
+    }
+
+    package mutating func requestNotebookSuggestionFocus() {
+        notebookSuggestionFocusGeneration += 1
     }
 
     package mutating func beginIndexing() -> Int {
@@ -382,7 +387,8 @@ package enum PrototypeAIChatFixtureAdapter {
             failureConsumed: false,
             pinnedMessageCount: 0,
             insertedPlotCount: 0,
-            productionBoundaryCalls: 0
+            productionBoundaryCalls: 0,
+            notebookSuggestionFocusGeneration: 0
         )
     }
 

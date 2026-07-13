@@ -116,26 +116,6 @@ struct AIChatPrototypeView: View {
             }
 
             HStack(spacing: 6) {
-                Menu {
-                    ForEach(projection.providers) { provider in
-                        Button(provider.label) {
-                            store.selectAIPrototypeProvider(provider.id)
-                        }
-                    }
-                    Divider()
-                    ForEach(projection.selectedProvider?.models ?? [], id: \.self) { model in
-                        Button(model) {
-                            store.selectAIPrototypeModel(model)
-                        }
-                    }
-                } label: {
-                    Text("\(projection.selectedProvider?.label ?? "Provider") · \(projection.selectedModel)")
-                        .lineLimit(1)
-                }
-                .menuStyle(.borderlessButton)
-                .workbenchFont(.caption)
-                .accessibilityIdentifier("aiPrototype.provider")
-
                 Spacer()
 
                 HStack(spacing: 4) {
@@ -371,10 +351,13 @@ struct AIChatPrototypeView: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 8)
                     }
-                    PrototypeAIComposerEditor(text: Binding(
-                        get: { projection.draft },
-                        set: { store.setAIPrototypeDraft($0) }
-                    ))
+                    PrototypeAIComposerEditor(
+                        text: Binding(
+                            get: { projection.draft },
+                            set: { store.setAIPrototypeDraft($0) }
+                        ),
+                        onSubmit: sendDraft
+                    )
                 }
                 .frame(minHeight: 58, maxHeight: layout == .expanded ? 100 : 74)
                 .background(Color(nsColor: .controlBackgroundColor))
@@ -400,6 +383,47 @@ struct AIChatPrototypeView: View {
                     .accessibilityIdentifier("aiPrototype.send")
                 }
             }
+
+            HStack(spacing: 10) {
+                Menu {
+                    ForEach(projection.providers) { provider in
+                        Button(provider.label) {
+                            store.selectAIPrototypeProvider(provider.id)
+                        }
+                    }
+                } label: {
+                    Label(
+                        projection.selectedProvider?.label ?? "Subscription",
+                        systemImage: "person.crop.circle"
+                    )
+                    .lineLimit(1)
+                }
+                .menuStyle(.borderlessButton)
+                .workbenchFont(.caption)
+                .accessibilityLabel("Subscription")
+                .accessibilityIdentifier("aiPrototype.provider")
+
+                Menu {
+                    ForEach(projection.selectedProvider?.models ?? [], id: \.self) { model in
+                        Button(model) {
+                            store.selectAIPrototypeModel(model)
+                        }
+                    }
+                } label: {
+                    Text(projection.selectedModel)
+                        .lineLimit(1)
+                }
+                .menuStyle(.borderlessButton)
+                .workbenchFont(.caption)
+                .accessibilityLabel("Model")
+                .accessibilityIdentifier("aiPrototype.model")
+
+                Spacer(minLength: 0)
+
+                Text("Return to send · Shift-Return for newline")
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(10)
         .background(.bar)
@@ -421,6 +445,15 @@ struct AIChatPrototypeView: View {
         .buttonStyle(.plain)
         .workbenchFont(.caption)
         .accessibilityIdentifier("aiPrototype.egressPreview")
+    }
+
+    private func sendDraft() {
+        guard let projection = store.state.prototypeAI,
+              projection.responseState != .streaming,
+              projection.corpusState == .ready,
+              !projection.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+        store.sendAIPrototypePrompt(projection.draft)
     }
 
     private func contextPanel(_ projection: PrototypeAIChatProjection) -> some View {
@@ -597,6 +630,7 @@ struct AIChatPrototypeView: View {
 
 private struct PrototypeAIComposerEditor: NSViewRepresentable {
     @Binding var text: String
+    let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -622,7 +656,9 @@ private struct PrototypeAIComposerEditor: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.setAccessibilityLabel("Ask anything about this project")
+        textView.setAccessibilityHelp("Return sends. Shift-Return inserts a new line.")
         textView.setAccessibilityIdentifier("aiPrototype.input")
+        textView.onSubmit = onSubmit
 
         let scrollView = NSScrollView()
         scrollView.drawsBackground = false
@@ -634,10 +670,11 @@ private struct PrototypeAIComposerEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? UserActivatedTextView,
-              textView.string != text
-        else { return }
-        textView.string = text
+        guard let textView = scrollView.documentView as? UserActivatedTextView else { return }
+        textView.onSubmit = onSubmit
+        if textView.string != text {
+            textView.string = text
+        }
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -658,6 +695,7 @@ private struct PrototypeAIComposerEditor: NSViewRepresentable {
 /// appeared. A real click enables ordinary keyboard focus and editing.
 private final class UserActivatedTextView: NSTextView {
     private var userRequestedFocus = false
+    var onSubmit: (() -> Void)?
 
     override var acceptsFirstResponder: Bool {
         userRequestedFocus
@@ -665,7 +703,35 @@ private final class UserActivatedTextView: NSTextView {
 
     override func mouseDown(with event: NSEvent) {
         userRequestedFocus = true
+        window?.makeFirstResponder(self)
         super.mouseDown(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let isReturn = event.keyCode == 36 || event.keyCode == 76
+        if isReturn, !event.modifierFlags.contains(.shift) {
+            onSubmit?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func insertNewline(_ sender: Any?) {
+        if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
+            super.insertNewline(sender)
+        } else {
+            onSubmit?()
+        }
+    }
+
+    override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        let string = insertString as? String
+        let isNewline = string == "\n" || string == "\r"
+        if isNewline, NSApp.currentEvent?.modifierFlags.contains(.shift) != true {
+            onSubmit?()
+            return
+        }
+        super.insertText(insertString, replacementRange: replacementRange)
     }
 }
 
