@@ -115,6 +115,7 @@ package final class AssistantSidecar {
     private let commandWriter: CommandWriter
     private let queue = DispatchQueue(label: "casars.mac.assistant-sidecar")
     private let readQueue = DispatchQueue(label: "casars.mac.assistant-sidecar.read")
+    private let stderrQueue = DispatchQueue(label: "casars.mac.assistant-sidecar.stderr")
     private var process: Process?
     private var stdin: FileHandle?
     private var runtimeDirectory: URL?
@@ -192,9 +193,10 @@ package final class AssistantSidecar {
         let node = try canonicalAbsoluteURL(configuration.nodeExecutable)
         let entrypoint = try canonicalAbsoluteURL(configuration.entrypoint)
         let adapterRoot = entrypoint.deletingLastPathComponent().deletingLastPathComponent()
-        let runtime = FileManager.default.temporaryDirectory
+        let runtimeCandidate = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-assistant-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: runtimeCandidate, withIntermediateDirectories: true)
+        let runtime = runtimeCandidate.resolvingSymlinksInPath()
         runtimeDirectory = runtime
         publishState(.starting)
         readySemaphore = DispatchSemaphore(value: 0)
@@ -242,7 +244,7 @@ package final class AssistantSidecar {
         self.process = process
         stdin = input.fileHandleForWriting
         readQueue.async { [weak self] in self?.readProtocol(stdout.fileHandleForReading) }
-        readQueue.async { [weak self] in
+        stderrQueue.async { [weak self] in
             let handle = stderr.fileHandleForReading
             var data = Data()
             var truncated = false
@@ -394,12 +396,14 @@ package final class AssistantSidecar {
     }
 
     private func profile(node: URL, adapterRoot: URL, runtime: URL) -> String {
-        let readableRoots = Self.nodeRuntimeReadRoots(node) + [
+        let nodeRuntimeRoots = Self.nodeRuntimeReadRoots(node)
+        let hostRoots = [
             adapterRoot,
             runtime,
             URL(fileURLWithPath: "/System/Library", isDirectory: true),
             URL(fileURLWithPath: "/usr/lib", isDirectory: true),
         ]
+        let readableRoots = nodeRuntimeRoots + hostRoots
         let readableRules = readableRoots.map { root in
             let path = seatbeltLiteral(root.path)
             return """
@@ -407,7 +411,12 @@ package final class AssistantSidecar {
             (allow file-read-metadata (subpath "\(path)"))
             """
         }.joined(separator: "\n")
-        let traversalRules = readableRoots
+        let runtimeTraversalRules = nodeRuntimeRoots
+            .flatMap(Self.metadataTraversalPaths)
+            .map(seatbeltLiteral)
+            .map { "(allow file-read* (literal \"\($0)\"))" }
+            .joined(separator: "\n")
+        let hostTraversalRules = hostRoots
             .flatMap(Self.metadataTraversalPaths)
             .map(seatbeltLiteral)
             .map { "(allow file-read-metadata (literal \"\($0)\"))" }
@@ -417,7 +426,8 @@ package final class AssistantSidecar {
         (deny default)
         (allow process-exec (literal "\(seatbeltLiteral(node.path))"))
         (allow signal (target self))
-        \(traversalRules)
+        \(runtimeTraversalRules)
+        \(hostTraversalRules)
         (allow file-read-metadata (literal "/dev"))
         (allow file-read-metadata (literal "/dev/null"))
         (allow file-read-metadata (literal "/dev/random"))
@@ -445,11 +455,13 @@ package final class AssistantSidecar {
             let path = binary.standardizedFileURL.resolvingSymlinksInPath().path
             guard inspected.insert(path).inserted else { continue }
             for dependency in linkedLibraries(of: URL(fileURLWithPath: path)) {
-                let canonical = dependency.standardizedFileURL.resolvingSymlinksInPath()
+                let lexical = dependency.standardizedFileURL
+                let canonical = lexical.resolvingSymlinksInPath()
                 let dependencyPath = canonical.path
                 guard !dependencyPath.hasPrefix("/System/") && !dependencyPath.hasPrefix("/usr/lib/") else {
                     continue
                 }
+                roots.append(lexical.deletingLastPathComponent())
                 roots.append(canonical.deletingLastPathComponent())
                 pending.append(canonical)
             }

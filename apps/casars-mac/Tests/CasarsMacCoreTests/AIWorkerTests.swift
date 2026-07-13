@@ -52,6 +52,7 @@ final class AIWorkerTests: XCTestCase {
         attempt("outside_list", lambda: list(pathlib.Path(\(String(reflecting: outside.path))).iterdir()))
         attempt("credential_read", lambda: pathlib.Path(\(String(reflecting: denied.appendingPathComponent("secret.txt").path))).read_text())
         attempt("unapproved_sibling_read", lambda: pathlib.Path(\(String(reflecting: science.appendingPathComponent("sibling.txt").path))).read_text())
+        attempt("unapproved_sibling_list", lambda: list(pathlib.Path(\(String(reflecting: science.path))).iterdir()))
         attempt("symlink_write", lambda: (pathlib.Path(os.environ["CASARS_ARTIFACT_STAGING"]) / "escape" / "denied.txt").write_text("no"))
         attempt("staging_write", lambda: (pathlib.Path(os.environ["CASARS_ARTIFACT_STAGING"]) / "allowed.txt").write_text("yes"))
         attempt("subprocess", lambda: subprocess.run([sys.executable, "-I", "-c", "print('no')"], capture_output=True))
@@ -81,6 +82,7 @@ final class AIWorkerTests: XCTestCase {
         XCTAssertEqual(payload["outside_list"] as? String, "PermissionError")
         XCTAssertEqual(payload["credential_read"] as? String, "PermissionError")
         XCTAssertEqual(payload["unapproved_sibling_read"] as? String, "PermissionError")
+        XCTAssertEqual(payload["unapproved_sibling_list"] as? String, "PermissionError")
         XCTAssertEqual(payload["symlink_write"] as? String, "PermissionError")
         XCTAssertEqual(payload["staging_write"] as? String, "allowed", "\(payload)")
         XCTAssertEqual(payload["subprocess"] as? String, "PermissionError")
@@ -116,16 +118,17 @@ final class AIWorkerTests: XCTestCase {
     }
 
     private func resolvedPython() throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = ["-f", "python3"]
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = Pipe()
-        try process.run()
-        process.waitUntilExit()
-        XCTAssertEqual(process.terminationStatus, 0)
-        return String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidates = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map { URL(fileURLWithPath: String($0)).appendingPathComponent("python3").path }
+            + ["/opt/homebrew/bin/python3", "/usr/local/bin/python3"]
+        if let executable = candidates.first(where: {
+            FileManager.default.isExecutableFile(atPath: $0)
+                && $0 != "/usr/bin/python3"
+                && !$0.contains("/Xcode.app/Contents/Developer/")
+        }) {
+            return executable
+        }
+        throw XCTSkip("a standalone Python runtime is required for Seatbelt worker tests")
     }
 }

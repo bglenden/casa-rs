@@ -79,6 +79,7 @@ package struct SeatbeltAIWorker {
         let staging = try absoluteURL(configuration.stagingRoot)
         let sciencePaths = try configuration.readableScienceRoots.map(absoluteURL)
         let deniedReadRoots = try configuration.deniedReadRoots.map(absoluteURL)
+        let pythonExecutables = try pythonExecutableChain(configuration.pythonExecutable)
         let runtimeRoots = try pythonRuntimeRoots(configuration.pythonExecutable)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         let home = staging.appendingPathComponent("home", isDirectory: true)
@@ -92,7 +93,7 @@ package struct SeatbeltAIWorker {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
         process.arguments = [
             "-p", profile(
-                pythonExecutable: try standardizedAbsoluteURL(configuration.pythonExecutable),
+                pythonExecutables: pythonExecutables,
                 staging: seatbeltCanonicalURL(staging),
                 readableSciencePaths: sciencePaths,
                 runtimeRoots: runtimeRoots,
@@ -146,7 +147,7 @@ package struct SeatbeltAIWorker {
     }
 
     private func profile(
-        pythonExecutable: URL,
+        pythonExecutables: [URL],
         staging: URL,
         readableSciencePaths: [URL],
         runtimeRoots: [URL],
@@ -183,7 +184,12 @@ package struct SeatbeltAIWorker {
                 "(allow file-read-metadata (\(filter) \"\(path)\"))",
             ]
         }.joined(separator: "\n")
-        let metadataTraversalRules = (readableDirectoryURLs + readableSciencePaths)
+        let runtimeTraversalRules = runtimeRoots
+            .flatMap { metadataTraversalPaths(for: seatbeltCanonicalURL($0)) }
+            .map(seatbeltLiteral)
+            .map { "(allow file-read* (literal \"\($0)\"))" }
+            .joined(separator: "\n")
+        let approvedPathTraversalRules = ([staging] + readableSciencePaths)
             .flatMap { metadataTraversalPaths(for: seatbeltCanonicalURL($0)) }
             .map(seatbeltLiteral)
             .map { "(allow file-read-metadata (literal \"\($0)\"))" }
@@ -197,14 +203,20 @@ package struct SeatbeltAIWorker {
                 ]
             }
             .joined(separator: "\n")
+        let executableRules = pythonExecutables
+            .map { seatbeltLiteral($0.path) }
+            .map { "(allow process-exec (literal \"\($0)\"))" }
+            .joined(separator: "\n")
         return """
         (version 1)
         (deny default)
-        (allow process-exec (literal "\(seatbeltLiteral(pythonExecutable.path))"))
+        \(executableRules)
         (allow signal (target self))
-        ; Dyld and realpath need ancestor traversal, but directory enumeration
-        ; and file contents remain deny-by-default outside approved roots.
-        \(metadataTraversalRules)
+        ; Dyld and executable realpath resolution need read access to runtime
+        ; ancestor path objects. Approved project inputs expose metadata-only
+        ; traversal so sibling directory entries and contents stay denied.
+        \(runtimeTraversalRules)
+        \(approvedPathTraversalRules)
         (allow file-read-metadata (literal "/dev"))
         \(readableDirectoryRules)
         \(scienceRules)
@@ -216,6 +228,20 @@ package struct SeatbeltAIWorker {
         (allow file-write* (subpath "\(seatbeltLiteral(staging.path))"))
         (deny network*)
         """
+    }
+
+    private func pythonExecutableChain(_ executable: String) throws -> [URL] {
+        let configured = try standardizedAbsoluteURL(executable)
+        let resolved = configured.resolvingSymlinksInPath()
+        var executables = [configured, resolved]
+        let frameworkLauncher = runtimePrefix(for: resolved)
+            .appendingPathComponent("Resources/Python.app/Contents/MacOS/Python")
+        if FileManager.default.isExecutableFile(atPath: frameworkLauncher.path) {
+            executables.append(frameworkLauncher.resolvingSymlinksInPath())
+        }
+        var seen: Set<String> = []
+        return executables.filter { seen.insert(seatbeltCanonicalURL($0).path).inserted }
+            .map(seatbeltCanonicalURL)
     }
 
     private func pythonRuntimeRoots(_ executable: String) throws -> [URL] {

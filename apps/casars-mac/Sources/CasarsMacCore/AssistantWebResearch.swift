@@ -315,7 +315,7 @@ private final class AssistantWebCollector: NSObject, URLSessionDataDelegate, URL
     ) {
         lock.withLock {
             observedMetrics = true
-            observedProxy = metrics.transactionMetrics.contains(\.isProxyConnection)
+            observedProxy = metrics.transactionMetrics.contains { $0.isProxyConnection }
             observedRemoteAddresses = metrics.transactionMetrics.compactMap(\.remoteAddress)
         }
     }
