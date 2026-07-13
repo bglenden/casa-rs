@@ -155,6 +155,8 @@ remain untrusted hints.
 and local retrieval tools as needed. It does not mean raw visibility arrays or
 entire corpora are copied into every prompt. The UI shows the context sources
 available to the agent and records the CASA resources/tools and citations used.
+The open-tab projection shares one 64 KiB excerpt budget: up to 16 KiB per tab
+for four or fewer tabs, then a deterministic fair share across larger tab sets.
 CASA cannot truthfully promise an exact provider-egress manifest for a coding
 agent that can also read files and run commands, so the UI does not make that
 claim. Codex owns its model traffic under the selected account and authority.
@@ -210,8 +212,8 @@ smoke using a user's existing ChatGPT subscription. Acceptance covers:
 - session resume with authority and MCP registration restored
 - corpus FTS retrieval and exact document/source citations
 - task suggestions opening the canonical task tab with non-defaults highlighted
-- one confirmed notebook append at the chronological tail, with no duplicate
-  proposal copy in chat and notebook
+- one explicit **Add to notebook** click that appends at the chronological tail,
+  with no second confirmation or duplicate proposal copy in chat and notebook
 - fixture-only GUI review state proving zero production boundary calls
 
 `just gui-test` remains the native interaction gate. Live account/model tests

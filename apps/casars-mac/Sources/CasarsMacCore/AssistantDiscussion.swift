@@ -120,6 +120,41 @@ package struct AssistantContextItemState: Codable, Equatable, Identifiable {
     package var selected: Bool = true
 }
 
+/// Deterministically shares one bounded context window across every open tab.
+/// Four or fewer tabs may contribute up to 16 KiB each; larger tab sets divide
+/// the 64 KiB projection budget fairly instead of multiplying a per-tab cap.
+package enum AssistantContextBudgetPolicy {
+    package static let totalProjectionBytes = 64 * 1_024
+    package static let maximumExcerptBytes = 16 * 1_024
+
+    package static func excerptLimits(openTabCount: Int) -> [Int] {
+        guard openTabCount > 0 else { return [] }
+        let fairShare = totalProjectionBytes / openTabCount
+        let remainder = totalProjectionBytes % openTabCount
+        return (0..<openTabCount).map { index in
+            min(maximumExcerptBytes, fairShare + (index < remainder ? 1 : 0))
+        }
+    }
+
+    package static func truncate(_ value: String, byteLimit: Int) -> String {
+        guard byteLimit > 0 else { return "" }
+        guard value.utf8.count > byteLimit else { return value }
+        let marker = "\n[… bounded by CASA-RS host …]"
+        let markerBytes = marker.utf8.count
+        guard byteLimit > markerBytes else { return utf8Prefix(value, byteLimit: byteLimit) }
+        return utf8Prefix(value, byteLimit: byteLimit - markerBytes) + marker
+    }
+
+    private static func utf8Prefix(_ value: String, byteLimit: Int) -> String {
+        var bytes = Array(value.utf8.prefix(byteLimit))
+        while !bytes.isEmpty {
+            if let prefix = String(bytes: bytes, encoding: .utf8) { return prefix }
+            bytes.removeLast()
+        }
+        return ""
+    }
+}
+
 package struct AssistantActivityState: Codable, Equatable, Identifiable {
     package var id: String
     package var label: String

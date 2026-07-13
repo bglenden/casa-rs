@@ -727,7 +727,7 @@ final class CasarsMacUITests: XCTestCase {
             "Assistant sidecar did not become ready to send"
         )
         try clickIdentified("assistant.send")
-        let pinToNotebook = app.buttons["Add to notebook"].firstMatch
+        let pinToNotebook = app.links["Add to notebook"].firstMatch
         XCTAssertTrue(
             pinToNotebook.waitForExistence(timeout: 15),
             app.debugDescription
@@ -737,17 +737,26 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Added to notebook"].firstMatch.waitForExistence(timeout: 5))
 
         let saved = try String(contentsOf: notebooks.appendingPathComponent("Analysis.md"))
-        XCTAssertTrue(saved.contains("casa-rs-ai-pin:v1"))
+        XCTAssertTrue(saved.contains("casa-rs-ai-pin:v1"), saved)
         XCTAssertTrue(saved.contains("Use Briggs weighting with robust -0.5"))
         XCTAssertTrue(saved.contains("CASA-RS Radio Interferometry Primer v1.0"))
         XCTAssertTrue(saved.hasSuffix("\n"), "Notebook append should leave a normal Markdown trailing newline")
         let conversations = project.appendingPathComponent(".casa-rs/conversations", isDirectory: true)
         XCTAssertFalse((try FileManager.default.contentsOfDirectory(atPath: conversations.path)).isEmpty)
 
-        let openTask = app.buttons["Open imager task"].firstMatch
+        let openTask = app.links["Open imager task"].firstMatch
         XCTAssertTrue(openTask.waitForExistence(timeout: 5), app.debugDescription)
         openTask.click()
-        XCTAssertTrue(element("task.parameter.weighting").waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(element("task.parameter.vis").waitForExistence(timeout: 8), app.debugDescription)
+        let taskScroll = try XCTUnwrap(
+            app.scrollViews.allElementsBoundByIndex.max {
+                $0.frame.width < $1.frame.width
+            },
+            app.debugDescription
+        )
+        for _ in 0..<6 {
+            taskScroll.scroll(byDeltaX: 0, deltaY: -420)
+        }
         XCTAssertTrue(waitForValue("task.parameter.weighting", containing: "briggs"))
         XCTAssertTrue(waitForValue("task.parameter.robust", containing: "-0.5"))
         XCTAssertEqual(try accessibilityValue("task.parameterSource.weighting"), "AI-suggested non-default")

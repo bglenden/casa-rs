@@ -257,8 +257,9 @@ For each wave:
   invalidation. Corpus tests cover baseline/project/release/live-source FTS
   retrieval and exact citations. The consolidated `just gui-test` run covers
   drawer/tab preservation, Return/Shift-Return, context-availability and
-  authority disclosure, citations, collapsed activity, one confirmed notebook-
-  tail append, canonical task routing, cancellation/retry, and resume. Live
+  authority disclosure, citations, collapsed activity, one direct notebook-
+  tail append with no second confirmation, canonical task routing,
+  cancellation/retry, and resume. Live
   Codex smoke is explicit, uses the user's existing ChatGPT subscription, and
   never requires or accepts a metered API key. Per the project verification
   policy, one current local or hosted GUI result is sufficient and duplicate

@@ -14,6 +14,9 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub const CORPUS_SCHEMA_VERSION: u32 = 2;
+// Retrieval-unit bound, not a science-data or download limit. Keeping one FTS
+// hit near a page of prose makes citations claim-local and tool results
+// independently reviewable.
 const MAX_CHUNK_BYTES: usize = 2_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

@@ -904,6 +904,8 @@ const fn default_assistant_corpus_search_limit() -> usize {
     8
 }
 
+// Protocol-plane bounds keep one MCP request/result finite. They do not cap
+// indexed documents, source size, scientific data, or downloads.
 const MAX_ASSISTANT_CORPUS_QUERY_BYTES: usize = 4_096;
 const MAX_ASSISTANT_CORPUS_SEARCH_RESULTS: usize = 32;
 

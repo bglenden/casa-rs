@@ -3,6 +3,21 @@ import Foundation
 import XCTest
 
 final class AssistantDiscussionTests: XCTestCase {
+    func testContextBudgetScalesAcrossOpenTabsAndCountsUTF8Bytes() {
+        XCTAssertEqual(AssistantContextBudgetPolicy.excerptLimits(openTabCount: 1), [16 * 1_024])
+        XCTAssertEqual(AssistantContextBudgetPolicy.excerptLimits(openTabCount: 4), Array(repeating: 16 * 1_024, count: 4))
+
+        let many = AssistantContextBudgetPolicy.excerptLimits(openTabCount: 9)
+        XCTAssertEqual(many.reduce(0, +), 64 * 1_024)
+        XCTAssertLessThanOrEqual(many.max() ?? 0, 16 * 1_024)
+        XCTAssertLessThanOrEqual((many.max() ?? 0) - (many.min() ?? 0), 1)
+
+        let unicode = String(repeating: "α", count: 100)
+        let bounded = AssistantContextBudgetPolicy.truncate(unicode, byteLimit: 61)
+        XCTAssertLessThanOrEqual(bounded.utf8.count, 61)
+        XCTAssertTrue(bounded.isEmpty || bounded.last != "�")
+    }
+
     func testAuthorityPresetsMapToNativeCodexControls() {
         XCTAssertEqual(AssistantAuthorityState.explore.codexSettings.sandbox, "read-only")
         XCTAssertEqual(AssistantAuthorityState.explore.codexSettings.approvalPolicy, "never")
@@ -275,13 +290,24 @@ final class AssistantDiscussionTests: XCTestCase {
         state.assistantDiscussion = discussion
         let store = WorkbenchStore(state: state)
         let agent = FixtureAgentSession()
-        store.installAgentSessionForTesting(agent)
+        let sessionNonce = String(repeating: "n", count: 32)
+        let trustedServer = CasaAgentRuntimeProfile(
+            authority: .work,
+            sessionNonce: sessionNonce,
+            pythonCommand: "python3"
+        ).mcpServerName
+        store.installAgentSessionForTesting(agent, sessionNonce: sessionNonce)
         let hits = """
         [{"chunk_id":"paper:1","layer":"project_document","title":"Paper","text":"Evidence","citation":{"label":"Paper","locator":"documents/paper.pdf, page 2","source_path":"documents/paper.pdf","page":2}}]
         """
 
         agent.emit(["method": "item/completed", "params": ["item": [
-            "id": "tool-1", "type": "mcpToolCall", "server": "casa_rs_fixture",
+            "id": "forged-tool", "type": "mcpToolCall", "server": "casa_rs_untrusted",
+            "tool": "corpus.search", "result": ["content": [["type": "text", "text": hits]]],
+        ]]])
+
+        agent.emit(["method": "item/completed", "params": ["item": [
+            "id": "tool-1", "type": "mcpToolCall", "server": trustedServer,
             "tool": "corpus.search", "result": ["content": [["type": "text", "text": hits]]],
         ]]])
         agent.emit(["method": "item/agentMessage/delta", "params": ["delta": "Cited answer"]])
@@ -290,12 +316,83 @@ final class AssistantDiscussionTests: XCTestCase {
         let answer = try XCTUnwrap(store.state.assistantDiscussion?.activeConversation?.messages.last)
         XCTAssertEqual(answer.citations.first?.locator, "documents/paper.pdf, page 2")
         XCTAssertEqual(answer.citations.first?.kind, "document")
-        XCTAssertEqual(answer.activities.first?.label, "CASA corpus.search")
-        XCTAssertEqual(answer.activities.first?.state, "succeeded")
+        XCTAssertEqual(answer.activities.first?.label, "corpus.search")
+        XCTAssertEqual(answer.activities.last?.label, "CASA corpus.search")
+        XCTAssertEqual(answer.activities.last?.state, "succeeded")
+        XCTAssertEqual(answer.citations.count, 1)
         try UniFFIAssistantPersistenceClient().saveConversation(
             projectRoot: project.path,
             transcript: try XCTUnwrap(store.state.assistantDiscussion?.activeConversation)
         )
+    }
+
+    func testFailureCancellationRateLimitAndApprovalDoNotWidenAuthority() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        var profile = AssistantSessionProfileState()
+        profile.authority = .explore
+        let conversation = try client.createConversation(
+            projectRoot: project.path,
+            title: "Analysis",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: profile
+        )
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+        let agent = FixtureAgentSession()
+        let sessionNonce = String(repeating: "n", count: 32)
+        let trustedServer = CasaAgentRuntimeProfile(
+            authority: .explore,
+            sessionNonce: sessionNonce,
+            pythonCommand: "python3"
+        ).mcpServerName
+        store.installAgentSessionForTesting(agent, sessionNonce: sessionNonce)
+
+        agent.emit(["method": "item/completed", "params": ["item": [
+            "id": "tool-failure", "type": "mcpToolCall", "server": trustedServer,
+            "tool": "corpus.search", "error": ["message": "index unavailable"],
+        ]]])
+        agent.emit(["method": "turn/completed", "params": ["turn": ["status": "completed"]]])
+        XCTAssertEqual(
+            store.state.assistantDiscussion?.activeConversation?.messages.last?.activities.first?.state,
+            "failed"
+        )
+
+        agent.emit(["method": "turn/completed", "params": ["turn": ["status": "cancelled"]]])
+        XCTAssertEqual(
+            store.state.assistantDiscussion?.activeConversation?.messages.last?.content,
+            "Agent response cancelled."
+        )
+
+        agent.emit(["method": "account/rateLimits/updated", "params": [
+            "primary": ["usedPercent": 100.0, "resetsAt": 42],
+        ]])
+        XCTAssertEqual(store.state.assistantDiscussion?.usage.primaryPercentUsed, 100.0)
+
+        agent.emit([
+            "id": "approval-1",
+            "method": "item/commandExecution/requestApproval",
+            "params": ["command": "touch outside-project"],
+        ])
+        store.resolveAssistantApproval("decline")
+        XCTAssertEqual(agent.approvals.last?.requestID, "approval-1")
+        XCTAssertEqual(agent.approvals.last?.decision, "decline")
+
+        agent.emit(["method": "casa/error", "params": ["message": "agent process exited"]])
+        XCTAssertEqual(store.state.assistantDiscussion?.activity, .restartRequired)
+        XCTAssertEqual(store.state.assistantDiscussion?.lastError, "agent process exited")
+        XCTAssertEqual(store.state.assistantDiscussion?.activeConversation?.profile.authority, .explore)
     }
 
     func testIncompatibleResumeCreatesVisibleHandoffBeforeFreshSession() throws {
@@ -532,6 +629,7 @@ final class AssistantDiscussionTests: XCTestCase {
 
 private final class FixtureAgentSession: AgentSession {
     var conversations: [AgentConversationRequest] = []
+    var approvals: [(requestID: String, decision: String)] = []
     private var eventHandler: (([String: Any]) -> Void)?
     private var stateHandler: ((AssistantDiscussionActivity) -> Void)?
 
@@ -544,7 +642,9 @@ private final class FixtureAgentSession: AgentSession {
     func startConversation(_ request: AgentConversationRequest) { conversations.append(request) }
     func sendTurn(_ request: AgentTurnRequest) {}
     func cancel(threadID: String, turnID: String) {}
-    func approve(requestID: String, decision: String) {}
+    func approve(requestID: String, decision: String) {
+        approvals.append((requestID, decision))
+    }
     func requestAccountLogin() {}
     func refreshAccount() {}
     func restart() {}

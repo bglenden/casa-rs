@@ -927,9 +927,13 @@ public final class WorkbenchStore: ObservableObject {
         assistantPersistenceClient = client
     }
 
-    package func installAgentSessionForTesting(_ session: AgentSession) {
+    package func installAgentSessionForTesting(
+        _ session: AgentSession,
+        sessionNonce: String? = nil
+    ) {
         agentSession?.terminate()
         agentSession = session
+        if let sessionNonce { assistantProjectNonce = sessionNonce }
         activeAgentCommand = state.assistantDiscussion?.activeConversation?.profile.agentCommand
         configureAgentSession(session)
     }
@@ -3891,7 +3895,10 @@ public final class WorkbenchStore: ObservableObject {
               let notebook = state.scientificNotebooks?.activeNotebook
         else { return }
         do {
-            let markdown = assistantPinMarkdown(message)
+            let markdown = assistantPinMarkdown(
+                message,
+                conversationID: conversation.id
+            )
             let pin = try assistantPersistenceClient.createPin(AssistantCreatePinEnvelope(
                 conversationId: conversation.id,
                 notebookId: notebook.id,
@@ -4215,7 +4222,9 @@ public final class WorkbenchStore: ObservableObject {
               let type = item["type"] as? String
         else { return }
         let tool = item["tool"] as? String
-        let label = tool.map { "CASA \($0)" } ?? type
+        let isTrustedCasaMCP = type == "mcpToolCall"
+            && item["server"] as? String == activeAssistantMCPServerName
+        let label = tool.map { isTrustedCasaMCP ? "CASA \($0)" : $0 } ?? type
         let error = (item["error"] as? [String: Any])?["message"] as? String
         let activity = AssistantActivityState(
             id: itemID,
@@ -4229,8 +4238,7 @@ public final class WorkbenchStore: ObservableObject {
             assistantPendingActivities.append(activity)
         }
         guard completed,
-              type == "mcpToolCall",
-              (item["server"] as? String)?.hasPrefix("casa_rs_") == true,
+              isTrustedCasaMCP,
               let result = item["result"] as? [String: Any],
               let content = result["content"] as? [[String: Any]]
         else { return }
@@ -4245,6 +4253,10 @@ public final class WorkbenchStore: ObservableObject {
                 appendAssistantTaskSuggestion(suggestion, id: itemID)
             }
         }
+    }
+
+    private var activeAssistantMCPServerName: String {
+        "casa_rs_\(assistantProjectNonce.prefix(12))"
     }
 
     private func appendAssistantTaskSuggestion(_ value: [String: Any], id: String) {
@@ -4357,7 +4369,9 @@ public final class WorkbenchStore: ObservableObject {
 
     private func assistantOpenTabContexts() -> [AssistantContextItemState] {
         var items: [AssistantContextItemState] = []
-        for tab in state.tabs {
+        let excerptLimits = AssistantContextBudgetPolicy.excerptLimits(openTabCount: state.tabs.count)
+        for (tabIndex, tab) in state.tabs.enumerated() {
+            let excerptLimit = excerptLimits[tabIndex]
             let item: AssistantContextItemState
             switch tab.kind {
             case .task:
@@ -4367,7 +4381,8 @@ public final class WorkbenchStore: ObservableObject {
                     kind: "task",
                     label: tab.title,
                     summary: "Open task and its current parameters",
-                    excerpt: assistantParameterSummary(surfaceID: taskID, instanceID: tab.id)
+                    excerpt: assistantParameterSummary(surfaceID: taskID, instanceID: tab.id),
+                    excerptLimit: excerptLimit
                 )
             case .notebook, .tutorial:
                 let notebook = state.scientificNotebooks?.activeNotebook
@@ -4376,7 +4391,8 @@ public final class WorkbenchStore: ObservableObject {
                     kind: tab.kind.rawValue,
                     label: notebook?.title ?? tab.title,
                     summary: tab.kind == .tutorial ? "Open tutorial notebook" : "Open scientific notebook",
-                    excerpt: notebook?.draftSource ?? ""
+                    excerpt: notebook?.draftSource ?? "",
+                    excerptLimit: excerptLimit
                 )
             case .datasetExplorer, .tableBrowser:
                 let dataset = tab.datasetID.flatMap { id in state.project.datasets.first { $0.id == id } }
@@ -4386,7 +4402,8 @@ public final class WorkbenchStore: ObservableObject {
                     label: tab.title,
                     summary: dataset.map { "Open \($0.kind.rawValue) dataset at \($0.path)" }
                         ?? "Open dataset explorer",
-                    excerpt: assistantDatasetContext(datasetID: tab.datasetID, tabKind: tab.kind)
+                    excerpt: assistantDatasetContext(datasetID: tab.datasetID, tabKind: tab.kind),
+                    excerptLimit: excerptLimit
                 )
             case .plotSamples:
                 let summaries = state.plotDocuments.map {
@@ -4397,7 +4414,8 @@ public final class WorkbenchStore: ObservableObject {
                     kind: "plot",
                     label: tab.title,
                     summary: "Open scientific plot tab",
-                    excerpt: summaries.joined(separator: "\n")
+                    excerpt: summaries.joined(separator: "\n"),
+                    excerptLimit: excerptLimit
                 )
             case .python:
                 item = assistantContext(
@@ -4405,7 +4423,8 @@ public final class WorkbenchStore: ObservableObject {
                     kind: "python",
                     label: tab.title,
                     summary: "Open user scientific Python tab",
-                    excerpt: state.python.buffer
+                    excerpt: state.python.buffer,
+                    excerptLimit: excerptLimit
                 )
             case .history:
                 item = assistantContext(
@@ -4413,7 +4432,8 @@ public final class WorkbenchStore: ObservableObject {
                     kind: "history",
                     label: tab.title,
                     summary: "Open task and plot execution history",
-                    excerpt: assistantJSON(Array(state.jobs.values))
+                    excerpt: assistantJSON(Array(state.jobs.values)),
+                    excerptLimit: excerptLimit
                 )
             case .aiChat:
                 item = assistantContext(
@@ -4421,7 +4441,8 @@ public final class WorkbenchStore: ObservableObject {
                     kind: "assistant",
                     label: tab.title,
                     summary: "Current AI discussion tab",
-                    excerpt: "The active conversation is already supplied by the agent session."
+                    excerpt: "The active conversation is already supplied by the agent session.",
+                    excerptLimit: excerptLimit
                 )
             }
             items.append(item)
@@ -4480,9 +4501,10 @@ public final class WorkbenchStore: ObservableObject {
         kind: String,
         label: String,
         summary: String,
-        excerpt: String
+        excerpt: String,
+        excerptLimit: Int
     ) -> AssistantContextItemState {
-        let bounded = Self.boundedAssistantExcerpt(excerpt, limit: 16_384)
+        let bounded = AssistantContextBudgetPolicy.truncate(excerpt, byteLimit: excerptLimit)
         return AssistantContextItemState(
             id: id,
             kind: kind,
@@ -4598,8 +4620,19 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
-    private func assistantPinMarkdown(_ message: AssistantMessageState) -> String {
-        var markdown = "\n\n> [!NOTE]\n> AI discussion snapshot\n\n\(message.content)"
+    private func assistantPinMarkdown(
+        _ message: AssistantMessageState,
+        conversationID: String
+    ) -> String {
+        var markdown = """
+
+
+        <!-- casa-rs-ai-pin:v1 conversation=\(conversationID) message=\(message.id) -->
+        > [!NOTE]
+        > AI discussion snapshot
+
+        \(message.content)
+        """
         for (index, citation) in message.citations.enumerated() {
             markdown += "\n\n[\(index + 1)] \(citation.label), \(citation.locator)"
         }
@@ -4652,11 +4685,6 @@ public final class WorkbenchStore: ObservableObject {
 
     private static func assistantTimestamp() -> UInt64 {
         UInt64(max(0, Date().timeIntervalSince1970 * 1_000))
-    }
-
-    private static func boundedAssistantExcerpt(_ value: String, limit: Int) -> String {
-        guard value.utf8.count > limit else { return value }
-        return String(value.prefix(limit)) + "\n[… bounded by CASA-RS host …]"
     }
 
     package func parameterIsAssistantSuggested(

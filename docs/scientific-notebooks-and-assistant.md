@@ -382,7 +382,8 @@ source and selection, task identity/schema/current values/default differences,
 explorer configuration and selected data products, Python cells and retained
 outputs, plots, and processing history. It also includes task and parameter
 documentation plus persistent table, MeasurementSet, image, coordinate, and
-measures semantics. The assistant may retrieve from these sources as needed
+measures semantics. Open-tab excerpts share a deterministic 64 KiB budget,
+with at most 16 KiB from any one tab. The assistant may retrieve from these sources as needed
 without per-read approval. CASA shows what domain context is available and
 which CASA resources and citations were used, not a fictional exact record of
 all bytes sent by the coding agent to its model.
@@ -390,8 +391,9 @@ all bytes sent by the coding agent to its model.
 Task suggestions open the canonical task tab with non-defaults highlighted.
 The ordinary task Run action remains the single approval and launches normal
 validation, safety checks, and notebook recording. Generic command, file,
-Python, and network approvals remain owned by Codex App Server, while notebook
-append and other typed CASA mutations retain their canonical CASA confirmation.
+Python, and network approvals remain owned by Codex App Server. **Add to
+notebook** is itself the explicit CASA action and appends once without another
+confirmation; other typed CASA mutations retain their canonical confirmation.
 
 ## Prototype-first wave gate
 
