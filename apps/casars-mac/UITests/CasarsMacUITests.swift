@@ -1006,6 +1006,7 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertFalse(element("aiPrototype.drawer").exists)
         try clickIdentified("aiPrototype.openDrawer")
         XCTAssertTrue(try require("aiPrototype.drawer").exists)
+        XCTAssertFalse(element("aiPrototype.openDrawer").exists)
 
         let resizeHandle = try require("aiPrototype.resizeHandle")
         let drawerScroll = try require("aiPrototype.conversationScroll")

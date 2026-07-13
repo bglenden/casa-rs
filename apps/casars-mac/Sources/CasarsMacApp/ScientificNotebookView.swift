@@ -244,17 +244,25 @@ struct ScientificNotebookView: View {
 
             Spacer()
 
-            if store.isAIPrototypeRuntime {
+            if store.isAIPrototypeRuntime,
+               store.state.prototypeAI?.presentation == .closed
+            {
                 Button {
                     store.openAIPrototypeDrawer()
                 } label: {
-                    Label(
-                        store.state.prototypeAI?.presentation == .drawer ? "AI open" : "Discuss",
-                        systemImage: "sparkles"
-                    )
+                    Label("Discuss", systemImage: "sparkles")
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("aiPrototype.openDrawer")
+            } else if store.isAIPrototypeRuntime,
+                      store.state.prototypeAI?.presentation == .tab
+            {
+                Button {
+                    store.dockAIPrototypeConversation()
+                } label: {
+                    Label("Dock chat", systemImage: "rectangle.righthalf.inset.filled")
+                }
+                .accessibilityIdentifier("aiPrototype.dockFromNotebook")
             }
 
             Picker("View", selection: Binding(

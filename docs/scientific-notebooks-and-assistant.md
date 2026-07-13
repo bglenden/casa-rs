@@ -274,8 +274,12 @@ come from the CASA-RS sidecar's provider-neutral catalog projection; its Pi
 adapter may reuse Pi authentication and model discovery internally, but Pi
 types do not cross into the GUI or durable project formats.
 
-The compact drawer header shows its primary attachment, history, expand, and
-close controls. The assistant automatically knows the semantic state of every
+The notebook toolbar shows **Discuss** only while the conversation is closed.
+It disappears while the drawer is visible because the drawer owns close and
+expand controls. If the conversation is expanded in a central tab and the user
+returns to the notebook, the toolbar instead offers **Dock chat**. The compact
+drawer header shows its primary attachment, history, expand, and close controls.
+The assistant automatically knows the semantic state of every
 open workbench tab and has standing read-only tools for notebooks, task schemas
 and current parameters, explorers, run history, plots, persistent CASA-RS data
 types, the radio-astronomy and project-document corpus, and release/live-
@@ -509,7 +513,7 @@ accepted. That presentation is superseded interaction evidence and must not
 unlock Phase B.
 
 The revised `casars-mac --show-prototype ai` Phase A prototype now begins from
-a full-width notebook with no AI pane. **AI open** reveals a conventional
+a full-width notebook with no AI pane. **Discuss** reveals a conventional
 free-form chat in a resizable contextual drawer; the same fixture conversation
 expands into a central AI tab and docks back without losing its draft or state.
 The compact header identifies the attached notebook and the zero-production-
