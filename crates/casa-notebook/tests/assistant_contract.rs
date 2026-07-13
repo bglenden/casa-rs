@@ -6,8 +6,8 @@ use casa_notebook::{
     ASSISTANT_PROTOCOL_VERSION, ASSISTANT_TRANSCRIPT_SCHEMA_VERSION, AssistantAttachment,
     AssistantAuthorityPolicy, AssistantContextItem, AssistantContextKind, AssistantEffectivePolicy,
     AssistantEgressManifest, AssistantExecutableIdentity, AssistantExecutionBinding,
-    AssistantInsertionBinding, AssistantMessage, AssistantPinReference, AssistantProposal,
-    AssistantProposalDestination, AssistantProposalKind, AssistantProposalState,
+    AssistantInsertionBinding, AssistantMessage, AssistantMessageRole, AssistantPinReference,
+    AssistantProposal, AssistantProposalDestination, AssistantProposalKind, AssistantProposalState,
     AssistantProtocolEvent, AssistantProtocolRequest, AssistantSidecarPolicy, AssistantStore,
     ConversationId, NotebookId,
 };
@@ -72,6 +72,24 @@ fn transcripts_are_project_owned_provider_neutral_and_atomic() {
     transcript
         .messages
         .push(AssistantMessage::user("Explain this plot"));
+    let tool_context = AssistantContextItem::new(
+        "tool:turn-1:0",
+        AssistantContextKind::ToolResult,
+        "proposal.note",
+        r#"{"title":"Add a note"}"#,
+        r#"{"proposal_id":"proposal-1","status":"pending_user_review"}"#,
+        true,
+        true,
+    );
+    let mut assistant_message = AssistantMessage::user("I prepared a notebook proposal.");
+    assistant_message.role = AssistantMessageRole::Assistant;
+    assistant_message.egress = Some(AssistantEgressManifest::new(
+        "openai-codex",
+        "gpt-5.4",
+        "provider",
+        vec![tool_context],
+    ));
+    transcript.messages.push(assistant_message);
     transcript.draft = "unsent continuation".to_owned();
     transcript.selected_context_ids = vec!["plot-current".to_owned()];
     store
@@ -83,6 +101,10 @@ fn transcripts_are_project_owned_provider_neutral_and_atomic() {
         .expect("reopen conversation");
     assert_eq!(reopened.schema_version, ASSISTANT_TRANSCRIPT_SCHEMA_VERSION);
     assert_eq!(reopened.messages, transcript.messages);
+    assert_eq!(
+        reopened.messages[1].egress.as_ref().unwrap().items[0].kind,
+        AssistantContextKind::ToolResult
+    );
     assert_eq!(reopened.draft, "unsent continuation");
     assert_eq!(
         reopened

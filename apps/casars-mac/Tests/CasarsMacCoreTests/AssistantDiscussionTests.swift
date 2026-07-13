@@ -238,10 +238,38 @@ final class AssistantDiscussionTests: XCTestCase {
             model: "gpt-5.4"
         )
         conversation.draft = "Continue this discussion"
+        let toolResult = AssistantContextItemState(
+            id: "tool:turn-1:0",
+            kind: "tool_result",
+            label: "proposal.note",
+            summary: #"{"title":"Add a note"}"#,
+            excerpt: #"{"proposal_id":"proposal-1","status":"pending_user_review"}"#,
+            providerVisible: true,
+            untrustedEvidence: true
+        )
+        conversation.messages.append(AssistantMessageState(
+            id: UUID().uuidString.lowercased(),
+            role: "assistant",
+            content: "I prepared a notebook proposal.",
+            createdAt: 1,
+            provider: "openai-codex",
+            model: "gpt-5.4",
+            citations: [],
+            egress: AssistantEgressState(
+                provider: "openai-codex",
+                model: "gpt-5.4",
+                destination: "provider",
+                items: [toolResult],
+                estimatedBytes: toolResult.byteCount
+            ),
+            proposals: [],
+            pins: []
+        ))
         try client.saveConversation(projectRoot: project.path, transcript: conversation)
         let reloaded = try client.conversations(projectRoot: project.path)
         XCTAssertEqual(reloaded.first?.draft, "Continue this discussion")
         XCTAssertEqual(reloaded.first?.provider, "openai-codex")
+        XCTAssertEqual(reloaded.first?.messages.first?.egress?.items.first?.kind, "tool_result")
 
         let messageID = UUID().uuidString.lowercased()
         let snapshot = "### AI discussion snapshot\nA cited answer."

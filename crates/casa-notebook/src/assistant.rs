@@ -75,6 +75,7 @@ pub enum AssistantContextKind {
     Corpus,
     Source,
     DataSemantics,
+    ToolResult,
     Web,
 }
 
