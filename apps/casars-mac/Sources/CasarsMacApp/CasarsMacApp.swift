@@ -22,6 +22,7 @@ struct CasarsMacApp: App {
     private let startupNotebookPrototypeScenario: NotebookPrototypeScenario?
     private let startupPythonPrototypeScenario: PythonPrototypeScenario?
     private let startupTutorialPrototypeScenario: TutorialNotebookPrototypeScenario?
+    private let startupAIPrototypeScenario: AIChatPrototypeScenario?
     private let startupShowImagerProgressMockup: Bool
     private let startupOpenImagerTask: Bool
     private let startupRunActiveTask: Bool
@@ -50,10 +51,15 @@ struct CasarsMacApp: App {
                     Self.argumentValue(after: "--prototype-state", in: arguments)
                 )
                 : nil)
+        let initialAIPrototypeScenario = Self.aiPrototypeScenario(arguments: arguments)
+            ?? (Self.argumentValue(after: "--capture-kind", in: arguments) == "ai-prototype"
+                ? Self.aiPrototypeScenarioValue(Self.argumentValue(after: "--prototype-state", in: arguments))
+                : nil)
         let initialStore = initialNotebookPrototypeScenario
             .map { WorkbenchStore.notebookPrototype(scenario: $0) }
             ?? initialPythonPrototypeScenario.map { WorkbenchStore.pythonPrototype(scenario: $0) }
             ?? initialTutorialPrototypeScenario.map { WorkbenchStore.tutorialPrototype(scenario: $0) }
+            ?? initialAIPrototypeScenario.map { WorkbenchStore.aiPrototype(scenario: $0) }
             ?? WorkbenchStore.empty()
         _store = StateObject(
             wrappedValue: initialStore
@@ -80,6 +86,7 @@ struct CasarsMacApp: App {
                 notebookPrototypeScenario: Self.notebookPrototypeScenario(arguments: arguments),
                 pythonPrototypeScenario: Self.pythonPrototypeScenario(arguments: arguments),
                 tutorialPrototypeScenario: Self.tutorialPrototypeScenario(arguments: arguments),
+                aiPrototypeScenario: Self.aiPrototypeScenario(arguments: arguments),
                 showImagerProgressMockup: arguments.contains("--show-imager-progress-mockup"),
                 imagerMeasurementSetPath: Self.argumentValue(after: "--open-imager-ms", in: arguments),
                 projectPath: Self.argumentValue(after: "--probe-project", in: arguments)
@@ -99,6 +106,7 @@ struct CasarsMacApp: App {
         startupNotebookPrototypeScenario = Self.notebookPrototypeScenario(arguments: arguments)
         startupPythonPrototypeScenario = Self.pythonPrototypeScenario(arguments: arguments)
         startupTutorialPrototypeScenario = Self.tutorialPrototypeScenario(arguments: arguments)
+        startupAIPrototypeScenario = Self.aiPrototypeScenario(arguments: arguments)
         startupShowImagerProgressMockup = arguments.contains("--show-imager-progress-mockup")
         startupOpenImagerTask = arguments.contains("--open-imager-task")
         startupRunActiveTask = arguments.contains("--run-active-task")
@@ -484,6 +492,7 @@ struct CasarsMacApp: App {
         notebookPrototypeScenario: NotebookPrototypeScenario?,
         pythonPrototypeScenario: PythonPrototypeScenario?,
         tutorialPrototypeScenario: TutorialNotebookPrototypeScenario?,
+        aiPrototypeScenario: AIChatPrototypeScenario?,
         showImagerProgressMockup: Bool,
         imagerMeasurementSetPath: String?,
         projectPath: String?
@@ -491,10 +500,11 @@ struct CasarsMacApp: App {
         let store = notebookPrototypeScenario.map { WorkbenchStore.notebookPrototype(scenario: $0) }
             ?? pythonPrototypeScenario.map { WorkbenchStore.pythonPrototype(scenario: $0) }
             ?? tutorialPrototypeScenario.map { WorkbenchStore.tutorialPrototype(scenario: $0) }
+            ?? aiPrototypeScenario.map { WorkbenchStore.aiPrototype(scenario: $0) }
             ?? WorkbenchStore.empty()
         store.setInterfaceFontSize(storedInterfaceFontSize())
         if notebookPrototypeScenario == nil, pythonPrototypeScenario == nil,
-           tutorialPrototypeScenario == nil, let tutorialPackPath {
+           tutorialPrototypeScenario == nil, aiPrototypeScenario == nil, let tutorialPackPath {
             if let projectPath { store.openProject(path: projectPath) }
             store.openTutorialTemplate(path: tutorialPackPath)
             if let tutorialSectionID {
@@ -585,8 +595,8 @@ struct CasarsMacApp: App {
     static func prototypeLaunchValidationError(arguments: [String]) -> String? {
         let showKind = argumentValue(after: "--show-prototype", in: arguments)
         if arguments.contains("--show-prototype") {
-            guard let showKind, ["notebook", "python", "tutorial"].contains(showKind) else {
-                return "--show-prototype requires: notebook, python, or tutorial"
+            guard let showKind, ["notebook", "python", "tutorial", "ai"].contains(showKind) else {
+                return "--show-prototype requires: notebook, python, tutorial, or ai"
             }
         }
 
@@ -595,6 +605,7 @@ struct CasarsMacApp: App {
         case "notebook-prototype": "notebook"
         case "python-prototype": "python"
         case "tutorial-prototype": "tutorial"
+        case "ai-prototype": "ai"
         default: nil
         }
         if let showKind, let capturePrototypeKind, showKind != capturePrototypeKind {
@@ -603,7 +614,7 @@ struct CasarsMacApp: App {
 
         let prototypeKind = showKind ?? capturePrototypeKind
         if arguments.contains("--prototype-state"), prototypeKind == nil {
-            return "--prototype-state requires a notebook, python, or tutorial prototype launch"
+            return "--prototype-state requires a notebook, python, tutorial, or ai prototype launch"
         }
         guard let prototypeKind else { return nil }
 
@@ -613,6 +624,7 @@ struct CasarsMacApp: App {
             case "notebook": ["happy-path", "external-conflict"]
             case "python": ["happy-path", "failure", "nonresponsive"]
             case "tutorial": ["happy-path", "checksum-failure", "disk-failure", "offline", "unsafe-archive"]
+            case "ai": ["happy-path", "provider-error", "rate-limited", "offline", "tool-failure", "nonresponsive"]
             default: []
             }
             if !accepted.contains(state ?? "") {
@@ -718,6 +730,23 @@ struct CasarsMacApp: App {
         case "disk-failure": .diskFailure
         case "offline": .offline
         case "unsafe-archive": .unsafeArchive
+        default: nil
+        }
+    }
+
+    fileprivate static func aiPrototypeScenario(arguments: [String]) -> AIChatPrototypeScenario? {
+        guard argumentValue(after: "--show-prototype", in: arguments) == "ai" else { return nil }
+        return aiPrototypeScenarioValue(argumentValue(after: "--prototype-state", in: arguments))
+    }
+
+    fileprivate static func aiPrototypeScenarioValue(_ value: String?) -> AIChatPrototypeScenario? {
+        switch value {
+        case nil, "happy-path": .primary
+        case "provider-error": .providerError
+        case "rate-limited": .rateLimited
+        case "offline": .offline
+        case "tool-failure": .toolFailure
+        case "nonresponsive": .nonresponsive
         default: nil
         }
     }
@@ -925,7 +954,8 @@ struct CasarsMacApp: App {
         didOpenStartupProject = true
         if startupNotebookPrototypeScenario != nil
             || startupPythonPrototypeScenario != nil
-            || startupTutorialPrototypeScenario != nil {
+            || startupTutorialPrototypeScenario != nil
+            || startupAIPrototypeScenario != nil {
             // The dedicated CLI launch already constructed a fresh immutable
             // prototype runtime. Never transition or reset a production store
             // from the normal startup flow.
@@ -1057,13 +1087,15 @@ final class WorkbenchFallbackWindowController {
         let notebookPrototypeScenario = CasarsMacApp.notebookPrototypeScenario(arguments: arguments)
         let pythonPrototypeScenario = CasarsMacApp.pythonPrototypeScenario(arguments: arguments)
         let tutorialPrototypeScenario = CasarsMacApp.tutorialPrototypeScenario(arguments: arguments)
+        let aiPrototypeScenario = CasarsMacApp.aiPrototypeScenario(arguments: arguments)
         let store = notebookPrototypeScenario.map { WorkbenchStore.notebookPrototype(scenario: $0) }
             ?? pythonPrototypeScenario.map { WorkbenchStore.pythonPrototype(scenario: $0) }
             ?? tutorialPrototypeScenario.map { WorkbenchStore.tutorialPrototype(scenario: $0) }
+            ?? aiPrototypeScenario.map { WorkbenchStore.aiPrototype(scenario: $0) }
             ?? WorkbenchStore.empty()
         store.setInterfaceFontSize(Self.storedInterfaceFontSize())
         if notebookPrototypeScenario == nil, pythonPrototypeScenario == nil,
-           tutorialPrototypeScenario == nil,
+           tutorialPrototypeScenario == nil, aiPrototypeScenario == nil,
            let tutorialPackPath = Self.argumentValue(after: "--open-tutorial-pack", in: arguments) {
             if let projectPath = Self.argumentValue(after: "--open-project", in: arguments)
                 ?? Self.argumentValue(after: "--probe-project", in: arguments) {
@@ -1081,7 +1113,7 @@ final class WorkbenchFallbackWindowController {
             store.openProject(path: projectPath)
         }
         if notebookPrototypeScenario == nil, pythonPrototypeScenario == nil,
-           tutorialPrototypeScenario == nil {
+           tutorialPrototypeScenario == nil, aiPrototypeScenario == nil {
             if arguments.contains("--show-imager-progress-mockup") {
                 store.openImagerProgressMockup()
             }

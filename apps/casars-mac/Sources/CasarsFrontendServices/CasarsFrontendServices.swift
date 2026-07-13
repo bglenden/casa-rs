@@ -3000,6 +3000,10 @@ public enum FrontendServiceError: Swift.Error {
     )
     case Tutorial(reason: String
     )
+    case Assistant(reason: String
+    )
+    case Corpus(reason: String
+    )
 }
 
 
@@ -3041,6 +3045,12 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
             reason: try FfiConverterString.read(from: &buf)
             )
         case 9: return .Tutorial(
+            reason: try FfiConverterString.read(from: &buf)
+            )
+        case 10: return .Assistant(
+            reason: try FfiConverterString.read(from: &buf)
+            )
+        case 11: return .Corpus(
             reason: try FfiConverterString.read(from: &buf)
             )
 
@@ -3097,6 +3107,16 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
 
         case let .Tutorial(reason):
             writeInt(&buf, Int32(9))
+            FfiConverterString.write(reason, into: &buf)
+
+
+        case let .Assistant(reason):
+            writeInt(&buf, Int32(10))
+            FfiConverterString.write(reason, into: &buf)
+
+
+        case let .Corpus(reason):
+            writeInt(&buf, Int32(11))
             FfiConverterString.write(reason, into: &buf)
 
         }
@@ -3877,6 +3897,84 @@ fileprivate struct FfiConverterSequenceTypePlotSeriesMetadata: FfiConverterRustB
         return seq
     }
 }
+/**
+ * List the provider-neutral visible conversations persisted for one project.
+ */
+public func assistantConversationsJson(projectRoot: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_assistant_conversations_json(
+        FfiConverterString.lower(projectRoot),$0
+    )
+})
+}
+/**
+ * Incrementally index trusted host-supplied corpus documents.
+ */
+public func assistantCorpusIndexJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_assistant_corpus_index_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * Execute the bounded `corpus.search` operation exposed through project MCP.
+ */
+public func assistantCorpusSearchJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_assistant_corpus_search_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * Create one persistent conversation attached primarily to a task or notebook.
+ */
+public func assistantCreateConversationJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_assistant_create_conversation_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * Construct one immutable notebook pin snapshot with transcript provenance.
+ */
+public func assistantCreatePinJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_assistant_create_pin_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * Load one persistent visible transcript without provider-specific envelopes.
+ */
+public func assistantLoadConversationJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_assistant_load_conversation_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
+ * Describe the versioned agent-neutral persistence and project-MCP boundary.
+ */
+public func assistantProtocolInfoJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_assistant_protocol_info_json($0
+    )
+})
+}
+/**
+ * Atomically save one provider-neutral visible transcript.
+ */
+public func assistantSaveConversationJson(requestJson: String)throws   {try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_assistant_save_conversation_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+}
+}
 public func buildImageExplorerSnapshotFromRequestJson(requestJson: String)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_build_image_explorer_snapshot_from_request_json(
@@ -4363,6 +4461,30 @@ private let initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_casars_frontend_services_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_assistant_conversations_json() != 59160) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_assistant_corpus_index_json() != 30464) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_assistant_corpus_search_json() != 53089) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_assistant_create_conversation_json() != 58016) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_assistant_create_pin_json() != 49145) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_assistant_load_conversation_json() != 65080) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_assistant_protocol_info_json() != 59469) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_assistant_save_conversation_json() != 38934) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_build_image_explorer_snapshot_from_request_json() != 58871) {
         return InitializationResult.apiChecksumMismatch

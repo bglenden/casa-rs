@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-07-12
+Last reality check: 2026-07-13
 Verification: just docs-check
 
 ## System purpose
@@ -127,11 +127,9 @@ may route to an existing named notebook explicitly.
 Wave 2 adds one persistent, visible, interruptible Python subprocess per open
 notebook. Swift supervises its CASA-RS JSONL protocol and owns interrupt,
 terminate/kill, restart, Run All, and explicit project-environment actions;
-`casa-notebook` owns the durable execution evidence. The unrestricted user
-kernel is not reused for AI. The macOS AI worker is a distinct `sandbox-exec`
-Seatbelt process with denied networking and outside writes, a scrubbed
-environment, and one canonical writable staging root. Exact-source approval is
-checked before launch.
+`casa-notebook` owns the durable execution evidence. Wave 4 coding-agent Python
+uses the user-selected or inherited scientific environment under the active
+agent authority preset; it is not forced into a separate fixed worker.
 
 Renderer-neutral MeasurementSet plot data is owned by `casa-ms`; UniFFI and
 PyO3 project that same Rust structure. `casars-python` adds NumPy-native MS
@@ -151,12 +149,59 @@ becomes a persisted or public contract. `tutorial-pack.v0` has no runtime
 reader or GUI state; an explicit Rust one-shot migrator converts its prose,
 native GUI task steps, and regression overlay into v1.
 
-The planned `casars-assistant` TypeScript sidecar is isolated behind a
-CASA-RS-owned JSONL/stdio protocol and may use Pi as a replaceable model/auth
-adapter. Swift remains the native interaction layer, and
-`casars-frontend-services` remains a projection layer rather than a persistence
-implementation. The assistant modules remain accepted architecture but do not
-exist until their implementation wave lands.
+Wave 4 replaces the bespoke model sidecar with a user-installed coding agent.
+A CASA-owned agent-session interface contains the runtime-specific shapes. The
+initial adapter spawns the official Codex App Server directly and speaks its
+JSON-RPC protocol over stdio; a future ACP adapter is the extension point for
+OpenCode and other agents. The metered OpenAI Responses API and Agents SDK are
+not initial backends. The Codex adapter invokes ChatGPT subscription login and
+account state without copying credentials into CASA projects or processes.
+The native interaction keeps model, reasoning effort, and subscription usage
+remaining immediately visible. Agent/account, authority, and Python selection
+are consolidated behind one secondary settings surface; AI invocation and
+AI-suggested state use purple consistently, apart from safety-severity colors.
+
+`casa-rs-agent-profile/v1` defines invariant guidance, a bundled CASA skill,
+the verified project MCP identity, backend resume metadata, an agent-neutral
+authority vector, and per-adapter capability declarations. **Explore**,
+**Work**, and **Full access** are GUI projections of that vector, not Codex or
+ACP modes. Explore launches from a neutral directory with project instructions
+disabled. Work uses the trusted project and the user's normal shell/Python
+environment with native Codex approvals. Full access is an explicit visible
+expert opt-in. Behavioral conformance verifies actual denial/escalation,
+profile/MCP identity, cancellation, and resume rather than merely checking a
+capability list.
+
+The project-scoped CASA MCP server exposes typed open-tab state, task schemas
+and parameters, persistent-data semantics, receipts, typed task suggestions,
+host-action descriptions, and cited corpus/source retrieval. Its unique
+nonce-derived session name, host-owned executable registration, and nonce on
+every tool call prevent a user-configured server from shadowing it. Generic
+command, file, network, and Python approval stays with
+App Server. CASA owns only canonical semantic actions such as notebook append,
+task Run, typed data mutation, and tutorial acquisition, avoiding duplicate
+prompts. An explicit **Add to notebook** click is itself sufficient authority
+for one idempotent append at the chronological tail; it does not trigger a
+second confirmation.
+
+`casa-notebook` continues to own durable agent-neutral visible conversations,
+citations, immutable pins, context-use records, and scientific receipts.
+Hidden reasoning and raw App Server/ACP envelopes are not persisted. A backend
+session is resumed only after the authority vector, profile, capabilities, and
+CASA MCP registration are reverified; otherwise CASA records a visible handoff
+to a new session.
+
+The CASA-RS-owned corpus combines a redistribution-cleared baseline, user
+project documents, release source/docs, and an optional commit-keyed live
+overlay; it never depends on a separate Radio Astronomy Oracle checkout.
+SQLite/FTS5 is the initial replaceable retrieval implementation. The removed
+384-dimensional feature hash is not an embedding; a real local embedding model
+requires retrieval-evaluation evidence. "Full context" means the agent can
+query complete typed semantic projections and retrieval tools as needed, not
+that raw arrays or entire corpora are copied into every prompt. CASA records
+used domain tools/resources and citations but does not claim an exact model-
+egress manifest for a coding agent with shell and filesystem authority. See
+`docs/assistant-security.md` for the executable runtime and authority contract.
 
 Every notebook-program wave starts with a launchable deterministic GUI
 prototype and an explicit approval gate before real adapters are connected.

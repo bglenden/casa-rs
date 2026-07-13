@@ -1,7 +1,7 @@
 # Scientific Notebooks, Tutorials, Python, and AI Assistant
 
 Truth class: accepted design
-Last reality check: 2026-07-12
+Last reality check: 2026-07-13
 Verification: just docs-check
 Architecture decision: [ADR-0007](adr/0007-scientific-notebooks-and-assistant-boundary.md)
 
@@ -10,7 +10,7 @@ Architecture decision: [ADR-0007](adr/0007-scientific-notebooks-and-assistant-bo
 This document defines the accepted product and implementation contract for the
 CASA-RS scientific notebook program. It covers notes, task execution records,
 parameter reuse, Python calculations and plots, tutorial datasets, and
-provider-neutral AI discussions in the native macOS workbench.
+agent-neutral AI discussions in the native macOS workbench.
 
 The primary user is a working scientist. A project still opens on its selected
 dataset or explorer; notebooks are a first-class project surface rather than a
@@ -183,8 +183,8 @@ Matplotlib figures are captured as PNG and SVG under the execution asset
 directory. The code and input references remain in the cell, so **Regenerate**
 creates a new execution and artifact revision without destroying the old one.
 
-Receipt schema v2 stores the exact Python source and SHA-256, `user` or
-`ai_worker` authority, selected input references, interpreter identity, Python
+Receipt schema v2 stores the exact Python source and SHA-256, execution
+authority, selected input references, interpreter identity, Python
 implementation/version, installed CASA-RS and plotting package versions, and a
 validated environment fingerprint. Schema-v1 task receipts remain readable.
 Ordered stream events are retained as an immutable JSON execution artifact in
@@ -205,10 +205,11 @@ Matplotlib/WCSAxes objects. The optional dependencies are installed with
 `casa-rs-python[plot]`; executable-rendered exports remain appropriate for
 GUI/TUI parity and regression images.
 
-AI Python is separate. The exact proposed code and expected artifact paths are
-shown before approval. Approval is bound to a content hash; any code change
-invalidates it. The worker has read-only project science data, a writable
-artifact staging directory, no network, and no inherited secrets.
+The coding agent uses the user-selected scientific Python through the selected
+Explore, Work, or Full-access authority. Explore has no generic execution;
+Work and Full access use Codex's normal visible activity and native approvals.
+Reproducible calculations belong in notebook Python cells, where exact source,
+inputs, interpreter provenance, output, and plot revisions are recorded.
 
 ## Tutorial notebooks and datasets
 
@@ -244,17 +245,112 @@ escaping symlinks, device files, archive bombs, and destination collisions.
 
 ## AI discussions and local corpus
 
-The assistant appears inline in the notebook workspace but conversations are
-stored separately. A transcript contains only visible messages, citations,
-timestamps, provider/model labels, and pin references. It excludes hidden
-reasoning and raw provider envelopes. Provider/model selection may change
-within a thread.
+The normal notebook state is the full-width notes-first document with no AI
+pane. Invoking AI from a notebook, selection, task, output, plot, or source
+opens an on-demand, resizable contextual drawer beside the notebook. The drawer
+can expand into a first-class central AI tab, and the central tab can dock back
+beside the notebook. These are two presentations of the same conversation,
+not copied or synchronized transcripts. Closing either presentation preserves
+the transcript, unsent draft, scroll position, selected context, running agent
+work, and pending approvals.
 
-The `casars-assistant` sidecar speaks a versioned CASA-RS JSONL/stdio protocol
-and uses Pi only as an adapter layer. Initial supported authentication is an
-OpenAI ChatGPT/Codex subscription; OpenCode Zen is the non-OpenAI live-smoke
-provider. Credentials stay outside projects, notebooks, indexes, and Python
-workers.
+Conversations are project-owned and stored separately from Markdown. A
+conversation opened from a notebook receives that notebook as its primary
+attachment and default pin destination, but may explicitly attach other
+notebooks, datasets, task tabs, outputs, history entries, documents, or source
+trees. A transcript contains only visible messages, citations, timestamps,
+agent/model labels, authority preset, used CASA resources, and pin references.
+It excludes hidden reasoning and raw App Server or provider envelopes. Agent or
+model selection creates an explicit backend-session handoff while preserving
+the project-owned visible conversation.
+
+Both drawer and central-tab presentations use a conventional free-form
+multiline composer fixed at the bottom. Optional suggested questions are
+empty-state aids only: selecting one fills editable composer text and never
+sends it or inserts a predetermined user message. Inline AI remains a
+transient, locally scoped invocation for a selected cell or artifact; durable
+conversation stays in the separate project transcript.
+Return sends the current message; Shift-Return inserts a newline. Subscription
+model and reasoning-effort selectors remain directly available below the
+composer, alongside a compact summary of subscription usage remaining. The
+usage summary expands to show the active rate-limit windows and reset times.
+Agent, ChatGPT subscription/account state, trust preset, and scientific Python
+live behind one secondary settings control. The account row is status, not a
+model or billing-action picker: Codex owns sign-in and CASA-RS stores no
+credential. These controls project the CASA-owned agent profile; App Server
+types do not cross into durable project formats.
+
+When the conversation is closed, a single purple sparkle in the lower-right of
+the notebook pane opens it and exposes a descriptive tooltip/accessibility
+label. It disappears while the drawer is visible because the drawer owns close
+and expand controls. Purple consistently denotes AI invocation and AI-suggested
+state; safety warnings such as Full access remain orange. The compact drawer
+header shows its primary attachment, history, expand, and close controls.
+The assistant automatically knows the semantic state of every
+open workbench tab and has standing read-only tools for notebooks, task schemas
+and current parameters, explorers, run history, plots, persistent CASA-RS data
+types, the radio-astronomy and project-document corpus, and release/live-
+checkout source. Users do not manually attach each open tab or corpus before
+ordinary questions.
+
+One compact row above the composer summarizes the typed CASA context and local
+retrieval sources available through the verified project MCP server. Opening
+it shows open-tab resources, corpus layers, source lookup, and the selected
+authority preset. CASA records the domain tools/resources and citations used,
+but does not claim to know the exact hidden model prompt or provider egress of
+a coding agent that may also read files or run commands.
+
+Citations attach to the claims they support. A lightweight preview shows the
+relevant document excerpt, page/section, source path/lines/commit, notebook
+block, or run provenance; opening it uses a normal central preview tab. Pins
+may add a conclusion, code, task intent, plot, citations, or a transcript link
+directly to the chronological end of the notebook from the explicit
+**Add to notebook** action.
+
+Answers and suggested actions remain ordinary chat messages until the user
+chooses a destination action. **Add to notebook** immediately appends once at
+the chronological tail, then the notebook opens and scrolls to the new block;
+there is no redundant destination or preview dialog. Task parameters open
+directly in the normal task tab with suggested
+non-defaults visibly marked; running the task uses its ordinary Run workflow.
+Plots use the notebook's explicit import/update workflow and downloads use the
+acquisition surface. Routine agent steps, commands, and logs stay collapsed by
+default. The same suggestion is never duplicated as proposal cards in both
+chat and Markdown.
+
+### Interaction precedents
+
+The 2026-07-12 interaction review selected this hybrid from established
+notebook and document-chat behavior rather than inventing a CASA-RS-only
+conversation model:
+
+- [Jupyter AI](https://jupyter-ai.readthedocs.io/en/v3/users/) uses a persistent
+  side-panel conversation with notebook/cell context and explicit code
+  insertion into the active notebook rather than a second action workspace in
+  chat.
+- [VS Code Chat](https://code.visualstudio.com/docs/agents/chat-view)
+  permits one chat session to move between the secondary side bar, editor, and
+  window, while [notebook AI](https://code.visualstudio.com/docs/agents/guides/notebooks-with-ai)
+  keeps inline chat scoped to targeted cell work and reviews proposed changes
+  in the notebook/editor with Keep/Undo controls.
+- [Databricks Genie Code](https://docs.databricks.com/aws/en/genie-code/use-genie-code)
+  uses a contextual side pane and can [maximize the same work into a full-page
+  chat](https://docs.databricks.com/aws/en/genie-code/full-page).
+- [Deepnote Agent](https://deepnote.com/docs/deepnote-agent) separates
+  notebook-level side chat from [block-local AI editing](https://deepnote.com/docs/ai-code-editing).
+- [NotebookLM](https://support.google.com/notebooklm/answer/16179559?hl=en)
+  establishes explicit source selection, claim-local citation preview, and
+  promotion of selected chat results into durable notes.
+
+These references are interaction precedent only. CASA-RS retains its own
+project-owned transcripts, typed scientific context, canonical task/notebook
+surfaces, and approval boundaries.
+
+CASA-RS launches the official Codex App Server over stdio behind its own
+agent-session interface. The initial path uses Codex's ChatGPT subscription
+login and account state; CASA-RS neither handles the credential nor requires a
+metered API key. A future ACP adapter may add OpenCode or another agent without
+changing transcripts, CASA MCP tools, notebook pins, or the authority model.
 
 The local corpus has four layers:
 
@@ -263,26 +359,41 @@ The local corpus has four layers:
 3. release-matched CASA-RS documentation and source
 4. an optional live-checkout source overlay keyed to its Git commit
 
-SQLite holds manifests, chunks, metadata, citations, and FTS5 indexes. A
-versioned local embedding model produces a flat float32 matrix searched by exact
-cosine similarity behind a private vector-index interface. Content hashes make
-updates incremental. Extraction and OCR are local by default; cloud OCR is a
-per-document opt-in.
+SQLite holds manifests, chunks, metadata, citations, and FTS5 indexes behind a
+replaceable retrieval interface. Content hashes make updates incremental.
+Extraction and OCR are local by default; cloud OCR is a per-document opt-in. A
+real local embedding model is optional future work only after retrieval
+evaluation shows a material benefit; its dimensions are model metadata rather
+than a fixed architecture constant.
 
 Scientific factual claims cite source pages or sections. Implementation claims
 cite paths, symbols, line ranges, and release/commit identity. Retrieved text
 and web content are evidence, never instructions.
 
-The assistant has standing read-only access to bounded metadata, statistics,
-samples, previews, source lookup, corpus retrieval, and public web research.
-Web queries and citations are visible. Uploads, downloads, logins, writes,
-Python, and tasks cross explicit approval boundaries. Hosted models may receive
-selected excerpts and bounded summaries or plots, but never bulk arrays,
-visibilities, full datasets, secrets, or unrestricted project files by default.
+The trusted CASA MCP server gives the agent typed access to bounded metadata,
+statistics, samples, previews, source lookup, corpus retrieval, and canonical
+CASA actions. **Explore** is read-only and disables project instructions,
+shell, writes, and network. **Work** deliberately enables the trusted project,
+the user's shell and selected scientific Python, with native Codex approvals.
+**Full access** is an explicit expert opt-in with a persistent indicator.
 
-Task proposals show the typed parameter diff, run-safety class, affected paths,
-and expected products. Approval launches the canonical task path so normal
-validation, safety checks, and notebook recording still apply.
+The standing read-only surface includes all open tab projections: notebook
+source and selection, task identity/schema/current values/default differences,
+explorer configuration and selected data products, Python cells and retained
+outputs, plots, and processing history. It also includes task and parameter
+documentation plus persistent table, MeasurementSet, image, coordinate, and
+measures semantics. Open-tab excerpts share a deterministic 64 KiB budget,
+with at most 16 KiB from any one tab. The assistant may retrieve from these sources as needed
+without per-read approval. CASA shows what domain context is available and
+which CASA resources and citations were used, not a fictional exact record of
+all bytes sent by the coding agent to its model.
+
+Task suggestions open the canonical task tab with non-defaults highlighted.
+The ordinary task Run action remains the single approval and launches normal
+validation, safety checks, and notebook recording. Generic command, file,
+Python, and network approvals remain owned by Codex App Server. **Add to
+notebook** is itself the explicit CASA action and appends once without another
+confirmation; other typed CASA mutations retain their canonical confirmation.
 
 ## Prototype-first wave gate
 
@@ -362,10 +473,9 @@ output; captures immutable PNG/SVG execution assets; and presents environment
 creation and plotting-package installation only as explicit user actions.
 `casa-ms` owns the shared numeric MS plot-data contract consumed by both the
 UniFFI GUI projection and PyO3. Python-native image planes include WCS, masks,
-beam metadata, and overlays. The separate macOS AI worker uses Seatbelt with
-network denial, scrubbed credentials, read-only science inputs, one writable
-staging root, exact-source approval, symlink-escape coverage, and inherited
-subprocess restrictions.
+beam metadata, and overlays. Wave 4 agent Python is a separate concern and uses
+the user-selected or inherited scientific environment under the active agent
+authority preset.
 
 Production explorer snapshots are Rust-owned `casa-notebook` records. MS and
 image explorers expose **Save to Notebook**; **New** creates a new identity and
@@ -399,13 +509,48 @@ end-to-end walkthrough.
 
 ### Wave 4: assistant and corpus
 
-Prototype: provider/model selector, context chips, streaming cited answers,
-corpus/indexing states, source links, approval cards, plot insertion,
-pin-to-notebook, redaction preview, rate limits, and offline/error states.
+Prototype: purple sparkle activation, persistent model/reasoning-effort and
+usage-remaining controls, consolidated agent/account/access/Python settings,
+Explore/Work/Full-access controls, context-availability disclosure, streaming cited
+answers, collapsed agent activity, direct task opening, one notebook-tail
+append, corpus/indexing states, rate limits, and cancellation/restart states.
 
-Production: Pi sidecar, secure authentication, local corpus, source overlays,
-web/retrieval/data tools, restricted AI Python, canonical task proposals,
-provider-neutral transcripts, and fake-provider plus live-provider smoke tests.
+Approved Phase A reality: the user approved the replacement prototype and its
+runtime/authority interaction on 2026-07-13. It begins from a full-width
+notebook with no AI pane. A purple lower-right sparkle reveals a conventional
+free-form chat in a resizable contextual drawer; the same fixture conversation
+expands into a central AI tab and docks back without losing its draft or state.
+The footer keeps model, reasoning effort, and subscription usage remaining in
+view; a single settings popover contains Codex agent, ChatGPT subscription
+status, trust preset, and scientific-Python fixtures. A compact context panel lists open tabs and
+the standing CASA MCP/corpus/source capabilities without claiming an exact
+provider-egress manifest. Routine agent activity is collapsed. **Add to
+notebook** immediately appends once at the chronological tail, then opens and
+focuses the new notebook block; there is no intermediate popup or duplicate
+proposal card. Task suggestions open
+the normal task tab with non-defaults marked. Full access requires explicit
+confirmation and remains visibly indicated. Deterministic rate-limit,
+cancellation, restart, accessibility, debug-state, and zero-production-call
+fixtures remain retained for deterministic CI.
+
+Phase B implementation: `casa-notebook` retains agent-neutral transcript, citation,
+immutable pin, context-use, and scientific-receipt contracts. A CASA-owned
+agent-session interface initially launches the official Codex App Server and
+uses ChatGPT subscription authentication; raw metered OpenAI APIs are excluded.
+`casa-rs-agent-profile/v1` carries invariant guidance, bundled CASA skill
+identity, the nonce-bearing project MCP identity, authority vector, adapter
+capabilities, and resume metadata. Explore starts from a neutral directory and
+behaviorally denies project instructions, writes, execution, and network. Work
+uses the trusted project plus the user's shell and selected scientific Python
+with native Codex approval events. Full access is an explicit expert opt-in.
+The project MCP supplies typed open-tab/task/data/notebook/tutorial and cited
+corpus/source operations. SQLite/FTS5 indexes the cleared baseline, project
+documents, release source/docs, and commit-keyed live overlay; the removed
+fixed feature hash is not an embedding. A future ACP adapter may add OpenCode
+without changing these CASA-owned contracts. The Xcode app stages a compact
+release/commit-labelled source snapshot, while local checkout runs add a live
+commit overlay. See
+[`assistant-security.md`](assistant-security.md) for the executable boundary.
 
 ## Program acceptance
 
@@ -414,10 +559,12 @@ notes; run and record a task; reload parameters; execute Python; regenerate a
 plot; ask a scientific question with document citations; ask an implementation
 question with source citations; approve an AI calculation; and pin its result.
 
-CI uses deterministic fixture providers. Opt-in live smoke covers OpenAI
-ChatGPT/Codex subscription authentication and OpenCode Zen. Timings for startup,
-indexing, retrieval, recording, and execution are recorded without imposing a
-hard performance budget in these waves.
+CI uses deterministic fixture agents. Opt-in live smoke covers Codex App Server
+with ChatGPT subscription authentication and never requires a metered API key.
+OpenCode over a future ACP adapter is the planned second agent, not a Wave 4
+implementation target. Timings for startup, indexing, retrieval, recording, and
+execution are recorded without imposing a hard performance budget in these
+waves.
 
 Each code wave runs `just quick`, `just verify`, the bounded `refactor` pass,
 and risk-appropriate architecture, test-adversary, and reality-sync reviews.

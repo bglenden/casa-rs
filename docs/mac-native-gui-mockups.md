@@ -1,8 +1,8 @@
 # Mac-Native GUI Mockups
 
 Truth class: proposed visual agreement
-Last reality check: 2026-05-03
-Verification: image-generation draft
+Last reality check: 2026-07-12
+Verification: just docs-check
 
 This document captures visual mockups for the mac-native `casa-rs` workbench.
 It is a companion to [`mac-native-gui-spec.md`](mac-native-gui-spec.md), not a
@@ -26,8 +26,10 @@ provider protocols exist.
 - The tab `+` belongs to the central workspace tab strip. It opens a new central
   work tab; it does not switch left-dock modes.
 - Full explorers and task panels live in central tabs.
-- AI chat is a first-class central tab. Inline AI suggestions and task diffs
-  are supporting surfaces, not a replacement for chat.
+- AI chat is an on-demand contextual drawer that can expand the same
+  conversation into a first-class central tab. The normal notebook has no AI
+  pane. Inline suggestions and task diffs are supporting surfaces, not a
+  replacement for chat.
 - Lightweight inspector sits immediately to the right of the active left-dock
   navigation panel and is completely collapsible.
 - Bottom panels such as logs or Python should be collapsed or short by default.
@@ -87,9 +89,36 @@ Rationale:
 - Users need a conversational workspace for exploration, planning, and
   follow-up questions, not only point actions.
 
+### 2026-07-12: One Conversation, Contextual Drawer And Central Tab
+
+Decision:
+
+- The normal notebook is full width with no AI pane.
+- AI opens as a conventional free-form chat drawer attached to the active
+  notebook or document.
+- Expanding opens the same conversation in a central AI tab; docking returns
+  it to the drawer without copying or synchronizing messages.
+- Suggested prompts may fill the composer but never create or submit
+  predetermined messages.
+- Inline AI is transient and locally scoped. Persistent conversations remain
+  project-owned, separately stored transcripts with explicit attachments.
+- The assistant automatically understands every open tab and may use standing
+  read-only corpus/source/task/data-type tools; only the bounded per-turn
+  provider payload requires explicit egress disclosure.
+
+Rationale:
+
+- This reconciles contextual document chat with the first-class work-tab
+  requirement while preserving scarce notebook width in the normal state.
+- Jupyter AI, VS Code notebooks, Databricks Genie Code, Deepnote, and
+  NotebookLM establish the side-chat, expandable-chat, explicit-context,
+  citation-preview, and save-to-note precedents.
+
 Status: accepted for mockups
 
 Supersedes: inline-suggestions-only interpretation
+
+Clarifies: 2026-05-04 first-class-work-tab decision
 
 ### 2026-05-04: GUI Work Uses GUI-Wave Names
 

@@ -35,34 +35,69 @@ struct ScientificNotebookView: View {
     }
 
     private func notebookWorkspace(_ notebook: PrototypeScientificNotebookProjection) -> some View {
-        VStack(spacing: 0) {
-            notebookToolbar(notebook)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 11)
+        ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 0) {
+                notebookToolbar(notebook)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
 
-            Divider()
+                Divider()
 
-            prototypeDisclosure
+                prototypeDisclosure
 
-            Divider()
+                Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if notebook.hasExternalConflict {
-                        externalConflictBanner
-                            .padding(.bottom, 20)
+                ScrollViewReader { scrollProxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            if notebook.hasExternalConflict {
+                                externalConflictBanner
+                                    .padding(.bottom, 20)
+                            }
+
+                            notebookDocument(notebook)
+
+                            Color.clear
+                                .id("notebook.aiPin.anchor")
+                                .frame(height: 80)
+                        }
+                        .padding(.horizontal, 44)
+                        .padding(.top, 30)
+                        .frame(maxWidth: 920, alignment: .leading)
+                        .frame(maxWidth: .infinity)
                     }
-
-                    notebookDocument(notebook)
-                        .padding(.bottom, 80)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .accessibilityIdentifier("notebook.document.scroll")
+                    .onChange(of: store.state.prototypeAI?.notebookPinFocusGeneration) { _ in
+                        if let projection = store.state.prototypeNotebook {
+                            loadRichDocument(projection)
+                        }
+                        withAnimation {
+                            scrollProxy.scrollTo("notebook.aiPin.anchor", anchor: .bottom)
+                        }
+                    }
                 }
-                .padding(.horizontal, 44)
-                .padding(.top, 30)
-                .frame(maxWidth: 920, alignment: .leading)
-                .frame(maxWidth: .infinity)
             }
-            .background(Color(nsColor: .textBackgroundColor))
-            .accessibilityIdentifier("notebook.document.scroll")
+
+            if store.isAIPrototypeRuntime,
+               store.state.prototypeAI?.presentation == .closed
+            {
+                Button {
+                    store.openAIPrototypeDrawer()
+                } label: {
+                    Image(systemName: "sparkles")
+                        .workbenchFont(.title3, weight: .semibold)
+                        .foregroundStyle(Color.purple)
+                        .padding(9)
+                        .background(Color.purple.opacity(0.12), in: Circle())
+                        .overlay(Circle().stroke(Color.purple.opacity(0.35)))
+                }
+                .buttonStyle(.plain)
+                .help("Discuss this notebook with AI")
+                .accessibilityLabel("Discuss this notebook with AI")
+                .accessibilityIdentifier("aiPrototype.openDrawer")
+                .padding(18)
+            }
         }
         .onAppear {
             loadRichDocument(notebook)
@@ -445,7 +480,9 @@ struct PrototypeNotebookTaskView: View {
                         title: task.title,
                         subtitle: store.state.isTutorialPrototype
                             ? "\(task.taskID) · parameters loaded from the tutorial notebook"
-                            : "\(task.taskID) · parameters loaded from the notebook block"
+                            : store.isAIPrototypeRuntime && task.id == "receipt-imager-cancelled"
+                                ? "\(task.taskID) · suggested by Codex from the active discussion"
+                                : "\(task.taskID) · parameters loaded from the notebook block"
                     )
                     .accessibilityIdentifier("prototypeTask.identity.\(task.id)")
                     Spacer()
@@ -491,6 +528,17 @@ struct PrototypeNotebookTaskView: View {
                                             "prototypeTask.parameterSource.\(parameter.parameterID)"
                                         )
                                         .accessibilityValue("tutorial override")
+                                } else if store.isAIPrototypeRuntime,
+                                          task.id == "receipt-imager-cancelled",
+                                          parameter.parameterID == "robust"
+                                {
+                                    Label("AI-suggested non-default", systemImage: "sparkles")
+                                        .workbenchFont(.caption2, weight: .semibold)
+                                        .foregroundStyle(Color.purple)
+                                        .accessibilityIdentifier(
+                                            "prototypeTask.parameterSource.\(parameter.parameterID)"
+                                        )
+                                        .accessibilityValue("AI-suggested non-default")
                                 }
                             }
                             .frame(width: 180, alignment: .leading)
@@ -503,18 +551,40 @@ struct PrototypeNotebookTaskView: View {
                             .font(.system(size: 13, design: .monospaced))
                             .accessibilityIdentifier("prototypeTask.parameter.\(parameter.parameterID)")
                         }
-                        .padding(.horizontal, store.state.isTutorialPrototype ? 10 : 0)
-                        .padding(.vertical, store.state.isTutorialPrototype ? 8 : 0)
+                        .padding(
+                            .horizontal,
+                            store.state.isTutorialPrototype
+                                || (store.isAIPrototypeRuntime
+                                    && task.id == "receipt-imager-cancelled"
+                                    && parameter.parameterID == "robust") ? 10 : 0
+                        )
+                        .padding(
+                            .vertical,
+                            store.state.isTutorialPrototype
+                                || (store.isAIPrototypeRuntime
+                                    && task.id == "receipt-imager-cancelled"
+                                    && parameter.parameterID == "robust") ? 8 : 0
+                        )
                         .background(
                             store.state.isTutorialPrototype
                                 ? Color.accentColor.opacity(0.07)
-                                : Color.clear
+                                : (store.isAIPrototypeRuntime
+                                    && task.id == "receipt-imager-cancelled"
+                                    && parameter.parameterID == "robust")
+                                    ? Color.purple.opacity(0.08)
+                                    : Color.clear
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                         .overlay {
                             if store.state.isTutorialPrototype {
                                 RoundedRectangle(cornerRadius: 7)
                                     .stroke(Color.accentColor.opacity(0.22), lineWidth: 1)
+                            } else if store.isAIPrototypeRuntime,
+                                      task.id == "receipt-imager-cancelled",
+                                      parameter.parameterID == "robust"
+                            {
+                                RoundedRectangle(cornerRadius: 7)
+                                    .stroke(Color.purple.opacity(0.28), lineWidth: 1)
                             }
                         }
                     }

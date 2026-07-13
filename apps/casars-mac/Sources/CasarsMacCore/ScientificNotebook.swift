@@ -9,6 +9,7 @@ package enum WorkbenchPrototypeKind: String, Codable, Equatable {
     case notebook
     case python
     case tutorial
+    case ai
 }
 
 package enum NotebookPrototypeScenario: String, Codable, Equatable {

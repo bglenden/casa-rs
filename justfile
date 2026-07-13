@@ -51,6 +51,15 @@ docs-check:
 gui-test:
     bash apps/casars-mac/script/test_gui.sh
 
+assistant-test:
+    CARGO_INCREMENTAL=0 cargo test -p casa-notebook --test assistant_contract --test corpus_contract
+    CARGO_INCREMENTAL=0 cargo test -p casars-frontend-services --bin casars-project-mcp
+    swift test --package-path apps/casars-mac --filter AssistantDiscussionTests
+
+# Opt-in smoke using the installed Codex CLI's existing ChatGPT subscription login.
+assistant-live-smoke:
+    CASA_RS_CODEX_LIVE_SMOKE=1 swift test --package-path apps/casars-mac --filter AssistantDiscussionTests/testOptInCodexSubscriptionSmoke
+
 graph:
     bash scripts/generate-graphs.sh
 

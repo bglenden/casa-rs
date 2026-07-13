@@ -1,8 +1,8 @@
 # Mac-Native GUI Product Spec
 
 Truth class: proposed product spec
-Last reality check: 2026-05-03
-Verification: not implemented
+Last reality check: 2026-07-12
+Verification: just docs-check
 
 > **Accepted follow-on design:** The notebook, tutorial, Python, corpus, and AI
 > architecture is now governed by
@@ -391,10 +391,30 @@ AI should be integrated across panels, but the workbench also needs a
 first-class AI chat terminal/tab. Inline suggestions are one AI output mode,
 not the whole AI surface.
 
-The AI chat tab is a central workspace tab. It can reference selected datasets,
-open task tabs, Python output, processing history, and active explorer state.
-It should support ordinary conversation, planning, command preparation, and
-follow-up questions without requiring the user to leave the workbench.
+The normal notebook state has no AI pane. Invoking AI opens a collapsible,
+resizable contextual drawer beside the active notebook or document. A standard
+expand action moves that same conversation into a central AI workspace tab for
+longer plans, source review, and complex proposals; **Dock beside notebook**
+returns it to the drawer. Only one presentation is shown at a time, and both
+share conversation identity, transcript, draft, scroll, selected context,
+running state, and pending proposals.
+
+Both presentations provide an ordinary free-form multiline composer fixed at
+the bottom. Suggested prompts are optional empty-state aids that only populate
+editable composer text; they never become predetermined transcript messages or
+submit automatically. Inline chat remains transient and locally scoped to a
+selected cell or artifact rather than becoming the persistent conversation.
+
+The drawer header shows the primary notebook/document attachment plus history,
+expand, and close controls. The assistant automatically understands all open
+tab projections and may inspect their typed semantic state through standing
+read-only tools; users do not attach each notebook, task, explorer, plot, or
+run manually. It likewise has retrieval access to the project/radio-astronomy
+corpus and version-matched or live-checkout CASA-RS documentation and source.
+One compact row above the composer summarizes the exact retrieved context and
+provider/egress destination for the next turn. Local awareness and tool access
+are not bulk hosted-model disclosure. Each sent turn retains an inspectable
+provider-payload manifest.
 
 Useful first capabilities:
 
@@ -423,7 +443,9 @@ The AI should report what context it used. When context is missing, it should
 ask for the missing dataset or panel selection instead of hallucinating a
 reduction workflow.
 
-AI chat output that changes workbench state should become explicit proposals:
+AI chat output that changes workbench state should become compact typed
+proposals with detail collapsed until **Review** opens the existing task,
+notebook-diff, run-review, or file/network approval surface:
 
 - task parameter diffs
 - Python snippets
@@ -432,7 +454,11 @@ AI chat output that changes workbench state should become explicit proposals:
 - processing-history annotations
 
 Those proposals must still go through the approval and audit model before they
-execute or mutate state.
+execute or mutate state. Insertion, execution, download, and file-write
+authority are separate approvals. Claim-local citations preview their exact
+evidence and open in normal central source tabs. Pinning creates a
+user-confirmed notebook snapshot with transcript provenance, never a live
+synchronized message.
 
 ## Safety And Trust Model
 
@@ -792,8 +818,9 @@ Suggested v0 demo spine:
    MeasurementSet discovery.
 2. Open one MeasurementSet explorer with summary, field/spw/scan views, and a
    small set of visibility plots.
-3. Open an AI chat tab that can discuss the selected dataset and prepare a
-   proposed task change.
+3. Open a contextual AI drawer that can discuss the selected dataset, then
+   expand the same thread into a central AI tab and prepare a proposed task
+   change.
 4. Open one task panel backed by either the selected first real task contract or
    a clearly marked fixture task contract.
 5. Show one AI parameter suggestion as a visible proposed diff against the task

@@ -23,8 +23,8 @@ let package = Package(
             dependencies: ["CasarsFrontendServicesFFI"],
             linkerSettings: [
                 .unsafeFlags([
-                    "-L", "../../target/release",
                     "-L", "../../target/debug",
+                    "-L", "../../target/release",
                     "-lcasars_frontend_services",
                     "-Xlinker", "-rpath",
                     "-Xlinker", "../../target/release",
@@ -38,7 +38,14 @@ let package = Package(
         ),
         .target(
             name: "CasarsMacCore",
-            dependencies: ["CasarsFrontendServices"]
+            dependencies: ["CasarsFrontendServices"],
+            resources: [
+                .copy("Resources/assistant-corpus")
+            ],
+            linkerSettings: [
+                .linkedFramework("PDFKit"),
+                .linkedFramework("Vision")
+            ]
         ),
         .executableTarget(
             name: "CasarsMacApp",

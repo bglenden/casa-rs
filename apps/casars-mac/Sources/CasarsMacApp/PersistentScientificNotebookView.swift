@@ -21,22 +21,24 @@ struct PersistentScientificNotebookView: View {
                 VStack(spacing: 0) {
                     toolbar(document)
                     Divider()
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
-                            if document.conflict != nil {
-                                conflictBanner
-                                    .padding(.bottom, 20)
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 0) {
+                                if document.conflict != nil {
+                                    conflictBanner
+                                        .padding(.bottom, 20)
+                                }
+                                notebookBody(document)
+                                Color.clear.frame(height: 80)
                             }
-                            notebookBody(document)
-                                .padding(.bottom, 80)
+                            .padding(.horizontal, 44)
+                            .padding(.top, 30)
+                            .frame(maxWidth: 920, alignment: .leading)
+                            .frame(maxWidth: .infinity)
                         }
-                        .padding(.horizontal, 44)
-                        .padding(.top, 30)
-                        .frame(maxWidth: 920, alignment: .leading)
-                        .frame(maxWidth: .infinity)
+                        .background(Color(nsColor: .textBackgroundColor))
+                        .accessibilityIdentifier("notebook.document.scroll")
                     }
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .accessibilityIdentifier("notebook.document.scroll")
                 }
                 .onAppear { loadRichDocument(document) }
                 .onChange(of: document.id) { _ in
@@ -93,6 +95,27 @@ struct PersistentScientificNotebookView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if store.state.assistantDiscussion?.presentation == .closed
+                || store.state.assistantDiscussion == nil
+            {
+                Button {
+                    store.openAssistantDiscussion(presentation: .drawer)
+                } label: {
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(.purple)
+                }
+                .buttonStyle(.borderless)
+                .help("Discuss this notebook with AI")
+                .accessibilityLabel("Discuss this notebook with AI")
+                .accessibilityIdentifier("assistant.openDrawer")
+            } else if store.state.assistantDiscussion?.presentation == .tab {
+                Button {
+                    store.dockAssistantDiscussion()
+                } label: {
+                    Label("Dock chat", systemImage: "rectangle.righthalf.inset.filled")
+                }
+                .accessibilityIdentifier("assistant.dockFromNotebook")
+            }
             if document.cells.contains(where: { $0.kind == "python" }) {
                 Text("User Python · normal user authority")
                     .workbenchFont(.caption, weight: .semibold)

@@ -16,6 +16,14 @@ private let measurementSetPlotLogger = Logger(
 
 private let denseScatterPointThreshold = 8_000
 
+private final class AssistantActionCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    func cancel() { lock.withLock { cancelled = true } }
+    var isCancelled: Bool { lock.withLock { cancelled } }
+}
+
 public protocol ProjectProbeClient {
     func probeProject(path: String) throws -> ProjectFixtureProbe
     func probePath(path: String) throws -> DatasetSummary?
@@ -803,6 +811,7 @@ private enum WorkbenchRuntimeKind {
     case notebookPrototype
     case pythonPrototype
     case tutorialPrototype
+    case aiPrototype
 }
 
 public final class WorkbenchStore: ObservableObject {
@@ -820,9 +829,19 @@ public final class WorkbenchStore: ObservableObject {
     private let taskExecutionMatrixClient: TaskExecutionMatrixClient
     private var notebookPersistenceClient: NotebookPersistenceClient
     private var tutorialPersistenceClient: TutorialPersistenceClient
+    private var assistantPersistenceClient: AssistantPersistenceClient
+    private var agentSession: AgentSession?
+    private var activeAgentCommand: String?
+    private var assistantProjectNonce = UUID().uuidString + UUID().uuidString
+    private var assistantPendingCitations: [AssistantCitationState] = []
+    private var assistantPendingActivities: [AssistantActivityState] = []
+    private var assistantPendingTaskSuggestions: [AssistantTaskSuggestionState] = []
+    private var assistantSuggestedParameters: [String: Set<String>] = [:]
+    private var assistantDraftSaveWorkItem: DispatchWorkItem?
     private let imagerProgressSource: ImagerProgressSource
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private let tableBrowserQueue = DispatchQueue(label: "casars.mac.tablebrowser-cell-window", qos: .userInitiated)
+    private let assistantCorpusQueue = DispatchQueue(label: "casars.mac.assistant-corpus", qos: .utility)
     private var activeTaskExecutions: [String: TaskExecution] = [:]
     private var taskParameterAttempts: [String: TaskParameterAttempt] = [:]
     private var notebookAttemptHandles: [String: NotebookAttemptHandle] = [:]
@@ -870,7 +889,9 @@ public final class WorkbenchStore: ObservableObject {
             }
         }
         self.state = initialState
-        if initialState.isTutorialPrototype {
+        if initialState.isAIPrototype {
+            runtimeKind = .aiPrototype
+        } else if initialState.isTutorialPrototype {
             runtimeKind = .tutorialPrototype
         } else if initialState.isNotebookPrototype {
             runtimeKind = .notebookPrototype
@@ -890,6 +911,7 @@ public final class WorkbenchStore: ObservableObject {
         self.taskExecutionMatrixClient = taskExecutionMatrixClient
         notebookPersistenceClient = UniFFINotebookPersistenceClient()
         tutorialPersistenceClient = UniFFITutorialPersistenceClient()
+        assistantPersistenceClient = UniFFIAssistantPersistenceClient()
         self.imagerProgressSource = imagerProgressSource
     }
 
@@ -901,12 +923,28 @@ public final class WorkbenchStore: ObservableObject {
         tutorialPersistenceClient = client
     }
 
+    package func installAssistantPersistenceClientForTesting(_ client: AssistantPersistenceClient) {
+        assistantPersistenceClient = client
+    }
+
+    package func installAgentSessionForTesting(
+        _ session: AgentSession,
+        sessionNonce: String? = nil
+    ) {
+        agentSession?.terminate()
+        agentSession = session
+        if let sessionNonce { assistantProjectNonce = sessionNonce }
+        activeAgentCommand = state.assistantDiscussion?.activeConversation?.profile.agentCommand
+        configureAgentSession(session)
+    }
+
     package func installPythonExecutableForTesting(_ path: String) {
         pythonExecutableOverride = path
     }
 
     deinit {
         pythonKernels.values.forEach { $0.terminate() }
+        agentSession?.terminate()
         guard runtimeKind == .production else { return }
         sessionLastWrites.values.forEach { $0.cancel() }
         for sessionKey in acceptedSessionParameterValues.keys {
@@ -986,6 +1024,27 @@ public final class WorkbenchStore: ObservableObject {
         )
     }
 
+    package static func aiPrototype(
+        scenario: AIChatPrototypeScenario = .primary,
+        dependencies: NotebookPrototypeRuntimeDependencies = .denied
+    ) -> WorkbenchStore {
+        NotebookPrototypeBoundaryAudit.reset()
+        return WorkbenchStore(
+            state: aiPrototypeState(scenario: scenario),
+            probeClient: dependencies.probeClient,
+            demoProjectClient: dependencies.demoProjectClient,
+            plotClient: dependencies.plotClient,
+            imageExplorerClient: dependencies.imageExplorerClient,
+            tableBrowserClient: dependencies.tableBrowserClient,
+            genericTaskClient: dependencies.genericTaskClient,
+            taskCatalogClient: PrototypeTaskCatalogClient(),
+            taskUISchemaClient: dependencies.taskUISchemaClient,
+            surfaceParameterClient: dependencies.surfaceParameterClient,
+            taskExecutionMatrixClient: PrototypeTaskExecutionMatrixClient(),
+            imagerProgressSource: EmptyImagerProgressSource()
+        )
+    }
+
     package var isNotebookPrototypeRuntime: Bool {
         runtimeKind == .notebookPrototype
     }
@@ -996,6 +1055,10 @@ public final class WorkbenchStore: ObservableObject {
 
     package var isTutorialPrototypeRuntime: Bool {
         runtimeKind == .tutorialPrototype
+    }
+
+    package var isAIPrototypeRuntime: Bool {
+        runtimeKind == .aiPrototype
     }
 
     package var isPrototypeRuntime: Bool {
@@ -1108,6 +1171,60 @@ public final class WorkbenchStore: ObservableObject {
             )
         ]
         state.activeTabID = "tab-tutorial-prototype"
+        return state
+    }
+
+    private static func aiPrototypeState(
+        scenario: AIChatPrototypeScenario,
+        interfaceFontSize: Double = WorkbenchState.defaultInterfaceFontSize
+    ) -> WorkbenchState {
+        var state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+        state.project = ProjectFixture(
+            name: "TW Hya Reduction",
+            rootPath: "/PrototypeProjects/tw-hya-assistant",
+            datasets: [
+                DatasetSummary(
+                    id: "prototype-twhya-ms",
+                    name: "twhya_calibrated.ms",
+                    path: "data/twhya_calibrated.ms",
+                    kind: .measurementSet,
+                    size: "2.1 GB fixture",
+                    units: "Jy, Hz, seconds",
+                    fields: ["TW Hya"],
+                    notes: "Deterministic AI prototype metadata; no data are opened."
+                )
+            ],
+            source: .fixture
+        )
+        state.selectedDatasetID = "prototype-twhya-ms"
+        state.prototypeNotebook = PrototypeScientificNotebookFixtureAdapter.make(scenario: .primary)
+        state.prototypeAI = PrototypeAIChatFixtureAdapter.make(scenario: scenario)
+        state.dockMode = .notebooks
+        state.leftDockCollapsed = false
+        state.inspectorCollapsed = true
+        state.tabs = [
+            WorkbenchTab(
+                id: "tab-scientific-notebook",
+                title: state.prototypeNotebook?.filename ?? "default.md",
+                kind: .notebook
+            ),
+            WorkbenchTab(
+                id: "tab-ai-context-task",
+                title: "Imager",
+                kind: .task,
+                datasetID: "prototype-twhya-ms",
+                taskID: "imager"
+            ),
+            WorkbenchTab(
+                id: "tab-ai-context-explorer",
+                title: "MS: TW Hya",
+                kind: .datasetExplorer,
+                datasetID: "prototype-twhya-ms"
+            ),
+            WorkbenchTab(id: "tab-ai-context-python", title: "Python", kind: .python),
+            WorkbenchTab(id: "tab-ai-context-history", title: "History", kind: .history),
+        ]
+        state.activeTabID = "tab-scientific-notebook"
         return state
     }
 
@@ -2113,6 +2230,7 @@ public final class WorkbenchStore: ObservableObject {
         case .notebookPrototype: "notebook"
         case .pythonPrototype: "Python"
         case .tutorialPrototype: "tutorial"
+        case .aiPrototype: "AI"
         case .production: "production"
         }
         state.lastErrors.append("\(action) are unavailable in the in-memory \(prototypeName) prototype")
@@ -2131,6 +2249,10 @@ public final class WorkbenchStore: ObservableObject {
         }
         if runtimeKind == .tutorialPrototype,
            tab.kind != .notebook && !(tab.kind == .task && tab.prototypeReceiptID != nil) {
+            _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
+            return
+        }
+        if runtimeKind == .aiPrototype, tab.kind != .aiChat {
             _ = rejectPrototypeProductionAction("Production \(tab.kind.rawValue) tabs")
             return
         }
@@ -2158,6 +2280,19 @@ public final class WorkbenchStore: ObservableObject {
         guard let index = state.tabs.firstIndex(where: { $0.id == tabID }) else {
             state.lastErrors.append("Unknown tab \(tabID)")
             return
+        }
+
+        if runtimeKind == .aiPrototype, tabID == "tab-ai-prototype",
+           var projection = state.prototypeAI
+        {
+            projection.setPresentation(.closed)
+            state.prototypeAI = projection
+        }
+        if runtimeKind == .production, tabID == "tab-assistant",
+           var discussion = state.assistantDiscussion
+        {
+            discussion.presentation = .closed
+            state.assistantDiscussion = discussion
         }
 
         let closingSessionKeys = state.parameterSessions.keys.filter { $0.hasPrefix("\(tabID)::") }
@@ -2256,12 +2391,20 @@ public final class WorkbenchStore: ObservableObject {
             }
             openTab(WorkbenchTab(id: "tab-plot-samples", title: "Plot Samples", kind: .plotSamples))
         case .aiChat:
-            guard !rejectPrototypeProductionAction("AI chat") else { return }
-            guard state.isDemoProject else {
-                state.lastErrors.append("AI chat is not connected yet")
+            if state.isAIPrototype {
+                expandAIPrototypeConversation()
                 return
             }
-            openTab(WorkbenchTab(id: "tab-ai", title: "AI Chat", kind: .aiChat))
+            if state.isDemoProject {
+                openTab(WorkbenchTab(id: "tab-ai", title: "AI Assistant", kind: .aiChat))
+                return
+            }
+            guard !rejectPrototypeProductionAction("AI chat") else { return }
+            guard state.hasProject else {
+                state.lastErrors.append("Open a project before starting an AI discussion")
+                return
+            }
+            openAssistantDiscussion(presentation: .tab)
         case .python:
             guard !rejectPrototypeProductionAction("Python") else { return }
             guard state.isDemoProject else {
@@ -2305,6 +2448,7 @@ public final class WorkbenchStore: ObservableObject {
             state.tutorialProjects = try tutorialPersistenceClient.list(
                 projectRoot: state.project.rootPath
             )
+            loadAssistantDiscussions()
         } catch {
             state.lastErrors.append("Load project notebooks: \(error)")
         }
@@ -2705,6 +2849,8 @@ public final class WorkbenchStore: ObservableObject {
                 state.imageExplorers[source] = explorer
                 refreshImageExplorer(datasetID: source)
             }
+        case "assistant_python_plot":
+            openTab(WorkbenchTab(id: "tab-python", title: "Python", kind: .python))
         default:
             state.lastErrors.append("Unknown notebook visualization surface \(revision.reopen.surface)")
         }
@@ -3374,7 +3520,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func setPrototypeNotebookDraft(_ markdown: String) {
-        guard runtimeKind == .notebookPrototype else { return }
+        guard runtimeKind == .notebookPrototype || runtimeKind == .aiPrototype else { return }
         updateActivePrototypeNotebook { document in
             document.draftMarkdown = markdown
             PrototypeScientificNotebookFixtureAdapter.synchronizeTaskCells(in: &document)
@@ -3382,12 +3528,12 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func setPrototypeNotebookViewMode(_ viewMode: PrototypeNotebookViewMode) {
-        guard runtimeKind == .notebookPrototype else { return }
+        guard runtimeKind == .notebookPrototype || runtimeKind == .aiPrototype else { return }
         updateActivePrototypeNotebook { $0.viewMode = viewMode }
     }
 
     package func savePrototypeNotebookDraft() {
-        guard runtimeKind == .notebookPrototype else { return }
+        guard runtimeKind == .notebookPrototype || runtimeKind == .aiPrototype else { return }
         guard state.prototypeNotebook?.hasExternalConflict == false else {
             state.lastErrors.append("Resolve the simulated external notebook conflict before saving")
             return
@@ -3407,7 +3553,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func selectPrototypeNotebookReceipt(_ receiptID: String) {
-        guard runtimeKind == .notebookPrototype else { return }
+        guard runtimeKind == .notebookPrototype || runtimeKind == .aiPrototype else { return }
         updateActivePrototypeNotebook { document in
             guard document.tasks.contains(where: { $0.id == receiptID }) else { return }
             document.selectedReceiptID = receiptID
@@ -3417,7 +3563,7 @@ public final class WorkbenchStore: ObservableObject {
     /// Opens an interactive task-shaped tab using only the fixture projection.
     /// No provider schema, parameter, dataset, or task adapter is consulted.
     package func openPrototypeNotebookTask(receiptID: String) {
-        guard runtimeKind == .notebookPrototype,
+        guard runtimeKind == .notebookPrototype || runtimeKind == .aiPrototype,
               let receipt = state.prototypeNotebook?.receipts.first(where: { $0.id == receiptID })
         else {
             state.lastErrors.append("Unknown prototype notebook task \(receiptID)")
@@ -3553,6 +3699,1213 @@ public final class WorkbenchStore: ObservableObject {
         }
         projection.documents[documentIndex].tasks[receiptIndex].revisions[revisionIndex] = revision
         state.prototypeNotebook = projection
+    }
+
+    package func loadAssistantDiscussions() {
+        guard runtimeKind == .production, state.hasProject else { return }
+        do {
+            let conversations = try assistantPersistenceClient.conversations(
+                projectRoot: state.project.rootPath
+            )
+            var discussion = state.assistantDiscussion ?? AssistantDiscussionState()
+            discussion.conversations = conversations
+            if !conversations.contains(where: { $0.id == discussion.activeConversationID }) {
+                discussion.activeConversationID = conversations.last?.id
+            }
+            discussion.contexts = assistantOpenTabContexts()
+            state.assistantDiscussion = discussion
+        } catch {
+            state.lastErrors.append("Load assistant conversations: \(error)")
+        }
+    }
+
+    package func openAssistantDiscussion(
+        presentation: AssistantDiscussionPresentation = .drawer
+    ) {
+        guard state.hasProject else { return }
+        if state.assistantDiscussion == nil { loadAssistantDiscussions() }
+        if state.assistantDiscussion?.activeConversation == nil { newAssistantConversation() }
+        state.assistantDiscussion?.presentation = presentation
+        if state.assistantDiscussion?.corpusStatus == "Not indexed" { refreshAssistantCorpus() }
+        prepareAgentSession()
+    }
+
+    package func closeAssistantDiscussion() {
+        state.assistantDiscussion?.presentation = .closed
+    }
+
+    package func dockAssistantDiscussion() {
+        openAssistantDiscussion(presentation: .drawer)
+    }
+
+    package func expandAssistantDiscussion() {
+        openAssistantDiscussion(presentation: .tab)
+    }
+
+    package func setAssistantDraft(_ draft: String) {
+        updateActiveAssistantConversation { $0.draft = draft }
+        scheduleAssistantDraftSave()
+    }
+
+    package func setAssistantScrollAnchor(_ messageID: String?) {
+        updateActiveAssistantConversation { $0.scrollAnchorMessageId = messageID }
+    }
+
+    package func selectAssistantConversation(_ id: String) {
+        guard state.assistantDiscussion?.conversations.contains(where: { $0.id == id }) == true else {
+            return
+        }
+        state.assistantDiscussion?.activeConversationID = id
+        state.assistantDiscussion?.contexts = assistantOpenTabContexts()
+        startActiveAgentConversation()
+    }
+
+    package func newAssistantConversation() {
+        do {
+            var profile = AssistantSessionProfileState()
+            if let model = state.assistantDiscussion?.models.first(where: \.isDefault)
+                ?? state.assistantDiscussion?.models.first
+            {
+                profile.model = model.id
+                profile.effort = model.defaultEffort
+            }
+            let conversation = try assistantPersistenceClient.createConversation(
+                projectRoot: state.project.rootPath,
+                title: "Project discussion",
+                attachment: assistantPrimaryAttachment(),
+                profile: profile
+            )
+            if state.assistantDiscussion == nil { state.assistantDiscussion = AssistantDiscussionState() }
+            state.assistantDiscussion?.conversations.append(conversation)
+            state.assistantDiscussion?.activeConversationID = conversation.id
+            state.assistantDiscussion?.contexts = assistantOpenTabContexts()
+            startActiveAgentConversation()
+        } catch {
+            recordAssistantError("Create discussion: \(error)")
+        }
+    }
+
+    package func selectAssistantModel(_ modelID: String) {
+        updateActiveAssistantConversation { conversation in
+            conversation.profile.model = modelID
+            if let model = state.assistantDiscussion?.models.first(where: { $0.id == modelID }) {
+                conversation.profile.effort = model.defaultEffort
+            }
+            conversation.backendSession = nil
+        }
+        persistActiveAssistantConversation()
+        startActiveAgentConversation()
+    }
+
+    package func selectAssistantEffort(_ effort: String) {
+        updateActiveAssistantConversation {
+            $0.profile.effort = effort
+            $0.backendSession = nil
+        }
+        persistActiveAssistantConversation()
+        startActiveAgentConversation()
+    }
+
+    package func selectAssistantAuthority(_ authority: AssistantAuthorityState) {
+        updateActiveAssistantConversation {
+            $0.profile.authority = authority
+            $0.backendSession = nil
+        }
+        persistActiveAssistantConversation()
+        startActiveAgentConversation()
+    }
+
+    package func setAssistantAgentCommand(_ command: String) {
+        let command = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty,
+              command != state.assistantDiscussion?.activeConversation?.profile.agentCommand
+        else { return }
+        updateActiveAssistantConversation {
+            $0.profile.agentCommand = command
+            $0.backendSession = nil
+        }
+        persistActiveAssistantConversation()
+        agentSession?.terminate()
+        agentSession = nil
+        activeAgentCommand = nil
+        prepareAgentSession()
+    }
+
+    package func setAssistantPythonCommand(_ command: String) {
+        let command = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty,
+              command != state.assistantDiscussion?.activeConversation?.profile.pythonCommand
+        else { return }
+        updateActiveAssistantConversation {
+            $0.profile.pythonCommand = command
+            $0.profile.pythonProvenance = nil
+            $0.backendSession = nil
+        }
+        persistActiveAssistantConversation()
+        probeAssistantPythonIfNeeded()
+        startActiveAgentConversation()
+    }
+
+    package func toggleAssistantContext(_ contextID: String) {
+        guard var discussion = state.assistantDiscussion,
+              let index = discussion.contexts.firstIndex(where: { $0.id == contextID })
+        else { return }
+        discussion.contexts[index].selected.toggle()
+        let selected = discussion.contexts.filter(\.selected).map(\.id)
+        state.assistantDiscussion = discussion
+        updateActiveAssistantConversation { $0.selectedContextIds = selected }
+        persistActiveAssistantConversation()
+        writeAssistantContextProjection()
+    }
+
+    package func refreshAssistantDiscussionContexts() {
+        state.assistantDiscussion?.contexts = assistantOpenTabContexts()
+        writeAssistantContextProjection()
+    }
+
+    package func refreshAssistantCorpus() {
+        guard state.hasProject else { return }
+        state.assistantDiscussion?.corpusStatus = "Indexing local corpus…"
+        assistantCorpusQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                let result = AssistantCorpusIngestor().collect(
+                    projectRoot: self.state.project.rootPath
+                )
+                _ = try self.assistantPersistenceClient.indexCorpus(
+                    projectRoot: self.state.project.rootPath,
+                    documents: result.documents,
+                    removeMissingLayers: result.refreshedLayers
+                )
+                DispatchQueue.main.async {
+                    self.state.assistantDiscussion?.corpusStatus = "Local corpus ready"
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.recordAssistantError("Refresh corpus: \(error)")
+                }
+            }
+        }
+    }
+
+    package func pinAssistantMessage(_ messageID: String) {
+        guard let discussion = state.assistantDiscussion,
+              let conversation = discussion.activeConversation,
+              let message = conversation.messages.first(where: { $0.id == messageID }),
+              let notebook = state.scientificNotebooks?.activeNotebook
+        else { return }
+        do {
+            let markdown = assistantPinMarkdown(
+                message,
+                conversationID: conversation.id
+            )
+            let pin = try assistantPersistenceClient.createPin(AssistantCreatePinEnvelope(
+                conversationId: conversation.id,
+                notebookId: notebook.id,
+                messageId: message.id,
+                representation: message.citations.isEmpty ? "answer_only" : "answer_with_citations",
+                snapshotContent: markdown
+            ))
+            appendAssistantMarkdownAtNotebookTail(markdown)
+            updateActiveAssistantConversation { transcript in
+                guard let index = transcript.messages.firstIndex(where: { $0.id == message.id }) else {
+                    return
+                }
+                transcript.messages[index].pins.append(pin)
+            }
+            persistActiveAssistantConversation()
+        } catch {
+            recordAssistantError("Add to notebook: \(error)")
+        }
+    }
+
+    package func authenticateAssistantAccount() {
+        agentSession?.requestAccountLogin()
+    }
+
+    package func sendAssistantPrompt() {
+        guard var discussion = state.assistantDiscussion,
+              var conversation = discussion.activeConversation
+        else { return }
+        let prompt = conversation.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return }
+        let message = AssistantMessageState(
+            id: UUID().uuidString.lowercased(),
+            role: "user",
+            content: prompt,
+            createdAt: Self.assistantTimestamp(),
+            agentId: nil,
+            model: nil,
+            citations: [],
+            usedContext: [],
+            activities: [],
+            taskSuggestions: [],
+            pins: []
+        )
+        conversation.messages.append(message)
+        conversation.draft = ""
+        conversation.updatedAt = Self.assistantTimestamp()
+        if let index = discussion.conversations.firstIndex(where: { $0.id == conversation.id }) {
+            discussion.conversations[index] = conversation
+        }
+        discussion.activity = .streaming
+        discussion.streamingText = ""
+        discussion.lastError = nil
+        state.assistantDiscussion = discussion
+        assistantPendingCitations = []
+        assistantPendingActivities = []
+        assistantPendingTaskSuggestions = []
+        state.assistantDiscussion?.contexts = assistantOpenTabContexts()
+        let selectedContexts = state.assistantDiscussion?.contexts.filter(\.selected).map(\.id) ?? []
+        updateActiveAssistantConversation { $0.selectedContextIds = selectedContexts }
+        persistActiveAssistantConversation()
+        writeAssistantContextProjection()
+
+        if conversation.backendSession == nil {
+            startActiveAgentConversation()
+        } else if let threadID = conversation.backendSession?.sessionId {
+            agentSession?.sendTurn(AgentTurnRequest(
+                threadID: threadID,
+                text: prompt,
+                model: conversation.profile.model,
+                effort: conversation.profile.effort
+            ))
+        }
+    }
+
+    package func cancelAssistantResponse() {
+        guard let conversation = state.assistantDiscussion?.activeConversation,
+              let threadID = conversation.backendSession?.sessionId,
+              let turnID = state.assistantDiscussion?.activeTurnID
+        else { return }
+        agentSession?.cancel(threadID: threadID, turnID: turnID)
+    }
+
+    package func resolveAssistantApproval(_ decision: String) {
+        guard let approval = state.assistantDiscussion?.pendingApproval else { return }
+        agentSession?.approve(requestID: approval.id, decision: decision)
+        state.assistantDiscussion?.pendingApproval = nil
+    }
+
+    package func restartAssistantAgent() {
+        agentSession?.restart()
+        startActiveAgentConversation()
+    }
+
+    private func prepareAgentSession() {
+        let command = state.assistantDiscussion?.activeConversation?.profile.agentCommand ?? "codex"
+        if agentSession == nil || activeAgentCommand != command {
+            agentSession?.terminate()
+            do {
+                let configuration = try AgentSessionConfiguration.discover(
+                    preferredAgentCommand: command
+                )
+                let session: AgentSession = configuration.fixtureMode
+                    ? DeterministicAgentSession()
+                    : CodexAppServerSession(configuration: configuration)
+                agentSession = session
+                activeAgentCommand = command
+                configureAgentSession(session)
+            } catch {
+                recordAssistantError("Agent unavailable: \(error)")
+                return
+            }
+        }
+        agentSession?.prepare { [weak self] result in
+            switch result {
+            case .success:
+                self?.startActiveAgentConversation()
+            case let .failure(error):
+                self?.recordAssistantError("Start agent: \(error)")
+            }
+        }
+    }
+
+    private func configureAgentSession(_ session: AgentSession) {
+        session.onStateChange { [weak self] activity in
+            self?.state.assistantDiscussion?.activity = activity
+        }
+        session.onEvent { [weak self] event in self?.handleAgentEvent(event) }
+    }
+
+    private func startActiveAgentConversation() {
+        guard let conversation = state.assistantDiscussion?.activeConversation else { return }
+        probeAssistantPythonIfNeeded()
+        assistantProjectNonce = UUID().uuidString + UUID().uuidString
+        state.assistantDiscussion?.contexts = assistantOpenTabContexts()
+        writeAssistantContextProjection()
+        agentSession?.startConversation(AgentConversationRequest(
+            projectRoot: state.project.rootPath,
+            model: conversation.profile.model,
+            effort: conversation.profile.effort,
+            resumeThreadID: conversation.backendSession?.sessionId,
+            runtimeProfile: CasaAgentRuntimeProfile(
+                authority: conversation.profile.authority,
+                sessionNonce: assistantProjectNonce,
+                pythonCommand: conversation.profile.pythonCommand
+            )
+        ))
+    }
+
+    private func probeAssistantPythonIfNeeded() {
+        guard let conversation = state.assistantDiscussion?.activeConversation,
+              conversation.profile.pythonProvenance?.selectedCommand
+                != conversation.profile.pythonCommand,
+              state.project.rootPath.hasPrefix("/")
+        else { return }
+        let selectedCommand = conversation.profile.pythonCommand
+        let conversationID = conversation.id
+        guard let resolvedCommand = AgentSessionConfiguration.resolveExecutable(selectedCommand) else {
+            recordAssistantError("Inspect selected Python: executable not found: \(selectedCommand)")
+            return
+        }
+        let kernel = PersistentPythonKernel(
+            pythonExecutable: resolvedCommand,
+            workspace: state.project.rootPath
+        )
+        kernel.prepare { [weak self, kernel] result in
+            defer { kernel.terminate() }
+            guard let self,
+                  self.state.assistantDiscussion?.activeConversation?.id == conversationID,
+                  self.state.assistantDiscussion?.activeConversation?.profile.pythonCommand
+                    == selectedCommand
+            else { return }
+            switch result {
+            case let .success(identity):
+                self.updateActiveAssistantConversation {
+                    $0.profile.pythonProvenance = AssistantPythonProvenanceState(
+                        selectedCommand: selectedCommand,
+                        resolvedPath: identity.interpreter,
+                        implementation: identity.implementation,
+                        version: identity.version,
+                        environmentLabel: Self.assistantPythonEnvironmentLabel(identity.interpreter),
+                        casaRsVersion: identity.casaRsVersion,
+                        packages: identity.packages
+                    )
+                }
+                self.persistActiveAssistantConversation()
+            case let .failure(error):
+                self.recordAssistantError("Inspect selected Python: \(error)")
+            }
+        }
+    }
+
+    private static func assistantPythonEnvironmentLabel(_ interpreter: String) -> String {
+        let executable = URL(fileURLWithPath: interpreter)
+        let bin = executable.deletingLastPathComponent()
+        let environment = bin.lastPathComponent == "bin" ? bin.deletingLastPathComponent() : bin
+        let label = environment.lastPathComponent
+        return label.isEmpty ? "System Python" : label
+    }
+
+    private func handleAgentEvent(_ event: [String: Any]) {
+        if let method = event["method"] as? String {
+            let params = event["params"] as? [String: Any] ?? [:]
+            switch method {
+            case "item/agentMessage/delta":
+                state.assistantDiscussion?.streamingText += params["delta"] as? String ?? ""
+            case "turn/started":
+                if let turn = params["turn"] as? [String: Any] {
+                    state.assistantDiscussion?.activeTurnID = turn["id"] as? String
+                }
+            case "turn/completed":
+                finishAssistantTurn(params)
+            case "item/started":
+                recordAssistantItem(params, completed: false)
+            case "item/completed":
+                recordAssistantItem(params, completed: true)
+            case "account/updated":
+                refreshAssistantAccount()
+            case "account/rateLimits/updated":
+                applyAssistantUsage(params)
+            case "account/login/completed":
+                refreshAssistantAccount()
+            case "casa/error", "error":
+                recordAssistantError((params["message"] as? String) ?? String(describing: params))
+            case "casa/resumeFailed":
+                let detail = (params["message"] as? String) ?? "backend session is incompatible"
+                let message = AssistantMessageState(
+                    id: UUID().uuidString.lowercased(),
+                    role: "activity",
+                    content: "Previous Codex session could not be resumed. A new backend session is starting.",
+                    createdAt: Self.assistantTimestamp(),
+                    agentId: "codex_app_server",
+                    model: nil,
+                    citations: [],
+                    usedContext: [],
+                    activities: [AssistantActivityState(
+                        id: UUID().uuidString.lowercased(),
+                        label: "Session handoff",
+                        state: "failed",
+                        summary: detail
+                    )],
+                    taskSuggestions: [],
+                    pins: []
+                )
+                updateActiveAssistantConversation {
+                    $0.messages.append(message)
+                    $0.backendSession = nil
+                }
+                persistActiveAssistantConversation()
+                startActiveAgentConversation()
+            case "item/commandExecution/requestApproval",
+                 "item/fileChange/requestApproval",
+                 "item/permissions/requestApproval",
+                 "mcpServer/elicitation/request":
+                if let rawID = event["id"] {
+                    state.assistantDiscussion?.pendingApproval = AssistantApprovalRequestState(
+                        id: String(describing: rawID),
+                        method: method,
+                        summary: assistantApprovalSummary(method: method, params: params)
+                    )
+                }
+            default:
+                break
+            }
+            return
+        }
+        guard let result = event["result"] as? [String: Any] else { return }
+        if let thread = result["thread"] as? [String: Any],
+           let threadID = thread["id"] as? String
+        {
+            updateActiveAssistantConversation {
+                $0.backendSession = AssistantBackendSessionState(
+                    backendId: "codex_app_server",
+                    sessionId: threadID
+                )
+            }
+            persistActiveAssistantConversation()
+            if state.assistantDiscussion?.activity == .streaming,
+               let prompt = state.assistantDiscussion?.activeConversation?.messages.last?.content
+            {
+                let conversation = state.assistantDiscussion?.activeConversation
+                agentSession?.sendTurn(AgentTurnRequest(
+                    threadID: threadID,
+                    text: prompt,
+                    model: conversation?.profile.model ?? "",
+                    effort: conversation?.profile.effort ?? "medium"
+                ))
+            }
+        }
+        if let data = result["data"] as? [[String: Any]] {
+            state.assistantDiscussion?.models = data.compactMap { model in
+                guard let id = model["id"] as? String else { return nil }
+                let efforts = (model["supportedReasoningEfforts"] as? [[String: Any]])?
+                    .compactMap { $0["reasoningEffort"] as? String ?? $0["effort"] as? String } ?? []
+                return AssistantModelState(
+                    id: id,
+                    label: model["displayName"] as? String ?? id,
+                    defaultEffort: model["defaultReasoningEffort"] as? String ?? "medium",
+                    supportedEfforts: efforts.isEmpty ? ["low", "medium", "high"] : efforts,
+                    isDefault: model["isDefault"] as? Bool ?? false
+                )
+            }
+        }
+        if result.keys.contains("requiresOpenaiAuth") {
+            let account = result["account"] as? [String: Any]
+            state.assistantDiscussion?.account = AssistantAccountState(
+                email: account?["email"] as? String,
+                plan: account?["planType"] as? String,
+                requiresLogin: account == nil
+            )
+        }
+        if result.keys.contains("rateLimits") { applyAssistantUsage(result) }
+        if let authURL = result["authUrl"] as? String ?? result["authURL"] as? String {
+            state.assistantDiscussion?.pendingAuthenticationURL = authURL
+            if let url = URL(string: authURL) { NSWorkspace.shared.open(url) }
+        }
+    }
+
+    private func recordAssistantItem(_ params: [String: Any], completed: Bool) {
+        guard let item = params["item"] as? [String: Any],
+              let itemID = item["id"] as? String,
+              let type = item["type"] as? String
+        else { return }
+        let tool = item["tool"] as? String
+        let isTrustedCasaMCP = type == "mcpToolCall"
+            && item["server"] as? String == activeAssistantMCPServerName
+        let label = tool.map { isTrustedCasaMCP ? "CASA \($0)" : $0 } ?? type
+        let error = (item["error"] as? [String: Any])?["message"] as? String
+        let activity = AssistantActivityState(
+            id: itemID,
+            label: label,
+            state: error == nil ? (completed ? "succeeded" : "running") : "failed",
+            summary: error
+        )
+        if let index = assistantPendingActivities.firstIndex(where: { $0.id == itemID }) {
+            assistantPendingActivities[index] = activity
+        } else {
+            assistantPendingActivities.append(activity)
+        }
+        guard completed,
+              isTrustedCasaMCP,
+              let result = item["result"] as? [String: Any],
+              let content = result["content"] as? [[String: Any]]
+        else { return }
+        for block in content where block["type"] as? String == "text" {
+            guard let text = block["text"] as? String,
+                  let data = text.data(using: .utf8),
+                  let value = try? JSONSerialization.jsonObject(with: data)
+            else { continue }
+            if let hits = value as? [[String: Any]] {
+                for hit in hits { appendAssistantCitation(hit) }
+            } else if tool == "task.suggest", let suggestion = value as? [String: Any] {
+                appendAssistantTaskSuggestion(suggestion, id: itemID)
+            }
+        }
+    }
+
+    private var activeAssistantMCPServerName: String {
+        "casa_rs_\(assistantProjectNonce.prefix(12))"
+    }
+
+    private func appendAssistantTaskSuggestion(_ value: [String: Any], id: String) {
+        guard value["kind"] as? String == "task_suggestion",
+              let taskID = value["task_id"] as? String,
+              let parameters = value["parameters"] as? [String: String]
+        else { return }
+        let suggestion = AssistantTaskSuggestionState(id: id, taskId: taskID, parameters: parameters)
+        if let index = assistantPendingTaskSuggestions.firstIndex(where: { $0.id == id }) {
+            assistantPendingTaskSuggestions[index] = suggestion
+        } else {
+            assistantPendingTaskSuggestions.append(suggestion)
+        }
+    }
+
+    private func appendAssistantCitation(_ hit: [String: Any]) {
+        guard let citation = hit["citation"] as? [String: Any],
+              let locator = citation["locator"] as? String
+        else { return }
+        let id = hit["chunk_id"] as? String ?? locator
+        guard !assistantPendingCitations.contains(where: { $0.id == id }) else { return }
+        let layer = hit["layer"] as? String
+        let kind = ["release_source", "live_source"].contains(layer) ? "source" : "document"
+        assistantPendingCitations.append(AssistantCitationState(
+            id: id,
+            kind: kind,
+            label: citation["label"] as? String ?? hit["title"] as? String ?? locator,
+            locator: locator,
+            excerpt: hit["text"] as? String ?? "",
+            sourcePath: citation["source_path"] as? String,
+            page: (citation["page"] as? NSNumber)?.uint32Value,
+            section: citation["section"] as? String,
+            lineStart: (citation["line_start"] as? NSNumber)?.uint32Value,
+            lineEnd: (citation["line_end"] as? NSNumber)?.uint32Value,
+            release: citation["release"] as? String,
+            commit: citation["commit"] as? String
+        ))
+    }
+
+    private func finishAssistantTurn(_ params: [String: Any]) {
+        let text = state.assistantDiscussion?.streamingText ?? ""
+        let turn = params["turn"] as? [String: Any]
+        let status = turn?["status"] as? String ?? "completed"
+        let errorMessage = (turn?["error"] as? [String: Any])?["message"] as? String
+        let durableText: String? = if !text.isEmpty {
+            text
+        } else if status == "failed" {
+            errorMessage ?? "Agent turn failed before producing an answer."
+        } else if ["cancelled", "interrupted"].contains(status) {
+            "Agent response cancelled."
+        } else if !assistantPendingActivities.isEmpty {
+            "Agent completed without a text response."
+        } else {
+            nil
+        }
+        if let durableText {
+            let conversation = state.assistantDiscussion?.activeConversation
+            let message = AssistantMessageState(
+                id: UUID().uuidString.lowercased(),
+                role: "assistant",
+                content: durableText,
+                createdAt: Self.assistantTimestamp(),
+                agentId: "codex_app_server",
+                model: conversation?.profile.model,
+                citations: assistantPendingCitations,
+                usedContext: state.assistantDiscussion?.contexts.filter(\.selected) ?? [],
+                activities: assistantPendingActivities,
+                taskSuggestions: assistantPendingTaskSuggestions,
+                pins: []
+            )
+            updateActiveAssistantConversation { $0.messages.append(message) }
+            persistActiveAssistantConversation()
+        }
+        state.assistantDiscussion?.streamingText = ""
+        state.assistantDiscussion?.activeTurnID = nil
+        state.assistantDiscussion?.activity = status == "failed" ? .restartRequired : .completed
+        assistantPendingCitations = []
+        assistantPendingActivities = []
+        assistantPendingTaskSuggestions = []
+        if status == "failed" {
+            recordAssistantError(errorMessage ?? "Agent turn failed")
+        }
+    }
+
+    private func refreshAssistantAccount() {
+        // App Server notifications contain no secrets; explicit reads refresh the visible account state.
+        agentSession?.refreshAccount()
+    }
+
+    private func applyAssistantUsage(_ payload: [String: Any]) {
+        let limits = payload["rateLimits"] as? [String: Any] ?? payload
+        let primary = limits["primary"] as? [String: Any]
+        let secondary = limits["secondary"] as? [String: Any]
+        if let plan = limits["planType"] as? String {
+            state.assistantDiscussion?.account.plan = plan
+        }
+        state.assistantDiscussion?.usage = AssistantUsageState(
+            primaryPercentUsed: (primary?["usedPercent"] as? NSNumber)?.doubleValue,
+            secondaryPercentUsed: (secondary?["usedPercent"] as? NSNumber)?.doubleValue,
+            primaryResetAt: (primary?["resetsAt"] as? NSNumber)?.uint64Value,
+            secondaryResetAt: (secondary?["resetsAt"] as? NSNumber)?.uint64Value
+        )
+    }
+
+    private func assistantApprovalSummary(method: String, params: [String: Any]) -> String {
+        if let command = params["command"] as? String { return command }
+        if let reason = params["reason"] as? String { return reason }
+        return method.replacingOccurrences(of: "item/", with: "")
+    }
+
+    private func assistantOpenTabContexts() -> [AssistantContextItemState] {
+        var items: [AssistantContextItemState] = []
+        let excerptLimits = AssistantContextBudgetPolicy.excerptLimits(openTabCount: state.tabs.count)
+        for (tabIndex, tab) in state.tabs.enumerated() {
+            let excerptLimit = excerptLimits[tabIndex]
+            let item: AssistantContextItemState
+            switch tab.kind {
+            case .task:
+                let taskID = tab.taskID ?? tab.title
+                item = assistantContext(
+                    id: "task:\(tab.id)",
+                    kind: "task",
+                    label: tab.title,
+                    summary: "Open task and its current parameters",
+                    excerpt: assistantParameterSummary(surfaceID: taskID, instanceID: tab.id),
+                    excerptLimit: excerptLimit
+                )
+            case .notebook, .tutorial:
+                let notebook = state.scientificNotebooks?.activeNotebook
+                item = assistantContext(
+                    id: "\(tab.kind.rawValue):\(tab.id)",
+                    kind: tab.kind.rawValue,
+                    label: notebook?.title ?? tab.title,
+                    summary: tab.kind == .tutorial ? "Open tutorial notebook" : "Open scientific notebook",
+                    excerpt: notebook?.draftSource ?? "",
+                    excerptLimit: excerptLimit
+                )
+            case .datasetExplorer, .tableBrowser:
+                let dataset = tab.datasetID.flatMap { id in state.project.datasets.first { $0.id == id } }
+                item = assistantContext(
+                    id: "\(tab.kind.rawValue):\(tab.id)",
+                    kind: "explorer",
+                    label: tab.title,
+                    summary: dataset.map { "Open \($0.kind.rawValue) dataset at \($0.path)" }
+                        ?? "Open dataset explorer",
+                    excerpt: assistantDatasetContext(datasetID: tab.datasetID, tabKind: tab.kind),
+                    excerptLimit: excerptLimit
+                )
+            case .plotSamples:
+                let summaries = state.plotDocuments.map {
+                    "\($0.title): \($0.subtitle) [\($0.allLayers.count) layers, \($0.panels.count) panels]"
+                }
+                item = assistantContext(
+                    id: "plot:\(tab.id)",
+                    kind: "plot",
+                    label: tab.title,
+                    summary: "Open scientific plot tab",
+                    excerpt: summaries.joined(separator: "\n"),
+                    excerptLimit: excerptLimit
+                )
+            case .python:
+                item = assistantContext(
+                    id: "python:\(tab.id)",
+                    kind: "python",
+                    label: tab.title,
+                    summary: "Open user scientific Python tab",
+                    excerpt: state.python.buffer,
+                    excerptLimit: excerptLimit
+                )
+            case .history:
+                item = assistantContext(
+                    id: "history:\(tab.id)",
+                    kind: "history",
+                    label: tab.title,
+                    summary: "Open task and plot execution history",
+                    excerpt: assistantJSON(Array(state.jobs.values)),
+                    excerptLimit: excerptLimit
+                )
+            case .aiChat:
+                item = assistantContext(
+                    id: "aiChat:\(tab.id)",
+                    kind: "assistant",
+                    label: tab.title,
+                    summary: "Current AI discussion tab",
+                    excerpt: "The active conversation is already supplied by the agent session.",
+                    excerptLimit: excerptLimit
+                )
+            }
+            items.append(item)
+        }
+        let previous = Dictionary(
+            uniqueKeysWithValues: (state.assistantDiscussion?.contexts ?? []).map { ($0.id, $0.selected) }
+        )
+        for index in items.indices {
+            items[index].selected = previous[items[index].id] ?? true
+        }
+        return items
+    }
+
+    private func assistantDatasetContext(datasetID: String?, tabKind: WorkbenchTabKind) -> String {
+        guard let datasetID,
+              let dataset = state.project.datasets.first(where: { $0.id == datasetID })
+        else { return "{}" }
+        var sections = [assistantJSON(dataset)]
+        if let plot = state.measurementSetPlots[datasetID] {
+            sections.append(assistantJSON([
+                "preset": plot.preset.rawValue,
+                "field": plot.selectedField ?? "",
+                "spectral_window": plot.selectedSpectralWindow ?? "",
+                "correlation": plot.selectedCorrelation ?? "",
+                "data_column": plot.dataColumn,
+                "selection": plot.result?.selectionSummary ?? "",
+            ]))
+        }
+        if let image = state.imageExplorers[datasetID] {
+            sections.append(assistantJSON(image.parameters))
+        }
+        if tabKind == .tableBrowser, let table = state.tableBrowsers[datasetID] {
+            sections.append(assistantJSON([
+                "selected_view": table.selectedView,
+                "profile_view": table.profileView,
+                "linked_table": table.linkedTable,
+                "content_mode": table.contentMode,
+            ]))
+        }
+        return sections.joined(separator: "\n")
+    }
+
+    private func assistantJSON<T: Encodable>(_ value: T) -> String {
+        (try? String(decoding: JSONEncoder().encode(value), as: UTF8.self)) ?? "{}"
+    }
+
+    private func assistantJSONObject<T: Encodable>(_ value: T) -> Any {
+        guard let data = try? JSONEncoder().encode(value),
+              let object = try? JSONSerialization.jsonObject(with: data)
+        else { return NSNull() }
+        return object
+    }
+
+    private func assistantContext(
+        id: String,
+        kind: String,
+        label: String,
+        summary: String,
+        excerpt: String,
+        excerptLimit: Int
+    ) -> AssistantContextItemState {
+        let bounded = AssistantContextBudgetPolicy.truncate(excerpt, byteLimit: excerptLimit)
+        return AssistantContextItemState(
+            id: id,
+            kind: kind,
+            label: label,
+            summary: summary,
+            excerpt: bounded,
+            byteCount: UInt64(bounded.utf8.count),
+            contentSha256: SHA256.hash(data: Data(bounded.utf8))
+                .map { String(format: "%02x", $0) }
+                .joined(),
+            untrustedEvidence: true,
+            selected: true
+        )
+    }
+
+    private func assistantParameterSummary(surfaceID: String, instanceID: String) -> String {
+        guard let parameters = state.parameterSessions[parameterSessionKey(
+            surfaceID: surfaceID,
+            instanceID: instanceID
+        )] else { return "{}" }
+        let names = Set(parameters.values.keys).union(parameters.draftText.keys)
+        return names.sorted().map { name in
+            let value = parameters.text(for: name)
+            return "\(name) = \(value)"
+        }.joined(separator: "\n")
+    }
+
+    private func assistantPrimaryAttachment() -> AssistantAttachmentState {
+        if let notebook = state.scientificNotebooks?.activeNotebook {
+            return AssistantAttachmentState(
+                kind: "notebook",
+                identifier: notebook.filename,
+                label: notebook.title,
+                primary: true
+            )
+        }
+        return AssistantAttachmentState(
+            kind: "project",
+            identifier: state.project.rootPath,
+            label: state.project.name,
+            primary: true
+        )
+    }
+
+    private func writeAssistantContextProjection() {
+        guard state.hasProject, state.project.rootPath.hasPrefix("/") else { return }
+        let root = URL(fileURLWithPath: state.project.rootPath, isDirectory: true)
+        let path = root.appendingPathComponent(".casa-rs/assistant-context.json")
+        let selected = state.assistantDiscussion?.contexts.filter(\.selected) ?? []
+        let receipts = (state.scientificNotebooks?.notebooks ?? []).map { notebook in
+            [
+                "notebook_id": notebook.id,
+                "notebook": notebook.filename,
+                "receipts": assistantJSONObject(notebook.receipts),
+            ] as [String: Any]
+        }
+        let projection: [String: Any] = [
+            "open_tabs": selected.map { [
+                "id": $0.id,
+                "kind": $0.kind,
+                "label": $0.label,
+                "summary": $0.summary,
+                "excerpt": $0.excerpt,
+            ] },
+            "data_semantics": selected.filter { ["explorer", "plot"].contains($0.kind) }.map {
+                [
+                    "id": $0.id,
+                    "label": $0.label,
+                    "summary": $0.summary,
+                    "semantics": $0.excerpt,
+                ]
+            },
+            "receipts": receipts,
+            "action_catalog": [
+                [
+                    "id": "task.suggest",
+                    "owner": "casa_rs_mcp",
+                    "effect": "Open canonical task tab with suggested non-default parameters",
+                    "requires_user_interaction": true,
+                ],
+                [
+                    "id": "notebook.append_assistant_message",
+                    "owner": "workbench",
+                    "effect": "Append an immutable AI snapshot to the active notebook tail",
+                    "requires_user_interaction": true,
+                ],
+                [
+                    "id": "plot.save_or_update_notebook",
+                    "owner": "workbench",
+                    "effect": "Save a plot snapshot or explicitly update an existing notebook plot",
+                    "requires_user_interaction": true,
+                ],
+                [
+                    "id": "tutorial.acquire_dataset",
+                    "owner": "workbench",
+                    "effect": "Run the tutorial dataset acquisition workflow",
+                    "requires_user_interaction": true,
+                ],
+            ],
+        ]
+        do {
+            try FileManager.default.createDirectory(
+                at: path.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let data = try JSONSerialization.data(
+                withJSONObject: projection,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            try data.write(to: path, options: .atomic)
+        } catch {
+            recordAssistantError("Write agent context: \(error)")
+        }
+    }
+
+    private func assistantPinMarkdown(
+        _ message: AssistantMessageState,
+        conversationID: String
+    ) -> String {
+        var markdown = """
+
+
+        <!-- casa-rs-ai-pin:v1 conversation=\(conversationID) message=\(message.id) -->
+        > [!NOTE]
+        > AI discussion snapshot
+
+        \(message.content)
+        """
+        for (index, citation) in message.citations.enumerated() {
+            markdown += "\n\n[\(index + 1)] \(citation.label), \(citation.locator)"
+        }
+        return markdown + "\n"
+    }
+
+    private func appendAssistantMarkdownAtNotebookTail(_ markdown: String) {
+        guard let notebook = state.scientificNotebooks?.activeNotebook else { return }
+        setScientificNotebookDraft(
+            notebook.draftSource.trimmingCharacters(in: .newlines) + markdown
+        )
+        saveScientificNotebook()
+    }
+
+    private func updateActiveAssistantConversation(
+        _ update: (inout AssistantConversationState) -> Void
+    ) {
+        guard var discussion = state.assistantDiscussion,
+              let id = discussion.activeConversationID,
+              let index = discussion.conversations.firstIndex(where: { $0.id == id })
+        else { return }
+        update(&discussion.conversations[index])
+        state.assistantDiscussion = discussion
+    }
+
+    private func persistActiveAssistantConversation() {
+        guard let conversation = state.assistantDiscussion?.activeConversation else { return }
+        do {
+            try assistantPersistenceClient.saveConversation(
+                projectRoot: state.project.rootPath,
+                transcript: conversation
+            )
+        } catch {
+            recordAssistantError("Save discussion: \(error)")
+        }
+    }
+
+    private func scheduleAssistantDraftSave() {
+        assistantDraftSaveWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.persistActiveAssistantConversation() }
+        assistantDraftSaveWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: item)
+    }
+
+    private func recordAssistantError(_ message: String) {
+        if state.assistantDiscussion == nil { state.assistantDiscussion = AssistantDiscussionState() }
+        state.assistantDiscussion?.lastError = message
+        state.assistantDiscussion?.activity = .restartRequired
+    }
+
+    private static func assistantTimestamp() -> UInt64 {
+        UInt64(max(0, Date().timeIntervalSince1970 * 1_000))
+    }
+
+    package func parameterIsAssistantSuggested(
+        surfaceID: String,
+        instanceID: String,
+        name: String
+    ) -> Bool {
+        assistantSuggestedParameters[parameterSessionKey(
+            surfaceID: surfaceID,
+            instanceID: instanceID
+        )]?.contains(name) == true
+    }
+
+    package func openAssistantTaskSuggestion(messageID: String, suggestionID: String) {
+        guard let suggestion = state.assistantDiscussion?.activeConversation?.messages
+            .first(where: { $0.id == messageID })?.taskSuggestions
+            .first(where: { $0.id == suggestionID }),
+              state.taskCatalog.contains(where: { $0.id == suggestion.taskId })
+        else {
+            recordAssistantError("The suggested task is not available in this build")
+            return
+        }
+        let tabID = "tab-assistant-\(suggestion.taskId)-\(UUID().uuidString.lowercased())"
+        openTab(WorkbenchTab(
+            id: tabID,
+            title: taskTitle(suggestion.taskId),
+            kind: .task,
+            taskID: suggestion.taskId
+        ))
+        selectTask(suggestion.taskId, tabID: tabID)
+        for (name, value) in suggestion.parameters.sorted(by: { $0.key < $1.key }) {
+            setGenericTaskValue(
+                taskID: suggestion.taskId,
+                instanceID: tabID,
+                argumentID: name,
+                value: value
+            )
+        }
+        assistantSuggestedParameters[parameterSessionKey(
+            surfaceID: suggestion.taskId,
+            instanceID: tabID
+        )] = Set(suggestion.parameters.keys)
+    }
+
+    package func selectAIPrototypeAgent(_ agentID: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.selectAgent(agentID)
+        state.prototypeAI = projection
+    }
+
+    package func setAIPrototypeDraft(_ draft: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.setDraft(draft)
+        state.prototypeAI = projection
+    }
+
+    package func openAIPrototypeDrawer() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.setPresentation(.drawer)
+        state.prototypeAI = projection
+        if state.activeTabID == "tab-ai-prototype" {
+            state.activeTabID = state.tabs.first { $0.kind == .notebook }?.id
+                ?? state.tabs.first?.id
+                ?? ""
+        }
+        state.tabs.removeAll { $0.id == "tab-ai-prototype" }
+    }
+
+    package func closeAIPrototypeConversation() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.setPresentation(.closed)
+        state.prototypeAI = projection
+        if state.activeTabID == "tab-ai-prototype" {
+            state.activeTabID = state.tabs.first { $0.kind == .notebook }?.id
+                ?? state.tabs.first?.id
+                ?? ""
+        }
+        state.tabs.removeAll { $0.id == "tab-ai-prototype" }
+    }
+
+    package func expandAIPrototypeConversation() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.setPresentation(.tab)
+        state.prototypeAI = projection
+        if !state.tabs.contains(where: { $0.id == "tab-ai-prototype" }) {
+            state.tabs.append(WorkbenchTab(
+                id: "tab-ai-prototype",
+                title: "AI · TW Hya discussion",
+                kind: .aiChat
+            ))
+        }
+        state.activeTabID = "tab-ai-prototype"
+    }
+
+    package func dockAIPrototypeConversation() {
+        openAIPrototypeDrawer()
+    }
+
+    package func openAIPrototypeTaskSuggestion() {
+        guard runtimeKind == .aiPrototype else { return }
+        let receiptID = "receipt-imager-cancelled"
+        selectPrototypeNotebookReceipt(receiptID)
+        if let tabIndex = state.tabs.firstIndex(where: { $0.kind == .task && $0.taskID == "imager" }) {
+            state.tabs[tabIndex].prototypeReceiptID = receiptID
+            state.activeTabID = state.tabs[tabIndex].id
+        } else {
+            openPrototypeNotebookTask(receiptID: receiptID)
+        }
+    }
+
+    package func selectAIPrototypeModel(_ model: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.selectModel(model)
+        state.prototypeAI = projection
+    }
+
+    package func selectAIPrototypeReasoningEffort(_ effort: PrototypeAIReasoningEffort) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.selectReasoningEffort(effort)
+        state.prototypeAI = projection
+    }
+
+    package func selectAIPrototypeTrustPreset(_ preset: PrototypeAITrustPreset) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.selectTrustPreset(preset)
+        state.prototypeAI = projection
+    }
+
+    package func selectAIPrototypePythonEnvironment(_ environmentID: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.selectPythonEnvironment(environmentID)
+        state.prototypeAI = projection
+    }
+
+    package func startAIPrototypeIndexing() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        let generation = projection.beginIndexing()
+        state.prototypeAI = projection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            guard let self, self.runtimeKind == .aiPrototype,
+                  var projection = self.state.prototypeAI
+            else { return }
+            projection.completeIndexing(generation: generation)
+            self.state.prototypeAI = projection
+        }
+    }
+
+    package func cancelAIPrototypeIndexing() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.cancelIndexing()
+        state.prototypeAI = projection
+    }
+
+    package func sendAIPrototypePrompt(_ prompt: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI,
+              let generation = projection.beginResponse(prompt: prompt)
+        else { return }
+        projection.setDraft("")
+        state.prototypeAI = projection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, self.runtimeKind == .aiPrototype,
+                  var projection = self.state.prototypeAI
+            else { return }
+            projection.completeResponse(generation: generation)
+            self.state.prototypeAI = projection
+        }
+    }
+
+    package func cancelAIPrototypeResponse() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.cancelResponse()
+        state.prototypeAI = projection
+    }
+
+    package func retryAIPrototypeResponse() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        let prompt = projection.activePrompt ?? "Retry the previous question with the same approved context."
+        projection.restartResponse()
+        guard let generation = projection.beginResponse(prompt: prompt) else {
+            state.prototypeAI = projection
+            return
+        }
+        state.prototypeAI = projection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, self.runtimeKind == .aiPrototype,
+                  var projection = self.state.prototypeAI
+            else { return }
+            projection.completeResponse(generation: generation)
+            self.state.prototypeAI = projection
+        }
+    }
+
+    package func restartAIPrototypeWorker() {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.restartResponse()
+        state.prototypeAI = projection
+    }
+
+    package func pinAIPrototypeMessage(_ messageID: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI,
+              let message = projection.pinMessage(messageID)
+        else { return }
+        let citations = message.citations.map { "- [\($0.label)] \($0.locator)" }.joined(separator: "\n")
+        let appendedMarkdown = """
+
+
+        ## AI note
+
+        \(message.text)
+
+        Sources:
+        \(citations)
+        """
+        updateActivePrototypeNotebook { document in
+            document.draftMarkdown += appendedMarkdown
+            document.savedMarkdown = document.draftMarkdown
+        }
+        state.prototypeAI = projection
+        state.activeTabID = state.tabs.first { $0.kind == .notebook }?.id
+            ?? state.tabs.first?.id
+            ?? ""
     }
 
     package func selectTutorialPrototypeSection(_ sectionID: String) {

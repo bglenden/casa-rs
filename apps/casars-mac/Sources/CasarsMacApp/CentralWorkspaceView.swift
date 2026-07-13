@@ -85,7 +85,7 @@ struct CentralWorkspaceView: View {
                 Button("AI Chat") {
                     store.openDefaultTab(kind: .aiChat)
                 }
-                .disabled(!store.state.isDemoProject)
+                .disabled(!store.state.hasProject)
                 Button("Python") {
                     store.openDefaultTab(kind: .python)
                 }
@@ -8490,8 +8490,22 @@ struct GenericTaskPanel: View {
         let isTutorialOverride = origin != "default" && store.state.tutorialProjects.contains {
             sourcePath.contains("/notebooks/\($0.tutorial.notebookFilename)#")
         }
+        let isAssistantSuggested = store.parameterIsAssistantSuggested(
+            surfaceID: activeTaskID,
+            instanceID: tabID,
+            name: parameter
+        )
         return HStack(spacing: 4) {
-            if isTutorialOverride {
+            if isAssistantSuggested {
+                Label("AI-suggested non-default", systemImage: "sparkles")
+                    .workbenchFont(.caption, weight: .semibold)
+                    .foregroundStyle(Color.purple)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.purple.opacity(0.09), in: Capsule())
+                    .accessibilityIdentifier("task.parameterSource.\(parameter)")
+                    .accessibilityValue("AI-suggested non-default")
+            } else if isTutorialOverride {
                 Label("Tutorial override", systemImage: "arrow.down.right.circle.fill")
                     .workbenchFont(.caption, weight: .semibold)
                     .foregroundStyle(Color.accentColor)
@@ -9565,6 +9579,16 @@ struct AIChatPanel: View {
     @State private var draft = ""
 
     var body: some View {
+        if store.isAIPrototypeRuntime {
+            AIChatPrototypeView(store: store, layout: .expanded)
+        } else if store.state.hasProject {
+            AssistantDiscussionView(store: store, layout: .expanded)
+        } else {
+            legacyFixturePanel
+        }
+    }
+
+    private var legacyFixturePanel: some View {
         VStack(spacing: 0) {
             PanelHeader(title: "AI Chat", subtitle: "Fixture assistant with explicit proposals and approval")
                 .padding()

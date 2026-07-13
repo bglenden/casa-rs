@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "casa-rs-radio-astronomy-primer",
+  "version": "1.0.0",
+  "documents": [
+    {
+      "path": "radio-interferometry-primer.md",
+      "title": "CASA-RS Radio Interferometry Primer",
+      "citation_label": "CASA-RS Radio Interferometry Primer v1.0",
+      "license": "LGPL-3.0-or-later",
+      "redistribution_basis": "Original CASA-RS project documentation",
+      "redistribution_cleared": true
+    }
+  ]
+}

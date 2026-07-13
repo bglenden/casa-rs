@@ -3,6 +3,141 @@ import XCTest
 @testable import CasarsMacCore
 
 final class WorkbenchStoreTests: XCTestCase {
+    func testAssistantContextsUseEachTaskTabSessionAndPreserveUserSelection() throws {
+        let parameters = RecordingSurfaceParameterClient()
+        let bundle = try parameters.loadBundle(surfaceID: "imager")
+        let snapshot = try parameters.defaults(surfaceID: "imager")
+        var first = SurfaceParameterSession(
+            bundle: bundle,
+            snapshot: snapshot,
+            selectedSource: .defaults,
+            baseProfileTOML: nil,
+            baseProfilePath: nil,
+            workspace: "/project"
+        )
+        var second = first
+        first.draftText["robust"] = "0.25"
+        second.draftText["robust"] = "-1.0"
+
+        var discussion = AssistantDiscussionState()
+        discussion.contexts = [
+            AssistantContextItemState(
+                id: "task:task-a",
+                kind: "task",
+                label: "First",
+                summary: "previous",
+                excerpt: "previous",
+                byteCount: 8,
+                contentSha256: "old",
+                untrustedEvidence: true,
+                selected: false
+            ),
+            AssistantContextItemState(
+                id: "task:task-b",
+                kind: "task",
+                label: "Second",
+                summary: "previous",
+                excerpt: "previous",
+                byteCount: 8,
+                contentSha256: "old",
+                untrustedEvidence: true,
+                selected: true
+            ),
+        ]
+        var state = EmptyWorkbench.makeState()
+        state.tabs = [
+            WorkbenchTab(id: "task-a", title: "First", kind: .task, taskID: "imager"),
+            WorkbenchTab(id: "task-b", title: "Second", kind: .task, taskID: "imager"),
+        ]
+        state.parameterSessions = [
+            "task-a::imager": first,
+            "task-b::imager": second,
+        ]
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+
+        store.refreshAssistantDiscussionContexts()
+
+        let contexts = try XCTUnwrap(store.state.assistantDiscussion?.contexts)
+        let firstContext = try XCTUnwrap(contexts.first { $0.id == "task:task-a" })
+        let secondContext = try XCTUnwrap(contexts.first { $0.id == "task:task-b" })
+        XCTAssertTrue(firstContext.excerpt.contains("robust = 0.25"))
+        XCTAssertTrue(secondContext.excerpt.contains("robust = -1.0"))
+        XCTAssertFalse(firstContext.selected)
+        XCTAssertTrue(secondContext.selected)
+    }
+
+    func testAssistantSendRefreshesTheBoundedMCPProjectionFromCurrentTabs() throws {
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-assistant-context-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: project) }
+
+        let parameters = RecordingSurfaceParameterClient()
+        let bundle = try parameters.loadBundle(surfaceID: "imager")
+        let snapshot = try parameters.defaults(surfaceID: "imager")
+        var session = SurfaceParameterSession(
+            bundle: bundle,
+            snapshot: snapshot,
+            selectedSource: .defaults,
+            baseProfileTOML: nil,
+            baseProfilePath: nil,
+            workspace: project.path
+        )
+        session.draftText["robust"] = "-0.75"
+
+        let persistence = UniFFIAssistantPersistenceClient()
+        var conversation = try persistence.createConversation(
+            projectRoot: project.path,
+            title: "Context refresh",
+            attachment: AssistantAttachmentState(
+                kind: "task",
+                identifier: "imager",
+                label: "Imager",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
+        )
+        conversation.draft = "Inspect the current imager parameters"
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        discussion.contexts = [AssistantContextItemState(
+            id: "task:task-a",
+            kind: "task",
+            label: "Stale",
+            summary: "stale",
+            excerpt: "robust = 0.0",
+            byteCount: 12,
+            contentSha256: "old",
+            untrustedEvidence: true,
+            selected: true
+        )]
+
+        var state = EmptyWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.project.source = .probed
+        state.tabs = [WorkbenchTab(id: "task-a", title: "Imager", kind: .task, taskID: "imager")]
+        state.parameterSessions = ["task-a::imager": session]
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+
+        store.sendAssistantPrompt()
+
+        let projectionURL = project.appendingPathComponent(".casa-rs/assistant-context.json")
+        let projectionData = try Data(contentsOf: projectionURL)
+        let projection = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: projectionData) as? [String: Any]
+        )
+        let openTabs = try XCTUnwrap(projection["open_tabs"] as? [[String: Any]])
+        XCTAssertEqual(openTabs.count, 1)
+        XCTAssertTrue((openTabs[0]["excerpt"] as? String)?.contains("robust = -0.75") == true)
+        XCTAssertEqual(
+            store.state.assistantDiscussion?.activeConversation?.selectedContextIds,
+            ["task:task-a"]
+        )
+    }
+
     func testLocalTWHyaMeasurementSetPlotTimingDiagnostic() throws {
         guard ProcessInfo.processInfo.environment["CASA_RS_RUN_LOCAL_TIMING"] == "1" else {
             throw XCTSkip("Set CASA_RS_RUN_LOCAL_TIMING=1 to run local TW Hya plot timing diagnostics.")
@@ -4110,7 +4245,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["spw"], "0")
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["imagename"], "casa-rs-runs/imager-1/probed.ms-imager")
         XCTAssertEqual(store.state.genericTaskToggles["imager"]?["dirty_only"], true)
-        XCTAssertTrue(store.state.lastErrors.contains("AI chat is not connected yet"))
+        XCTAssertFalse(store.state.lastErrors.contains("AI chat is not connected yet"))
         XCTAssertTrue(store.state.lastErrors.contains("Python is not connected yet"))
         XCTAssertFalse(store.state.lastErrors.contains("Task panels are not connected for real projects yet"))
 

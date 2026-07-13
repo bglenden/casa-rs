@@ -7,6 +7,8 @@
 //! both persisted formats so native, terminal, command-line, and Python
 //! surfaces cannot drift into independent storage implementations.
 
+mod assistant;
+mod corpus;
 mod ids;
 mod markdown;
 mod receipt;
@@ -14,7 +16,19 @@ mod store;
 mod tutorial;
 mod visualization;
 
-pub use ids::{CellId, NotebookId, RunId};
+pub use assistant::{
+    ASSISTANT_PROFILE_VERSION, ASSISTANT_TRANSCRIPT_SCHEMA_VERSION, AssistantActivity,
+    AssistantActivityState, AssistantAttachment, AssistantAuthorityPreset, AssistantBackendSession,
+    AssistantCitation, AssistantCitationKind, AssistantContextItem, AssistantContextKind,
+    AssistantError, AssistantMessage, AssistantMessageRole, AssistantPinReference,
+    AssistantPythonProvenance, AssistantSessionProfile, AssistantStore, AssistantTaskSuggestion,
+    ConversationTranscript,
+};
+pub use corpus::{
+    CORPUS_SCHEMA_VERSION, CorpusCitation, CorpusDocument, CorpusDocumentInput, CorpusError,
+    CorpusIndex, CorpusIndexReport, CorpusLayer, CorpusSearchHit,
+};
+pub use ids::{AssistantMessageId, AssistantPinId, CellId, ConversationId, NotebookId, RunId};
 pub use markdown::{CellKind, NotebookCell, NotebookDocument, NotebookParseError, TaskCellIntent};
 pub use receipt::{
     ApprovalRecord, ArtifactReference, ExecutionInput, ExecutionReceipt, ExecutionStatus,

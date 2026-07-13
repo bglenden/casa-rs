@@ -2773,6 +2773,10 @@ public struct WorkbenchState: Codable, Equatable {
     package var prototypePython: PrototypePythonNotebookProjection?
     /// Ephemeral fixture projection present only for the Wave 3 tutorial interaction prototype.
     package var prototypeTutorial: TutorialNotebookPrototypeProjection?
+    /// Ephemeral fixture projection present only for the Wave 4 AI interaction prototype.
+    package var prototypeAI: PrototypeAIChatProjection?
+    /// Production provider-neutral conversations persisted by `casa-notebook`.
+    package var assistantDiscussion: AssistantDiscussionState?
     public var activeTaskID: String
     public var taskUISchemas: [String: TaskUISchema]
     public var parameterSessions: [String: SurfaceParameterSession]
@@ -2847,6 +2851,8 @@ public struct WorkbenchState: Codable, Equatable {
         prototypeNotebook = nil
         prototypePython = nil
         prototypeTutorial = nil
+        prototypeAI = nil
+        assistantDiscussion = nil
         self.activeTaskID = activeTaskID
         self.taskUISchemas = taskUISchemas
         self.parameterSessions = parameterSessions
@@ -2923,13 +2929,17 @@ public struct WorkbenchState: Codable, Equatable {
         prototypeTutorial != nil
     }
 
+    package var isAIPrototype: Bool {
+        prototypeAI != nil
+    }
+
     package var activeTutorialProject: TutorialProjectState? {
         guard let notebookID = scientificNotebooks?.activeNotebookID else { return nil }
         return tutorialProjects.first { $0.tutorial.notebookId == notebookID }
     }
 
     package var isPrototype: Bool {
-        isNotebookPrototype || isPythonPrototype || isTutorialPrototype
+        isNotebookPrototype || isPythonPrototype || isTutorialPrototype || isAIPrototype
     }
 
     public var isDemoProject: Bool {
@@ -2993,6 +3003,81 @@ package struct DebugTutorialProjectSnapshot: Codable, Equatable {
     }
 }
 
+package struct DebugPrototypeAIChatSnapshot: Codable, Equatable {
+    package var scenario: AIChatPrototypeScenario
+    package var presentation: PrototypeAIChatPresentation
+    package var primaryAttachment: String
+    package var draft: String
+    package var workspaceSourceIDs: [String]
+    package var openTabSourceIDs: [String]
+    package var agent: String
+    package var model: String
+    package var reasoningEffort: PrototypeAIReasoningEffort
+    package var account: String
+    package var usageRemaining: String
+    package var trustPreset: PrototypeAITrustPreset
+    package var pythonEnvironment: String
+    package var corpusState: PrototypeAIActivityState
+    package var responseState: PrototypeAIActivityState
+    package var availableContextIDs: [String]
+    package var messageCount: Int
+    package var pinnedMessageCount: Int
+    package var productionBoundaryCalls: Int
+
+    package init(state: PrototypeAIChatProjection) {
+        scenario = state.scenario
+        presentation = state.presentation
+        primaryAttachment = state.primaryAttachment
+        draft = state.draft
+        workspaceSourceIDs = state.workspaceSources.map(\.id)
+        openTabSourceIDs = state.openTabSources.map(\.id)
+        agent = state.selectedAgent?.label ?? state.selectedAgentID
+        model = state.selectedModel
+        reasoningEffort = state.reasoningEffort
+        account = "\(state.account.label) · \(state.account.status)"
+        usageRemaining = state.usage.compactLabel
+        trustPreset = state.trustPreset
+        pythonEnvironment = state.selectedPythonEnvironment?.label
+            ?? state.selectedPythonEnvironmentID
+        corpusState = state.corpusState
+        responseState = state.responseState
+        availableContextIDs = state.contexts.map(\.id)
+        messageCount = state.messages.count
+        pinnedMessageCount = state.pinnedMessageCount
+        productionBoundaryCalls = state.productionBoundaryCalls
+    }
+}
+
+package struct DebugAssistantDiscussionSnapshot: Codable, Equatable {
+    package var presentation: AssistantDiscussionPresentation
+    package var activity: AssistantDiscussionActivity
+    package var activeConversationID: String?
+    package var conversationCount: Int
+    package var messageCount: Int
+    package var provider: String?
+    package var model: String?
+    package var selectedContextIDs: [String]
+    package var estimatedEgressBytes: UInt64
+    package var corpusStatus: String
+    package var lastError: String?
+
+    package init(state: AssistantDiscussionState) {
+        presentation = state.presentation
+        activity = state.activity
+        activeConversationID = state.activeConversationID
+        conversationCount = state.conversations.count
+        messageCount = state.activeConversation?.messages.count ?? 0
+        provider = state.activeConversation?.profile.backendId
+        model = state.activeConversation?.profile.model
+        selectedContextIDs = state.contexts.filter(\.selected).map(\.id)
+        estimatedEgressBytes = state.contexts.filter(\.selected).reduce(0) {
+            $0 + $1.byteCount
+        }
+        corpusStatus = state.corpusStatus
+        lastError = state.lastError
+    }
+}
+
 public struct DebugStateSnapshot: Codable, Equatable {
     public var activeProject: String
     public var activeLeftDockMode: DockMode
@@ -3004,6 +3089,8 @@ public struct DebugStateSnapshot: Codable, Equatable {
     package var prototypeNotebook: DebugPrototypeScientificNotebookSnapshot?
     package var prototypePython: DebugPrototypePythonNotebookSnapshot?
     package var prototypeTutorial: DebugTutorialNotebookPrototypeSnapshot?
+    package var prototypeAI: DebugPrototypeAIChatSnapshot?
+    package var assistantDiscussion: DebugAssistantDiscussionSnapshot?
     package var tutorials: [DebugTutorialProjectSnapshot]
     public var scientificNotebook: DebugScientificNotebookSnapshot?
     public var discoveredDatasets: [String]
@@ -3043,6 +3130,8 @@ public struct DebugStateSnapshot: Codable, Equatable {
         prototypeNotebook = state.prototypeNotebook.map(DebugPrototypeScientificNotebookSnapshot.init(state:))
         prototypePython = state.prototypePython.map(DebugPrototypePythonNotebookSnapshot.init(state:))
         prototypeTutorial = state.prototypeTutorial.map(DebugTutorialNotebookPrototypeSnapshot.init(state:))
+        prototypeAI = state.prototypeAI.map(DebugPrototypeAIChatSnapshot.init(state:))
+        assistantDiscussion = state.assistantDiscussion.map(DebugAssistantDiscussionSnapshot.init(state:))
         tutorials = state.tutorialProjects.map(DebugTutorialProjectSnapshot.init(state:))
         scientificNotebook = state.scientificNotebooks.map(DebugScientificNotebookSnapshot.init(state:))
         activeLeftDockMode = state.dockMode

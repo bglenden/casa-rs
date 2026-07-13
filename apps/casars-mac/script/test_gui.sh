@@ -17,6 +17,11 @@ fi
 
 command -v xcodebuild >/dev/null
 
+if [[ -z "${CASA_RS_GUI_TEST_PYTHON:-}" ]]; then
+  CASA_RS_GUI_TEST_PYTHON="$("$REPO_ROOT/scripts/resolve-python.sh" 3.10)"
+fi
+export CASA_RS_GUI_TEST_PYTHON
+
 if ! [[ "$COUNTDOWN_SECONDS" =~ ^[0-9]+$ ]]; then
   echo "CASA_RS_GUI_TEST_COUNTDOWN_SECONDS must be a non-negative integer" >&2
   exit 2
@@ -31,6 +36,7 @@ CARGO_INCREMENTAL=0 cargo build -p casars-frontend-services
 echo "==> Building CasarsMacUITests without launching the app"
 echo "==> Destination: $DESTINATION"
 echo "==> Result bundle: $RESULT_BUNDLE"
+echo "==> Python: $CASA_RS_GUI_TEST_PYTHON"
 
 xcodebuild build-for-testing \
   -project "$ROOT_DIR/CasarsMac.xcodeproj" \

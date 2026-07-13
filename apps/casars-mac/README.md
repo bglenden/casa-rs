@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-07-12
-Verification: swift test; just gui-test; swift run casars-mac --dump-debug-state --simulate-main-flow; swift run casars-mac --dump-debug-state --show-prototype notebook; swift run casars-mac --dump-debug-state --show-prototype python; swift run casars-mac --dump-debug-state --show-prototype tutorial; ./script/build_and_run.sh --verify
+Verification: swift test; just gui-test; swift run casars-mac --dump-debug-state --simulate-main-flow; swift run casars-mac --dump-debug-state --show-prototype notebook; swift run casars-mac --dump-debug-state --show-prototype python; swift run casars-mac --dump-debug-state --show-prototype tutorial; swift run casars-mac --dump-debug-state --show-prototype ai; ./script/build_and_run.sh --verify
 
 `casars-mac` is the SwiftUI prototype for the native macOS `casa-rs`
 workbench. The app keeps a synthetic demo fixture for layout and dry-run
@@ -23,10 +23,12 @@ swift run casars-mac --dump-debug-state --open-imager-ms /path/to/input.ms
 swift run casars-mac --dump-debug-state --show-prototype notebook --prototype-state happy-path
 swift run casars-mac --dump-debug-state --show-prototype python --prototype-state happy-path
 swift run casars-mac --dump-debug-state --show-prototype tutorial --prototype-state happy-path
+swift run casars-mac --dump-debug-state --show-prototype ai --prototype-state happy-path
 swift run casars-mac --capture-gui-evidence --capture-kind imager-progress-mockup --output /tmp/imager-progress.png
 swift run casars-mac --capture-gui-evidence --capture-kind notebook-prototype --prototype-state external-conflict --output /tmp/notebook-conflict.png
 swift run casars-mac --capture-gui-evidence --capture-kind python-prototype --prototype-state happy-path --output /tmp/python-notebook.png
 swift run casars-mac --capture-gui-evidence --capture-kind tutorial-prototype --prototype-state happy-path --output /tmp/tutorial-notebook.png
+swift run casars-mac --capture-gui-evidence --capture-kind ai-prototype --prototype-state happy-path --output /tmp/ai-discussion.png
 ./script/build_and_run.sh
 ./script/build_and_run.sh --verify
 ./script/install-local-gui.sh --force
@@ -36,6 +38,7 @@ swift run casars-mac --capture-gui-evidence --capture-kind tutorial-prototype --
 ./script/build_and_run.sh --show-prototype notebook --prototype-state happy-path
 ./script/build_and_run.sh --show-prototype python --prototype-state happy-path
 ./script/build_and_run.sh --show-prototype tutorial --prototype-state happy-path
+./script/build_and_run.sh --show-prototype ai --prototype-state happy-path
 ./script/build_and_run.sh --empty
 ```
 
@@ -148,6 +151,18 @@ tutorial overrides are visibly and accessibly identified. Accepted states are
 adapter is invoked by that prototype. The normal production runtime now forks
 portable v1 templates into Rust-backed learner notebooks and uses the accepted
 interaction for explicitly approved verified acquisition.
+Pass `--show-prototype ai` for the revised Wave 4 fixture-only Codex discussion.
+It presents a conventional notebook side chat opened by a purple lower-right
+sparkle. Model, reasoning effort, and compact subscription usage remaining stay
+visible below the composer; one settings popover contains agent, ChatGPT
+subscription status, access preset, and scientific Python. The
+fixture exercises typed CASA context inspection, citations, collapsed agent
+activity, explicit Full-access confirmation, append-at-end notebook pins, and
+direct loading of suggested parameters into the normal task tab. Return sends;
+Shift-Return inserts a newline. The prototype does not launch Codex App Server,
+authenticate, query a corpus, execute Python or tasks, access a project, or use
+the network; the boundary counter remains zero. Accepted fixture states are
+`happy-path`, `rate-limited`, and `nonresponsive`.
 `swift run casars-mac` is reserved for non-interactive debug-state commands and
 low-level executable diagnosis.
 

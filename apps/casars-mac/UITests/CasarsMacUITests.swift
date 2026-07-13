@@ -114,13 +114,23 @@ final class CasarsMacUITests: XCTestCase {
     func testTaskNavigationExecutionGesturesAndNeutralTaskCell() throws {
         launchPrototype()
 
+        try bringIntoView(
+            "notebook.parameters.open.receipt-imager-mfs",
+            in: "notebook.document.scroll",
+            deltaY: -220
+        )
+
         let parameterBlock = try require("notebook.parameters.open.receipt-imager-mfs")
         let status = try require("notebook.executionStatus.receipt-imager-mfs")
         XCTAssertGreaterThan(parameterBlock.frame.width, status.frame.width * 2, "Status color/label must remain a compact affordance, not task-cell decoration.")
         XCTAssertNotEqual(parameterBlock.identifier, status.identifier)
 
-        parameterBlock.click()
-        XCTAssertTrue(try require("prototypeTask.identity.receipt-imager-mfs").waitForExistence(timeout: 5))
+        try clickIdentified("notebook.parameters.open.receipt-imager-mfs")
+        let taskIdentity = element("prototypeTask.identity.receipt-imager-mfs")
+        if !taskIdentity.waitForExistence(timeout: 2) {
+            try clickIdentified("notebook.parameters.open.receipt-imager-mfs")
+        }
+        XCTAssertTrue(taskIdentity.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertEqual(try textValue(try require("prototypeTask.parameter.vis")), "data/twhya_calibrated.ms")
 
         try require("central.tab.tab-scientific-notebook").click()
@@ -583,10 +593,7 @@ final class CasarsMacUITests: XCTestCase {
         try FileManager.default.createDirectory(at: pythonBin, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(
             at: pythonBin.appendingPathComponent("python3"),
-            withDestinationURL: URL(fileURLWithPath:
-                ProcessInfo.processInfo.environment["CASA_RS_GUI_TEST_PYTHON"]
-                    ?? "/usr/bin/python3"
-            )
+            withDestinationURL: URL(fileURLWithPath: try resolvedTestPython())
         )
         let notebookFile = notebooks.appendingPathComponent("python.md")
         let source = """
@@ -673,6 +680,89 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(visibleOutput.waitForExistence(timeout: 5))
     }
 
+    func testProductionAssistantPersistsCitedTailPinAndOpensSuggestedTask() throws {
+        let notebookID = "019f0000-0000-7000-8000-000000000401"
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-mac-ui-assistant-\(UUID().uuidString)", isDirectory: true)
+        let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
+        try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
+        try "<!-- casa-rs-notebook:v1 id=\(notebookID) -->\n\n# Analysis\n\nInitial note.\n"
+            .write(to: notebooks.appendingPathComponent("Analysis.md"), atomically: true, encoding: .utf8)
+        try "# Fixture source\nTyped CASA-RS provider contracts.\n"
+            .write(to: project.appendingPathComponent("ARCHITECTURE.md"), atomically: true, encoding: .utf8)
+        productionProjectURL = project
+
+        app = XCUIApplication()
+        ensureStoppedBeforeLaunch()
+        app.launchEnvironment["CASA_RS_AGENT_FIXTURE"] = "1"
+        app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = project.path
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "-NSAutomaticTextCompletionEnabled", "NO",
+            "--open-project", project.path,
+        ]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
+        try clickIdentified("dock.mode.notebooks")
+        XCTAssertTrue(notebookSelector(notebookID).waitForExistence(timeout: 5), app.debugDescription)
+        try clickIdentified("notebook.selector.open")
+        if element("inspector.collapse").isHittable { try clickIdentified("inspector.collapse") }
+
+        try clickIdentified("assistant.openDrawer")
+        XCTAssertTrue(element("assistant.discussion").waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(element("assistant.model").waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(element("assistant.effort").waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(element("assistant.usage").waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(element("assistant.settings").waitForExistence(timeout: 8), app.debugDescription)
+        replaceText("assistant.input", with: "How should I start weighting this image?")
+        let send = try require("assistant.send")
+        let sendReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"),
+            object: send
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [sendReady], timeout: 15),
+            .completed,
+            "Assistant sidecar did not become ready to send"
+        )
+        try clickIdentified("assistant.send")
+        let pinToNotebook = app.links["Add to notebook"].firstMatch
+        XCTAssertTrue(
+            pinToNotebook.waitForExistence(timeout: 15),
+            app.debugDescription
+        )
+
+        pinToNotebook.click()
+        XCTAssertTrue(app.staticTexts["Added to notebook"].firstMatch.waitForExistence(timeout: 5))
+
+        let saved = try String(contentsOf: notebooks.appendingPathComponent("Analysis.md"))
+        XCTAssertTrue(saved.contains("casa-rs-ai-pin:v1"), saved)
+        XCTAssertTrue(saved.contains("Use Briggs weighting with robust -0.5"))
+        XCTAssertTrue(saved.contains("CASA-RS Radio Interferometry Primer v1.0"))
+        XCTAssertTrue(saved.hasSuffix("\n"), "Notebook append should leave a normal Markdown trailing newline")
+        let conversations = project.appendingPathComponent(".casa-rs/conversations", isDirectory: true)
+        XCTAssertFalse((try FileManager.default.contentsOfDirectory(atPath: conversations.path)).isEmpty)
+
+        let openTask = app.links["Open imager task"].firstMatch
+        XCTAssertTrue(openTask.waitForExistence(timeout: 5), app.debugDescription)
+        openTask.click()
+        XCTAssertTrue(element("task.parameter.vis").waitForExistence(timeout: 8), app.debugDescription)
+        let taskScroll = try XCTUnwrap(
+            app.scrollViews.allElementsBoundByIndex.max {
+                $0.frame.width < $1.frame.width
+            },
+            app.debugDescription
+        )
+        for _ in 0..<6 {
+            taskScroll.scroll(byDeltaX: 0, deltaY: -420)
+        }
+        XCTAssertTrue(waitForValue("task.parameter.weighting", containing: "briggs"))
+        XCTAssertTrue(waitForValue("task.parameter.robust", containing: "-0.5"))
+        XCTAssertEqual(try accessibilityValue("task.parameterSource.weighting"), "AI-suggested non-default")
+        XCTAssertEqual(try accessibilityValue("task.parameterSource.robust"), "AI-suggested non-default")
+    }
+
     func testTutorialPrototypeLearnerNotesApprovalAndTaskLoading() throws {
         launchTutorialPrototype()
         let datasetID = "tutorial-dataset-twhya-calibrated"
@@ -704,6 +794,11 @@ final class CasarsMacUITests: XCTestCase {
         )
         XCTAssertEqual(try accessibilityValue("notebook.dirtyState"), "dirty")
 
+        try bringIntoView(
+            "tutorialPrototype.dataset.review.\(datasetID)",
+            in: "notebook.document.scroll",
+            deltaY: -260
+        )
         try clickIdentified("tutorialPrototype.dataset.review.\(datasetID)")
         XCTAssertTrue(try require("tutorialPrototype.approval.sheet").exists)
         XCTAssertEqual(try accessibilityValue("tutorialPrototype.approval.scheme"), "https")
@@ -847,6 +942,11 @@ final class CasarsMacUITests: XCTestCase {
     func testTutorialPrototypeCancellationResumeAndAttemptIdentity() throws {
         launchTutorialPrototype()
         let datasetID = "tutorial-dataset-twhya-calibrated"
+        try bringIntoView(
+            "tutorialPrototype.dataset.review.\(datasetID)",
+            in: "notebook.document.scroll",
+            deltaY: -260
+        )
         try clickIdentified("tutorialPrototype.dataset.review.\(datasetID)")
         try clickIdentified("tutorialPrototype.approval.approve")
 
@@ -886,6 +986,11 @@ final class CasarsMacUITests: XCTestCase {
     func testTutorialPrototypeChecksumFailureStaysCompactAndRetryRecovers() throws {
         launchTutorialPrototype(scenario: "checksum-failure")
         let datasetID = "tutorial-dataset-twhya-calibrated"
+        try bringIntoView(
+            "tutorialPrototype.dataset.review.\(datasetID)",
+            in: "notebook.document.scroll",
+            deltaY: -260
+        )
         try clickIdentified("tutorialPrototype.dataset.review.\(datasetID)")
         try clickIdentified("tutorialPrototype.approval.approve")
 
@@ -914,6 +1019,11 @@ final class CasarsMacUITests: XCTestCase {
     func testTutorialPrototypeDiskFailureShowsPlanAndRecoversExplicitly() throws {
         launchTutorialPrototype(scenario: "disk-failure")
         let datasetID = "tutorial-dataset-twhya-calibrated"
+        try bringIntoView(
+            "tutorialPrototype.dataset.review.\(datasetID)",
+            in: "notebook.document.scroll",
+            deltaY: -260
+        )
         try clickIdentified("tutorialPrototype.dataset.review.\(datasetID)")
         let diskPlan = try accessibilityValue("tutorialPrototype.approval.diskRequirement")
         XCTAssertTrue(diskPlan.contains("required"))
@@ -944,6 +1054,12 @@ final class CasarsMacUITests: XCTestCase {
     func testTutorialPrototypeAccessibilityAndIsolation() throws {
         launchTutorialPrototype()
 
+        try bringIntoView(
+            "tutorialPrototype.dataset.review.tutorial-dataset-twhya-calibrated",
+            in: "notebook.document.scroll",
+            deltaY: -260
+        )
+
         let visibleWindowFrame = app.windows.firstMatch.frame
         var unacceptedIssues: [String] = []
         try app.performAccessibilityAudit { issue in
@@ -971,15 +1087,23 @@ final class CasarsMacUITests: XCTestCase {
             }
             if issue.auditType.contains(.contrast),
                let frame = issue.element?.frame,
-               !frame.intersects(visibleWindowFrame)
+               !visibleWindowFrame.contains(frame)
             {
-                // XCTest audits lazily retained ScrollView descendants even
-                // when their frames are fully outside the visible window.
-                // The retained element screenshot is unrelated screen pixels,
-                // so there is no rendered contrast to evaluate at this state.
+                // XCTest audits lazily retained and edge-clipped ScrollView
+                // descendants. Their element snapshots include unrelated
+                // screen pixels, so they have no complete rendered foreground
+                // and background pair to evaluate at this scroll position.
                 return true
             }
-            unacceptedIssues.append(issue.compactDescription)
+            let element = issue.element
+            unacceptedIssues.append(
+                "\(issue.compactDescription)"
+                    + " [type=\(issue.auditType), identifier=\(element?.identifier ?? "<none>"),"
+                    + " elementType=\(String(describing: element?.elementType)),"
+                    + " frame=\(String(describing: element?.frame)),"
+                    + " label=\(element?.label ?? "<none>"),"
+                    + " value=\(String(describing: element?.value))]"
+            )
             return true
         }
         XCTAssertTrue(unacceptedIssues.isEmpty, unacceptedIssues.joined(separator: "\n"))
@@ -997,6 +1121,114 @@ final class CasarsMacUITests: XCTestCase {
         }
         app.typeKey(.escape, modifierFlags: [])
         assertZeroTutorialProductionBoundaryCalls()
+    }
+
+    func testAIPrototypeCitedAnswerPinAndApprovedActions() throws {
+        launchAIPrototype(openDrawer: false)
+
+        XCTAssertTrue(try require("notebook.document.scroll").exists)
+        XCTAssertFalse(element("aiPrototype.drawer").exists)
+        XCTAssertTrue(try require("aiPrototype.openDrawer").label.contains("Discuss this notebook"))
+        try clickIdentified("aiPrototype.openDrawer")
+        XCTAssertTrue(try require("aiPrototype.drawer").exists)
+        XCTAssertFalse(element("aiPrototype.openDrawer").exists)
+
+        let resizeHandle = try require("aiPrototype.resizeHandle")
+        let drawerScroll = try require("aiPrototype.conversationScroll")
+        let initialHandleX = resizeHandle.frame.midX
+        let initialDrawerWidth = drawerScroll.frame.width
+        let dragStart = resizeHandle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        dragStart.press(forDuration: 0.1, thenDragTo: dragStart.withOffset(CGVector(dx: -60, dy: 0)))
+        XCTAssertLessThan(try require("aiPrototype.resizeHandle").frame.midX, initialHandleX - 35)
+        XCTAssertGreaterThan(try require("aiPrototype.conversationScroll").frame.width, initialDrawerWidth + 35)
+
+        XCTAssertTrue(try require("aiPrototype.boundaryStatus").label.contains("0 production calls"))
+        XCTAssertTrue(try require("aiPrototype.model").exists)
+        XCTAssertTrue(try require("aiPrototype.effort").exists)
+        XCTAssertTrue(try require("aiPrototype.usage").exists)
+        XCTAssertTrue(try require("aiPrototype.settings").exists)
+
+        try clickIdentified("aiPrototype.effort")
+        XCTAssertTrue(app.menuItems["High"].waitForExistence(timeout: 3))
+        app.menuItems["High"].click()
+        XCTAssertTrue(try require("aiPrototype.effort").value as? String == "High")
+
+        try clickIdentified("aiPrototype.usage")
+        XCTAssertTrue(try require("aiPrototype.usagePanel").exists)
+        app.typeKey(.escape, modifierFlags: [])
+
+        try clickIdentified("aiPrototype.settings")
+        XCTAssertTrue(try require("aiPrototype.settingsPanel").exists)
+        XCTAssertTrue(try require("aiPrototype.agent").exists)
+        XCTAssertTrue(try require("aiPrototype.account").exists)
+        XCTAssertTrue(try require("aiPrototype.trust").exists)
+        XCTAssertTrue(try require("aiPrototype.python").exists)
+
+        try clickIdentified("aiPrototype.trust")
+        XCTAssertTrue(app.menuItems["Full access"].waitForExistence(timeout: 3))
+        app.menuItems["Full access"].click()
+        XCTAssertTrue(try require("aiPrototype.fullAccessSheet").exists)
+        try clickIdentified("aiPrototype.fullAccess.confirm")
+        XCTAssertTrue(try require("aiPrototype.fullAccessIndicator").exists)
+
+        try clickIdentified("aiPrototype.contextPreview")
+        XCTAssertTrue(try require("aiPrototype.workspaceSource.tab-task").exists)
+        XCTAssertTrue(try require("aiPrototype.workspaceSource.corpus-radio").exists)
+        XCTAssertTrue(try require("aiPrototype.workspaceSource.source-casars").exists)
+        XCTAssertTrue(try require("aiPrototype.context.semantics").exists)
+        try clickIdentified("aiPrototype.context.close")
+
+        try clickIdentified("aiPrototype.suggestion.plot")
+        XCTAssertTrue(try require("aiPrototype.input").value as? String == "Compare the current plot with the TW Hya paper.")
+        try clickIdentified("aiPrototype.expand")
+        XCTAssertTrue(try require("aiPrototype.expanded").exists)
+        XCTAssertTrue(try require("aiPrototype.input").value as? String == "Compare the current plot with the TW Hya paper.")
+        try clickIdentified("aiPrototype.dock")
+        XCTAssertTrue(try require("aiPrototype.drawer").exists)
+
+        let composer = try require("aiPrototype.input")
+        composer.click()
+        composer.typeKey(.return, modifierFlags: [.shift])
+        XCTAssertFalse(element("aiPrototype.message.ai-assistant-1").exists)
+        composer.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(try require("aiPrototype.message.ai-assistant-1", timeout: 5).exists)
+        try clickIdentified("aiPrototype.citation.citation-paper")
+        XCTAssertTrue(try require("aiPrototype.sourcePreview").exists)
+        XCTAssertTrue(try require("aiPrototype.message.ai-assistant-1.activity").exists)
+        try clickIdentified("aiPrototype.message.ai-assistant-1.activity")
+        try clickIdentified("aiPrototype.message.ai-assistant-1.addToNotebook")
+        XCTAssertFalse(element("aiPrototype.pinSheet").exists)
+        try clickIdentified("notebook.viewMode.raw")
+        let rawMarkdown = try textValue(try require("notebook.editor.raw"))
+        XCTAssertTrue(rawMarkdown.contains("## AI note"))
+        XCTAssertTrue(rawMarkdown.hasSuffix("- [casa-ms source] crates/casa-ms/src/msexplore.rs · build_plot_document"))
+
+        try clickIdentified("aiPrototype.message.ai-assistant-1.openTask")
+        XCTAssertTrue(try require("prototypeTask.parameterSource.robust").exists)
+        XCTAssertTrue(try require("prototypeTask.parameter.robust").value as? String == "-0.5")
+        assertZeroAIProductionBoundaryCalls()
+    }
+
+    func testAIPrototypeRateLimitAndNonresponsiveRecoveryAreExplicit() throws {
+        launchAIPrototype(scenario: "rate-limited")
+        try clickIdentified("aiPrototype.suggestion.plot")
+        try clickIdentified("aiPrototype.send")
+        XCTAssertTrue(try require("aiPrototype.response.error", timeout: 5).exists)
+        try clickIdentified("aiPrototype.response.retry")
+        XCTAssertTrue(try require("aiPrototype.message.ai-assistant-3", timeout: 5).exists)
+        assertZeroAIProductionBoundaryCalls()
+
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 5))
+        launchAIPrototype(scenario: "nonresponsive")
+        try clickIdentified("aiPrototype.suggestion.task")
+        try clickIdentified("aiPrototype.send")
+        XCTAssertTrue(try require("aiPrototype.response.streaming", timeout: 3).exists)
+        try clickIdentified("aiPrototype.response.cancel")
+        XCTAssertTrue(try require("aiPrototype.response.restartRequired").exists)
+        try clickIdentified("aiPrototype.response.restart")
+        XCTAssertFalse(element("aiPrototype.response.restartRequired").exists)
+        assertZeroAIProductionBoundaryCalls()
     }
 
     private func launchPrototype(scenario: String = "happy-path") {
@@ -1048,6 +1280,38 @@ final class CasarsMacUITests: XCTestCase {
             app.debugDescription
         )
         XCTAssertTrue(element("tutorialPrototype.progressSummary").waitForExistence(timeout: 5))
+    }
+
+    private func launchAIPrototype(
+        scenario: String = "happy-path",
+        openDrawer: Bool = true
+    ) {
+        app = XCUIApplication()
+        ensureStoppedBeforeLaunch()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "-NSAutomaticTextCompletionEnabled", "NO",
+            "--show-prototype", "ai",
+            "--prototype-state", scenario,
+        ]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(
+            app.windows["casa-rs Workbench"].waitForExistence(timeout: 10),
+            app.debugDescription
+        )
+        XCTAssertTrue(
+            element("notebook.document.scroll").waitForExistence(timeout: 5),
+            app.debugDescription
+        )
+        XCTAssertTrue(element("aiPrototype.openDrawer").waitForExistence(timeout: 5))
+        if openDrawer {
+            element("aiPrototype.openDrawer").click()
+            XCTAssertTrue(
+                element("aiPrototype.boundaryStatus").waitForExistence(timeout: 5),
+                app.debugDescription
+            )
+        }
     }
 
     private func ensureStoppedBeforeLaunch() {
@@ -1283,10 +1547,47 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertEqual(audit.value as? String ?? audit.label, "0")
     }
 
+    private func resolvedTestPython() throws -> String {
+        let environment = ProcessInfo.processInfo.environment
+        let pathCandidates = (environment["PATH"] ?? "")
+            .split(separator: ":")
+            .flatMap { directory in
+                ["python3", "python"].map {
+                    URL(fileURLWithPath: String(directory)).appendingPathComponent($0).path
+                }
+            }
+        let candidates = [environment["CASA_RS_GUI_TEST_PYTHON"]].compactMap { $0 }
+            + pathCandidates
+            + [
+                "/opt/homebrew/bin/python3",
+                "/usr/local/bin/python3",
+                "/opt/local/bin/python3",
+                "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+            ]
+        if let executable = candidates.first(where: {
+            FileManager.default.isExecutableFile(atPath: $0)
+                && URL(fileURLWithPath: $0).resolvingSymlinksInPath().path != "/usr/bin/python3"
+                && !$0.contains("/Xcode.app/Contents/Developer/")
+        }) {
+            return executable
+        }
+        throw XCTSkip("a standalone Python runtime is required for production GUI tests")
+    }
+
     private func assertZeroTutorialProductionBoundaryCalls() {
         let audit = element("tutorialPrototype.boundaryAudit")
         XCTAssertTrue(audit.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertEqual(audit.value as? String ?? audit.label, "0")
+    }
+
+    private func assertZeroAIProductionBoundaryCalls() {
+        let audit = element("aiPrototype.boundaryStatus")
+        XCTAssertTrue(audit.waitForExistence(timeout: 3), app.debugDescription)
+        let value = audit.value as? String ?? ""
+        XCTAssertTrue(
+            value == "0" || audit.label.contains("0 production calls"),
+            "Expected zero AI production calls, got value=\(value.debugDescription) label=\(audit.label)"
+        )
     }
 
     private func taskCells(in markdown: String) -> [String] {

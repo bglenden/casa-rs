@@ -103,15 +103,15 @@ while [[ $# -gt 0 ]]; do
       ;;
     --show-prototype)
       if [[ $# -lt 2 ]]; then
-        echo "--show-prototype requires: notebook, python, or tutorial" >&2
+        echo "--show-prototype requires: notebook, python, tutorial, or ai" >&2
         exit 2
       fi
       case "$2" in
-        notebook|python|tutorial)
+        notebook|python|tutorial|ai)
           SHOW_PROTOTYPE="$2"
           ;;
         *)
-          echo "--show-prototype requires: notebook, python, or tutorial" >&2
+          echo "--show-prototype requires: notebook, python, tutorial, or ai" >&2
           exit 2
           ;;
       esac
@@ -129,7 +129,7 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       case "$2" in
-        happy-path|external-conflict|failure|nonresponsive|checksum-failure|disk-failure|offline|unsafe-archive)
+        happy-path|external-conflict|failure|nonresponsive|rate-limited|checksum-failure|disk-failure|offline|unsafe-archive)
           PROTOTYPE_STATE="$2"
           ;;
         *)
@@ -156,7 +156,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     *)
-      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH [--tutorial-section ID]|--show-prototype notebook|python|tutorial [--prototype-state STATE]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
+      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH [--tutorial-section ID]|--show-prototype notebook|python|tutorial|ai [--prototype-state STATE]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
       exit 2
       ;;
   esac
@@ -173,7 +173,7 @@ if [[ "$PROTOTYPE_STATE_SET" == "1" && -z "$SHOW_PROTOTYPE" ]]; then
 fi
 
 case "$SHOW_PROTOTYPE:$PROTOTYPE_STATE" in
-  :happy-path|notebook:happy-path|notebook:external-conflict|python:happy-path|python:failure|python:nonresponsive|tutorial:happy-path|tutorial:checksum-failure|tutorial:disk-failure|tutorial:offline|tutorial:unsafe-archive)
+  :happy-path|notebook:happy-path|notebook:external-conflict|python:happy-path|python:failure|python:nonresponsive|tutorial:happy-path|tutorial:checksum-failure|tutorial:disk-failure|tutorial:offline|tutorial:unsafe-archive|ai:happy-path|ai:rate-limited|ai:nonresponsive)
     ;;
   *)
     echo "prototype state '$PROTOTYPE_STATE' is not valid for '$SHOW_PROTOTYPE'" >&2
@@ -266,7 +266,7 @@ if [[ "$MODE" == "--stage-only" || "$MODE" == "stage" ]]; then
 fi
 stage_temp_real_project
 "$REPO_ROOT/scripts/generate-frontend-bindings.sh" "$REPO_ROOT/target/frontend-bindings"
-cargo build --release -p casars-frontend-services --lib
+cargo build --release -p casars-frontend-services --lib --bin casars-project-mcp
 TASK_HELPER_SPECS=()
 if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" && -z "$SHOW_PROTOTYPE" ]]; then
   while IFS= read -r spec; do
@@ -317,6 +317,13 @@ if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" && -z "$SHOW_PROTOTYPE" ]]; then
   done
 fi
 cp "$APP_ICON_SOURCE" "$APP_RESOURCES/$APP_ICON_NAME"
+core_resource_bundle="$(dirname "$BUILD_BINARY")/casars-mac_CasarsMacCore.bundle"
+if [[ -d "$core_resource_bundle" ]]; then
+  cp -R "$core_resource_bundle" "$APP_RESOURCES/"
+fi
+mkdir -p "$APP_RESOURCES/bin"
+cp "$RUST_PROFILE_DIR/casars-project-mcp" "$APP_RESOURCES/bin/casars-project-mcp"
+bash "$ROOT_DIR/script/stage-source-corpus.sh" "$APP_RESOURCES/casars-source"
 chmod +x "$APP_BINARY"
 if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" && -z "$SHOW_PROTOTYPE" ]]; then
   for spec in "${TASK_HELPER_SPECS[@]}"; do
@@ -476,7 +483,7 @@ case "$MODE" in
     echo "==> Staged $APP_BUNDLE"
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH|--show-prototype notebook|python|tutorial [--prototype-state STATE]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
+    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH|--show-prototype notebook|python|tutorial|ai [--prototype-state STATE]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
     exit 2
     ;;
 esac

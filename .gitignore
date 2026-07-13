@@ -12,6 +12,7 @@ TempLattice*/
 IMAGING_WEIGHT_*/
 __pycache__/
 *.py[cod]
+**/node_modules/
 .codex/
 .codex-run-worktrees/
 # Per-workspace managed Last profiles are runtime state, including when a
