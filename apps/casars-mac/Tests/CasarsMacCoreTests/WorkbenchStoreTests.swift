@@ -4110,7 +4110,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["spw"], "0")
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["imagename"], "casa-rs-runs/imager-1/probed.ms-imager")
         XCTAssertEqual(store.state.genericTaskToggles["imager"]?["dirty_only"], true)
-        XCTAssertTrue(store.state.lastErrors.contains("AI chat is not connected yet"))
+        XCTAssertFalse(store.state.lastErrors.contains("AI chat is not connected yet"))
         XCTAssertTrue(store.state.lastErrors.contains("Python is not connected yet"))
         XCTAssertFalse(store.state.lastErrors.contains("Task panels are not connected for real projects yet"))
 

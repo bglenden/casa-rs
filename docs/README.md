@@ -25,6 +25,9 @@ This directory holds stable project documentation.
 - [`scientific-notebooks-and-assistant.md`](scientific-notebooks-and-assistant.md)
   - accepted Markdown notebook, execution receipt, tutorial, Python, local
     corpus, assistant, and prototype-first wave design
+- [`assistant-security.md`](assistant-security.md)
+  - current Wave 4 sidecar authority, corpus ownership, context-egress,
+    approval, isolated execution, and credential boundaries
 - [`reference/task-parameters.md`](reference/task-parameters.md)
   - generated catalog of every task and session parameter surface
 - [`provider-contracts.md`](provider-contracts.md)

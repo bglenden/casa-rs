@@ -673,6 +673,71 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(visibleOutput.waitForExistence(timeout: 5))
     }
 
+    func testProductionAssistantPersistsPinAndDestinationFirstProposal() throws {
+        let notebookID = "019f0000-0000-7000-8000-000000000401"
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-mac-ui-assistant-\(UUID().uuidString)", isDirectory: true)
+        let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
+        try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
+        try "<!-- casa-rs-notebook:v1 id=\(notebookID) -->\n\n# Analysis\n\nInitial note.\n"
+            .write(to: notebooks.appendingPathComponent("Analysis.md"), atomically: true, encoding: .utf8)
+        try "# Fixture source\nTyped CASA-RS provider contracts.\n"
+            .write(to: project.appendingPathComponent("ARCHITECTURE.md"), atomically: true, encoding: .utf8)
+        productionProjectURL = project
+
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let entrypoint = repository.appendingPathComponent("apps/casars-assistant/dist/main.js").path
+        let node = ["/opt/homebrew/bin/node", "/usr/local/bin/node"]
+            .first(where: FileManager.default.isExecutableFile(atPath:))
+        guard let node, FileManager.default.fileExists(atPath: entrypoint) else {
+            throw XCTSkip("assistant adapter or Node is not built")
+        }
+
+        app = XCUIApplication()
+        ensureStoppedBeforeLaunch()
+        app.launchEnvironment["CASARS_ASSISTANT_FAKE"] = "1"
+        app.launchEnvironment["CASA_RS_ASSISTANT_NODE"] = node
+        app.launchEnvironment["CASA_RS_ASSISTANT_ENTRYPOINT"] = entrypoint
+        app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = project.path
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "-NSAutomaticTextCompletionEnabled", "NO",
+            "--open-project", project.path,
+        ]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
+        try clickIdentified("dock.mode.notebooks")
+        XCTAssertTrue(notebookSelector(notebookID).waitForExistence(timeout: 5), app.debugDescription)
+        try clickIdentified("notebook.selector.open")
+        if element("inspector.collapse").isHittable { try clickIdentified("inspector.collapse") }
+
+        try clickIdentified("assistant.openDrawer")
+        XCTAssertTrue(element("assistant.discussion").waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(element("assistant.provider").waitForExistence(timeout: 8), app.debugDescription)
+        replaceText("assistant.input", with: "Please propose a note")
+        try clickIdentified("assistant.send")
+        XCTAssertTrue(
+            app.buttons["Pin to notebook"].firstMatch.waitForExistence(timeout: 8),
+            app.debugDescription
+        )
+
+        app.buttons["Pin to notebook"].firstMatch.click()
+        XCTAssertTrue(element("assistant.pin.confirm").waitForExistence(timeout: 5))
+        try clickIdentified("assistant.pin.confirm")
+        XCTAssertTrue(element("assistant.openNotebookSuggestions").waitForExistence(timeout: 5))
+        try clickIdentified("assistant.openNotebookSuggestions")
+        XCTAssertTrue(app.buttons["Insert at notebook tail"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["Insert at notebook tail"].firstMatch.click()
+
+        let saved = try String(contentsOf: notebooks.appendingPathComponent("Analysis.md"))
+        XCTAssertTrue(saved.contains("casa-rs-ai-pin:v1"))
+        XCTAssertTrue(saved.contains("A deterministic proposed note."))
+        let conversations = project.appendingPathComponent(".casa-rs/conversations", isDirectory: true)
+        XCTAssertFalse((try FileManager.default.contentsOfDirectory(atPath: conversations.path)).isEmpty)
+    }
+
     func testTutorialPrototypeLearnerNotesApprovalAndTaskLoading() throws {
         launchTutorialPrototype()
         let datasetID = "tutorial-dataset-twhya-calibrated"

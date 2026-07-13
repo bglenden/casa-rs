@@ -151,19 +151,26 @@ becomes a persisted or public contract. `tutorial-pack.v0` has no runtime
 reader or GUI state; an explicit Rust one-shot migrator converts its prose,
 native GUI task steps, and regression overlay into v1.
 
-The planned `casars-assistant` TypeScript sidecar is isolated behind a
-CASA-RS-owned JSONL/stdio protocol and may use Pi as a replaceable model/auth
-adapter. Swift remains the native interaction layer, and
-`casars-frontend-services` remains a projection layer rather than a persistence
-implementation. The assistant modules remain accepted architecture but do not
-exist until their implementation wave lands. Swift presents one project-owned
-conversation state either in an on-demand contextual drawer or in an expanded
-central AI tab; presentation changes do not copy transcripts or establish a
-second persistence boundary. Swift supplies the sidecar with typed read-only
-projections for every open tab, while Rust/provider contracts and the local
-corpus expose task schemas, parameters, persistent data semantics, project
-documents, and release/live source. Provider egress remains a bounded,
-per-turn manifest rather than a dump of that locally available context.
+`casars-assistant` is a TypeScript sidecar isolated behind the CASA-RS-owned
+JSONL/stdio protocol. Its exactly pinned Pi dependency is a replaceable
+model/auth adapter, not an authority boundary. `casa-notebook` owns durable
+provider-neutral conversations, citations, egress manifests, immutable pins,
+exact proposal receipts, and the private SQLite/FTS5/flat-vector corpus.
+`casars-frontend-services` only projects those Rust contracts. Swift owns native
+interaction, Keychain credential brokering, typed open-tab projections, bounded
+host-tool mediation, and process supervision.
+
+The sidecar runs under deny-by-default Seatbelt authority with provider network
+access but no project filesystem, SQLite, shell, Python, credential-file, or
+direct host-tool access. A distinct Seatbelt worker executes separately
+approved exact Python with no network, read-only approved science inputs, and
+one writable staging root. The CASA-RS-owned corpus combines a
+redistribution-cleared baseline, project `documents/`, release source/docs, and
+an optional commit-keyed live overlay; it never depends on a separate Radio
+Astronomy Oracle checkout. Host-mediated search returns only bounded cited
+evidence. Provider egress records initial typed context plus dynamically
+retrieved evidence instead of dumping locally available state. See
+`docs/assistant-security.md` for the executable security contract.
 
 Every notebook-program wave starts with a launchable deterministic GUI
 prototype and an explicit approval gate before real adapters are connected.

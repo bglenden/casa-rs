@@ -351,11 +351,12 @@ struct AIChatPrototypeView: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 8)
                     }
-                    PrototypeAIComposerEditor(
+                    AIComposerEditor(
                         text: Binding(
                             get: { projection.draft },
                             set: { store.setAIPrototypeDraft($0) }
                         ),
+                        accessibilityID: "aiPrototype.input",
                         onSubmit: sendDraft
                     )
                 }
@@ -628,8 +629,9 @@ struct AIChatPrototypeView: View {
     }
 }
 
-private struct PrototypeAIComposerEditor: NSViewRepresentable {
+struct AIComposerEditor: NSViewRepresentable {
     @Binding var text: String
+    let accessibilityID: String
     let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -657,7 +659,7 @@ private struct PrototypeAIComposerEditor: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.setAccessibilityLabel("Ask anything about this project")
         textView.setAccessibilityHelp("Return sends. Shift-Return inserts a new line.")
-        textView.setAccessibilityIdentifier("aiPrototype.input")
+        textView.setAccessibilityIdentifier(accessibilityID)
         textView.onSubmit = onSubmit
 
         let scrollView = NSScrollView()

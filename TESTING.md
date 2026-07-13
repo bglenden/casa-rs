@@ -240,6 +240,24 @@ For each wave:
   predetermined-question fixture is not Phase A approval evidence. Phase A
   does not claim authentication, network, retrieval, Python, task, download,
   notebook-write, or transcript persistence.
+- Wave 4 Phase B uses Rust contract tests for provider-neutral atomic
+  transcripts, exact insertion/execution approval invalidation, immutable pin
+  hashes/provenance, policy intersection, incremental corpus refresh, exact
+  cited chunks, and cleared baseline paths. TypeScript tests exercise the
+  constrained protocol, host-mediated retrieval, proposal-only mutation
+  requests, and fail-closed denial of executable tools. Focused native tests
+  exercise the generated Rust boundary, baseline/project/release ingestion,
+  portable Seatbelt startup, host-mediated tool round-trips, local/private web
+  denial, and the separate AI Python worker. Public-provider smoke is explicit
+  and Keychain-backed: `just assistant-live-smoke <provider> <model>` runs only
+  after the GUI has stored that provider's credential; normal CI skips it and
+  never accepts secrets through environment variables. The consolidated
+  `just gui-test` run covers drawer/tab preservation, Return/Shift-Return,
+  egress disclosure, citations, immutable pin confirmation, notebook-tail
+  proposal review, canonical task routing, cancellation/retry, and generated
+  plot import. Per the project verification policy, one current local or hosted
+  GUI result is sufficient and duplicate runs are not required without an
+  intervening relevant change.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review

@@ -2775,6 +2775,8 @@ public struct WorkbenchState: Codable, Equatable {
     package var prototypeTutorial: TutorialNotebookPrototypeProjection?
     /// Ephemeral fixture projection present only for the Wave 4 AI interaction prototype.
     package var prototypeAI: PrototypeAIChatProjection?
+    /// Production provider-neutral conversations persisted by `casa-notebook`.
+    package var assistantDiscussion: AssistantDiscussionState?
     public var activeTaskID: String
     public var taskUISchemas: [String: TaskUISchema]
     public var parameterSessions: [String: SurfaceParameterSession]
@@ -2850,6 +2852,7 @@ public struct WorkbenchState: Codable, Equatable {
         prototypePython = nil
         prototypeTutorial = nil
         prototypeAI = nil
+        assistantDiscussion = nil
         self.activeTaskID = activeTaskID
         self.taskUISchemas = taskUISchemas
         self.parameterSessions = parameterSessions
@@ -3038,6 +3041,36 @@ package struct DebugPrototypeAIChatSnapshot: Codable, Equatable {
     }
 }
 
+package struct DebugAssistantDiscussionSnapshot: Codable, Equatable {
+    package var presentation: AssistantDiscussionPresentation
+    package var activity: AssistantDiscussionActivity
+    package var activeConversationID: String?
+    package var conversationCount: Int
+    package var messageCount: Int
+    package var provider: String?
+    package var model: String?
+    package var selectedContextIDs: [String]
+    package var estimatedEgressBytes: UInt64
+    package var corpusStatus: String
+    package var lastError: String?
+
+    package init(state: AssistantDiscussionState) {
+        presentation = state.presentation
+        activity = state.activity
+        activeConversationID = state.activeConversationID
+        conversationCount = state.conversations.count
+        messageCount = state.activeConversation?.messages.count ?? 0
+        provider = state.activeConversation?.provider
+        model = state.activeConversation?.model
+        selectedContextIDs = state.contexts.filter(\.providerVisible).map(\.id)
+        estimatedEgressBytes = state.contexts.filter(\.providerVisible).reduce(0) {
+            $0 + $1.byteCount
+        }
+        corpusStatus = state.corpusStatus
+        lastError = state.lastError
+    }
+}
+
 public struct DebugStateSnapshot: Codable, Equatable {
     public var activeProject: String
     public var activeLeftDockMode: DockMode
@@ -3050,6 +3083,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     package var prototypePython: DebugPrototypePythonNotebookSnapshot?
     package var prototypeTutorial: DebugTutorialNotebookPrototypeSnapshot?
     package var prototypeAI: DebugPrototypeAIChatSnapshot?
+    package var assistantDiscussion: DebugAssistantDiscussionSnapshot?
     package var tutorials: [DebugTutorialProjectSnapshot]
     public var scientificNotebook: DebugScientificNotebookSnapshot?
     public var discoveredDatasets: [String]
@@ -3090,6 +3124,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         prototypePython = state.prototypePython.map(DebugPrototypePythonNotebookSnapshot.init(state:))
         prototypeTutorial = state.prototypeTutorial.map(DebugTutorialNotebookPrototypeSnapshot.init(state:))
         prototypeAI = state.prototypeAI.map(DebugPrototypeAIChatSnapshot.init(state:))
+        assistantDiscussion = state.assistantDiscussion.map(DebugAssistantDiscussionSnapshot.init(state:))
         tutorials = state.tutorialProjects.map(DebugTutorialProjectSnapshot.init(state:))
         scientificNotebook = state.scientificNotebooks.map(DebugScientificNotebookSnapshot.init(state:))
         activeLeftDockMode = state.dockMode

@@ -564,6 +564,16 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
             }
             cursor = parent
         }
+        for directory in (environment["PATH"] ?? "").split(separator: ":") {
+            let candidate = URL(fileURLWithPath: String(directory), isDirectory: true)
+                .appendingPathComponent(binaryName)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+                .path
+            if isExecutable(candidate) {
+                return candidate
+            }
+        }
         return nil
     }
 

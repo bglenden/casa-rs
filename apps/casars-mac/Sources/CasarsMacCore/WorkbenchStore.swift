@@ -16,6 +16,27 @@ private let measurementSetPlotLogger = Logger(
 
 private let denseScatterPointThreshold = 8_000
 
+private enum AssistantProposalHostError: Error {
+    case invalidPayload(String)
+    case executableUnavailable(String)
+}
+
+private final class AssistantActionCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    func cancel() { lock.withLock { cancelled = true } }
+    var isCancelled: Bool { lock.withLock { cancelled } }
+}
+
+private final class AssistantDownloadOutcome: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<Data, Error>?
+
+    func finish(_ value: Result<Data, Error>) { lock.withLock { result = value } }
+    var value: Result<Data, Error>? { lock.withLock { result } }
+}
+
 public protocol ProjectProbeClient {
     func probeProject(path: String) throws -> ProjectFixtureProbe
     func probePath(path: String) throws -> DatasetSummary?
@@ -821,9 +842,21 @@ public final class WorkbenchStore: ObservableObject {
     private let taskExecutionMatrixClient: TaskExecutionMatrixClient
     private var notebookPersistenceClient: NotebookPersistenceClient
     private var tutorialPersistenceClient: TutorialPersistenceClient
+    private var assistantPersistenceClient: AssistantPersistenceClient
+    private var assistantCredentialVault: AssistantCredentialVault
+    private var assistantSidecar: AssistantSidecar?
+    private var activeAssistantRequestID: String?
+    private var assistantCitationsByRequest: [String: [AssistantCitationState]] = [:]
+    private var assistantProposalsByRequest: [String: [AssistantProposalState]] = [:]
+    private var assistantDynamicContextsByRequest: [String: [AssistantContextItemState]] = [:]
+    private var assistantActionCancellations: [String: AssistantActionCancellation] = [:]
+    private var assistantDraftSaveWorkItem: DispatchWorkItem?
+    private var assistantSuggestedTaskSources: Set<String> = []
     private let imagerProgressSource: ImagerProgressSource
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private let tableBrowserQueue = DispatchQueue(label: "casars.mac.tablebrowser-cell-window", qos: .userInitiated)
+    private let assistantCorpusQueue = DispatchQueue(label: "casars.mac.assistant-corpus", qos: .utility)
+    private let assistantActionQueue = DispatchQueue(label: "casars.mac.assistant-actions", qos: .userInitiated)
     private var activeTaskExecutions: [String: TaskExecution] = [:]
     private var taskParameterAttempts: [String: TaskParameterAttempt] = [:]
     private var notebookAttemptHandles: [String: NotebookAttemptHandle] = [:]
@@ -893,6 +926,8 @@ public final class WorkbenchStore: ObservableObject {
         self.taskExecutionMatrixClient = taskExecutionMatrixClient
         notebookPersistenceClient = UniFFINotebookPersistenceClient()
         tutorialPersistenceClient = UniFFITutorialPersistenceClient()
+        assistantPersistenceClient = UniFFIAssistantPersistenceClient()
+        assistantCredentialVault = KeychainAssistantCredentialVault()
         self.imagerProgressSource = imagerProgressSource
     }
 
@@ -904,12 +939,27 @@ public final class WorkbenchStore: ObservableObject {
         tutorialPersistenceClient = client
     }
 
+    package func installAssistantPersistenceClientForTesting(_ client: AssistantPersistenceClient) {
+        assistantPersistenceClient = client
+    }
+
+    package func installAssistantCredentialVaultForTesting(_ vault: AssistantCredentialVault) {
+        assistantCredentialVault = vault
+    }
+
+    package func installAssistantSidecarForTesting(_ sidecar: AssistantSidecar) {
+        assistantSidecar?.terminate()
+        assistantSidecar = sidecar
+        configureAssistantSidecar(sidecar)
+    }
+
     package func installPythonExecutableForTesting(_ path: String) {
         pythonExecutableOverride = path
     }
 
     deinit {
         pythonKernels.values.forEach { $0.terminate() }
+        assistantSidecar?.terminate()
         guard runtimeKind == .production else { return }
         sessionLastWrites.values.forEach { $0.cancel() }
         for sessionKey in acceptedSessionParameterValues.keys {
@@ -2253,6 +2303,12 @@ public final class WorkbenchStore: ObservableObject {
             projection.setPresentation(.closed)
             state.prototypeAI = projection
         }
+        if runtimeKind == .production, tabID == "tab-assistant",
+           var discussion = state.assistantDiscussion
+        {
+            discussion.presentation = .closed
+            state.assistantDiscussion = discussion
+        }
 
         let closingSessionKeys = state.parameterSessions.keys.filter { $0.hasPrefix("\(tabID)::") }
         for sessionKey in closingSessionKeys {
@@ -2354,12 +2410,16 @@ public final class WorkbenchStore: ObservableObject {
                 expandAIPrototypeConversation()
                 return
             }
-            guard !rejectPrototypeProductionAction("AI chat") else { return }
-            guard state.isDemoProject else {
-                state.lastErrors.append("AI chat is not connected yet")
+            if state.isDemoProject {
+                openTab(WorkbenchTab(id: "tab-ai", title: "AI Assistant", kind: .aiChat))
                 return
             }
-            openTab(WorkbenchTab(id: "tab-ai", title: "AI Chat", kind: .aiChat))
+            guard !rejectPrototypeProductionAction("AI chat") else { return }
+            guard state.hasProject else {
+                state.lastErrors.append("Open a project before starting an AI discussion")
+                return
+            }
+            openAssistantDiscussion(presentation: .tab)
         case .python:
             guard !rejectPrototypeProductionAction("Python") else { return }
             guard state.isDemoProject else {
@@ -2403,6 +2463,7 @@ public final class WorkbenchStore: ObservableObject {
             state.tutorialProjects = try tutorialPersistenceClient.list(
                 projectRoot: state.project.rootPath
             )
+            loadAssistantDiscussions()
         } catch {
             state.lastErrors.append("Load project notebooks: \(error)")
         }
@@ -2803,6 +2864,8 @@ public final class WorkbenchStore: ObservableObject {
                 state.imageExplorers[source] = explorer
                 refreshImageExplorer(datasetID: source)
             }
+        case "assistant_python_plot":
+            openTab(WorkbenchTab(id: "tab-python", title: "Python", kind: .python))
         default:
             state.lastErrors.append("Unknown notebook visualization surface \(revision.reopen.surface)")
         }
@@ -3651,6 +3714,1720 @@ public final class WorkbenchStore: ObservableObject {
         }
         projection.documents[documentIndex].tasks[receiptIndex].revisions[revisionIndex] = revision
         state.prototypeNotebook = projection
+    }
+
+    package func loadAssistantDiscussions() {
+        guard runtimeKind == .production, state.hasProject else { return }
+        do {
+            let conversations = try assistantPersistenceClient.conversations(
+                projectRoot: state.project.rootPath
+            )
+            var discussion = state.assistantDiscussion ?? AssistantDiscussionState()
+            discussion.conversations = conversations
+            if !conversations.contains(where: { $0.id == discussion.activeConversationID }) {
+                discussion.activeConversationID = conversations.last?.id
+            }
+            discussion.contexts = assistantOpenTabContexts()
+            discussion.corpusStatus = "Corpus refresh pending"
+            state.assistantDiscussion = discussion
+            rebuildAssistantSuggestedTaskSources(conversations)
+        } catch {
+            state.lastErrors.append("Load assistant conversations: \(error)")
+        }
+    }
+
+    private func rebuildAssistantSuggestedTaskSources(
+        _ conversations: [AssistantConversationState]
+    ) {
+        assistantSuggestedTaskSources.removeAll(keepingCapacity: true)
+        guard let notebooks = state.scientificNotebooks else { return }
+        for proposal in conversations.flatMap({ $0.messages }).flatMap(\.proposals)
+            where proposal.kind == "task" && proposal.insertionApproval != nil
+        {
+            guard let notebook = notebooks.notebooks.first(where: {
+                $0.id == proposal.insertion.destination.identifier
+            }),
+            let range = proposal.insertion.exactContent.range(
+                of: #"casa-rs-cell:v1 id=([^ ]+) kind=task"#,
+                options: .regularExpression
+            )
+            else { continue }
+            let marker = String(proposal.insertion.exactContent[range])
+            guard let idRange = marker.range(of: #"id=([^ ]+)"#, options: .regularExpression)
+            else { continue }
+            let cellID = marker[idRange].dropFirst(3)
+            assistantSuggestedTaskSources.insert(
+                "\(notebooks.projectRoot)/notebooks/\(notebook.filename)#\(cellID)"
+            )
+        }
+    }
+
+    package func openAssistantDiscussion(presentation: AssistantDiscussionPresentation = .drawer) {
+        guard runtimeKind == .production, state.hasProject else { return }
+        if state.assistantDiscussion == nil { loadAssistantDiscussions() }
+        guard var discussion = state.assistantDiscussion else { return }
+        discussion.presentation = presentation
+        discussion.contexts = assistantOpenTabContexts()
+        discussion.lastError = nil
+        state.assistantDiscussion = discussion
+        if presentation == .tab {
+            openTab(WorkbenchTab(id: "tab-assistant", title: "AI Chat", kind: .aiChat))
+        }
+        prepareAssistantSidecar()
+        if discussion.corpusStatus == "Corpus refresh pending"
+            || discussion.corpusStatus == "Not indexed"
+        {
+            refreshAssistantCorpus()
+        }
+    }
+
+    package func refreshAssistantCorpus() {
+        guard runtimeKind == .production,
+              state.hasProject,
+              var discussion = state.assistantDiscussion,
+              discussion.corpusStatus != "Indexing local corpus…"
+        else { return }
+        discussion.corpusStatus = "Indexing local corpus…"
+        state.assistantDiscussion = discussion
+        let projectRoot = state.project.rootPath
+        let persistence = assistantPersistenceClient
+        assistantCorpusQueue.async { [weak self] in
+            let ingestion = AssistantCorpusIngestor().collect(projectRoot: projectRoot)
+            do {
+                let report = try persistence.indexCorpus(
+                    projectRoot: projectRoot,
+                    documents: ingestion.documents,
+                    removeMissingLayers: ingestion.refreshedLayers
+                )
+                DispatchQueue.main.async {
+                    guard let self, var current = self.state.assistantDiscussion else { return }
+                    current.corpusStatus = "CASA-RS scientific corpus ready"
+                    if !ingestion.diagnostics.isEmpty {
+                        current.corpusStatus += " · \(ingestion.diagnostics.count) diagnostics"
+                    }
+                    self.state.assistantDiscussion = current
+                    _ = report
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.recordAssistantError("Index assistant corpus: \(error)")
+                }
+            }
+        }
+    }
+
+    package func closeAssistantDiscussion() {
+        guard var discussion = state.assistantDiscussion else { return }
+        discussion.presentation = .closed
+        state.assistantDiscussion = discussion
+    }
+
+    package func dockAssistantDiscussion() {
+        guard var discussion = state.assistantDiscussion else { return }
+        discussion.presentation = .drawer
+        state.assistantDiscussion = discussion
+        if state.activeTabID == "tab-assistant" {
+            state.activeTabID = state.tabs.first(where: { $0.kind == .notebook })?.id
+                ?? state.tabs.first?.id
+                ?? ""
+        }
+    }
+
+    package func expandAssistantDiscussion() {
+        openAssistantDiscussion(presentation: .tab)
+    }
+
+    package func showAssistantNotebookSuggestions() {
+        guard var discussion = state.assistantDiscussion else { return }
+        discussion.notebookSuggestionFocusGeneration += 1
+        state.assistantDiscussion = discussion
+        openDefaultTab(kind: .notebook)
+    }
+
+    package func setAssistantDraft(_ draft: String) {
+        updateActiveAssistantConversation { conversation in
+            conversation.draft = draft
+            conversation.updatedAt = Self.assistantTimestamp()
+        }
+        assistantDraftSaveWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.persistActiveAssistantConversation() }
+        assistantDraftSaveWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: item)
+    }
+
+    package func setAssistantScrollAnchor(_ messageID: String?) {
+        guard state.assistantDiscussion?.activeConversation?.scrollAnchorMessageId != messageID else {
+            return
+        }
+        updateActiveAssistantConversation { conversation in
+            conversation.scrollAnchorMessageId = messageID
+            conversation.updatedAt = Self.assistantTimestamp()
+        }
+        assistantDraftSaveWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.persistActiveAssistantConversation() }
+        assistantDraftSaveWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: item)
+    }
+
+    package func selectAssistantConversation(_ id: String) {
+        guard var discussion = state.assistantDiscussion,
+              discussion.conversations.contains(where: { $0.id == id })
+        else { return }
+        discussion.activeConversationID = id
+        discussion.lastError = nil
+        state.assistantDiscussion = discussion
+    }
+
+    package func newAssistantConversation() {
+        guard var discussion = state.assistantDiscussion,
+              let provider = discussion.providers.first,
+              let model = provider.models.first
+        else { return }
+        do {
+            let attachment = assistantPrimaryAttachment()
+            let conversation = try assistantPersistenceClient.createConversation(
+                projectRoot: state.project.rootPath,
+                title: "Project discussion",
+                attachment: attachment,
+                provider: provider.id,
+                model: model.id
+            )
+            discussion.conversations.append(conversation)
+            discussion.activeConversationID = conversation.id
+            state.assistantDiscussion = discussion
+        } catch {
+            recordAssistantError("Create assistant conversation: \(error)")
+        }
+    }
+
+    package func selectAssistantProvider(_ providerID: String) {
+        guard let provider = state.assistantDiscussion?.providers.first(where: { $0.id == providerID }),
+              let model = provider.models.first
+        else { return }
+        updateActiveAssistantConversation { conversation in
+            conversation.provider = provider.id
+            conversation.model = model.id
+            conversation.updatedAt = Self.assistantTimestamp()
+        }
+        persistActiveAssistantConversation()
+    }
+
+    package func selectAssistantModel(_ modelID: String) {
+        guard state.assistantDiscussion?.selectedProvider?.models.contains(where: {
+            $0.id == modelID
+        }) == true else { return }
+        updateActiveAssistantConversation { conversation in
+            conversation.model = modelID
+            conversation.updatedAt = Self.assistantTimestamp()
+        }
+        persistActiveAssistantConversation()
+    }
+
+    package func toggleAssistantContext(_ contextID: String) {
+        guard var discussion = state.assistantDiscussion,
+              let index = discussion.contexts.firstIndex(where: { $0.id == contextID })
+        else { return }
+        discussion.contexts[index].providerVisible.toggle()
+        if let conversationIndex = discussion.conversations.firstIndex(where: {
+            $0.id == discussion.activeConversationID
+        }) {
+            discussion.conversations[conversationIndex].selectedContextIds = discussion.contexts
+                .filter(\.providerVisible)
+                .map(\.id)
+            discussion.conversations[conversationIndex].updatedAt = Self.assistantTimestamp()
+        }
+        state.assistantDiscussion = discussion
+        persistActiveAssistantConversation()
+    }
+
+    package func assistantPinPreview(
+        _ message: AssistantMessageState,
+        representation: String,
+        notebookID: String? = nil
+    ) -> String {
+        guard let conversation = state.assistantDiscussion?.activeConversation,
+              let notebooks = state.scientificNotebooks,
+              let notebook = notebooks.notebooks.first(where: {
+                  $0.id == (notebookID ?? notebooks.activeNotebookID)
+              })
+        else { return message.content }
+        var lines = [
+            "### AI discussion snapshot",
+            "",
+            message.content,
+        ]
+        if representation == "answer_with_citations", !message.citations.isEmpty {
+            lines.append(contentsOf: ["", "Sources:"])
+            for (index, citation) in message.citations.enumerated() {
+                lines.append("\(index + 1). \(citation.label) — \(citation.locator)")
+            }
+        }
+        lines.append(contentsOf: [
+            "",
+            "<!-- casa-rs-ai-pin:v1 conversation=\(conversation.id) message=\(message.id) notebook=\(notebook.id) representation=\(representation) -->",
+        ])
+        return lines.joined(separator: "\n")
+    }
+
+    package func pinAssistantMessage(
+        _ messageID: String,
+        representation: String = "answer_with_citations",
+        notebookID: String? = nil
+    ) {
+        guard var discussion = state.assistantDiscussion,
+              let conversationIndex = discussion.conversations.firstIndex(where: {
+                  $0.id == discussion.activeConversationID
+              }),
+              let messageIndex = discussion.conversations[conversationIndex].messages.firstIndex(where: {
+                  $0.id == messageID
+              }),
+              discussion.conversations[conversationIndex].messages[messageIndex].role == "assistant",
+              let notebooks = state.scientificNotebooks,
+              let targetID = notebookID ?? notebooks.activeNotebookID,
+              var document = notebooks.notebooks.first(where: { $0.id == targetID })
+        else { return }
+        let message = discussion.conversations[conversationIndex].messages[messageIndex]
+        guard !message.pins.contains(where: { $0.notebookId == document.id }) else { return }
+        let snapshot = assistantPinPreview(
+            message,
+            representation: representation,
+            notebookID: document.id
+        )
+        do {
+            let pin = try assistantPersistenceClient.createPin(AssistantCreatePinEnvelope(
+                conversationId: discussion.conversations[conversationIndex].id,
+                notebookId: document.id,
+                messageId: message.id,
+                representation: representation,
+                destination: "\(document.filename)#chronological-tail",
+                snapshotContent: snapshot
+            ))
+            let separator = document.draftSource.hasSuffix("\n\n") ? "" : "\n\n"
+            document.draftSource += separator + snapshot + "\n"
+            document.cells = try notebookPersistenceClient.projectCells(source: document.draftSource)
+            let saved: NotebookDocumentState
+            switch try notebookPersistenceClient.save(
+                projectRoot: notebooks.projectRoot,
+                document: document,
+                resolution: .reject
+            ) {
+            case let .saved(value), let .reloaded(value): saved = value
+            case let .conflict(conflict):
+                updateActiveScientificNotebook { $0.conflict = conflict }
+                throw AssistantProposalHostError.invalidPayload("notebook changed externally")
+            }
+            replaceScientificNotebook(saved)
+            discussion.conversations[conversationIndex].messages[messageIndex].pins.append(pin)
+            discussion.conversations[conversationIndex].updatedAt = Self.assistantTimestamp()
+            state.assistantDiscussion = discussion
+            persistActiveAssistantConversation()
+            selectScientificNotebook(document.id)
+            showAssistantNotebookSuggestions()
+        } catch {
+            recordAssistantError("Pin assistant snapshot: \(error)")
+        }
+    }
+
+    package func approveAssistantProposalInsertion(_ proposalID: String) {
+        guard let proposal = assistantProposal(id: proposalID),
+              proposal.insertionApproval == nil
+        else { return }
+        do {
+            let approved = try assistantPersistenceClient.approveProposalInsertion(
+                proposal: proposal,
+                authority: "user"
+            )
+            guard let project = state.scientificNotebooks,
+                  let targetIndex = project.notebooks.firstIndex(where: {
+                      $0.id == approved.insertion.destination.identifier
+                  })
+            else {
+                throw AssistantProposalHostError.invalidPayload("notebook destination")
+            }
+            state.scientificNotebooks?.activeNotebookID = project.notebooks[targetIndex].id
+            guard var document = state.scientificNotebooks?.activeNotebook else {
+                throw AssistantProposalHostError.invalidPayload("active notebook")
+            }
+            let existingCellIDs = Set(document.cells.map(\.id))
+            let separator = document.draftSource.hasSuffix("\n\n") ? "" : "\n\n"
+            document.draftSource += separator + approved.insertion.exactContent + "\n"
+            document.cells = try notebookPersistenceClient.projectCells(source: document.draftSource)
+            let saved: NotebookDocumentState
+            switch try notebookPersistenceClient.save(
+                projectRoot: project.projectRoot,
+                document: document,
+                resolution: .reject
+            ) {
+            case let .saved(value), let .reloaded(value):
+                saved = value
+            case let .conflict(conflict):
+                updateActiveScientificNotebook { $0.conflict = conflict }
+                throw AssistantProposalHostError.invalidPayload("notebook changed externally")
+            }
+            replaceScientificNotebook(saved)
+            replaceAssistantProposal(approved)
+            persistActiveAssistantConversation()
+            if approved.kind == "task",
+               let newTask = saved.cells.last(where: {
+                   !existingCellIDs.contains($0.id) && $0.kind == "task"
+               })
+            {
+                assistantSuggestedTaskSources.insert(
+                    "\(project.projectRoot)/notebooks/\(saved.filename)#\(newTask.id)"
+                )
+                openScientificNotebookTask(cellID: newTask.id)
+            }
+        } catch {
+            recordAssistantError("Insert assistant proposal: \(error)")
+        }
+    }
+
+    public func parameterIsAssistantSuggested(
+        surfaceID: String,
+        instanceID: String,
+        name: String
+    ) -> Bool {
+        guard parameterOrigin(surfaceID: surfaceID, instanceID: instanceID, name: name) != "default",
+              let source = parameterSession(surfaceID: surfaceID, instanceID: instanceID)?.baseProfilePath
+        else { return false }
+        return assistantSuggestedTaskSources.contains(source)
+    }
+
+    package func rejectAssistantProposal(_ proposalID: String) {
+        guard let proposal = assistantProposal(id: proposalID) else { return }
+        do {
+            let rejected = try assistantPersistenceClient.rejectProposal(
+                proposal: proposal,
+                authority: "user"
+            )
+            replaceAssistantProposal(rejected)
+            persistActiveAssistantConversation()
+        } catch {
+            recordAssistantError("Reject assistant proposal: \(error)")
+        }
+    }
+
+    package func executeAssistantProposal(_ proposalID: String) {
+        guard let proposal = assistantProposal(id: proposalID),
+              proposal.insertionApproval != nil,
+              proposal.approval == nil,
+              ["python", "plot", "download"].contains(proposal.kind)
+        else { return }
+        do {
+            var approved = try assistantPersistenceClient.approveProposalExecution(
+                proposal: proposal,
+                authority: "user"
+            )
+            approved.state = "running"
+            replaceAssistantProposal(approved)
+            persistActiveAssistantConversation()
+            let projectRoot = state.project.rootPath
+            let cancellation = AssistantActionCancellation()
+            assistantActionCancellations[proposalID] = cancellation
+            assistantActionQueue.async { [weak self] in
+                self?.runApprovedAssistantProposal(
+                    approved,
+                    projectRoot: projectRoot,
+                    cancellation: cancellation
+                )
+            }
+        } catch {
+            recordAssistantError("Approve assistant execution: \(error)")
+        }
+    }
+
+    private func runApprovedAssistantProposal(
+        _ proposal: AssistantProposalState,
+        projectRoot: String,
+        cancellation: AssistantActionCancellation
+    ) {
+        do {
+            guard !cancellation.isCancelled else {
+                finishAssistantProposal(proposal.id, outcome: "cancelled", result: "Cancelled before launch.")
+                return
+            }
+            let currentIdentity = try assistantExecutableIdentity(proposal.execution.executable.path)
+            guard currentIdentity == proposal.execution.executable else {
+                throw AIWorkerError.approvalInvalidated
+            }
+            switch proposal.kind {
+            case "python", "plot":
+                guard let source = proposal.execution.exactSource else {
+                    throw AssistantProposalHostError.invalidPayload("Python source")
+                }
+                let readRoots = proposal.execution.inputPaths.map { path -> String in
+                    let url = path.hasPrefix("/")
+                        ? URL(fileURLWithPath: path)
+                        : URL(fileURLWithPath: projectRoot).appendingPathComponent(path)
+                    var isDirectory: ObjCBool = false
+                    if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                       !isDirectory.boolValue
+                    {
+                        return url.deletingLastPathComponent().path
+                    }
+                    return url.path
+                }
+                let worker = SeatbeltAIWorker(configuration: AIWorkerConfiguration(
+                    pythonExecutable: proposal.execution.executable.path,
+                    readableScienceRoots: readRoots,
+                    stagingRoot: proposal.execution.workingDirectory
+                ))
+                let result = try worker.execute(
+                    exactSource: source,
+                    approval: AIWorkerApproval(exactSource: source),
+                    isCancelled: { cancellation.isCancelled }
+                )
+                let outcome = cancellation.isCancelled
+                    ? "cancelled" : (result.terminationStatus == 0 ? "succeeded" : "failed")
+                let successSummary = assistantOutputSummary(
+                    proposal: proposal,
+                    stdout: result.stdout
+                )
+                finishAssistantProposal(proposal.id, outcome: outcome, result:
+                    result.terminationStatus == 0
+                        ? successSummary
+                        : Self.boundedAssistantExcerpt(result.stderr, limit: 8_000))
+            case "download":
+                runApprovedAssistantDownload(
+                    proposal,
+                    projectRoot: projectRoot,
+                    cancellation: cancellation
+                )
+            default:
+                throw AssistantProposalHostError.invalidPayload(proposal.kind)
+            }
+        } catch {
+            finishAssistantProposal(
+                proposal.id,
+                outcome: cancellation.isCancelled ? "cancelled" : "failed",
+                result: String(describing: error)
+            )
+        }
+    }
+
+    private func runApprovedAssistantDownload(
+        _ proposal: AssistantProposalState,
+        projectRoot: String,
+        cancellation: AssistantActionCancellation
+    ) {
+        guard case let .object(payload) = proposal.payload,
+              let urlText = payload["url"]?.displayText,
+              let url = URL(string: urlText),
+              url.scheme == "https",
+              let destinationText = payload["destination"]?.displayText
+        else {
+            finishAssistantProposal(proposal.id, outcome: "failed",
+                result: "Only an exact HTTPS URL and project-relative destination are permitted.")
+            return
+        }
+        let destination = URL(fileURLWithPath: projectRoot)
+            .appendingPathComponent(destinationText)
+            .standardizedFileURL
+        let projectPrefix = URL(fileURLWithPath: projectRoot).standardizedFileURL.path + "/"
+        guard destination.path.hasPrefix(projectPrefix) else {
+            finishAssistantProposal(proposal.id, outcome: "failed",
+                result: "Download destination escapes the project root.")
+            return
+        }
+        let semaphore = DispatchSemaphore(value: 0)
+        let outcome = AssistantDownloadOutcome()
+        let task = URLSession.shared.dataTask(with: url) { data, _, error in
+            if let error { outcome.finish(.failure(error)) }
+            else if let data { outcome.finish(.success(data)) }
+            else { outcome.finish(.failure(AssistantProposalHostError.invalidPayload("empty download"))) }
+            semaphore.signal()
+        }
+        task.resume()
+        let deadline = DispatchTime.now() + 120
+        while semaphore.wait(timeout: .now() + 0.1) != .success {
+            if cancellation.isCancelled {
+                task.cancel()
+                finishAssistantProposal(proposal.id, outcome: "cancelled", result: "Download cancelled.")
+                return
+            }
+            if DispatchTime.now() >= deadline {
+                task.cancel()
+                finishAssistantProposal(proposal.id, outcome: "failed", result: "Download timed out.")
+                return
+            }
+        }
+        do {
+            guard let value = outcome.value else {
+                throw AssistantProposalHostError.invalidPayload("download")
+            }
+            let data = try value.get()
+            if case let .object(payload) = proposal.payload,
+               let expected = payload["sha256"]?.displayText,
+               !expected.isEmpty,
+               expected != Self.assistantSHA256(data)
+            {
+                throw AIWorkerError.approvalInvalidated
+            }
+            try FileManager.default.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: destination, options: .atomic)
+            finishAssistantProposal(proposal.id, outcome: "succeeded",
+                result: "Downloaded \(data.count) bytes to \(destinationText).")
+        } catch {
+            finishAssistantProposal(
+                proposal.id,
+                outcome: cancellation.isCancelled ? "cancelled" : "failed",
+                result: String(describing: error)
+            )
+        }
+    }
+
+    package func cancelAssistantProposal(_ id: String) {
+        assistantActionCancellations[id]?.cancel()
+    }
+
+    package func retryAssistantProposal(_ id: String) {
+        guard var proposal = assistantProposal(id: id),
+              ["failed", "cancelled"].contains(proposal.state)
+        else { return }
+        proposal.state = "pending"
+        proposal.approval = nil
+        proposal.result = nil
+        replaceAssistantProposal(proposal)
+        persistActiveAssistantConversation()
+        executeAssistantProposal(id)
+    }
+
+    package func importAssistantPlotArtifact(_ id: String) {
+        guard let proposal = assistantProposal(id: id),
+              proposal.kind == "plot",
+              proposal.state == "succeeded",
+              let path = proposal.execution.outputPaths.first(where: {
+                  ["png", "jpg", "jpeg", "svg"].contains(URL(fileURLWithPath: $0).pathExtension.lowercased())
+              }),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              !data.isEmpty
+        else {
+            recordAssistantError("Import assistant plot: no approved generated image is available")
+            return
+        }
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        let image = NSImage(data: data)
+        saveVisualizationData(
+            data,
+            extension: ext,
+            title: proposal.title,
+            notebookID: state.scientificNotebooks?.activeNotebookID,
+            visualizationID: nil,
+            sourceReferences: proposal.execution.inputPaths,
+            surface: "assistant_python_plot",
+            parameters: [
+                "source": .string(proposal.execution.exactSource ?? ""),
+                "proposal_id": .string(proposal.id),
+            ],
+            renderer: "Seatbelt-isolated Python",
+            mediaType: ext == "svg" ? "image/svg+xml" : "image/\(ext == "jpg" ? "jpeg" : ext)",
+            width: UInt32(max(image?.size.width ?? 0, 0)),
+            height: UInt32(max(image?.size.height ?? 0, 0)),
+            settings: ["content_sha256": .string(Self.assistantSHA256(data))]
+        )
+    }
+
+    private func assistantOutputSummary(
+        proposal: AssistantProposalState,
+        stdout: String
+    ) -> String {
+        var lines: [String] = []
+        let bounded = Self.boundedAssistantExcerpt(stdout, limit: 4_000)
+        if !bounded.isEmpty { lines.append(bounded) }
+        for path in proposal.execution.outputPaths {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)), !data.isEmpty else {
+                lines.append("Expected output not created: \(path)")
+                continue
+            }
+            lines.append("Generated: \(path) · \(data.count) bytes · sha256 \(Self.assistantSHA256(data))")
+        }
+        return lines.isEmpty ? "Completed without textual or file output." : lines.joined(separator: "\n")
+    }
+
+    private func finishAssistantProposal(_ id: String, outcome: String, result: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, var proposal = self.assistantProposal(id: id) else { return }
+            proposal.state = outcome
+            proposal.result = result
+            self.assistantActionCancellations.removeValue(forKey: id)
+            self.replaceAssistantProposal(proposal)
+            self.persistActiveAssistantConversation()
+        }
+    }
+
+    package func authenticateAssistantProvider(_ providerID: String) {
+        guard var discussion = state.assistantDiscussion else { return }
+        discussion.activity = .authenticating
+        discussion.lastError = nil
+        state.assistantDiscussion = discussion
+        assistantSidecar?.send([
+            "command": "authenticate",
+            "request_id": "auth-\(UUID().uuidString)",
+            "provider": providerID,
+        ])
+    }
+
+    package func submitAssistantAuthenticationPrompt(
+        requestID: String,
+        promptID: String,
+        value: String
+    ) {
+        assistantSidecar?.send([
+            "command": "authentication_response",
+            "request_id": requestID,
+            "prompt_id": promptID,
+            "value": value,
+        ])
+        if var discussion = state.assistantDiscussion {
+            discussion.pendingAuthenticationPrompt = nil
+            state.assistantDiscussion = discussion
+        }
+    }
+
+    package func dismissAssistantAuthenticationPrompt() {
+        guard var discussion = state.assistantDiscussion else { return }
+        discussion.pendingAuthenticationPrompt = nil
+        state.assistantDiscussion = discussion
+    }
+
+    package func sendAssistantPrompt() {
+        guard var discussion = state.assistantDiscussion,
+              assistantSidecar != nil,
+              discussion.activity == .ready || discussion.activity == .completed,
+              let conversationIndex = discussion.conversations.firstIndex(where: {
+                  $0.id == discussion.activeConversationID
+              })
+        else { return }
+        let prompt = discussion.conversations[conversationIndex].draft
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty, discussion.activity != .streaming else { return }
+        discussion.contexts = assistantOpenTabContexts(preservingSelectionFrom: discussion.contexts)
+        let now = Self.assistantTimestamp()
+        let userMessageID = UUID().uuidString.lowercased()
+        discussion.conversations[conversationIndex].messages.append(AssistantMessageState(
+            id: userMessageID,
+            role: "user",
+            content: prompt,
+            createdAt: now,
+            provider: nil,
+            model: nil,
+            citations: [],
+            egress: nil,
+            proposals: [],
+            pins: []
+        ))
+        discussion.conversations[conversationIndex].draft = ""
+        discussion.conversations[conversationIndex].scrollAnchorMessageId = userMessageID
+        discussion.conversations[conversationIndex].updatedAt = now
+        discussion.conversations[conversationIndex].selectedContextIds = discussion.contexts
+            .filter(\.providerVisible)
+            .map(\.id)
+        discussion.activity = .streaming
+        discussion.streamingText = ""
+        discussion.lastError = nil
+        let conversation = discussion.conversations[conversationIndex]
+        let egress = AssistantEgressState(
+            provider: conversation.provider,
+            model: conversation.model,
+            destination: assistantProviderDestination(conversation.provider),
+            items: discussion.contexts,
+            estimatedBytes: discussion.contexts.filter(\.providerVisible).reduce(0) {
+                $0 + $1.byteCount
+            }
+        )
+        state.assistantDiscussion = discussion
+        assistantDraftSaveWorkItem?.cancel()
+        persistActiveAssistantConversation()
+        let requestID = "turn-\(UUID().uuidString)"
+        activeAssistantRequestID = requestID
+        assistantCitationsByRequest[requestID] = []
+        assistantProposalsByRequest[requestID] = []
+        assistantDynamicContextsByRequest[requestID] = []
+        do {
+            var command: [String: Any] = [
+                "command": "turn",
+                "request_id": requestID,
+                "conversation_id": conversation.id,
+                "provider": conversation.provider,
+                "model": conversation.model,
+                "messages": try assistantJSONObject(conversation.messages),
+                "egress": try assistantJSONObject(egress),
+                "tools": assistantToolDefinitions(),
+            ]
+            if let credential = try assistantCredentialVault.load(provider: conversation.provider) {
+                command["credential"] = try assistantJSONObject(credential)
+            }
+            assistantSidecar?.send(command)
+        } catch {
+            recordAssistantError("Prepare assistant turn: \(error)")
+        }
+    }
+
+    package func cancelAssistantResponse() {
+        guard let requestID = activeAssistantRequestID else { return }
+        assistantSidecar?.cancel(requestID: requestID)
+    }
+
+    package func restartAssistantSidecar() {
+        assistantSidecar?.restart()
+    }
+
+    private func prepareAssistantSidecar() {
+        if assistantSidecar == nil {
+            do {
+                let sidecar = AssistantSidecar(configuration: try .discover())
+                configureAssistantSidecar(sidecar)
+                assistantSidecar = sidecar
+            } catch {
+                recordAssistantError("Assistant unavailable: \(error)")
+                return
+            }
+        }
+        assistantSidecar?.prepare { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.assistantSidecar?.send([
+                    "command": "catalog",
+                    "request_id": "catalog-\(UUID().uuidString)",
+                ])
+            case let .failure(error):
+                self.recordAssistantError("Assistant startup: \(error)")
+            }
+        }
+    }
+
+    private func configureAssistantSidecar(_ sidecar: AssistantSidecar) {
+        sidecar.onStateChange { [weak self] activity in
+            guard let self, var discussion = self.state.assistantDiscussion else { return }
+            if discussion.activity != .streaming && discussion.activity != .authenticating {
+                discussion.activity = activity
+                self.state.assistantDiscussion = discussion
+            }
+        }
+        sidecar.onEvent { [weak self] event in self?.handleAssistantEvent(event) }
+    }
+
+    private func handleAssistantEvent(_ event: [String: Any]) {
+        guard let kind = event["event"] as? String else { return }
+        switch kind {
+        case "catalog":
+            handleAssistantCatalog(event)
+        case "authentication_url":
+            guard var discussion = state.assistantDiscussion else { return }
+            discussion.pendingAuthenticationURL = event["url"] as? String
+            discussion.pendingAuthenticationInstructions = event["instructions"] as? String
+            state.assistantDiscussion = discussion
+        case "authentication_prompt":
+            guard var discussion = state.assistantDiscussion,
+                  let requestID = event["request_id"] as? String,
+                  let promptID = event["prompt_id"] as? String,
+                  let message = event["message"] as? String
+            else { return }
+            discussion.pendingAuthenticationPrompt = AssistantAuthenticationPromptState(
+                requestID: requestID,
+                promptID: promptID,
+                message: message,
+                secret: event["secret"] as? Bool ?? false
+            )
+            state.assistantDiscussion = discussion
+        case "authentication_complete", "credential_updated":
+            handleAssistantCredential(event)
+        case "turn_started":
+            break
+        case "text_delta":
+            guard var discussion = state.assistantDiscussion else { return }
+            discussion.streamingText += event["delta"] as? String ?? ""
+            state.assistantDiscussion = discussion
+        case "tool_call":
+            handleAssistantToolCall(event)
+        case "turn_complete":
+            handleAssistantTurnComplete(event)
+        case "cancelled":
+            guard var discussion = state.assistantDiscussion else { return }
+            discussion.activity = .cancelled
+            discussion.streamingText = ""
+            state.assistantDiscussion = discussion
+            activeAssistantRequestID = nil
+        case "error":
+            let details = event["error"] as? [String: Any]
+            recordAssistantError(details?["message"] as? String ?? "Assistant request failed")
+        default:
+            break
+        }
+    }
+
+    private func handleAssistantCatalog(_ event: [String: Any]) {
+        guard let catalog = event["catalog"],
+              let data = try? JSONSerialization.data(withJSONObject: catalog),
+              let envelope = try? assistantDecoder().decode(
+                  AssistantProviderCatalogState.self,
+                  from: data
+              ),
+              var discussion = state.assistantDiscussion
+        else { return }
+        discussion.providers = envelope.providers.map { provider in
+            var provider = provider
+            provider.configured = (try? assistantCredentialVault.load(provider: provider.id)) != nil
+            return provider
+        }
+        discussion.activity = .ready
+        state.assistantDiscussion = discussion
+        if discussion.activeConversationID == nil { newAssistantConversation() }
+    }
+
+    private func handleAssistantCredential(_ event: [String: Any]) {
+        guard let credentialValue = event["credential"],
+              let data = try? JSONSerialization.data(withJSONObject: credentialValue),
+              let credential = try? assistantDecoder().decode(
+                  AssistantCredentialLeaseState.self,
+                  from: data
+              )
+        else { return }
+        do {
+            try assistantCredentialVault.save(credential)
+            guard var discussion = state.assistantDiscussion else { return }
+            if let index = discussion.providers.firstIndex(where: { $0.id == credential.provider }) {
+                discussion.providers[index].configured = true
+            }
+            discussion.activity = .ready
+            discussion.pendingAuthenticationURL = nil
+            discussion.pendingAuthenticationInstructions = nil
+            discussion.pendingAuthenticationPrompt = nil
+            state.assistantDiscussion = discussion
+        } catch {
+            recordAssistantError("Store assistant credential: \(error)")
+        }
+    }
+
+    private func handleAssistantToolCall(_ event: [String: Any]) {
+        if let name = event["name"] as? String, name.hasPrefix("proposal.") {
+            handleAssistantProposalToolCall(event, name: name)
+            return
+        }
+        guard let name = event["name"] as? String,
+              let requestID = event["request_id"] as? String,
+              let callID = event["call_id"] as? String,
+              let arguments = event["arguments"] as? [String: Any]
+        else {
+            sendAssistantToolError(event: event, message: "Unknown or invalid read-only tool call")
+            return
+        }
+        if name == "web.fetch" || name == "web.search" {
+            handleAssistantWebFetch(
+                event: event,
+                requestID: requestID,
+                callID: callID,
+                name: name,
+                arguments: arguments
+            )
+            return
+        }
+        do {
+            let encoded: Any
+            switch name {
+            case "corpus.search", "source.search":
+                guard let query = arguments["query"] as? String else {
+                    throw AssistantProposalHostError.invalidPayload("search query")
+                }
+                let requestedLimit = arguments["limit"] as? Int ?? 8
+                let hits = try assistantPersistenceClient.searchCorpus(
+                    projectRoot: state.project.rootPath,
+                    query: query,
+                    limit: min(max(requestedLimit, 1), 16)
+                )
+                assistantCitationsByRequest[requestID, default: []].append(contentsOf: hits.map {
+                    AssistantCitationState(
+                        id: $0.chunkId,
+                        kind: $0.layer == "release_source" || $0.layer == "live_source" ? "source" : "document",
+                        label: $0.citation.label,
+                        locator: $0.citation.locator,
+                        excerpt: $0.text,
+                        sourcePath: $0.citation.sourcePath,
+                        page: $0.citation.page,
+                        section: $0.citation.section,
+                        lineStart: $0.citation.lineStart,
+                        lineEnd: $0.citation.lineEnd,
+                        release: $0.citation.release,
+                        commit: $0.citation.commit
+                    )
+                })
+                encoded = try assistantJSONObject(hits)
+            case "context.open_tabs":
+                encoded = try assistantJSONObject(assistantOpenTabContexts(
+                    preservingSelectionFrom: state.assistantDiscussion?.contexts ?? []
+                ))
+            case "task.schema":
+                let taskID = arguments["task_id"] as? String ?? state.activeTaskID
+                let schema = try state.taskUISchemas[taskID]
+                    ?? taskUISchemaClient.loadTaskUISchema(taskID: taskID)
+                encoded = try assistantJSONObject(schema)
+            case "data.describe":
+                let requested = arguments["dataset_id"] as? String
+                guard let dataset = requested.flatMap({ id in state.project.datasets.first { $0.id == id } })
+                    ?? state.selectedDataset
+                else { throw AssistantProposalHostError.invalidPayload("dataset identity") }
+                encoded = try assistantJSONObject(dataset)
+            default:
+                throw AssistantProposalHostError.invalidPayload("unknown read-only tool \(name)")
+            }
+            if name != "context.open_tabs" {
+                recordAssistantDynamicContext(
+                    requestID: requestID,
+                    name: name,
+                    arguments: arguments,
+                    result: encoded
+                )
+            }
+            assistantSidecar?.send([
+                "command": "tool_result",
+                "request_id": requestID,
+                "call_id": callID,
+                "result": encoded,
+                "is_error": false,
+            ])
+        } catch {
+            sendAssistantToolError(event: event, message: "Read-only tool \(name) failed: \(error)")
+        }
+    }
+
+    private func handleAssistantWebFetch(
+        event: [String: Any],
+        requestID: String,
+        callID: String,
+        name: String,
+        arguments: [String: Any]
+    ) {
+        let url: URL?
+        if name == "web.search", let query = arguments["query"] as? String,
+           !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            var components = URLComponents(string: "https://api.crossref.org/works")
+            components?.queryItems = [
+                URLQueryItem(name: "query.bibliographic", value: query),
+                URLQueryItem(name: "rows", value: "6"),
+                URLQueryItem(name: "select", value: "DOI,title,author,published,URL"),
+            ]
+            url = components?.url
+        } else {
+            url = (arguments["url"] as? String).flatMap(URL.init(string:))
+        }
+        guard let url else {
+            sendAssistantToolError(event: event, message: "\(name) requires a valid query or public HTTPS URL")
+            return
+        }
+        assistantActionQueue.async { [weak self] in
+            do {
+                let page = try AssistantWebResearchClient().fetch(url)
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    do {
+                        let encoded = try self.assistantJSONObject(page)
+                        self.assistantCitationsByRequest[requestID, default: []].append(
+                            AssistantCitationState(
+                                id: "web:\(page.contentSha256)",
+                                kind: "web",
+                                label: page.title,
+                                locator: page.url,
+                                excerpt: Self.boundedAssistantExcerpt(page.text, limit: 4_000),
+                                sourcePath: nil,
+                                page: nil,
+                                section: nil,
+                                lineStart: nil,
+                                lineEnd: nil,
+                                release: nil,
+                                commit: nil
+                            )
+                        )
+                        self.recordAssistantDynamicContext(
+                            requestID: requestID,
+                            name: name,
+                            arguments: arguments,
+                            result: encoded
+                        )
+                        self.assistantSidecar?.send([
+                            "command": "tool_result",
+                            "request_id": requestID,
+                            "call_id": callID,
+                            "result": encoded,
+                            "is_error": false,
+                        ])
+                    } catch {
+                        self.sendAssistantToolError(event: event, message: "Encode web evidence: \(error)")
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.sendAssistantToolError(event: event, message: "Public web fetch failed: \(error)")
+                }
+            }
+        }
+    }
+
+    private func recordAssistantDynamicContext(
+        requestID: String,
+        name: String,
+        arguments: [String: Any],
+        result: Any
+    ) {
+        guard let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+              let argumentData = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys])
+        else { return }
+        let excerpt = Self.boundedAssistantExcerpt(String(decoding: data, as: UTF8.self), limit: 64_000)
+        let argumentText = Self.boundedAssistantExcerpt(String(decoding: argumentData, as: UTF8.self), limit: 4_000)
+        assistantDynamicContextsByRequest[requestID, default: []].append(AssistantContextItemState(
+            id: "tool:\(requestID):\(assistantDynamicContextsByRequest[requestID, default: []].count)",
+            kind: "tool_result",
+            label: name,
+            summary: argumentText,
+            excerpt: excerpt,
+            providerVisible: true,
+            untrustedEvidence: true
+        ))
+    }
+
+    private func sendAssistantToolError(event: [String: Any], message: String) {
+        guard let requestID = event["request_id"] as? String,
+              let callID = event["call_id"] as? String
+        else { return }
+        assistantSidecar?.send([
+            "command": "tool_result",
+            "request_id": requestID,
+            "call_id": callID,
+            "result": ["error": message],
+            "is_error": true,
+        ])
+    }
+
+    private func handleAssistantProposalToolCall(_ event: [String: Any], name: String) {
+        guard let requestID = event["request_id"] as? String,
+              let callID = event["call_id"] as? String,
+              let arguments = event["arguments"] as? [String: Any],
+              let title = arguments["title"] as? String,
+              let kind = name.split(separator: ".").last.map(String.init),
+              ["task", "python", "plot", "download", "note"].contains(kind)
+        else {
+            sendAssistantToolError(event: event, message: "Invalid proposal tool call")
+            return
+        }
+        do {
+            let payload = try assistantJSONValue(arguments)
+            let affectedPaths = arguments["affected_paths"] as? [String]
+                ?? arguments["output_paths"] as? [String]
+                ?? []
+            let insertionContent = try assistantProposalInsertionContent(
+                kind: kind,
+                arguments: arguments
+            )
+            guard let notebook = state.scientificNotebooks?.activeNotebook else {
+                throw AssistantProposalHostError.invalidPayload("active notebook destination")
+            }
+            let insertion = AssistantInsertionBindingState(
+                destination: AssistantProposalDestinationState(
+                    surface: "notebook",
+                    identifier: notebook.id,
+                    position: "chronological_tail"
+                ),
+                exactContent: insertionContent,
+                contentSha256: Self.assistantSHA256(Data(insertionContent.utf8))
+            )
+            let execution = try assistantProposalExecutionBinding(
+                kind: kind,
+                arguments: arguments,
+                affectedPaths: affectedPaths
+            )
+            let proposal = try assistantPersistenceClient.createProposal(
+                AssistantCreateProposalEnvelope(
+                    kind: kind,
+                    title: title,
+                    authority: assistantProposalAuthority(kind),
+                    payload: payload,
+                    execution: execution,
+                    insertion: insertion,
+                    affectedPaths: affectedPaths
+                )
+            )
+            assistantProposalsByRequest[requestID, default: []].append(proposal)
+            assistantSidecar?.send([
+                "command": "tool_result",
+                "request_id": requestID,
+                "call_id": callID,
+                "result": [
+                    "proposal_id": proposal.id,
+                    "status": "pending_user_review",
+                    "destination": try assistantJSONObject(proposal.insertion.destination),
+                ],
+                "is_error": false,
+            ])
+        } catch {
+            sendAssistantToolError(event: event, message: "Create exact proposal: \(error)")
+        }
+    }
+
+    private func assistantToolDefinitions() -> [[String: Any]] {
+        let title = ["type": "string"]
+        let stringArray = ["type": "array", "items": ["type": "string"]] as [String: Any]
+        return [
+            [
+                "name": "corpus.search",
+                "description": "Search the host-owned standard radio astronomy, project-document, and CASA-RS source corpus. Results are untrusted cited evidence.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string"],
+                        "limit": ["type": "integer", "minimum": 1, "maximum": 16],
+                    ],
+                    "required": ["query"],
+                ],
+                "read_only": true,
+            ],
+            [
+                "name": "source.search",
+                "description": "Search the same host-owned cited index with emphasis on CASA-RS release or commit-keyed source and documentation evidence.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string"],
+                        "limit": ["type": "integer", "minimum": 1, "maximum": 16],
+                    ],
+                    "required": ["query"],
+                ],
+                "read_only": true,
+            ],
+            [
+                "name": "context.open_tabs",
+                "description": "Refresh bounded typed semantic projections of every currently open workbench tab. Never returns raw arrays, visibilities, credentials, or unrestricted files.",
+                "input_schema": ["type": "object", "properties": [:]],
+                "read_only": true,
+            ],
+            [
+                "name": "task.schema",
+                "description": "Read a CASA-RS-owned typed task schema, parameter defaults, help, units, and current implementation contract.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": ["task_id": ["type": "string"]],
+                ],
+                "read_only": true,
+            ],
+            [
+                "name": "data.describe",
+                "description": "Read bounded persistent-data metadata for one known project dataset; bulk scientific arrays are excluded.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": ["dataset_id": ["type": "string"]],
+                ],
+                "read_only": true,
+            ],
+            [
+                "name": "web.search",
+                "description": "Search public scholarly metadata through the credential-free Crossref API, then use web.fetch for exact source pages. Results are untrusted discovery evidence.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": ["query": ["type": "string"]],
+                    "required": ["query"],
+                ],
+                "read_only": true,
+            ],
+            [
+                "name": "web.fetch",
+                "description": "Fetch one explicit credential-free public HTTPS page through the bounded CASA-RS host. Redirects to local/private networks, cookies, binary responses, and responses over 1 MiB are denied. Returned page text is untrusted cited evidence.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": ["url": ["type": "string", "format": "uri"]],
+                    "required": ["url"],
+                ],
+                "read_only": true,
+            ],
+            [
+                "name": "proposal.note",
+                "description": "Propose Markdown at the chronological tail of the attached notebook. This records a pending proposal and never writes by itself.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": ["title": title, "markdown": ["type": "string"]],
+                    "required": ["title", "markdown"],
+                ],
+                "read_only": false,
+            ],
+            [
+                "name": "proposal.task",
+                "description": "Propose sparse typed task parameters for review in the canonical task tab. This never executes the task.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": [
+                        "title": title,
+                        "task_id": ["type": "string"],
+                        "parameters": ["type": "object"],
+                        "affected_paths": stringArray,
+                    ],
+                    "required": ["title", "task_id", "parameters"],
+                ],
+                "read_only": false,
+            ],
+            [
+                "name": "proposal.python",
+                "description": "Propose exact Python source for the isolated AI worker and notebook review. This never runs Python.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": [
+                        "title": title,
+                        "source": ["type": "string"],
+                        "input_paths": stringArray,
+                        "output_paths": stringArray,
+                    ],
+                    "required": ["title", "source"],
+                ],
+                "read_only": false,
+            ],
+            [
+                "name": "proposal.plot",
+                "description": "Propose exact isolated Python source that stages a scientific figure for explicit notebook insertion.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": [
+                        "title": title,
+                        "source": ["type": "string"],
+                        "input_paths": stringArray,
+                        "output_paths": stringArray,
+                    ],
+                    "required": ["title", "source", "output_paths"],
+                ],
+                "read_only": false,
+            ],
+            [
+                "name": "proposal.download",
+                "description": "Propose a public download with exact URL and project destination. This never accesses the network.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": [
+                        "title": title,
+                        "url": ["type": "string"],
+                        "destination": ["type": "string"],
+                        "sha256": ["type": "string"],
+                    ],
+                    "required": ["title", "url", "destination"],
+                ],
+                "read_only": false,
+            ],
+        ]
+    }
+
+    private func assistantProposalInsertionContent(
+        kind: String,
+        arguments: [String: Any]
+    ) throws -> String {
+        let cellID = UUID().uuidString.lowercased()
+        switch kind {
+        case "note":
+            return arguments["markdown"] as? String ?? ""
+        case "task":
+            let taskID = arguments["task_id"] as? String ?? state.activeTaskID
+            let parameters = try assistantJSONValue(arguments["parameters"] as? [String: Any] ?? [:])
+            guard case let .object(values) = parameters else {
+                throw AssistantProposalHostError.invalidPayload("task parameters")
+            }
+            let parameterLines = values.sorted { $0.key < $1.key }
+                .map { "\($0.key) = \($0.value.tomlLiteral)" }
+                .joined(separator: "\n")
+            return """
+            <!-- casa-rs-cell:v1 id=\(cellID) kind=task -->
+            ```toml
+            [casars]
+            format = 1
+            surface = \(JSONValue.string(taskID).tomlLiteral)
+            kind = "task"
+            contract = 1
+
+            [parameters]
+            \(parameterLines)
+            ```
+            <!-- /casa-rs-cell -->
+            """
+        case "python", "plot":
+            let source = arguments["source"] as? String ?? ""
+            return """
+            <!-- casa-rs-cell:v1 id=\(cellID) kind=python -->
+            ```python
+            \(source)
+            ```
+            <!-- /casa-rs-cell -->
+            """
+        case "download":
+            let url = arguments["url"] as? String ?? ""
+            let destination = arguments["destination"] as? String ?? ""
+            return "Proposed download: [\(url)](\(url)) → `\(destination)`"
+        default:
+            throw AssistantProposalHostError.invalidPayload(kind)
+        }
+    }
+
+    private func assistantProposalExecutionBinding(
+        kind: String,
+        arguments: [String: Any],
+        affectedPaths: [String]
+    ) throws -> AssistantExecutionBindingState {
+        let executablePath: String
+        let exactSource: String?
+        let operationType: String
+        var workingDirectory = state.project.rootPath
+        var boundOutputPaths = affectedPaths
+        switch kind {
+        case "task":
+            let taskID = arguments["task_id"] as? String ?? state.activeTaskID
+            guard let task = state.taskCatalog.first(where: { $0.id == taskID }),
+                  let resolved = ProcessGenericTaskClient.resolvedExecutablePath(
+                      binaryName: task.binaryName,
+                      overrideEnv: task.overrideEnv
+                  )
+            else { throw AssistantProposalHostError.executableUnavailable(taskID) }
+            executablePath = resolved
+            exactSource = nil
+            operationType = "task.execute"
+        case "python", "plot":
+            let resolved = pythonExecutable(root: state.project.rootPath)
+            guard FileManager.default.isExecutableFile(atPath: resolved) else {
+                throw AssistantProposalHostError.executableUnavailable("project Python")
+            }
+            executablePath = resolved
+            exactSource = arguments["source"] as? String
+            operationType = kind == "plot" ? "python.plot" : "python.execute"
+            let sourceHash = Self.assistantSHA256(Data((exactSource ?? "").utf8))
+            let staging = URL(fileURLWithPath: state.project.rootPath)
+                .appendingPathComponent(".casa-rs/ai-staging/\(sourceHash.prefix(16))", isDirectory: true)
+                .standardizedFileURL
+            workingDirectory = staging.path
+            let requestedOutputs = arguments["output_paths"] as? [String] ?? []
+            boundOutputPaths = try requestedOutputs.map { requested in
+                guard !requested.hasPrefix("/") else {
+                    throw AssistantProposalHostError.invalidPayload("output path must be staging-relative")
+                }
+                let output = staging.appendingPathComponent(requested).standardizedFileURL
+                guard output.path.hasPrefix(staging.path + "/") else {
+                    throw AssistantProposalHostError.invalidPayload("output path escapes AI staging")
+                }
+                return output.path
+            }
+        case "download":
+            executablePath = try assistantHostExecutable()
+            exactSource = arguments["url"] as? String
+            operationType = "download.public"
+        case "note":
+            executablePath = try assistantHostExecutable()
+            exactSource = arguments["markdown"] as? String
+            operationType = "notebook.insert_note"
+        default:
+            throw AssistantProposalHostError.invalidPayload(kind)
+        }
+        let canonical = try assistantJSONValue(arguments)
+        return AssistantExecutionBindingState(
+            operationType: operationType,
+            canonicalParameters: canonical,
+            exactSource: exactSource,
+            inputPaths: arguments["input_paths"] as? [String] ?? [],
+            outputPaths: boundOutputPaths,
+            workingDirectory: workingDirectory,
+            executable: try assistantExecutableIdentity(executablePath)
+        )
+    }
+
+    private func assistantProposalAuthority(_ kind: String) -> String {
+        switch kind {
+        case "python", "plot": "Seatbelt AI worker · no network · staging writes only"
+        case "task": "Canonical CASA-RS task path · exact parameters · separate run approval"
+        case "download": "Public download · exact URL and destination · separate approval"
+        default: "Notebook insertion · exact content and destination approval"
+        }
+    }
+
+    private func assistantExecutableIdentity(_ path: String) throws -> AssistantExecutableState {
+        let data = try Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe)
+        return AssistantExecutableState(
+            path: URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path,
+            version: assistantExecutableVersion(path),
+            sha256: Self.assistantSHA256(data)
+        )
+    }
+
+    private func assistantExecutableVersion(_ path: String) -> String {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = ["--version"]
+        process.standardOutput = output
+        process.standardError = output
+        guard (try? process.run()) != nil else { return "unreported" }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return "unreported" }
+        let value = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? "unreported" : Self.boundedAssistantExcerpt(value, limit: 256)
+    }
+
+    private func assistantHostExecutable() throws -> String {
+        guard let path = Bundle.main.executableURL?.path,
+              FileManager.default.isExecutableFile(atPath: path)
+        else { throw AssistantProposalHostError.executableUnavailable("casars-mac") }
+        return path
+    }
+
+    private func assistantJSONValue(_ value: Any) throws -> JSONValue {
+        let data = try JSONSerialization.data(withJSONObject: value)
+        return try assistantDecoder().decode(JSONValue.self, from: data)
+    }
+
+    private static func assistantSHA256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func handleAssistantTurnComplete(_ event: [String: Any]) {
+        guard let requestID = event["request_id"] as? String,
+              let value = event["message"],
+              let data = try? JSONSerialization.data(withJSONObject: value),
+              var message = try? assistantDecoder().decode(AssistantMessageState.self, from: data),
+              var discussion = state.assistantDiscussion,
+              let index = discussion.conversations.firstIndex(where: {
+                  $0.id == discussion.activeConversationID
+              })
+        else { return }
+        message.citations = assistantCitationsByRequest.removeValue(forKey: requestID) ?? []
+        message.proposals = assistantProposalsByRequest.removeValue(forKey: requestID) ?? []
+        let contexts = discussion.contexts
+            + (assistantDynamicContextsByRequest.removeValue(forKey: requestID) ?? [])
+        message.egress = AssistantEgressState(
+            provider: discussion.conversations[index].provider,
+            model: discussion.conversations[index].model,
+            destination: assistantProviderDestination(discussion.conversations[index].provider),
+            items: contexts,
+            estimatedBytes: contexts.filter(\.providerVisible).reduce(0) { $0 + $1.byteCount }
+        )
+        discussion.conversations[index].messages.append(message)
+        discussion.conversations[index].scrollAnchorMessageId = message.id
+        discussion.conversations[index].updatedAt = Self.assistantTimestamp()
+        discussion.activity = .completed
+        discussion.streamingText = ""
+        state.assistantDiscussion = discussion
+        activeAssistantRequestID = nil
+        persistActiveAssistantConversation()
+    }
+
+    private func assistantOpenTabContexts(
+        preservingSelectionFrom previous: [AssistantContextItemState] = []
+    ) -> [AssistantContextItemState] {
+        let selection = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0.providerVisible) })
+        var contexts: [AssistantContextItemState] = []
+        for tab in state.tabs {
+            switch tab.kind {
+            case .notebook, .tutorial:
+                guard let notebook = state.scientificNotebooks?.activeNotebook else { continue }
+                contexts.append(AssistantContextItemState(
+                    id: "tab:\(tab.id)",
+                    kind: "notebook",
+                    label: tab.title,
+                    summary: "Open notebook Markdown",
+                    excerpt: Self.boundedAssistantExcerpt(notebook.draftSource, limit: 48_000),
+                    providerVisible: selection["tab:\(tab.id)"] ?? true,
+                    untrustedEvidence: true
+                ))
+            case .task:
+                let values = state.genericTaskValues[state.activeTaskID] ?? [:]
+                let summary = values.sorted { $0.key < $1.key }
+                    .map { "\($0.key) = \($0.value)" }
+                    .joined(separator: "\n")
+                contexts.append(AssistantContextItemState(
+                    id: "tab:\(tab.id)",
+                    kind: "task",
+                    label: tab.title,
+                    summary: "Typed task \(state.activeTaskID) and current values",
+                    excerpt: Self.boundedAssistantExcerpt(
+                        "task = \(state.activeTaskID)\n\(summary)",
+                        limit: 24_000
+                    ),
+                    providerVisible: selection["tab:\(tab.id)"] ?? true,
+                    untrustedEvidence: true
+                ))
+            case .datasetExplorer, .tableBrowser:
+                guard let dataset = tab.datasetID.flatMap({ id in
+                    state.project.datasets.first { $0.id == id }
+                }) ?? state.selectedDataset else { continue }
+                let excerpt = """
+                name: \(dataset.name)
+                kind: \(dataset.kind.rawValue)
+                size: \(dataset.size)
+                units: \(dataset.units)
+                fields: \(dataset.fields.joined(separator: ", "))
+                spectral windows: \(dataset.spectralWindows.joined(separator: ", "))
+                columns: \(dataset.columns.joined(separator: ", "))
+                shape: \(dataset.shape.map(String.init).joined(separator: " × "))
+                """
+                contexts.append(AssistantContextItemState(
+                    id: "tab:\(tab.id)",
+                    kind: "explorer",
+                    label: tab.title,
+                    summary: "Bounded scientific metadata; bulk arrays excluded",
+                    excerpt: excerpt,
+                    providerVisible: selection["tab:\(tab.id)"] ?? true,
+                    untrustedEvidence: true
+                ))
+            case .plotSamples:
+                contexts.append(AssistantContextItemState(
+                    id: "tab:\(tab.id)",
+                    kind: "plot",
+                    label: tab.title,
+                    summary: "Renderer-neutral plot descriptions",
+                    excerpt: state.plotDocuments.map { "\($0.title): \($0.subtitle)" }
+                        .joined(separator: "\n"),
+                    providerVisible: selection["tab:\(tab.id)"] ?? true,
+                    untrustedEvidence: true
+                ))
+            case .python:
+                contexts.append(AssistantContextItemState(
+                    id: "tab:\(tab.id)",
+                    kind: "python",
+                    label: tab.title,
+                    summary: "Visible Python source and captured plot references",
+                    excerpt: Self.boundedAssistantExcerpt(state.python.buffer, limit: 24_000),
+                    providerVisible: selection["tab:\(tab.id)"] ?? true,
+                    untrustedEvidence: true
+                ))
+            case .history:
+                contexts.append(AssistantContextItemState(
+                    id: "tab:\(tab.id)",
+                    kind: "history",
+                    label: tab.title,
+                    summary: "Processing history receipts",
+                    excerpt: state.history.map {
+                        "\($0.timestamp) \($0.title): \($0.reason)"
+                    }.joined(separator: "\n"),
+                    providerVisible: selection["tab:\(tab.id)"] ?? true,
+                    untrustedEvidence: true
+                ))
+            case .aiChat:
+                continue
+            }
+        }
+        return contexts
+    }
+
+    private func assistantPrimaryAttachment() -> AssistantAttachmentState {
+        if let notebook = state.scientificNotebooks?.activeNotebook {
+            return AssistantAttachmentState(
+                kind: "notebook",
+                identifier: notebook.id,
+                label: notebook.filename,
+                primary: true
+            )
+        }
+        if let tab = state.tabs.first(where: { $0.id == state.activeTabID }) {
+            return AssistantAttachmentState(
+                kind: tab.kind == .task ? "task" : "explorer",
+                identifier: tab.id,
+                label: tab.title,
+                primary: true
+            )
+        }
+        return AssistantAttachmentState(
+            kind: "history",
+            identifier: "project",
+            label: state.project.name,
+            primary: true
+        )
+    }
+
+    private func assistantProposal(id: String) -> AssistantProposalState? {
+        state.assistantDiscussion?.activeConversation?.messages
+            .lazy
+            .flatMap(\.proposals)
+            .first { $0.id == id }
+    }
+
+    private func replaceAssistantProposal(_ replacement: AssistantProposalState) {
+        guard var discussion = state.assistantDiscussion,
+              let conversationIndex = discussion.conversations.firstIndex(where: {
+                  $0.id == discussion.activeConversationID
+              })
+        else { return }
+        for messageIndex in discussion.conversations[conversationIndex].messages.indices {
+            if let proposalIndex = discussion.conversations[conversationIndex]
+                .messages[messageIndex]
+                .proposals
+                .firstIndex(where: { $0.id == replacement.id })
+            {
+                discussion.conversations[conversationIndex]
+                    .messages[messageIndex]
+                    .proposals[proposalIndex] = replacement
+                discussion.conversations[conversationIndex].updatedAt = Self.assistantTimestamp()
+                state.assistantDiscussion = discussion
+                return
+            }
+        }
+    }
+
+    private func updateActiveAssistantConversation(
+        _ update: (inout AssistantConversationState) -> Void
+    ) {
+        guard var discussion = state.assistantDiscussion,
+              let index = discussion.conversations.firstIndex(where: {
+                  $0.id == discussion.activeConversationID
+              })
+        else { return }
+        update(&discussion.conversations[index])
+        state.assistantDiscussion = discussion
+    }
+
+    private func persistActiveAssistantConversation() {
+        guard let conversation = state.assistantDiscussion?.activeConversation else { return }
+        do {
+            try assistantPersistenceClient.saveConversation(
+                projectRoot: state.project.rootPath,
+                transcript: conversation
+            )
+        } catch {
+            recordAssistantError("Save assistant conversation: \(error)")
+        }
+    }
+
+    private func recordAssistantError(_ message: String) {
+        guard var discussion = state.assistantDiscussion else {
+            state.lastErrors.append(message)
+            return
+        }
+        discussion.activity = .failed
+        discussion.lastError = message
+        discussion.streamingText = ""
+        state.assistantDiscussion = discussion
+        activeAssistantRequestID = nil
+    }
+
+    private func assistantProviderDestination(_ provider: String) -> String {
+        switch provider {
+        case "openai-codex": "chatgpt.com"
+        case "openai": "api.openai.com"
+        case "opencode": "opencode.ai"
+        default: provider
+        }
+    }
+
+    private func assistantJSONObject<T: Encodable>(_ value: T) throws -> Any {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        return try JSONSerialization.jsonObject(with: encoder.encode(value))
+    }
+
+    private func assistantDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }
+
+    private static func assistantTimestamp() -> UInt64 {
+        UInt64(max(0, Date().timeIntervalSince1970 * 1_000))
+    }
+
+    private static func boundedAssistantExcerpt(_ value: String, limit: Int) -> String {
+        guard value.utf8.count > limit else { return value }
+        return String(value.prefix(limit)) + "\n[… bounded by CASA-RS host …]"
     }
 
     package func selectAIPrototypeProvider(_ providerID: String) {

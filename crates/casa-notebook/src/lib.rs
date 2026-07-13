@@ -7,6 +7,8 @@
 //! both persisted formats so native, terminal, command-line, and Python
 //! surfaces cannot drift into independent storage implementations.
 
+mod assistant;
+mod corpus;
 mod ids;
 mod markdown;
 mod receipt;
@@ -14,7 +16,27 @@ mod store;
 mod tutorial;
 mod visualization;
 
-pub use ids::{CellId, NotebookId, RunId};
+pub use assistant::{
+    ASSISTANT_PROTOCOL_VERSION, ASSISTANT_TRANSCRIPT_SCHEMA_VERSION, AssistantApproval,
+    AssistantAttachment, AssistantAuthorityPolicy, AssistantCitation, AssistantCitationKind,
+    AssistantContextItem, AssistantContextKind, AssistantCredentialLease, AssistantEffectivePolicy,
+    AssistantEgressManifest, AssistantError, AssistantExecutableIdentity,
+    AssistantExecutionBinding, AssistantInsertionBinding, AssistantMessage, AssistantMessageRole,
+    AssistantPinReference, AssistantProposal, AssistantProposalDestination, AssistantProposalKind,
+    AssistantProposalState, AssistantProtocolError, AssistantProtocolEvent,
+    AssistantProtocolRequest, AssistantProviderCatalog, AssistantProviderModel,
+    AssistantProviderOption, AssistantSidecarPolicy, AssistantStore, AssistantToolDefinition,
+    ConversationTranscript,
+};
+pub use corpus::{
+    CORPUS_EMBEDDING_DIMENSIONS, CORPUS_EMBEDDING_MODEL_VERSION, CORPUS_SCHEMA_VERSION,
+    CorpusCitation, CorpusDocument, CorpusDocumentInput, CorpusError, CorpusIndex,
+    CorpusIndexReport, CorpusLayer, CorpusSearchHit,
+};
+pub use ids::{
+    AssistantMessageId, AssistantPinId, AssistantProposalId, CellId, ConversationId, NotebookId,
+    RunId,
+};
 pub use markdown::{CellKind, NotebookCell, NotebookDocument, NotebookParseError, TaskCellIntent};
 pub use receipt::{
     ApprovalRecord, ArtifactReference, ExecutionInput, ExecutionReceipt, ExecutionStatus,

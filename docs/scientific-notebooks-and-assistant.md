@@ -532,13 +532,24 @@ non-default parameter marked. Pinning previews the notebook representation and
 location before confirmation. The right-anchored drawer uses stable global
 drag coordinates so its divider tracks the pointer in the expected direction.
 Deterministic rate-limit, cancellation, restart, accessibility, debug-state,
-and zero-production-boundary fixtures remain live. Explicit user interaction
-approval is still required after this destination-first revision and before
-Phase B begins.
+and zero-production-boundary fixtures remain live. The user explicitly accepted
+this destination-first Phase A interaction on 2026-07-12.
 
-Production: Pi sidecar, secure authentication, local corpus, source overlays,
-web/retrieval/data tools, restricted AI Python, canonical task proposals,
-provider-neutral transcripts, and fake-provider plus live-provider smoke tests.
+Current Phase B reality: `casa-notebook` owns provider-neutral transcript,
+citation, egress, immutable pin, exact proposal, separate insertion/execution
+approval, and incremental SQLite/FTS5/flat-vector corpus contracts.
+`casars-assistant` uses the exactly pinned Pi adapter behind a versioned
+CASA-RS JSONL/stdio protocol; Swift brokers Keychain credentials, typed context,
+and bounded host tools. The sidecar is Seatbelt-constrained to provider network
+access and has no project filesystem, SQLite, shell, Python, or credential-file
+authority. The CASA-RS-owned corpus combines its cleared baseline primer,
+project `documents/`, release source/docs, and a commit-keyed live overlay.
+Task, note, Python, plot, and download requests become notebook-tail proposals;
+AI Python uses a separate no-network Seatbelt worker and plot assets require an
+explicit notebook import. Deterministic fake-provider coverage is part of
+`just quick`; the Keychain-backed OpenAI/OpenCode smoke remains opt-in through
+`just assistant-live-smoke <provider> <model>`. See
+[`assistant-security.md`](assistant-security.md) for the executable boundary.
 
 ## Program acceptance
 

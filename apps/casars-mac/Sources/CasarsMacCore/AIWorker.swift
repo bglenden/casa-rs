@@ -67,7 +67,11 @@ package struct SeatbeltAIWorker {
         self.configuration = configuration
     }
 
-    package func execute(exactSource: String, approval: AIWorkerApproval) throws -> AIWorkerResult {
+    package func execute(
+        exactSource: String,
+        approval: AIWorkerApproval,
+        isCancelled: @escaping () -> Bool = { false }
+    ) throws -> AIWorkerResult {
         guard approval.approves(exactSource) else { throw AIWorkerError.approvalInvalidated }
         guard FileManager.default.isExecutableFile(atPath: "/usr/bin/sandbox-exec") else {
             throw AIWorkerError.sandboxUnavailable
@@ -122,6 +126,13 @@ package struct SeatbeltAIWorker {
         let drains = DispatchGroup()
         stdoutDrain.start(in: drains)
         stderrDrain.start(in: drains)
+        while process.isRunning {
+            if isCancelled() {
+                process.terminate()
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
         process.waitUntilExit()
         drains.wait()
         return AIWorkerResult(

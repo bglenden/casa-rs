@@ -10,6 +10,25 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  assistant:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/casars-assistant/package-lock.json
+
+      - name: Install pinned assistant adapter dependencies
+        run: npm --prefix apps/casars-assistant ci --ignore-scripts
+
+      - name: Test the provider-neutral assistant protocol
+        run: npm --prefix apps/casars-assistant test
+
   lint_test:
     runs-on: ubuntu-latest
     steps:

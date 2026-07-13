@@ -65,9 +65,21 @@ struct WorkbenchView: View {
                 AIChatPrototypeView(store: store, layout: .drawer)
                     .frame(width: aiDrawerWidth)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else if store.state.assistantDiscussion?.presentation == .drawer {
+                HorizontalResizeHandle(
+                    width: $aiDrawerWidth,
+                    range: 340...520,
+                    anchor: .right,
+                    accessibilityID: "assistant.resizeHandle"
+                )
+
+                AssistantDiscussionView(store: store, layout: .drawer)
+                    .frame(width: aiDrawerWidth)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .animation(.easeInOut(duration: 0.18), value: store.state.prototypeAI?.presentation)
+        .animation(.easeInOut(duration: 0.18), value: store.state.assistantDiscussion?.presentation)
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {

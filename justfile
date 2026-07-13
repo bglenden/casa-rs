@@ -5,12 +5,14 @@ default:
 
 setup:
     cargo fetch
+    npm --prefix apps/casars-assistant ci --ignore-scripts
 
 quick:
     ./scripts/check-spdx.sh
     cargo fmt --all -- --check
     CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings
     CARGO_INCREMENTAL=0 cargo test --workspace
+    just assistant-test
 
 verify:
     just quick
@@ -50,6 +52,13 @@ docs-check:
 
 gui-test:
     bash apps/casars-mac/script/test_gui.sh
+
+assistant-test:
+    npm --prefix apps/casars-assistant test
+
+# Opt-in network smoke using a credential previously stored by casars-mac in Keychain.
+assistant-live-smoke provider model:
+    CASA_RS_ASSISTANT_LIVE_SMOKE_PROVIDER='{{provider}}' CASA_RS_ASSISTANT_LIVE_SMOKE_MODEL='{{model}}' swift test --package-path apps/casars-mac --filter AssistantDiscussionTests/testOptInLiveProviderSmokeUsesHostKeychainLease
 
 graph:
     bash scripts/generate-graphs.sh

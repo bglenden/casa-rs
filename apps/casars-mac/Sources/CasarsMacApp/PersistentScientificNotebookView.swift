@@ -10,9 +10,14 @@ struct PersistentScientificNotebookView: View {
     @State private var lightboxRevision: NotebookVisualizationRevision?
     @State private var tutorialSourceOverrides: [String: String] = [:]
     @State private var skippedTutorialChecks: Set<String> = []
+    @State private var expandedAssistantProposalIDs: Set<String> = []
 
     private var document: NotebookDocumentState? {
         store.state.scientificNotebooks?.activeNotebook
+    }
+
+    private var assistantProposals: [AssistantProposalState] {
+        store.state.assistantDiscussion?.activeConversation?.messages.flatMap(\.proposals) ?? []
     }
 
     var body: some View {
@@ -21,22 +26,34 @@ struct PersistentScientificNotebookView: View {
                 VStack(spacing: 0) {
                     toolbar(document)
                     Divider()
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
-                            if document.conflict != nil {
-                                conflictBanner
-                                    .padding(.bottom, 20)
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 0) {
+                                if document.conflict != nil {
+                                    conflictBanner
+                                        .padding(.bottom, 20)
+                                }
+                                notebookBody(document)
+                                if !assistantProposals.isEmpty {
+                                    assistantProposalSection
+                                        .id("assistant.notebookSuggestions")
+                                        .padding(.top, 28)
+                                }
+                                Color.clear.frame(height: 80)
                             }
-                            notebookBody(document)
-                                .padding(.bottom, 80)
+                            .padding(.horizontal, 44)
+                            .padding(.top, 30)
+                            .frame(maxWidth: 920, alignment: .leading)
+                            .frame(maxWidth: .infinity)
                         }
-                        .padding(.horizontal, 44)
-                        .padding(.top, 30)
-                        .frame(maxWidth: 920, alignment: .leading)
-                        .frame(maxWidth: .infinity)
+                        .background(Color(nsColor: .textBackgroundColor))
+                        .accessibilityIdentifier("notebook.document.scroll")
+                        .onChange(of: store.state.assistantDiscussion?.notebookSuggestionFocusGeneration) { _ in
+                            withAnimation {
+                                proxy.scrollTo("assistant.notebookSuggestions", anchor: .top)
+                            }
+                        }
                     }
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .accessibilityIdentifier("notebook.document.scroll")
                 }
                 .onAppear { loadRichDocument(document) }
                 .onChange(of: document.id) { _ in
@@ -93,6 +110,24 @@ struct PersistentScientificNotebookView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if store.state.assistantDiscussion?.presentation == .closed
+                || store.state.assistantDiscussion == nil
+            {
+                Button {
+                    store.openAssistantDiscussion(presentation: .drawer)
+                } label: {
+                    Label("Discuss", systemImage: "sparkles")
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("assistant.openDrawer")
+            } else if store.state.assistantDiscussion?.presentation == .tab {
+                Button {
+                    store.dockAssistantDiscussion()
+                } label: {
+                    Label("Dock chat", systemImage: "rectangle.righthalf.inset.filled")
+                }
+                .accessibilityIdentifier("assistant.dockFromNotebook")
+            }
             if document.cells.contains(where: { $0.kind == "python" }) {
                 Text("User Python · normal user authority")
                     .workbenchFont(.caption, weight: .semibold)
@@ -150,6 +185,140 @@ struct PersistentScientificNotebookView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 11)
+    }
+
+    private var assistantProposalSection: some View {
+        let current = assistantProposals.filter {
+            !["succeeded", "failed", "rejected", "cancelled"].contains($0.state)
+        }
+        let previous = assistantProposals.filter {
+            ["succeeded", "failed", "rejected", "cancelled"].contains($0.state)
+        }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("AI suggestions", systemImage: "sparkles")
+                    .workbenchFont(.headline)
+                    .accessibilityIdentifier("assistant.notebookSuggestions")
+                Spacer()
+                Text("Chronological tail · exact review before each action")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(current) { proposal in
+                assistantProposalRow(proposal)
+            }
+            if !previous.isEmpty {
+                DisclosureGroup("Previous suggestions (\(previous.count))") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(previous) { proposal in
+                            assistantProposalRow(proposal)
+                        }
+                    }
+                    .padding(.top, 8)
+                }
+                .workbenchFont(.caption)
+            }
+        }
+        .padding(12)
+        .background(Color.accentColor.opacity(0.045))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor.opacity(0.18)))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func assistantProposalRow(_ proposal: AssistantProposalState) -> some View {
+        let expanded = expandedAssistantProposalIDs.contains(proposal.id)
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(proposal.title).workbenchFont(.subheadline, weight: .semibold)
+                Text(proposal.kind.capitalized).workbenchFont(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Text(proposal.state.replacingOccurrences(of: "_", with: " ").capitalized)
+                    .workbenchFont(.caption, weight: .semibold)
+                    .foregroundStyle(assistantProposalColor(proposal.state))
+            }
+            Text(proposal.authority)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+            Button(expanded ? "Hide exact content" : "Review exact content") {
+                if expanded { expandedAssistantProposalIDs.remove(proposal.id) }
+                else { expandedAssistantProposalIDs.insert(proposal.id) }
+            }
+            .buttonStyle(.link)
+            .accessibilityIdentifier("assistant.proposal.\(proposal.id).review")
+            if expanded {
+                Text(proposal.insertion.exactContent)
+                    .workbenchFont(.caption, design: .monospaced)
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                Text("Destination: \(proposal.insertion.destination.position) · \(proposal.insertion.destination.identifier)")
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if proposal.state == "pending", proposal.insertionApproval == nil {
+                HStack {
+                    Button("Insert at notebook tail") {
+                        store.approveAssistantProposalInsertion(proposal.id)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("assistant.proposal.\(proposal.id).insert")
+                    Button("Reject") { store.rejectAssistantProposal(proposal.id) }
+                        .accessibilityIdentifier("assistant.proposal.\(proposal.id).reject")
+                }
+            } else if proposal.state == "pending", proposal.insertionApproval != nil {
+                if ["python", "plot", "download"].contains(proposal.kind) {
+                    Button(proposal.kind == "download" ? "Approve download" : "Approve isolated run") {
+                        store.executeAssistantProposal(proposal.id)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("assistant.proposal.\(proposal.id).execute")
+                } else {
+                    Label(
+                        proposal.kind == "task"
+                            ? "Inserted and opened in the canonical task tab; Run remains separate."
+                            : "Inserted into the notebook.",
+                        systemImage: "checkmark.circle"
+                    )
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            } else if proposal.state == "running" {
+                Button("Cancel") { store.cancelAssistantProposal(proposal.id) }
+                    .accessibilityIdentifier("assistant.proposal.\(proposal.id).cancel")
+            } else if ["failed", "cancelled"].contains(proposal.state),
+                      ["python", "plot", "download"].contains(proposal.kind)
+            {
+                Button("Retry with new approval") { store.retryAssistantProposal(proposal.id) }
+                    .accessibilityIdentifier("assistant.proposal.\(proposal.id).retry")
+            } else if proposal.state == "succeeded", proposal.kind == "plot" {
+                Button("Save generated figure to notebook") {
+                    store.importAssistantPlotArtifact(proposal.id)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("assistant.proposal.\(proposal.id).importPlot")
+            }
+            if let result = proposal.result, !result.isEmpty {
+                DisclosureGroup("Result") {
+                    Text(result).workbenchFont(.caption, design: .monospaced).textSelection(.enabled)
+                }
+                .workbenchFont(.caption)
+            }
+        }
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.65))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .accessibilityIdentifier("assistant.proposal.\(proposal.id)")
+    }
+
+    private func assistantProposalColor(_ state: String) -> Color {
+        switch state {
+        case "succeeded": .green
+        case "failed", "rejected": .red
+        case "running": .blue
+        default: .orange
+        }
     }
 
     private var conflictBanner: some View {
