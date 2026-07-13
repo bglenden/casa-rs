@@ -8,6 +8,30 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertFalse(AssistantWebResearchClient.isPublicHTTPS(URL(string: "https://localhost/data")!))
         XCTAssertFalse(AssistantWebResearchClient.isPublicHTTPS(URL(string: "https://127.0.0.1/data")!))
         XCTAssertFalse(AssistantWebResearchClient.isPublicHTTPS(URL(string: "https://user:secret@example.com")!))
+        XCTAssertThrowsError(try AssistantApprovedDownloadClient().download(
+            URL(string: "https://127.0.0.1/private")!,
+            isCancelled: { false }
+        ))
+    }
+
+    func testDiscoveredFixtureModeIsOwnedByTheHostConfiguration() throws {
+        let root = try temporaryProject()
+        let node = root.appendingPathComponent("node")
+        let entrypoint = root.appendingPathComponent("main.js")
+        try "#!/bin/sh\necho v22.19.0\n".write(to: node, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: node.path)
+        try "// fixture\n".write(to: entrypoint, atomically: true, encoding: .utf8)
+
+        let configuration = try AssistantSidecarConfiguration.discover(environment: [
+            "CASA_RS_ASSISTANT_NODE": node.path,
+            "CASA_RS_ASSISTANT_ENTRYPOINT": entrypoint.path,
+            "CASA_RS_ASSISTANT_FIXTURE": "1",
+            "PATH": "",
+        ])
+
+        XCTAssertEqual(configuration.nodeExecutable, node.path)
+        XCTAssertEqual(configuration.entrypoint, entrypoint.path)
+        XCTAssertTrue(configuration.fixtureMode)
     }
 
     func testRustPersistenceAndCorpusBridgeStayProviderNeutral() throws {
@@ -224,6 +248,12 @@ final class AssistantDiscussionTests: XCTestCase {
         try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
         try "TW Hya has a nearly face-on disk."
             .write(to: documents.appendingPathComponent("twhya.md"), atomically: true, encoding: .utf8)
+        let outside = project.appendingPathComponent("outside-secret.md")
+        try "must not enter the corpus".write(to: outside, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            at: documents.appendingPathComponent("linked-secret.md"),
+            withDestinationURL: outside
+        )
 
         let source = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-source-tests-\(UUID().uuidString)", isDirectory: true)
@@ -245,6 +275,7 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertTrue(result.documents.contains {
             $0.layer == "project_document" && $0.sourceIdentity == "documents/twhya.md"
         })
+        XCTAssertFalse(result.documents.contains { $0.content.contains("must not enter the corpus") })
         XCTAssertTrue(result.documents.contains {
             $0.layer == "release_source" && $0.sourceIdentity == "ARCHITECTURE.md"
         })

@@ -20,10 +20,12 @@ Credentials are stored as device-only Keychain items and are leased to the
 adapter over stdin for the selected provider. They are excluded from projects,
 transcripts, notebooks, indexes, process environments, logs, and Python.
 
-The sidecar searches for a compatible Node runtime in the application bundle,
-an explicit override, `PATH`, and common user package-manager locations. It
-requires Node 22.19 or later. Seatbelt read rules are derived from the resolved
-runtime and its linked libraries; security does not depend on a Homebrew path.
+The installed application bundles the built adapter and its exactly locked
+production dependencies. The sidecar searches for a compatible Node runtime in
+the application bundle, an explicit override, `PATH`, and common user package-
+manager and version-manager locations. It requires Node 22.19 or later.
+Seatbelt read rules are derived from the resolved runtime and its linked
+libraries; security does not depend on a Homebrew path.
 
 ## CASA-RS-owned corpus
 
@@ -79,6 +81,9 @@ resolved executable actually used. Any change invalidates approval.
 
 Insertion approval is separate from execution approval. Downloads additionally
 bind the exact HTTPS URL, project-relative destination, and optional digest.
+The host uses an ephemeral credential-free session, rejects redirects, and
+limits an assistant-proposed download to 128 MiB; larger scientific datasets
+use the tutorial acquisition contract.
 Tasks open the canonical task tab with suggested non-defaults marked; the
 normal task Run action remains separate. AI Python runs in a second Seatbelt
 worker with no network, read-only approved scientific inputs, and one

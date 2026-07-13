@@ -29,14 +29,6 @@ private final class AssistantActionCancellation: @unchecked Sendable {
     var isCancelled: Bool { lock.withLock { cancelled } }
 }
 
-private final class AssistantDownloadOutcome: @unchecked Sendable {
-    private let lock = NSLock()
-    private var result: Result<Data, Error>?
-
-    func finish(_ value: Result<Data, Error>) { lock.withLock { result = value } }
-    var value: Result<Data, Error>? { lock.withLock { result } }
-}
-
 public protocol ProjectProbeClient {
     func probeProject(path: String) throws -> ProjectFixtureProbe
     func probePath(path: String) throws -> DatasetSummary?
@@ -4229,33 +4221,11 @@ public final class WorkbenchStore: ObservableObject {
                 result: "Download destination escapes the project root.")
             return
         }
-        let semaphore = DispatchSemaphore(value: 0)
-        let outcome = AssistantDownloadOutcome()
-        let task = URLSession.shared.dataTask(with: url) { data, _, error in
-            if let error { outcome.finish(.failure(error)) }
-            else if let data { outcome.finish(.success(data)) }
-            else { outcome.finish(.failure(AssistantProposalHostError.invalidPayload("empty download"))) }
-            semaphore.signal()
-        }
-        task.resume()
-        let deadline = DispatchTime.now() + 120
-        while semaphore.wait(timeout: .now() + 0.1) != .success {
-            if cancellation.isCancelled {
-                task.cancel()
-                finishAssistantProposal(proposal.id, outcome: "cancelled", result: "Download cancelled.")
-                return
-            }
-            if DispatchTime.now() >= deadline {
-                task.cancel()
-                finishAssistantProposal(proposal.id, outcome: "failed", result: "Download timed out.")
-                return
-            }
-        }
         do {
-            guard let value = outcome.value else {
-                throw AssistantProposalHostError.invalidPayload("download")
-            }
-            let data = try value.get()
+            let data = try AssistantApprovedDownloadClient().download(
+                url,
+                isCancelled: { cancellation.isCancelled }
+            )
             if case let .object(payload) = proposal.payload,
                let expected = payload["sha256"]?.displayText,
                !expected.isEmpty,

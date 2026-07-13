@@ -160,6 +160,11 @@ exact proposal receipts, and the private SQLite/FTS5/flat-vector corpus.
 interaction, Keychain credential brokering, typed open-tab projections, bounded
 host-tool mediation, and process supervision.
 
+The macOS app stages the built adapter and its locked production dependency
+tree into its resources through one shared local/Xcode packaging script. Node
+runtime discovery remains location-independent and version-checked rather than
+assuming one package manager.
+
 The sidecar runs under deny-by-default Seatbelt authority with provider network
 access but no project filesystem, SQLite, shell, Python, credential-file, or
 direct host-tool access. A distinct Seatbelt worker executes separately

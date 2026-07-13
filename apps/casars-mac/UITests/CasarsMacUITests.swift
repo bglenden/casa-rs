@@ -685,20 +685,16 @@ final class CasarsMacUITests: XCTestCase {
             .write(to: project.appendingPathComponent("ARCHITECTURE.md"), atomically: true, encoding: .utf8)
         productionProjectURL = project
 
-        let repository = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let entrypoint = repository.appendingPathComponent("apps/casars-assistant/dist/main.js").path
         let node = ["/opt/homebrew/bin/node", "/usr/local/bin/node"]
             .first(where: FileManager.default.isExecutableFile(atPath:))
-        guard let node, FileManager.default.fileExists(atPath: entrypoint) else {
-            throw XCTSkip("assistant adapter or Node is not built")
+        guard let node else {
+            throw XCTSkip("Node is not installed")
         }
 
         app = XCUIApplication()
         ensureStoppedBeforeLaunch()
-        app.launchEnvironment["CASARS_ASSISTANT_FAKE"] = "1"
+        app.launchEnvironment["CASA_RS_ASSISTANT_FIXTURE"] = "1"
         app.launchEnvironment["CASA_RS_ASSISTANT_NODE"] = node
-        app.launchEnvironment["CASA_RS_ASSISTANT_ENTRYPOINT"] = entrypoint
         app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = project.path
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",

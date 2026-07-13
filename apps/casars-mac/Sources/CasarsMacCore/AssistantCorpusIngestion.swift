@@ -98,8 +98,10 @@ package struct AssistantCorpusIngestor {
                 diagnostics.append("Skipped uncleared baseline document \(entry.path)")
                 continue
             }
+            let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
             let url = root.appendingPathComponent(entry.path).standardizedFileURL
-            guard url.path.hasPrefix(root.standardizedFileURL.path + "/"),
+                .resolvingSymlinksInPath()
+            guard url.path.hasPrefix(canonicalRoot.path + "/"),
                   fileManager.isReadableFile(atPath: url.path),
                   supportedExtension(url.pathExtension)
             else {
@@ -197,7 +199,9 @@ package struct AssistantCorpusIngestor {
         diagnostics: inout [String],
         totalBytes: inout Int
     ) {
-        let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .fileSizeKey]
+        let keys: [URLResourceKey] = [
+            .isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey,
+        ]
         let options: FileManager.DirectoryEnumerationOptions = [.skipsHiddenFiles, .skipsPackageDescendants]
         guard let enumerator = fileManager.enumerator(
             at: root,
@@ -213,6 +217,7 @@ package struct AssistantCorpusIngestor {
             guard documents.count < maximumDocuments, totalBytes < maximumTotalBytes else { return }
             guard let values = try? url.resourceValues(forKeys: Set(keys)),
                   values.isRegularFile == true,
+                  values.isSymbolicLink != true,
                   let fileSize = values.fileSize,
                   fileSize <= maximumFileBytes,
                   supportedExtension(url.pathExtension)

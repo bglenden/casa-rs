@@ -58,14 +58,18 @@ package struct AssistantSidecarConfiguration: Equatable {
             environment["CASA_RS_ASSISTANT_ENTRYPOINT"],
             URL(fileURLWithPath: fileManager.currentDirectoryPath)
                 .appendingPathComponent("apps/casars-assistant/dist/main.js").path,
-            Bundle.main.resourceURL?.appendingPathComponent("casars-assistant/main.js").path,
+            Bundle.main.resourceURL?.appendingPathComponent("casars-assistant/dist/main.js").path,
         ].compactMap { $0 }
         guard let entrypoint = entryCandidates.first(where: fileManager.fileExists(atPath:)) else {
             throw AssistantSidecarError.unavailable(
                 "The external casars-assistant adapter is not built; run `just assistant-test` or set CASA_RS_ASSISTANT_ENTRYPOINT"
             )
         }
-        return Self(nodeExecutable: node, entrypoint: entrypoint)
+        return Self(
+            nodeExecutable: node,
+            entrypoint: entrypoint,
+            fixtureMode: environment["CASA_RS_ASSISTANT_FIXTURE"] == "1"
+        )
     }
 
     private static func nodeVersionIsSupported(_ executable: String) -> Bool {
@@ -189,7 +193,7 @@ package final class AssistantSidecar {
         let entrypoint = try canonicalAbsoluteURL(configuration.entrypoint)
         let adapterRoot = entrypoint.deletingLastPathComponent().deletingLastPathComponent()
         let runtime = FileManager.default.temporaryDirectory
-            .appendingPathComponent("casars-assistant-(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("casars-assistant-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true)
         runtimeDirectory = runtime
         publishState(.starting)

@@ -14,10 +14,59 @@ package struct AssistantWebPageState: Codable, Equatable {
 
 package enum AssistantWebResearchError: Error, Equatable {
     case unsafeURL
+    case cancelled
     case timeout
     case responseTooLarge
     case unsupportedResponse(String)
     case transport(String)
+}
+
+/// Downloads one exactly approved public HTTPS resource without ambient
+/// credentials, cookies, redirects, or an unbounded in-memory response.
+package struct AssistantApprovedDownloadClient {
+    private let maximumBytes = 134_217_728
+
+    package init() {}
+
+    package func download(
+        _ url: URL,
+        isCancelled: @escaping () -> Bool
+    ) throws -> Data {
+        guard AssistantWebResearchClient.isPublicHTTPS(url) else {
+            throw AssistantWebResearchError.unsafeURL
+        }
+        let collector = AssistantWebCollector(maximumBytes: maximumBytes, allowsRedirects: false)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 120
+        configuration.httpCookieAcceptPolicy = .never
+        configuration.httpShouldSetCookies = false
+        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        configuration.urlCredentialStorage = nil
+        let session = URLSession(configuration: configuration, delegate: collector, delegateQueue: nil)
+        let task = session.dataTask(with: URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        task.resume()
+        let deadline = Date().addingTimeInterval(120)
+        while !collector.wait(timeout: 0.1) {
+            if isCancelled() {
+                task.cancel()
+                session.invalidateAndCancel()
+                throw AssistantWebResearchError.cancelled
+            }
+            if Date() >= deadline {
+                task.cancel()
+                session.invalidateAndCancel()
+                throw AssistantWebResearchError.timeout
+            }
+        }
+        session.finishTasksAndInvalidate()
+        if let error = collector.error { throw error }
+        guard let response = collector.response as? HTTPURLResponse,
+              (200..<300).contains(response.statusCode),
+              response.url == url
+        else { throw AssistantWebResearchError.unsupportedResponse("non-success or redirected response") }
+        return collector.data
+    }
 }
 
 /// Host-mediated, credential-free public HTTPS retrieval for cited web evidence.
@@ -154,8 +203,12 @@ private final class AssistantWebCollector: NSObject, URLSessionDataDelegate, URL
     private var collected = Data()
     private var capturedResponse: URLResponse?
     private var capturedError: AssistantWebResearchError?
+    private let allowsRedirects: Bool
 
-    init(maximumBytes: Int) { self.maximumBytes = maximumBytes }
+    init(maximumBytes: Int, allowsRedirects: Bool = true) {
+        self.maximumBytes = maximumBytes
+        self.allowsRedirects = allowsRedirects
+    }
 
     var data: Data { lock.withLock { collected } }
     var response: URLResponse? { lock.withLock { capturedResponse } }
@@ -198,7 +251,10 @@ private final class AssistantWebCollector: NSObject, URLSessionDataDelegate, URL
         newRequest request: URLRequest,
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
-        guard let url = request.url, AssistantWebResearchClient.isPublicHTTPS(url) else {
+        guard allowsRedirects,
+              let url = request.url,
+              AssistantWebResearchClient.isPublicHTTPS(url)
+        else {
             lock.withLock { capturedError = .unsafeURL }
             completionHandler(nil)
             return
