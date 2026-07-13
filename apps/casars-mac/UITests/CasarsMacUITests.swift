@@ -719,9 +719,19 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(element("assistant.discussion").waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(element("assistant.provider").waitForExistence(timeout: 8), app.debugDescription)
         replaceText("assistant.input", with: "Please propose a note")
+        let send = try require("assistant.send")
+        let sendReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"),
+            object: send
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [sendReady], timeout: 15),
+            .completed,
+            "Assistant sidecar did not become ready to send"
+        )
         try clickIdentified("assistant.send")
         XCTAssertTrue(
-            app.buttons["Pin to notebook"].firstMatch.waitForExistence(timeout: 8),
+            app.buttons["Pin to notebook"].firstMatch.waitForExistence(timeout: 15),
             app.debugDescription
         )
 
@@ -1169,11 +1179,21 @@ final class CasarsMacUITests: XCTestCase {
         try clickIdentified("aiPrototype.openNotebookSuggestions")
         XCTAssertTrue(try require("notebook.aiSuggestions").isHittable)
 
+        try bringIntoView(
+            "notebook.aiProposal.proposal-task.review",
+            in: "notebook.document.scroll",
+            deltaY: -220
+        )
         try clickIdentified("notebook.aiProposal.proposal-task.review")
         try clickIdentified("notebook.aiProposal.proposal-task.openTask")
         XCTAssertTrue(try require("prototypeTask.parameterSource.robust").exists)
         XCTAssertTrue(try require("prototypeTask.parameter.robust").value as? String == "-0.5")
         try clickIdentified("central.tab.tab-scientific-notebook")
+        try bringIntoView(
+            "notebook.aiProposal.proposal-task.review",
+            in: "notebook.document.scroll",
+            deltaY: -220
+        )
         try clickIdentified("notebook.aiProposal.proposal-task.review")
         try clickIdentified("notebook.aiProposal.proposal-task.apply")
         XCTAssertTrue(

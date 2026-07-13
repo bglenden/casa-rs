@@ -287,7 +287,7 @@ struct TutorialNotebookPrototypeView: View {
                             .workbenchFont(.subheadline, weight: .semibold)
                         Text(dataset.destination)
                             .workbenchFont(.caption, design: .monospaced)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.primary)
                     }
                     Spacer()
                     Text(dataset.phase.label)
@@ -418,44 +418,57 @@ struct TutorialNotebookPrototypeView: View {
         }
     }
 
+    @ViewBuilder
     private var taskParameterCard: some View {
         let isReady = tutorial?.dataset.isReady == true
-        return Button {
-            if isReady, let taskID = tutorial?.fixtureTask.id {
+        if isReady {
+            Button {
+                guard let taskID = tutorial?.fixtureTask.id else { return }
                 store.openPrototypeTutorialTask(taskID: taskID)
+            } label: {
+                taskParameterCardContent(isReady: true)
             }
-        } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("# Create a TW Hya continuum image")
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Label(
-                        isReady ? "Open Task" : "Waiting for data",
-                        systemImage: isReady ? "arrow.up.forward.app" : "lock"
-                    )
-                        .workbenchFont(.caption)
-                }
-                Text("[parameters]")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                ForEach(tutorial?.fixtureTask.parameterRows.prefix(5) ?? []) { row in
-                    Text("\(row.parameterID) = \(tomlValue(row.value))")
-                        .font(.system(size: 12, design: .monospaced))
-                        .lineLimit(1)
-                }
-            }
-            .padding(11)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.secondary.opacity(0.055))
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .help("Open the task with these tutorial overrides")
+            .accessibilityIdentifier("notebook.parameters.open.tutorial-task-twhya-imager")
+        } else {
+            taskParameterCardContent(isReady: false)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Create a TW Hya continuum image parameters")
+                .accessibilityValue("Waiting for data")
+                .accessibilityIdentifier("notebook.parameters.open.tutorial-task-twhya-imager")
         }
-        .buttonStyle(.plain)
-        .disabled(!isReady)
-        .help(isReady ? "Open the task with these tutorial overrides" : "Acquire the dataset before opening the task")
-        .accessibilityIdentifier("notebook.parameters.open.tutorial-task-twhya-imager")
+    }
+
+    private func taskParameterCardContent(isReady: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("# Create a TW Hya continuum image")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.primary)
+                Spacer()
+                Label(
+                    isReady ? "Open Task" : "Waiting for data",
+                    systemImage: isReady ? "arrow.up.forward.app" : "lock"
+                )
+                .workbenchFont(.caption)
+                .foregroundStyle(.primary)
+            }
+            Text("[parameters]")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(.primary)
+            ForEach(tutorial?.fixtureTask.parameterRows.prefix(5) ?? []) { row in
+                Text("\(row.parameterID) = \(tomlValue(row.value))")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .contentShape(Rectangle())
     }
 
     private var approvalPresented: Binding<Bool> {
@@ -611,7 +624,7 @@ private extension TutorialNotebookAcquisitionPhase {
         case .downloading, .verifying, .unpacking: .accentColor
         case .checksumFailed, .diskFailed, .offline, .unsafeArchive: .red
         case .cancelled: .orange
-        case .missing, .approvalRequired: .secondary
+        case .missing, .approvalRequired: .primary
         }
     }
 
