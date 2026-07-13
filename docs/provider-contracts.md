@@ -350,6 +350,14 @@ Object surfaces should remain stateful over MCP. They should not be forced into
 fake-stateless request patterns that reopen files and discard backend state on
 every call.
 
+The Wave 4 project agent server is an authenticated composition of these MCP
+projections, notebook and receipt operations, open-tab semantic resources, and
+local corpus/source retrieval. Its trust identity is not another provider
+bundle: `casa-rs-agent-profile/v1` binds a unique server name and per-session
+nonce, and only a successful profile handshake grants CASA domain-authority
+status. Agent-specific App Server or ACP envelopes stop outside the provider
+schemas and durable project contracts.
+
 ## Current Repo Mapping
 
 This is the intended classification for current and near-term surfaces.

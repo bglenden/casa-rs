@@ -1,135 +1,208 @@
-# Assistant Security and Corpus Runtime
+# Assistant Agent Runtime, Authority, and Corpus
 
 Truth class: current descriptive
-Last reality check: 2026-07-12
+Last reality check: 2026-07-13
 Verification: just docs-check
 Architecture decision: [ADR-0007](adr/0007-scientific-notebooks-and-assistant-boundary.md)
 
-## Authority model
+## Runtime choice
 
-`casars-assistant` is an untrusted provider adapter. It may keep conversation
-state in memory, contact the selected model provider, and return text or typed
-tool requests over the CASA-RS JSONL/stdio protocol. It has no project
-filesystem, SQLite, shell, Python, credential-file, or direct host-tool
-authority. The native host starts it under Seatbelt and fails closed if the
-protocol version or deny-by-default policy attestation differs.
+CASA-RS does not implement a model loop. It launches a user-installed coding
+agent behind a CASA-owned agent-session interface and supplies CASA semantics
+through a project-scoped MCP server.
 
-Permissions are the intersection of host, conversation, and request policy.
-No lower layer can widen authority. There is no ordinary elevated chat mode.
-Credentials are stored as device-only Keychain items and are leased to the
-adapter over stdin for the selected provider. They are excluded from projects,
-transcripts, notebooks, indexes, process environments, logs, and Python.
+Wave 4 targets the official Codex App Server directly. This is the only initial
+OpenAI surface that combines ChatGPT subscription authentication, a local
+coding-agent runtime, approvals, sandbox policy, MCP, and resumable sessions.
+The metered Responses API and Agents SDK are not Wave 4 backends. The ChatGPT
+Apps SDK targets an app hosted inside ChatGPT rather than this native local
+workbench.
 
-The installed application bundles the built adapter, its exactly locked
-production dependencies, and a release/commit-identified projection of tracked
-CASA-RS source and maintained documentation. The sidecar searches for a
-compatible Node runtime in the application bundle, an explicit override,
-`PATH`, and common user package-manager and version-manager locations. It
-requires Node 22.19 or later.
-Seatbelt read rules are derived from the resolved runtime and its linked
-libraries; security does not depend on a Homebrew path. Only literal ancestor
-metadata needed for path traversal is exposed; directory enumeration outside
-adapter/runtime or explicitly approved science roots remains denied.
+The direct adapter is intentionally replaceable. Durable conversations,
+notebook pins, citations, CASA tool schemas, and the authority vocabulary do
+not contain Codex request or event shapes. A future ACP adapter may add
+OpenCode or another conforming agent. ACP is not the authority contract: it
+standardizes transport and session operations but does not normalize sandbox,
+permission, skill, instruction, or trust semantics.
 
-## CASA-RS-owned corpus
+The initial adapter discovers a user-selected or installed `codex` executable
+without assuming Homebrew or any other package manager. It speaks App Server
+JSON-RPC over stdio. CASA invokes the App Server account login flow and reads
+account/rate-limit status, but never receives, copies, or stores the ChatGPT
+credential. API-key authentication is not part of the initial subscription-
+funded product path.
 
-The scientific corpus belongs to the current CASA-RS project. It does not
-query, mount, or depend on a separately installed Radio Astronomy Oracle.
-CASA-RS builds one incremental index from:
+## CASA agent profile and capability contract
 
-1. a versioned redistribution-cleared baseline pack shipped by CASA-RS
-2. user documents under the project `documents/` directory
+`casa-rs-agent-profile/v1` is the internal cross-agent contract. It contains:
+
+- a small invariant developer instruction describing CASA recording,
+  citations, and approval ownership
+- the version and identity of the bundled CASA skill
+- the expected CASA MCP identity and one-time session nonce
+- a CASA authority vector and the selected friendly preset
+- adapter capabilities and any unsupported or partially enforced dimensions
+- the conversation-to-backend-session mapping needed for resume
+
+The authority vector is independent of App Server and ACP modes:
+
+```text
+project filesystem: none | read | write
+external filesystem: none | prompted-read | prompted-write | unrestricted
+execution: none | prompted | normal | unrestricted
+network: none | prompted | normal | unrestricted
+project instructions: disabled | enabled
+CASA MCP identity: required profile version + session nonce
+```
+
+The GUI presents three expert-oriented presets:
+
+- **Explore**: read-only project context through the trusted CASA MCP server;
+  no shell execution, project writes, network, or project-local instructions
+- **Work**: the normal trusted-project mode; project writes, user-selected
+  additional directories, the user's shell and Python environment, and native
+  Codex approval for commands, file changes, network, and escalation
+- **Full access**: explicit expert opt-in to unrestricted Codex authority, with
+  a persistent visible indicator
+
+There is no separate strict/Seatbelt assistant mode. A deployment may later add
+custom presets, but Wave 4 does not preserve the removed constrained worker as
+a compatibility path.
+
+For Explore, Codex starts from a neutral working directory and receives the
+project through read-only CASA resources so project `AGENTS.md`, skills, hooks,
+or other local instructions cannot become authority before trust. Work and Full
+access deliberately use the trusted project as the working directory and may
+load its normal agent instructions.
+
+Each adapter declares how it maps the vector to its actual primitives and must
+fail visibly if it cannot honor a required dimension. Conformance is behavioral,
+not a catalog check: startup invokes the nonce-bearing profile tool, exercises
+a harmless resource read, verifies permission denial/escalation behavior, and
+proves cancellation and resume with the MCP server reattached.
+
+## Approval ownership
+
+Approval is workflow control, not a claim of containment. Ownership is kept
+single-source:
+
+| Action | Approval owner |
+|---|---|
+| shell commands, ordinary file changes, generic Python, and network | Codex App Server and its native approval events |
+| opening a task with suggested parameters | no mutation; CASA opens the canonical task tab and highlights non-defaults |
+| running a task from that tab | the ordinary CASA task Run workflow |
+| typed CASA data mutation requested through MCP | the canonical CASA operation and its normal scientific receipt path |
+| adding an answer, code, or plot to a notebook | one explicit CASA notebook insertion confirmation |
+| tutorial data acquisition | the existing CASA tutorial acquisition workflow |
+
+The bundled skill tells the agent to prefer typed CASA MCP operations for
+scientific work that should be validated and recorded. Work and Full access do
+not pretend that raw shell or Python cannot bypass those conventions; such
+commands remain visible agent activity but may not produce CASA scientific
+receipts. CASA does not add a second confirmation merely because Codex already
+approved a generic command.
+
+## Python and downloads
+
+The assistant uses the same user-selected or inherited scientific Python
+environment that an astronomer expects to work with CASA and local packages.
+The executable may change between sessions. Receipts record the resolved path,
+version, environment label, and useful package/CASA metadata when available;
+they do not hash the executable or invalidate a workflow solely because the
+path or version changed.
+
+Ad-hoc agent Python runs under the selected authority preset. Reproducible
+notebook calculations still store exact source, named inputs, environment
+metadata, outputs, and plot assets. This is provenance, not a hermetic replay
+claim.
+
+There is no assistant-specific 128 MiB download ceiling or whole-body buffer.
+Generic downloads use the agent's normal network and filesystem authority.
+Tutorial and other CASA-managed acquisition streams into a temporary file in
+the destination project, honors ordinary proxy/TLS configuration, checks
+declared size and available disk when known, optionally verifies a digest, and
+atomically promotes a completed artifact. Configurable user or deployment
+quotas are allowed; an arbitrary built-in scientific-data policy cap is not.
+
+## CASA MCP and context
+
+The project-scoped CASA MCP server is the typed boundary for:
+
+- all open notebook, task, explorer, plot, Python, and history tabs
+- task schemas, defaults, current parameters, and canonical task opening
+- persistent data-type metadata and immutable run receipts
+- notebook reading, explicit append/pin, plot import, and explorer reopening
+- local radio-astronomy, project-document, release/live-source, and CASA
+  semantics retrieval with exact citations
+- tutorial acquisition and other canonical CASA workflows
+
+The MCP server name is unique per backend session. Its required profile tool
+returns the profile version and one-time nonce so a user-configured server
+cannot shadow it. CASA treats only that verified server as trusted domain
+authority; MCP annotations and every other server remain untrusted hints.
+
+"Full context" means the agent can query complete typed semantic projections
+and local retrieval tools as needed. It does not mean raw visibility arrays or
+entire corpora are copied into every prompt. The UI shows the context sources
+available to the agent and records the CASA resources/tools and citations used.
+CASA cannot truthfully promise an exact provider-egress manifest for a coding
+agent that can also read files and run commands, so the UI does not make that
+claim. Codex owns its model traffic under the selected account and authority.
+
+## Local corpus
+
+The corpus belongs to the CASA-RS project; it does not depend on a separately
+installed Radio Astronomy Oracle. Its layers are:
+
+1. a versioned baseline pack of standard radio-astronomy material that CASA-RS
+   has a recorded right to redistribute
+2. user-supplied project documents, which do not require redistribution rights
 3. release-matched CASA-RS documentation and source
-4. an optional live source overlay identified by Git commit
+4. an optional live-checkout overlay identified by Git commit
 
-The initial baseline is the original CASA-RS radio-interferometry primer under
-`CasarsMacCore/Resources/assistant-corpus`; its manifest records the pack
-version and redistribution clearance. Additional standard texts may be added
-only with an explicit redistribution basis.
+SQLite stores document metadata, chunks, citations, and FTS5 text indexes
+behind a replaceable retrieval interface. Wave 4 removes the fixed 384-
+dimensional word/bigram feature hash and does not call it an embedding. A real
+local embedding model and index may be added only after retrieval evaluations
+show a material benefit; its dimension is model metadata, not architecture.
 
-The host extracts UTF-8 text locally and uses PDFKit text extraction with
-Vision OCR only for pages without embedded text. It enforces file, corpus, and
-document-count limits. SQLite stores document metadata, chunks, citations, and
-FTS5 terms. A private versioned 384-dimensional feature-hash embedding produces
-a flat float32 matrix searched by exact cosine similarity. Both representations
-are rebuildable managed state under `.casa-rs/corpus/`.
+Retrieved documents and source are evidence, never instructions. Scientific
+claims cite document/page/section identities. Implementation claims cite the
+CASA-RS release or commit plus path, symbol, and lines. Project documents can
+contain prompt injection, so they cannot change the authority vector, load
+skills, or grant approval.
 
-Pi never receives a database path or SQL interface. It calls the typed
-`corpus.search` or `source.search` host tool and receives only bounded cited
-excerpts. Project documents and retrieved pages are always marked untrusted
-evidence, so their text cannot grant instructions or permissions.
+## Conversations and resume
 
-## Context and egress
+CASA owns the visible durable transcript, citations, pins, context-use records,
+agent/model labels, authority preset, and backend-session mapping. Hidden
+reasoning and raw App Server envelopes are not project data. The Codex thread is
+resumed when compatible; every resume re-verifies profile version/nonce,
+authority, MCP registration, and current agent capabilities before accepting a
+new turn.
 
-The native host owns typed projections for every open notebook, task,
-explorer, plot, Python, and history tab. Separate read-only tools expose task
-schemas, persistent-data metadata, corpus/source retrieval, and credential-free
-public scholarly research. `web.search` uses Crossref discovery;
-`web.fetch` accepts one explicit public HTTPS URL, resolves and rejects local
-or private addresses and unsafe redirects, verifies the actual URLSession
-remote address after connection to close DNS-rebinding gaps, rejects proxy
-connections, sends no cookies or credentials,
-accepts text responses only, caps the fetched body at 1 MiB, and sends at most
-48 KiB of its extracted text to the provider. Initial tab context is capped at
-64 KiB; each host-tool result is capped at 64 KiB and dynamic tool context at
-256 KiB per turn. The stored egress manifest is the exact bounded projection
-sent, including tool failures and proposal receipts.
-
-The model receives only selected bounded tab projections and tool results.
-Raw arrays, visibilities, full datasets, unrestricted files, and secrets are
-excluded. Visible transcript history is limited to the newest 128 messages and
-256 KiB per turn; sidecar protocol lines are limited to 1 MiB. Every visible
-assistant message retains the provider/model and a manifest of initial plus
-dynamically retrieved context sent on that turn.
-Document, source, run, and web evidence becomes a claim-local citation.
-
-## Proposals, execution, and pins
-
-Mutation requests can only create pending typed proposals. The host binds the
-proposal hash to operation type, canonical parameters, exact source, input and
-output paths, working directory, and executable canonical path, version, and
-SHA-256. Executable discovery is portable, but approval is always bound to the
-resolved executable actually used. Any change invalidates approval.
-
-Insertion approval is separate from execution approval. Downloads additionally
-bind the exact HTTPS URL, project-relative destination, and optional digest.
-The host uses an ephemeral credential-free session, rejects redirects, and
-limits an assistant-proposed download to 128 MiB; larger scientific datasets
-use the tutorial acquisition contract.
-Tasks open the canonical task tab with suggested non-defaults marked; the
-normal task Run action remains separate. AI Python runs in a second Seatbelt
-worker with no network, read-only approved scientific inputs, and one
-content-addressed staging directory. Plot files enter notebook visualization
-history only after a separate explicit import action.
-
-Project-owned write destinations reject absolute paths, traversal, and every
-existing symbolic-link ancestor both when the proposal is bound and again at
-execution. AI-worker input paths are canonicalized before approval. The worker
-grants literal reads for approved files and subtree reads only for explicitly
-approved directories. It cannot fork subprocesses, so cancellation terminates
-the complete isolated execution authority rather than leaving descendants
-behind. Worker stdout and
-stderr are drained continuously and retained up to 16 MiB each, with explicit
-truncation markers beyond that bound.
-
-Failure and cancellation are recorded honestly and do not retry. An explicit
-retry creates a new execution approval. A notebook pin is an immutable,
-user-previewed Markdown snapshot containing conversation/message provenance
-and a content SHA-256; later transcript changes never update it.
-
-Approved AI Python, plot, and download attempts also enter the shared notebook
-receipt path. Receipt v2 records AI-worker authority and exact source for
-Python, the approved hashes, resolved operation parameters, affected paths,
-products, stdout/stderr, diagnostics, and the terminal success, failure, or
-cancellation state. Conversation proposals remain the review surface; they do
-not replace scientific execution provenance.
+If a backend session is missing or incompatible, CASA starts a new one and
+shows a visible handoff boundary with a bounded conversation summary. It does
+not silently claim continuity. Switching to a future agent likewise creates a
+new backend session while preserving the provider-neutral CASA transcript.
 
 ## Verification
 
-`just assistant-test` runs the deterministic protocol adapter. Native focused
-tests cover Rust persistence/corpus projections, the full Seatbelt tool
-round-trip, baseline/project/source ingestion, URL denial, and immutable pin
-contracts. `just assistant-live-smoke <provider> <model>` is opt-in: it uses a
-credential already stored by the GUI in Keychain and never accepts a secret on
-the command line or in an environment variable. The consolidated native GUI
-gate remains `just gui-test`.
+Wave 4 requires deterministic adapter and GUI fixtures plus opt-in live Codex
+smoke using a user's existing ChatGPT subscription. Acceptance covers:
+
+- ChatGPT login/account state without CASA handling a credential
+- profile/MCP identity verification and collision resistance
+- Explore denial of project instructions, writes, execution, and network
+- Work command/file/network approvals with no duplicate CASA prompt
+- user-selected Python identity and environment changes across runs
+- cancellation, process failure, and explicit retry without widened authority
+- session resume with authority and MCP registration restored
+- corpus FTS retrieval and exact document/source citations
+- task suggestions opening the canonical task tab with non-defaults highlighted
+- one confirmed notebook append at the chronological tail, with no duplicate
+  proposal copy in chat and notebook
+- fixture-only GUI review state proving zero production boundary calls
+
+`just gui-test` remains the native interaction gate. Live account/model tests
+are opt-in and never require a metered API key.

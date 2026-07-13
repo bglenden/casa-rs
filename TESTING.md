@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-07-12
+Last reality check: 2026-07-13
 Verification: just verify
 
 ## Test categories
@@ -189,9 +189,8 @@ For each wave:
 - Wave 2 Phase B adds production evidence for exact-source receipt-v2 Python
   execution, compact-by-default ordered output and immutable artifacts
   surviving a fresh notebook
-  load, persistent namespace plus interrupt/restart recovery, independent
-  Seatbelt AI-worker denial of network/outside writes/symlink escape/credential
-  inheritance, tutorial-backed native MeasurementSet and image-plane data with
+  load, persistent namespace plus interrupt/restart recovery, tutorial-backed
+  native MeasurementSet and image-plane data with
   editable Matplotlib/WCSAxes objects, and Rust-owned explorer snapshot New,
   Update, immutable history, and exact reopen intent. Launched-app coverage
   executes a production Python cell from a disposable project and verifies its
@@ -217,47 +216,47 @@ For each wave:
   forks a test-owned template into a disposable project, approves a local file
   acquisition, waits for Ready, and opens the normal task tab with accessible
   tutorial-override markers; it uses no user data or external network.
-- Revised Wave 4 Phase A uses two package-internal fake providers and
-  deterministic context, citation, corpus, response, and proposal fixtures.
-  Core tests cover
-  provider-neutral selection, explicit egress context, cited completion,
-  rate-limit retry, nonresponsive cancellation/restart, proposal rejection,
-  tool failure/cancellation/retry, debug projection, and zero production calls.
-  XCUITests start from a full-width notebook, open and close the contextual chat
-  drawer, use a normal free-form composer, expand and dock the same fixture
-  conversation without losing draft/scroll/context/proposal state, inspect the
-  context/egress manifest and claim-local citation preview, pin a selected
-  result, and review compact task/Python proposals in their canonical surfaces.
-  Cross-tab fixtures prove that the assistant can discover and read the typed
-  state of every open notebook, task, explorer, plot, Python, and history tab
-  without manual attachment. Corpus/source fixtures prove on-demand retrieval
-  of radio-astronomy documents, task/parameter semantics, persistent data-type
-  documentation, and release/live source, while assertions constrain the
-  hosted-provider request to the visible bounded per-turn payload.
-  They also cover rate-limit recovery, nonresponsive worker restart, stable
-  accessibility identifiers, and zero production-boundary calls. Suggested
-  prompts may fill but never submit the composer. The superseded full-width,
-  predetermined-question fixture is not Phase A approval evidence. Phase A
-  does not claim authentication, network, retrieval, Python, task, download,
-  notebook-write, or transcript persistence.
-- Wave 4 Phase B uses Rust contract tests for provider-neutral atomic
-  transcripts, exact insertion/execution approval invalidation, immutable pin
-  hashes/provenance, policy intersection, incremental corpus refresh, exact
-  cited chunks, and cleared baseline paths. TypeScript tests exercise the
-  constrained protocol, host-mediated retrieval, proposal-only mutation
-  requests, and fail-closed denial of executable tools. Focused native tests
-  exercise the generated Rust boundary, baseline/project/release ingestion,
-  portable Seatbelt startup, host-mediated tool round-trips, local/private web
-  denial, and the separate AI Python worker. Public-provider smoke is explicit
-  and Keychain-backed: `just assistant-live-smoke <provider> <model>` runs only
-  after the GUI has stored that provider's credential; normal CI skips it and
-  never accepts secrets through environment variables. The consolidated
-  `just gui-test` run covers drawer/tab preservation, Return/Shift-Return,
-  egress disclosure, citations, immutable pin confirmation, notebook-tail
-  proposal review, canonical task routing, cancellation/retry, and generated
-  plot import. Per the project verification policy, one current local or hosted
-  GUI result is sufficient and duplicate runs are not required without an
-  intervening relevant change.
+- Revised Wave 4 Phase A uses only package-internal Codex-agent, account,
+  authority, Python-environment, context, citation, activity, corpus, response,
+  and recovery fixtures. Core tests cover agent/model selection, Explore/Work/
+  Full-access transitions, explicit Full-access confirmation, user Python
+  selection, cited completion, rate-limit retry, nonresponsive cancellation/
+  restart, canonical task opening, chronological notebook-tail insertion,
+  debug projection, and zero production calls. XCUITests start from a
+  full-width notebook, open and close the contextual chat drawer, use a normal
+  free-form composer, expand and dock the same fixture conversation without
+  losing its draft or state, inspect context available through the trusted CASA
+  MCP fixture, expand otherwise-collapsed agent activity, add a selected answer
+  once at the notebook tail, and open task parameters directly in the canonical
+  task tab with non-defaults highlighted. The fixture does not claim an exact
+  model-prompt or provider-egress manifest. It also covers subscription/account
+  presentation, stable accessibility identifiers, and zero production-boundary
+  calls. Suggested prompts may fill but never submit the composer. Superseded
+  provider-sidecar, predetermined-question, duplicate proposal-card, and exact-
+  egress fixtures are not Phase A approval evidence. Phase A does not claim
+  authentication, agent startup, MCP, network, retrieval, Python execution,
+  task execution, download, notebook persistence, or transcript persistence.
+- Wave 4 Phase B uses Rust contract tests for agent-neutral atomic transcripts,
+  immutable pin hashes/provenance, single-owner insertion/execution approvals,
+  incremental SQLite/FTS5 corpus refresh, exact cited chunks, and cleared
+  baseline paths. Adapter tests exercise official Codex App Server JSON-RPC,
+  opt-in ChatGPT subscription login/account state, cancellation, process
+  failure, rate limits, and session resume without exposing credentials to
+  CASA-RS. Conformance tests verify `casa-rs-agent-profile/v1`, nonce-bearing
+  CASA MCP identity and collision resistance, capability mapping, Explore
+  denial of project instructions/write/exec/network, Work native approval
+  events without a duplicate CASA prompt, and visible failure when an authority
+  dimension cannot be honored. Python tests use the user-selected or inherited
+  executable and record identity changes without path or executable-hash
+  invalidation. Corpus tests cover baseline/project/release/live-source FTS
+  retrieval and exact citations. The consolidated `just gui-test` run covers
+  drawer/tab preservation, Return/Shift-Return, context-availability and
+  authority disclosure, citations, collapsed activity, one confirmed notebook-
+  tail append, canonical task routing, cancellation/retry, and resume. Live
+  Codex smoke is explicit, uses the user's existing ChatGPT subscription, and
+  never requires or accepts a metered API key. Per the project verification
+  policy, one current local or hosted GUI result is sufficient and duplicate
+  runs are not required without an intervening relevant change.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review

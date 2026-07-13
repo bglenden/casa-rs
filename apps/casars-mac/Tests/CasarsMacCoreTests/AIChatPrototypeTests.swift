@@ -2,21 +2,25 @@
 import XCTest
 
 final class AIChatPrototypeTests: XCTestCase {
-    func testFactoryCreatesProviderNeutralIsolatedFixture() throws {
+    func testFactoryCreatesCodexSubscriptionFixtureWithoutProductionCalls() throws {
         let store = WorkbenchStore.aiPrototype()
         let projection = try XCTUnwrap(store.state.prototypeAI)
 
         XCTAssertTrue(store.isAIPrototypeRuntime)
-        XCTAssertEqual(projection.providers.map(\.id), ["fixture-openai", "fixture-zen"])
-        XCTAssertEqual(Set(projection.providers.map { $0.models.isEmpty }), [false])
-        XCTAssertEqual(projection.proposals.map(\.kind), [.task, .python, .plot, .download])
+        XCTAssertEqual(projection.agents.map(\.id), ["codex-app-server", "opencode-acp"])
+        XCTAssertTrue(projection.agents.first?.enabled == true)
+        XCTAssertTrue(projection.agents.last?.enabled == false)
+        XCTAssertEqual(projection.selectedAgentID, "codex-app-server")
+        XCTAssertEqual(projection.account.label, "ChatGPT Pro")
+        XCTAssertEqual(projection.account.funding, "Subscription · no API billing")
+        XCTAssertEqual(projection.trustPreset, .work)
+        XCTAssertEqual(projection.selectedPythonEnvironmentID, "casa-python")
         XCTAssertEqual(projection.presentation, .closed)
         XCTAssertEqual(store.state.activeTabID, "tab-scientific-notebook")
         XCTAssertEqual(projection.openTabSources.count, 5)
         XCTAssertTrue(projection.workspaceSources.contains { $0.id == "corpus-radio" })
         XCTAssertTrue(projection.workspaceSources.contains { $0.id == "source-casars" })
         XCTAssertEqual(store.prototypeProductionBoundaryInvocationCount, 0)
-        XCTAssertEqual(projection.productionBoundaryCalls, 0)
     }
 
     func testDrawerAndExpandedTabShareDraftAndConversationState() throws {
@@ -34,7 +38,6 @@ final class AIChatPrototypeTests: XCTestCase {
         store.dockAIPrototypeConversation()
         XCTAssertEqual(store.state.prototypeAI?.presentation, .drawer)
         XCTAssertEqual(store.state.activeTabID, "tab-scientific-notebook")
-        XCTAssertEqual(store.state.prototypeAI?.draft, "Explain the current Imager parameters")
 
         store.closeAIPrototypeConversation()
         XCTAssertEqual(store.state.prototypeAI?.presentation, .closed)
@@ -43,47 +46,60 @@ final class AIChatPrototypeTests: XCTestCase {
         XCTAssertEqual(store.prototypeProductionBoundaryInvocationCount, 0)
     }
 
-    func testProviderContextAndEgressSelectionRemainExplicit() throws {
+    func testAgentModelTrustAndUserPythonControlsAreLiveFixtures() throws {
         let store = WorkbenchStore.aiPrototype()
 
-        store.selectAIPrototypeProvider("fixture-zen")
-        store.selectAIPrototypeModel("GLM-4.5")
-        store.toggleAIPrototypeContext("plot")
-        store.toggleAIPrototypeContext("paper")
+        store.selectAIPrototypeAgent("opencode-acp")
+        XCTAssertEqual(store.state.prototypeAI?.selectedAgentID, "codex-app-server")
+
+        store.selectAIPrototypeModel("gpt-5.3-codex")
+        store.selectAIPrototypeTrustPreset(.explore)
+        store.selectAIPrototypePythonEnvironment("login-python")
 
         let projection = try XCTUnwrap(store.state.prototypeAI)
-        XCTAssertEqual(projection.selectedProviderID, "fixture-zen")
-        XCTAssertEqual(projection.selectedModel, "GLM-4.5")
-        XCTAssertEqual(projection.selectedContexts.map(\.id), ["project", "source", "plot"])
-        XCTAssertTrue(projection.selectedContexts.allSatisfy { !$0.egressSummary.isEmpty })
+        XCTAssertEqual(projection.selectedModel, "gpt-5.3-codex")
+        XCTAssertEqual(projection.trustPreset, .explore)
+        XCTAssertEqual(projection.selectedPythonEnvironment?.label, "Login-shell Python")
+        XCTAssertEqual(projection.contexts.map(\.id), ["project", "paper", "source", "semantics"])
         XCTAssertEqual(store.prototypeProductionBoundaryInvocationCount, 0)
     }
 
-    func testSuggestionsReturnToNotebookAndTaskProposalOpensCanonicalTaskTab() throws {
+    func testAnswerCanAppendOnceAtNotebookTailAndOpenCanonicalTask() throws {
         let store = WorkbenchStore.aiPrototype()
-        store.expandAIPrototypeConversation()
+        let originalMarkdown = try XCTUnwrap(store.state.prototypeNotebook?.draftMarkdown)
+        let completed = expectation(description: "fixture answer")
 
-        let focusGeneration = try XCTUnwrap(
-            store.state.prototypeAI?.notebookSuggestionFocusGeneration
-        )
-        store.showAIPrototypeNotebookSuggestions()
-        XCTAssertEqual(store.state.prototypeAI?.presentation, .drawer)
-        XCTAssertEqual(store.state.activeTabID, "tab-scientific-notebook")
-        XCTAssertEqual(
-            store.state.prototypeAI?.notebookSuggestionFocusGeneration,
-            focusGeneration + 1
-        )
+        store.sendAIPrototypePrompt("Compare the plot")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 2)
 
-        store.openAIPrototypeTaskProposal("proposal-task")
+        let message = try XCTUnwrap(store.state.prototypeAI?.messages.last)
+        XCTAssertEqual(message.role, .assistant)
+        XCTAssertEqual(message.activity.count, 3)
+        XCTAssertEqual(message.suggestedTaskID, "imager")
+
+        store.pinAIPrototypeMessage(message.id)
+        let appended = try XCTUnwrap(store.state.prototypeNotebook?.draftMarkdown)
+        XCTAssertTrue(appended.hasPrefix(originalMarkdown))
+        XCTAssertTrue(appended.hasSuffix("- [casa-ms source] crates/casa-ms/src/msexplore.rs · build_plot_document"))
+        XCTAssertEqual(store.state.prototypeAI?.pinnedMessageCount, 1)
+        XCTAssertEqual(store.state.prototypeAI?.notebookPinFocusGeneration, 1)
+
+        store.pinAIPrototypeMessage(message.id)
+        XCTAssertEqual(store.state.prototypeNotebook?.draftMarkdown, appended)
+        XCTAssertEqual(store.state.prototypeAI?.pinnedMessageCount, 1)
+
+        store.openAIPrototypeTaskSuggestion()
         let taskTab = try XCTUnwrap(store.state.tabs.first { $0.id == "tab-ai-context-task" })
         XCTAssertEqual(taskTab.kind, .task)
         XCTAssertEqual(taskTab.taskID, "imager")
         XCTAssertEqual(taskTab.prototypeReceiptID, "receipt-imager-cancelled")
-        XCTAssertEqual(store.state.activeTabID, "tab-ai-context-task")
-        let proposalTask = try XCTUnwrap(
+        let task = try XCTUnwrap(
             store.state.prototypeNotebook?.receipts.first { $0.id == "receipt-imager-cancelled" }
         )
-        XCTAssertEqual(proposalTask.parameterRows.first { $0.parameterID == "robust" }?.value, "-0.5")
+        XCTAssertEqual(task.parameterRows.first { $0.parameterID == "robust" }?.value, "-0.5")
         XCTAssertEqual(store.prototypeProductionBoundaryInvocationCount, 0)
     }
 
@@ -101,10 +117,10 @@ final class AIChatPrototypeTests: XCTestCase {
 
         XCTAssertEqual(projection.responseState, .completed)
         XCTAssertEqual(projection.messages.last?.citations.count, 2)
-        XCTAssertEqual(projection.messages.last?.providerLabel, "OpenAI subscription")
+        XCTAssertEqual(projection.messages.last?.agentLabel, "Codex")
     }
 
-    func testNonresponsiveCancellationRequiresExplicitWorkerRestart() throws {
+    func testNonresponsiveCancellationRequiresExplicitAgentRestart() throws {
         var projection = PrototypeAIChatFixtureAdapter.make(scenario: .nonresponsive)
         let generation = try XCTUnwrap(projection.beginResponse(prompt: "Keep working"))
         projection.completeResponse(generation: generation)
@@ -117,28 +133,22 @@ final class AIChatPrototypeTests: XCTestCase {
         XCTAssertNil(projection.activePrompt)
     }
 
-    func testProposalRejectionFailureCancellationAndRetryDoNotBroadenAuthority() throws {
-        var projection = PrototypeAIChatFixtureAdapter.make(scenario: .toolFailure)
-        projection.rejectProposal("proposal-download")
-        XCTAssertEqual(projection.proposals.first { $0.id == "proposal-download" }?.state, .rejected)
-
-        let failedGeneration = try XCTUnwrap(projection.beginProposal("proposal-task"))
-        projection.completeProposal("proposal-task", generation: failedGeneration)
-        XCTAssertEqual(projection.proposals.first { $0.id == "proposal-task" }?.state, .failed)
-
-        projection.retryProposal("proposal-task")
-        let retryGeneration = try XCTUnwrap(projection.beginProposal("proposal-task"))
-        projection.cancelProposal("proposal-task")
-        projection.completeProposal("proposal-task", generation: retryGeneration)
-        XCTAssertEqual(projection.proposals.first { $0.id == "proposal-task" }?.state, .cancelled)
-        XCTAssertEqual(projection.productionBoundaryCalls, 0)
+    func testFullAccessSelectionIsExplicitFixtureState() {
+        let store = WorkbenchStore.aiPrototype()
+        XCTAssertEqual(store.state.prototypeAI?.trustPreset, .work)
+        store.selectAIPrototypeTrustPreset(.fullAccess)
+        XCTAssertEqual(store.state.prototypeAI?.trustPreset, .fullAccess)
+        store.selectAIPrototypeTrustPreset(.work)
+        XCTAssertEqual(store.state.prototypeAI?.trustPreset, .work)
+        XCTAssertEqual(store.prototypeProductionBoundaryInvocationCount, 0)
     }
 
-    func testDebugSnapshotExposesPrototypeReviewState() throws {
+    func testDebugSnapshotExposesReplacementPrototypeReviewState() throws {
         let store = WorkbenchStore.aiPrototype()
         store.setAIPrototypeDraft("Explain the open tabs")
         store.openAIPrototypeDrawer()
-        store.rejectAIPrototypeProposal("proposal-plot")
+        store.selectAIPrototypeTrustPreset(.explore)
+        store.selectAIPrototypePythonEnvironment("login-python")
 
         let debug = try XCTUnwrap(store.debugSnapshot().prototypeAI)
         XCTAssertEqual(debug.scenario, .primary)
@@ -147,9 +157,12 @@ final class AIChatPrototypeTests: XCTestCase {
         XCTAssertEqual(debug.draft, "Explain the open tabs")
         XCTAssertEqual(debug.openTabSourceIDs.count, 5)
         XCTAssertTrue(debug.workspaceSourceIDs.contains("schema-casars"))
-        XCTAssertEqual(debug.provider, "OpenAI subscription")
+        XCTAssertEqual(debug.agent, "Codex")
+        XCTAssertEqual(debug.account, "ChatGPT Pro · Connected fixture")
+        XCTAssertEqual(debug.trustPreset, .explore)
+        XCTAssertEqual(debug.pythonEnvironment, "Login-shell Python")
+        XCTAssertEqual(debug.availableContextIDs, ["project", "paper", "source", "semantics"])
         XCTAssertEqual(debug.pinnedMessageCount, 0)
-        XCTAssertEqual(debug.proposalStates["proposal-plot"], .rejected)
         XCTAssertEqual(debug.productionBoundaryCalls, 0)
     }
 }

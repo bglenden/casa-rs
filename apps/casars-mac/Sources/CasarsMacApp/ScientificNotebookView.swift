@@ -6,7 +6,6 @@ import SwiftUI
 struct ScientificNotebookView: View {
     @ObservedObject var store: WorkbenchStore
     @State private var expandedExecutionIDs: Set<String> = []
-    @State private var expandedAIProposalIDs: Set<String> = []
     @State private var richDocument = PrototypeNotebookRichDocument(markdown: "")
 
     var body: some View {
@@ -57,15 +56,8 @@ struct ScientificNotebookView: View {
 
                         notebookDocument(notebook)
 
-                        if let ai = store.state.prototypeAI,
-                           ai.messages.contains(where: { $0.role == .assistant })
-                        {
-                            aiSuggestionSection(ai)
-                                .id("notebook.aiSuggestions.anchor")
-                                .padding(.top, 28)
-                        }
-
                         Color.clear
+                            .id("notebook.aiPin.anchor")
                             .frame(height: 80)
                     }
                     .padding(.horizontal, 44)
@@ -75,9 +67,12 @@ struct ScientificNotebookView: View {
                 }
                 .background(Color(nsColor: .textBackgroundColor))
                 .accessibilityIdentifier("notebook.document.scroll")
-                .onChange(of: store.state.prototypeAI?.notebookSuggestionFocusGeneration) { _ in
+                .onChange(of: store.state.prototypeAI?.notebookPinFocusGeneration) { _ in
+                    if let projection = store.state.prototypeNotebook {
+                        loadRichDocument(projection)
+                    }
                     withAnimation {
-                        scrollProxy.scrollTo("notebook.aiSuggestions.anchor", anchor: .top)
+                        scrollProxy.scrollTo("notebook.aiPin.anchor", anchor: .bottom)
                     }
                 }
             }
@@ -94,125 +89,6 @@ struct ScientificNotebookView: View {
             if mode == .rich, let projection = store.state.prototypeNotebook {
                 loadRichDocument(projection)
             }
-        }
-    }
-
-    private func aiSuggestionSection(_ ai: PrototypeAIChatProjection) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("AI suggestions", systemImage: "sparkles")
-                    .workbenchFont(.headline)
-                    .accessibilityIdentifier("notebook.aiSuggestions")
-                Spacer()
-                Text("Review in the notebook or destination task")
-                    .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            ForEach(ai.proposals) { proposal in
-                aiSuggestionRow(proposal)
-            }
-        }
-        .padding(12)
-        .background(Color.accentColor.opacity(0.045))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor.opacity(0.18)))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func aiSuggestionRow(_ proposal: PrototypeAIProposal) -> some View {
-        let expanded = expandedAIProposalIDs.contains(proposal.id)
-
-        return VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Image(systemName: aiProposalIcon(proposal.kind))
-                    .foregroundStyle(.secondary)
-                Text(proposal.title)
-                    .workbenchFont(.subheadline, weight: .semibold)
-                Spacer()
-                Text(proposal.state.rawValue.capitalized)
-                    .workbenchFont(.caption)
-                    .foregroundStyle(aiProposalStateColor(proposal.state))
-                    .accessibilityIdentifier("notebook.aiProposal.\(proposal.id).state")
-                Button(expanded ? "Hide" : "Review") {
-                    if expanded {
-                        expandedAIProposalIDs.remove(proposal.id)
-                    } else {
-                        expandedAIProposalIDs.insert(proposal.id)
-                    }
-                }
-                .buttonStyle(.link)
-                .accessibilityIdentifier("notebook.aiProposal.\(proposal.id).review")
-            }
-
-            if expanded {
-                Text(proposal.summary)
-                    .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
-                Text(proposal.exactPayload)
-                    .workbenchFont(.caption, design: .monospaced)
-                    .textSelection(.enabled)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.secondary.opacity(0.07))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-
-                HStack {
-                    if proposal.kind == .task {
-                        Button("Open Imager") {
-                            store.openAIPrototypeTaskProposal(proposal.id)
-                        }
-                        .accessibilityIdentifier("notebook.aiProposal.\(proposal.id).openTask")
-                    }
-
-                    if proposal.state == .pending {
-                        Button("Apply") {
-                            store.approveAIPrototypeProposal(proposal.id)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .accessibilityIdentifier("notebook.aiProposal.\(proposal.id).apply")
-                        Button("Discard") {
-                            store.rejectAIPrototypeProposal(proposal.id)
-                        }
-                        .controlSize(.small)
-                        .accessibilityIdentifier("notebook.aiProposal.\(proposal.id).reject")
-                    } else if proposal.state == .running {
-                        Button("Cancel") {
-                            store.cancelAIPrototypeProposal(proposal.id)
-                        }
-                        .accessibilityIdentifier("notebook.aiProposal.\(proposal.id).cancel")
-                    } else if proposal.state == .failed || proposal.state == .cancelled {
-                        Button("Retry") {
-                            store.retryAIPrototypeProposal(proposal.id)
-                        }
-                        .accessibilityIdentifier("notebook.aiProposal.\(proposal.id).retry")
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-    }
-
-    private func aiProposalIcon(_ kind: PrototypeAIProposalKind) -> String {
-        switch kind {
-        case .task: "slider.horizontal.3"
-        case .python: "chevron.left.forwardslash.chevron.right"
-        case .plot: "chart.xyaxis.line"
-        case .download: "arrow.down.circle"
-        case .note: "note.text"
-        }
-    }
-
-    private func aiProposalStateColor(_ state: PrototypeAIProposalState) -> Color {
-        switch state {
-        case .succeeded: .green
-        case .failed: .red
-        case .running: .blue
-        case .cancelled, .rejected: .secondary
-        case .pending: .orange
         }
     }
 
@@ -604,7 +480,7 @@ struct PrototypeNotebookTaskView: View {
                         subtitle: store.state.isTutorialPrototype
                             ? "\(task.taskID) · parameters loaded from the tutorial notebook"
                             : store.isAIPrototypeRuntime && task.id == "receipt-imager-cancelled"
-                                ? "\(task.taskID) · AI suggestion loaded from Analysis.md"
+                                ? "\(task.taskID) · suggested by Codex from the active discussion"
                                 : "\(task.taskID) · parameters loaded from the notebook block"
                     )
                     .accessibilityIdentifier("prototypeTask.identity.\(task.id)")

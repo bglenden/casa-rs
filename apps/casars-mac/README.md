@@ -151,6 +151,16 @@ tutorial overrides are visibly and accessibly identified. Accepted states are
 adapter is invoked by that prototype. The normal production runtime now forks
 portable v1 templates into Rust-backed learner notebooks and uses the accepted
 interaction for explicitly approved verified acquisition.
+Pass `--show-prototype ai` for the revised Wave 4 fixture-only Codex discussion.
+It presents a conventional notebook side chat with agent, model, ChatGPT
+subscription, trust, and scientific-Python controls below the composer. The
+fixture exercises typed CASA context inspection, citations, collapsed agent
+activity, explicit Full-access confirmation, append-at-end notebook pins, and
+direct loading of suggested parameters into the normal task tab. Return sends;
+Shift-Return inserts a newline. The prototype does not launch Codex App Server,
+authenticate, query a corpus, execute Python or tasks, access a project, or use
+the network; the boundary counter remains zero. Accepted fixture states are
+`happy-path`, `rate-limited`, and `nonresponsive`.
 `swift run casars-mac` is reserved for non-interactive debug-state commands and
 low-level executable diagnosis.
 

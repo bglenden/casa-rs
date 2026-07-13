@@ -3010,15 +3010,16 @@ package struct DebugPrototypeAIChatSnapshot: Codable, Equatable {
     package var draft: String
     package var workspaceSourceIDs: [String]
     package var openTabSourceIDs: [String]
-    package var provider: String
+    package var agent: String
     package var model: String
+    package var account: String
+    package var trustPreset: PrototypeAITrustPreset
+    package var pythonEnvironment: String
     package var corpusState: PrototypeAIActivityState
     package var responseState: PrototypeAIActivityState
-    package var selectedContextIDs: [String]
+    package var availableContextIDs: [String]
     package var messageCount: Int
-    package var proposalStates: [String: PrototypeAIProposalState]
     package var pinnedMessageCount: Int
-    package var insertedPlotCount: Int
     package var productionBoundaryCalls: Int
 
     package init(state: PrototypeAIChatProjection) {
@@ -3028,15 +3029,17 @@ package struct DebugPrototypeAIChatSnapshot: Codable, Equatable {
         draft = state.draft
         workspaceSourceIDs = state.workspaceSources.map(\.id)
         openTabSourceIDs = state.openTabSources.map(\.id)
-        provider = state.selectedProvider?.label ?? state.selectedProviderID
+        agent = state.selectedAgent?.label ?? state.selectedAgentID
         model = state.selectedModel
+        account = "\(state.account.label) · \(state.account.status)"
+        trustPreset = state.trustPreset
+        pythonEnvironment = state.selectedPythonEnvironment?.label
+            ?? state.selectedPythonEnvironmentID
         corpusState = state.corpusState
         responseState = state.responseState
-        selectedContextIDs = state.selectedContexts.map(\.id)
+        availableContextIDs = state.contexts.map(\.id)
         messageCount = state.messages.count
-        proposalStates = Dictionary(uniqueKeysWithValues: state.proposals.map { ($0.id, $0.state) })
         pinnedMessageCount = state.pinnedMessageCount
-        insertedPlotCount = state.insertedPlotCount
         productionBoundaryCalls = state.productionBoundaryCalls
     }
 }

@@ -54,10 +54,19 @@ Swift owns native interaction and rendering. `casars-frontend-services` may
 project notebook and run information but must not become a second persistence
 implementation. GUI/TUI/CLI/Python surfaces use the same Rust-owned contracts.
 
-The assistant is a separate `casars-assistant` TypeScript sidecar behind a
-versioned CASA-RS-owned JSONL/stdio protocol. The sidecar may use Pi for model
-and authentication adapters, but no persisted notebook, transcript, proposal,
-tool, or corpus contract may depend on Pi-specific envelopes.
+The assistant is an installed coding agent behind a CASA-owned agent-session
+interface. Wave 4 integrates the official Codex App Server directly over its
+stdio JSON-RPC protocol; a future ACP adapter may add other agents. App Server,
+ACP, Codex, and future-agent envelopes stop at their adapter. Persisted
+notebook, transcript, pin, citation, authority, tool, and corpus contracts are
+CASA-owned and agent-neutral.
+
+CASA-RS owns `casa-rs-agent-profile/v1`: invariant operating guidance, a
+bundled CASA skill, the verified project MCP identity, a cross-agent authority
+vector, declared adapter capabilities, and resume invariants. Friendly trust
+presets are projections of that vector rather than App Server or ACP modes.
+This prevents a second agent from silently redefining filesystem, execution,
+network, project-instruction, or MCP trust semantics.
 
 ### Recording and execution
 
@@ -71,11 +80,10 @@ scientific operation.
 
 The user Python kernel is persistent per open notebook and runs with normal
 user-process authority. Every Python-cell execution is therefore recorded as
-potentially mutating. AI-generated Python runs in a separate constrained
-worker: project scientific data are read-only, only a dedicated artifact
-staging directory is writable, networking is disabled, and credentials are
-not inherited. AI code and task requests require approval bound to the exact
-code or typed parameter proposal.
+potentially mutating. Agent Python uses the user-selected or inherited
+scientific environment under the conversation's authority preset. Receipts
+record source, inputs, outputs, the resolved interpreter path/version, and
+environment metadata, but do not hash the executable or claim hermetic replay.
 
 ### Tutorials and data acquisition
 
@@ -92,19 +100,21 @@ Downloads are verified and archives are materialized defensively. When no
 digest is supplied, the user approves the risk and the computed SHA-256 is
 pinned in managed tutorial state.
 
-### Assistant, corpus, and trust
+### Assistant agent, corpus, and trust
 
 AI discussions are shown in the notebook workspace but persist as separate,
-provider-neutral visible-message transcripts under `.casa-rs/conversations/`.
+agent-neutral visible-message transcripts under `.casa-rs/conversations/`.
 Selected messages, code, plots, or conclusions may be pinned into Markdown.
-Every assistant turn records its provider/model label and citations, but not
-hidden reasoning or raw provider envelopes.
+Every assistant turn records its agent/model label and citations, but not
+hidden reasoning or raw agent/provider envelopes. CASA also stores the backend
+session identifier and profile version needed to resume; a missing or
+incompatible session creates a visible handoff instead of silent continuity.
 
 "Shown in the notebook workspace" does not mean embedded chat cells. The same
 project-owned transcript may be presented in an on-demand contextual drawer
 beside its primary notebook attachment or expanded into a first-class central
 AI tab. Both presentations share conversation identity, draft, scroll,
-context, and pending proposals. Every presentation has a normal free-form
+context, and pending approvals. Every presentation has a normal free-form
 multiline composer; suggested prompts may populate that composer but never
 become predetermined or automatically submitted messages. A pin is an
 explicit, immutable notebook snapshot with transcript provenance, not a live
@@ -113,25 +123,45 @@ or synchronized copy of the conversation.
 Retrieval is local and layered: a versioned redistributable baseline pack,
 project documents copied under `documents/`, release-matched `casa-rs` source,
 and an optional live-checkout overlay keyed to a Git commit. SQLite stores
-source/chunk metadata, citations, and FTS5 text indexes. A versioned float32
-embedding matrix provides exact cosine search behind a private vector-index
-interface. Scientific claims cite document pages or sections; implementation
-claims cite source paths, symbols, lines, and release/commit identity.
+source/chunk metadata, citations, and FTS5 text indexes behind a replaceable
+retrieval interface. A real local embedding model may be added only after
+retrieval evaluations justify it; its dimension is model metadata. Scientific
+claims cite document pages or sections; implementation claims cite source
+paths, symbols, lines, and release/commit identity.
 
-The assistant orchestration has automatic semantic awareness of every open
-workbench tab and standing read-only tool access to notebook content, task
+The selected coding agent has automatic semantic awareness of every open
+workbench tab and standing typed tool access to notebook content, task
 schemas and current parameters, explorer state, run history, plots, persistent
 CASA-RS data types, the project corpus, and release/live-checkout source. Users
-do not manually attach each open tab before an ordinary question. This local
-workspace/tool visibility is distinct from provider egress: a hosted model
-receives only the retrieved excerpts, typed state, or bounded summaries used
-for the turn, recorded in its visible context manifest.
+do not manually attach each open tab before an ordinary question. "Full
+context" means these complete semantic projections and local retrieval tools
+are queryable, not that raw arrays or entire corpora are copied into every
+prompt. CASA records the domain resources/tools and citations used, but does
+not claim to know the coding agent's exact model prompt or all provider egress.
 
-Read-only public web research is available with visible queries and citations.
-Downloads, uploads, authenticated actions, and writes require separate
-approval. Hosted models may receive selected document excerpts and bounded
-scientific summaries or plots, but not bulk arrays, visibilities, full
-datasets, credentials, or unrestricted project files by default.
+Three presets map to the CASA authority vector: **Explore** is read-only and
+disables shell, network, writes, and project-local instructions; **Work** uses
+the trusted project plus the user's shell/Python and native agent approvals;
+**Full access** is an explicit expert opt-in with a persistent indicator. There
+is no retained strict-worker compatibility mode.
+
+The Codex App Server owns generic command, file, network, and Python approval.
+CASA owns only the semantic confirmation of typed CASA operations, notebook
+insertion, task Run, and tutorial acquisition. A task suggestion opens the
+canonical task tab with non-defaults highlighted rather than creating a second
+approval. Work and Full access are honest that raw shell or Python may bypass
+CASA recording conventions; the bundled skill directs recordable scientific
+work through the project-scoped CASA MCP server.
+
+The CASA MCP server has a unique per-session name and a nonce-bearing profile
+handshake so it cannot be shadowed by user configuration. Only that verified
+server is trusted domain authority. Project files, documents, source, tool
+results, and other MCP servers remain untrusted evidence and cannot grant
+authority or approval.
+
+Credentials remain in the selected agent's normal auth store. The initial
+Codex adapter invokes ChatGPT subscription login/account state without copying
+tokens into CASA state. Raw metered OpenAI APIs are not an initial backend.
 
 ### Prototype-first delivery
 
@@ -152,7 +182,7 @@ Delivery order is:
 1. Markdown notebooks and execution receipts.
 2. Persistent Python cells and reproducible plots.
 3. Tutorial notebooks and verified dataset acquisition.
-4. Pi-backed assistant, local corpus, and approved actions.
+4. Codex coding-agent assistant, local corpus, and canonical CASA actions.
 
 ## Consequences
 
@@ -160,45 +190,50 @@ Positive:
 - notes, task intent, plots, and pinned conclusions remain readable outside the app
 - execution history is durable without turning Markdown into an opaque machine log
 - all user surfaces share one notebook and receipt contract
-- provider/model adapters can change without migrating project data
+- agent/model adapters can change without migrating project data
 - prototype approval settles interaction design before expensive backend work
 
 Negative:
-- the workspace gains a Rust contract crate and a TypeScript sidecar
-- safe Python, download, OCR, retrieval, and credential boundaries require
-  packaging and platform-specific work
+- the workspace gains a Rust contract crate plus an agent-session and MCP
+  runtime boundary
+- agent discovery, auth, instruction trust, Python, download, OCR, retrieval,
+  and resume behavior require platform-specific work
 - Markdown round-trip fidelity and external-edit reconciliation become release
   requirements rather than editor polish
 
 Neutral / tradeoffs:
 - parameter replay is supported, but exact environment or data-state replay is not
-- the user Python kernel is intentionally powerful; only AI execution is constrained
+- user and agent Python are intentionally powerful under the selected authority
+  preset
 - project-local downloads favor isolation and portability over deduplicated caching
-- exact vector search is preferred over an external vector service for the first release
+- FTS5 is the initial retrieval baseline; embeddings require evaluation evidence
 
 ## Alternatives considered
 
 1. Store notebooks as opaque JSON or a private database and export Markdown.
 2. Put exact run envelopes directly in Markdown cells.
 3. Use a Jupyter server and browser-based notebook as the primary GUI.
-4. Put AI provider SDKs and retrieval logic directly in Swift.
+4. Implement a bespoke provider/model loop in Swift or TypeScript.
 5. Use provider-hosted RAG or require PostgreSQL/pgvector.
-6. Permit AI to share the unrestricted user Python kernel.
+6. Force agent Python into a separate fixed restricted interpreter.
 7. Implement backend contracts before validating each wave's GUI interaction.
+8. Use ACP modes as the CASA authority contract.
+9. Use metered provider APIs despite the subscription-only product constraint.
 
 ## Enforcement
 
 This decision is enforced by:
 - tests: Markdown golden/round-trip tests, receipt lifecycle and cross-surface
-  contract tests, GUI fixture-state tests, Python-worker isolation tests,
-  tutorial download/extraction tests, and deterministic fake-provider tests
+  contract tests, GUI fixture-state tests, user-Python identity tests,
+  tutorial download/extraction tests, and deterministic fake-agent tests
 - lint/import/dependency rules: Swift and frontend services may project but may
-  not redefine persisted or provider semantics; Pi-specific shapes stop at the
-  assistant adapter
+  not redefine persisted or agent semantics; Codex App Server and ACP shapes
+  stop at their adapters
 - CI checks: `just quick`, `just verify`, Swift tests, GUI debug-state smoke,
   and targeted Python/assistant tests for the active wave
-- review trigger: persisted-format, public-API, dependency, runtime, security,
-  model-egress, or prototype-gate changes require explicit architecture review
+- review trigger: persisted-format, public-API, dependency, runtime, authority,
+  provider-traffic, or prototype-gate changes require explicit architecture
+  review
 - none / guidance only:
 
 ## Drift detection
@@ -207,8 +242,10 @@ Suspect drift if:
 - notebooks require CASA-RS to be readable or editable
 - a GUI/TUI/Python surface writes a different receipt shape
 - mutable run state replaces immutable execution revisions
-- Pi or one model provider appears in durable project schemas
-- assistant tools can bypass typed proposals and user approval
-- AI Python inherits project write access, network access, or credentials
+- Codex, App Server, ACP, or one provider appears in durable project schemas
+- an adapter silently weakens a required authority-vector dimension
+- the verified CASA MCP identity can be shadowed or resume skips its handshake
+- project instructions load in Explore mode
+- CASA duplicates a native agent approval for the same generic operation
 - opening a notebook or tutorial automatically runs code or downloads data
 - production integration begins before the wave's live prototype is accepted

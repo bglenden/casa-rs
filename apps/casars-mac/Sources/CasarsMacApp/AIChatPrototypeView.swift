@@ -1,5 +1,5 @@
-import CasarsMacCore
 import AppKit
+import CasarsMacCore
 import SwiftUI
 
 enum AIChatPrototypeLayout {
@@ -13,8 +13,9 @@ struct AIChatPrototypeView: View {
 
     @State private var selectedCitationID: String?
     @State private var sourceCitation: PrototypeAICitation?
-    @State private var messageForPin: PrototypeAIMessage?
+    @State private var messageForNotebook: PrototypeAIMessage?
     @State private var contextOpen = false
+    @State private var confirmingFullAccess = false
 
     private var projection: PrototypeAIChatProjection? {
         store.state.prototypeAI
@@ -38,15 +39,20 @@ struct AIChatPrototypeView: View {
             if contextOpen, let projection {
                 contextPanel(projection)
                     .padding(.trailing, 10)
-                    .padding(.bottom, 112)
+                    .padding(.bottom, 154)
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
         .sheet(item: $sourceCitation) { citation in
             sourceSheet(citation)
         }
-        .sheet(item: $messageForPin) { message in
-            pinSheet(message)
+        .sheet(item: $messageForNotebook) { message in
+            PrototypeAINotebookSheet(store: store, message: message) {
+                messageForNotebook = nil
+            }
+        }
+        .sheet(isPresented: $confirmingFullAccess) {
+            fullAccessSheet
         }
     }
 
@@ -115,13 +121,18 @@ struct AIChatPrototypeView: View {
                 }
             }
 
-            HStack(spacing: 6) {
-                Spacer()
-
-                HStack(spacing: 4) {
-                    Image(systemName: "lock.shield")
-                    Text("Fixture · \(store.prototypeProductionBoundaryInvocationCount) calls")
+            HStack(spacing: 8) {
+                if projection.trustPreset == .fullAccess {
+                    Label("Full access", systemImage: "exclamationmark.shield.fill")
+                        .workbenchFont(.caption, weight: .semibold)
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("aiPrototype.fullAccessIndicator")
                 }
+                Spacer()
+                Label(
+                    "Fixture · \(store.prototypeProductionBoundaryInvocationCount) calls",
+                    systemImage: "shippingbox"
+                )
                 .workbenchFont(.caption2)
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .ignore)
@@ -151,17 +162,13 @@ struct AIChatPrototypeView: View {
                 if projection.responseState == .streaming {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text("Reading open-tab state and local sources…")
+                        Text("Codex is using CASA context…")
                             .foregroundStyle(.secondary)
                     }
                     .accessibilityIdentifier("aiPrototype.response.streaming")
                 }
 
                 responseNotice(projection)
-
-                if projection.messages.contains(where: { $0.role == .assistant }) {
-                    notebookSuggestionSummary(projection)
-                }
             }
             .frame(maxWidth: layout == .expanded ? 760 : .infinity, alignment: .leading)
             .padding(layout == .expanded ? 24 : 12)
@@ -170,42 +177,11 @@ struct AIChatPrototypeView: View {
         .accessibilityIdentifier("aiPrototype.conversationScroll")
     }
 
-    private func notebookSuggestionSummary(_ projection: PrototypeAIChatProjection) -> some View {
-        let unresolvedCount = projection.proposals.filter { proposal in
-            proposal.state == .pending || proposal.state == .running
-        }.count
-
-        return Button {
-            store.showAIPrototypeNotebookSuggestions()
-        } label: {
-            HStack(spacing: 9) {
-                Image(systemName: "doc.badge.ellipsis")
-                    .foregroundStyle(.tint)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Suggestions are in Analysis.md")
-                        .workbenchFont(.subheadline, weight: .semibold)
-                    Text("\(unresolvedCount) pending · review each change where it will be applied")
-                        .workbenchFont(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "arrow.up.forward.app")
-                    .foregroundStyle(.secondary)
-            }
-            .padding(10)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(Color.accentColor.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .accessibilityIdentifier("aiPrototype.openNotebookSuggestions")
-    }
-
     private func emptyConversation(_ projection: PrototypeAIChatProjection) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Ask about this project", systemImage: "bubble.left.and.text.bubble.right")
                 .workbenchFont(.title3, weight: .semibold)
-            Text("I can inspect every open tab, retrieve from the radio astronomy corpus, and explain the current CASA-RS source. Nothing is sent until you ask.")
+            Text("Codex can query every open tab, the radio astronomy and project-paper corpus, CASA task semantics, and the current CASA-RS source through the trusted project MCP fixture.")
                 .foregroundStyle(.secondary)
 
             Text("Try asking")
@@ -233,27 +209,19 @@ struct AIChatPrototypeView: View {
         HStack {
             if message.role == .user { Spacer(minLength: layout == .expanded ? 120 : 28) }
 
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text(message.role == .user ? "You" : "Assistant")
+                    Text(message.role == .user ? "You" : "Codex")
                         .workbenchFont(.caption, weight: .semibold)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("aiPrototype.message.\(message.id)")
-                    if let provider = message.providerLabel, let model = message.modelLabel {
-                        Text("\(provider) · \(model)")
+                    if let agent = message.agentLabel, let model = message.modelLabel {
+                        Text("\(agent) · \(model)")
                             .workbenchFont(.caption2)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                     }
                     Spacer()
-                    if message.role == .assistant {
-                        Button(message.pinned ? "Pinned" : "Pin") {
-                            messageForPin = message
-                        }
-                        .buttonStyle(.link)
-                        .disabled(message.pinned)
-                        .accessibilityIdentifier("aiPrototype.message.\(message.id).pin")
-                    }
                 }
 
                 Text(message.text)
@@ -270,14 +238,6 @@ struct AIChatPrototypeView: View {
                             .accessibilityIdentifier("aiPrototype.citation.\(citation.id)")
                         }
                     }
-
-                    DisclosureGroup("Sent context") {
-                        Text(contextLabels(message.usedContextIDs, projection: projection))
-                            .workbenchFont(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .workbenchFont(.caption)
-                    .accessibilityIdentifier("aiPrototype.message.\(message.id).usedContext")
                 }
 
                 if let citation = selectedCitation(in: message) {
@@ -297,9 +257,51 @@ struct AIChatPrototypeView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                     .accessibilityIdentifier("aiPrototype.sourcePreview")
                 }
+
+                if !message.activity.isEmpty {
+                    DisclosureGroup("Agent activity · \(message.activity.count) steps") {
+                        VStack(alignment: .leading, spacing: 5) {
+                            ForEach(Array(message.activity.enumerated()), id: \.offset) { index, activity in
+                                Text("\(index + 1). \(activity)")
+                                    .workbenchFont(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text("Used: \(contextLabels(message.usedContextIDs, projection: projection))")
+                                .workbenchFont(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.top, 4)
+                    }
+                    .workbenchFont(.caption)
+                    .accessibilityIdentifier("aiPrototype.message.\(message.id).activity")
+                }
+
+                if message.role == .assistant {
+                    HStack(spacing: 10) {
+                        Button(message.pinned ? "Added to Analysis.md" : "Add to notebook") {
+                            messageForNotebook = message
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(message.pinned)
+                        .accessibilityIdentifier("aiPrototype.message.\(message.id).addToNotebook")
+
+                        if message.suggestedTaskID == "imager" {
+                            Button("Open Imager task") {
+                                store.openAIPrototypeTaskSuggestion()
+                            }
+                            .controlSize(.small)
+                            .accessibilityIdentifier("aiPrototype.message.\(message.id).openTask")
+                        }
+                    }
+                }
             }
             .padding(11)
-            .background(message.role == .user ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.08))
+            .background(
+                message.role == .user
+                    ? Color.accentColor.opacity(0.12)
+                    : Color.secondary.opacity(0.08)
+            )
             .clipShape(RoundedRectangle(cornerRadius: 10))
 
             if message.role == .assistant { Spacer(minLength: layout == .expanded ? 70 : 0) }
@@ -327,7 +329,7 @@ struct AIChatPrototypeView: View {
                 .foregroundStyle(.secondary)
         case .restartRequired:
             HStack {
-                Text("Worker did not respond; restart is explicit.")
+                Text("Agent process did not respond; restart is explicit.")
                     .accessibilityIdentifier("aiPrototype.response.restartRequired")
                 Spacer()
                 Button("Restart") { store.restartAIPrototypeWorker() }
@@ -385,49 +387,103 @@ struct AIChatPrototypeView: View {
                 }
             }
 
+            agentControls(projection)
+
+            Text("Return to send · Shift-Return for newline")
+                .workbenchFont(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(.bar)
+    }
+
+    private func agentControls(_ projection: PrototypeAIChatProjection) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 10) {
                 Menu {
-                    ForEach(projection.providers) { provider in
-                        Button(provider.label) {
-                            store.selectAIPrototypeProvider(provider.id)
+                    ForEach(projection.agents) { agent in
+                        Button(agent.enabled ? agent.label : "\(agent.label) · later") {
+                            store.selectAIPrototypeAgent(agent.id)
                         }
+                        .disabled(!agent.enabled)
                     }
                 } label: {
-                    Label(
-                        projection.selectedProvider?.label ?? "Subscription",
-                        systemImage: "person.crop.circle"
-                    )
-                    .lineLimit(1)
+                    Label(projection.selectedAgent?.label ?? "Agent", systemImage: "terminal")
+                        .lineLimit(1)
                 }
                 .menuStyle(.borderlessButton)
                 .workbenchFont(.caption)
-                .accessibilityLabel("Subscription")
-                .accessibilityIdentifier("aiPrototype.provider")
+                .accessibilityLabel("Agent")
+                .accessibilityIdentifier("aiPrototype.agent")
 
                 Menu {
-                    ForEach(projection.selectedProvider?.models ?? [], id: \.self) { model in
-                        Button(model) {
-                            store.selectAIPrototypeModel(model)
-                        }
+                    ForEach(projection.selectedAgent?.models ?? [], id: \.self) { model in
+                        Button(model) { store.selectAIPrototypeModel(model) }
                     }
                 } label: {
-                    Text(projection.selectedModel)
-                        .lineLimit(1)
+                    Text(projection.selectedModel).lineLimit(1)
                 }
                 .menuStyle(.borderlessButton)
                 .workbenchFont(.caption)
                 .accessibilityLabel("Model")
                 .accessibilityIdentifier("aiPrototype.model")
 
-                Spacer(minLength: 0)
+                Menu {
+                    Button(projection.account.status) {}
+                    Button(projection.account.funding) {}
+                } label: {
+                    Label(projection.account.label, systemImage: "person.crop.circle.badge.checkmark")
+                        .lineLimit(1)
+                }
+                .menuStyle(.borderlessButton)
+                .workbenchFont(.caption)
+                .accessibilityLabel("Subscription account")
+                .accessibilityIdentifier("aiPrototype.account")
+            }
 
-                Text("Return to send · Shift-Return for newline")
-                    .workbenchFont(.caption2)
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Menu {
+                    Button(PrototypeAITrustPreset.explore.label) {
+                        store.selectAIPrototypeTrustPreset(.explore)
+                    }
+                    Button(PrototypeAITrustPreset.work.label) {
+                        store.selectAIPrototypeTrustPreset(.work)
+                    }
+                    Divider()
+                    Button(PrototypeAITrustPreset.fullAccess.label) {
+                        confirmingFullAccess = true
+                    }
+                } label: {
+                    Label(projection.trustPreset.label, systemImage: trustIcon(projection.trustPreset))
+                        .lineLimit(1)
+                }
+                .menuStyle(.borderlessButton)
+                .workbenchFont(.caption)
+                .accessibilityLabel("Trust preset")
+                .accessibilityValue(projection.trustPreset.label)
+                .accessibilityIdentifier("aiPrototype.trust")
+
+                Menu {
+                    ForEach(projection.pythonEnvironments) { environment in
+                        Button(environment.label) {
+                            store.selectAIPrototypePythonEnvironment(environment.id)
+                        }
+                    }
+                } label: {
+                    Label(
+                        projection.selectedPythonEnvironment?.label ?? "Python",
+                        systemImage: "chevron.left.forwardslash.chevron.right"
+                    )
+                    .lineLimit(1)
+                }
+                .menuStyle(.borderlessButton)
+                .workbenchFont(.caption)
+                .accessibilityLabel("Scientific Python")
+                .accessibilityIdentifier("aiPrototype.python")
+
+                Spacer(minLength: 0)
             }
         }
-        .padding(10)
-        .background(.bar)
     }
 
     private func contextDisclosure(_ projection: PrototypeAIChatProjection) -> some View {
@@ -437,7 +493,7 @@ struct AIChatPrototypeView: View {
             HStack(spacing: 5) {
                 Image(systemName: "chevron.right")
                     .rotationEffect(.degrees(contextOpen ? 90 : 0))
-                Text("Context: \(projection.selectedContexts.count) items · 86 KB → \(projection.selectedProvider?.label ?? "provider")")
+                Text("CASA context available · \(projection.openTabSources.count) open tabs · corpus + source")
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -445,7 +501,7 @@ struct AIChatPrototypeView: View {
         }
         .buttonStyle(.plain)
         .workbenchFont(.caption)
-        .accessibilityIdentifier("aiPrototype.egressPreview")
+        .accessibilityIdentifier("aiPrototype.contextPreview")
     }
 
     private func sendDraft() {
@@ -460,7 +516,7 @@ struct AIChatPrototypeView: View {
     private func contextPanel(_ projection: PrototypeAIChatProjection) -> some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Context for the next turn")
+                Text("Available through CASA MCP")
                     .workbenchFont(.headline)
                 Spacer()
                 Button {
@@ -477,55 +533,45 @@ struct AIChatPrototypeView: View {
             Divider()
 
             ScrollView {
-                contextDetails(projection)
-                    .padding(14)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Codex chooses relevant typed resources as it works. CASA records used domain tools and citations, not an exact hidden model prompt or provider-egress manifest.")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(projection.workspaceSources) { source in
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: source.openTab ? "rectangle.on.rectangle" : "books.vertical")
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(source.label).workbenchFont(.caption, weight: .semibold)
+                                Text(source.detail).workbenchFont(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                        .accessibilityIdentifier("aiPrototype.workspaceSource.\(source.id)")
+                    }
+
+                    Divider()
+                    ForEach(projection.contexts) { context in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(context.label).workbenchFont(.caption, weight: .semibold)
+                            Text(context.detail).workbenchFont(.caption2).foregroundStyle(.secondary)
+                        }
+                        .accessibilityIdentifier("aiPrototype.context.\(context.id)")
+                    }
+
+                    corpusControl(projection)
+                    Text("Selected preset: \(projection.trustPreset.detail)")
+                        .workbenchFont(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(14)
             }
         }
-        .frame(width: layout == .drawer ? 370 : 400, height: 500)
+        .frame(width: layout == .drawer ? 380 : 420, height: 520)
         .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.3)))
         .shadow(radius: 12)
-    }
-
-    private func contextDetails(_ projection: PrototypeAIChatProjection) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Automatic read-only workspace awareness")
-                .workbenchFont(.caption, weight: .semibold)
-            ForEach(projection.workspaceSources) { source in
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: source.openTab ? "rectangle.on.rectangle" : "books.vertical")
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(source.label).workbenchFont(.caption, weight: .semibold)
-                        Text(source.detail).workbenchFont(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                .accessibilityIdentifier("aiPrototype.workspaceSource.\(source.id)")
-            }
-
-            Divider()
-            Text("Provider payload for the next turn")
-                .workbenchFont(.caption, weight: .semibold)
-            ForEach(projection.contexts) { context in
-                Toggle(isOn: Binding(
-                    get: { context.selected },
-                    set: { _ in store.toggleAIPrototypeContext(context.id) }
-                )) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(context.label).workbenchFont(.caption)
-                        Text(context.egressSummary).workbenchFont(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.checkbox)
-                .accessibilityIdentifier("aiPrototype.context.\(context.id)")
-            }
-
-            corpusControl(projection)
-            Text("Secrets, raw visibilities, and bulk arrays remain local.")
-                .workbenchFont(.caption2)
-                .foregroundStyle(.secondary)
-        }
     }
 
     private func corpusControl(_ projection: PrototypeAIChatProjection) -> some View {
@@ -553,16 +599,39 @@ struct AIChatPrototypeView: View {
         }
     }
 
+    private var fullAccessSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Enable Full access?", systemImage: "exclamationmark.shield.fill")
+                .workbenchFont(.title2, weight: .semibold)
+                .foregroundStyle(.orange)
+                .accessibilityIdentifier("aiPrototype.fullAccessSheet")
+            Text("This fixture represents unrestricted coding-agent authority. In the real app, Codex could read and change files, execute commands, and use the network without normal Work-mode prompts.")
+            Text("CASA-RS will keep Full access visibly indicated until you leave it.")
+                .foregroundStyle(.secondary)
+            Spacer()
+            HStack {
+                Button("Cancel") { confirmingFullAccess = false }
+                Spacer()
+                Button("Enable Full access") {
+                    store.selectAIPrototypeTrustPreset(.fullAccess)
+                    confirmingFullAccess = false
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("aiPrototype.fullAccess.confirm")
+            }
+        }
+        .padding(24)
+        .frame(width: 520, height: 290)
+    }
+
     private func sourceSheet(_ citation: PrototypeAICitation) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Label("Fixture source preview", systemImage: "doc.text.magnifyingglass")
                 .workbenchFont(.title2, weight: .semibold)
                 .accessibilityIdentifier("aiPrototype.sourceSheet")
             Text(citation.label).workbenchFont(.headline)
-            Text(citation.locator)
-                .workbenchFont(.body, design: .monospaced)
-            Text(citation.excerpt)
-                .textSelection(.enabled)
+            Text(citation.locator).workbenchFont(.body, design: .monospaced)
+            Text(citation.excerpt).textSelection(.enabled)
             Spacer()
             HStack {
                 Spacer()
@@ -574,30 +643,21 @@ struct AIChatPrototypeView: View {
         .frame(width: 620, height: 360)
     }
 
-    private func pinSheet(_ message: PrototypeAIMessage) -> some View {
-        PrototypeAIPinSheet(store: store, message: message) {
-            messageForPin = nil
-        }
-    }
-
     private func selectedCitation(in message: PrototypeAIMessage) -> PrototypeAICitation? {
         guard let selectedCitationID else { return nil }
         return message.citations.first { $0.id == selectedCitationID }
     }
 
-    private func contextLabels(
-        _ ids: [String],
-        projection: PrototypeAIChatProjection
-    ) -> String {
-        let labels = ids.compactMap { id in projection.contexts.first { $0.id == id }?.label }
-        return labels.joined(separator: " · ")
+    private func contextLabels(_ ids: [String], projection: PrototypeAIChatProjection) -> String {
+        ids.compactMap { id in projection.contexts.first { $0.id == id }?.label }
+            .joined(separator: " · ")
     }
 
     private func corpusLabel(_ state: PrototypeAIActivityState) -> String {
         switch state {
-        case .ready: "Corpus ready · 4,814 documents + CASA-RS source"
+        case .ready: "Local corpus ready · FTS fixture"
         case .indexing: "Indexing local sources"
-        case .offline: "Corpus offline"
+        case .offline: "Local corpus offline"
         case .cancelled: "Indexing cancelled"
         case .failed: "Indexing failed"
         default: state.rawValue.capitalized
@@ -606,9 +666,9 @@ struct AIChatPrototypeView: View {
 
     private func responseFailureLabel(_ state: PrototypeAIActivityState) -> String {
         switch state {
-        case .rateLimited: "Provider rate limited; nothing was retried."
-        case .offline: "Provider offline; project context remains local."
-        default: "Provider failed before returning an answer."
+        case .rateLimited: "Codex rate limited; nothing was retried."
+        case .offline: "Codex unavailable; project context remains local."
+        default: "Agent failed before returning an answer."
         }
     }
 
@@ -619,6 +679,14 @@ struct AIChatPrototypeView: View {
         case .offline, .failed, .rateLimited, .restartRequired: .orange
         case .cancelled: .secondary
         default: .secondary
+        }
+    }
+
+    private func trustIcon(_ preset: PrototypeAITrustPreset) -> String {
+        switch preset {
+        case .explore: "eye"
+        case .work: "hammer"
+        case .fullAccess: "exclamationmark.shield"
         }
     }
 
@@ -699,9 +767,7 @@ private final class UserActivatedTextView: NSTextView {
     private var userRequestedFocus = false
     var onSubmit: (() -> Void)?
 
-    override var acceptsFirstResponder: Bool {
-        userRequestedFocus
-    }
+    override var acceptsFirstResponder: Bool { userRequestedFocus }
 
     override func mouseDown(with event: NSEvent) {
         userRequestedFocus = true
@@ -737,31 +803,23 @@ private final class UserActivatedTextView: NSTextView {
     }
 }
 
-private struct PrototypeAIPinSheet: View {
+private struct PrototypeAINotebookSheet: View {
     @ObservedObject var store: WorkbenchStore
     let message: PrototypeAIMessage
     let dismiss: () -> Void
 
-    @State private var representation = "Markdown conclusion"
-    @State private var insertionTarget = "After current heading"
-
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("Pin to notebook", systemImage: "pin")
+            Label("Add to notebook", systemImage: "text.append")
                 .workbenchFont(.title2, weight: .semibold)
                 .accessibilityIdentifier("aiPrototype.pinSheet")
-            Picker("Representation", selection: $representation) {
-                Text("Markdown conclusion").tag("Markdown conclusion")
-                Text("Cited note block").tag("Cited note block")
-                Text("Conversation link").tag("Conversation link")
-            }
-            Picker("Insert", selection: $insertionTarget) {
-                Text("After current heading").tag("After current heading")
-                Text("End of notebook").tag("End of notebook")
-            }
 
-            GroupBox("Insertion preview") {
+            LabeledContent("Destination", value: "Analysis.md · end of notebook")
+                .accessibilityIdentifier("aiPrototype.pin.destination")
+
+            GroupBox("Append preview") {
                 VStack(alignment: .leading, spacing: 6) {
+                    Text("AI note").workbenchFont(.headline)
                     Text(message.text)
                     Text("Citations and conversation provenance retained.")
                         .workbenchFont(.caption)
@@ -774,7 +832,7 @@ private struct PrototypeAIPinSheet: View {
             HStack {
                 Button("Cancel", action: dismiss)
                 Spacer()
-                Button("Confirm pin") {
+                Button("Add at end") {
                     store.pinAIPrototypeMessage(message.id)
                     dismiss()
                 }
@@ -783,6 +841,6 @@ private struct PrototypeAIPinSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 620, height: 430)
+        .frame(width: 620, height: 390)
     }
 }

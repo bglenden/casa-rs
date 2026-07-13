@@ -3530,7 +3530,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func setPrototypeNotebookDraft(_ markdown: String) {
-        guard runtimeKind == .notebookPrototype else { return }
+        guard runtimeKind == .notebookPrototype || runtimeKind == .aiPrototype else { return }
         updateActivePrototypeNotebook { document in
             document.draftMarkdown = markdown
             PrototypeScientificNotebookFixtureAdapter.synchronizeTaskCells(in: &document)
@@ -3538,12 +3538,12 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func setPrototypeNotebookViewMode(_ viewMode: PrototypeNotebookViewMode) {
-        guard runtimeKind == .notebookPrototype else { return }
+        guard runtimeKind == .notebookPrototype || runtimeKind == .aiPrototype else { return }
         updateActivePrototypeNotebook { $0.viewMode = viewMode }
     }
 
     package func savePrototypeNotebookDraft() {
-        guard runtimeKind == .notebookPrototype else { return }
+        guard runtimeKind == .notebookPrototype || runtimeKind == .aiPrototype else { return }
         guard state.prototypeNotebook?.hasExternalConflict == false else {
             state.lastErrors.append("Resolve the simulated external notebook conflict before saving")
             return
@@ -5880,9 +5880,9 @@ public final class WorkbenchStore: ObservableObject {
         return String(value.prefix(limit)) + "\n[… bounded by CASA-RS host …]"
     }
 
-    package func selectAIPrototypeProvider(_ providerID: String) {
+    package func selectAIPrototypeAgent(_ agentID: String) {
         guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
-        projection.selectProvider(providerID)
+        projection.selectAgent(agentID)
         state.prototypeAI = projection
     }
 
@@ -5934,21 +5934,8 @@ public final class WorkbenchStore: ObservableObject {
         openAIPrototypeDrawer()
     }
 
-    package func showAIPrototypeNotebookSuggestions() {
-        openAIPrototypeDrawer()
-        if var projection = state.prototypeAI {
-            projection.requestNotebookSuggestionFocus()
-            state.prototypeAI = projection
-        }
-        state.activeTabID = state.tabs.first { $0.kind == .notebook }?.id
-            ?? state.tabs.first?.id
-            ?? ""
-    }
-
-    package func openAIPrototypeTaskProposal(_ proposalID: String) {
-        guard runtimeKind == .aiPrototype,
-              state.prototypeAI?.proposals.first(where: { $0.id == proposalID })?.kind == .task
-        else { return }
+    package func openAIPrototypeTaskSuggestion() {
+        guard runtimeKind == .aiPrototype else { return }
         let receiptID = "receipt-imager-cancelled"
         selectPrototypeNotebookReceipt(receiptID)
         if let tabIndex = state.tabs.firstIndex(where: { $0.kind == .task && $0.taskID == "imager" }) {
@@ -5965,9 +5952,15 @@ public final class WorkbenchStore: ObservableObject {
         state.prototypeAI = projection
     }
 
-    package func toggleAIPrototypeContext(_ contextID: String) {
+    package func selectAIPrototypeTrustPreset(_ preset: PrototypeAITrustPreset) {
         guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
-        projection.toggleContext(contextID)
+        projection.selectTrustPreset(preset)
+        state.prototypeAI = projection
+    }
+
+    package func selectAIPrototypePythonEnvironment(_ environmentID: String) {
+        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
+        projection.selectPythonEnvironment(environmentID)
         state.prototypeAI = projection
     }
 
@@ -6036,41 +6029,28 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func pinAIPrototypeMessage(_ messageID: String) {
-        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
-        projection.pinMessage(messageID)
-        state.prototypeAI = projection
-    }
-
-    package func approveAIPrototypeProposal(_ proposalID: String) {
         guard runtimeKind == .aiPrototype, var projection = state.prototypeAI,
-              let generation = projection.beginProposal(proposalID)
+              let message = projection.pinMessage(messageID)
         else { return }
-        state.prototypeAI = projection
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            guard let self, self.runtimeKind == .aiPrototype,
-                  var projection = self.state.prototypeAI
-            else { return }
-            projection.completeProposal(proposalID, generation: generation)
-            self.state.prototypeAI = projection
+        let citations = message.citations.map { "- [\($0.label)] \($0.locator)" }.joined(separator: "\n")
+        let appendedMarkdown = """
+
+
+        ## AI note
+
+        \(message.text)
+
+        Sources:
+        \(citations)
+        """
+        updateActivePrototypeNotebook { document in
+            document.draftMarkdown += appendedMarkdown
+            document.savedMarkdown = document.draftMarkdown
         }
-    }
-
-    package func rejectAIPrototypeProposal(_ proposalID: String) {
-        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
-        projection.rejectProposal(proposalID)
         state.prototypeAI = projection
-    }
-
-    package func cancelAIPrototypeProposal(_ proposalID: String) {
-        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
-        projection.cancelProposal(proposalID)
-        state.prototypeAI = projection
-    }
-
-    package func retryAIPrototypeProposal(_ proposalID: String) {
-        guard runtimeKind == .aiPrototype, var projection = state.prototypeAI else { return }
-        projection.retryProposal(proposalID)
-        state.prototypeAI = projection
+        state.activeTabID = state.tabs.first { $0.kind == .notebook }?.id
+            ?? state.tabs.first?.id
+            ?? ""
     }
 
     package func selectTutorialPrototypeSection(_ sectionID: String) {

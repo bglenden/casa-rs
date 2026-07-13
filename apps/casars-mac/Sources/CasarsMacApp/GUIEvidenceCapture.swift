@@ -344,7 +344,6 @@ private enum GUIEvidenceCaptureRenderer {
         {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
-        store.showAIPrototypeNotebookSuggestions()
         let view = WorkbenchView(store: store)
             .environment(\.workbenchFontSize, WorkbenchState.defaultInterfaceFontSize)
             .preferredColorScheme(.dark)

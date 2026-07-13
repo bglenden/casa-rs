@@ -1182,10 +1182,24 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertGreaterThan(try require("aiPrototype.conversationScroll").frame.width, initialDrawerWidth + 35)
 
         XCTAssertTrue(try require("aiPrototype.boundaryStatus").label.contains("0 production calls"))
-        try clickIdentified("aiPrototype.egressPreview")
+        XCTAssertTrue(try require("aiPrototype.agent").exists)
+        XCTAssertTrue(try require("aiPrototype.model").exists)
+        XCTAssertTrue(try require("aiPrototype.account").exists)
+        XCTAssertTrue(try require("aiPrototype.trust").exists)
+        XCTAssertTrue(try require("aiPrototype.python").exists)
+
+        try clickIdentified("aiPrototype.trust")
+        XCTAssertTrue(app.menuItems["Full access"].waitForExistence(timeout: 3))
+        app.menuItems["Full access"].click()
+        XCTAssertTrue(try require("aiPrototype.fullAccessSheet").exists)
+        try clickIdentified("aiPrototype.fullAccess.confirm")
+        XCTAssertTrue(try require("aiPrototype.fullAccessIndicator").exists)
+
+        try clickIdentified("aiPrototype.contextPreview")
         XCTAssertTrue(try require("aiPrototype.workspaceSource.tab-task").exists)
         XCTAssertTrue(try require("aiPrototype.workspaceSource.corpus-radio").exists)
         XCTAssertTrue(try require("aiPrototype.workspaceSource.source-casars").exists)
+        XCTAssertTrue(try require("aiPrototype.context.semantics").exists)
         try clickIdentified("aiPrototype.context.close")
 
         try clickIdentified("aiPrototype.suggestion.plot")
@@ -1195,8 +1209,6 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(try require("aiPrototype.input").value as? String == "Compare the current plot with the TW Hya paper.")
         try clickIdentified("aiPrototype.dock")
         XCTAssertTrue(try require("aiPrototype.drawer").exists)
-        XCTAssertTrue(try require("aiPrototype.provider").exists)
-        XCTAssertTrue(try require("aiPrototype.model").exists)
 
         let composer = try require("aiPrototype.input")
         composer.click()
@@ -1206,51 +1218,20 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(try require("aiPrototype.message.ai-assistant-1", timeout: 5).exists)
         try clickIdentified("aiPrototype.citation.citation-paper")
         XCTAssertTrue(try require("aiPrototype.sourcePreview").exists)
-        try clickIdentified("aiPrototype.message.ai-assistant-1.pin")
+        XCTAssertTrue(try require("aiPrototype.message.ai-assistant-1.activity").exists)
+        try clickIdentified("aiPrototype.message.ai-assistant-1.activity")
+        try clickIdentified("aiPrototype.message.ai-assistant-1.addToNotebook")
         XCTAssertTrue(try require("aiPrototype.pinSheet").exists)
+        XCTAssertTrue(try require("aiPrototype.pin.destination").exists)
         try clickIdentified("aiPrototype.pin.confirm")
-        XCTAssertFalse(try require("aiPrototype.message.ai-assistant-1.pin").isEnabled)
+        try clickIdentified("notebook.viewMode.raw")
+        let rawMarkdown = try textValue(try require("notebook.editor.raw"))
+        XCTAssertTrue(rawMarkdown.contains("## AI note"))
+        XCTAssertTrue(rawMarkdown.hasSuffix("- [casa-ms source] crates/casa-ms/src/msexplore.rs · build_plot_document"))
 
-        try clickIdentified("aiPrototype.openNotebookSuggestions")
-        XCTAssertTrue(try require("notebook.aiSuggestions").isHittable)
-
-        try bringIntoView(
-            "notebook.aiProposal.proposal-task.review",
-            in: "notebook.document.scroll",
-            deltaY: -220
-        )
-        try clickIdentified("notebook.aiProposal.proposal-task.review")
-        try clickIdentified("notebook.aiProposal.proposal-task.openTask")
+        try clickIdentified("aiPrototype.message.ai-assistant-1.openTask")
         XCTAssertTrue(try require("prototypeTask.parameterSource.robust").exists)
         XCTAssertTrue(try require("prototypeTask.parameter.robust").value as? String == "-0.5")
-        try clickIdentified("central.tab.tab-scientific-notebook")
-        try bringIntoView(
-            "notebook.aiProposal.proposal-task.review",
-            in: "notebook.document.scroll",
-            deltaY: -220
-        )
-        try clickIdentified("notebook.aiProposal.proposal-task.review")
-        try clickIdentified("notebook.aiProposal.proposal-task.apply")
-        XCTAssertTrue(
-            waitForAccessibilityValue(
-                "notebook.aiProposal.proposal-task.state",
-                containing: "Succeeded",
-                timeout: 5
-            )
-        )
-        try bringIntoView(
-            "notebook.aiProposal.proposal-python.review",
-            in: "notebook.document.scroll",
-            deltaY: -220
-        )
-        try clickIdentified("notebook.aiProposal.proposal-python.review")
-        try clickIdentified("notebook.aiProposal.proposal-python.reject")
-        XCTAssertTrue(
-            waitForAccessibilityValue(
-                "notebook.aiProposal.proposal-python.state",
-                containing: "Rejected"
-            )
-        )
         assertZeroAIProductionBoundaryCalls()
     }
 

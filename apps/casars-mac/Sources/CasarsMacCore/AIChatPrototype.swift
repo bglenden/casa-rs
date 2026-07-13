@@ -1,7 +1,7 @@
 import Foundation
 
 /// Deterministic Wave 4 review scenarios. These values are fixture-only and
-/// never enter assistant provider, transcript, proposal, or corpus contracts.
+/// never enter agent, transcript, authority, or corpus contracts.
 package enum AIChatPrototypeScenario: String, Codable, Equatable {
     case primary = "happy-path"
     case providerError = "provider-error"
@@ -30,6 +30,31 @@ package enum PrototypeAIChatPresentation: String, Codable, Equatable {
     case tab
 }
 
+package enum PrototypeAITrustPreset: String, CaseIterable, Codable, Equatable {
+    case explore
+    case work
+    case fullAccess = "full-access"
+
+    package var label: String {
+        switch self {
+        case .explore: "Explore"
+        case .work: "Work"
+        case .fullAccess: "Full access"
+        }
+    }
+
+    package var detail: String {
+        switch self {
+        case .explore:
+            "CASA context only; no project instructions, shell, writes, or network"
+        case .work:
+            "Trusted project, user shell/Python, and native Codex approvals"
+        case .fullAccess:
+            "Unrestricted expert mode; explicitly confirmed and always visible"
+        }
+    }
+}
+
 package struct PrototypeAIWorkspaceSource: Identifiable, Codable, Equatable {
     package let id: String
     package var label: String
@@ -37,18 +62,30 @@ package struct PrototypeAIWorkspaceSource: Identifiable, Codable, Equatable {
     package var openTab: Bool
 }
 
-package struct PrototypeAIProvider: Identifiable, Codable, Equatable {
+package struct PrototypeAIAgent: Identifiable, Codable, Equatable {
     package let id: String
     package var label: String
+    package var detail: String
     package var models: [String]
+    package var enabled: Bool
+}
+
+package struct PrototypeAIAccount: Codable, Equatable {
+    package var label: String
+    package var status: String
+    package var funding: String
+}
+
+package struct PrototypeAIPythonEnvironment: Identifiable, Codable, Equatable {
+    package let id: String
+    package var label: String
+    package var detail: String
 }
 
 package struct PrototypeAIContext: Identifiable, Codable, Equatable {
     package let id: String
     package var label: String
     package var detail: String
-    package var selected: Bool
-    package var egressSummary: String
 }
 
 package struct PrototypeAICitation: Identifiable, Codable, Equatable {
@@ -67,50 +104,13 @@ package struct PrototypeAIMessage: Identifiable, Codable, Equatable {
     package let id: String
     package var role: PrototypeAIMessageRole
     package var text: String
-    package var providerLabel: String?
+    package var agentLabel: String?
     package var modelLabel: String?
     package var citations: [PrototypeAICitation]
     package var usedContextIDs: [String]
+    package var activity: [String]
+    package var suggestedTaskID: String?
     package var pinned: Bool
-}
-
-package enum PrototypeAIProposalKind: String, CaseIterable, Codable, Equatable {
-    case task
-    case python
-    case plot
-    case download
-    case note
-
-    package var label: String {
-        switch self {
-        case .task: "Task"
-        case .python: "Python"
-        case .plot: "Plot"
-        case .download: "Download"
-        case .note: "Note"
-        }
-    }
-}
-
-package enum PrototypeAIProposalState: String, Codable, Equatable {
-    case pending
-    case running
-    case succeeded
-    case failed
-    case rejected
-    case cancelled
-}
-
-package struct PrototypeAIProposal: Identifiable, Codable, Equatable {
-    package let id: String
-    package var kind: PrototypeAIProposalKind
-    package var title: String
-    package var summary: String
-    package var exactPayload: String
-    package var authority: String
-    package var affectedPaths: [String]
-    package var state: PrototypeAIProposalState
-    package var result: String?
 }
 
 /// Mutable in-memory projection for the Wave 4 interaction prototype.
@@ -122,48 +122,54 @@ package struct PrototypeAIChatProjection: Codable, Equatable {
     package var draft: String
     package var suggestedPrompts: [String]
     package var workspaceSources: [PrototypeAIWorkspaceSource]
-    package var providers: [PrototypeAIProvider]
-    package var selectedProviderID: String
+    package var agents: [PrototypeAIAgent]
+    package var selectedAgentID: String
     package var selectedModel: String
+    package var account: PrototypeAIAccount
+    package var trustPreset: PrototypeAITrustPreset
+    package var pythonEnvironments: [PrototypeAIPythonEnvironment]
+    package var selectedPythonEnvironmentID: String
     package var contexts: [PrototypeAIContext]
     package var corpusState: PrototypeAIActivityState
     package var responseState: PrototypeAIActivityState
     package var messages: [PrototypeAIMessage]
-    package var proposals: [PrototypeAIProposal]
     package var generation: Int
     package var activePrompt: String?
     package var failureConsumed: Bool
     package var pinnedMessageCount: Int
-    package var insertedPlotCount: Int
     package var productionBoundaryCalls: Int
-    package var notebookSuggestionFocusGeneration: Int
+    package var notebookPinFocusGeneration: Int
 
     package var openTabSources: [PrototypeAIWorkspaceSource] {
         workspaceSources.filter(\.openTab)
     }
 
-    package var selectedProvider: PrototypeAIProvider? {
-        providers.first { $0.id == selectedProviderID }
+    package var selectedAgent: PrototypeAIAgent? {
+        agents.first { $0.id == selectedAgentID }
     }
 
-    package var selectedContexts: [PrototypeAIContext] {
-        contexts.filter(\.selected)
+    package var selectedPythonEnvironment: PrototypeAIPythonEnvironment? {
+        pythonEnvironments.first { $0.id == selectedPythonEnvironmentID }
     }
 
-    package mutating func selectProvider(_ id: String) {
-        guard let provider = providers.first(where: { $0.id == id }) else { return }
-        selectedProviderID = provider.id
-        selectedModel = provider.models.first ?? "Fixture model"
+    package mutating func selectAgent(_ id: String) {
+        guard let agent = agents.first(where: { $0.id == id }), agent.enabled else { return }
+        selectedAgentID = agent.id
+        selectedModel = agent.models.first ?? "Fixture model"
     }
 
     package mutating func selectModel(_ model: String) {
-        guard selectedProvider?.models.contains(model) == true else { return }
+        guard selectedAgent?.models.contains(model) == true else { return }
         selectedModel = model
     }
 
-    package mutating func toggleContext(_ id: String) {
-        guard let index = contexts.firstIndex(where: { $0.id == id }) else { return }
-        contexts[index].selected.toggle()
+    package mutating func selectTrustPreset(_ preset: PrototypeAITrustPreset) {
+        trustPreset = preset
+    }
+
+    package mutating func selectPythonEnvironment(_ id: String) {
+        guard pythonEnvironments.contains(where: { $0.id == id }) else { return }
+        selectedPythonEnvironmentID = id
     }
 
     package mutating func setPresentation(_ presentation: PrototypeAIChatPresentation) {
@@ -174,8 +180,8 @@ package struct PrototypeAIChatProjection: Codable, Equatable {
         self.draft = draft
     }
 
-    package mutating func requestNotebookSuggestionFocus() {
-        notebookSuggestionFocusGeneration += 1
+    package mutating func requestNotebookPinFocus() {
+        notebookPinFocusGeneration += 1
     }
 
     package mutating func beginIndexing() -> Int {
@@ -211,10 +217,12 @@ package struct PrototypeAIChatProjection: Codable, Equatable {
             id: "ai-user-\(generation)",
             role: .user,
             text: normalized,
-            providerLabel: nil,
+            agentLabel: nil,
             modelLabel: nil,
             citations: [],
             usedContextIDs: [],
+            activity: [],
+            suggestedTaskID: nil,
             pinned: false
         ))
         return generation
@@ -224,7 +232,7 @@ package struct PrototypeAIChatProjection: Codable, Equatable {
         guard generation == self.generation, responseState == .streaming else { return }
         if !failureConsumed {
             switch scenario {
-            case .providerError:
+            case .providerError, .toolFailure:
                 failureConsumed = true
                 responseState = .failed
                 return
@@ -238,20 +246,24 @@ package struct PrototypeAIChatProjection: Codable, Equatable {
                 return
             case .nonresponsive:
                 return
-            case .primary, .toolFailure:
+            case .primary:
                 break
             }
         }
-        let provider = selectedProvider
-        let citations = PrototypeAIChatFixtureAdapter.answerCitations
         messages.append(PrototypeAIMessage(
             id: "ai-assistant-\(generation)",
             role: .assistant,
             text: "TW Hya's compact continuum emission is consistent with a nearly face-on disk. CASA-RS currently builds this view through the Rust-owned MeasurementSet plot-data path, then projects it to Swift.",
-            providerLabel: provider?.label,
+            agentLabel: selectedAgent?.label,
             modelLabel: selectedModel,
-            citations: citations,
-            usedContextIDs: selectedContexts.map(\.id),
+            citations: PrototypeAIChatFixtureAdapter.answerCitations,
+            usedContextIDs: contexts.map(\.id),
+            activity: [
+                "Read the active Analysis.md section and open Imager parameters",
+                "Retrieved one project-paper page and the matching CASA-RS symbol",
+                "Compared plot metadata without loading raw visibility arrays",
+            ],
+            suggestedTaskID: "imager",
             pinned: false
         ))
         activePrompt = nil
@@ -271,60 +283,14 @@ package struct PrototypeAIChatProjection: Codable, Equatable {
         failureConsumed = true
     }
 
-    package mutating func pinMessage(_ id: String) {
-        guard let index = messages.firstIndex(where: { $0.id == id }), !messages[index].pinned else { return }
+    package mutating func pinMessage(_ id: String) -> PrototypeAIMessage? {
+        guard let index = messages.firstIndex(where: { $0.id == id }), !messages[index].pinned else {
+            return nil
+        }
         messages[index].pinned = true
         pinnedMessageCount += 1
-    }
-
-    package mutating func rejectProposal(_ id: String) {
-        guard let index = proposals.firstIndex(where: { $0.id == id }), proposals[index].state == .pending else { return }
-        proposals[index].state = .rejected
-        proposals[index].result = "Rejected; no fixture action was invoked."
-    }
-
-    package mutating func beginProposal(_ id: String) -> Int? {
-        guard let index = proposals.firstIndex(where: { $0.id == id }), proposals[index].state == .pending else { return nil }
-        generation += 1
-        proposals[index].state = .running
-        return generation
-    }
-
-    package mutating func completeProposal(_ id: String, generation: Int) {
-        guard generation == self.generation,
-              let index = proposals.firstIndex(where: { $0.id == id }),
-              proposals[index].state == .running
-        else { return }
-        if scenario == .toolFailure && proposals[index].kind == .task && !failureConsumed {
-            failureConsumed = true
-            proposals[index].state = .failed
-            proposals[index].result = "Fixture task validation failed before invocation."
-            return
-        }
-        proposals[index].state = .succeeded
-        proposals[index].result = switch proposals[index].kind {
-        case .task: "Fixture task proposal completed; no task provider was invoked."
-        case .python: "Fixture calculation produced one staged result."
-        case .plot: "Fixture plot revision inserted into the notebook preview."
-        case .download: "Fixture download plan completed without network access."
-        case .note: "Fixture note pinned into the notebook preview."
-        }
-        if proposals[index].kind == .plot { insertedPlotCount += 1 }
-    }
-
-    package mutating func cancelProposal(_ id: String) {
-        guard let index = proposals.firstIndex(where: { $0.id == id }), proposals[index].state == .running else { return }
-        generation += 1
-        proposals[index].state = .cancelled
-        proposals[index].result = "Cancelled; authority was not broadened or retried."
-    }
-
-    package mutating func retryProposal(_ id: String) {
-        guard let index = proposals.firstIndex(where: { $0.id == id }),
-              proposals[index].state == .failed || proposals[index].state == .cancelled
-        else { return }
-        proposals[index].state = .pending
-        proposals[index].result = nil
+        requestNotebookPinFocus()
+        return messages[index]
     }
 }
 
@@ -356,48 +322,44 @@ package enum PrototypeAIChatFixtureAdapter {
                 "How does CASA-RS represent this MeasurementSet on disk?",
             ],
             workspaceSources: [
-                PrototypeAIWorkspaceSource(id: "tab-notebook", label: "default.md", detail: "Complete notebook, current section, and selection", openTab: true),
-                PrototypeAIWorkspaceSource(id: "tab-task", label: "Imager task", detail: "Schema, current values, and non-default parameters", openTab: true),
+                PrototypeAIWorkspaceSource(id: "tab-notebook", label: "Analysis.md", detail: "Complete notebook, current section, and selection", openTab: true),
+                PrototypeAIWorkspaceSource(id: "tab-task", label: "Imager task", detail: "Schema, current values, defaults, and non-default parameters", openTab: true),
                 PrototypeAIWorkspaceSource(id: "tab-explorer", label: "TW Hya explorer", detail: "Selected dataset, plot configuration, and bounded preview", openTab: true),
-                PrototypeAIWorkspaceSource(id: "tab-python", label: "Python output 17", detail: "Cell source, environment identity, result, and figure", openTab: true),
+                PrototypeAIWorkspaceSource(id: "tab-python", label: "Python output 17", detail: "Cell source, selected environment, result, and figure", openTab: true),
                 PrototypeAIWorkspaceSource(id: "tab-history", label: "Processing history", detail: "Receipts, products, statuses, and diagnostics", openTab: true),
                 PrototypeAIWorkspaceSource(id: "corpus-radio", label: "Radio astronomy corpus", detail: "4,812 fixture documents with page/section retrieval", openTab: false),
-                PrototypeAIWorkspaceSource(id: "corpus-project", label: "Project papers", detail: "2 copied papers plus notebook references", openTab: false),
+                PrototypeAIWorkspaceSource(id: "corpus-project", label: "Project papers", detail: "2 user-supplied papers plus notebook references", openTab: false),
                 PrototypeAIWorkspaceSource(id: "source-casars", label: "CASA-RS source", detail: "Release source plus live-checkout overlay at fixture commit 597da3f", openTab: false),
                 PrototypeAIWorkspaceSource(id: "schema-casars", label: "CASA-RS semantics", detail: "Tasks, parameters, tables, MeasurementSets, images, coordinates, and measures", openTab: false),
             ],
-            providers: [
-                PrototypeAIProvider(id: "fixture-openai", label: "OpenAI subscription", models: ["GPT-5", "GPT-5 mini"]),
-                PrototypeAIProvider(id: "fixture-zen", label: "OpenCode Zen", models: ["Qwen3 Coder", "GLM-4.5"]),
+            agents: [
+                PrototypeAIAgent(id: "codex-app-server", label: "Codex", detail: "Direct App Server · initial Wave 4 target", models: ["gpt-5.4", "gpt-5.3-codex"], enabled: true),
+                PrototypeAIAgent(id: "opencode-acp", label: "OpenCode", detail: "Future ACP adapter", models: [], enabled: false),
             ],
-            selectedProviderID: "fixture-openai",
-            selectedModel: "GPT-5",
+            selectedAgentID: "codex-app-server",
+            selectedModel: "gpt-5.4",
+            account: PrototypeAIAccount(label: "ChatGPT Pro", status: "Connected fixture", funding: "Subscription · no API billing"),
+            trustPreset: .work,
+            pythonEnvironments: [
+                PrototypeAIPythonEnvironment(id: "casa-python", label: "CASA 6.7 Python", detail: "~/SoftwareProjects/casa-build/venv/bin/python · fixture"),
+                PrototypeAIPythonEnvironment(id: "login-python", label: "Login-shell Python", detail: "/usr/local/bin/python3 · fixture"),
+            ],
+            selectedPythonEnvironmentID: "casa-python",
             contexts: [
-                PrototypeAIContext(id: "project", label: "Project", detail: "Dataset metadata and bounded summaries", selected: true, egressSummary: "2 metadata summaries; raw visibilities excluded"),
-                PrototypeAIContext(id: "paper", label: "TW Hya paper", detail: "Copied project paper with page citations", selected: true, egressSummary: "3 cited excerpts; author email redacted"),
-                PrototypeAIContext(id: "source", label: "CASA-RS source", detail: "Commit-keyed local source overlay", selected: true, egressSummary: "2 source excerpts with path and symbol"),
-                PrototypeAIContext(id: "plot", label: "Current plot", detail: "Downsampled plot summary and preview", selected: false, egressSummary: "1 bounded plot summary; arrays excluded"),
+                PrototypeAIContext(id: "project", label: "Open project tabs", detail: "5 typed semantic projections available through CASA MCP"),
+                PrototypeAIContext(id: "paper", label: "Radio astronomy + project papers", detail: "Local FTS retrieval with page/section citations"),
+                PrototypeAIContext(id: "source", label: "CASA-RS implementation", detail: "Release/live source with path, symbol, lines, and commit"),
+                PrototypeAIContext(id: "semantics", label: "CASA task and data semantics", detail: "Schemas, defaults, receipts, persistent types, and canonical actions"),
             ],
             corpusState: scenario == .offline ? .offline : .ready,
             responseState: .idle,
             messages: [],
-            proposals: proposalFixtures(),
             generation: 0,
             activePrompt: nil,
             failureConsumed: false,
             pinnedMessageCount: 0,
-            insertedPlotCount: 0,
             productionBoundaryCalls: 0,
-            notebookSuggestionFocusGeneration: 0
+            notebookPinFocusGeneration: 0
         )
-    }
-
-    private static func proposalFixtures() -> [PrototypeAIProposal] {
-        [
-            PrototypeAIProposal(id: "proposal-task", kind: .task, title: "Run a safer continuum image", summary: "Open the canonical Imager task with a sparse typed proposal.", exactPayload: "vis = data/twhya_calibrated.ms\nimagename = products/twhya_robust\nrobust = -0.5", authority: "Task execution · explicit approval", affectedPaths: ["products/twhya_robust.*"], state: .pending, result: nil),
-            PrototypeAIProposal(id: "proposal-python", kind: .python, title: "Calculate disk inclination", summary: "Run exact visible code in the restricted AI worker.", exactPayload: "inclination = acos(minor_axis / major_axis)\nprint(degrees(inclination))", authority: "AI Python · no network · staged artifacts only", affectedPaths: ["notebooks/assets/ai/inclination.txt"], state: .pending, result: nil),
-            PrototypeAIProposal(id: "proposal-plot", kind: .plot, title: "Plot deprojected amplitude", summary: "Generate a scientific figure and insert an immutable notebook revision.", exactPayload: "plot_deprojected_amplitude(ms='data/twhya_calibrated.ms', bins=40)", authority: "AI Python plot · explicit notebook insertion", affectedPaths: ["notebooks/assets/ai/deprojected-amplitude.png"], state: .pending, result: nil),
-            PrototypeAIProposal(id: "proposal-download", kind: .download, title: "Download a comparison paper", summary: "Review source, size, destination, and checksum before acquisition.", exactPayload: "https://example.invalid/twhya-comparison.pdf", authority: "Public download · project documents only", affectedPaths: ["documents/twhya-comparison.pdf"], state: .pending, result: nil),
-        ]
     }
 }
