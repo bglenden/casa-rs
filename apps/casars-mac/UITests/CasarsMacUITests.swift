@@ -777,17 +777,26 @@ final class CasarsMacUITests: XCTestCase {
         let receiptRoot = project.appendingPathComponent(".casa-rs/notebook-runs", isDirectory: true)
         let deadline = Date().addingTimeInterval(12)
         var receiptText = ""
-        while Date() < deadline, !receiptText.contains(#""authority":"ai_worker""#) {
+        var foundWorkerReceipt = false
+        while Date() < deadline, !foundWorkerReceipt {
             if let enumerator = FileManager.default.enumerator(at: receiptRoot, includingPropertiesForKeys: nil) {
                 for case let url as URL in enumerator where url.lastPathComponent == "receipt.json" {
-                    receiptText += (try? String(contentsOf: url)) ?? ""
+                    guard let data = try? Data(contentsOf: url),
+                          let receipt = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          let executionInput = receipt["execution_input"] as? [String: Any],
+                          let details = executionInput["details"] as? [String: Any],
+                          details["authority"] as? String == "ai_worker"
+                    else { continue }
+                    receiptText = String(decoding: data, as: UTF8.self)
+                    foundWorkerReceipt = true
+                    break
                 }
             }
-            if !receiptText.contains(#""authority":"ai_worker""#) {
+            if !foundWorkerReceipt {
                 RunLoop.current.run(until: Date().addingTimeInterval(0.1))
             }
         }
-        XCTAssertTrue(receiptText.contains(#""authority":"ai_worker""#), receiptText)
+        XCTAssertTrue(foundWorkerReceipt, receiptText)
         XCTAssertTrue(receiptText.contains("CASARS_ARTIFACT_STAGING"), receiptText)
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: project.appendingPathComponent(".casa-rs/ai-staging").path
