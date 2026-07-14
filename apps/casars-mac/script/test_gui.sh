@@ -15,8 +15,11 @@ TEST_SELECTION_ARGS=()
 TEST_DESCRIPTION="all CasarsMacUITests"
 
 if [[ -n "$ONLY_TESTING" ]]; then
-  TEST_SELECTION_ARGS=(-only-testing "$ONLY_TESTING")
-  TEST_DESCRIPTION="$ONLY_TESTING"
+  IFS=',' read -r -a selected_tests <<< "$ONLY_TESTING"
+  for selected_test in "${selected_tests[@]}"; do
+    TEST_SELECTION_ARGS+=(-only-testing "$selected_test")
+  done
+  TEST_DESCRIPTION="${#selected_tests[@]} selected GUI test(s)"
 fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then

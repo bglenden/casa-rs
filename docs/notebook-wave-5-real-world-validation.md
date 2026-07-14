@@ -62,8 +62,15 @@ The following focused evidence is green:
 - current `just verify` equivalent: workspace SPDX/fmt/clippy/tests green (the
   two localhost HTTP tests were rerun outside the shell sandbox after its
   expected socket denial), Python package 100 passed and 2 skipped
-- full `CasarsMacUITests` app/test bundle: build-for-testing succeeded; the
-  foreground run remains consolidated for the review window
+- full `CasarsMacUITests` app/test bundle: build-for-testing succeeded and one
+  consolidated 25-test foreground run completed (20 passed, 1 opt-in skip,
+  4 failures). Those failures exposed stale accessibility assumptions around
+  Rich-note editing, compact Python controls, assistant diagnostics, and the
+  chat-only task action. The repaired affected workflows then passed in
+  focused batches: complete Rich editing, independent named drafts,
+  production Python execution/reload, tutorial learner notes, and production
+  assistant corpus/pin/task navigation. Repository policy permits reusing the
+  unaffected green results because only those focused surfaces changed.
 
 The production refresh UI retains the Rust index report and local extraction
 diagnostics. Its ordinary context row stays compact; details are available in
@@ -96,6 +103,15 @@ CASA_RS_SOURCE_ROOT=/absolute/path/to/casa-rs \
 swift test --package-path apps/casars-mac \
   --filter AssistantDiscussionTests.testOptInCodexSubscriptionUsesScientificAndSourceCorpusTools
 ```
+
+The later manual review timeout was produced by a Workbench process launched on
+2026-07-13, before the `experimentalApi` repair was built. The stale process was
+terminated and the current rebuilt app was launched directly for review. Rich
+mode now suppresses metadata-only notebook control comments, rendered Markdown
+enters editing reliably without swallowing Markdown links, and the purple
+notebook-chat affordance has hover help. XCUITest explicitly checks that the
+control-comment element is absent while the saved AI note and its chat-only
+task action remain usable.
 
 The consolidated GUI gate is run after the Wave 5B interaction changes have
 accumulated, following the repository policy that foreground XCUITests run in

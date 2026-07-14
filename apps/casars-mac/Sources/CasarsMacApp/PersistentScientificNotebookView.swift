@@ -148,10 +148,13 @@ struct PersistentScientificNotebookView: View {
                 } label: {
                     Image(systemName: "sparkles")
                         .foregroundStyle(.purple)
+                        .contentShape(Rectangle())
+                        .help("Open notebook chat")
                 }
                 .buttonStyle(.borderless)
                 .help("Discuss this notebook with AI")
                 .accessibilityLabel("Discuss this notebook with AI")
+                .accessibilityHint("Opens notebook chat beside this notebook")
                 .accessibilityIdentifier("assistant.openDrawer")
             } else if store.state.assistantDiscussion?.presentation == .tab {
                 Button {
@@ -166,6 +169,7 @@ struct PersistentScientificNotebookView: View {
                     Menu("Python") {
                         pythonToolbarActions
                     }
+                    .accessibilityLabel("Python, normal user authority")
                     .accessibilityIdentifier("notebook.python.menu")
                 } else {
                     Text("User Python · normal user authority")

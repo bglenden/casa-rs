@@ -91,6 +91,8 @@ struct ScientificNotebookView: View {
                         .padding(9)
                         .background(Color.purple.opacity(0.12), in: Circle())
                         .overlay(Circle().stroke(Color.purple.opacity(0.35)))
+                        .contentShape(Circle())
+                        .help("Open notebook chat")
                 }
                 .buttonStyle(.plain)
                 .help("Discuss this notebook with AI")
@@ -686,7 +688,7 @@ struct RichMarkdownBlockEditor: View {
             .fontWeight(.semibold)
             .accessibilityIdentifier(accessibilityID)
         } else {
-            if isEditing || NotebookMarkdownPresentation.attributedString(source) == nil {
+            if isEditing || source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ZStack(alignment: .topLeading) {
                     if source.isEmpty {
                         Text(isInsertionSurface ? "Add notes here…" : "Continue writing notes…")
@@ -701,6 +703,10 @@ struct RichMarkdownBlockEditor: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .focused($editorFocused)
                         .accessibilityIdentifier(accessibilityID)
+                        .onAppear {
+                            guard isEditing else { return }
+                            DispatchQueue.main.async { editorFocused = true }
+                        }
                 }
                 .onChange(of: editorFocused) { focused in
                     if !focused, !source.isEmpty { isEditing = false }
@@ -710,10 +716,8 @@ struct RichMarkdownBlockEditor: View {
                     .font(.system(size: 15))
                     .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
                     .contentShape(Rectangle())
-                    .textSelection(.enabled)
                     .onTapGesture {
                         isEditing = true
-                        DispatchQueue.main.async { editorFocused = true }
                     }
                     .help("Click to edit this Markdown block")
                     .accessibilityIdentifier(accessibilityID)

@@ -15,6 +15,7 @@ struct AssistantDiscussionView: View {
     @State private var agentCommandDraft = ""
     @State private var pythonCommandDraft = ""
     @State private var confirmFullAccess = false
+    @State private var corpusDiagnosticsExpanded = false
 
     private var discussion: AssistantDiscussionState? { store.state.assistantDiscussion }
 
@@ -429,7 +430,20 @@ struct AssistantDiscussionView: View {
                     .textSelection(.enabled)
                     .accessibilityIdentifier("assistant.corpus.status")
                 if !discussion.corpusDiagnostics.isEmpty {
-                    DisclosureGroup("Diagnostics (\(discussion.corpusDiagnostics.count))") {
+                    Button {
+                        corpusDiagnosticsExpanded.toggle()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: corpusDiagnosticsExpanded ? "chevron.down" : "chevron.right")
+                            Text("Diagnostics (\(discussion.corpusDiagnostics.count))")
+                            Spacer(minLength: 0)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("assistant.corpus.diagnostics")
+                    .accessibilityValue(corpusDiagnosticsExpanded ? "expanded" : "collapsed")
+                    if corpusDiagnosticsExpanded {
                         ForEach(Array(discussion.corpusDiagnostics.enumerated()), id: \.offset) { _, item in
                             Text(item)
                                 .workbenchFont(.caption2)
@@ -437,8 +451,6 @@ struct AssistantDiscussionView: View {
                                 .textSelection(.enabled)
                         }
                     }
-                    .workbenchFont(.caption2)
-                    .accessibilityIdentifier("assistant.corpus.diagnostics")
                 }
             }
         }

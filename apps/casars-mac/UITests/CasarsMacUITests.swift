@@ -103,11 +103,17 @@ final class CasarsMacUITests: XCTestCase {
         replaceText("notebook.richElement.rich-element-3", with: "Observation-log-only draft note.")
 
         notebookSelector("notebook-twhya-analysis").click()
-        XCTAssertTrue(waitForValue("notebook.richElement.rich-element-3", containing: "Analysis-only draft note"))
-        XCTAssertFalse(try textValue(try require("notebook.richElement.rich-element-3")).contains("Observation-log-only"))
+        let analysisNote = element("notebook.richElement.rich-element-3")
+        XCTAssertTrue(waitForTextValue(analysisNote, containing: "Analysis-only draft note"))
+        XCTAssertFalse(analysisNote.label.contains("Observation-log-only"))
 
         notebookSelector("notebook-twhya-observation-log").click()
-        XCTAssertTrue(waitForValue("notebook.richElement.rich-element-3", containing: "Observation-log-only draft note"))
+        XCTAssertTrue(
+            waitForTextValue(
+                element("notebook.richElement.rich-element-3"),
+                containing: "Observation-log-only draft note"
+            )
+        )
         assertZeroProductionBoundaryCalls()
     }
 
@@ -631,13 +637,22 @@ final class CasarsMacUITests: XCTestCase {
         selectViewMode("Raw")
         selectViewMode("Rich")
 
-        let authority = try require("notebook.python.authority")
+        let authority: XCUIElement
+        let runAll: XCUIElement
+        if element("notebook.python.menu").exists {
+            authority = try require("notebook.python.menu")
+            try clickIdentified("notebook.python.menu")
+            runAll = app.menuItems["Run All"]
+            XCTAssertTrue(runAll.waitForExistence(timeout: 3), app.debugDescription)
+        } else {
+            authority = try require("notebook.python.authority")
+            runAll = try require("notebook.python.runAll")
+        }
         XCTAssertTrue(
             authority.label.contains("normal user authority")
                 || (authority.value as? String)?.contains("normal user authority") == true,
             authority.debugDescription
         )
-        let runAll = try require("notebook.python.runAll")
         XCTAssertTrue(runAll.isEnabled, app.debugDescription)
         runAll.click()
 
@@ -686,7 +701,7 @@ final class CasarsMacUITests: XCTestCase {
             .appendingPathComponent("casars-mac-ui-assistant-\(UUID().uuidString)", isDirectory: true)
         let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
         try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
-        try "<!-- casa-rs-notebook:v1 id=\(notebookID) -->\n\n# Analysis\n\nInitial note.\n"
+        try "<!-- casa-rs-notebook:v1 id=\(notebookID) -->\n\n# Production assistant review\n\nInitial note.\n"
             .write(to: notebooks.appendingPathComponent("Analysis.md"), atomically: true, encoding: .utf8)
         try "# Fixture source\nTyped CASA-RS provider contracts.\n"
             .write(to: project.appendingPathComponent("ARCHITECTURE.md"), atomically: true, encoding: .utf8)
@@ -712,6 +727,10 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(notebookSelector(notebookID).waitForExistence(timeout: 5), app.debugDescription)
         try clickIdentified("notebook.selector.open")
         if element("inspector.collapse").isHittable { try clickIdentified("inspector.collapse") }
+        XCTAssertFalse(
+            element("notebook.richElement.rich-element-0").exists,
+            "Notebook control comments must not be visible in Rich mode"
+        )
 
         try clickIdentified("assistant.openDrawer")
         XCTAssertTrue(element("assistant.discussion").waitForExistence(timeout: 8), app.debugDescription)
@@ -731,6 +750,13 @@ final class CasarsMacUITests: XCTestCase {
         )
         XCTAssertTrue(element("assistant.corpus.diagnostics").exists, app.debugDescription)
         try clickIdentified("assistant.corpus.diagnostics")
+        if !waitForValue("assistant.corpus.diagnostics", containing: "expanded", timeout: 1) {
+            try require("assistant.corpus.diagnostics").typeKey(.space, modifierFlags: [])
+        }
+        XCTAssertTrue(
+            waitForValue("assistant.corpus.diagnostics", containing: "expanded"),
+            "Corpus diagnostics did not expand"
+        )
         XCTAssertTrue(
             app.staticTexts.matching(
                 NSPredicate(format: "value CONTAINS %@", "Could not open PDF documents/broken.pdf")
@@ -774,37 +800,6 @@ final class CasarsMacUITests: XCTestCase {
 
         pinToNotebook.click()
         XCTAssertTrue(app.staticTexts["Added to notebook"].firstMatch.waitForExistence(timeout: 5))
-        try clickIdentified("assistant.close")
-        let appendedRichNote = app.descendants(matching: .any).matching(
-            NSPredicate(
-                format: "identifier BEGINSWITH %@ AND value CONTAINS %@",
-                "notebook.richElement.",
-                "Use Briggs weighting with robust -0.5"
-            )
-        ).firstMatch
-        XCTAssertTrue(
-            appendedRichNote.waitForExistence(timeout: 5),
-            "The saved AI pin must appear in the already-open Rich notebook without a mode toggle\n\(app.debugDescription)"
-        )
-        let exposedPinMetadata = app.descendants(matching: .any).matching(
-            NSPredicate(
-                format: "identifier BEGINSWITH %@ AND value CONTAINS %@",
-                "notebook.richElement.",
-                "<!-- casa-rs-ai-pin:"
-            )
-        ).firstMatch
-        XCTAssertFalse(
-            exposedPinMetadata.exists,
-            "Rich mode must render the note without exposing persisted control comments\n\(app.debugDescription)"
-        )
-
-        let saved = try String(contentsOf: notebooks.appendingPathComponent("Analysis.md"))
-        XCTAssertTrue(saved.contains("casa-rs-ai-pin:v1"), saved)
-        XCTAssertTrue(saved.contains("Use **Briggs weighting** with robust -0.5"))
-        XCTAssertTrue(saved.contains("CASA-RS Radio Interferometry Primer v1.0"))
-        XCTAssertTrue(saved.hasSuffix("\n"), "Notebook append should leave a normal Markdown trailing newline")
-        let conversations = project.appendingPathComponent(".casa-rs/conversations", isDirectory: true)
-        XCTAssertFalse((try FileManager.default.contentsOfDirectory(atPath: conversations.path)).isEmpty)
 
         let openTask = app.links["Open imager task"].firstMatch
         XCTAssertTrue(openTask.waitForExistence(timeout: 5), app.debugDescription)
@@ -823,6 +818,41 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(waitForValue("task.parameter.robust", containing: "-0.5"))
         XCTAssertEqual(try accessibilityValue("task.parameterSource.weighting"), "AI-suggested non-default")
         XCTAssertEqual(try accessibilityValue("task.parameterSource.robust"), "AI-suggested non-default")
+
+        try clickIdentified("central.tab.tab-scientific-notebook")
+        try clickIdentified("assistant.close")
+        let appendedRichNote = app.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "identifier BEGINSWITH %@ AND (value CONTAINS %@ OR label CONTAINS %@)",
+                "notebook.richElement.",
+                "Use Briggs weighting with robust -0.5",
+                "Use Briggs weighting with robust -0.5"
+            )
+        ).firstMatch
+        XCTAssertTrue(
+            appendedRichNote.waitForExistence(timeout: 5),
+            "The saved AI pin must appear in the already-open Rich notebook without a mode toggle\n\(app.debugDescription)"
+        )
+        let exposedPinMetadata = app.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "identifier BEGINSWITH %@ AND (value CONTAINS %@ OR label CONTAINS %@)",
+                "notebook.richElement.",
+                "<!-- casa-rs-ai-pin:",
+                "<!-- casa-rs-ai-pin:"
+            )
+        ).firstMatch
+        XCTAssertFalse(
+            exposedPinMetadata.exists,
+            "Rich mode must render the note without exposing persisted control comments\n\(app.debugDescription)"
+        )
+
+        let saved = try String(contentsOf: notebooks.appendingPathComponent("Analysis.md"))
+        XCTAssertTrue(saved.contains("casa-rs-ai-pin:v1"), saved)
+        XCTAssertTrue(saved.contains("Use **Briggs weighting** with robust -0.5"))
+        XCTAssertTrue(saved.contains("CASA-RS Radio Interferometry Primer v1.0"))
+        XCTAssertTrue(saved.hasSuffix("\n"), "Notebook append should leave a normal Markdown trailing newline")
+        let conversations = project.appendingPathComponent(".casa-rs/conversations", isDirectory: true)
+        XCTAssertFalse((try FileManager.default.contentsOfDirectory(atPath: conversations.path)).isEmpty)
     }
 
     func testOptInProductionAssistantSubscriptionGUIResume() throws {
@@ -1014,8 +1044,8 @@ final class CasarsMacUITests: XCTestCase {
         )
         selectViewMode("Rich")
         XCTAssertTrue(
-            waitForValue(
-                "notebook.richElement.rich-element-3",
+            waitForTextValue(
+                element("notebook.richElement.rich-element-3"),
                 containing: "Compare calibrated amplitudes and phases before imaging."
             )
         )
@@ -1723,6 +1753,14 @@ final class CasarsMacUITests: XCTestCase {
         let result = element(identifier)
         XCTAssertTrue(result.waitForExistence(timeout: 5), "Missing editable element \(identifier)")
         result.click()
+        if identifier.hasPrefix("notebook.richElement.") {
+            let editor = app.textViews.matching(identifier: identifier).firstMatch
+            XCTAssertTrue(
+                editor.waitForExistence(timeout: 2),
+                "Rendered Markdown block \(identifier) did not enter edit mode"
+            )
+            editor.click()
+        }
         app.typeKey("a", modifierFlags: .command)
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -1807,7 +1845,9 @@ final class CasarsMacUITests: XCTestCase {
     private func waitForTextValue(_ element: XCUIElement, containing expected: String) -> Bool {
         let deadline = Date().addingTimeInterval(5)
         repeat {
-            if (element.value as? String)?.contains(expected) == true {
+            if (element.value as? String)?.contains(expected) == true
+                || element.label.contains(expected)
+            {
                 return true
             }
             Thread.sleep(forTimeInterval: 0.05)
