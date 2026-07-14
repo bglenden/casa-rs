@@ -84,6 +84,7 @@ struct AssistantDiscussionView: View {
                 Button { store.closeAssistantDiscussion() } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
                     .help("Close chat")
+                    .accessibilityIdentifier("assistant.close")
             } else {
                 Button("Dock beside notebook") { store.dockAssistantDiscussion() }
                     .controlSize(.small)
@@ -117,7 +118,8 @@ struct AssistantDiscussionView: View {
                     }
                     if discussion.activity == .streaming {
                         HStack(alignment: .top, spacing: 8) {
-                            ProgressView().controlSize(.small)
+                            Image(systemName: "sparkles")
+                                .foregroundStyle(.purple)
                             Text(discussion.streamingText.isEmpty ? "Thinking…" : discussion.streamingText)
                                 .textSelection(.enabled)
                         }
@@ -178,7 +180,9 @@ struct AssistantDiscussionView: View {
                     }
                     Spacer()
                 }
-                Text(message.content).textSelection(.enabled)
+                if let rendered = NotebookMarkdownPresentation.attributedString(message.content) {
+                    Text(rendered).textSelection(.enabled)
+                }
                 ForEach(Array(message.citations.enumerated()), id: \.element.id) { index, citation in
                     DisclosureGroup(
                         isExpanded: Binding(
@@ -416,6 +420,27 @@ struct AssistantDiscussionView: View {
                 }
             }
             LabeledContent("Plan", value: discussion.account.plan?.capitalized ?? "Unknown")
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Local corpus").workbenchFont(.caption, weight: .semibold)
+                Text(discussion.corpusStatus)
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("assistant.corpus.status")
+                if !discussion.corpusDiagnostics.isEmpty {
+                    DisclosureGroup("Diagnostics (\(discussion.corpusDiagnostics.count))") {
+                        ForEach(Array(discussion.corpusDiagnostics.enumerated()), id: \.offset) { _, item in
+                            Text(item)
+                                .workbenchFont(.caption2)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .workbenchFont(.caption2)
+                    .accessibilityIdentifier("assistant.corpus.diagnostics")
+                }
+            }
         }
         .padding(16)
         .frame(width: 390)

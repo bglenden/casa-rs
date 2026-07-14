@@ -388,6 +388,98 @@ mod tests {
     }
 
     #[test]
+    fn exact_nonce_tools_retrieve_scientific_and_source_citations() {
+        let project = tempfile::tempdir().expect("project");
+        let project_root = project.path().canonicalize().expect("canonical project");
+        casars_frontend_services::assistant_corpus_index_json(
+            json!({
+                "project_root": project_root,
+                "documents": [
+                    {
+                        "id": "baseline:primer",
+                        "layer": "baseline",
+                        "title": "Radio primer",
+                        "source_identity": "baseline/primer.md",
+                        "content": "Briggs weighting trades sensitivity against angular resolution.",
+                        "citation": {
+                            "label": "Radio primer",
+                            "locator": "baseline/primer.md, Imaging",
+                            "source_path": "baseline/primer.md",
+                            "section": "Imaging",
+                            "release": "1.0.0"
+                        },
+                        "redistribution_cleared": true
+                    },
+                    {
+                        "id": "source:corpus",
+                        "layer": "live_source",
+                        "title": "corpus.rs",
+                        "source_identity": "crates/casa-notebook/src/corpus.rs@abc123",
+                        "content": "pub const CORPUS_SCHEMA_VERSION: u32 = 2;",
+                        "citation": {
+                            "label": "corpus.rs",
+                            "locator": "crates/casa-notebook/src/corpus.rs",
+                            "source_path": "crates/casa-notebook/src/corpus.rs",
+                            "commit": "abc123"
+                        },
+                        "redistribution_cleared": true
+                    }
+                ],
+                "remove_missing_layers": ["baseline", "live_source"]
+            })
+            .to_string(),
+        )
+        .expect("index corpus");
+        let nonce = "abcdefghijklmnopqrstuvwx";
+
+        let corpus_response = handle(
+            &project_root,
+            nonce,
+            &json!({
+                "jsonrpc": "2.0", "id": 11, "method": "tools/call",
+                "params": {"name": "corpus.search", "arguments": {
+                    "nonce": nonce, "query": "Briggs sensitivity resolution"
+                }}
+            }),
+        )
+        .expect("corpus response");
+        let corpus_hits: Vec<Value> = serde_json::from_str(
+            corpus_response["result"]["content"][0]["text"]
+                .as_str()
+                .expect("corpus text"),
+        )
+        .expect("corpus hits");
+        assert_eq!(corpus_hits[0]["layer"], "baseline");
+        assert_eq!(corpus_hits[0]["citation"]["section"], "Imaging");
+
+        let source_response = handle(
+            &project_root,
+            nonce,
+            &json!({
+                "jsonrpc": "2.0", "id": 12, "method": "tools/call",
+                "params": {"name": "source.search", "arguments": {
+                    "nonce": nonce, "query": "CORPUS_SCHEMA_VERSION"
+                }}
+            }),
+        )
+        .expect("source response");
+        let source_hits: Vec<Value> = serde_json::from_str(
+            source_response["result"]["content"][0]["text"]
+                .as_str()
+                .expect("source text"),
+        )
+        .expect("source hits");
+        assert_eq!(source_hits.len(), 1);
+        assert_eq!(source_hits[0]["layer"], "live_source");
+        assert_eq!(source_hits[0]["citation"]["commit"], "abc123");
+        assert_eq!(source_hits[0]["citation"]["line_start"], 1);
+        assert_eq!(
+            source_hits[0]["citation"]["source_path"],
+            "crates/casa-notebook/src/corpus.rs"
+        );
+    }
+
+    #[test]
     fn task_catalog_is_a_compact_discovery_surface() {
         let compact = compact_task_catalog(
             &json!({

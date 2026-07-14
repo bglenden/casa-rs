@@ -47,6 +47,16 @@ struct PersistentScientificNotebookView: View {
                 .onChange(of: document.viewMode) { mode in
                     if mode == .rich, let current = self.document { loadRichDocument(current) }
                 }
+                .onChange(of: document.draftSource) { source in
+                    // Rich edits update the local projection before the store, so this
+                    // equality guard preserves cursor/focus. Programmatic changes such
+                    // as an AI tail append differ and must be reconciled immediately.
+                    if document.viewMode == .rich, richDocument.markdown != source,
+                       let current = self.document
+                    {
+                        loadRichDocument(current)
+                    }
+                }
             }
         }
         .sheet(item: Binding(
@@ -86,15 +96,50 @@ struct PersistentScientificNotebookView: View {
     }
 
     private func toolbar(_ document: NotebookDocumentState) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(document.title)
-                    .workbenchFont(.title3, weight: .semibold)
-                Text("notebooks/\(document.filename)")
-                    .workbenchFont(.caption, design: .monospaced)
-                    .foregroundStyle(.secondary)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                notebookIdentity(document, compact: false)
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 12)
+                notebookToolbarActions(document, compact: false)
+                    .fixedSize(horizontal: true, vertical: false)
             }
-            Spacer()
+
+            VStack(alignment: .leading, spacing: 8) {
+                notebookIdentity(document, compact: true)
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    notebookToolbarActions(document, compact: true)
+                }
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 11)
+    }
+
+    private func notebookIdentity(_ document: NotebookDocumentState, compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(document.title)
+                .workbenchFont(.title3, weight: .semibold)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .accessibilityIdentifier("notebook.title")
+            Text("notebooks/\(document.filename)")
+                .workbenchFont(.caption, design: .monospaced)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .accessibilityIdentifier("notebook.path")
+        }
+        .frame(maxWidth: compact ? .infinity : nil, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func notebookToolbarActions(
+        _ document: NotebookDocumentState,
+        compact: Bool
+    ) -> some View {
+        Group {
             if store.state.assistantDiscussion?.presentation == .closed
                 || store.state.assistantDiscussion == nil
             {
@@ -117,27 +162,17 @@ struct PersistentScientificNotebookView: View {
                 .accessibilityIdentifier("assistant.dockFromNotebook")
             }
             if document.cells.contains(where: { $0.kind == "python" }) {
-                Text("User Python · normal user authority")
-                    .workbenchFont(.caption, weight: .semibold)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("notebook.python.authority")
-                Button("Run All") { store.runAllScientificPythonCells() }
-                    .disabled(store.pythonNotebookRuntime.status != .ready)
-                    .accessibilityIdentifier("notebook.python.runAll")
-                Button("Stop") { store.interruptScientificPythonKernel() }
-                    .disabled(store.pythonNotebookRuntime.status != .running)
-                    .accessibilityIdentifier("notebook.python.stop")
-                Button("Restart") { store.restartScientificPythonKernel() }
-                    .disabled(![.restartRequired, .interrupting].contains(store.pythonNotebookRuntime.status))
-                    .accessibilityIdentifier("notebook.python.restart")
-                if store.projectPythonEnvironmentStatus == .unavailable {
-                    Button("Create Python Environment") {
-                        store.createOrRepairProjectPythonEnvironment()
+                if compact {
+                    Menu("Python") {
+                        pythonToolbarActions
                     }
-                    .accessibilityIdentifier("notebook.python.createEnvironment")
+                    .accessibilityIdentifier("notebook.python.menu")
                 } else {
-                    Button("Install Plotting") { store.installProjectPythonPlottingPackages() }
-                        .accessibilityIdentifier("notebook.python.installPlotting")
+                    Text("User Python · normal user authority")
+                        .workbenchFont(.caption, weight: .semibold)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("notebook.python.authority")
+                    pythonToolbarActions
                 }
             }
             Picker("View", selection: Binding(
@@ -153,16 +188,22 @@ struct PersistentScientificNotebookView: View {
             }
             .labelsHidden()
             .pickerStyle(.segmented)
-            .frame(width: 150)
+            .frame(width: compact ? 112 : 150)
             .accessibilityIdentifier("notebook.viewMode")
 
             Button {
                 store.saveScientificNotebook()
             } label: {
-                Label("Save", systemImage: "square.and.arrow.down")
+                if compact {
+                    Image(systemName: "square.and.arrow.down")
+                } else {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
             }
             .disabled(!document.isDirty || document.conflict != nil)
             .keyboardShortcut("s", modifiers: [.command])
+            .help("Save notebook")
+            .accessibilityLabel("Save")
             .accessibilityIdentifier("notebook.save")
 
             Text(document.isDirty ? "Edited" : "Saved")
@@ -171,8 +212,28 @@ struct PersistentScientificNotebookView: View {
                 .accessibilityIdentifier("notebook.dirtyState")
                 .accessibilityValue(document.isDirty ? "dirty" : "saved")
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 11)
+    }
+
+    @ViewBuilder
+    private var pythonToolbarActions: some View {
+        Button("Run All") { store.runAllScientificPythonCells() }
+            .disabled(store.pythonNotebookRuntime.status != .ready)
+            .accessibilityIdentifier("notebook.python.runAll")
+        Button("Stop") { store.interruptScientificPythonKernel() }
+            .disabled(store.pythonNotebookRuntime.status != .running)
+            .accessibilityIdentifier("notebook.python.stop")
+        Button("Restart") { store.restartScientificPythonKernel() }
+            .disabled(![.restartRequired, .interrupting].contains(store.pythonNotebookRuntime.status))
+            .accessibilityIdentifier("notebook.python.restart")
+        if store.projectPythonEnvironmentStatus == .unavailable {
+            Button("Create Python Environment") {
+                store.createOrRepairProjectPythonEnvironment()
+            }
+            .accessibilityIdentifier("notebook.python.createEnvironment")
+        } else {
+            Button("Install Plotting") { store.installProjectPythonPlottingPackages() }
+                .accessibilityIdentifier("notebook.python.installPlotting")
+        }
     }
 
     private var conflictBanner: some View {

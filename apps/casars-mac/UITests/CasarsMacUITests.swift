@@ -690,6 +690,10 @@ final class CasarsMacUITests: XCTestCase {
             .write(to: notebooks.appendingPathComponent("Analysis.md"), atomically: true, encoding: .utf8)
         try "# Fixture source\nTyped CASA-RS provider contracts.\n"
             .write(to: project.appendingPathComponent("ARCHITECTURE.md"), atomically: true, encoding: .utf8)
+        let documents = project.appendingPathComponent("documents", isDirectory: true)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        try Data("not a PDF".utf8).write(to: documents.appendingPathComponent("broken.pdf"))
+        try Data([0, 1, 2]).write(to: documents.appendingPathComponent("unsupported.docx"))
         productionProjectURL = project
 
         app = XCUIApplication()
@@ -711,11 +715,28 @@ final class CasarsMacUITests: XCTestCase {
 
         try clickIdentified("assistant.openDrawer")
         XCTAssertTrue(element("assistant.discussion").waitForExistence(timeout: 8), app.debugDescription)
+        let notebookTitle = try require("notebook.title")
+        XCTAssertGreaterThan(notebookTitle.frame.width, 100, app.debugDescription)
+        XCTAssertLessThan(notebookTitle.frame.height, 40, app.debugDescription)
+        XCTAssertTrue(element("notebook.viewMode").isHittable, app.debugDescription)
+        XCTAssertTrue(element("notebook.save").exists, app.debugDescription)
         XCTAssertTrue(element("assistant.model").waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(element("assistant.effort").waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(element("assistant.usage").waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(element("assistant.settings").waitForExistence(timeout: 8), app.debugDescription)
         try clickIdentified("assistant.settings")
+        XCTAssertTrue(
+            waitForValue("assistant.corpus.status", containing: "Local corpus ready", timeout: 15),
+            app.debugDescription
+        )
+        XCTAssertTrue(element("assistant.corpus.diagnostics").exists, app.debugDescription)
+        try clickIdentified("assistant.corpus.diagnostics")
+        XCTAssertTrue(
+            app.staticTexts.matching(
+                NSPredicate(format: "value CONTAINS %@", "Could not open PDF documents/broken.pdf")
+            ).firstMatch.waitForExistence(timeout: 5),
+            app.debugDescription
+        )
         XCTAssertTrue(element("assistant.account.logout").waitForExistence(timeout: 5), app.debugDescription)
         try clickIdentified("assistant.account.logout")
         XCTAssertTrue(element("assistant.account.login").waitForExistence(timeout: 5), app.debugDescription)
@@ -753,10 +774,33 @@ final class CasarsMacUITests: XCTestCase {
 
         pinToNotebook.click()
         XCTAssertTrue(app.staticTexts["Added to notebook"].firstMatch.waitForExistence(timeout: 5))
+        try clickIdentified("assistant.close")
+        let appendedRichNote = app.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "identifier BEGINSWITH %@ AND value CONTAINS %@",
+                "notebook.richElement.",
+                "Use Briggs weighting with robust -0.5"
+            )
+        ).firstMatch
+        XCTAssertTrue(
+            appendedRichNote.waitForExistence(timeout: 5),
+            "The saved AI pin must appear in the already-open Rich notebook without a mode toggle\n\(app.debugDescription)"
+        )
+        let exposedPinMetadata = app.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "identifier BEGINSWITH %@ AND value CONTAINS %@",
+                "notebook.richElement.",
+                "<!-- casa-rs-ai-pin:"
+            )
+        ).firstMatch
+        XCTAssertFalse(
+            exposedPinMetadata.exists,
+            "Rich mode must render the note without exposing persisted control comments\n\(app.debugDescription)"
+        )
 
         let saved = try String(contentsOf: notebooks.appendingPathComponent("Analysis.md"))
         XCTAssertTrue(saved.contains("casa-rs-ai-pin:v1"), saved)
-        XCTAssertTrue(saved.contains("Use Briggs weighting with robust -0.5"))
+        XCTAssertTrue(saved.contains("Use **Briggs weighting** with robust -0.5"))
         XCTAssertTrue(saved.contains("CASA-RS Radio Interferometry Primer v1.0"))
         XCTAssertTrue(saved.hasSuffix("\n"), "Notebook append should leave a normal Markdown trailing newline")
         let conversations = project.appendingPathComponent(".casa-rs/conversations", isDirectory: true)

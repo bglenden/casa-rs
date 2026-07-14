@@ -839,6 +839,8 @@ public final class WorkbenchStore: ObservableObject {
     private var assistantPendingTaskSuggestions: [AssistantTaskSuggestionState] = []
     private var assistantPendingStreamText = ""
     private var assistantStreamFlushWorkItem: DispatchWorkItem?
+    private var assistantResponseTimeoutWorkItem: DispatchWorkItem?
+    private var assistantResponseTimeout: TimeInterval = 120
     private var assistantSuggestedParameters: [String: Set<String>] = [:]
     private var assistantDraftSaveWorkItem: DispatchWorkItem?
     private let imagerProgressSource: ImagerProgressSource
@@ -945,8 +947,19 @@ public final class WorkbenchStore: ObservableObject {
         pythonExecutableOverride = path
     }
 
+    package func installAssistantResponseTimeoutForTesting(_ timeout: TimeInterval) {
+        assistantResponseTimeout = timeout
+    }
+
+    package func expireAssistantResponseForTesting() {
+        handleAssistantResponseTimeout(
+            conversationID: state.assistantDiscussion?.activeConversation?.id
+        )
+    }
+
     deinit {
         assistantStreamFlushWorkItem?.cancel()
+        assistantResponseTimeoutWorkItem?.cancel()
         pythonKernels.values.forEach { $0.terminate() }
         agentSession?.terminate()
         guard runtimeKind == .production else { return }
@@ -3862,6 +3875,7 @@ public final class WorkbenchStore: ObservableObject {
         updateActiveAssistantConversation { $0.selectedContextIds = selected }
         persistActiveAssistantConversation()
         writeAssistantContextProjection()
+        scheduleAssistantResponseTimeout()
     }
 
     package func refreshAssistantDiscussionContexts() {
@@ -3872,26 +3886,47 @@ public final class WorkbenchStore: ObservableObject {
     package func refreshAssistantCorpus() {
         guard state.hasProject else { return }
         state.assistantDiscussion?.corpusStatus = "Indexing local corpus…"
+        state.assistantDiscussion?.corpusIndexReport = nil
+        state.assistantDiscussion?.corpusDiagnostics = []
         assistantCorpusQueue.async { [weak self] in
             guard let self else { return }
+            var diagnostics: [String] = []
             do {
                 let result = AssistantCorpusIngestor().collect(
                     projectRoot: self.state.project.rootPath
                 )
-                _ = try self.assistantPersistenceClient.indexCorpus(
+                diagnostics = result.diagnostics
+                let reportJSON = try self.assistantPersistenceClient.indexCorpus(
                     projectRoot: self.state.project.rootPath,
                     documents: result.documents,
                     removeMissingLayers: result.refreshedLayers
                 )
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                let report = try decoder.decode(
+                    AssistantCorpusIndexReportState.self,
+                    from: Data(reportJSON.utf8)
+                )
                 DispatchQueue.main.async {
-                    self.state.assistantDiscussion?.corpusStatus = "Local corpus ready"
+                    self.state.assistantDiscussion?.corpusStatus = Self.assistantCorpusStatus(report)
+                    self.state.assistantDiscussion?.corpusIndexReport = report
+                    self.state.assistantDiscussion?.corpusDiagnostics = result.diagnostics
                 }
             } catch {
+                let retainedDiagnostics = diagnostics
                 DispatchQueue.main.async {
+                    self.state.assistantDiscussion?.corpusStatus = "Local corpus refresh failed"
+                    self.state.assistantDiscussion?.corpusIndexReport = nil
+                    self.state.assistantDiscussion?.corpusDiagnostics = retainedDiagnostics
                     self.recordAssistantError("Refresh corpus: \(error)")
                 }
             }
         }
+    }
+
+    private static func assistantCorpusStatus(_ report: AssistantCorpusIndexReportState) -> String {
+        let changed = report.indexedDocuments + report.removedDocuments
+        return "Local corpus ready · \(report.chunkCount) chunks · \(changed) changed"
     }
 
     package func pinAssistantMessage(_ messageID: String) {
@@ -4068,6 +4103,7 @@ public final class WorkbenchStore: ObservableObject {
     /// before changing the nonce-bound runtime profile so only one project MCP
     /// helper is alive for this Workbench session.
     private func restartActiveAgentConversation() {
+        cancelAssistantResponseTimeout()
         assistantConversationStartPending = false
         agentSession?.restart()
         startActiveAgentConversation()
@@ -4125,6 +4161,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func handleAgentEvent(_ event: [String: Any]) {
+        noteAssistantResponseActivity()
         if let method = event["method"] as? String {
             let params = event["params"] as? [String: Any] ?? [:]
             switch method {
@@ -4334,6 +4371,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func finishAssistantTurn(_ params: [String: Any]) {
+        cancelAssistantResponseTimeout()
         flushAssistantStreamTextNow()
         let text = state.assistantDiscussion?.streamingText ?? ""
         let turn = params["turn"] as? [String: Any]
@@ -4741,9 +4779,49 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func recordAssistantError(_ message: String) {
+        cancelAssistantResponseTimeout()
         if state.assistantDiscussion == nil { state.assistantDiscussion = AssistantDiscussionState() }
         state.assistantDiscussion?.lastError = message
         state.assistantDiscussion?.activity = .restartRequired
+    }
+
+    private func scheduleAssistantResponseTimeout() {
+        assistantResponseTimeoutWorkItem?.cancel()
+        guard state.assistantDiscussion?.activity == .streaming else { return }
+        let conversationID = state.assistantDiscussion?.activeConversation?.id
+        let work = DispatchWorkItem { [weak self] in
+            self?.handleAssistantResponseTimeout(conversationID: conversationID)
+        }
+        assistantResponseTimeoutWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + assistantResponseTimeout, execute: work)
+    }
+
+    private func handleAssistantResponseTimeout(conversationID: String?) {
+        guard state.assistantDiscussion?.activity == .streaming,
+              state.assistantDiscussion?.activeConversation?.id == conversationID
+        else { return }
+        if let threadID = state.assistantDiscussion?.activeConversation?.backendSession?.sessionId,
+           let turnID = state.assistantDiscussion?.activeTurnID
+        {
+            agentSession?.cancel(threadID: threadID, turnID: turnID)
+        } else {
+            agentSession?.restart()
+            assistantConversationStartPending = false
+        }
+        state.assistantDiscussion?.activeTurnID = nil
+        recordAssistantError(
+            "The assistant did not report any activity for two minutes. Restart the agent and try again."
+        )
+    }
+
+    private func noteAssistantResponseActivity() {
+        guard state.assistantDiscussion?.activity == .streaming else { return }
+        scheduleAssistantResponseTimeout()
+    }
+
+    private func cancelAssistantResponseTimeout() {
+        assistantResponseTimeoutWorkItem?.cancel()
+        assistantResponseTimeoutWorkItem = nil
     }
 
     private static func assistantTimestamp() -> UInt64 {

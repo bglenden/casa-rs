@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import CoreGraphics
 @testable import CasarsMacCore
 import XCTest
 
@@ -143,6 +145,47 @@ final class AssistantDiscussionTests: XCTestCase {
         )
     }
 
+    func testRuntimeApplicationContextSupersedesAResumedThreadsStaleNonce() throws {
+        let staleNonce = String(repeating: "s", count: 32)
+        let currentNonce = String(repeating: "c", count: 32)
+        let currentProfile = CasaAgentRuntimeProfile(
+            authority: .work,
+            sessionNonce: currentNonce,
+            pythonCommand: "/Users/scientist/bin/python"
+        )
+
+        let contexts = CodexAppServerSession.runtimeAdditionalContext(currentProfile)
+        let context = try XCTUnwrap(contexts["casa-rs-runtime-profile"])
+
+        XCTAssertEqual(context["kind"], "application")
+        XCTAssertTrue(context["value"]?.contains(currentNonce) == true)
+        XCTAssertTrue(context["value"]?.contains(currentProfile.mcpServerName) == true)
+        XCTAssertFalse(context["value"]?.contains(staleNonce) == true)
+        XCTAssertTrue(context["value"]?.contains("supersedes any earlier") == true)
+        XCTAssertTrue(context["value"]?.contains("task.catalog") == true)
+    }
+
+    func testAppServerTurnStartErrorBecomesVisibleAgentError() throws {
+        let session = CodexAppServerSession(configuration: AgentSessionConfiguration(
+            agentExecutable: "/usr/bin/false",
+            projectMCPExecutable: "/project/bin/casars-project-mcp"
+        ))
+        let visibleError = expectation(description: "turn error surfaced")
+        session.onEvent { event in
+            if event["method"] as? String == "casa/error",
+               let params = event["params"] as? [String: Any],
+               (params["message"] as? String)?.contains("fixture rejected turn") == true
+            {
+                visibleError.fulfill()
+            }
+        }
+        try session.receiveTurnStartErrorForTesting(
+            requestID: 42,
+            message: "fixture rejected turn"
+        )
+        wait(for: [visibleError], timeout: 1)
+    }
+
     func testPersistenceRoundTripStoresAgentNeutralProfileAndOpaqueResumeID() throws {
         let project = try temporaryProject()
         defer { try? FileManager.default.removeItem(at: project) }
@@ -273,6 +316,49 @@ final class AssistantDiscussionTests: XCTestCase {
             chunks.joined()
         )
         XCTAssertEqual(store.state.assistantDiscussion?.streamingText, "")
+    }
+
+    func testUnresponsiveAgentCannotLeaveConversationThinkingIndefinitely() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        var conversation = try client.createConversation(
+            projectRoot: project.path,
+            title: "Analysis",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
+        )
+        conversation.backendSession = AssistantBackendSessionState(
+            backendId: "codex_app_server",
+            sessionId: "thread-unresponsive"
+        )
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+        let agent = FixtureAgentSession()
+        store.installAgentSessionForTesting(agent)
+        store.setAssistantDraft("List the supported CASA-RS tasks")
+        store.sendAssistantPrompt()
+
+        XCTAssertEqual(store.state.assistantDiscussion?.activity, .streaming)
+        XCTAssertEqual(agent.turns.count, 1)
+
+        store.expireAssistantResponseForTesting()
+
+        XCTAssertEqual(agent.restartCount, 1)
+        XCTAssertTrue(
+            store.state.assistantDiscussion?.lastError?.contains("did not report any activity") == true
+        )
+        XCTAssertNil(store.state.assistantDiscussion?.activeTurnID)
     }
 
     func testAccountLogoutClearsVisibleSubscriptionStateAfterBackendConfirmation() {
@@ -449,6 +535,171 @@ final class AssistantDiscussionTests: XCTestCase {
                 && $0.citation.commit == "abc123"
         })
         XCTAssertEqual(result.refreshedLayers, ["baseline", "project_document", "release_source", "live_source"])
+    }
+
+    func testProjectPDFCorpusSupportsPageCitationsDiagnosticsAndReplacementLifecycle() throws {
+        let project = try temporaryProject()
+        let source = try temporaryProject()
+        defer {
+            try? FileManager.default.removeItem(at: project)
+            try? FileManager.default.removeItem(at: source)
+        }
+        let documents = project.appendingPathComponent("documents", isDirectory: true)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        try "# Architecture".write(
+            to: source.appendingPathComponent("ARCHITECTURE.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"schema_version":1,"release":"v-test","commit":"abc123"}"#.write(
+            to: source.appendingPathComponent("casars-source.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let paper = documents.appendingPathComponent("paper.pdf")
+        try writeTextPDF([
+            "First-page control phrase amber telescope.",
+            "Second-page scientific phrase quadrature zephyr.",
+        ], to: paper)
+        try Data("not a PDF".utf8).write(to: documents.appendingPathComponent("broken.pdf"))
+        try Data([0, 1, 2]).write(to: documents.appendingPathComponent("unsupported.docx"))
+
+        let environment = ["CASA_RS_SOURCE_ROOT": source.path]
+        let client = UniFFIAssistantPersistenceClient()
+        let first = AssistantCorpusIngestor().collect(
+            projectRoot: project.path,
+            environment: environment
+        )
+        XCTAssertTrue(first.diagnostics.contains { $0.contains("Could not open PDF documents/broken.pdf") })
+        XCTAssertTrue(first.diagnostics.contains { $0.contains("Unsupported corpus file type documents/unsupported.docx") })
+        XCTAssertEqual(
+            first.documents.filter { $0.citation.sourcePath == "documents/paper.pdf" }.map(\.citation.page),
+            [1, 2]
+        )
+        let firstReport = try decodeCorpusReport(client.indexCorpus(
+            projectRoot: project.path,
+            documents: first.documents,
+            removeMissingLayers: first.refreshedLayers
+        ))
+        XCTAssertGreaterThan(firstReport.indexedDocuments, 0)
+        let pageTwo = try XCTUnwrap(
+            client.searchCorpus(projectRoot: project.path, query: "quadrature zephyr", limit: 4).first
+        )
+        XCTAssertEqual(pageTwo.citation.sourcePath, "documents/paper.pdf")
+        XCTAssertEqual(pageTwo.citation.page, 2)
+
+        try writeTextPDF(["Replacement phrase ultraviolet marmalade."], to: paper)
+        let changed = AssistantCorpusIngestor().collect(
+            projectRoot: project.path,
+            environment: environment
+        )
+        let changedReport = try decodeCorpusReport(client.indexCorpus(
+            projectRoot: project.path,
+            documents: changed.documents,
+            removeMissingLayers: changed.refreshedLayers
+        ))
+        XCTAssertGreaterThanOrEqual(changedReport.indexedDocuments, 1)
+        XCTAssertGreaterThanOrEqual(changedReport.removedDocuments, 1)
+        XCTAssertTrue(try client.searchCorpus(
+            projectRoot: project.path,
+            query: "quadrature zephyr",
+            limit: 4
+        ).isEmpty)
+        XCTAssertEqual(
+            try client.searchCorpus(projectRoot: project.path, query: "ultraviolet marmalade", limit: 4)
+                .first?.citation.page,
+            1
+        )
+
+        try FileManager.default.removeItem(at: paper)
+        let removed = AssistantCorpusIngestor().collect(
+            projectRoot: project.path,
+            environment: environment
+        )
+        let removedReport = try decodeCorpusReport(client.indexCorpus(
+            projectRoot: project.path,
+            documents: removed.documents,
+            removeMissingLayers: removed.refreshedLayers
+        ))
+        XCTAssertGreaterThanOrEqual(removedReport.removedDocuments, 1)
+        XCTAssertTrue(try client.searchCorpus(
+            projectRoot: project.path,
+            query: "ultraviolet marmalade",
+            limit: 4
+        ).isEmpty)
+    }
+
+    func testOptInPublicScientificPDFUsesProductionExtractionAndCitationBoundary() throws {
+        guard let pdfPath = ProcessInfo.processInfo.environment["CASA_RS_WAVE5B_PUBLIC_PDF"] else {
+            throw XCTSkip("Set CASA_RS_WAVE5B_PUBLIC_PDF to a downloaded public scientific PDF.")
+        }
+        let sourceRoot = ProcessInfo.processInfo.environment["CASA_RS_SOURCE_ROOT"]
+            ?? FileManager.default.currentDirectoryPath
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let documents = project.appendingPathComponent("documents", isDirectory: true)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        let staged = documents.appendingPathComponent("sidereal-visibility-averaging.pdf")
+        try FileManager.default.copyItem(atPath: pdfPath, toPath: staged.path)
+
+        let result = AssistantCorpusIngestor().collect(
+            projectRoot: project.path,
+            environment: ["CASA_RS_SOURCE_ROOT": sourceRoot]
+        )
+        let pages = result.documents.filter {
+            $0.citation.sourcePath == "documents/sidereal-visibility-averaging.pdf"
+        }
+        XCTAssertEqual(pages.count, 9)
+        XCTAssertEqual(pages.map(\.citation.page), Array(1 ... 9).map(UInt32.init))
+
+        let client = UniFFIAssistantPersistenceClient()
+        let report = try decodeCorpusReport(client.indexCorpus(
+            projectRoot: project.path,
+            documents: result.documents,
+            removeMissingLayers: result.refreshedLayers
+        ))
+        let hits = try client.searchCorpus(
+            projectRoot: project.path,
+            query: "3000 hours factor 169 14-fold",
+            limit: 8
+        )
+        let scientificHit = try XCTUnwrap(hits.first {
+            $0.citation.sourcePath == "documents/sidereal-visibility-averaging.pdf"
+                && $0.citation.page == 1
+                && $0.text.contains("169")
+                && $0.text.contains("14-fold")
+        })
+        XCTAssertEqual(scientificHit.citation.locator, "documents/sidereal-visibility-averaging.pdf, page 1")
+        let baselineHit = try XCTUnwrap(
+            client.searchCorpus(
+                projectRoot: project.path,
+                query: "redistribution-cleared concise orientation substitute observatory documentation",
+                limit: 12
+            ).first {
+                $0.layer == "baseline"
+                    && $0.citation.sourcePath?.hasSuffix("radio-interferometry-primer.md") == true
+            }
+        )
+        let sourceHit = try XCTUnwrap(
+            client.searchCorpus(
+                projectRoot: project.path,
+                query: "CORPUS_SCHEMA_VERSION MAX_CHUNK_BYTES retrieval unit",
+                limit: 12
+            ).first {
+                $0.layer == "live_source"
+                    && $0.citation.sourcePath == "crates/casa-notebook/src/corpus.rs"
+                    && $0.citation.commit != nil
+                    && $0.citation.lineStart != nil
+                    && $0.citation.lineEnd != nil
+            }
+        )
+        print(
+            "CASA_RS_WAVE5B_PDF indexed=\(report.indexedDocuments) chunks=\(report.chunkCount) "
+                + "citation=\(scientificHit.citation.locator) baseline=\(baselineHit.citation.locator) "
+                + "source=\(sourceHit.citation.locator) commit=\(sourceHit.citation.commit ?? "missing") "
+                + "lines=\(sourceHit.citation.lineStart ?? 0)-\(sourceHit.citation.lineEnd ?? 0) "
+                + "diagnostics=\(result.diagnostics)"
+        )
     }
 
     func testPinDestinationIsAlwaysChronologicalTail() throws {
@@ -887,6 +1138,152 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: forbiddenMarker.path))
         XCTAssertEqual(workApprovalCount, 1, "CASA must relay one Codex-native approval without duplicating it")
         XCTAssertFalse(FileManager.default.fileExists(atPath: workMarker.path))
+    }
+
+    func testOptInCodexSubscriptionUsesScientificAndSourceCorpusTools() throws {
+        guard ProcessInfo.processInfo.environment["CASA_RS_CODEX_LIVE_CORPUS"] == "1",
+              let pdfPath = ProcessInfo.processInfo.environment["CASA_RS_WAVE5B_PUBLIC_PDF"]
+        else {
+            throw XCTSkip("Set CASA_RS_CODEX_LIVE_CORPUS=1 and CASA_RS_WAVE5B_PUBLIC_PDF.")
+        }
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let documents = project.appendingPathComponent("documents", isDirectory: true)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(
+            atPath: pdfPath,
+            toPath: documents.appendingPathComponent("sidereal-visibility-averaging.pdf").path
+        )
+        let sourceRoot = ProcessInfo.processInfo.environment["CASA_RS_SOURCE_ROOT"]
+            ?? FileManager.default.currentDirectoryPath
+        let ingestion = AssistantCorpusIngestor().collect(
+            projectRoot: project.path,
+            environment: ["CASA_RS_SOURCE_ROOT": sourceRoot]
+        )
+        let expectedCommit = try XCTUnwrap(ingestion.documents.first {
+            $0.citation.sourcePath == "crates/casa-notebook/src/corpus.rs"
+        }?.citation.commit)
+        let persistence = UniFFIAssistantPersistenceClient()
+        _ = try persistence.indexCorpus(
+            projectRoot: project.path,
+            documents: ingestion.documents,
+            removeMissingLayers: ingestion.refreshedLayers
+        )
+
+        let session = CodexAppServerSession(configuration: try .discover())
+        defer { session.terminate() }
+        let ready = expectation(description: "Codex App Server ready")
+        let account = expectation(description: "ChatGPT subscription account")
+        let corpusTool = expectation(description: "corpus.search called")
+        let sourceTool = expectation(description: "source.search called")
+        let completed = expectation(description: "retrieval answer completed")
+        let nonce = String(repeating: "r", count: 32)
+        let profile = CasaAgentRuntimeProfile(
+            authority: .explore,
+            sessionNonce: nonce,
+            pythonCommand: "python3"
+        )
+        var observedAccount = false
+        var observedCorpusTool = false
+        var observedSourceTool = false
+        var sent = false
+        var answer = ""
+        session.onEvent { event in
+            if let result = event["result"] as? [String: Any] {
+                if !observedAccount,
+                   result.keys.contains("requiresOpenaiAuth"), result["account"] != nil
+                {
+                    observedAccount = true
+                    account.fulfill()
+                }
+                if !sent,
+                   let thread = result["thread"] as? [String: Any],
+                   let id = thread["id"] as? String
+                {
+                    sent = true
+                    session.sendTurn(AgentTurnRequest(
+                        threadID: id,
+                        text: """
+                        Use only the \(profile.mcpServerName) project tools, with the exact current nonce. First call corpus.search for the 3000-hour SVA estimate in the project PDF. Then call source.search for CORPUS_SCHEMA_VERSION. Reply with the estimated data-volume and computing-time reductions, the PDF page locator, and the casa-rs source path, commit, and line range. Do not use shell or web.
+                        """,
+                        model: "",
+                        effort: "low"
+                    ))
+                }
+            }
+            guard let method = event["method"] as? String,
+                  let params = event["params"] as? [String: Any]
+            else { return }
+            if method == "item/completed",
+               let item = params["item"] as? [String: Any],
+               item["type"] as? String == "mcpToolCall",
+               item["server"] as? String == profile.mcpServerName
+            {
+                if item["tool"] as? String == "corpus.search", !observedCorpusTool {
+                    observedCorpusTool = true
+                    corpusTool.fulfill()
+                }
+                if item["tool"] as? String == "source.search", !observedSourceTool {
+                    observedSourceTool = true
+                    sourceTool.fulfill()
+                }
+            } else if method == "item/agentMessage/delta",
+                      let delta = params["delta"] as? String
+            {
+                answer += delta
+            } else if method == "turn/completed" {
+                completed.fulfill()
+            }
+        }
+        session.prepare { result in
+            if case let .failure(error) = result { XCTFail("Codex failed: \(error)") }
+            ready.fulfill()
+        }
+        wait(for: [ready, account], timeout: 25)
+        session.startConversation(AgentConversationRequest(
+            projectRoot: project.path,
+            model: "",
+            effort: "low",
+            resumeThreadID: nil,
+            runtimeProfile: profile
+        ))
+        wait(for: [corpusTool, sourceTool, completed], timeout: 120)
+        XCTAssertTrue(answer.contains("169"), answer)
+        XCTAssertTrue(answer.contains("14"), answer)
+        XCTAssertTrue(answer.contains("page 1"), answer)
+        XCTAssertTrue(answer.contains("crates/casa-notebook/src/corpus.rs"), answer)
+        XCTAssertTrue(answer.contains(expectedCommit), answer)
+        print("CASA_RS_WAVE5B_LIVE_AGENT \(answer)")
+    }
+
+    private func writeTextPDF(_ pages: [String], to url: URL) throws {
+        try? FileManager.default.removeItem(at: url)
+        guard let consumer = CGDataConsumer(url: url as CFURL) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        var mediaBox = CGRect(x: 0, y: 0, width: 612, height: 792)
+        guard let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        for text in pages {
+            context.beginPDFPage(nil)
+            let graphics = NSGraphicsContext(cgContext: context, flipped: false)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = graphics
+            (text as NSString).draw(
+                in: NSRect(x: 72, y: 650, width: 468, height: 72),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 18)]
+            )
+            NSGraphicsContext.restoreGraphicsState()
+            context.endPDFPage()
+        }
+        context.closePDF()
+    }
+
+    private func decodeCorpusReport(_ json: String) throws -> AssistantCorpusIndexReportState {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(AssistantCorpusIndexReportState.self, from: Data(json.utf8))
     }
 
     private func temporaryProject() throws -> URL {

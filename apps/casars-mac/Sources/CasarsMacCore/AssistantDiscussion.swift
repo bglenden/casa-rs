@@ -248,11 +248,22 @@ package struct AssistantDiscussionState: Codable, Equatable {
     package var pendingApproval: AssistantApprovalRequestState?
     package var lastError: String?
     package var corpusStatus = "Not indexed"
+    package var corpusIndexReport: AssistantCorpusIndexReportState?
+    package var corpusDiagnostics: [String] = []
     package var pendingAuthenticationURL: String?
 
     package var activeConversation: AssistantConversationState? {
         conversations.first { $0.id == activeConversationID }
     }
+}
+
+package struct AssistantCorpusIndexReportState: Codable, Equatable {
+    package var schemaVersion: UInt32
+    package var retrievalEngine: String
+    package var indexedDocuments: Int
+    package var unchangedDocuments: Int
+    package var removedDocuments: Int
+    package var chunkCount: Int
 }
 
 package struct AssistantCorpusDocumentRequest: Encodable {

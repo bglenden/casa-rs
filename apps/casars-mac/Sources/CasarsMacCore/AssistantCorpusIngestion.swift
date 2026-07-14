@@ -50,7 +50,9 @@ package struct AssistantCorpusIngestor {
         if let source = sourceRoot(environment: environment) {
             let gitCommit = gitValue(source, arguments: ["rev-parse", "HEAD"])
             let manifest = sourceManifest(source)
-            let commit = gitCommit ?? manifest?.commit
+            let commit = gitCommit.map {
+                gitWorkingTreeIsDirty(source) ? "\($0)+dirty" : $0
+            } ?? manifest?.commit
             let release = gitValue(source, arguments: ["describe", "--tags", "--always"])
                 ?? manifest?.release
             let layer = gitCommit == nil ? "release_source" : "live_source"
@@ -224,12 +226,15 @@ package struct AssistantCorpusIngestor {
                 diagnostics.append("Skipped symbolic-link corpus entry \(relativePath(url, root: identityRoot))")
                 continue
             }
-            guard
-                  values.isRegularFile == true,
-                  supportedExtension(url.pathExtension)
-            else { continue }
+            guard values.isRegularFile == true else { continue }
             let treeRelative = relativePath(url, root: identityRoot)
             let relative = identityPrefix.map { "\($0)/\(treeRelative)" } ?? treeRelative
+            guard supportedExtension(url.pathExtension) else {
+                if layer == "project_document" {
+                    diagnostics.append("Unsupported corpus file type \(relative)")
+                }
+                continue
+            }
             if url.pathExtension.lowercased() == "pdf" {
                 let pages = extractPDF(url, relative: relative, diagnostics: &diagnostics)
                 for (page, content) in pages {
@@ -387,6 +392,14 @@ package struct AssistantCorpusIngestor {
         guard process.terminationStatus == 0 else { return nil }
         return String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func gitWorkingTreeIsDirty(_ root: URL) -> Bool {
+        guard let status = gitValue(
+            root,
+            arguments: ["status", "--porcelain", "--untracked-files=normal"]
+        ) else { return false }
+        return !status.isEmpty
     }
 
     private func supportedExtension(_ value: String) -> Bool {

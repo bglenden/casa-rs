@@ -3059,6 +3059,8 @@ package struct DebugAssistantDiscussionSnapshot: Codable, Equatable {
     package var selectedContextIDs: [String]
     package var estimatedEgressBytes: UInt64
     package var corpusStatus: String
+    package var corpusIndexReport: AssistantCorpusIndexReportState?
+    package var corpusDiagnostics: [String]
     package var lastError: String?
 
     package init(state: AssistantDiscussionState) {
@@ -3074,6 +3076,8 @@ package struct DebugAssistantDiscussionSnapshot: Codable, Equatable {
             $0 + $1.byteCount
         }
         corpusStatus = state.corpusStatus
+        corpusIndexReport = state.corpusIndexReport
+        corpusDiagnostics = state.corpusDiagnostics
         lastError = state.lastError
     }
 }
