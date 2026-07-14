@@ -430,15 +430,22 @@ package final class CodexAppServerSession: AgentSession {
             }
         }
         initializeID = nextID
-        try send(method: "initialize", params: [
-            "clientInfo": ["name": "casa-rs", "title": "CASA-RS Workbench", "version": "0.24.1"],
-            "capabilities": ["experimentalApi": false],
-        ])
+        try send(method: "initialize", params: Self.initializeParams)
         guard readySemaphore.wait(timeout: .now() + 10) == .success else {
             terminateLocked()
             throw AgentSessionError.startupTimeout
         }
         if let startupError { throw startupError }
+    }
+
+    package static var initializeParams: [String: Any] {
+        [
+            "clientInfo": ["name": "casa-rs", "title": "CASA-RS Workbench", "version": "0.24.1"],
+            // turn/start.additionalContext is the only experimental surface
+            // CASA-RS currently consumes. It carries the current nonce-bound
+            // runtime profile on every turn, including resumed threads.
+            "capabilities": ["experimentalApi": true],
+        ]
     }
 
     @discardableResult

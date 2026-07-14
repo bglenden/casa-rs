@@ -165,6 +165,14 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertTrue(context["value"]?.contains("task.catalog") == true)
     }
 
+    func testAppServerDeclaresCapabilityRequiredByPerTurnRuntimeContext() throws {
+        let capabilities = try XCTUnwrap(
+            CodexAppServerSession.initializeParams["capabilities"] as? [String: Bool]
+        )
+
+        XCTAssertEqual(capabilities["experimentalApi"], true)
+    }
+
     func testAppServerTurnStartErrorBecomesVisibleAgentError() throws {
         let session = CodexAppServerSession(configuration: AgentSessionConfiguration(
             agentExecutable: "/usr/bin/false",
@@ -1174,9 +1182,8 @@ final class AssistantDiscussionTests: XCTestCase {
         defer { session.terminate() }
         let ready = expectation(description: "Codex App Server ready")
         let account = expectation(description: "ChatGPT subscription account")
-        let corpusTool = expectation(description: "corpus.search called")
-        let sourceTool = expectation(description: "source.search called")
-        let completed = expectation(description: "retrieval answer completed")
+        let threadStarted = expectation(description: "project-aware Codex thread started")
+        let turnFinished = expectation(description: "retrieval turn reached a terminal event")
         let nonce = String(repeating: "r", count: 32)
         let profile = CasaAgentRuntimeProfile(
             authority: .explore,
@@ -1188,8 +1195,11 @@ final class AssistantDiscussionTests: XCTestCase {
         var observedSourceTool = false
         var sent = false
         var answer = ""
+        var agentError: String?
+        var eventTrace: [String] = []
         session.onEvent { event in
             if let result = event["result"] as? [String: Any] {
+                eventTrace.append("result keys=\(result.keys.sorted())")
                 if !observedAccount,
                    result.keys.contains("requiresOpenaiAuth"), result["account"] != nil
                 {
@@ -1201,6 +1211,7 @@ final class AssistantDiscussionTests: XCTestCase {
                    let id = thread["id"] as? String
                 {
                     sent = true
+                    threadStarted.fulfill()
                     session.sendTurn(AgentTurnRequest(
                         threadID: id,
                         text: """
@@ -1214,6 +1225,16 @@ final class AssistantDiscussionTests: XCTestCase {
             guard let method = event["method"] as? String,
                   let params = event["params"] as? [String: Any]
             else { return }
+            if method == "casa/error" || method == "error" {
+                let message = String(describing: params["message"] ?? params)
+                eventTrace.append("\(method): \(message)")
+                if agentError == nil {
+                    agentError = message
+                    if sent { turnFinished.fulfill() }
+                }
+            } else if ["thread/started", "turn/started", "turn/completed", "item/completed"].contains(method) {
+                eventTrace.append(method)
+            }
             if method == "item/completed",
                let item = params["item"] as? [String: Any],
                item["type"] as? String == "mcpToolCall",
@@ -1221,18 +1242,16 @@ final class AssistantDiscussionTests: XCTestCase {
             {
                 if item["tool"] as? String == "corpus.search", !observedCorpusTool {
                     observedCorpusTool = true
-                    corpusTool.fulfill()
                 }
                 if item["tool"] as? String == "source.search", !observedSourceTool {
                     observedSourceTool = true
-                    sourceTool.fulfill()
                 }
             } else if method == "item/agentMessage/delta",
                       let delta = params["delta"] as? String
             {
                 answer += delta
             } else if method == "turn/completed" {
-                completed.fulfill()
+                if agentError == nil { turnFinished.fulfill() }
             }
         }
         session.prepare { result in
@@ -1247,7 +1266,17 @@ final class AssistantDiscussionTests: XCTestCase {
             resumeThreadID: nil,
             runtimeProfile: profile
         ))
-        wait(for: [corpusTool, sourceTool, completed], timeout: 120)
+        guard XCTWaiter.wait(for: [threadStarted], timeout: 25) == .completed else {
+            XCTFail("Project-aware Codex thread did not start. Events: \(eventTrace)")
+            return
+        }
+        guard XCTWaiter.wait(for: [turnFinished], timeout: 120) == .completed else {
+            XCTFail("Agent retrieval turn did not complete. Events: \(eventTrace)")
+            return
+        }
+        XCTAssertNil(agentError, "Agent failed: \(agentError ?? "unknown"). Events: \(eventTrace)")
+        XCTAssertTrue(observedCorpusTool, "corpus.search was not called. Events: \(eventTrace)")
+        XCTAssertTrue(observedSourceTool, "source.search was not called. Events: \(eventTrace)")
         XCTAssertTrue(answer.contains("169"), answer)
         XCTAssertTrue(answer.contains("14"), answer)
         XCTAssertTrue(answer.contains("page 1"), answer)

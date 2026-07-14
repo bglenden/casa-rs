@@ -58,7 +58,7 @@ The following focused evidence is green:
   the production persistence boundary
 - exact-nonce `corpus.search` and `source.search` project-MCP calls, including
   scientific section and source commit/line metadata
-- all assistant core tests: 27 executed, 4 opt-in skips, 0 failures
+- all assistant core tests: 28 executed, 4 opt-in skips, 0 failures
 - current `just verify` equivalent: workspace SPDX/fmt/clippy/tests green (the
   two localhost HTTP tests were rerun outside the shell sandbox after its
   expected socket denial), Python package 100 passed and 2 skipped
@@ -69,14 +69,25 @@ The production refresh UI retains the Rust index report and local extraction
 diagnostics. Its ordinary context row stays compact; details are available in
 AI settings and in debug JSON.
 
-### Pending external-agent acceptance
+### Live external-agent acceptance
 
 The opt-in test
 `AssistantDiscussionTests.testOptInCodexSubscriptionUsesScientificAndSourceCorpusTools`
-requires a live Codex agent to call both nonce-bound retrieval tools and cite
-the paper page plus source path/revision/lines. Running it sends selected paper
-excerpts and current source excerpts to the user's ChatGPT subscription. It
-must therefore be run only after explicit approval for that external egress:
+requires explicit approval because it sends selected paper excerpts and current
+source excerpts to the user's ChatGPT subscription. Brian provided that approval
+on 2026-07-14. The live run completed in 30.241 seconds: the Codex agent called
+both exact nonce-derived retrieval tools and reported the independently verified
+169-fold data-volume and 14-fold computing-time reductions from PDF page 1. It
+also cited `crates/casa-notebook/src/corpus.rs`, lines 1-61, at revision
+`3985f969bfc939ada7ad61934e0d5f3c313cb397+dirty`.
+
+The first authorized run exposed a production adapter defect. CASA-RS supplied
+`turn/start.additionalContext` to refresh the nonce-bound profile on every turn,
+but initialized Codex App Server with `experimentalApi: false`; App Server
+therefore rejected the turn and the UI remained in Thinking state. CASA-RS now
+declares the required capability, surfaces a rejected turn immediately, and the
+opt-in test distinguishes thread startup, terminal agent errors, tool use, and
+turn completion. The passing command was:
 
 ```sh
 CASA_RS_CODEX_LIVE_CORPUS=1 \
