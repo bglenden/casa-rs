@@ -4849,6 +4849,7 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
         let tabID = "tab-assistant-\(suggestion.taskId)-\(UUID().uuidString.lowercased())"
+        guard applyAssistantTaskSuggestion(suggestion, instanceID: tabID) else { return }
         openTab(WorkbenchTab(
             id: tabID,
             title: taskTitle(suggestion.taskId),
@@ -4856,18 +4857,61 @@ public final class WorkbenchStore: ObservableObject {
             taskID: suggestion.taskId
         ))
         selectTask(suggestion.taskId, tabID: tabID)
-        for (name, value) in suggestion.parameters.sorted(by: { $0.key < $1.key }) {
-            setGenericTaskValue(
-                taskID: suggestion.taskId,
-                instanceID: tabID,
-                argumentID: name,
-                value: value
-            )
-        }
         assistantSuggestedParameters[parameterSessionKey(
             surfaceID: suggestion.taskId,
             instanceID: tabID
         )] = Set(suggestion.parameters.keys)
+    }
+
+    private func applyAssistantTaskSuggestion(
+        _ suggestion: AssistantTaskSuggestionState,
+        instanceID: String
+    ) -> Bool {
+        let sessionKey = parameterSessionKey(
+            surfaceID: suggestion.taskId,
+            instanceID: instanceID
+        )
+        do {
+            let bundle = try surfaceParameterClient.loadBundle(surfaceID: suggestion.taskId)
+            let defaults = try surfaceParameterClient.defaults(surfaceID: suggestion.taskId)
+            var session = SurfaceParameterSession(
+                bundle: bundle,
+                snapshot: defaults,
+                selectedSource: .defaults,
+                baseProfileTOML: nil,
+                baseProfilePath: nil,
+                workspace: parameterWorkspacePath()
+            )
+            for (name, text) in suggestion.parameters {
+                guard let concept = bundle.concept(for: name) else {
+                    recordAssistantError("The suggested task contains unknown parameter \(name)")
+                    return false
+                }
+                let normalized = concept.valueDomain.isPathLike && !Self.isInlineRegionSyntax(text)
+                    ? projectRelativePath(text)
+                    : text
+                session.overridePatch.values[name] = concept.valueDomain.value(from: normalized)
+            }
+            guard resolveParameterSession(
+                &session,
+                editedParameters: Set(suggestion.parameters.keys)
+            ) else { return false }
+            let errors = session.snapshot.diagnostics
+                .filter { $0.level == "error" }
+                .map(\.message)
+            guard errors.isEmpty else {
+                recordAssistantError(
+                    "The suggested \(suggestion.taskId) parameters are not runnable: "
+                        + errors.joined(separator: "; ")
+                )
+                return false
+            }
+            state.parameterSessions[sessionKey] = session
+            return true
+        } catch {
+            recordAssistantError("Open suggested \(suggestion.taskId) task: \(error)")
+            return false
+        }
     }
 
     package func selectAIPrototypeAgent(_ agentID: String) {

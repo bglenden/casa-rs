@@ -113,6 +113,19 @@ notebook-chat affordance has hover help. XCUITest explicitly checks that the
 control-comment element is absent while the saved AI note and its chat-only
 task action remain usable.
 
+The next manual task-discovery review successfully listed the native
+`simobserve`, `simalma`, and `simanalyze` surfaces and produced an Open task
+action, but exposed a second boundary defect: `task.suggest` accepted known
+parameter names without checking that they were mutually active in the resolved
+request mode. The Workbench then applied the suggestion one field at a time,
+leaving a partially resolved form with a page of inactive-parameter errors.
+The project MCP now exposes mode predicates in `task.schema` and validates the
+complete proposed draft before returning an action. The Workbench independently
+applies accepted values as one Defaults-based patch and refuses any invalid
+draft without opening a task tab. Focused Rust tests cover a valid ALMA family
+mosaic and reject the inactive `polarization_basis` combination; a focused
+Swift test covers atomic application and the GUI-side refusal boundary.
+
 The consolidated GUI gate is run after the Wave 5B interaction changes have
 accumulated, following the repository policy that foreground XCUITests run in
 one exclusive batch.

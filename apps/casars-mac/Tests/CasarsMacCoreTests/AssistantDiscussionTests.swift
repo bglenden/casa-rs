@@ -781,6 +781,84 @@ final class AssistantDiscussionTests: XCTestCase {
         ))
     }
 
+    func testTaskSuggestionAppliesModeDependentParametersAtomicallyAndRejectsInvalidDrafts() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        var conversation = try client.createConversation(
+            projectRoot: project.path,
+            title: "Analysis",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
+        )
+        conversation.messages.append(AssistantMessageState(
+            id: "answer",
+            role: "assistant",
+            content: "Create an ALMA mosaic.",
+            createdAt: 1,
+            agentId: "fixture",
+            model: "fixture",
+            citations: [],
+            usedContext: [],
+            activities: [],
+            taskSuggestions: [
+                AssistantTaskSuggestionState(
+                    id: "invalid",
+                    taskId: "simobserve",
+                    parameters: [
+                        "request_kind": "family",
+                        "telescope": "ALMA",
+                        "polarization_basis": "linear",
+                    ]
+                ),
+                AssistantTaskSuggestionState(
+                    id: "valid",
+                    taskId: "simobserve",
+                    parameters: [
+                        "request_kind": "family",
+                        "telescope": "ALMA",
+                        "array_config": "alma.cycle10.5.cfg",
+                        "band": "Band 6",
+                        "pointing_count": "4",
+                        "output_ms": "products/alma-mosaic.ms",
+                    ]
+                ),
+            ],
+            pins: []
+        ))
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+
+        let initialTabs = store.state.tabs.count
+        store.openAssistantTaskSuggestion(messageID: "answer", suggestionID: "invalid")
+        XCTAssertEqual(store.state.tabs.count, initialTabs)
+
+        store.openAssistantTaskSuggestion(messageID: "answer", suggestionID: "valid")
+        let tab = try XCTUnwrap(store.state.tabs.first { $0.id == store.state.activeTabID })
+        XCTAssertEqual(tab.taskID, "simobserve")
+        XCTAssertEqual(
+            store.parameterText(surfaceID: "simobserve", instanceID: tab.id, name: "request_kind"),
+            "family"
+        )
+        XCTAssertEqual(
+            store.parameterText(surfaceID: "simobserve", instanceID: tab.id, name: "array_config"),
+            "alma.cycle10.5.cfg"
+        )
+        XCTAssertFalse(
+            try XCTUnwrap(store.parameterSession(surfaceID: "simobserve", instanceID: tab.id)).hasErrors
+        )
+    }
+
     func testCompletedCasaCorpusToolProducesDurableCitationAndActivity() throws {
         let project = try temporaryProject()
         defer { try? FileManager.default.removeItem(at: project) }
