@@ -149,8 +149,9 @@ Use `Closes #N` only for issues that should auto-close on merge.
   use core tests, debug-state checks, and deterministic capture; accumulate
   interaction changes for prototype-handoff and pre-Review GUI gates. Use a
   focused XCUITest run only to diagnose a failure from the consolidated gate.
-- Prefer the dedicated logged-in remote Mac worker for consolidated native GUI
-  gates when it is available, using `just gui-test-remote` or
+- Native GUI testing is remote-first. When the configured logged-in Mac worker
+  is reachable, do not run Xcode/XCTest GUI gates on the development Mac; use
+  `just gui-test-remote` or
   `just notebook-roundtrip-gui-remote`. Keep its checkout clean, select the
   exact pushed revision, and configure its dedicated stable signing identity
   once with `scripts/setup-gui-remote-signing.sh`. Ad-hoc signatures identify
@@ -162,8 +163,10 @@ Use `Closes #N` only for issues that should auto-close on merge.
   the checkout and Xcode DerivedData on internal storage, while placing the
   large Cargo target, task executables, and retained artifacts on configured
   external storage. A green remote run is the GUI gate; do not repeat it locally
-  solely for duplicate assurance. Local foreground automation remains the
-  fallback and focused diagnostic surface.
+  solely for duplicate assurance. Run local foreground automation only when
+  the remote worker is unavailable or a remote failure specifically requires
+  local focused diagnosis; record that reason and announce the focus-taking
+  window before launch.
 - Before implementing behavior that exists in CASA/casacore C++, inspect the
   relevant upstream task/tool/library path first and preserve its semantics
   unless there is an explicit reason to diverge.
