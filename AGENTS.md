@@ -149,6 +149,13 @@ Use `Closes #N` only for issues that should auto-close on merge.
   use core tests, debug-state checks, and deterministic capture; accumulate
   interaction changes for prototype-handoff and pre-Review GUI gates. Use a
   focused XCUITest run only to diagnose a failure from the consolidated gate.
+- Prefer the dedicated logged-in remote Mac worker for consolidated native GUI
+  gates when it is available, using `just gui-test-remote` or
+  `just notebook-roundtrip-gui-remote`. Keep its checkout clean, select the
+  exact pushed revision, and place build caches and retained artifacts on its
+  configured external storage. A green remote run is the GUI gate; do not
+  repeat it locally solely for duplicate assurance. Local foreground automation
+  remains the fallback and focused diagnostic surface.
 - Before implementing behavior that exists in CASA/casacore C++, inspect the
   relevant upstream task/tool/library path first and preserve its semantics
   unless there is an explicit reason to diverge.

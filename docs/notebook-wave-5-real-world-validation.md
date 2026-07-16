@@ -201,9 +201,17 @@ The reusable acceptance entrypoint is:
 just notebook-roundtrip-gui
 ```
 
-It is deliberately opt-in and local. The harness requires a logged-in Codex
-CLI using the existing ChatGPT subscription, chooses the normal user/system
-Python through `scripts/resolve-python.sh` unless
+On a configured dedicated macOS worker, use
+`just notebook-roundtrip-gui-remote` instead. The remote runner checks out the
+exact pushed revision, keeps Cargo/Xcode state and full result artifacts on the
+worker's configured external storage, and copies only the sanitized JSON report
+back into the local ignored `.gui-test/remote/` directory. This avoids taking
+the development Mac's foreground focus while preserving the same production
+acceptance path.
+
+It is deliberately opt-in and requires an interactive macOS session. The
+harness requires a logged-in Codex CLI using the existing ChatGPT subscription,
+chooses the normal user/system Python through `scripts/resolve-python.sh` unless
 `CASA_RS_GUI_TEST_PYTHON=/absolute/path/to/python` is supplied, and rejects
 metered API-key configuration. It builds the real `simobserve`, `msexplore`,
 frontend-service, app, and XCUITest executables before announcing one exclusive

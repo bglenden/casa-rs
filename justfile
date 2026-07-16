@@ -51,6 +51,10 @@ docs-check:
 gui-test:
     bash apps/casars-mac/script/test_gui.sh
 
+# Run the deterministic GUI gate on a dedicated logged-in remote Mac.
+gui-test-remote:
+    bash scripts/test-gui-remote.sh gui-test
+
 assistant-test:
     CARGO_INCREMENTAL=0 cargo test -p casa-notebook --test assistant_contract --test corpus_contract
     CARGO_INCREMENTAL=0 cargo test -p casars-frontend-services --bin casars-project-mcp
@@ -68,6 +72,10 @@ assistant-live-gui:
 # Codex CLI's ChatGPT subscription and a disposable project.
 notebook-roundtrip-gui:
     bash apps/casars-mac/script/test_notebook_roundtrip_gui.sh
+
+# Run the live notebook production round-trip on a dedicated remote Mac.
+notebook-roundtrip-gui-remote:
+    bash scripts/test-gui-remote.sh notebook-roundtrip-gui
 
 graph:
     bash scripts/generate-graphs.sh

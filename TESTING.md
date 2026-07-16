@@ -105,6 +105,24 @@ The deterministic assistant journey includes logout, the signed-out composer,
 and fixture reauthorization before continuing normal chat; real credentials are
 never required by `just gui-test`.
 
+For unattended development, `just gui-test-remote` runs the same gate on a
+dedicated, logged-in macOS worker and leaves Xcode, Cargo, and result artifacts
+on that worker. Set `CASA_RS_GUI_TEST_REMOTE=user@host`; optionally set an SSH
+identity, checkout, storage root, Xcode developer directory, or Python with the
+`CASA_RS_GUI_TEST_REMOTE_*` variables listed by
+`scripts/test-gui-remote.sh --help`. The local checkout must be clean and its
+HEAD must be the pushed tip of the same-named origin branch. The runner refuses
+an uninitialized Xcode installation or a dirty remote checkout, switches the
+dedicated checkout to the exact requested commit, stores build state outside
+the checkout, and reports the remote artifact path. Use the remote worker as
+the normal exclusive GUI surface when available; a current green local or
+remote run satisfies the single GUI gate. The worker needs full initialized
+Xcode, Developer Tools mode, SSH access, and a real logged-in console session;
+automatic login is a worker-provisioning choice rather than a repository
+requirement. For setup or failure diagnosis only,
+`CASA_RS_GUI_TEST_REMOTE_ONLY=TestTarget/TestClass/testMethod` selects a focused
+test without changing the normal consolidated-gate policy.
+
 `just assistant-live-gui` is the opt-in real-account acceptance exception. It
 uses the installed Codex CLI's existing ChatGPT subscription, an isolated
 temporary project, and the user-selected Python; API-key environment variables
@@ -131,6 +149,13 @@ successful run removes the disposable project and retains the `.xcresult` plus
 the sanitized `NotebookRoundTripGUI.report.json` under
 `apps/casars-mac/.gui-test/`. A failed run retains the project for focused
 diagnosis. This live acceptance is not part of CI or `just gui-test`.
+
+`just notebook-roundtrip-gui-remote` runs that opt-in live acceptance on the
+same remote worker. It additionally requires the worker's Codex CLI to be
+logged into an approved ChatGPT subscription and its selected Python to provide
+NumPy and Matplotlib. On success the full artifacts remain on the worker's
+configured storage and the sanitized JSON report is copied into
+`apps/casars-mac/.gui-test/remote/` locally.
 
 ## Coverage / confidence policy
 

@@ -6,6 +6,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 CODEX_COMMAND="${CASA_RS_CODEX_COMMAND:-codex}"
 PYTHON_COMMAND="${CASA_RS_GUI_TEST_PYTHON:-$($REPO_ROOT/scripts/resolve-python.sh 3.10)}"
+TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
+if [[ "$TARGET_DIR" != /* ]]; then
+  TARGET_DIR="$REPO_ROOT/$TARGET_DIR"
+fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "notebook production round-trip acceptance requires macOS with an interactive GUI session" >&2
@@ -59,8 +63,8 @@ fi
 /usr/bin/plutil -insert evidenceReport -string "$TEST_EVIDENCE_REPORT" "$LIVE_GATE"
 /usr/bin/plutil -insert repoRoot -string "$REPO_ROOT" "$LIVE_GATE"
 /usr/bin/plutil -insert repoRevision -string "$(git -C "$REPO_ROOT" rev-parse HEAD)" "$LIVE_GATE"
-/usr/bin/plutil -insert simobserveCommand -string "$REPO_ROOT/target/debug/simobserve" "$LIVE_GATE"
-/usr/bin/plutil -insert msexploreCommand -string "$REPO_ROOT/target/debug/msexplore" "$LIVE_GATE"
+/usr/bin/plutil -insert simobserveCommand -string "$TARGET_DIR/debug/simobserve" "$LIVE_GATE"
+/usr/bin/plutil -insert msexploreCommand -string "$TARGET_DIR/debug/msexplore" "$LIVE_GATE"
 /usr/bin/plutil -insert resumeAfterTask -string "$([[ "$RESUME_AFTER_TASK" == "1" ]] && echo true || echo false)" "$LIVE_GATE"
 trap 'rm -f "$LIVE_GATE" "$PASS_RECEIPT"' EXIT
 
