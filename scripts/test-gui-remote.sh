@@ -74,6 +74,7 @@ if [[ -n "${CASA_RS_GUI_TEST_REMOTE_IDENTITY:-}" ]]; then
 fi
 
 encode_remote_arg() {
+  printf 'x'
   printf '%s' "$1" | /usr/bin/base64
 }
 
@@ -102,7 +103,7 @@ ssh "${ssh_args[@]}" "$remote" /bin/bash -s -- "${encoded_remote_args[@]}" <<'RE
 set -euo pipefail
 
 decode_arg() {
-  printf '%s' "$1" | /usr/bin/base64 -D
+  printf '%s' "${1#x}" | /usr/bin/base64 -D
 }
 
 repo_root="$(decode_arg "$1")"
@@ -188,7 +189,7 @@ if [[ "$mode" == "notebook-roundtrip-gui" && "$status" == "0" ]]; then
   ssh "${ssh_args[@]}" "$remote" /bin/bash -s -- \
     "$encoded_report" >"$local_report" <<'REMOTE_REPORT'
 set -euo pipefail
-report_path="$(printf '%s' "$1" | /usr/bin/base64 -D)"
+report_path="$(printf '%s' "${1#x}" | /usr/bin/base64 -D)"
 cat "$report_path"
 REMOTE_REPORT
   echo "==> Copied sanitized report to $local_report"
