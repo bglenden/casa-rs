@@ -23,7 +23,6 @@ Optional configuration:
   CASA_RS_GUI_TEST_REMOTE_PYTHON=/absolute/path/to/python
   CASA_RS_GUI_TEST_REMOTE_CODEX=/absolute/path/to/codex
   CASA_RS_GUI_TEST_REMOTE_ONLY=TestTarget/TestClass/testMethod
-  CASA_RS_GUI_TEST_REMOTE_TUTORIAL_ARCHIVE_SEED=/absolute/path/to/download.part
 EOF
 }
 
@@ -38,7 +37,6 @@ developer_dir="${CASA_RS_GUI_TEST_REMOTE_DEVELOPER_DIR:-/Applications/Xcode.app/
 remote_python="${CASA_RS_GUI_TEST_REMOTE_PYTHON:-}"
 remote_codex="${CASA_RS_GUI_TEST_REMOTE_CODEX:-}"
 remote_only="${CASA_RS_GUI_TEST_REMOTE_ONLY:-}"
-remote_tutorial_archive_seed="${CASA_RS_GUI_TEST_REMOTE_TUTORIAL_ARCHIVE_SEED:-}"
 
 case "$mode" in
   gui-test | notebook-roundtrip-gui | tutorial-journey-gui) ;;
@@ -99,7 +97,6 @@ remote_args=(
   "$remote_root" "$remote_storage" "$remote_derived_data" "$remote_artifacts"
   "$remote_target" "$developer_dir" "$branch" "$revision" "$mode"
   "$remote_python" "$remote_codex" "$remote_only" "$remote_signing_config"
-  "$remote_tutorial_archive_seed"
 )
 encoded_remote_args=()
 for arg in "${remote_args[@]}"; do
@@ -134,7 +131,6 @@ python_command="$(expand_remote_home "$(decode_arg "${10}")")"
 codex_command="$(expand_remote_home "$(decode_arg "${11}")")"
 only_testing="$(decode_arg "${12}")"
 signing_config="$(expand_remote_home "$(decode_arg "${13}")")"
-tutorial_archive_seed="$(expand_remote_home "$(decode_arg "${14}")")"
 
 export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export DEVELOPER_DIR="$developer_dir"
@@ -232,10 +228,6 @@ fi
 if [[ -n "$only_testing" ]]; then
   export CASA_RS_GUI_TEST_ONLY="$only_testing"
 fi
-if [[ -n "$tutorial_archive_seed" ]]; then
-  export CASA_RS_GUI_TEST_TUTORIAL_ARCHIVE_SEED="$tutorial_archive_seed"
-fi
-
 case "$mode" in
   gui-test)
     bash apps/casars-mac/script/test_gui.sh

@@ -1687,20 +1687,6 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: templateMarkdown), templateMarkdownData)
         XCTAssertTrue(forkedSource.contains("# First Look at Imaging: TW Hya"))
         XCTAssertTrue(forkedSource.contains("019f6666-6666-7666-8666-666666666666"))
-        if let archiveSeed = environment["archiveSeed"] {
-            let downloadPart = tutorialLock.deletingLastPathComponent()
-                .appendingPathComponent("staging/twhya-calibrated", isDirectory: true)
-                .appendingPathComponent("download.part")
-            try FileManager.default.createDirectory(
-                at: downloadPart.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try FileManager.default.copyItem(
-                at: URL(fileURLWithPath: archiveSeed),
-                to: downloadPart
-            )
-        }
-
         let pythonCellID = "019f0000-0000-7000-8000-000000000418"
         let pythonSource = """
         import matplotlib.pyplot as plt
@@ -2031,7 +2017,6 @@ final class CasarsMacUITests: XCTestCase {
                 "source_uri": expectedSource,
                 "expected_size_bytes": expectedSize,
                 "expected_sha256": expectedSha256,
-                "archive_seeded": environment["archiveSeed"] != nil,
                 "duration_seconds": acquisitionDurationSeconds,
                 "operation_id": acquisitionReceipt["operation_id"] as? String ?? "",
                 "run_id": acquisitionReceipt["run_id"] as? String ?? "",
@@ -2737,24 +2722,36 @@ final class CasarsMacUITests: XCTestCase {
         _ citation: LiveAssistantTranscript.Citation,
         repoRoot: URL
     ) -> Bool {
-        let corpusRoot = repoRoot
-            .appendingPathComponent("apps/casars-mac/Sources/CasarsMacCore/Resources/assistant-corpus/standard-v1")
-        guard let enumerator = FileManager.default.enumerator(
-            at: corpusRoot,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else { return false }
+        let corpusRoot = repoRoot.appendingPathComponent(
+            "apps/casars-mac/Sources/CasarsMacCore/Resources/assistant-corpus",
+            isDirectory: true
+        )
+        let manifestURL = corpusRoot.appendingPathComponent("corpus-pack.json")
+        guard let manifestData = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONSerialization.jsonObject(with: manifestData) as? [String: Any],
+              let manifestID = manifest["id"] as? String,
+              let manifestVersion = manifest["version"] as? String,
+              citation.release == manifestVersion,
+              let sourcePath = citation.sourcePath,
+              sourcePath.hasPrefix("baseline/\(manifestID)/"),
+              let page = citation.page,
+              let entries = manifest["documents"] as? [[String: Any]]
+        else { return false }
+        let citedSource = String(sourcePath.dropFirst("baseline/\(manifestID)/".count))
+        guard let entry = entries.first(where: {
+            ($0["source_path"] as? String ?? $0["path"] as? String) == citedSource
+        }), let relativePath = entry["path"] as? String
+        else { return false }
+        let citedFile = corpusRoot.appendingPathComponent(relativePath)
+        guard entry["format"] as? String == "normalized_pages_json",
+              let pagesData = try? Data(contentsOf: citedFile),
+              let pages = try? JSONSerialization.jsonObject(with: pagesData) as? [[String: Any]],
+              let citedPage = pages.first(where: { ($0["page"] as? NSNumber)?.uint32Value == page }),
+              let content = citedPage["content"] as? String
+        else { return false }
         let excerptNeedle = normalizedEvidence(citation.excerpt ?? "")
-        for case let file as URL in enumerator where file.pathExtension == "json" {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
-            if excerptNeedle.count >= 32 {
-                let prefix = String(excerptNeedle.prefix(160))
-                if normalizedEvidence(text).contains(prefix) { return true }
-            } else if !citation.locator.isEmpty {
-                return true
-            }
-        }
-        return false
+        guard excerptNeedle.count >= 32 else { return false }
+        return normalizedEvidence(content).contains(String(excerptNeedle.prefix(160)))
     }
 
     private func sourceCitationExists(
