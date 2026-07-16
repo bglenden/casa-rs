@@ -371,9 +371,24 @@ The local corpus has four layers:
 3. release-matched CASA-RS documentation and source
 4. an optional live-checkout source overlay keyed to its Git commit
 
+The installed baseline is the compact versioned pack described in
+`assistant-standard-corpus.md`: the full 2026 NRAO workshop epoch, the open
+Springer synthesis-imaging book, and the CASA-RS primer. It is an app resource
+installed once, not copied into project `documents/`; page/slide labels and
+numbers remain exact retrieval citations.
+
 SQLite holds manifests, chunks, metadata, citations, and FTS5 indexes behind a
-replaceable retrieval interface. Content hashes make updates incremental.
-Extraction and OCR are local by default; cloud OCR is a per-document opt-in. A
+replaceable retrieval interface. Project-document refresh first compares a
+metadata fingerprint (path, type, size, mtime, ctime, and filesystem identity),
+then reads and content-hashes only the changed sources. Debounced recursive
+filesystem events request this reconciliation automatically; startup and the
+manual refresh action use the same path. No-change refresh performs no content
+read, PDF extraction, or OCR. Rename/delete reconciliation and changed-source
+replacement are atomic, while an unreadable or concurrently changing source
+keeps its last valid indexed content for a later retry. Project watcher events
+do not rebuild the baseline or release/live source layers, and no periodic full
+scan is used. Extraction and OCR are local by default; cloud OCR is a
+per-document opt-in. A
 real local embedding model is optional future work only after retrieval
 evaluation shows a material benefit; its dimensions are model metadata rather
 than a fixed architecture constant.

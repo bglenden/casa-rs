@@ -136,6 +136,58 @@ The consolidated GUI gate is run after the Wave 5B interaction changes have
 accumulated, following the repository policy that foreground XCUITests run in
 one exclusive batch.
 
+## Wave 5C: automatic incremental project corpus (#421)
+
+Project documents are reconciled when a real project opens and after debounced
+recursive filesystem events. The watcher is only an event hint: Rust-owned
+SQLite fingerprints over path, type, size, mtime, ctime, and file identity are
+the durable correctness boundary. The host reads/extracts only paths returned by
+the Rust plan, supplies the complete source snapshot for rename/delete removal,
+and marks failed or concurrently changing sources so their last valid content
+survives and is retried. Watcher-triggered refresh is project-only; baseline and
+release/live-source layers remain independent. Manual refresh performs the same
+incremental project planning while also refreshing those shared layers.
+
+Focused evidence on 2026-07-15:
+
+- 11 Rust corpus contract tests passed, including metadata no-op, preserved-
+  mtime/atomic identity, failure retention, rename/delete, and schema-v2
+  multi-page migration.
+- 4 native Swift corpus tests passed, including a PDF-bearing no-change refresh
+  with zero content/PDF/OCR work, real Workbench startup plus automatic edit
+  retrieval, burst coalescing, and `documents/` creation recovery.
+- the compact diagnostic records metadata reads, content reads, PDF extractions,
+  and OCR calls for each refresh without adding routine full-width UI.
+
+## Wave 5D: versioned standard radio-astronomy corpus (#420)
+
+The v1 selection is the 27-deck 2026 NRAO workshop epoch plus the open Springer
+book; 2024 remains fully inventoried but excluded as superseded, and the paid
+ASP book is explicitly excluded. Brian authorized NRAO bundling and confirmed
+this smaller selection in issue #420. The clean-install app resource contains
+2,314 external pages/slides plus the CASA-RS primer and requires neither the
+Oracle checkout nor network access.
+
+Focused evidence on 2026-07-15:
+
+- the self-contained verifier accounted for all 55 candidate sources, checked
+  all 28 selected content files/digests, and matched the 2,314-page/slide pack;
+- the recorded network audit reached all 28 authoritative selected origins with
+  zero failures;
+- 3 native Swift pack tests passed: clean-install load and cited retrieval,
+  tamper rejection, and baseline upgrade preserving project documents and an
+  assistant conversation;
+- the compact pack measured 3,077,083 bytes versus 359,670,733 bytes of selected
+  original PDFs; clean debug ingestion/indexing took 2.62 seconds and produced
+  a 14,786,560-byte SQLite index;
+- rendered Perley geometry slide 15 was visually compared with its normalized
+  text. Targeted corrections restore `H_0`, `delta_0`, `nu`, and `nu_F` where
+  OCR had confused zero/degree and Greek/Latin glyphs.
+- a production ChatGPT-subscription agent completed two separate bounded
+  baseline searches in 25.76 seconds and repeated the independently checked
+  locators `Interferometry and Synthesis in Radio Astronomy.pdf, page 806` and
+  `Perley-Geometry-SIW2026.pdf, slide 15`; no shell or web tool was used.
+
 ## Bounded refactor pass
 
 The 2026-07-15 follow-up pass was bounded to the assistant progress, citation,

@@ -666,7 +666,7 @@ final class AssistantDiscussionTests: XCTestCase {
             projectRoot: project.path,
             query: "quadrature zephyr",
             limit: 4
-        ).isEmpty)
+        ).allSatisfy { $0.citation.sourcePath != "documents/paper.pdf" })
         XCTAssertEqual(
             try client.searchCorpus(projectRoot: project.path, query: "ultraviolet marmalade", limit: 4)
                 .first?.citation.page,
@@ -688,7 +688,7 @@ final class AssistantDiscussionTests: XCTestCase {
             projectRoot: project.path,
             query: "ultraviolet marmalade",
             limit: 4
-        ).isEmpty)
+        ).allSatisfy { $0.citation.sourcePath != "documents/paper.pdf" })
     }
 
     func testOptInPublicScientificPDFUsesProductionExtractionAndCitationBoundary() throws {

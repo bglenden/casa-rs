@@ -3,7 +3,7 @@
 //! Local layered assistant corpus with SQLite FTS5 retrieval and exact citations.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-pub const CORPUS_SCHEMA_VERSION: u32 = 2;
+pub const CORPUS_SCHEMA_VERSION: u32 = 3;
 // Retrieval-unit bound, not a science-data or download limit. Keeping one FTS
 // hit near a page of prose makes citations claim-local and tool results
 // independently reviewable.
@@ -80,6 +80,30 @@ pub struct CorpusIndexReport {
     pub chunk_count: usize,
 }
 
+/// Metadata-only identity for one supported file under `<project>/documents`.
+///
+/// The host obtains this from `lstat(2)` without reading file content. The
+/// status-change timestamp and filesystem identity make preserved-mtime edits
+/// and editor-style atomic replacements observable without hashing unchanged
+/// files on every reconciliation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectCorpusSource {
+    pub relative_path: PathBuf,
+    pub file_type: String,
+    pub size_bytes: u64,
+    pub modified_unix_ns: i64,
+    pub status_changed_unix_ns: i64,
+    pub file_identity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectCorpusPlan {
+    pub schema_version: u32,
+    pub extract_paths: Vec<PathBuf>,
+    pub unchanged_paths: Vec<PathBuf>,
+    pub removed_paths: Vec<PathBuf>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CorpusSearchHit {
     pub chunk_id: String,
@@ -140,11 +164,140 @@ impl CorpusIndex {
         documents: &[CorpusDocumentInput],
         remove_missing_layers: &BTreeSet<CorpusLayer>,
     ) -> Result<CorpusIndexReport, CorpusError> {
+        self.index_documents_internal(documents, remove_missing_layers, None, &BTreeSet::new())
+    }
+
+    /// Compare a complete metadata-only project-document inventory with the
+    /// last successfully indexed source state.
+    pub fn plan_project_sources(
+        &self,
+        sources: &[ProjectCorpusSource],
+    ) -> Result<ProjectCorpusPlan, CorpusError> {
+        let sources = validated_project_sources(sources)?;
+        let connection = self.connection()?;
+        let existing = load_project_source_fingerprints(&connection)?;
+        let mut extract_paths = Vec::new();
+        let mut unchanged_paths = Vec::new();
+        for (path, source) in &sources {
+            let fingerprint = project_source_fingerprint(source)?;
+            if existing.get(path) == Some(&fingerprint) {
+                unchanged_paths.push(path.clone());
+            } else {
+                extract_paths.push(path.clone());
+            }
+        }
+        let removed_paths = existing
+            .keys()
+            .filter(|path| !sources.contains_key(*path))
+            .cloned()
+            .collect();
+        Ok(ProjectCorpusPlan {
+            schema_version: CORPUS_SCHEMA_VERSION,
+            extract_paths,
+            unchanged_paths,
+            removed_paths,
+        })
+    }
+
+    /// Atomically reconcile a complete project-source inventory while only
+    /// replacing documents extracted from changed sources. Failed sources keep
+    /// their last usable indexed content and fingerprint so a later refresh
+    /// retries them.
+    pub fn index_documents_with_project_sources(
+        &self,
+        documents: &[CorpusDocumentInput],
+        remove_missing_layers: &BTreeSet<CorpusLayer>,
+        project_sources: &[ProjectCorpusSource],
+        failed_project_sources: &BTreeSet<PathBuf>,
+    ) -> Result<CorpusIndexReport, CorpusError> {
+        self.index_documents_internal(
+            documents,
+            remove_missing_layers,
+            Some(project_sources),
+            failed_project_sources,
+        )
+    }
+
+    fn index_documents_internal(
+        &self,
+        documents: &[CorpusDocumentInput],
+        remove_missing_layers: &BTreeSet<CorpusLayer>,
+        project_sources: Option<&[ProjectCorpusSource]>,
+        failed_project_sources: &BTreeSet<PathBuf>,
+    ) -> Result<CorpusIndexReport, CorpusError> {
+        let project_sources = project_sources.map(validated_project_sources).transpose()?;
+        if project_sources.is_some()
+            && remove_missing_layers.contains(&CorpusLayer::ProjectDocument)
+        {
+            return Err(CorpusError::InvalidDocument(
+                "project_document removal must use the project-source snapshot".to_owned(),
+            ));
+        }
+        for path in failed_project_sources {
+            validate_project_source_path(path)?;
+            if project_sources
+                .as_ref()
+                .is_some_and(|sources| !sources.contains_key(path))
+            {
+                return Err(CorpusError::InvalidDocument(format!(
+                    "failed project source {} is absent from the source snapshot",
+                    path.display()
+                )));
+            }
+        }
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         let mut indexed_documents = 0;
         let mut unchanged_documents = 0;
         let mut seen = BTreeSet::new();
+
+        let mut successful_project_paths = BTreeSet::new();
+        let mut project_document_ids: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
+        for input in documents {
+            if input.layer != CorpusLayer::ProjectDocument {
+                continue;
+            }
+            let path = input.citation.source_path.clone().ok_or_else(|| {
+                CorpusError::InvalidDocument(format!(
+                    "project document {} has no source path",
+                    input.id
+                ))
+            })?;
+            validate_project_source_path(&path)?;
+            if let Some(sources) = &project_sources
+                && !sources.contains_key(&path)
+            {
+                return Err(CorpusError::InvalidDocument(format!(
+                    "project document {} source {} is absent from the source snapshot",
+                    input.id,
+                    path.display()
+                )));
+            }
+            successful_project_paths.insert(path.clone());
+            project_document_ids
+                .entry(path)
+                .or_default()
+                .insert(input.id.clone());
+        }
+        if successful_project_paths
+            .iter()
+            .any(|path| failed_project_sources.contains(path))
+        {
+            return Err(CorpusError::InvalidDocument(
+                "a project source cannot be both successfully extracted and failed".to_owned(),
+            ));
+        }
+
+        let mut old_project_document_ids = BTreeMap::new();
+        if project_sources.is_some() {
+            for path in &successful_project_paths {
+                let ids = project_document_ids_for_source(&transaction, path)?;
+                for id in &ids {
+                    delete_document(&transaction, id)?;
+                }
+                old_project_document_ids.insert(path.clone(), ids);
+            }
+        }
 
         for input in documents {
             validate_input(input)?;
@@ -201,10 +354,20 @@ impl CorpusIndex {
             }
 
             delete_document(&transaction, &input.id)?;
+            let project_source_path = (input.layer == CorpusLayer::ProjectDocument)
+                .then(|| {
+                    input
+                        .citation
+                        .source_path
+                        .as_ref()
+                        .map(|path| path.to_string_lossy().into_owned())
+                })
+                .flatten();
             transaction.execute(
                 "INSERT INTO documents
-                 (id, layer, title, source_identity, content_sha256, redistribution_cleared)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 (id, layer, title, source_identity, content_sha256, redistribution_cleared,
+                  project_source_path)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     input.id,
                     layer_name(input.layer),
@@ -212,6 +375,7 @@ impl CorpusIndex {
                     input.source_identity,
                     content_sha256,
                     input.redistribution_cleared,
+                    project_source_path,
                 ],
             )?;
             for (ordinal, chunk) in chunks.into_iter().enumerate() {
@@ -237,7 +401,13 @@ impl CorpusIndex {
             indexed_documents += 1;
         }
 
-        let mut removed_documents = 0;
+        let mut removed_documents = old_project_document_ids
+            .iter()
+            .map(|(path, old_ids)| {
+                let new_ids = project_document_ids.get(path).cloned().unwrap_or_default();
+                old_ids.difference(&new_ids).count()
+            })
+            .sum();
         for layer in remove_missing_layers {
             let mut statement = transaction.prepare("SELECT id FROM documents WHERE layer = ?1")?;
             let existing: Vec<String> = statement
@@ -248,6 +418,46 @@ impl CorpusIndex {
                 if !seen.contains(&id) {
                     delete_document(&transaction, &id)?;
                     removed_documents += 1;
+                }
+            }
+        }
+
+        if let Some(project_sources) = &project_sources {
+            let existing = load_project_source_fingerprints(&transaction)?;
+            for path in existing
+                .keys()
+                .filter(|path| !project_sources.contains_key(*path))
+            {
+                let ids = project_document_ids_for_source(&transaction, path)?;
+                for id in &ids {
+                    delete_document(&transaction, id)?;
+                }
+                removed_documents += ids.len();
+                transaction.execute(
+                    "DELETE FROM project_sources WHERE relative_path = ?1",
+                    [path.to_string_lossy().as_ref()],
+                )?;
+            }
+            for (path, source) in project_sources {
+                if failed_project_sources.contains(path) {
+                    continue;
+                }
+                let fingerprint = project_source_fingerprint(source)?;
+                let existing_fingerprint = existing.get(path);
+                if successful_project_paths.contains(path) {
+                    transaction.execute(
+                        "INSERT OR REPLACE INTO project_sources
+                         (relative_path, fingerprint_json) VALUES (?1, ?2)",
+                        params![path.to_string_lossy(), fingerprint],
+                    )?;
+                } else if existing_fingerprint == Some(&fingerprint) {
+                    unchanged_documents +=
+                        project_document_ids_for_source(&transaction, path)?.len();
+                } else {
+                    return Err(CorpusError::InvalidDocument(format!(
+                        "changed project source {} supplied neither extracted documents nor a failure marker",
+                        path.display()
+                    )));
                 }
             }
         }
@@ -372,7 +582,8 @@ impl CorpusIndex {
                  title TEXT NOT NULL,
                  source_identity TEXT NOT NULL,
                  content_sha256 TEXT NOT NULL,
-                 redistribution_cleared INTEGER NOT NULL
+                 redistribution_cleared INTEGER NOT NULL,
+                 project_source_path TEXT
              );
              CREATE TABLE IF NOT EXISTS chunks (
                  id TEXT PRIMARY KEY,
@@ -386,6 +597,10 @@ impl CorpusIndex {
                  chunk_id UNINDEXED,
                  text,
                  tokenize = 'unicode61'
+             );
+             CREATE TABLE IF NOT EXISTS project_sources (
+                 relative_path TEXT PRIMARY KEY,
+                 fingerprint_json TEXT NOT NULL
              );",
         )?;
         let stored_version: Option<String> = connection
@@ -395,11 +610,35 @@ impl CorpusIndex {
                 |row| row.get(0),
             )
             .optional()?;
-        if let Some(version) = stored_version
-            && version != CORPUS_SCHEMA_VERSION.to_string()
-        {
-            return Err(CorpusError::UnsupportedSchemaVersion(version));
+        match stored_version.as_deref() {
+            None | Some("3") => {}
+            Some("2") => {
+                if !table_has_column(&connection, "documents", "project_source_path")? {
+                    connection.execute(
+                        "ALTER TABLE documents ADD COLUMN project_source_path TEXT",
+                        [],
+                    )?;
+                }
+            }
+            Some(version) => {
+                return Err(CorpusError::UnsupportedSchemaVersion(version.to_owned()));
+            }
         }
+        // Schema v2 project documents predate the explicit source-path column.
+        // Backfill it from the durable per-chunk citation so the first v3
+        // incremental replacement can remove every old page from that source.
+        connection.execute(
+            "UPDATE documents
+             SET project_source_path = (
+                 SELECT json_extract(c.citation_json, '$.source_path')
+                 FROM chunks c
+                 WHERE c.document_id = documents.id
+                 ORDER BY c.ordinal
+                 LIMIT 1
+             )
+             WHERE layer = 'project_document' AND project_source_path IS NULL",
+            [],
+        )?;
         connection.execute(
             "INSERT OR REPLACE INTO corpus_meta (key, value) VALUES ('schema_version', ?1)",
             [CORPUS_SCHEMA_VERSION.to_string()],
@@ -500,6 +739,106 @@ fn index_fingerprint(
         first_chunk_citation_json,
     };
     serde_json::to_vec(&fingerprint).map(|bytes| sha256(&bytes))
+}
+
+fn validated_project_sources(
+    sources: &[ProjectCorpusSource],
+) -> Result<BTreeMap<PathBuf, ProjectCorpusSource>, CorpusError> {
+    let mut validated = BTreeMap::new();
+    for source in sources {
+        validate_project_source_path(&source.relative_path)?;
+        if source.file_type.trim().is_empty() || source.file_identity.trim().is_empty() {
+            return Err(CorpusError::InvalidDocument(format!(
+                "project source {} has incomplete file identity metadata",
+                source.relative_path.display()
+            )));
+        }
+        let extension = source
+            .relative_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if !extension.eq_ignore_ascii_case(&source.file_type) {
+            return Err(CorpusError::InvalidDocument(format!(
+                "project source {} type does not match its extension",
+                source.relative_path.display()
+            )));
+        }
+        if validated
+            .insert(source.relative_path.clone(), source.clone())
+            .is_some()
+        {
+            return Err(CorpusError::InvalidDocument(format!(
+                "duplicate project source {}",
+                source.relative_path.display()
+            )));
+        }
+    }
+    Ok(validated)
+}
+
+fn validate_project_source_path(path: &Path) -> Result<(), CorpusError> {
+    let mut components = path.components();
+    if !matches!(components.next(), Some(Component::Normal(value)) if value == "documents")
+        || components.next().is_none()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir
+                    | Component::RootDir
+                    | Component::Prefix(_)
+                    | Component::CurDir
+            )
+        })
+    {
+        return Err(CorpusError::InvalidDocument(format!(
+            "project source path must be a relative file under documents/: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn project_source_fingerprint(source: &ProjectCorpusSource) -> Result<String, CorpusError> {
+    serde_json::to_string(source).map_err(CorpusError::Json)
+}
+
+fn load_project_source_fingerprints(
+    connection: &Connection,
+) -> Result<BTreeMap<PathBuf, String>, rusqlite::Error> {
+    let mut statement = connection.prepare(
+        "SELECT relative_path, fingerprint_json FROM project_sources ORDER BY relative_path",
+    )?;
+    statement
+        .query_map([], |row| {
+            Ok((PathBuf::from(row.get::<_, String>(0)?), row.get(1)?))
+        })?
+        .collect()
+}
+
+fn project_document_ids_for_source(
+    connection: &Connection,
+    path: &Path,
+) -> Result<BTreeSet<String>, rusqlite::Error> {
+    let mut statement = connection.prepare(
+        "SELECT id FROM documents WHERE layer = 'project_document'
+         AND project_source_path = ?1 ORDER BY id",
+    )?;
+    statement
+        .query_map([path.to_string_lossy().as_ref()], |row| row.get(0))?
+        .collect()
+}
+
+fn table_has_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+) -> Result<bool, rusqlite::Error> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let names = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(names.iter().any(|name| name == column))
 }
 
 fn section_or_symbol_hint(text: &str) -> Option<String> {

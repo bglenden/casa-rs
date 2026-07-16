@@ -26,7 +26,8 @@ pub use assistant::{
 };
 pub use corpus::{
     CORPUS_SCHEMA_VERSION, CorpusCitation, CorpusDocument, CorpusDocumentInput, CorpusError,
-    CorpusIndex, CorpusIndexReport, CorpusLayer, CorpusSearchHit,
+    CorpusIndex, CorpusIndexReport, CorpusLayer, CorpusSearchHit, ProjectCorpusPlan,
+    ProjectCorpusSource,
 };
 pub use ids::{AssistantMessageId, AssistantPinId, CellId, ConversationId, NotebookId, RunId};
 pub use markdown::{CellKind, NotebookCell, NotebookDocument, NotebookParseError, TaskCellIntent};

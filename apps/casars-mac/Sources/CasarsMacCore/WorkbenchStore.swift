@@ -825,6 +825,18 @@ private enum WorkbenchRuntimeKind {
     case aiPrototype
 }
 
+private enum AssistantCorpusRefreshRequest {
+    case allLayers
+    case projectDocuments
+
+    func merged(with other: Self) -> Self {
+        if self == .allLayers || other == .allLayers { return .allLayers }
+        return .projectDocuments
+    }
+}
+
+extension AssistantCorpusRefreshRequest: Equatable {}
+
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
     @Published package private(set) var pythonNotebookRuntime = NotebookPythonRuntimeState()
@@ -858,6 +870,10 @@ public final class WorkbenchStore: ObservableObject {
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private let tableBrowserQueue = DispatchQueue(label: "casars.mac.tablebrowser-cell-window", qos: .userInitiated)
     private let assistantCorpusQueue = DispatchQueue(label: "casars.mac.assistant-corpus", qos: .utility)
+    private var projectCorpusWatcher: ProjectCorpusWatcher?
+    private var assistantCorpusRefreshRunning = false
+    private var pendingAssistantCorpusRefresh: AssistantCorpusRefreshRequest?
+    private var fullyRefreshedAssistantCorpusProject: String?
     private var activeTaskExecutions: [String: TaskExecution] = [:]
     private var taskParameterAttempts: [String: TaskParameterAttempt] = [:]
     private var notebookAttemptHandles: [String: NotebookAttemptHandle] = [:]
@@ -969,6 +985,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     deinit {
+        projectCorpusWatcher?.stop()
         assistantStreamFlushWorkItem?.cancel()
         assistantResponseTimeoutWorkItem?.cancel()
         pythonKernels.values.forEach { $0.terminate() }
@@ -1296,6 +1313,10 @@ public final class WorkbenchStore: ObservableObject {
 
     public func openProject(path: String) {
         guard !rejectPrototypeProductionAction("Project opening") else { return }
+        projectCorpusWatcher?.stop()
+        projectCorpusWatcher = nil
+        pendingAssistantCorpusRefresh = nil
+        fullyRefreshedAssistantCorpusProject = nil
         let interfaceFontSize = state.interfaceFontSize
         let taskCatalog = state.taskCatalog
         cleanupTemporaryDemoProject()
@@ -1313,6 +1334,9 @@ public final class WorkbenchStore: ObservableObject {
             if let dataset = state.selectedDataset {
                 openExplorer(for: dataset)
             }
+            state.assistantDiscussion = AssistantDiscussionState()
+            startProjectCorpusWatcher()
+            requestAssistantCorpusRefresh(.projectDocuments)
             state.history.append(
                 ProcessingHistoryEvent(
                     id: "hist-project-open-\(state.history.count + 1)",
@@ -3761,7 +3785,9 @@ public final class WorkbenchStore: ObservableObject {
         }
         if state.assistantDiscussion?.activeConversation == nil { newAssistantConversation() }
         state.assistantDiscussion?.presentation = presentation
-        if state.assistantDiscussion?.corpusStatus == "Not indexed" { refreshAssistantCorpus() }
+        if fullyRefreshedAssistantCorpusProject != state.project.rootPath {
+            requestAssistantCorpusRefresh(.allLayers)
+        }
         prepareAgentSession()
     }
 
@@ -3895,7 +3921,31 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func refreshAssistantCorpus() {
-        guard state.hasProject else { return }
+        requestAssistantCorpusRefresh(.allLayers)
+    }
+
+    private func startProjectCorpusWatcher() {
+        guard runtimeKind == .production, state.hasProject else { return }
+        let watcher = ProjectCorpusWatcher(projectRoot: state.project.rootPath) { [weak self] in
+            DispatchQueue.main.async {
+                self?.requestAssistantCorpusRefresh(.projectDocuments)
+            }
+        }
+        projectCorpusWatcher = watcher
+        watcher.start()
+    }
+
+    private func requestAssistantCorpusRefresh(_ request: AssistantCorpusRefreshRequest) {
+        guard runtimeKind == .production, state.hasProject else { return }
+        if state.assistantDiscussion == nil { state.assistantDiscussion = AssistantDiscussionState() }
+        if assistantCorpusRefreshRunning {
+            pendingAssistantCorpusRefresh = pendingAssistantCorpusRefresh.map {
+                $0.merged(with: request)
+            } ?? request
+            return
+        }
+        assistantCorpusRefreshRunning = true
+        let projectRoot = state.project.rootPath
         state.assistantDiscussion?.corpusStatus = "Indexing local corpus…"
         state.assistantDiscussion?.corpusIndexReport = nil
         state.assistantDiscussion?.corpusDiagnostics = []
@@ -3903,14 +3953,28 @@ public final class WorkbenchStore: ObservableObject {
             guard let self else { return }
             var diagnostics: [String] = []
             do {
-                let result = AssistantCorpusIngestor().collect(
-                    projectRoot: self.state.project.rootPath
+                let ingestor = AssistantCorpusIngestor()
+                let inventory = ingestor.projectDocumentInventory(projectRoot: projectRoot)
+                let plan = try self.assistantPersistenceClient.projectCorpusPlan(
+                    projectRoot: projectRoot,
+                    sources: inventory.sources
+                )
+                let scope: AssistantCorpusRefreshScope = request == .allLayers
+                    ? .allLayers : .projectDocuments
+                let result = ingestor.collectIncremental(
+                    projectRoot: projectRoot,
+                    projectInventory: inventory,
+                    extractProjectPaths: Set(plan.extractPaths),
+                    scope: scope
                 )
                 diagnostics = result.diagnostics
+                diagnostics.append(Self.assistantCorpusMetrics(result.metrics))
                 let reportJSON = try self.assistantPersistenceClient.indexCorpus(
-                    projectRoot: self.state.project.rootPath,
+                    projectRoot: projectRoot,
                     documents: result.documents,
-                    removeMissingLayers: result.refreshedLayers
+                    removeMissingLayers: result.refreshedLayers,
+                    projectSources: result.projectSources,
+                    failedProjectSources: result.failedProjectSources
                 )
                 let decoder = JSONDecoder()
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -3919,20 +3983,43 @@ public final class WorkbenchStore: ObservableObject {
                     from: Data(reportJSON.utf8)
                 )
                 DispatchQueue.main.async {
-                    self.state.assistantDiscussion?.corpusStatus = Self.assistantCorpusStatus(report)
-                    self.state.assistantDiscussion?.corpusIndexReport = report
-                    self.state.assistantDiscussion?.corpusDiagnostics = result.diagnostics
+                    if self.state.project.rootPath == projectRoot {
+                        self.state.assistantDiscussion?.corpusStatus = Self.assistantCorpusStatus(report)
+                        self.state.assistantDiscussion?.corpusIndexReport = report
+                        self.state.assistantDiscussion?.corpusDiagnostics = diagnostics
+                        if request == .allLayers {
+                            self.fullyRefreshedAssistantCorpusProject = projectRoot
+                        }
+                    }
+                    self.finishAssistantCorpusRefresh()
                 }
             } catch {
                 let retainedDiagnostics = diagnostics
                 DispatchQueue.main.async {
-                    self.state.assistantDiscussion?.corpusStatus = "Local corpus refresh failed"
-                    self.state.assistantDiscussion?.corpusIndexReport = nil
-                    self.state.assistantDiscussion?.corpusDiagnostics = retainedDiagnostics
-                    self.recordAssistantError("Refresh corpus: \(error)")
+                    if self.state.project.rootPath == projectRoot {
+                        self.state.assistantDiscussion?.corpusStatus = "Local corpus refresh failed"
+                        self.state.assistantDiscussion?.corpusIndexReport = nil
+                        self.state.assistantDiscussion?.corpusDiagnostics = retainedDiagnostics
+                        self.recordAssistantError("Refresh corpus: \(error)")
+                    }
+                    self.finishAssistantCorpusRefresh()
                 }
             }
         }
+    }
+
+    private func finishAssistantCorpusRefresh() {
+        assistantCorpusRefreshRunning = false
+        guard let pending = pendingAssistantCorpusRefresh else { return }
+        pendingAssistantCorpusRefresh = nil
+        requestAssistantCorpusRefresh(pending)
+    }
+
+    private static func assistantCorpusMetrics(_ metrics: AssistantCorpusRefreshMetricsState) -> String {
+        "Project refresh: \(metrics.projectMetadataReads) metadata reads, "
+            + "\(metrics.projectContentReads) content reads, "
+            + "\(metrics.projectPDFExtractions) PDF extractions, "
+            + "\(metrics.projectOCRCalls) OCR calls."
     }
 
     private static func assistantCorpusStatus(_ report: AssistantCorpusIndexReportState) -> String {

@@ -203,6 +203,26 @@ used domain tools/resources and citations but does not claim an exact model-
 egress manifest for a coding agent with shell and filesystem authority. See
 `docs/assistant-security.md` for the executable runtime and authority contract.
 
+Project-document maintenance is host-notified but database-correct: recursive
+macOS filesystem events are debounced hints, while a complete metadata-only
+inventory and SQLite-owned fingerprints decide what changed. Fingerprints bind
+the relative path, type, size, mtime, ctime, and filesystem identity so atomic
+replacement and preserved-mtime edits are detected. Only changed sources are
+read or passed through PDF extraction/OCR. The source snapshot atomically
+removes deleted or renamed documents; failed or concurrently changing sources
+retain their last valid indexed content and remain scheduled for retry. Project
+watch events never refresh the independent baseline or source-code layers, and
+there is no periodic full-content scan.
+
+The baseline radio-astronomy layer is a versioned `casars-mac` app resource,
+installed once rather than copied into projects. Its schema-v2 manifest binds
+each compact page/slide source to an authoritative origin, source and content
+digests, license metadata, redistribution basis, and exact citation kind. The
+runtime verifies content digests before indexing. Baseline replacement removes
+only the baseline layer, preserving project documents and conversations. See
+`docs/assistant-standard-corpus.md` for the selected sources, maintenance
+workflow, and measured cost.
+
 Every notebook-program wave starts with a launchable deterministic GUI
 prototype and an explicit approval gate before real adapters are connected.
 The prototype state belongs in `CasarsMacCore`; it may not establish persisted

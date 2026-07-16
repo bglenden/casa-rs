@@ -2,7 +2,9 @@
 
 use std::{collections::BTreeSet, path::PathBuf};
 
-use casa_notebook::{CorpusCitation, CorpusDocumentInput, CorpusIndex, CorpusLayer};
+use casa_notebook::{
+    CorpusCitation, CorpusDocumentInput, CorpusIndex, CorpusLayer, ProjectCorpusSource,
+};
 use tempfile::tempdir;
 
 fn document(id: &str, layer: CorpusLayer, title: &str, content: &str) -> CorpusDocumentInput {
@@ -25,6 +27,294 @@ fn document(id: &str, layer: CorpusLayer, title: &str, content: &str) -> CorpusD
         },
         redistribution_cleared: layer != CorpusLayer::Baseline,
     }
+}
+
+fn project_source(path: &str, identity: &str) -> ProjectCorpusSource {
+    ProjectCorpusSource {
+        relative_path: PathBuf::from(path),
+        file_type: PathBuf::from(path)
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_owned(),
+        size_bytes: 128,
+        modified_unix_ns: 1_000,
+        status_changed_unix_ns: 2_000,
+        file_identity: identity.to_owned(),
+    }
+}
+
+#[test]
+fn schema_two_project_pages_are_backfilled_before_incremental_replacement() {
+    let project = tempdir().expect("project");
+    let index = CorpusIndex::open(project.path()).expect("open corpus");
+    let mut page_one = document(
+        "paper-page-1",
+        CorpusLayer::ProjectDocument,
+        "Paper",
+        "Original first page.",
+    );
+    page_one.citation.source_path = Some(PathBuf::from("documents/paper.pdf"));
+    let mut page_two = document(
+        "paper-page-2",
+        CorpusLayer::ProjectDocument,
+        "Paper",
+        "Obsolete second page zephyr.",
+    );
+    page_two.citation.source_path = Some(PathBuf::from("documents/paper.pdf"));
+    index
+        .index_documents(
+            &[page_one, page_two],
+            &BTreeSet::from([CorpusLayer::ProjectDocument]),
+        )
+        .expect("seed legacy project pages");
+    drop(index);
+
+    let connection =
+        rusqlite::Connection::open(project.path().join(".casa-rs/corpus/index.sqlite3"))
+            .expect("open sqlite");
+    connection
+        .execute("UPDATE documents SET project_source_path = NULL", [])
+        .expect("clear v3 source paths");
+    connection
+        .execute("DELETE FROM project_sources", [])
+        .expect("clear v3 fingerprints");
+    connection
+        .execute(
+            "UPDATE corpus_meta SET value = '2' WHERE key = 'schema_version'",
+            [],
+        )
+        .expect("mark schema two");
+    drop(connection);
+
+    let migrated = CorpusIndex::open(project.path()).expect("migrate corpus");
+    let source = project_source("documents/paper.pdf", "1:22");
+    let mut replacement = document(
+        "paper-page-1",
+        CorpusLayer::ProjectDocument,
+        "Paper",
+        "Replacement one-page paper.",
+    );
+    replacement.citation.source_path = Some(PathBuf::from("documents/paper.pdf"));
+    let report = migrated
+        .index_documents_with_project_sources(
+            &[replacement],
+            &BTreeSet::new(),
+            &[source],
+            &BTreeSet::new(),
+        )
+        .expect("replace migrated pages");
+    assert_eq!(report.removed_documents, 1);
+    assert!(migrated.search("zephyr", 4).expect("search").is_empty());
+}
+
+#[test]
+fn project_source_plan_skips_unchanged_content_without_reextraction() {
+    let project = tempdir().expect("project");
+    let index = CorpusIndex::open(project.path()).expect("open corpus");
+    let source = project_source("documents/paper.md", "1:10");
+    let first_plan = index
+        .plan_project_sources(std::slice::from_ref(&source))
+        .expect("initial plan");
+    assert_eq!(
+        first_plan.extract_paths,
+        [PathBuf::from("documents/paper.md")]
+    );
+    assert!(first_plan.unchanged_paths.is_empty());
+
+    let report = index
+        .index_documents_with_project_sources(
+            &[document(
+                "paper",
+                CorpusLayer::ProjectDocument,
+                "Paper",
+                "Stable project evidence.",
+            )],
+            &BTreeSet::new(),
+            std::slice::from_ref(&source),
+            &BTreeSet::new(),
+        )
+        .expect("index project source");
+    assert_eq!(report.indexed_documents, 1);
+
+    let second_plan = index
+        .plan_project_sources(std::slice::from_ref(&source))
+        .expect("unchanged plan");
+    assert!(second_plan.extract_paths.is_empty());
+    assert_eq!(
+        second_plan.unchanged_paths,
+        [PathBuf::from("documents/paper.md")]
+    );
+    let unchanged = index
+        .index_documents_with_project_sources(&[], &BTreeSet::new(), &[source], &BTreeSet::new())
+        .expect("commit unchanged inventory");
+    assert_eq!(unchanged.indexed_documents, 0);
+    assert_eq!(unchanged.unchanged_documents, 1);
+}
+
+#[test]
+fn project_source_plan_detects_preserved_mtime_and_atomic_identity_changes() {
+    let project = tempdir().expect("project");
+    let index = CorpusIndex::open(project.path()).expect("open corpus");
+    let source = project_source("documents/paper.md", "1:10");
+    index
+        .index_documents_with_project_sources(
+            &[document(
+                "paper",
+                CorpusLayer::ProjectDocument,
+                "Paper",
+                "Original evidence.",
+            )],
+            &BTreeSet::new(),
+            std::slice::from_ref(&source),
+            &BTreeSet::new(),
+        )
+        .expect("seed source");
+
+    let mut preserved_mtime = source.clone();
+    preserved_mtime.status_changed_unix_ns += 1;
+    assert_eq!(preserved_mtime.modified_unix_ns, source.modified_unix_ns);
+    assert_eq!(
+        index
+            .plan_project_sources(std::slice::from_ref(&preserved_mtime))
+            .expect("ctime plan")
+            .extract_paths,
+        [PathBuf::from("documents/paper.md")]
+    );
+
+    let mut atomic_replacement = source;
+    atomic_replacement.file_identity = "1:11".to_owned();
+    assert_eq!(
+        index
+            .plan_project_sources(&[atomic_replacement])
+            .expect("replacement plan")
+            .extract_paths,
+        [PathBuf::from("documents/paper.md")]
+    );
+}
+
+#[test]
+fn failed_project_source_keeps_last_usable_index_and_retries() {
+    let project = tempdir().expect("project");
+    let index = CorpusIndex::open(project.path()).expect("open corpus");
+    let source = project_source("documents/paper.md", "1:10");
+    index
+        .index_documents_with_project_sources(
+            &[document(
+                "paper",
+                CorpusLayer::ProjectDocument,
+                "Paper",
+                "Last usable violet evidence.",
+            )],
+            &BTreeSet::new(),
+            std::slice::from_ref(&source),
+            &BTreeSet::new(),
+        )
+        .expect("seed source");
+
+    let mut unreadable = source;
+    unreadable.status_changed_unix_ns += 10;
+    let failed = BTreeSet::from([PathBuf::from("documents/paper.md")]);
+    index
+        .index_documents_with_project_sources(
+            &[],
+            &BTreeSet::new(),
+            std::slice::from_ref(&unreadable),
+            &failed,
+        )
+        .expect("retain failed source");
+    assert_eq!(
+        index.search("violet evidence", 1).expect("search")[0].document_id,
+        "paper"
+    );
+    assert_eq!(
+        index
+            .plan_project_sources(&[unreadable])
+            .expect("retry plan")
+            .extract_paths,
+        [PathBuf::from("documents/paper.md")]
+    );
+}
+
+#[test]
+fn project_source_snapshot_reconciles_rename_and_removal_without_touching_other_documents() {
+    let project = tempdir().expect("project");
+    let index = CorpusIndex::open(project.path()).expect("open corpus");
+    let paper = project_source("documents/paper.md", "1:10");
+    let notes = project_source("documents/notes.md", "1:20");
+    index
+        .index_documents_with_project_sources(
+            &[
+                document(
+                    "paper",
+                    CorpusLayer::ProjectDocument,
+                    "Paper",
+                    "Old amber evidence.",
+                ),
+                document(
+                    "notes",
+                    CorpusLayer::ProjectDocument,
+                    "Notes",
+                    "Unrelated cobalt evidence.",
+                ),
+            ],
+            &BTreeSet::new(),
+            &[paper, notes.clone()],
+            &BTreeSet::new(),
+        )
+        .expect("seed sources");
+
+    let renamed = project_source("documents/renamed.md", "1:10");
+    let mut renamed_document = document(
+        "renamed",
+        CorpusLayer::ProjectDocument,
+        "Renamed",
+        "New ultraviolet evidence.",
+    );
+    renamed_document.citation.source_path = Some(PathBuf::from("documents/renamed.md"));
+    let report = index
+        .index_documents_with_project_sources(
+            &[renamed_document],
+            &BTreeSet::new(),
+            &[renamed.clone(), notes.clone()],
+            &BTreeSet::new(),
+        )
+        .expect("reconcile rename");
+    assert_eq!(report.removed_documents, 1);
+    assert!(
+        index
+            .search("amber evidence", 4)
+            .expect("old search")
+            .iter()
+            .all(|hit| hit.document_id != "paper" && !hit.text.contains("amber"))
+    );
+    assert_eq!(
+        index.search("ultraviolet evidence", 2).expect("new search")[0].document_id,
+        "renamed"
+    );
+    assert_eq!(
+        index.search("cobalt evidence", 2).expect("other search")[0].document_id,
+        "notes"
+    );
+
+    let removed = index
+        .index_documents_with_project_sources(&[], &BTreeSet::new(), &[notes], &BTreeSet::new())
+        .expect("remove renamed source");
+    assert_eq!(removed.removed_documents, 1);
+    assert!(
+        index
+            .search("ultraviolet evidence", 4)
+            .expect("removed search")
+            .iter()
+            .all(|hit| hit.document_id != "renamed" && !hit.text.contains("ultraviolet"))
+    );
+    assert!(
+        index
+            .plan_project_sources(&[renamed])
+            .expect("renamed now new")
+            .extract_paths
+            .contains(&PathBuf::from("documents/renamed.md"))
+    );
 }
 
 #[test]

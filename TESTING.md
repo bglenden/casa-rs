@@ -282,7 +282,25 @@ For each wave:
   Codex smoke is explicit, uses the user's existing ChatGPT subscription, and
   never requires or accepts a metered API key. Per the project verification
   policy, one current local or hosted GUI result is sufficient and duplicate
-  runs are not required without an intervening relevant change.
+  assurance is not required.
+- Wave 5 project-corpus maintenance tests prove that a no-change refresh reads
+  metadata but performs zero content reads, PDF extractions, and OCR calls;
+  preserved-mtime atomic replacement is still detected; schema-v2 multi-page
+  citations migrate without stale pages; and extraction failures retain the
+  previous usable index. Native Swift tests exercise startup reconciliation,
+  automatic edit refresh, recursive watcher recovery when `documents/` appears,
+  and debounce/coalescing for bursty filesystem events. Rust contract tests
+  cover add, edit, rename, delete, unrelated-document preservation, and retry
+  behavior. Corpus watcher tests are headless core tests and do not take GUI
+  focus.
+- Wave 5 standard-corpus tests load the committed pack without an Oracle
+  checkout or network access, verify all 2,314 external pages/slides plus the
+  primer, reject a tampered content digest, retrieve a visually checked 2026
+  slide with its exact citation, and prove a baseline-version replacement
+  preserves project documents and assistant conversations. The docs check
+  validates all 55 inventory decisions, the 28 selected bundle files and
+  digests, the 2,314 page/slide count, and the recorded authoritative-origin
+  audit.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review

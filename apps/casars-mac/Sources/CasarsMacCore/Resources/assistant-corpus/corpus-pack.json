@@ -1,15 +1,530 @@
 {
-  "schema_version": 1,
-  "id": "casa-rs-radio-astronomy-primer",
-  "version": "1.0.0",
+  "schema_version": 2,
+  "id": "casa-rs-standard-radio-astronomy",
+  "version": "2026.07.1",
+  "selection": "2026 workshop plus open Springer book; 2024 retained as superseded inventory",
   "documents": [
     {
       "path": "radio-interferometry-primer.md",
+      "format": "utf8_text",
       "title": "CASA-RS Radio Interferometry Primer",
       "citation_label": "CASA-RS Radio Interferometry Primer v1.0",
-      "license": "LGPL-3.0-or-later",
+      "citation_kind": "document",
+      "source_path": "radio-interferometry-primer.md",
+      "content_sha256": "8df1c08263e9aebbafe0e22c039f43e23ca8e2b79593ae8d627c98e37085e294",
+      "source_sha256": "8df1c08263e9aebbafe0e22c039f43e23ca8e2b79593ae8d627c98e37085e294",
+      "origin_url": "https://github.com/bglenden/casa-rs",
+      "license": {
+        "id": "LGPL-3.0-or-later",
+        "url": "https://www.gnu.org/licenses/lgpl-3.0.html"
+      },
       "redistribution_basis": "Original CASA-RS project documentation",
-      "redistribution_cleared": true
+      "collection_id": "casa-rs",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/interferometry-and-synthesis-in-radio-astronomy-855e570763d3.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Interferometry and Synthesis in Radio Astronomy",
+      "citation_label": "Interferometry and Synthesis in Radio Astronomy.pdf",
+      "citation_kind": "book_page",
+      "source_path": "Interferometry and Synthesis in Radio Astronomy.pdf",
+      "content_sha256": "54584f86a00104a73731a98e2f1ca35d409c2c8c0f7bd0174799a22b4ca8ad2f",
+      "source_sha256": "855e570763d36b1422e81a0b5da6b3aee976a604dcc7234581a33d1792773aba",
+      "origin_url": "https://link.springer.com/book/10.1007/978-3-319-44431-4",
+      "license": {
+        "id": "CC-BY-NC-4.0",
+        "url": "https://creativecommons.org/licenses/by-nc/4.0/"
+      },
+      "redistribution_basis": "Bundled under the publisher-recorded CC BY-NC 4.0 license.",
+      "collection_id": "books",
+      "year": null
+    },
+    {
+      "path": "standard-v1/alma-manual-calibration-tutorial-siss-2026-c443e0cda06a.pages.json",
+      "format": "normalized_pages_json",
+      "title": "ALMA Manual Calibration",
+      "citation_label": "ALMA-Manual-Calibration-Tutorial_SISS-2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "ALMA-Manual-Calibration-Tutorial_SISS-2026.pdf",
+      "content_sha256": "e2045561211c9e1c7a00fd5b88c57f60565bf112b29ba6cfa0f086dfc8f0d9ac",
+      "source_sha256": "c443e0cda06aa804e0f12d8e6b1946842d924268a7cb3d7d03d9279147b67754",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/ALMA-Manual-Calibration-Tutorial_SISS-2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/alma-manual-imaging-tutorial-siss-2026-981b33dcf769.pages.json",
+      "format": "normalized_pages_json",
+      "title": "ALMA Manual Imaging",
+      "citation_label": "ALMA-Manual-Imaging-Tutorial_SISS-2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "ALMA-Manual-Imaging-Tutorial_SISS-2026.pdf",
+      "content_sha256": "8ed7408e147e0b71b11b748c8104253f75eb75f9930d97ad78567410d66e2a97",
+      "source_sha256": "981b33dcf76945733dec7b7e907ad91d53a7afcc1e38d1cfdf105d53c3d117bc",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/ALMA-Manual-Imaging-Tutorial_SISS-2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/blanchard-antennas-receiver-85a03c09e309.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Antennas and receiver systems",
+      "citation_label": "Blanchard-Antennas-Receiver.pptx",
+      "citation_kind": "slide",
+      "source_path": "Blanchard-Antennas-Receiver.pptx",
+      "content_sha256": "a9558a75d69fc1ad895c8047e30260cde1815d2c87898437303d807ebfa0f829",
+      "source_sha256": "85a03c09e309a38f1e577f28eea2a4277a8b86f780143bbd1d88edae396ca379",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Blanchard-Antennas-Receiver.pptx",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/butterfield-errorrecognition-siw2026-e10a7be06702.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Error Recognition",
+      "citation_label": "Butterfield-ErrorRecognition-SIW2026.pptx",
+      "citation_kind": "slide",
+      "source_path": "Butterfield-ErrorRecognition-SIW2026.pptx",
+      "content_sha256": "e6f7ccb70cadf159252df55a853ac6e5e32ec49f968f1e606a1c663d216e8fcb",
+      "source_sha256": "e10a7be06702957bcc7e23ea7ca4687956122d20a25ef8484ed7d3f66f43f3c0",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Butterfield-ErrorRecognition-SIW2026.pptx",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/creecheak-optcalibration-siw2026-1297376c6bf9.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Special Session: Calibration in Optical Interferometry",
+      "citation_label": "CreechEak-OptCalibration-SIW2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "CreechEak-OptCalibration-SIW2026.pdf",
+      "content_sha256": "4f94520f45affac8b28713ec91480a0c960402054d9c6b9fcbd5dcecd19138c4",
+      "source_sha256": "1297376c6bf9a04d5d393638dc088e924b2c2b63e5461316484efc955c25a3a6",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/CreechEak-OptCalibration-SIW2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/jagannathan-widefield-3b281d7d14f6.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Wide-field imaging",
+      "citation_label": "Jagannathan-Widefield.pdf",
+      "citation_kind": "slide",
+      "source_path": "Jagannathan-Widefield.pdf",
+      "content_sha256": "55d9ac41655c5602042468f692e3c79c4a5a055af576c7703a7962966f5e4adc",
+      "source_sha256": "3b281d7d14f6906d24ed92f7e0aa0590a332d6c6916cc4c7cd225469ea7bb042",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Jagannathan-Widefield.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/linford-vlbi-siw2026-b95a6ab2cde9.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Very Long Baseline Interferometry",
+      "citation_label": "Linford-VLBI-SIW2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "Linford-VLBI-SIW2026.pdf",
+      "content_sha256": "391588704137a91b6fa52e4655335bcfe71f7a1cd6d14461f36bd703d6501307",
+      "source_sha256": "b95a6ab2cde964a6fc8a01e2ee1390f6258ffa61f911e7ca41e1bdea6b94f811",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Linford-VLBI-SIW2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/ludovici-introductionradioastro-siw2026-dfa676377ad9.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Introduction to Radio Astronomy",
+      "citation_label": "Ludovici-IntroductionRadioAstro-SIW2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "Ludovici-IntroductionRadioAstro-SIW2026.pdf",
+      "content_sha256": "9077349ed0d6cdfeae6c6e393c002082311e0410229c340749b8a429ead23877",
+      "source_sha256": "dfa676377ad91ce2ba9181036fa6bcc2cc9f884cb2fc278cf24cdd57686746f7",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Ludovici-IntroductionRadioAstro-SIW2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/marvil-imaging2026-57343c49c331.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Introduction to Imaging and Deconvolution",
+      "citation_label": "Marvil_Imaging2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "Marvil_Imaging2026.pdf",
+      "content_sha256": "10da50ecae7f2a0bb5208fe426998e93fba7e41a552d01839161b8b0fa9664b3",
+      "source_sha256": "57343c49c331b76284ffb105bf1feb81f33c944d1ef46f2b55071fb385cd1058",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Marvil_Imaging2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/marvilcalibration2026-c9d5ad1cb055.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Calibration",
+      "citation_label": "MarvilCalibration2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "MarvilCalibration2026.pdf",
+      "content_sha256": "42fb457c9e0c5a2d1b930f57beffc15e21f135ac58eef4ee5cc935eb99b63ef9",
+      "source_sha256": "c9d5ad1cb055735582080e0010f854fe417ef154bf1f3f9a2763dbe7419f079f",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/MarvilCalibration2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/marvilselfcal2026-f6c9c563d8fd.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Self-calibration",
+      "citation_label": "MarvilSelfcal2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "MarvilSelfcal2026.pdf",
+      "content_sha256": "a28ded34c02c1e1a05979ce855046803e308a1fdd117c6c02c7e58adad6c206f",
+      "source_sha256": "f6c9c563d8fd05a5aeac0645ba38a3d2385b845d905951c7135c0306e170c5fe",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/MarvilSelfcal2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/perley-fundamentals-siw2026-657e0c7eb91e.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Fundamentals of radio interferometry I",
+      "citation_label": "Perley-Fundamentals-SIW2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "Perley-Fundamentals-SIW2026.pdf",
+      "content_sha256": "d6ab8c01432678809ba3d5593ea2bed27c52753b26b111dd26b2c060454a206b",
+      "source_sha256": "657e0c7eb91e6b535621dcd9598cdfac732588be2510699468b522ddc7f97837",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Fundamentals-SIW2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/perley-geometry-siw2026-63fb00084c9e.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Basic radio interferometry - Geometry",
+      "citation_label": "Perley-Geometry-SIW2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "Perley-Geometry-SIW2026.pdf",
+      "content_sha256": "c08d117c37e67c897054aa3e701616b7cb20d33047d127497474201824a5f58e",
+      "source_sha256": "63fb00084c9eac18a78516206fbf0c83dbcd4e423c71ce8fbdaf38f510f44e12",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Geometry-SIW2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/perley-polarization-siw2026-5b17d117b65b.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Polarization in radio interferometry",
+      "citation_label": "Perley-Polarization-SIW2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "Perley-Polarization-SIW2026.pdf",
+      "content_sha256": "f04e573d80d14fd1d9dae946a407a6648eb77e771841b1b08cf9c41ebd0e75c7",
+      "source_sha256": "5b17d117b65babfa62097fdd375320289a64ed1fe8c391d16388662aea44ea34",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Polarization-SIW2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/perley-practical-siw2026-ee3d87fe6492.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Fundamentals of radio interferometry II",
+      "citation_label": "Perley-Practical-SIW2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "Perley-Practical-SIW2026.pdf",
+      "content_sha256": "d30737782ce65075377ce51b1000116b56795e0883a6a0cfac3eec457c84a390",
+      "source_sha256": "ee3d87fe64920b86d1134979f3a48e426e533f806f5b6f7e3e473c241eb72fee",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Practical-SIW2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/pesc-nonimganalysis-siw2026-1384a9e4620f.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Image and non-imaging analysis",
+      "citation_label": "Pesc-nonImgAnalysis-SIW2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "Pesc-nonImgAnalysis-SIW2026.pdf",
+      "content_sha256": "3dd0b96e7a4abc2d1aea7ad586bc50f316fb1643f843035428744487a809e8f9",
+      "source_sha256": "1384a9e4620fd5cfbb10010658be050136a519e08dc079e270c9bec1f8b43631",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Pesc-nonImgAnalysis-SIW2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/plant-correlators-dbd92a0312c8.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Cross Correlators & Digital Signal Processing",
+      "citation_label": "Plant-Correlators.pptx",
+      "citation_kind": "slide",
+      "source_path": "Plant-Correlators.pptx",
+      "content_sha256": "4f05ebf8c98bb6e4f869d0ae6052c4891ec45ec533f48454a2cff0b835d2d252",
+      "source_sha256": "dbd92a0312c80ad5e0320d61108a291ea750a14c132351d6cde67f32d7c3fffd",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Plant-Correlators.pptx",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/schaefer-optimaging-siw2026-2f9dab475d49.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Special Session: Imaging in Optical Interferometry",
+      "citation_label": "Schaefer-OptImaging-SIW2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "Schaefer-OptImaging-SIW2026.pdf",
+      "content_sha256": "2c2bb642885cb6489c2bb6f7d6c283aa9489ed9043dbd212b48a55e48b898526",
+      "source_sha256": "2f9dab475d49cb775a60a997a08a6274b00208cfb439f271a518387435bfd92b",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Schaefer-OptImaging-SIW2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/sekhar-rfi2026-d769e0a6bf14.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Radio Frequency Interference",
+      "citation_label": "Sekhar_RFI2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "Sekhar_RFI2026.pdf",
+      "content_sha256": "2602830d2bf5e1db8e88ee70ab44a2f307c0ce7bb0792c6935759611a5375e5f",
+      "source_sha256": "d769e0a6bf140c49aa3690894d31f4fae874660a88a417b254cac203cd5d00f3",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Sekhar_RFI2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/siw21-vlba-casa-a819c110d9b6.pages.json",
+      "format": "normalized_pages_json",
+      "title": "VLBA Basic Phase-Referencing Calibration and Imaging (CASA)",
+      "citation_label": "SIW21_VLBA_CASA.pdf",
+      "citation_kind": "slide",
+      "source_path": "SIW21_VLBA_CASA.pdf",
+      "content_sha256": "8d648c130d3d748302edfd82ed6e3d52dbf8c6537ffeff3baa51358e8ad32529",
+      "source_sha256": "a819c110d9b6c07259f2e4eeeefcc6958e260f2901ac6b081f0129b734de6f74",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/SIW21_VLBA_CASA.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/svoboda-spectral-lines-52967ab30fd7.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Special Topics: Spectral Lines",
+      "citation_label": "Svoboda_Spectral_Lines.pdf",
+      "citation_kind": "slide",
+      "source_path": "Svoboda_Spectral_Lines.pdf",
+      "content_sha256": "ed99f26edadc6b844c3ba0d959dd198a47f29cc649273c27a6aaf860afa3a7a7",
+      "source_sha256": "52967ab30fd7873fc00008322f51a043f0bd3a62c12a05dc3ce29257facb0920",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Svoboda_Spectral_Lines.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/tobin-siw-hf-radio-interferomety-2026-8b326242db77.pages.json",
+      "format": "normalized_pages_json",
+      "title": "High frequency radio interferometry",
+      "citation_label": "Tobin_SIW_HF_Radio_Interferomety_2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "Tobin_SIW_HF_Radio_Interferomety_2026.pdf",
+      "content_sha256": "eef2b7860a958599594672ef71864456d1296c38323120b75b9e90d1de46db41",
+      "source_sha256": "8b326242db7760898cf878dbdc134a32acc93f7d90be0ac85be761e70e2b44b2",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Tobin_SIW_HF_Radio_Interferomety_2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/tobin-siw-srdp-2026-3ddbf94e39bb.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Science Ready Data Products & other NRAO Initiatives",
+      "citation_label": "Tobin_SIW_SRDP_2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "Tobin_SIW_SRDP_2026.pdf",
+      "content_sha256": "3c2695ad49e6813627c08932abf22a8906d476762a869f1df65d3f3b9231375e",
+      "source_sha256": "3ddbf94e39bb859b1242b0c79ec8693a77e267b27281ed7ef3809404e5dc4c5c",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Tobin_SIW_SRDP_2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/tremblay-lowfreq-siw2026-a928d25b5b1f.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Low frequency radio interferometry",
+      "citation_label": "Tremblay-LowFreq-SIW2026.pptx",
+      "citation_kind": "slide",
+      "source_path": "Tremblay-LowFreq-SIW2026.pptx",
+      "content_sha256": "cd1f4351e5c260927437b951351d3f8dba15d35d39d2409daef8e9c6f1cb6c34",
+      "source_sha256": "a928d25b5b1f637d2b3bdc841a3ff845dec4f69b2c666daacc940d461579b3d7",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Tremblay-LowFreq-SIW2026.pptx",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/urv-overview-siw2026-b9cc7db0fdc6.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Workshop Overview",
+      "citation_label": "URV-Overview-SIW2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "URV-Overview-SIW2026.pdf",
+      "content_sha256": "b4d28babf73cc5b942ff7a2ade4dbd823e08de26aab930711fda7ccc297c734d",
+      "source_sha256": "b9cc7db0fdc6bdc8267e071fe1a244a9ea0307003692fa683ee1ed4fba5d9b6d",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/URV-Overview-SIW2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/urv-wideband-imaging-siw2026-646f8466fba1.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Wide-band imaging",
+      "citation_label": "URV_Wideband_Imaging_SIW2026.pdf",
+      "citation_kind": "slide",
+      "source_path": "URV_Wideband_Imaging_SIW2026.pdf",
+      "content_sha256": "bf737f806b323de74baaa69bb0a8c02f2ad3bb0c0f594cee532cf2e548882a32",
+      "source_sha256": "646f8466fba12ecbf542b355149699339d91cbc2604258d956f5f9466a7e8ada",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/URV_Wideband_Imaging_SIW2026.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
+    },
+    {
+      "path": "standard-v1/vanbelle-optical-instruments-f3957eaca8a6.pages.json",
+      "format": "normalized_pages_json",
+      "title": "Special Session: Overview of Optical Interferometry & Facilities",
+      "citation_label": "vanBelle-optical-instruments.pdf",
+      "citation_kind": "slide",
+      "source_path": "vanBelle-optical-instruments.pdf",
+      "content_sha256": "e3bb1c48f8af8cd178c29c932e864bc53d2dc38013eb2b2d99801b84977d1bbe",
+      "source_sha256": "f3957eaca8a66694c52dff8e3a40ce4958f29ab4bfaf2ace5b18d8ff468a9e9a",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/vanBelle-optical-instruments.pdf",
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
+      },
+      "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026
     }
   ]
 }
