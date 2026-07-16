@@ -2002,7 +2002,7 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(element("notebook.visualization.openExplorer.\(explorerVisualizationID)").exists)
         try bringIntoView("notebook.python.previousRevisions.\(pythonCellID)", in: "notebook.document.scroll", deltaY: 420)
         XCTAssertTrue(element("notebook.python.latestRevision.\(pythonCellID)").exists)
-        try bringIntoView("notebook.parameters.open.\(taskCellID)", in: "notebook.document.scroll", deltaY: -420)
+        try bringIntoView("notebook.parameters.open.\(taskCellID)", in: "notebook.document.scroll", deltaY: 420)
         try clickIdentified("notebook.parameters.open.\(taskCellID)")
         XCTAssertTrue(waitForValue("task.parameter.vis", containing: "data/twhya_calibrated.ms", timeout: 15))
         XCTAssertFalse(element("task.stop").isEnabled, "Reloading tutorial parameters must not rerun the task")
