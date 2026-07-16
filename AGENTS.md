@@ -152,7 +152,9 @@ Use `Closes #N` only for issues that should auto-close on merge.
 - Prefer the dedicated logged-in remote Mac worker for consolidated native GUI
   gates when it is available, using `just gui-test-remote` or
   `just notebook-roundtrip-gui-remote`. Keep its checkout clean, select the
-  exact pushed revision, and place build caches and retained artifacts on its
+  exact pushed revision, and keep the checkout and Xcode DerivedData on its
+  internal disk so regenerated app bundles do not repeatedly request removable
+  volume access. Place the large Cargo target and retained artifacts on its
   configured external storage. A green remote run is the GUI gate; do not
   repeat it locally solely for duplicate assurance. Local foreground automation
   remains the fallback and focused diagnostic surface.

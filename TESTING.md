@@ -116,7 +116,10 @@ an uninitialized Xcode installation or a dirty remote checkout, switches the
 dedicated checkout to the exact requested commit, stores build state outside
 the checkout (with an ignored `target` link for the Xcode project's existing
 linker contract), reuses incremental Xcode build state, and reports the remote
-artifact path. Use the remote worker as
+artifact path. By default the checkout and Xcode DerivedData live on the
+worker's internal disk so regenerated app bundles do not repeatedly request
+removable-volume access; the large Cargo target and retained artifacts remain
+on configured external storage. Use the remote worker as
 the normal exclusive GUI surface when available; a current green local or
 remote run satisfies the single GUI gate. The worker needs full initialized
 Xcode, Developer Tools mode, SSH access, and a real logged-in console session;

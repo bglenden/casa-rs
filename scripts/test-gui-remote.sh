@@ -17,6 +17,7 @@ Optional configuration:
   CASA_RS_GUI_TEST_REMOTE_IDENTITY=/absolute/path/to/ssh-key
   CASA_RS_GUI_TEST_REMOTE_ROOT=/absolute/path/to/remote/checkout
   CASA_RS_GUI_TEST_REMOTE_STORAGE=/absolute/path/to/remote/build-storage
+  CASA_RS_GUI_TEST_REMOTE_DERIVED_DATA=/absolute/path/to/xcode-derived-data
   CASA_RS_GUI_TEST_REMOTE_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
   CASA_RS_GUI_TEST_REMOTE_PYTHON=/absolute/path/to/python
   CASA_RS_GUI_TEST_REMOTE_CODEX=/absolute/path/to/codex
@@ -27,8 +28,9 @@ EOF
 repo_root="$(git rev-parse --show-toplevel)"
 mode="${1:-gui-test}"
 remote="${CASA_RS_GUI_TEST_REMOTE:-}"
-remote_root="${CASA_RS_GUI_TEST_REMOTE_ROOT:-/Volumes/Extra Storage (not encrypted)/casa-rs-gui-worker}"
+remote_root="${CASA_RS_GUI_TEST_REMOTE_ROOT:-@HOME@/Library/Caches/casa-rs-gui-worker/source}"
 remote_storage="${CASA_RS_GUI_TEST_REMOTE_STORAGE:-/Volumes/Extra Storage (not encrypted)/casa-rs-gui-worker-state}"
+remote_derived_data="${CASA_RS_GUI_TEST_REMOTE_DERIVED_DATA:-@HOME@/Library/Developer/Xcode/DerivedData/casa-rs-gui-worker}"
 developer_dir="${CASA_RS_GUI_TEST_REMOTE_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 remote_python="${CASA_RS_GUI_TEST_REMOTE_PYTHON:-}"
 remote_codex="${CASA_RS_GUI_TEST_REMOTE_CODEX:-}"
@@ -85,13 +87,14 @@ remote_target="$remote_storage/target"
 echo "==> Remote GUI worker: $remote"
 echo "==> Revision: $revision ($branch)"
 echo "==> Checkout: $remote_root"
+echo "==> Xcode build cache: $remote_derived_data"
 echo "==> Build cache: $remote_target"
 echo "==> Artifacts: $remote_artifacts"
 
 remote_args=(
-  "$remote_root" "$remote_storage" "$remote_artifacts" "$remote_target"
-  "$developer_dir" "$branch" "$revision" "$mode" "$remote_python"
-  "$remote_codex" "$remote_only"
+  "$remote_root" "$remote_storage" "$remote_derived_data" "$remote_artifacts"
+  "$remote_target" "$developer_dir" "$branch" "$revision" "$mode"
+  "$remote_python" "$remote_codex" "$remote_only"
 )
 encoded_remote_args=()
 for arg in "${remote_args[@]}"; do
@@ -106,18 +109,25 @@ decode_arg() {
   printf '%s' "${1#x}" | /usr/bin/base64 -D
 }
 
-repo_root="$(decode_arg "$1")"
-storage_root="$(decode_arg "$2")"
-artifact_root="$(decode_arg "$3")"
-target_dir="$(decode_arg "$4")"
-derived_data="$storage_root/DerivedData"
-developer_dir="$(decode_arg "$5")"
-branch="$(decode_arg "$6")"
-revision="$(decode_arg "$7")"
-mode="$(decode_arg "$8")"
-python_command="$(decode_arg "$9")"
-codex_command="$(decode_arg "${10}")"
-only_testing="$(decode_arg "${11}")"
+expand_remote_home() {
+  case "$1" in
+    @HOME@/*) printf '%s/%s' "$HOME" "${1#@HOME@/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+repo_root="$(expand_remote_home "$(decode_arg "$1")")"
+storage_root="$(expand_remote_home "$(decode_arg "$2")")"
+derived_data="$(expand_remote_home "$(decode_arg "$3")")"
+artifact_root="$(expand_remote_home "$(decode_arg "$4")")"
+target_dir="$(expand_remote_home "$(decode_arg "$5")")"
+developer_dir="$(expand_remote_home "$(decode_arg "$6")")"
+branch="$(decode_arg "$7")"
+revision="$(decode_arg "$8")"
+mode="$(decode_arg "$9")"
+python_command="$(expand_remote_home "$(decode_arg "${10}")")"
+codex_command="$(expand_remote_home "$(decode_arg "${11}")")"
+only_testing="$(decode_arg "${12}")"
 
 export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export DEVELOPER_DIR="$developer_dir"
