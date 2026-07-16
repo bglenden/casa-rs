@@ -1939,7 +1939,13 @@ final class CasarsMacUITests: XCTestCase {
             "Propose and execute a Python calculation of the nominal angular resolution in arcseconds at 372.5 GHz for a 750 m baseline. Use the selected scientific Python command through the generic command tool. Before executing, explicitly request native user approval using escalated execution; do not calculate it mentally. After approval and execution, reply with \(calculationMarker), the executed expression, and its result."
         )
         XCTAssertTrue(element("assistant.approval").waitForExistence(timeout: 90), app.debugDescription)
-        try clickIdentified("assistant.approval.approve")
+        // SwiftUI exposes the approval card's actions as globally labelled
+        // buttons on macOS even when it elides identifiers assigned inside the
+        // card's combined accessibility container.
+        let approve = app.buttons["Approve"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(approve.isHittable, app.debugDescription)
+        approve.click()
         let calculationTranscript = try waitForLiveAssistantTranscript(in: project, timeout: 180) { transcript in
             transcript.messages.contains { message in
                 message.role == "assistant" && message.content.contains(calculationMarker)
