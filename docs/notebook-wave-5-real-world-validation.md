@@ -324,6 +324,23 @@ approved #418 check was deferred.
 
 ## Bounded refactor pass
 
+The #418 pass used pre-journey checkpoint `dfdda7373` and was bounded to the
+opt-in TW Hya GUI acceptance harness, its dedicated remote entrypoint, and the
+two package-internal native approval accessibility identifiers it exercises.
+The delta adds no public application-developer API, compatibility surface,
+runtime fallback, or second production implementation: the test composes the
+existing tutorial, notebook, explorer, task, Python, corpus, App Server, and
+project-MCP owners directly. The broad alternative—extracting another generic
+live-journey framework from the #417 and #418 tests—would increase indirection
+without consolidating production behavior, so no refactor edit was warranted.
+The exact archive size/digest and tutorial science values are provenance and
+acceptance inputs; wait bounds and scroll distances are automation interaction
+policy rather than dataset- or machine-planning heuristics. Public API remains
+zero before and after, no migration guide applies, and no performance benchmark
+covers or is warranted for this opt-in acceptance-only surface. The green
+authoritative journey, `just docs-check`, and stale fallback/compatibility scan
+are the verification evidence.
+
 The #417 pass used checkpoint commit `9417f2457` and was bounded to the
 package-internal MeasurementSet plot-document -> SwiftUI render -> notebook
 visualization -> explorer-reopen path plus its acceptance harness. The narrower
