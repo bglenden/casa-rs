@@ -1,4 +1,5 @@
 import CasarsMacCore
+import AppKit
 import CoreGraphics
 import OSLog
 import SwiftUI
@@ -7,6 +8,79 @@ private let workbenchPlotLogger = Logger(
     subsystem: "org.casa-rs.casars-mac",
     category: "WorkbenchPlot"
 )
+
+enum WorkbenchPlotPNGRendererError: Error {
+    case bitmapAllocationFailed
+    case pngEncodingFailed
+}
+
+@MainActor
+enum WorkbenchPlotPNGRenderer {
+    static func render(
+        plot: WorkbenchPlotDocument,
+        displayMode: WorkbenchPlotDisplayMode?,
+        characterSize: Double?,
+        width: UInt32,
+        height: UInt32
+    ) throws -> NotebookVisualizationImage {
+        let renderedWidth = max(Int(width), 1)
+        let renderedHeight = max(Int(height), 1)
+        let frame = NSRect(x: 0, y: 0, width: renderedWidth, height: renderedHeight)
+        let content = WorkbenchPlotView(
+            plot: plot,
+            displayModeOverride: displayMode,
+            characterSizeOverride: characterSize
+        )
+        .frame(width: CGFloat(renderedWidth), height: CGFloat(renderedHeight))
+        .background(Color(nsColor: .textBackgroundColor))
+        let hostingView = NSHostingView(rootView: content)
+        hostingView.frame = frame
+        hostingView.appearance = NSAppearance(named: .darkAqua)
+
+        let window = NSWindow(
+            contentRect: frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hostingView
+        window.isReleasedWhenClosed = false
+        window.backgroundColor = .textBackgroundColor
+        window.layoutIfNeeded()
+        hostingView.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: renderedWidth,
+            pixelsHigh: renderedHeight,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            window.close()
+            throw WorkbenchPlotPNGRendererError.bitmapAllocationFailed
+        }
+        bitmap.size = NSSize(width: renderedWidth, height: renderedHeight)
+        hostingView.cacheDisplay(in: hostingView.bounds, to: bitmap)
+        window.close()
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw WorkbenchPlotPNGRendererError.pngEncodingFailed
+        }
+        return NotebookVisualizationImage(
+            data: png,
+            fileExtension: "png",
+            mediaType: "image/png",
+            width: UInt32(renderedWidth),
+            height: UInt32(renderedHeight),
+            renderer: "casa-rs Workbench SwiftUI plot renderer"
+        )
+    }
+}
 
 struct PlotSamplesPanel: View {
     @ObservedObject var store: WorkbenchStore

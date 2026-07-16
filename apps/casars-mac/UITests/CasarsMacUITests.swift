@@ -1052,6 +1052,548 @@ final class CasarsMacUITests: XCTestCase {
         )
     }
 
+    func testOptInProductionNotebookTaskPythonPlotRoundTrip() throws {
+        let artifactDirectory = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent(".gui-test", isDirectory: true)
+        let gate = artifactDirectory.appendingPathComponent("notebook-roundtrip-gui.enabled")
+        guard FileManager.default.fileExists(atPath: gate.path) else {
+            throw XCTSkip("run `just notebook-roundtrip-gui` to exercise the production round-trip")
+        }
+        let object = try PropertyListSerialization.propertyList(
+            from: Data(contentsOf: gate),
+            options: [],
+            format: nil
+        )
+        let environment = try XCTUnwrap(object as? [String: String])
+        let notebookID = "019f0000-0000-7000-8000-000000000517"
+        let pythonCellID = "019f0000-0000-7000-8000-000000000518"
+        let project = URL(
+            fileURLWithPath: try XCTUnwrap(environment["projectRoot"]),
+            isDirectory: true
+        )
+        let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
+        let pythonBin = project.appendingPathComponent(".casa-rs/python/bin", isDirectory: true)
+        let notebookFile = notebooks.appendingPathComponent("Analysis.md")
+        let failingPython = "raise RuntimeError(\"intentional Wave 5C retry\")\n"
+        let outputRelativePath = "products/wave5c-synthetic.ms"
+        let outputMS = project.appendingPathComponent(outputRelativePath, isDirectory: true)
+        let runs = project.appendingPathComponent(".casa-rs/notebook-runs", isDirectory: true)
+        let resumeAfterTask = environment["resumeAfterTask"] == "true"
+        var marker: String
+        var taskCellID: String
+        print("CASA_RS_WAVE5C_PROJECT \(project.path)")
+
+        if resumeAfterTask {
+            let retainedMarkdown = try String(contentsOf: notebookFile, encoding: .utf8)
+            let markerRange = try XCTUnwrap(
+                retainedMarkdown.range(
+                    of: #"WAVE5C-ROUNDTRIP-[A-F0-9]{8}"#,
+                    options: .regularExpression
+                ),
+                "The retained project does not contain a Wave 5C assistant marker"
+            )
+            marker = String(retainedMarkdown[markerRange])
+            let taskReceipt = try waitForReceiptObject(in: runs, timeout: 2) {
+                $0["operation_id"] as? String == "simobserve"
+                    && $0["status"] as? String == "succeeded"
+            }
+            taskCellID = try XCTUnwrap(taskReceipt["cell_id"] as? String)
+            XCTAssertTrue(waitForPath(outputMS, timeout: 2), "Retained simobserve output is missing")
+            print("CASA_RS_WAVE5C_RESUME after_task marker=\(marker)")
+            launchLiveAssistantProject(project, environment: environment)
+            try openProductionAssistant(notebookID: notebookID)
+
+            let visualizationID = try waitForVisualizationID(in: notebookFile, timeout: 2)
+            let visualizationFile = project
+                .appendingPathComponent(".casa-rs/notebook-visualizations", isDirectory: true)
+                .appendingPathComponent("\(visualizationID).json")
+            let visualization = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(contentsOf: visualizationFile)) as? [String: Any]
+            )
+            let revisions = try XCTUnwrap(visualization["revisions"] as? [[String: Any]])
+            XCTAssertGreaterThanOrEqual(revisions.count, 2)
+            let latestRevision = try XCTUnwrap(revisions.last?["revision"] as? NSNumber).intValue
+
+            try clickIdentified("central.tab.tab-scientific-notebook")
+            try clickIdentified("assistant.close")
+            try bringIntoView(
+                "notebook.visualization.\(visualizationID)",
+                in: "notebook.document.scroll",
+                deltaY: -480,
+                attempts: 16
+            )
+            XCTAssertTrue(element("notebook.visualization.previousRevisions.\(visualizationID)").exists)
+            try clickIdentified("notebook.visualization.preview.\(latestRevision)")
+            XCTAssertTrue(
+                element("notebook.visualization.lightbox").waitForExistence(timeout: 5),
+                app.debugDescription
+            )
+            app.typeKey(.escape, modifierFlags: [])
+            try bringIntoView(
+                "notebook.visualization.openExplorer.\(visualizationID)",
+                in: "notebook.document.scroll",
+                deltaY: 200
+            )
+            try clickIdentified("notebook.visualization.openExplorer.\(visualizationID)")
+            XCTAssertTrue(waitForValue("msPlot.preset.\(outputMS.path)", containing: "Amplitude vs Time"))
+
+            app.terminate()
+            XCTAssertTrue(app.wait(for: .notRunning, timeout: 8), "Production app did not terminate")
+            launchLiveAssistantProject(project, environment: environment)
+            try openProductionAssistant(notebookID: notebookID)
+            _ = try waitForLiveAssistantTranscript(in: project, timeout: 10) {
+                $0.messages.contains { $0.content.contains(marker) }
+            }
+            try clickIdentified("assistant.close")
+            try bringIntoView(
+                "notebook.visualization.\(visualizationID)",
+                in: "notebook.document.scroll",
+                deltaY: -480,
+                attempts: 16
+            )
+            XCTAssertTrue(element("notebook.visualization.previousRevisions.\(visualizationID)").exists)
+            try bringIntoView(
+                "notebook.python.previousRevisions.\(pythonCellID)",
+                in: "notebook.document.scroll",
+                deltaY: 420
+            )
+            XCTAssertTrue(element("notebook.python.latestRevision.\(pythonCellID)").exists)
+            try bringIntoView(
+                "notebook.parameters.open.\(taskCellID)",
+                in: "notebook.document.scroll",
+                deltaY: -420
+            )
+            try clickIdentified("notebook.parameters.open.\(taskCellID)")
+            XCTAssertTrue(waitForValue("task.parameter.output_ms", containing: outputRelativePath, timeout: 10))
+            XCTAssertFalse(element("task.stop").isEnabled, "Reloading receipt parameters must not rerun the task")
+            try Data().write(
+                to: URL(fileURLWithPath: try XCTUnwrap(environment["passReceipt"])),
+                options: .atomic
+            )
+            return
+        } else {
+            try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: pythonBin, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(
+                at: pythonBin.appendingPathComponent("python3"),
+                withDestinationURL: URL(fileURLWithPath: try XCTUnwrap(environment["pythonCommand"]))
+            )
+            try """
+            <!-- casa-rs-notebook:v1 id=\(notebookID) -->
+
+            # Wave 5C production round-trip
+
+            This disposable notebook validates one chronological scientific workflow.
+
+            <!-- casa-rs-cell:v1 id=\(pythonCellID) kind=python -->
+            ```python
+            \(failingPython)```
+            <!-- /casa-rs-cell -->
+            """.write(to: notebookFile, atomically: true, encoding: .utf8)
+
+            marker = "WAVE5C-ROUNDTRIP-\(UUID().uuidString.prefix(8))"
+            print("CASA_RS_WAVE5C_MARKER \(marker)")
+
+            launchLiveAssistantProject(project, environment: environment)
+            try openProductionAssistant(notebookID: notebookID)
+            try sendLiveAssistantPrompt(
+            """
+            Use only the CASA project MCP tools; do not use shell or web. Call corpus.search for robust visibility weighting, then task.schema for simobserve. Call task.suggest for simobserve with exactly these non-default parameters and no default-valued parameters: request_kind=family, telescope=ALMA, array_config=synthetic-alma-compact, band=Band 6, target_ms_size_gib=0.00001, output_ms=\(outputRelativePath), pointing_count=3. Reply with \(marker), a short cited scientific explanation, and the task action.
+            """
+        )
+        let transcript = try waitForLiveAssistantTranscript(in: project, timeout: 120) { transcript in
+            transcript.messages.contains { message in
+                message.role == "assistant"
+                    && message.content.contains(marker)
+                    && !message.citations.isEmpty
+                    && message.activities.contains {
+                        $0.label == "CASA task.suggest" && $0.state == "succeeded"
+                    }
+                    && message.taskSuggestions.contains { $0.taskId == "simobserve" }
+            }
+        }
+        let answer = try XCTUnwrap(transcript.messages.last { $0.content.contains(marker) })
+        let suggestion = try XCTUnwrap(answer.taskSuggestions.first { $0.taskId == "simobserve" })
+        let expectedSuggestion = [
+            "request_kind": "family",
+            "telescope": "ALMA",
+            "array_config": "synthetic-alma-compact",
+            "band": "Band 6",
+            "target_ms_size_gib": "0.00001",
+            "output_ms": outputRelativePath,
+            "pointing_count": "3",
+        ]
+        let expectedParameterOrder = [
+            "request_kind",
+            "telescope",
+            "array_config",
+            "band",
+            "target_ms_size_gib",
+            "output_ms",
+            "pointing_count",
+        ]
+        XCTAssertEqual(Set(suggestion.parameters.keys), Set(expectedSuggestion.keys))
+        for (name, value) in expectedSuggestion where name != "target_ms_size_gib" {
+            XCTAssertEqual(suggestion.parameters[name], value, "Unexpected suggested value for \(name)")
+        }
+        XCTAssertEqual(
+            try XCTUnwrap(Double(try XCTUnwrap(suggestion.parameters["target_ms_size_gib"]))),
+            0.00001,
+            accuracy: 1e-12
+        )
+
+        try clickIdentified("assistant.message.\(answer.id).pin", timeout: 10)
+        XCTAssertTrue(app.staticTexts["Added to notebook"].firstMatch.waitForExistence(timeout: 5))
+        let pinned = try String(contentsOf: notebookFile, encoding: .utf8)
+        XCTAssertEqual(pinned.components(separatedBy: "casa-rs-ai-pin:v1").count - 1, 1)
+        XCTAssertEqual(pinned.components(separatedBy: marker).count - 1, 1)
+        XCTAssertTrue(pinned.contains(answer.citations[0].locator), pinned)
+        XCTAssertTrue(pinned.hasSuffix("<!-- /casa-rs-cell -->\n"), pinned)
+
+        try clickIdentified("assistant.message.\(answer.id).task.\(suggestion.id)", timeout: 10)
+        XCTAssertTrue(element("task.parameter.request_kind").waitForExistence(timeout: 10), app.debugDescription)
+        let taskScroll = try XCTUnwrap(
+            app.scrollViews.allElementsBoundByIndex.max { $0.frame.width < $1.frame.width },
+            app.debugDescription
+        )
+        // Follow the schema's top-to-bottom order. The task form is lazy, so
+        // revisiting an earlier control after scrolling it offscreen makes the
+        // accessibility element disappear even though its value is intact.
+        for parameter in expectedParameterOrder {
+            let control = element("task.parameter.\(parameter)")
+            for _ in 0..<12 where !control.exists || !control.isHittable {
+                taskScroll.scroll(byDeltaX: 0, deltaY: -300)
+            }
+            XCTAssertTrue(control.exists, "Missing suggested parameter \(parameter)\n\(app.debugDescription)")
+            XCTAssertEqual(
+                try accessibilityValue("task.parameterSource.\(parameter)"),
+                "AI-suggested non-default"
+            )
+        }
+        XCTAssertFalse(
+            element("task.parameterSource.ms_channels").exists,
+            "A default-valued parameter must not be decorated as AI-suggested"
+        )
+        for _ in 0..<10 where !element("task.safety.confirm").isHittable {
+            taskScroll.scroll(byDeltaX: 0, deltaY: -360)
+        }
+        try clickIdentified("task.safety.confirm")
+        try clickIdentified("task.run")
+        XCTAssertTrue(
+            waitForValue("task.run.status", containing: "succeeded", timeout: 120),
+            app.debugDescription
+        )
+        XCTAssertTrue(waitForPath(outputMS, timeout: 10), "simobserve did not create \(outputMS.path)")
+        let taskReceipt = try waitForReceiptObject(in: runs, timeout: 10) {
+            $0["operation_id"] as? String == "simobserve" && $0["status"] as? String == "succeeded"
+        }
+        taskCellID = try XCTUnwrap(taskReceipt["cell_id"] as? String)
+        XCTAssertEqual((taskReceipt["schema_version"] as? NSNumber)?.intValue, 2)
+        XCTAssertTrue(
+            (taskReceipt["products"] as? [[String: Any]])?.contains {
+                ($0["path"] as? String)?.contains(outputRelativePath) == true
+            } == true,
+            "Task receipt did not retain the produced MeasurementSet: \(taskReceipt)"
+        )
+        }
+
+        try clickIdentified("central.tab.tab-scientific-notebook")
+        try clickIdentified("assistant.close")
+        try bringIntoView("notebook.python.cell.\(pythonCellID)", in: "notebook.document.scroll", deltaY: -360)
+        let pythonRun = try require("notebook.python.run.\(pythonCellID)")
+        XCTAssertEqual(
+            XCTWaiter.wait(
+                for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: pythonRun)],
+                timeout: 15
+            ),
+            .completed,
+            "Selected project Python did not become ready"
+        )
+        pythonRun.click()
+        _ = try waitForReceiptObject(in: runs, timeout: 30) {
+            $0["operation_id"] as? String == "python.execute"
+                && $0["status"] as? String == "failed"
+        }
+
+        let scientificPython = """
+        import matplotlib.pyplot as plt
+        wavelength_m = 0.0013
+        baseline_m = 1000.0
+        resolution_arcsec = 206265.0 * wavelength_m / baseline_m
+        print(f"resolution_arcsec={resolution_arcsec:.6f}")
+        baselines = [100.0, 300.0, 1000.0]
+        resolutions = [206265.0 * wavelength_m / value for value in baselines]
+        plt.figure()
+        plt.plot(baselines, resolutions, marker="o")
+        plt.xlabel("Baseline (m)")
+        plt.ylabel("Resolution (arcsec)")
+        plt.title("Wave 5C resolution estimate")
+        """ + "\n"
+        let scientificPythonEditorText = String(scientificPython.dropLast())
+        try bringIntoView("notebook.python.editor.\(pythonCellID)", in: "notebook.document.scroll", deltaY: 280)
+        replaceText("notebook.python.editor.\(pythonCellID)", with: scientificPythonEditorText)
+        try clickIdentified("notebook.save")
+        try bringIntoView("notebook.python.run.\(pythonCellID)", in: "notebook.document.scroll", deltaY: -220)
+        try clickIdentified("notebook.python.run.\(pythonCellID)")
+        let firstSuccess = try waitForReceiptObject(in: runs, timeout: 40) {
+            guard $0["operation_id"] as? String == "python.execute",
+                  $0["status"] as? String == "succeeded",
+                  let input = $0["execution_input"] as? [String: Any],
+                  let details = input["details"] as? [String: Any]
+            else { return false }
+            return details["source"] as? String == scientificPython
+        }
+        let firstDetails = try XCTUnwrap(
+            (firstSuccess["execution_input"] as? [String: Any])?["details"] as? [String: Any]
+        )
+        let firstEnvironment = try XCTUnwrap(firstDetails["environment"] as? [String: Any])
+        XCTAssertEqual((firstSuccess["schema_version"] as? NSNumber)?.intValue, 2)
+        XCTAssertEqual(
+            URL(fileURLWithPath: try XCTUnwrap(firstEnvironment["interpreter"] as? String))
+                .resolvingSymlinksInPath().path,
+            URL(fileURLWithPath: try XCTUnwrap(environment["pythonCommand"]))
+                .resolvingSymlinksInPath().path
+        )
+        XCTAssertTrue((firstEnvironment["fingerprint_sha256"] as? String)?.isEmpty == false)
+        let usefulPackages = try XCTUnwrap(firstEnvironment["packages"] as? [String: String])
+        XCTAssertNotNil(usefulPackages["numpy"])
+        XCTAssertNotNil(usefulPackages["matplotlib"])
+        XCTAssertTrue(
+            (firstSuccess["artifacts"] as? [[String: Any]])?.contains {
+                $0["role"] as? String == "figure" && $0["media_type"] as? String == "image/png"
+            } == true
+        )
+
+        let regeneratedPython = scientificPython
+            .replacingOccurrences(of: "baseline_m = 1000.0", with: "baseline_m = 2000.0")
+            .replacingOccurrences(of: "Wave 5C resolution estimate", with: "Wave 5C revised resolution estimate")
+        let regeneratedPythonEditorText = String(regeneratedPython.dropLast())
+        try bringIntoView("notebook.python.editor.\(pythonCellID)", in: "notebook.document.scroll", deltaY: 260)
+        replaceText("notebook.python.editor.\(pythonCellID)", with: regeneratedPythonEditorText)
+        try clickIdentified("notebook.save")
+        try bringIntoView("notebook.python.run.\(pythonCellID)", in: "notebook.document.scroll", deltaY: -220)
+        try clickIdentified("notebook.python.run.\(pythonCellID)")
+        let regenerated = try waitForReceiptObject(in: runs, timeout: 40) {
+            guard $0["operation_id"] as? String == "python.execute",
+                  $0["status"] as? String == "succeeded",
+                  let input = $0["execution_input"] as? [String: Any],
+                  let details = input["details"] as? [String: Any]
+            else { return false }
+            return details["source"] as? String == regeneratedPython
+        }
+        let pythonCellReceiptID = try XCTUnwrap(regenerated["cell_id"] as? String)
+        XCTAssertEqual(pythonCellReceiptID, pythonCellID)
+        let regeneratedRunID = try XCTUnwrap(regenerated["run_id"] as? String)
+        let regeneratedRevision = try XCTUnwrap(regenerated["revision"] as? NSNumber).uint64Value
+        try bringIntoView("notebook.python.previousRevisions.\(pythonCellID)", in: "notebook.document.scroll", deltaY: -260)
+        XCTAssertTrue(element("notebook.python.figure.\(regeneratedRunID)-\(regeneratedRevision)").exists)
+
+        try clickIdentified("dock.mode.datasets")
+        let outputRowID = "dataset.row.\(outputMS.path)"
+        XCTAssertTrue(element(outputRowID).waitForExistence(timeout: 15), app.debugDescription)
+        element(outputRowID).doubleClick()
+        let modeID = "msExplore.mode.\(outputMS.path)"
+        let mode = try require(modeID, timeout: 10)
+        let plotsSegment = mode.descendants(matching: .radioButton).matching(
+            NSPredicate(format: "label == %@", "Plots")
+        ).firstMatch
+        XCTAssertTrue(plotsSegment.waitForExistence(timeout: 5), app.debugDescription)
+        plotsSegment.click()
+        let generateID = "msPlot.generate.\(outputMS.path)"
+        try clickIdentified(generateID)
+        let saveID = "msPlot.saveToNotebook.\(outputMS.path)"
+        XCTAssertTrue(element(saveID).waitForExistence(timeout: 30), app.debugDescription)
+        try clickIdentified(saveID)
+        XCTAssertTrue(app.menuItems["New plot"].waitForExistence(timeout: 5), app.debugDescription)
+        app.menuItems["New plot"].click()
+        let visualizationID = try waitForVisualizationID(in: notebookFile, timeout: 10)
+
+        let preset = try require("msPlot.preset.\(outputMS.path)")
+        preset.click()
+        XCTAssertTrue(app.menuItems["Amplitude vs Time"].waitForExistence(timeout: 5), app.debugDescription)
+        app.menuItems["Amplitude vs Time"].click()
+        try clickIdentified(generateID)
+        XCTAssertTrue(element(saveID).waitForExistence(timeout: 30), app.debugDescription)
+        try clickIdentified(saveID)
+        XCTAssertTrue(app.menuItems["Update UV Coverage"].waitForExistence(timeout: 5), app.debugDescription)
+        app.menuItems["Update UV Coverage"].click()
+        let visualizationFile = project
+            .appendingPathComponent(".casa-rs/notebook-visualizations", isDirectory: true)
+            .appendingPathComponent("\(visualizationID).json")
+        XCTAssertTrue(waitForPath(visualizationFile, timeout: 10))
+        let visualization = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: visualizationFile)) as? [String: Any]
+        )
+        let visualizationRevisions = try XCTUnwrap(visualization["revisions"] as? [[String: Any]])
+        XCTAssertEqual(visualizationRevisions.count, 2)
+        XCTAssertNotEqual(
+            visualizationRevisions[0]["asset_path"] as? String,
+            visualizationRevisions[1]["asset_path"] as? String
+        )
+        for revision in visualizationRevisions {
+            let render = try XCTUnwrap(revision["render"] as? [String: Any])
+            XCTAssertEqual((render["width"] as? NSNumber)?.intValue, 960)
+            XCTAssertEqual((render["height"] as? NSNumber)?.intValue, 600)
+            let reopen = try XCTUnwrap(revision["reopen"] as? [String: Any])
+            XCTAssertEqual(reopen["surface"] as? String, "msexplore")
+            XCTAssertEqual(revision["source_references"] as? [String], [outputMS.path])
+        }
+
+        try clickIdentified("central.tab.tab-scientific-notebook")
+        try bringIntoView(
+            "notebook.visualization.\(visualizationID)",
+            in: "notebook.document.scroll",
+            deltaY: -480,
+            attempts: 16
+        )
+        XCTAssertTrue(element("notebook.visualization.previousRevisions.\(visualizationID)").exists)
+        try clickIdentified("notebook.visualization.preview.2")
+        XCTAssertTrue(element("notebook.visualization.lightbox").waitForExistence(timeout: 5), app.debugDescription)
+        app.typeKey(.escape, modifierFlags: [])
+        try bringIntoView("notebook.visualization.openExplorer.\(visualizationID)", in: "notebook.document.scroll", deltaY: 200)
+        try clickIdentified("notebook.visualization.openExplorer.\(visualizationID)")
+        XCTAssertTrue(waitForValue("msPlot.preset.\(outputMS.path)", containing: "Amplitude vs Time"))
+
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 8), "Production app did not terminate")
+        launchLiveAssistantProject(project, environment: environment)
+        try openProductionAssistant(notebookID: notebookID)
+        let restartedTranscript = try waitForLiveAssistantTranscript(in: project, timeout: 10) {
+            $0.messages.contains { $0.content.contains(marker) }
+        }
+        try clickIdentified("assistant.close")
+        try bringIntoView(
+            "notebook.visualization.\(visualizationID)",
+            in: "notebook.document.scroll",
+            deltaY: -480,
+            attempts: 16
+        )
+        XCTAssertTrue(element("notebook.visualization.previousRevisions.\(visualizationID)").exists)
+        try bringIntoView("notebook.python.previousRevisions.\(pythonCellID)", in: "notebook.document.scroll", deltaY: 420)
+        XCTAssertTrue(element("notebook.python.latestRevision.\(pythonCellID)").exists)
+        try bringIntoView("notebook.parameters.open.\(taskCellID)", in: "notebook.document.scroll", deltaY: -420)
+        try clickIdentified("notebook.parameters.open.\(taskCellID)")
+        XCTAssertTrue(waitForValue("task.parameter.output_ms", containing: outputRelativePath, timeout: 10))
+        XCTAssertFalse(element("task.stop").isEnabled, "Reloading the receipt parameters must not rerun the task")
+
+        let finalMarkdown = try String(contentsOf: notebookFile, encoding: .utf8)
+        XCTAssertEqual(finalMarkdown.components(separatedBy: "casa-rs-ai-pin:v1").count - 1, 1)
+        XCTAssertEqual(finalMarkdown.components(separatedBy: "casa-rs-visualization:v1").count - 1, 1)
+        XCTAssertTrue(finalMarkdown.contains("Wave 5C revised resolution estimate"))
+        let durableReceipts = receiptObjects(in: runs)
+        XCTAssertEqual(durableReceipts.filter { $0["operation_id"] as? String == "simobserve" }.count, 1)
+        XCTAssertEqual(
+            durableReceipts.filter {
+                $0["operation_id"] as? String == "python.execute"
+                    && $0["status"] as? String == "failed"
+            }.count,
+            1
+        )
+        XCTAssertEqual(
+            durableReceipts.filter {
+                $0["operation_id"] as? String == "python.execute"
+                    && $0["status"] as? String == "succeeded"
+            }.count,
+            2
+        )
+        let durableTaskReceipt = try XCTUnwrap(
+            durableReceipts.first { $0["operation_id"] as? String == "simobserve" }
+        )
+        let durablePythonReceipts = durableReceipts.filter {
+            $0["operation_id"] as? String == "python.execute"
+                && $0["status"] as? String == "succeeded"
+        }
+        let restartedAnswer = try XCTUnwrap(
+            restartedTranscript.messages.first { $0.role == "assistant" && $0.content.contains(marker) }
+        )
+        let taskProducts = (durableTaskReceipt["products"] as? [[String: Any]])?.compactMap {
+            $0["path"] as? String
+        } ?? []
+        let pythonEvidence = durablePythonReceipts.compactMap { receipt -> [String: Any]? in
+            guard let input = receipt["execution_input"] as? [String: Any],
+                  let details = input["details"] as? [String: Any]
+            else { return nil }
+            return [
+                "run_id": receipt["run_id"] as? String ?? "",
+                "revision": (receipt["revision"] as? NSNumber)?.uint64Value ?? 0,
+                "source_sha256": details["source_sha256"] as? String ?? "",
+                "interpreter": (details["environment"] as? [String: Any])?["interpreter"] as? String ?? "",
+                "environment_fingerprint_sha256":
+                    (details["environment"] as? [String: Any])?["fingerprint_sha256"] as? String ?? "",
+                "artifacts": (receipt["artifacts"] as? [[String: Any]])?.compactMap {
+                    $0["path"] as? String
+                } ?? [],
+            ]
+        }
+        let visualizationEvidence = visualizationRevisions.map { revision -> [String: Any] in
+            let reopen = revision["reopen"] as? [String: Any]
+            let parameters = reopen?["parameters"] as? [String: Any]
+            return [
+                "revision": (revision["revision"] as? NSNumber)?.uint64Value ?? 0,
+                "asset_path": revision["asset_path"] as? String ?? "",
+                "preset": parameters?["preset"] as? String ?? "",
+                "source_references": revision["source_references"] as? [String] ?? [],
+            ]
+        }
+        let evidence: [String: Any] = [
+            "schema_version": 1,
+            "repository_revision": environment["repoRevision"] ?? "",
+            "project_root": project.path,
+            "notebook": "notebooks/Analysis.md",
+            "assistant": [
+                "marker": marker,
+                "citation_locators": restartedAnswer.citations.map(\.locator),
+                "pin_count": 1,
+            ],
+            "task": [
+                "operation_id": "simobserve",
+                "cell_id": durableTaskReceipt["cell_id"] as? String ?? "",
+                "run_id": durableTaskReceipt["run_id"] as? String ?? "",
+                "receipt_schema_version": (durableTaskReceipt["schema_version"] as? NSNumber)?.intValue ?? 0,
+                "output": outputMS.path,
+                "products": taskProducts,
+            ],
+            "python": [
+                "selected_interpreter": firstEnvironment["interpreter"] as? String ?? "",
+                "version": firstEnvironment["version"] as? String ?? "",
+                "packages": usefulPackages,
+                "failed_attempts": 1,
+                "successful_revisions": pythonEvidence,
+            ],
+            "visualization": [
+                "id": visualizationID,
+                "revisions": visualizationEvidence,
+                "previewed_revision": 2,
+                "reopened_preset": "Amplitude vs Time",
+            ],
+            "restart_count": 2,
+            "receipt_counts": [
+                "simobserve_succeeded": 1,
+                "python_failed": 1,
+                "python_succeeded": 2,
+            ],
+            "cleanup": "test-owned project removed by harness after report validation",
+        ]
+        let evidenceData = try JSONSerialization.data(
+            withJSONObject: evidence,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try evidenceData.write(
+            to: URL(fileURLWithPath: try XCTUnwrap(environment["evidenceReport"])),
+            options: .atomic
+        )
+        try Data().write(
+            to: URL(fileURLWithPath: try XCTUnwrap(environment["passReceipt"])),
+            options: .atomic
+        )
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Wave 5C production notebook task Python plot round-trip"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testTutorialPrototypeLearnerNotesApprovalAndTaskLoading() throws {
         launchTutorialPrototype()
         let datasetID = "tutorial-dataset-twhya-calibrated"
@@ -1620,6 +2162,16 @@ final class CasarsMacUITests: XCTestCase {
         app.launchEnvironment["CODEX_HOME"] = environment["codexHome"] ?? ""
         app.launchEnvironment["CASA_RS_AGENT_COMMAND"] = environment["agentCommand"] ?? "codex"
         app.launchEnvironment["CASA_RS_GUI_TEST_PYTHON"] = environment["pythonCommand"] ?? "python3"
+        if let repoRoot = environment["repoRoot"] {
+            app.launchEnvironment["CASA_RS_REPO_ROOT"] = repoRoot
+            app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = repoRoot
+        }
+        if let simobserve = environment["simobserveCommand"] {
+            app.launchEnvironment["CASARS_SIMOBSERVE_BIN"] = simobserve
+        }
+        if let msexplore = environment["msexploreCommand"] {
+            app.launchEnvironment["CASARS_MSEXPLORE_BIN"] = msexplore
+        }
         app.launchEnvironment["OPENAI_API_KEY"] = ""
         app.launchEnvironment["AZURE_OPENAI_API_KEY"] = ""
         app.launchEnvironment["OPENAI_BASE_URL"] = ""
@@ -1694,7 +2246,16 @@ final class CasarsMacUITests: XCTestCase {
     }
 
     private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        // XCTest's direct identifier query traps when the identifier is longer
+        // than 128 characters. Real project paths can legitimately make stable
+        // path-derived identifiers longer than that, so use the equivalent
+        // predicate form for those controls.
+        if identifier.utf16.count > 128 {
+            return app.descendants(matching: .any).matching(
+                NSPredicate(format: "identifier == %@", identifier)
+            ).firstMatch
+        }
+        return app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
     private func clickIdentified(_ identifier: String, timeout: TimeInterval = 5) throws {
@@ -1827,7 +2388,7 @@ final class CasarsMacUITests: XCTestCase {
         containing substring: String,
         timeout: TimeInterval = 5
     ) -> Bool {
-        let element = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        let element = element(identifier)
         let predicate = NSPredicate(format: "value CONTAINS %@", substring)
         return XCTWaiter.wait(
             for: [XCTNSPredicateExpectation(predicate: predicate, object: element)],
@@ -1855,6 +2416,64 @@ final class CasarsMacUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.05)
         } while Date() < deadline
         return false
+    }
+
+    private func waitForPath(_ url: URL, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if FileManager.default.fileExists(atPath: url.path) { return true }
+            Thread.sleep(forTimeInterval: 0.05)
+        } while Date() < deadline
+        return false
+    }
+
+    private func waitForReceiptObject(
+        in runs: URL,
+        timeout: TimeInterval,
+        matching predicate: ([String: Any]) -> Bool
+    ) throws -> [String: Any] {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            for receipt in receiptObjects(in: runs) {
+                if predicate(receipt) { return receipt }
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        } while Date() < deadline
+        let message = "Timed out waiting for a matching notebook receipt in \(runs.path)"
+        XCTFail(message)
+        throw LiveAssistantAcceptanceError.transcriptTimeout(message)
+    }
+
+    private func receiptObjects(in runs: URL) -> [[String: Any]] {
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: runs,
+            includingPropertiesForKeys: nil
+        ))?.map { $0.appendingPathComponent("receipt.json") } ?? []
+        return urls.compactMap { receipt in
+            guard let data = try? Data(contentsOf: receipt),
+                  let object = try? JSONSerialization.jsonObject(with: data),
+                  let dictionary = object as? [String: Any]
+            else { return nil }
+            return dictionary
+        }
+    }
+
+    private func waitForVisualizationID(in notebook: URL, timeout: TimeInterval) throws -> String {
+        let prefix = "<!-- casa-rs-visualization:v1 id="
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if let source = try? String(contentsOf: notebook, encoding: .utf8),
+               let start = source.range(of: prefix)?.upperBound,
+               let end = source[start...].firstIndex(where: { $0 == " " || $0 == ">" })
+            {
+                let id = String(source[start..<end])
+                if !id.isEmpty { return id }
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        } while Date() < deadline
+        let message = "Timed out waiting for a notebook visualization in \(notebook.path)"
+        XCTFail(message)
+        throw LiveAssistantAcceptanceError.transcriptTimeout(message)
     }
 
     private func waitForReceipt(in runs: URL, containing text: String) -> Bool {
@@ -2015,10 +2634,21 @@ private struct LiveAssistantTranscript: Decodable {
         var label: String
         var state: String
     }
+    struct Citation: Decodable {
+        var locator: String
+    }
+    struct TaskSuggestion: Decodable {
+        var id: String
+        var taskId: String
+        var parameters: [String: String]
+    }
     struct Message: Decodable {
+        var id: String
         var role: String
         var content: String
+        var citations: [Citation]
         var activities: [Activity]
+        var taskSuggestions: [TaskSuggestion]
     }
 
     var backendSession: BackendSession?

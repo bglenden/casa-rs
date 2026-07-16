@@ -118,6 +118,20 @@ production-decodes the disposable transcript for diagnosis. The local
 foreground harness hides and later restores Codex during the exclusive test
 window.
 
+`just notebook-roundtrip-gui` is the broader opt-in production-science
+acceptance for issue #417. It uses the existing ChatGPT subscription, the
+repository's real `simobserve` and MeasurementSet plot helpers, and the
+user/system Python selected by `scripts/resolve-python.sh` (override with
+`CASA_RS_GUI_TEST_PYTHON`). It removes metered API variables, builds every
+helper before taking the exclusive foreground window, and drives a disposable
+project through cited agent retrieval, a canonical typed task suggestion, real
+task execution, one intentional Python failure and retry, two Python plot
+revisions, two explorer-plot revisions, and two full application restarts. A
+successful run removes the disposable project and retains the `.xcresult` plus
+the sanitized `NotebookRoundTripGUI.report.json` under
+`apps/casars-mac/.gui-test/`. A failed run retains the project for focused
+diagnosis. This live acceptance is not part of CI or `just gui-test`.
+
 ## Coverage / confidence policy
 
 - CI enforces 75% line coverage.
@@ -301,6 +315,18 @@ For each wave:
   validates all 55 inventory decisions, the 28 selected bundle files and
   digests, the 2,314 page/slide count, and the recorded authoritative-origin
   audit.
+- Wave 5 production round-trip acceptance runs only through the explicit
+  `just notebook-roundtrip-gui` opt-in. It proves a cited live response is
+  appended exactly once, a typed `simobserve` suggestion decorates only the
+  proposed non-defaults, a real synthetic MeasurementSet and receipt-v2 record
+  survive reload, the selected Python identity and exact source hashes survive
+  one failed and two successful immutable revisions, and a changed
+  MeasurementSet plot retains two assets plus reopen provenance. It terminates
+  and relaunches production `casars-mac` twice, reopens the latest plot directly
+  in the Plot explorer surface, and verifies that opening recorded task
+  parameters does not rerun the task. Focused core tests retain the managed rich
+  output cell and explorer-reopen regressions without requiring a provider or
+  foreground window.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review

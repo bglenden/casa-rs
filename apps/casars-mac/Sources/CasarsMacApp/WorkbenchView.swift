@@ -29,10 +29,14 @@ struct WorkbenchView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 if !store.state.leftDockCollapsed {
                     LeftDockView(store: store)
-                        .frame(width: leftDockWidth)
+                        .frame(
+                            width: leftDockWidth,
+                            height: geometry.size.height,
+                            alignment: .top
+                        )
 
                     HorizontalResizeHandle(
                         width: $leftDockWidth,
@@ -86,6 +90,7 @@ struct WorkbenchView: View {
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .onAppear {
                 reconcilePanelsForDrawer(
                     containerWidth: geometry.size.width,
@@ -236,8 +241,12 @@ struct LeftDockView: View {
             Divider()
 
             dockContent
-
-            Spacer(minLength: 0)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: 0,
+                    maxHeight: .infinity
+                )
+                .clipped()
 
             Divider()
 
@@ -264,6 +273,13 @@ struct LeftDockView: View {
             }
             .padding(8)
         }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: 0,
+            maxHeight: .infinity,
+            alignment: .top
+        )
+        .clipped()
         .background(.regularMaterial)
     }
 
@@ -631,7 +647,6 @@ struct LeftDockView: View {
                     }
                 }
             }
-            .accessibilityIdentifier("dataset.row.\(dataset.id)")
     }
 
     private var projectSourceLabel: String {
@@ -1079,14 +1094,14 @@ private struct DatasetRowClickTarget: NSViewRepresentable {
 
     func makeNSView(context: Context) -> DatasetRowClickView {
         let view = DatasetRowClickView()
-        view.datasetID = datasetID
+        view.configureAccessibility(datasetID: datasetID)
         view.onSingleClick = onSingleClick
         view.onDoubleClick = onDoubleClick
         return view
     }
 
     func updateNSView(_ nsView: DatasetRowClickView, context: Context) {
-        nsView.datasetID = datasetID
+        nsView.configureAccessibility(datasetID: datasetID)
         nsView.onSingleClick = onSingleClick
         nsView.onDoubleClick = onDoubleClick
     }
@@ -1098,6 +1113,15 @@ private final class DatasetRowClickView: NSView {
     var onDoubleClick: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { false }
+
+    func configureAccessibility(datasetID: String) {
+        self.datasetID = datasetID
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityIdentifier("dataset.row.\(datasetID)")
+        setAccessibilityLabel("Open \(URL(fileURLWithPath: datasetID).lastPathComponent)")
+        setAccessibilityHelp("Double-click to open the dataset explorer")
+    }
 
     override func mouseDown(with event: NSEvent) {
         let clickedDatasetID = datasetID

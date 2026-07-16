@@ -193,6 +193,35 @@ final class ScientificNotebookRichDocumentTests: XCTestCase {
         XCTAssertTrue(document.markdown.hasSuffix("<!-- /casa-rs-cell -->\n\nAfter revised."))
     }
 
+    func testVisualizationOutputCellRemainsManagedAcrossRichModeEdits() throws {
+        let outputCell = """
+        <!-- casa-rs-cell:v1 id=plot-output kind=output -->
+        <!-- casa-rs-visualization:v1 id=saved-plot -->
+        Latest revision is shown by default. Expand Previous revisions for history.
+        <!-- /casa-rs-cell -->
+        """ + "\n"
+        let source = "Before.\n\n" + outputCell + "\nAfter."
+        var document = PrototypeNotebookRichDocument(markdown: source)
+
+        XCTAssertEqual(document.elements.compactMap(\.taskID), ["plot-output"])
+        XCTAssertEqual(
+            document.elements.first { $0.taskID == "plot-output" }?.source,
+            outputCell
+        )
+
+        let afterID = try XCTUnwrap(document.elements.first {
+            $0.editableSource?.contains("After.") == true
+        }?.id)
+        XCTAssertTrue(document.replaceEditableSource(elementID: afterID, with: "After revised."))
+
+        XCTAssertTrue(document.markdown.contains(outputCell))
+        XCTAssertEqual(
+            PrototypeNotebookRichDocument(markdown: document.markdown)
+                .elements.compactMap(\.taskID),
+            ["plot-output"]
+        )
+    }
+
     private func taskCell(id: String, trailingNewline: Bool) -> String {
         "<!-- casa-rs-cell:v1 id=\(id) kind=task -->\n"
             + "```toml\n"

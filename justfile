@@ -64,6 +64,11 @@ assistant-live-smoke:
 assistant-live-gui:
     bash apps/casars-mac/script/test_assistant_live_gui.sh
 
+# Opt-in real-world notebook/task/Python/plot round-trip using the installed
+# Codex CLI's ChatGPT subscription and a disposable project.
+notebook-roundtrip-gui:
+    bash apps/casars-mac/script/test_notebook_roundtrip_gui.sh
+
 graph:
     bash scripts/generate-graphs.sh
 

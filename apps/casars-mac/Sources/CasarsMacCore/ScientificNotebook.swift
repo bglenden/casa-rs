@@ -755,7 +755,7 @@ package struct PrototypeNotebookRichDocument: Equatable {
         guard trimmed.hasPrefix("<!-- casa-rs-cell:v1 "),
               trimmed.hasSuffix("-->"),
               trimmed.split(whereSeparator: \.isWhitespace).contains(where: {
-                  $0 == "kind=task" || $0 == "kind=python"
+                  $0 == "kind=task" || $0 == "kind=python" || $0 == "kind=output"
               })
         else { return nil }
         guard let idToken = trimmed

@@ -237,7 +237,9 @@ struct DatasetExplorerPanel: View {
                     MeasurementSetPlotPanel(
                         store: store,
                         dataset: dataset,
-                        initialExplorerMode: initialMeasurementSetExplorerMode
+                        initialExplorerMode: store.shouldPresentMeasurementSetPlotSurface(
+                            datasetID: dataset.id
+                        ) ? .plots : initialMeasurementSetExplorerMode
                     )
                 } else if dataset.kind == .imageCube && !store.state.isDemoProject {
                     VStack(alignment: .leading, spacing: 10) {
@@ -276,7 +278,6 @@ struct DatasetExplorerPanel: View {
                 .padding(20)
             }
         }
-        .accessibilityIdentifier("panel.datasetExplorer")
     }
 
     private func tableBrowserRoot(for dataset: DatasetSummary) -> some View {
@@ -4751,7 +4752,6 @@ struct MeasurementSetPlotPanel: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityIdentifier("msPlot.panel.\(dataset.id)")
         .onAppear {
             if summaryStatus == .idle {
                 runMeasurementSetSummary()
@@ -4788,6 +4788,35 @@ struct MeasurementSetPlotPanel: View {
         store.measurementSetExplorerPlotState(datasetID: dataset.id)
     }
 
+    private func saveVisiblePlotToNotebook(updating visualizationID: String? = nil) {
+        guard let result = visiblePlotResult else {
+            store.reportMeasurementSetPlotSaveError(
+                datasetID: dataset.id,
+                message: "Generate the current plot before saving it."
+            )
+            return
+        }
+        do {
+            let image = try WorkbenchPlotPNGRenderer.render(
+                plot: result.plotDocument,
+                displayMode: plotDisplayMode,
+                characterSize: plotCharacterSizeOverride,
+                width: result.imageWidth,
+                height: result.imageHeight
+            )
+            store.saveMeasurementSetPlotToNotebook(
+                datasetID: dataset.id,
+                updating: visualizationID,
+                renderedImage: image
+            )
+        } catch {
+            store.reportMeasurementSetPlotSaveError(
+                datasetID: dataset.id,
+                message: error.localizedDescription
+            )
+        }
+    }
+
     private var visiblePlotResult: MeasurementSetPlotResultSummary? {
         guard let result = plotState.result, result.matches(plotState: plotState) else {
             return nil
@@ -4822,14 +4851,11 @@ struct MeasurementSetPlotPanel: View {
                 if visiblePlotResult != nil {
                     Menu("Save to Notebook") {
                         Button("New plot") {
-                            store.saveMeasurementSetPlotToNotebook(datasetID: dataset.id)
+                            saveVisiblePlotToNotebook()
                         }
                         ForEach(savedVisualizations) { visualization in
                             Button("Update \(visualization.title)") {
-                                store.saveMeasurementSetPlotToNotebook(
-                                    datasetID: dataset.id,
-                                    updating: visualization.id
-                                )
+                                saveVisiblePlotToNotebook(updating: visualization.id)
                             }
                         }
                     }
@@ -8050,6 +8076,7 @@ struct GenericTaskPanel: View {
                         || (store.taskRequiresConfirmation(taskID: activeTaskID, instanceID: tabID)
                             && !store.taskHasConfirmation(taskID: activeTaskID, instanceID: tabID))
                 )
+                .accessibilityIdentifier("task.run")
 
                 Button {
                     store.stopTask()
@@ -8057,6 +8084,7 @@ struct GenericTaskPanel: View {
                     Label("Stop", systemImage: "stop.fill")
                 }
                 .disabled(store.state.taskRun.state != .running)
+                .accessibilityIdentifier("task.stop")
             }
             .padding()
             .background(.bar)
@@ -8382,6 +8410,7 @@ struct GenericTaskPanel: View {
                 Text("Safety")
                     .workbenchFont(.headline)
                 Toggle("Confirm catalog-declared run risks", isOn: confirmed)
+                    .accessibilityIdentifier("task.safety.confirm")
                 Text(safety.classes.joined(separator: ", "))
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
@@ -9076,6 +9105,7 @@ struct GenericTaskPanel: View {
             }
             Text(store.state.taskRun.state.rawValue)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("task.run.status")
             if activeTaskID == "imager", let progress = store.state.taskRun.imagerProgress {
                 ImagerProgressDashboard(snapshot: progress)
             }

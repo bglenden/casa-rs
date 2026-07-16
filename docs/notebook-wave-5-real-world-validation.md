@@ -1,7 +1,7 @@
 # Notebook Wave 5 Real-World Validation
 
 Truth class: implementation evidence
-Last reality check: 2026-07-15
+Last reality check: 2026-07-16
 Wave issue: #414
 
 Wave 5 validates the production scientific-notebook and assistant workflow
@@ -192,6 +192,67 @@ Focused evidence on 2026-07-15:
   the independently checked locators `Interferometry and Synthesis in Radio
   Astronomy.pdf, page 806` and `Perley-Geometry-SIW2026.pdf, slide 15`; no shell
   or web tool was used.
+
+## Production notebook/task/Python/plot round-trip (#417)
+
+The reusable acceptance entrypoint is:
+
+```sh
+just notebook-roundtrip-gui
+```
+
+It is deliberately opt-in and local. The harness requires a logged-in Codex
+CLI using the existing ChatGPT subscription, chooses the normal user/system
+Python through `scripts/resolve-python.sh` unless
+`CASA_RS_GUI_TEST_PYTHON=/absolute/path/to/python` is supplied, and rejects
+metered API-key configuration. It builds the real `simobserve`, `msexplore`,
+frontend-service, app, and XCUITest executables before announcing one exclusive
+foreground window.
+
+The launched test owns its entire disposable project and performs these steps
+without user parameter entry or receipt inspection:
+
+1. Ask the live agent to use the nonce-bound project corpus and canonical task
+   tools, require a genuine citation, and obtain a typed `simobserve`
+   suggestion.
+2. Append the answer once at the chronological notebook tail, open the existing
+   task tab directly, prove all seven proposed non-defaults—and no sampled
+   default—carry the compact AI provenance decoration, approve the task's normal
+   safety control, and run it.
+3. Generate `products/wave5c-synthetic.ms` with the real task using an ALMA
+   compact family request, Band 6, three pointings, and a deliberately tiny
+   0.00001-GiB target suitable for acceptance testing. Verify receipt schema v2,
+   the recorded product, and later parameter reload without re-execution.
+4. Select the resolved project Python, record implementation/version/package
+   identity and its environment fingerprint, retain one intentional
+   `RuntimeError` receipt, replace the exact source, and successfully execute
+   and then regenerate a small angular-resolution calculation and Matplotlib
+   figure. Verify two immutable successful receipts, exact source hashes, and
+   PNG artifacts.
+5. Generate a real UV Coverage explorer plot, save it explicitly, change to
+   Amplitude vs Time, and update the same notebook visualization. Verify two
+   distinct 960-by-600 PNG assets, source references, latest/previous revision
+   UI, enlargement, and direct reopen into the Plot explorer with the latest
+   preset.
+6. Terminate and relaunch production `casars-mac` twice. Verify the cited pin,
+   conversation, notebook Markdown, task receipt/parameters, Python revisions,
+   plot revisions, and direct task/plot reopen behavior after process loss.
+
+On success, the test-owned project is removed. The Xcode result bundle and a
+sanitized machine-readable evidence summary remain at
+`apps/casars-mac/.gui-test/NotebookRoundTripGUI.xcresult` and
+`apps/casars-mac/.gui-test/NotebookRoundTripGUI.report.json`. On failure, the
+project is retained and the same command can run the focused restart-only
+diagnostic with `CASA_RS_NOTEBOOK_ROUNDTRIP_RESUME_AFTER_TASK=1`; that mode is
+for diagnosing a consolidated failure, not acceptance evidence.
+
+The live work exposed and repaired four production-boundary defects: output
+visualizations were parsed as raw Markdown in rich mode; the data-first
+MeasurementSet plot backend had no encoded image for notebook storage; nested
+accessibility identifiers hid revision and explorer controls; and plot reopen
+restored the preset but left the explorer on its Summary surface. Focused rich
+document and Workbench-store regressions now cover these boundaries, while the
+opt-in XCUITest covers real rendering, persistence, and process restart.
 
 ## Bounded refactor pass
 

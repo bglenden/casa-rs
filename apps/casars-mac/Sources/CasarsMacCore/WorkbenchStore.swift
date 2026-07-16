@@ -612,6 +612,31 @@ public protocol MeasurementSetMetadataClient {
     func probeTimeRange(datasetPath: String) throws -> MeasurementSetTimeRangeSummary
 }
 
+package struct NotebookVisualizationImage {
+    package let data: Data
+    package let fileExtension: String
+    package let mediaType: String
+    package let width: UInt32
+    package let height: UInt32
+    package let renderer: String
+
+    package init(
+        data: Data,
+        fileExtension: String,
+        mediaType: String,
+        width: UInt32,
+        height: UInt32,
+        renderer: String
+    ) {
+        self.data = data
+        self.fileExtension = fileExtension
+        self.mediaType = mediaType
+        self.width = width
+        self.height = height
+        self.renderer = renderer
+    }
+}
+
 public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
     public init() {}
 
@@ -881,6 +906,7 @@ public final class WorkbenchStore: ObservableObject {
     private var pythonKernelStatuses: [String: NotebookPythonKernelStatus] = [:]
     private var pythonExecutableOverride: String?
     private var measurementSetParameterAttempts: [String: TaskParameterAttempt] = [:]
+    private var measurementSetPlotSurfaceRequests: Set<String> = []
     private var acceptedSessionParameterValues: [String: [String: SurfaceParameterValue]] = [:]
     private var acceptedSessionParameterSequence: [String: UInt64] = [:]
     private var nextSessionParameterSequence: UInt64 = 0
@@ -2800,34 +2826,54 @@ public final class WorkbenchStore: ObservableObject {
 
     package func saveMeasurementSetPlotToNotebook(
         datasetID: String,
-        updating visualizationID: String? = nil
+        updating visualizationID: String? = nil,
+        renderedImage: NotebookVisualizationImage? = nil
     ) {
         guard let project = state.scientificNotebooks,
-              var plotState = state.measurementSetPlots[datasetID],
-              let result = plotState.result,
-              !result.imageBytes.isEmpty
+              let plotState = state.measurementSetPlots[datasetID],
+              let result = plotState.result
         else {
             state.lastErrors.append("Generate a MeasurementSet plot before saving it to a notebook")
             return
         }
-        plotState.result = nil
-        plotState.status = .idle
-        plotState.lastError = nil
+        let image = renderedImage ?? NotebookVisualizationImage(
+            data: result.imageBytes,
+            fileExtension: result.imageFormat.lowercased() == "svg" ? "svg" : "png",
+            mediaType: result.imageFormat.lowercased() == "svg" ? "image/svg+xml" : "image/png",
+            width: result.imageWidth,
+            height: result.imageHeight,
+            renderer: result.renderer
+        )
+        guard !image.data.isEmpty else {
+            state.lastErrors.append("Render the MeasurementSet plot before saving it to a notebook")
+            return
+        }
+        var reopenState = plotState
+        reopenState.result = nil
+        reopenState.status = .idle
+        reopenState.lastError = nil
         saveVisualizationData(
-            result.imageBytes,
-            extension: result.imageFormat.lowercased() == "svg" ? "svg" : "png",
+            image.data,
+            extension: image.fileExtension,
             title: result.title,
             notebookID: project.activeNotebookID,
             visualizationID: visualizationID,
             sourceReferences: [result.datasetPath],
             surface: "msexplore",
-            parameters: Self.jsonValue(plotState).objectValue ?? [:],
-            renderer: result.renderer,
-            mediaType: result.imageFormat.lowercased() == "svg" ? "image/svg+xml" : "image/png",
-            width: result.imageWidth,
-            height: result.imageHeight,
+            parameters: Self.jsonValue(reopenState).objectValue ?? [:],
+            renderer: image.renderer,
+            mediaType: image.mediaType,
+            width: image.width,
+            height: image.height,
             settings: ["selection_summary": .string(result.selectionSummary)]
         )
+    }
+
+    package func reportMeasurementSetPlotSaveError(datasetID: String, message: String) {
+        let diagnostic = "Save MeasurementSet plot to notebook: \(message)"
+        state.lastErrors.append(diagnostic)
+        state.measurementSetPlots[datasetID]?.lastError = diagnostic
+        measurementSetPlotLogger.error("\(diagnostic, privacy: .public)")
     }
 
     package func saveImageExplorerToNotebook(
@@ -2883,6 +2929,7 @@ public final class WorkbenchStore: ObservableObject {
                 .object(revision.reopen.parameters)
             ) else { return }
             state.measurementSetPlots[restored.datasetID] = restored
+            measurementSetPlotSurfaceRequests.insert(restored.datasetID)
             openDatasetExplorer(restored.datasetID)
         case "imexplore":
             openImageExplorerPath(source)
@@ -2908,6 +2955,11 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
+    package func shouldPresentMeasurementSetPlotSurface(datasetID: String) -> Bool {
+        measurementSetPlotSurfaceRequests.contains(datasetID)
+    }
+
+    @discardableResult
     private func saveVisualizationData(
         _ data: Data,
         extension fileExtension: String,
@@ -2922,7 +2974,7 @@ public final class WorkbenchStore: ObservableObject {
         width: UInt32,
         height: UInt32,
         settings: [String: JSONValue]
-    ) {
+    ) -> Bool {
         let temporary = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-visualization-\(UUID().uuidString).\(fileExtension)")
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -2952,8 +3004,15 @@ public final class WorkbenchStore: ObservableObject {
                 )
             ))
             loadScientificNotebooks()
+            measurementSetPlotLogger.info(
+                "Saved notebook visualization surface=\(surface, privacy: .public) bytes=\(data.count, privacy: .public)"
+            )
+            return true
         } catch {
-            state.lastErrors.append("Save visualization to notebook: \(error)")
+            let diagnostic = "Save visualization to notebook: \(error)"
+            state.lastErrors.append(diagnostic)
+            measurementSetPlotLogger.error("\(diagnostic, privacy: .public)")
+            return false
         }
     }
 

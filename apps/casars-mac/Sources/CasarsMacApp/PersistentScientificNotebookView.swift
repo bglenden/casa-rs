@@ -611,7 +611,9 @@ struct PersistentScientificNotebookView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(visualization.title).workbenchFont(.headline)
+                Text(visualization.title)
+                    .workbenchFont(.headline)
+                    .accessibilityIdentifier("notebook.visualization.\(visualization.id)")
                 Spacer()
                 Button("Open in Explorer") {
                     store.openNotebookVisualization(visualization.id)
@@ -639,7 +641,6 @@ struct PersistentScientificNotebookView: View {
         .padding(10)
         .background(Color.secondary.opacity(0.045))
         .clipShape(RoundedRectangle(cornerRadius: 7))
-        .accessibilityIdentifier("notebook.visualization.\(visualization.id)")
     }
 
     private func visualizationPreview(
