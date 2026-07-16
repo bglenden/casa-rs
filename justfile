@@ -10,7 +10,7 @@ quick:
     ./scripts/check-spdx.sh
     cargo fmt --all -- --check
     CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings
-    CARGO_INCREMENTAL=0 cargo test --workspace
+    CARGO_INCREMENTAL=0 RUST_TEST_THREADS=1 cargo test --workspace
 
 verify:
     just quick
@@ -28,7 +28,7 @@ typecheck:
     CARGO_INCREMENTAL=0 cargo check --workspace --all-targets
 
 test:
-    CARGO_INCREMENTAL=0 cargo test --workspace
+    CARGO_INCREMENTAL=0 RUST_TEST_THREADS=1 cargo test --workspace
     ./scripts/test-python-package.sh
     bash scripts/test-smoke.sh
     ./scripts/test-install-suite.sh

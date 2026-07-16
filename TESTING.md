@@ -38,6 +38,12 @@ Verification: just verify
   must not select them implicitly.
 - Heavy parity suites stay behind explicit opt-in gates such as `scripts/test-slow.sh`.
 - Release-only Cargo integration suites should stay out of the default compile path via explicit `[[test]]` entries and `required-features`, not only file-local `cfg` guards.
+- Standard workspace gates set `RUST_TEST_THREADS=1`. The imager progress
+  observer is process-global so that worker threads contribute to one run; a
+  parallel libtest harness can otherwise attach unrelated imaging work to an
+  active progress-test context and poison the shared test lock after the first
+  assertion failure. This serializes test cases, not the worker concurrency
+  exercised inside an imaging run.
 
 ## Mocking policy
 

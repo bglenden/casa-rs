@@ -39,6 +39,10 @@ jobs:
         run: cargo clean
 
       - name: Run tests
+        env:
+          # casars-imager progress instrumentation is process-global and its
+          # unit tests intentionally exercise that shared context.
+          RUST_TEST_THREADS: 1
         run: cargo test --workspace
 
   python_package:

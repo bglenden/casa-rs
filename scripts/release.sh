@@ -221,7 +221,7 @@ main() {
   echo "==> Running default local release gates"
   run_timed_step "cargo fmt" cargo fmt --all -- --check
   run_timed_step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
-  run_timed_step "cargo test" cargo test --workspace
+  run_timed_step "cargo test" env RUST_TEST_THREADS=1 cargo test --workspace
   run_timed_step "C++ interop release gate" bash scripts/test-release-cpp-interop.sh
   run_timed_step "python package gate" scripts/test-python-package.sh
   run_timed_step "smoke gate" bash scripts/test-smoke.sh
