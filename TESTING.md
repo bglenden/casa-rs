@@ -114,7 +114,9 @@ identity, checkout, storage root, Xcode developer directory, or Python with the
 HEAD must be the pushed tip of the same-named origin branch. The runner refuses
 an uninitialized Xcode installation or a dirty remote checkout, switches the
 dedicated checkout to the exact requested commit, stores build state outside
-the checkout, and reports the remote artifact path. Use the remote worker as
+the checkout (with an ignored `target` link for the Xcode project's existing
+linker contract), reuses incremental Xcode build state, and reports the remote
+artifact path. Use the remote worker as
 the normal exclusive GUI surface when available; a current green local or
 remote run satisfies the single GUI gate. The worker needs full initialized
 Xcode, Developer Tools mode, SSH access, and a real logged-in console session;

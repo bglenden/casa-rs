@@ -110,6 +110,7 @@ repo_root="$(decode_arg "$1")"
 storage_root="$(decode_arg "$2")"
 artifact_root="$(decode_arg "$3")"
 target_dir="$(decode_arg "$4")"
+derived_data="$storage_root/DerivedData"
 developer_dir="$(decode_arg "$5")"
 branch="$(decode_arg "$6")"
 revision="$(decode_arg "$7")"
@@ -123,6 +124,7 @@ export DEVELOPER_DIR="$developer_dir"
 export CARGO_INCREMENTAL=0
 export CARGO_TARGET_DIR="$target_dir"
 export CASA_RS_GUI_TEST_ARTIFACT_ROOT="$artifact_root"
+export CASA_RS_GUI_TEST_DERIVED_DATA="$derived_data"
 export CASA_RS_GUI_TEST_COUNTDOWN_SECONDS=0
 export CASA_RS_GUI_TEST_EXCLUSIVE_NOTICE=0
 
@@ -156,7 +158,16 @@ if [[ "$remote_revision" != "$revision" ]]; then
 fi
 git -C "$repo_root" switch --quiet --detach "$revision"
 
-mkdir -p "$storage_root" "$artifact_root" "$target_dir"
+mkdir -p "$storage_root" "$artifact_root" "$target_dir" "$derived_data"
+repo_target="$repo_root/target"
+if [[ -e "$repo_target" || -L "$repo_target" ]]; then
+  if [[ ! -L "$repo_target" || ! "$repo_target" -ef "$target_dir" ]]; then
+    echo "remote checkout target must be absent or link to $target_dir" >&2
+    exit 2
+  fi
+else
+  ln -s "$target_dir" "$repo_target"
+fi
 cd "$repo_root"
 
 if [[ -n "$python_command" ]]; then
