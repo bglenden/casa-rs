@@ -1209,6 +1209,9 @@ final class CasarsMacUITests: XCTestCase {
                     && message.content.contains(marker)
                     && !message.citations.isEmpty
                     && message.activities.contains {
+                        $0.label == "CASA corpus.search" && $0.state == "succeeded"
+                    }
+                    && message.activities.contains {
                         $0.label == "CASA task.suggest" && $0.state == "succeeded"
                     }
                     && message.taskSuggestions.contains { $0.taskId == "simobserve" }
@@ -1349,7 +1352,11 @@ final class CasarsMacUITests: XCTestCase {
             (firstSuccess["execution_input"] as? [String: Any])?["details"] as? [String: Any]
         )
         let firstEnvironment = try XCTUnwrap(firstDetails["environment"] as? [String: Any])
+        let firstSourceSHA256 = SHA256.hash(data: Data(scientificPython.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
         XCTAssertEqual((firstSuccess["schema_version"] as? NSNumber)?.intValue, 2)
+        XCTAssertEqual(firstDetails["source_sha256"] as? String, firstSourceSHA256)
         XCTAssertEqual(
             URL(fileURLWithPath: try XCTUnwrap(firstEnvironment["interpreter"] as? String))
                 .resolvingSymlinksInPath().path,
@@ -1365,6 +1372,13 @@ final class CasarsMacUITests: XCTestCase {
                 $0["role"] as? String == "figure" && $0["media_type"] as? String == "image/png"
             } == true
         )
+        let firstFigurePath = try XCTUnwrap(
+            (firstSuccess["artifacts"] as? [[String: Any]])?.first {
+                $0["role"] as? String == "figure" && $0["media_type"] as? String == "image/png"
+            }?["path"] as? String
+        )
+        let firstFigure = try Data(contentsOf: project.appendingPathComponent(firstFigurePath))
+        XCTAssertTrue(firstFigure.starts(with: [0x89, 0x50, 0x4e, 0x47]))
 
         let regeneratedPython = scientificPython
             .replacingOccurrences(of: "baseline_m = 1000.0", with: "baseline_m = 2000.0")
@@ -1383,6 +1397,22 @@ final class CasarsMacUITests: XCTestCase {
             else { return false }
             return details["source"] as? String == regeneratedPython
         }
+        let regeneratedDetails = try XCTUnwrap(
+            (regenerated["execution_input"] as? [String: Any])?["details"] as? [String: Any]
+        )
+        let regeneratedSourceSHA256 = SHA256.hash(data: Data(regeneratedPython.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        XCTAssertEqual(regeneratedDetails["source_sha256"] as? String, regeneratedSourceSHA256)
+        XCTAssertNotEqual(regeneratedSourceSHA256, firstSourceSHA256)
+        let regeneratedFigurePath = try XCTUnwrap(
+            (regenerated["artifacts"] as? [[String: Any]])?.first {
+                $0["role"] as? String == "figure" && $0["media_type"] as? String == "image/png"
+            }?["path"] as? String
+        )
+        let regeneratedFigure = try Data(contentsOf: project.appendingPathComponent(regeneratedFigurePath))
+        XCTAssertTrue(regeneratedFigure.starts(with: [0x89, 0x50, 0x4e, 0x47]))
+        XCTAssertNotEqual(regeneratedFigure, firstFigure)
         let pythonCellReceiptID = try XCTUnwrap(regenerated["cell_id"] as? String)
         XCTAssertEqual(pythonCellReceiptID, pythonCellID)
         let regeneratedRunID = try XCTUnwrap(regenerated["run_id"] as? String)
@@ -1440,6 +1470,12 @@ final class CasarsMacUITests: XCTestCase {
             XCTAssertEqual(reopen["surface"] as? String, "msexplore")
             XCTAssertEqual(revision["source_references"] as? [String], [outputMS.path])
         }
+        let visualizationAssets = try visualizationRevisions.map { revision in
+            project.appendingPathComponent(try XCTUnwrap(revision["asset_path"] as? String))
+        }
+        let visualizationPNGs = try visualizationAssets.map { try Data(contentsOf: $0) }
+        XCTAssertTrue(visualizationPNGs.allSatisfy { $0.starts(with: [0x89, 0x50, 0x4e, 0x47]) })
+        XCTAssertNotEqual(visualizationPNGs[0], visualizationPNGs[1])
 
         try clickIdentified("central.tab.tab-scientific-notebook")
         try bringIntoView(

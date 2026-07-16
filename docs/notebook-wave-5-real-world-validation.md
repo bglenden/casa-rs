@@ -256,6 +256,42 @@ opt-in XCUITest covers real rendering, persistence, and process restart.
 
 ## Bounded refactor pass
 
+The #417 pass used checkpoint commit `9417f2457` and was bounded to the
+package-internal MeasurementSet plot-document -> SwiftUI render -> notebook
+visualization -> explorer-reopen path plus its acceptance harness. The narrower
+test-only alternative was rejected because it would preserve the production
+storage defect. Public application-developer API remains zero before and after;
+the persisted visualization and receipt contracts are unchanged. Discovery
+found two image inputs at the store boundary: the new explicit rendered image
+and a retained optional fallback to legacy `MeasurementSetPlotResultSummary`
+bytes. Every in-repo caller now supplies the rendered image, the fallback was
+deleted, and the package-internal method requires that single input. The result
+is one storage implementation instead of two, with nine fallback-construction
+lines removed and no shim or migration burden outside the package. The separate
+whole-window evidence renderer remains intentionally distinct because it waits
+for asynchronous view settling and supports a caller-selected HiDPI scale; it
+does not store notebook products. No performance benchmark covers AppKit image
+encoding, and none is warranted for this user-triggered acceptance-scale path.
+The 960-by-600 plot product is the existing explicit render contract, the
+0.00001-GiB MeasurementSet is test-owned fixture sizing, and timeouts/scroll
+distances are automation interaction policies—not dataset- or machine-planning
+heuristics. Focused store/rich-document tests, Xcode test compilation, the
+restart diagnostic, and the final opt-in live journey provide the verification
+evidence.
+
+The #417 architecture review found no dependency-direction, public-API,
+persisted-format, or provider-contract change: Rust still owns scientific plot
+data, SwiftUI owns native rendering, and `casa-notebook` owns visualization
+revision persistence. The test-adversary review identified three shallow-proof
+risks in the first acceptance draft. The final journey therefore requires a
+successful cited `corpus.search` activity, independently recomputes both Python
+source hashes recorded in receipt schema v2, and reads the stored Python and
+MeasurementSet plot artifacts back as distinct PNG byte streams. No accepted
+check was deferred. The reality-sync review found `ARCHITECTURE.md`, ADR-0007,
+and the provider-contract documentation consistent with the implementation;
+`TESTING.md` and this procedure are the only documentation updates needed, and
+there are no generated contract artifacts or follow-up drift items.
+
 The #420/#421 corpus pass used checkpoint commit `8231c5bc9`. The broad bounded
 scope was the package-internal ingestion operation and its Workbench/test
 callers; watcher implementation, SQLite contracts, and provider/public APIs

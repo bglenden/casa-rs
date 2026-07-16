@@ -2827,7 +2827,7 @@ public final class WorkbenchStore: ObservableObject {
     package func saveMeasurementSetPlotToNotebook(
         datasetID: String,
         updating visualizationID: String? = nil,
-        renderedImage: NotebookVisualizationImage? = nil
+        renderedImage: NotebookVisualizationImage
     ) {
         guard let project = state.scientificNotebooks,
               let plotState = state.measurementSetPlots[datasetID],
@@ -2836,15 +2836,7 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("Generate a MeasurementSet plot before saving it to a notebook")
             return
         }
-        let image = renderedImage ?? NotebookVisualizationImage(
-            data: result.imageBytes,
-            fileExtension: result.imageFormat.lowercased() == "svg" ? "svg" : "png",
-            mediaType: result.imageFormat.lowercased() == "svg" ? "image/svg+xml" : "image/png",
-            width: result.imageWidth,
-            height: result.imageHeight,
-            renderer: result.renderer
-        )
-        guard !image.data.isEmpty else {
+        guard !renderedImage.data.isEmpty else {
             state.lastErrors.append("Render the MeasurementSet plot before saving it to a notebook")
             return
         }
@@ -2853,18 +2845,18 @@ public final class WorkbenchStore: ObservableObject {
         reopenState.status = .idle
         reopenState.lastError = nil
         saveVisualizationData(
-            image.data,
-            extension: image.fileExtension,
+            renderedImage.data,
+            extension: renderedImage.fileExtension,
             title: result.title,
             notebookID: project.activeNotebookID,
             visualizationID: visualizationID,
             sourceReferences: [result.datasetPath],
             surface: "msexplore",
             parameters: Self.jsonValue(reopenState).objectValue ?? [:],
-            renderer: image.renderer,
-            mediaType: image.mediaType,
-            width: image.width,
-            height: image.height,
+            renderer: renderedImage.renderer,
+            mediaType: renderedImage.mediaType,
+            width: renderedImage.width,
+            height: renderedImage.height,
             settings: ["selection_summary": .string(result.selectionSummary)]
         )
     }
