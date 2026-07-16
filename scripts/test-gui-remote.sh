@@ -170,6 +170,14 @@ else
 fi
 cd "$repo_root"
 
+/usr/bin/caffeinate -dimsu -w $$ >/dev/null 2>&1 &
+caffeinate_pid=$!
+stop_caffeinate() {
+  kill "$caffeinate_pid" >/dev/null 2>&1 || true
+  wait "$caffeinate_pid" 2>/dev/null || true
+}
+trap stop_caffeinate EXIT
+
 if [[ -n "$python_command" ]]; then
   export CASA_RS_GUI_TEST_PYTHON="$python_command"
 fi

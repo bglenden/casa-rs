@@ -121,7 +121,10 @@ the normal exclusive GUI surface when available; a current green local or
 remote run satisfies the single GUI gate. The worker needs full initialized
 Xcode, Developer Tools mode, SSH access, and a real logged-in console session;
 automatic login is a worker-provisioning choice rather than a repository
-requirement. For setup or failure diagnosis only,
+requirement. The console must be unlocked when the gate starts. The runner
+holds a test-scoped `caffeinate` assertion while it owns the GUI window; it does
+not permanently disable the worker's normal screen-lock policy. For setup or
+failure diagnosis only,
 `CASA_RS_GUI_TEST_REMOTE_ONLY=TestTarget/TestClass/testMethod` selects a focused
 test without changing the normal consolidated-gate policy.
 
