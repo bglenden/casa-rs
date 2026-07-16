@@ -1829,7 +1829,10 @@ final class CasarsMacUITests: XCTestCase {
         let taskReceipt = try waitForReceiptObject(in: runs, timeout: 30) {
             $0["operation_id"] as? String == "imager" && $0["status"] as? String == "succeeded"
         }
-        XCTAssertEqual(taskReceipt["cell_id"] as? String, taskCellID)
+        let taskRunCellID = try XCTUnwrap(taskReceipt["cell_id"] as? String)
+        let markdownAfterTask = try String(contentsOf: notebookFile, encoding: .utf8)
+        XCTAssertTrue(markdownAfterTask.contains("id=\(taskCellID) kind=task"))
+        XCTAssertTrue(markdownAfterTask.contains("id=\(taskRunCellID) kind=task"))
         XCTAssertEqual((taskReceipt["schema_version"] as? NSNumber)?.intValue, 2)
         XCTAssertFalse((taskReceipt["products"] as? [[String: Any]] ?? []).isEmpty)
 
@@ -2033,7 +2036,8 @@ final class CasarsMacUITests: XCTestCase {
             ],
             "task": [
                 "operation_id": "imager",
-                "cell_id": taskReceipt["cell_id"] as? String ?? "",
+                "template_cell_id": taskCellID,
+                "run_cell_id": taskRunCellID,
                 "run_id": taskReceipt["run_id"] as? String ?? "",
                 "receipt_schema_version": (taskReceipt["schema_version"] as? NSNumber)?.intValue ?? 0,
                 "products": (taskReceipt["products"] as? [[String: Any]])?.compactMap { $0["path"] as? String } ?? [],
