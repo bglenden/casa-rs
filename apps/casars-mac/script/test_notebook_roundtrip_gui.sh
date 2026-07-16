@@ -36,9 +36,10 @@ LIVE_GATE="$ROOT_DIR/.gui-test/notebook-roundtrip-gui.enabled"
 LIVE_PROJECT="$HOME/Library/Containers/org.casa-rs.casars-mac.uitests.xctrunner/Data/tmp/casars-wave5c-roundtrip-retained"
 PASS_RECEIPT="$LIVE_PROJECT/.notebook-roundtrip-gui.passed"
 EVIDENCE_REPORT="${CASA_RS_GUI_TEST_ARTIFACT_ROOT:-$ROOT_DIR/.gui-test}/NotebookRoundTripGUI.report.json"
+TEST_EVIDENCE_REPORT="$LIVE_PROJECT/.notebook-roundtrip-gui.report.json"
 RESUME_AFTER_TASK="${CASA_RS_NOTEBOOK_ROUNDTRIP_RESUME_AFTER_TASK:-0}"
 mkdir -p "$ROOT_DIR/.gui-test"
-rm -f "$LIVE_GATE" "$PASS_RECEIPT" "$EVIDENCE_REPORT"
+rm -f "$LIVE_GATE" "$PASS_RECEIPT" "$EVIDENCE_REPORT" "$TEST_EVIDENCE_REPORT"
 if [[ "$RESUME_AFTER_TASK" == "1" ]]; then
   [[ -d "$LIVE_PROJECT" ]] || {
     echo "cannot resume Wave 5C: retained project is missing at $LIVE_PROJECT" >&2
@@ -55,7 +56,7 @@ fi
 /usr/bin/plutil -insert pythonCommand -string "$PYTHON_COMMAND" "$LIVE_GATE"
 /usr/bin/plutil -insert projectRoot -string "$LIVE_PROJECT" "$LIVE_GATE"
 /usr/bin/plutil -insert passReceipt -string "$PASS_RECEIPT" "$LIVE_GATE"
-/usr/bin/plutil -insert evidenceReport -string "$EVIDENCE_REPORT" "$LIVE_GATE"
+/usr/bin/plutil -insert evidenceReport -string "$TEST_EVIDENCE_REPORT" "$LIVE_GATE"
 /usr/bin/plutil -insert repoRoot -string "$REPO_ROOT" "$LIVE_GATE"
 /usr/bin/plutil -insert repoRevision -string "$(git -C "$REPO_ROOT" rev-parse HEAD)" "$LIVE_GATE"
 /usr/bin/plutil -insert simobserveCommand -string "$REPO_ROOT/target/debug/simobserve" "$LIVE_GATE"
@@ -72,10 +73,11 @@ if [[ ! -f "$PASS_RECEIPT" ]]; then
   exit 1
 fi
 if [[ "$RESUME_AFTER_TASK" != "1" ]]; then
-  [[ -f "$EVIDENCE_REPORT" ]] || {
+  [[ -f "$TEST_EVIDENCE_REPORT" ]] || {
     echo "notebook production round-trip acceptance did not write its evidence report" >&2
     exit 1
   }
+  cp "$TEST_EVIDENCE_REPORT" "$EVIDENCE_REPORT"
   "$PYTHON_COMMAND" -m json.tool "$EVIDENCE_REPORT" >/dev/null
   echo "==> Durable sanitized evidence: $EVIDENCE_REPORT"
 fi
