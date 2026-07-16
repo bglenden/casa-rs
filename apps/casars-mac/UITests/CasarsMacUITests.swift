@@ -1959,7 +1959,17 @@ final class CasarsMacUITests: XCTestCase {
         let pinnedSource = try String(contentsOf: notebookFile, encoding: .utf8)
         XCTAssertEqual(pinnedSource.components(separatedBy: calculationMarker).count - 1, 1)
         XCTAssertEqual(pinnedSource.components(separatedBy: "casa-rs-ai-pin:v1").count - 1, 1)
-        XCTAssertTrue(pinnedSource.hasSuffix("<!-- /casa-rs-cell -->\n"), pinnedSource)
+        let lastCellEnd = try XCTUnwrap(
+            pinnedSource.range(of: "<!-- /casa-rs-cell -->", options: .backwards)
+        )
+        let pinMarker = try XCTUnwrap(
+            pinnedSource.range(of: "<!-- casa-rs-ai-pin:v1", options: .backwards)
+        )
+        XCTAssertLessThan(
+            lastCellEnd.upperBound,
+            pinMarker.lowerBound,
+            "The AI snapshot was not appended after the existing chronological notebook cells"
+        )
 
         let backendSessionID = calculationTranscript.backendSession?.sessionId
         app.terminate()
