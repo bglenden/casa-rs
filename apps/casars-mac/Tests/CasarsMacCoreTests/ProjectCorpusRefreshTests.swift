@@ -200,6 +200,97 @@ final class ProjectCorpusRefreshTests: XCTestCase {
         XCTAssertEqual(observed, 1)
     }
 
+    func testTransientReadFailureRetainsLastValidIndexAndRetriesSafely() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let documents = project.appendingPathComponent("documents", isDirectory: true)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        let note = documents.appendingPathComponent("paper.md")
+        try "last valid obsidian evidence".write(to: note, atomically: true, encoding: .utf8)
+        try Data([0, 1, 2]).write(to: documents.appendingPathComponent("unsupported.docx"))
+        let outside = project.appendingPathComponent("outside.md")
+        try "must not be indexed".write(to: outside, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            at: documents.appendingPathComponent("linked.md"),
+            withDestinationURL: outside
+        )
+
+        let ingestor = AssistantCorpusIngestor()
+        let client = UniFFIAssistantPersistenceClient()
+        let initialInventory = ingestor.projectDocumentInventory(projectRoot: project.path)
+        XCTAssertEqual(initialInventory.sources.map(\.relativePath), ["documents/paper.md"])
+        XCTAssertTrue(initialInventory.diagnostics.contains {
+            $0.contains("Skipped symbolic-link corpus entry documents/linked.md")
+        })
+        XCTAssertTrue(initialInventory.diagnostics.contains {
+            $0.contains("Unsupported corpus file type documents/unsupported.docx")
+        })
+        let initial = ingestor.collect(
+            projectRoot: project.path,
+            projectInventory: initialInventory,
+            extractProjectPaths: ["documents/paper.md"],
+            scope: .projectDocuments
+        )
+        _ = try client.indexCorpus(
+            projectRoot: project.path,
+            documents: initial.documents,
+            removeMissingLayers: initial.refreshedLayers,
+            projectSources: initial.projectSources,
+            failedProjectSources: initial.failedProjectSources
+        )
+
+        try "replacement chartreuse evidence".write(to: note, atomically: true, encoding: .utf8)
+        let changedInventory = ingestor.projectDocumentInventory(projectRoot: project.path)
+        let changedPlan = try client.projectCorpusPlan(
+            projectRoot: project.path, sources: changedInventory.sources
+        )
+        XCTAssertEqual(changedPlan.extractPaths, ["documents/paper.md"])
+        try FileManager.default.removeItem(at: note)
+        let failed = ingestor.collect(
+            projectRoot: project.path,
+            projectInventory: changedInventory,
+            extractProjectPaths: Set(changedPlan.extractPaths),
+            scope: .projectDocuments
+        )
+        XCTAssertEqual(failed.failedProjectSources, ["documents/paper.md"])
+        XCTAssertTrue(failed.diagnostics.contains {
+            $0.contains("Project corpus source became unreadable or symbolic-linked documents/paper.md")
+        })
+        _ = try client.indexCorpus(
+            projectRoot: project.path,
+            documents: failed.documents,
+            removeMissingLayers: failed.refreshedLayers,
+            projectSources: failed.projectSources,
+            failedProjectSources: failed.failedProjectSources
+        )
+        XCTAssertTrue(try client.searchCorpus(
+            projectRoot: project.path, query: "obsidian", limit: 4
+        ).contains { $0.citation.sourcePath == "documents/paper.md" })
+
+        try "replacement chartreuse evidence".write(to: note, atomically: true, encoding: .utf8)
+        let retryInventory = ingestor.projectDocumentInventory(projectRoot: project.path)
+        let retryPlan = try client.projectCorpusPlan(
+            projectRoot: project.path, sources: retryInventory.sources
+        )
+        XCTAssertEqual(retryPlan.extractPaths, ["documents/paper.md"])
+        let retry = ingestor.collect(
+            projectRoot: project.path,
+            projectInventory: retryInventory,
+            extractProjectPaths: Set(retryPlan.extractPaths),
+            scope: .projectDocuments
+        )
+        _ = try client.indexCorpus(
+            projectRoot: project.path,
+            documents: retry.documents,
+            removeMissingLayers: retry.refreshedLayers,
+            projectSources: retry.projectSources,
+            failedProjectSources: retry.failedProjectSources
+        )
+        XCTAssertTrue(try client.searchCorpus(
+            projectRoot: project.path, query: "chartreuse", limit: 4
+        ).contains { $0.citation.sourcePath == "documents/paper.md" })
+    }
+
     func testWatcherRecoversWhenDocumentsDirectoryIsCreated() throws {
         let project = try temporaryProject()
         defer { try? FileManager.default.removeItem(at: project) }

@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-07-13
+Last reality check: 2026-07-15
 Verification: just docs-check
 
 ## System purpose

@@ -40,7 +40,11 @@
       "source_class": "book",
       "collection_id": "books",
       "year": null,
-      "contributors": [],
+      "contributors": [
+        "A. Richard Thompson",
+        "James M. Moran",
+        "George W. Swenson Jr."
+      ],
       "topic_tags": [],
       "authority_level": "foundation",
       "specificity_scope": "broad",

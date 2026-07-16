@@ -1,7 +1,7 @@
 # casars-mac
 
 Truth class: current descriptive
-Last reality check: 2026-07-12
+Last reality check: 2026-07-15
 Verification: swift test; just gui-test; swift run casars-mac --dump-debug-state --simulate-main-flow; swift run casars-mac --dump-debug-state --show-prototype notebook; swift run casars-mac --dump-debug-state --show-prototype python; swift run casars-mac --dump-debug-state --show-prototype tutorial; swift run casars-mac --dump-debug-state --show-prototype ai; ./script/build_and_run.sh --verify
 
 `casars-mac` is the SwiftUI prototype for the native macOS `casa-rs`

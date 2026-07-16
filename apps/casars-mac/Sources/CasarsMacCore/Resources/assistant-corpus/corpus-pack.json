@@ -16,8 +16,13 @@
       "origin_url": "https://github.com/bglenden/casa-rs",
       "license": {
         "id": "LGPL-3.0-or-later",
+        "name": "GNU Lesser General Public License v3.0 or later",
         "url": "https://www.gnu.org/licenses/lgpl-3.0.html"
       },
+      "contributors": [
+        "CASA-RS contributors"
+      ],
+      "modifications": "None; original CASA-RS project documentation.",
       "redistribution_basis": "Original CASA-RS project documentation",
       "collection_id": "casa-rs",
       "year": 2026
@@ -34,8 +39,15 @@
       "origin_url": "https://link.springer.com/book/10.1007/978-3-319-44431-4",
       "license": {
         "id": "CC-BY-NC-4.0",
+        "name": "Creative Commons Attribution-NonCommercial 4.0 International",
         "url": "https://creativecommons.org/licenses/by-nc/4.0/"
       },
+      "contributors": [
+        "A. Richard Thompson",
+        "James M. Moran",
+        "George W. Swenson Jr."
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Bundled under the publisher-recorded CC BY-NC 4.0 license.",
       "collection_id": "books",
       "year": null
@@ -52,8 +64,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/ALMA-Manual-Calibration-Tutorial_SISS-2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Dominic Ludovici"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -70,8 +87,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/ALMA-Manual-Imaging-Tutorial_SISS-2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Dominic Ludovici"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -88,8 +110,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Blanchard-Antennas-Receiver.pptx",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Jay Blanchard"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -106,8 +133,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Butterfield-ErrorRecognition-SIW2026.pptx",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Natalie Butterfield"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -124,8 +156,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/CreechEak-OptCalibration-SIW2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Michelle Creech-Eakman"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -142,8 +179,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Jagannathan-Widefield.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Preshanth Jagannathan"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -160,8 +202,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Linford-VLBI-SIW2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Justin Linford"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -178,8 +225,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Ludovici-IntroductionRadioAstro-SIW2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Dominic Ludovici"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -196,8 +248,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Marvil_Imaging2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Joshua Marvil"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -214,8 +271,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/MarvilCalibration2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Joshua Marvil"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -232,8 +294,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/MarvilSelfcal2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Joshua Marvil"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -250,8 +317,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Fundamentals-SIW2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Rick Perley"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -268,8 +340,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Geometry-SIW2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Rick Perley"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -286,8 +363,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Polarization-SIW2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Rick Perley"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -304,8 +386,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Practical-SIW2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Rick Perley"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -322,8 +409,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Pesc-nonImgAnalysis-SIW2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Dominic Pesce"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -340,8 +432,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Plant-Correlators.pptx",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Kathryn Plant"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -358,8 +455,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Schaefer-OptImaging-SIW2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Gail Schaefer"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -376,8 +478,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Sekhar_RFI2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Krishna Sekhar"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -394,8 +501,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/SIW21_VLBA_CASA.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Justin Linford"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -412,8 +524,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Svoboda_Spectral_Lines.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Brian Svoboda"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -430,8 +547,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Tobin_SIW_HF_Radio_Interferomety_2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "John Tobin"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -448,8 +570,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Tobin_SIW_SRDP_2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Tobin"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -466,8 +593,14 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Tremblay-LowFreq-SIW2026.pptx",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Steven Tremblay",
+        "Preshanth Jagannathan"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -484,8 +617,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/URV-Overview-SIW2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Urvashi Rau"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -502,8 +640,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/URV_Wideband_Imaging_SIW2026.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Urvashi Rau"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026
@@ -520,8 +663,13 @@
       "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/vanBelle-optical-instruments.pdf",
       "license": {
         "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
         "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf"
       },
+      "contributors": [
+        "Gerard van Belle"
+      ],
+      "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
       "redistribution_basis": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420.",
       "collection_id": "nrao-synthesis-2026",
       "year": 2026

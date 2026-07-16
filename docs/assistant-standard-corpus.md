@@ -14,8 +14,9 @@ index, but the baseline source files are installed only once with the app.
 Version `2026.07.1` contains:
 
 - all 27 NRAO Synthesis Imaging Workshop 2026 decks (1,404 slides),
-- *Interferometry and Synthesis in Radio Astronomy* (910 pages), distributed
-  under CC BY-NC 4.0, and
+- *Interferometry and Synthesis in Radio Astronomy*, Third Edition, by A.
+  Richard Thompson, James M. Moran, and George W. Swenson Jr. (910 pages),
+  distributed under CC BY-NC 4.0, and
 - the small CASA-RS radio-interferometry primer.
 
 The source inventory accounts individually for all 55 Oracle sources and 4,892
@@ -41,6 +42,10 @@ source PDFs. `corpus-pack.json` schema v2 binds every included source to:
 - SHA-256 of the source working copy and bundled text,
 - license identifier and URL, and
 - the recorded redistribution basis.
+
+The installed `NOTICE.md` and manifest provide source-level attribution and
+state that the bundled representation is normalized page text, with images
+omitted and any visually verified OCR corrections disclosed as modifications.
 
 The runtime rejects a pack entry when its bundled-content digest differs. It
 produces one baseline document per source page or slide, preserving the source
@@ -78,8 +83,8 @@ does not apply broad mathematical substitutions.
 ## Measured cost
 
 The selected original PDFs total 359,670,733 bytes. The installed compact pack
-is 3,077,083 bytes. A clean debug test on the reference Apple Silicon system
-loaded and indexed 2,315 page-level documents in 2.61 seconds and produced a
+is 3,087,373 bytes. A clean debug test on the reference Apple Silicon system
+loaded and indexed 2,315 page-level documents in 2.79 seconds and produced a
 14,782,464-byte SQLite index. These are measurements, not hard limits. The v1
 pack is enabled by default because the measured install and first-index costs
 are modest; no 128 MB or executable-location policy is inferred from them.

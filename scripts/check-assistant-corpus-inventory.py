@@ -67,6 +67,7 @@ def main() -> None:
             require(source["redistribution"]["bundled"] is True,
                     f"{label} is selected but not marked bundled")
             require(source["bundle"] is not None, f"{label} has no bundle record")
+            require(bool(source["contributors"]), f"{label} has no attribution contributors")
             bundle_path = PACK_ROOT / source["bundle"]["path"]
             require(bundle_path.is_file(), f"{label} bundle content is missing")
             require(digest(bundle_path) == source["bundle"]["sha256"],
@@ -92,12 +93,23 @@ def main() -> None:
                 f"manifest origin/source digest missing: {document['path']}")
         require(bool(document["license"]["id"] and document["redistribution_basis"]),
                 f"manifest license/basis missing: {document['path']}")
+        require(bool(document["license"]["name"] and document["license"]["url"]),
+                f"manifest license name/URL missing: {document['path']}")
+        require(bool(document["contributors"] and document["modifications"]),
+                f"manifest attribution/modification notice missing: {document['path']}")
         if document["format"] == "normalized_pages_json":
             pages = json.loads(path.read_text(encoding="utf-8"))
             require(all(page["page"] > 0 and page["content"].strip() for page in pages),
                     f"empty or invalid page content: {document['path']}")
             page_total += len(pages)
     require(page_total == 2_314, "resource pack page/slide count must be 2314")
+    notice = (PACK_ROOT / "NOTICE.md").read_text(encoding="utf-8")
+    require("A. Richard Thompson" in notice,
+            "installed notice must name the book authors")
+    require("Creative Commons Attribution-NonCommercial 4.0" in notice,
+            "installed notice must identify the book license")
+    require("images are omitted" in notice,
+            "installed notice must disclose normalized-text modifications")
 
     audit = json.loads(ORIGIN_AUDIT.read_text(encoding="utf-8"))
     require(audit["inventory_id"] == payload["id"], "origin audit targets another inventory")

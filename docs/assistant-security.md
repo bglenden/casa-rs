@@ -1,7 +1,7 @@
 # Assistant Agent Runtime, Authority, and Corpus
 
 Truth class: current descriptive
-Last reality check: 2026-07-13
+Last reality check: 2026-07-15
 Verification: just docs-check
 Architecture decision: [ADR-0007](adr/0007-scientific-notebooks-and-assistant-boundary.md)
 

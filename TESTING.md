@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-07-13
+Last reality check: 2026-07-15
 Verification: just verify
 
 ## Test categories

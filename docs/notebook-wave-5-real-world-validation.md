@@ -153,9 +153,10 @@ Focused evidence on 2026-07-15:
 - 11 Rust corpus contract tests passed, including metadata no-op, preserved-
   mtime/atomic identity, failure retention, rename/delete, and schema-v2
   multi-page migration.
-- 4 native Swift corpus tests passed, including a PDF-bearing no-change refresh
+- 5 native Swift corpus tests passed, including a PDF-bearing no-change refresh
   with zero content/PDF/OCR work, real Workbench startup plus automatic edit
-  retrieval, burst coalescing, and `documents/` creation recovery.
+  retrieval, burst coalescing, `documents/` creation recovery, and transient
+  disappearance/retry with symlink and unsupported-input exclusion.
 - the compact diagnostic records metadata reads, content reads, PDF extractions,
   and OCR calls for each refresh without adding routine full-width UI.
 
@@ -172,21 +173,25 @@ Focused evidence on 2026-07-15:
 
 - the self-contained verifier accounted for all 55 candidate sources, checked
   all 28 selected content files/digests, and matched the 2,314-page/slide pack;
+- the installed notice and per-source manifest record contributors, complete
+  license identity/URL, origins, and the normalized-text/image-omission
+  modification notice, including explicit attribution for the Springer book;
 - the recorded network audit reached all 28 authoritative selected origins with
   zero failures;
 - 3 native Swift pack tests passed: clean-install load and cited retrieval,
   tamper rejection, and baseline upgrade preserving project documents and an
   assistant conversation;
-- the compact pack measured 3,077,083 bytes versus 359,670,733 bytes of selected
-  original PDFs; clean debug ingestion/indexing took 2.61 seconds and produced
+- the compact pack measured 3,087,373 bytes versus 359,670,733 bytes of selected
+  original PDFs; clean debug ingestion/indexing took 2.79 seconds and produced
   a 14,782,464-byte SQLite index;
 - rendered Perley geometry slide 15 was visually compared with its normalized
   text. Targeted corrections restore `H_0`, `delta_0`, `nu`, and `nu_F` where
   OCR had confused zero/degree and Greek/Latin glyphs.
 - a production ChatGPT-subscription agent completed two separate bounded
-  baseline searches in 25.76 seconds and repeated the independently checked
-  locators `Interferometry and Synthesis in Radio Astronomy.pdf, page 806` and
-  `Perley-Geometry-SIW2026.pdf, slide 15`; no shell or web tool was used.
+  baseline searches after the ingestion refactor in 24.97 seconds and repeated
+  the independently checked locators `Interferometry and Synthesis in Radio
+  Astronomy.pdf, page 806` and `Perley-Geometry-SIW2026.pdf, slide 15`; no shell
+  or web tool was used.
 
 ## Bounded refactor pass
 
@@ -200,7 +205,7 @@ supplies the source inventory/extraction plan to the single `collect` operation,
 and tests commit project-source snapshots through the same canonical index
 boundary as production. Package-internal ingestion operations fell from two to
 one; public application-developer API remained zero before and after. No shim,
-alias, or fallback was retained. The consolidated 39-test assistant/corpus run
+alias, or fallback was retained. The consolidated 40-test assistant/corpus run
 passed (5 explicit live-test skips); the separately enabled production corpus
 test also passed. No corpus benchmark exists, so the clean-pack timing above is
 the relevant measured performance evidence. The 600 ms debounce is an explicit
@@ -234,3 +239,45 @@ watchdog is an agent no-activity UX timeout. This work adds no science-data,
 document-size, memory, worker, or executable-location limit. There is no corpus
 benchmark in the repository; the real 843-document/13,759-chunk checkout-plus-
 paper run completed successfully and serves as functional timing evidence only.
+
+## Architecture, test-adversary, and reality-sync reviews
+
+The dedicated architecture review found no dependency-direction, public
+provider-contract, runtime-authority, or approved-scope drift. Swift remains the
+host extraction/watcher owner, Rust remains the fingerprint/index/citation
+owner, and project MCP remains the bounded agent boundary. Its one blocking
+finding was incomplete CC BY-NC attribution/change disclosure for the bundled
+Springer-derived text; the generated manifest and installed `NOTICE.md` now name
+all authors, the full license and source, and the normalized-text/image-omission
+modifications. No follow-up issue or ADR update is required. Confidence: high.
+
+The adversarial test review mapped every #421 and #420 acceptance check to
+executable or generated evidence. It found that the transient-read guarantee
+was split between a Rust retention test and Swift extraction diagnostics. A new
+end-to-end regression now removes a changed file after inventory, proves its
+last valid search hit survives, excludes symlink/unsupported inputs with bounded
+diagnostics, and proves the recreated source is retried and replaces the old
+hit. The review found no remaining shallow or approval-scope gaps. Testing
+readiness: ready.
+
+Reality sync updated the maintained architecture, testing, security,
+scientific-notebook design, and macOS README reality dates. The committed pack,
+inventory, origin audit, generated bindings, tests, and docs describe the same
+2026-plus-book selection and automatic incremental project-corpus behavior.
+Drift classification: no ADR change; generated artifacts and maintained docs
+current; no follow-up issue.
+
+## Final #420/#421 gates
+
+Current final evidence on 2026-07-15, after the refactor and review fixes:
+
+- `just verify` passed outside the shell sandbox: SPDX, formatting, workspace
+  clippy with warnings denied, the complete Rust workspace test suite, and the
+  Python package suite (100 passed, 2 skipped). The first sandboxed attempt was
+  blocked only by localhost-listener permissions. A later transient
+  `casars-imager` shared test-lock failure passed immediately in isolation and
+  did not reproduce in the green full rerun.
+- `python3 scripts/check-assistant-corpus-inventory.py` accounted for all 55
+  candidate sources; `git diff --check` passed.
+- `just gui-test` built the native app/test bundle and passed the single
+  consolidated foreground batch: 25 tests executed, 1 skipped, 0 failures.

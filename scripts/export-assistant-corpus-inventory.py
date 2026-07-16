@@ -39,6 +39,11 @@ BOOK_POLICY: dict[str, dict[str, Any]] = {
     "books:interferometry-and-synthesis-in-radio-astronomy": {
         "origin_url": "https://link.springer.com/book/10.1007/978-3-319-44431-4",
         "download_url": "https://link.springer.com/content/pdf/10.1007/978-3-319-44431-4.pdf",
+        "contributors": [
+            "A. Richard Thompson",
+            "James M. Moran",
+            "George W. Swenson Jr.",
+        ],
         "license": {
             "id": "CC-BY-NC-4.0",
             "name": "Creative Commons Attribution-NonCommercial 4.0 International",
@@ -206,7 +211,7 @@ def export(root: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
                 "source_class": row["source_class"],
                 "collection_id": row["collection_id"],
                 "year": row["year"],
-                "contributors": json.loads(row["contributors_json"]),
+                "contributors": policy.get("contributors") or json.loads(row["contributors_json"]),
                 "topic_tags": json.loads(row["topic_tags_json"]),
                 "authority_level": row["authority_level"],
                 "specificity_scope": row["specificity_scope"],
@@ -294,7 +299,13 @@ def pack_manifest(payload: dict[str, Any], bundle_files: dict[str, bytes], pack_
         "content_sha256": digest(primer_path),
         "source_sha256": digest(primer_path),
         "origin_url": "https://github.com/bglenden/casa-rs",
-        "license": {"id": "LGPL-3.0-or-later", "url": "https://www.gnu.org/licenses/lgpl-3.0.html"},
+        "license": {
+            "id": "LGPL-3.0-or-later",
+            "name": "GNU Lesser General Public License v3.0 or later",
+            "url": "https://www.gnu.org/licenses/lgpl-3.0.html",
+        },
+        "contributors": ["CASA-RS contributors"],
+        "modifications": "None; original CASA-RS project documentation.",
         "redistribution_basis": "Original CASA-RS project documentation",
         "collection_id": "casa-rs",
         "year": 2026,
@@ -313,7 +324,13 @@ def pack_manifest(payload: dict[str, Any], bundle_files: dict[str, bytes], pack_
             "content_sha256": bundle["sha256"],
             "source_sha256": source["oracle_working_copy_sha256"],
             "origin_url": source["origin_url"],
-            "license": {"id": source["license"]["id"], "url": source["license"]["url"]},
+            "license": {
+                "id": source["license"]["id"],
+                "name": source["license"]["name"],
+                "url": source["license"]["url"],
+            },
+            "contributors": source["contributors"],
+            "modifications": "Normalized page-level text extracted from the source; images are omitted and visually verified OCR corrections may be applied.",
             "redistribution_basis": source["redistribution"]["reason"],
             "collection_id": source["collection_id"],
             "year": source["year"],
@@ -340,6 +357,31 @@ def write_pack(payload: dict[str, Any], bundle_files: dict[str, bytes], pack_roo
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)
     (pack_root / "corpus-pack.json").write_bytes(pack_manifest(payload, bundle_files, pack_root))
+    (pack_root / "NOTICE.md").write_bytes(pack_notice(payload))
+
+
+def pack_notice(payload: dict[str, Any]) -> bytes:
+    book = next(source for source in payload["sources"] if source["id"] == "books:interferometry-and-synthesis-in-radio-astronomy")
+    lines = [
+        "# CASA-RS standard radio-astronomy corpus notice",
+        "",
+        f"Corpus pack: `{payload['id']}@{payload['version']}`.",
+        "",
+        "## Interferometry and Synthesis in Radio Astronomy, Third Edition",
+        "",
+        "Authors: " + ", ".join(book["contributors"]),
+        f"Source: {book['origin_url']}",
+        f"License: {book['license']['name']} ({book['license']['url']})",
+        "Changes: normalized page-level text was extracted from the source; images are omitted and source/page-specific visually verified OCR corrections may be applied.",
+        "",
+        "## NRAO Synthesis Imaging Workshop 2026",
+        "",
+        "The compact pack includes normalized page-level text from the 27 publicly hosted 2026 workshop decks. The title, contributor(s), authoritative NRAO URL, source digest, and individual license/authorization record for every deck are in `corpus-pack.json`.",
+        "Changes: images are omitted and source/slide-specific visually verified OCR corrections may be applied.",
+        "Bundling authorization was explicitly recorded by the CASA-RS project owner in issue #420 on 2026-07-15.",
+        "",
+    ]
+    return ("\n".join(lines)).encode()
 
 
 def main() -> None:
@@ -349,11 +391,14 @@ def main() -> None:
     payload, bundle_files = export(args.oracle_root.resolve())
     encoded = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode()
     expected_manifest = pack_manifest(payload, bundle_files, args.pack_root)
+    expected_notice = pack_notice(payload)
     if args.check:
         if not args.output.is_file() or args.output.read_bytes() != encoded:
             raise SystemExit(f"inventory is stale: regenerate {args.output}")
         if not (args.pack_root / "corpus-pack.json").is_file() or (args.pack_root / "corpus-pack.json").read_bytes() != expected_manifest:
             raise SystemExit(f"corpus pack manifest is stale: regenerate {args.pack_root}")
+        if not (args.pack_root / "NOTICE.md").is_file() or (args.pack_root / "NOTICE.md").read_bytes() != expected_notice:
+            raise SystemExit(f"corpus pack notice is stale: regenerate {args.pack_root}")
         for relative, content in bundle_files.items():
             path = args.pack_root / relative
             if not path.is_file() or path.read_bytes() != content:
