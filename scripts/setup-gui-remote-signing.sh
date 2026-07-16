@@ -7,6 +7,11 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "remote GUI signing setup requires macOS" >&2
   exit 2
 fi
+if [[ -n "${SSH_CONNECTION:-}" ]]; then
+  echo "stable GUI signing setup must run in Terminal in the worker's logged-in desktop session" >&2
+  echo "open Terminal through Screen Sharing and run this script there once" >&2
+  exit 2
+fi
 
 identity_name="${CASA_RS_GUI_TEST_SIGNING_NAME:-casa-rs GUI Test Worker}"
 config_path="${CASA_RS_GUI_TEST_SIGNING_CONFIG:-$HOME/.config/casa-rs/gui-worker-signing.env}"
@@ -93,10 +98,9 @@ created_keychain=1
   -s \
   -k "$keychain_password" \
   "$keychain_path" >/dev/null
-/usr/bin/sudo /usr/bin/security add-trusted-cert \
-  -d \
+/usr/bin/security add-trusted-cert \
   -r trustRoot \
-  -k /Library/Keychains/System.keychain \
+  -k "$keychain_path" \
   "$certificate"
 
 search_keychains=("$keychain_path")

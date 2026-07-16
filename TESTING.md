@@ -169,10 +169,12 @@ Run `scripts/setup-gui-remote-signing.sh` once while logged in to a dedicated
 worker before its first remote GUI gate. The setup creates a self-signed
 development identity in a dedicated keychain, stores that keychain's random
 password in `~/.config/casa-rs/gui-worker-signing.env` with mode `0600`, and
-does not use or retain the user's login password. The one-time setup invokes
-`sudo` only to add the public development certificate to the system trust
-store; run it from an interactive terminal so the administrator password can
-be entered normally. Remote gates require this configuration, unlock only the
+does not use or retain the user's login password. Run the one-time setup from
+Terminal in the worker's logged-in desktop session, including when operating
+the worker through Screen Sharing; macOS refuses trust-setting changes from an
+SSH session because it cannot present SecurityAgent authorization. The public
+development certificate is trusted only for that user, not installed as a
+system-wide root. Remote gates require this configuration, unlock only the
 dedicated keychain, and reject a rebuilt app if its designated requirement is
 tied to a one-build ad-hoc `cdhash`. This lets macOS retain a one-time
 removable-volume decision while the large Cargo target, task executables, and
