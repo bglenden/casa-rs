@@ -160,7 +160,9 @@ diagnosis. Disposable live projects default to
 `~/Library/Caches/casa-rs-gui-tests/` (override the parent with
 `CASA_RS_GUI_TEST_PROJECT_BASE`); they must not live inside the XCTest runner's
 app container, which would create an unrelated macOS cross-app-data privacy
-prompt. This live acceptance is not part of CI or `just gui-test`.
+prompt. The sandboxed UI-test runner has a test-only, home-relative read/write
+exception limited to that cache directory; the Workbench product target does
+not receive it. This live acceptance is not part of CI or `just gui-test`.
 
 `just notebook-roundtrip-gui-remote` runs that opt-in live acceptance on the
 same remote worker. It additionally requires the worker's Codex CLI to be

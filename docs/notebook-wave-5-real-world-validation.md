@@ -211,7 +211,9 @@ acceptance path. Disposable projects live under the ordinary user cache at
 `~/Library/Caches/casa-rs-gui-tests/` by default; use
 `CASA_RS_GUI_TEST_PROJECT_BASE` to choose another unprotected parent directory.
 They intentionally do not live inside the XCTest runner's app container because
-that would make the Workbench request cross-app-data permission.
+that would make the Workbench request cross-app-data permission. The sandboxed
+XCTest runner alone has a home-relative read/write exception for this cache;
+the production Workbench target does not.
 
 It is deliberately opt-in and requires an interactive macOS session. The
 harness requires a logged-in Codex CLI using the existing ChatGPT subscription,

@@ -156,7 +156,9 @@ Use `Closes #N` only for issues that should auto-close on merge.
   once with `scripts/setup-gui-remote-signing.sh`. Ad-hoc signatures identify
   each rebuilt app as new code and therefore repeat macOS privacy prompts. Keep
   disposable GUI-test projects in the ordinary user cache selected by
-  `CASA_RS_GUI_TEST_PROJECT_BASE`, never inside another app's container. Keep
+  `CASA_RS_GUI_TEST_PROJECT_BASE`, never inside another app's container. The
+  XCUITest target's test-only file exception must stay limited to that cache
+  directory and must not be copied to the Workbench product target. Keep
   the checkout and Xcode DerivedData on internal storage, while placing the
   large Cargo target, task executables, and retained artifacts on configured
   external storage. A green remote run is the GUI gate; do not repeat it locally
