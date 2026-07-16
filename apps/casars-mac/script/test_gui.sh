@@ -11,8 +11,21 @@ DESTINATION="${CASA_RS_GUI_TEST_DESTINATION:-platform=macOS,arch=$(uname -m)}"
 COUNTDOWN_SECONDS="${CASA_RS_GUI_TEST_COUNTDOWN_SECONDS:-10}"
 ONLY_TESTING="${CASA_RS_GUI_TEST_ONLY:-}"
 REUSE_BUILD="${CASA_RS_GUI_TEST_REUSE_BUILD:-0}"
+CODE_SIGN_IDENTITY="${CASA_RS_GUI_TEST_CODE_SIGN_IDENTITY:-}"
+CODE_SIGN_KEYCHAIN="${CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN:-}"
 TEST_SELECTION_ARGS=()
+CODE_SIGN_ARGS=()
 TEST_DESCRIPTION="all CasarsMacUITests"
+
+if [[ -n "$CODE_SIGN_IDENTITY" ]]; then
+  CODE_SIGN_ARGS+=(
+    "CODE_SIGN_STYLE=Manual"
+    "CODE_SIGN_IDENTITY=$CODE_SIGN_IDENTITY"
+  )
+  if [[ -n "$CODE_SIGN_KEYCHAIN" ]]; then
+    CODE_SIGN_ARGS+=("OTHER_CODE_SIGN_FLAGS=--keychain $CODE_SIGN_KEYCHAIN")
+  fi
+fi
 
 if [[ -n "$ONLY_TESTING" ]]; then
   IFS=',' read -r -a selected_tests <<< "$ONLY_TESTING"
@@ -56,13 +69,29 @@ else
   echo "==> Destination: $DESTINATION"
   echo "==> Result bundle: $RESULT_BUNDLE"
   echo "==> Python: $CASA_RS_GUI_TEST_PYTHON"
+  if [[ -n "$CODE_SIGN_IDENTITY" ]]; then
+    echo "==> Stable code-sign identity: $CODE_SIGN_IDENTITY"
+  fi
 
   xcodebuild build-for-testing \
     -project "$ROOT_DIR/CasarsMac.xcodeproj" \
     -scheme CasarsMacGUI \
     -configuration Debug \
     -destination "$DESTINATION" \
-    -derivedDataPath "$DERIVED_DATA"
+    -derivedDataPath "$DERIVED_DATA" \
+    ${CODE_SIGN_ARGS[@]+"${CODE_SIGN_ARGS[@]}"}
+
+  if [[ -n "$CODE_SIGN_IDENTITY" ]]; then
+    app_bundle="$DERIVED_DATA/Build/Products/Debug/casars-mac.app"
+    /usr/bin/codesign --verify --deep --strict "$app_bundle"
+    designated_requirement="$(/usr/bin/codesign -dr - "$app_bundle" 2>&1)"
+    if [[ "$designated_requirement" == *"cdhash"* ]]; then
+      echo "stable GUI signing failed; app designated requirement is build-specific" >&2
+      echo "$designated_requirement" >&2
+      exit 1
+    fi
+    echo "==> App identity: $designated_requirement"
+  fi
 fi
 
 notify_local() {

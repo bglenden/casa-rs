@@ -165,6 +165,20 @@ NumPy and Matplotlib. On success the full artifacts remain on the worker's
 configured storage and the sanitized JSON report is copied into
 `apps/casars-mac/.gui-test/remote/` locally.
 
+Run `scripts/setup-gui-remote-signing.sh` once while logged in to a dedicated
+worker before its first remote GUI gate. The setup creates a self-signed
+development identity in a dedicated keychain, stores that keychain's random
+password in `~/.config/casa-rs/gui-worker-signing.env` with mode `0600`, and
+does not use or retain the user's login password. The one-time setup invokes
+`sudo` only to add the public development certificate to the system trust
+store; run it from an interactive terminal so the administrator password can
+be entered normally. Remote gates require this configuration, unlock only the
+dedicated keychain, and reject a rebuilt app if its designated requirement is
+tied to a one-build ad-hoc `cdhash`. This lets macOS retain a one-time
+removable-volume decision while the large Cargo target, task executables, and
+test artifacts stay on external storage. Override the config location with
+`CASA_RS_GUI_TEST_REMOTE_SIGNING_CONFIG`.
+
 ## Coverage / confidence policy
 
 - CI enforces 75% line coverage.

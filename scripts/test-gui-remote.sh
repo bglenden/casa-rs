@@ -18,6 +18,7 @@ Optional configuration:
   CASA_RS_GUI_TEST_REMOTE_ROOT=/absolute/path/to/remote/checkout
   CASA_RS_GUI_TEST_REMOTE_STORAGE=/absolute/path/to/remote/build-storage
   CASA_RS_GUI_TEST_REMOTE_DERIVED_DATA=/absolute/path/to/xcode-derived-data
+  CASA_RS_GUI_TEST_REMOTE_SIGNING_CONFIG=/absolute/path/to/signing-config
   CASA_RS_GUI_TEST_REMOTE_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
   CASA_RS_GUI_TEST_REMOTE_PYTHON=/absolute/path/to/python
   CASA_RS_GUI_TEST_REMOTE_CODEX=/absolute/path/to/codex
@@ -31,6 +32,7 @@ remote="${CASA_RS_GUI_TEST_REMOTE:-}"
 remote_root="${CASA_RS_GUI_TEST_REMOTE_ROOT:-@HOME@/Library/Caches/casa-rs-gui-worker/source}"
 remote_storage="${CASA_RS_GUI_TEST_REMOTE_STORAGE:-/Volumes/Extra Storage (not encrypted)/casa-rs-gui-worker-state}"
 remote_derived_data="${CASA_RS_GUI_TEST_REMOTE_DERIVED_DATA:-@HOME@/Library/Developer/Xcode/DerivedData/casa-rs-gui-worker}"
+remote_signing_config="${CASA_RS_GUI_TEST_REMOTE_SIGNING_CONFIG:-@HOME@/.config/casa-rs/gui-worker-signing.env}"
 developer_dir="${CASA_RS_GUI_TEST_REMOTE_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 remote_python="${CASA_RS_GUI_TEST_REMOTE_PYTHON:-}"
 remote_codex="${CASA_RS_GUI_TEST_REMOTE_CODEX:-}"
@@ -94,7 +96,7 @@ echo "==> Artifacts: $remote_artifacts"
 remote_args=(
   "$remote_root" "$remote_storage" "$remote_derived_data" "$remote_artifacts"
   "$remote_target" "$developer_dir" "$branch" "$revision" "$mode"
-  "$remote_python" "$remote_codex" "$remote_only"
+  "$remote_python" "$remote_codex" "$remote_only" "$remote_signing_config"
 )
 encoded_remote_args=()
 for arg in "${remote_args[@]}"; do
@@ -128,6 +130,7 @@ mode="$(decode_arg "$9")"
 python_command="$(expand_remote_home "$(decode_arg "${10}")")"
 codex_command="$(expand_remote_home "$(decode_arg "${11}")")"
 only_testing="$(decode_arg "${12}")"
+signing_config="$(expand_remote_home "$(decode_arg "${13}")")"
 
 export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export DEVELOPER_DIR="$developer_dir"
@@ -155,6 +158,29 @@ if ! "$developer_dir/usr/bin/xcodebuild" -checkFirstLaunchStatus; then
   echo "Xcode license/first-launch setup is incomplete on the remote Mac" >&2
   exit 2
 fi
+if [[ ! -f "$signing_config" ]]; then
+  echo "stable GUI-worker signing is not configured: $signing_config" >&2
+  echo "run scripts/setup-gui-remote-signing.sh once on the worker" >&2
+  exit 2
+fi
+# shellcheck disable=SC1090 -- private worker config created by the setup script.
+source "$signing_config"
+: "${CASA_RS_GUI_TEST_CODE_SIGN_IDENTITY:?missing code-sign identity in $signing_config}"
+: "${CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN:?missing keychain path in $signing_config}"
+: "${CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN_PASSWORD:?missing keychain password in $signing_config}"
+/usr/bin/security unlock-keychain \
+  -p "$CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN_PASSWORD" \
+  "$CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN"
+if ! /usr/bin/security find-identity -v -p codesigning \
+  "$CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN" |
+  /usr/bin/grep -Fq "$CASA_RS_GUI_TEST_CODE_SIGN_IDENTITY"
+then
+  echo "stable GUI-worker signing identity is unavailable" >&2
+  exit 2
+fi
+export CASA_RS_GUI_TEST_CODE_SIGN_IDENTITY
+export CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN
+unset CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN_PASSWORD
 checkout_changes="$(git -C "$repo_root" status --porcelain --untracked-files=all)"
 repo_target="$repo_root/target"
 if [[ -L "$repo_target" && "$repo_target" -ef "$target_dir" ]]; then
