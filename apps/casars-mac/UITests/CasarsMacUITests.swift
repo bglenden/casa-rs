@@ -1687,6 +1687,19 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: templateMarkdown), templateMarkdownData)
         XCTAssertTrue(forkedSource.contains("# First Look at Imaging: TW Hya"))
         XCTAssertTrue(forkedSource.contains("019f6666-6666-7666-8666-666666666666"))
+        if let archiveSeed = environment["archiveSeed"] {
+            let downloadPart = tutorialLock.deletingLastPathComponent()
+                .appendingPathComponent("staging/twhya-calibrated", isDirectory: true)
+                .appendingPathComponent("download.part")
+            try FileManager.default.createDirectory(
+                at: downloadPart.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.copyItem(
+                at: URL(fileURLWithPath: archiveSeed),
+                to: downloadPart
+            )
+        }
 
         let pythonCellID = "019f0000-0000-7000-8000-000000000418"
         let pythonSource = """
@@ -1860,7 +1873,7 @@ final class CasarsMacUITests: XCTestCase {
         let revisedPythonSource = pythonSource
             .replacingOccurrences(of: "maximum_baseline_m = 500.0", with: "maximum_baseline_m = 750.0")
             .replacingOccurrences(of: "TW Hya Band 7 nominal resolution", with: "TW Hya Band 7 revised resolution")
-        try bringIntoView("notebook.python.editor.\(pythonCellID)", in: "notebook.document.scroll", deltaY: 260)
+        try bringIntoView("notebook.python.editor.\(pythonCellID)", in: "notebook.document.scroll", deltaY: -420)
         replaceText("notebook.python.editor.\(pythonCellID)", with: String(revisedPythonSource.dropLast()))
         try clickIdentified("notebook.save")
         try bringIntoView("notebook.python.run.\(pythonCellID)", in: "notebook.document.scroll", deltaY: -240)
@@ -2018,6 +2031,7 @@ final class CasarsMacUITests: XCTestCase {
                 "source_uri": expectedSource,
                 "expected_size_bytes": expectedSize,
                 "expected_sha256": expectedSha256,
+                "archive_seeded": environment["archiveSeed"] != nil,
                 "duration_seconds": acquisitionDurationSeconds,
                 "operation_id": acquisitionReceipt["operation_id"] as? String ?? "",
                 "run_id": acquisitionReceipt["run_id"] as? String ?? "",

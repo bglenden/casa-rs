@@ -85,6 +85,23 @@ rm -rf "$LIVE_PROJECT"
 /usr/bin/plutil -insert expectedSha256 -string "$EXPECTED_SHA256" "$LIVE_GATE"
 /usr/bin/plutil -insert imagerCommand -string "$TARGET_DIR/debug/casars-imager" "$LIVE_GATE"
 /usr/bin/plutil -insert msexploreCommand -string "$TARGET_DIR/debug/msexplore" "$LIVE_GATE"
+if [[ -n "${CASA_RS_GUI_TEST_TUTORIAL_ARCHIVE_SEED:-}" ]]; then
+  seed="${CASA_RS_GUI_TEST_TUTORIAL_ARCHIVE_SEED}"
+  [[ -f "$seed" ]] || {
+    echo "tutorial archive seed does not exist: $seed" >&2
+    exit 2
+  }
+  [[ "$(stat -f '%z' "$seed")" == "$EXPECTED_SIZE" ]] || {
+    echo "tutorial archive seed has the wrong size: $seed" >&2
+    exit 2
+  }
+  [[ "$(shasum -a 256 "$seed" | awk '{print $1}')" == "$EXPECTED_SHA256" ]] || {
+    echo "tutorial archive seed has the wrong SHA-256: $seed" >&2
+    exit 2
+  }
+  /usr/bin/plutil -insert archiveSeed -string "$seed" "$LIVE_GATE"
+  echo "==> Focused diagnostic will resume from a previously verified archive"
+fi
 trap 'rm -f "$LIVE_GATE" "$PASS_RECEIPT"' EXIT
 
 if ! bash "$ROOT_DIR/script/test_gui.sh"; then
