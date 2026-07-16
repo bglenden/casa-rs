@@ -1,4 +1,5 @@
 import CasarsMacCore
+import AppKit
 import SwiftUI
 
 enum AssistantDiscussionLayout {
@@ -10,7 +11,7 @@ struct AssistantDiscussionView: View {
     @ObservedObject var store: WorkbenchStore
     let layout: AssistantDiscussionLayout
     @State private var contextsExpanded = false
-    @State private var expandedCitationIDs: Set<String> = []
+    @State private var sourceCitation: AssistantCitationState?
     @State private var settingsPresented = false
     @State private var agentCommandDraft = ""
     @State private var pythonCommandDraft = ""
@@ -39,6 +40,9 @@ struct AssistantDiscussionView: View {
         }
         .tint(.purple)
         .background(Color(nsColor: .textBackgroundColor))
+        .sheet(item: $sourceCitation) { citation in
+            citationPreview(citation)
+        }
         .confirmationDialog(
             "Give this agent full system access?",
             isPresented: $confirmFullAccess,
@@ -97,7 +101,8 @@ struct AssistantDiscussionView: View {
     }
 
     private func conversation(_ discussion: AssistantDiscussionState) -> some View {
-        ScrollViewReader { proxy in
+        let bottomID = "assistant.conversation.bottom"
+        return ScrollViewReader { proxy in
             ScrollView {
                 // Chat transcripts are modest in size and update rapidly while a turn streams.
                 // A LazyVStack can repeatedly invalidate its view-list layout when the streaming
@@ -118,11 +123,13 @@ struct AssistantDiscussionView: View {
                         messageRow(message).id(message.id)
                     }
                     if discussion.activity == .streaming {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "sparkles")
-                                .foregroundStyle(.purple)
-                            Text(discussion.streamingText.isEmpty ? "Thinking…" : discussion.streamingText)
-                                .textSelection(.enabled)
+                        VStack(alignment: .leading, spacing: 7) {
+                            if !discussion.streamingText.isEmpty {
+                                Text(discussion.streamingText)
+                                    .workbenchFont(.body)
+                                    .textSelection(.enabled)
+                            }
+                            assistantProgress(discussion)
                         }
                         .padding(10)
                         .accessibilityIdentifier("assistant.streaming")
@@ -154,6 +161,7 @@ struct AssistantDiscussionView: View {
                         .background(Color.orange.opacity(0.08))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
+                    Color.clear.frame(height: 1).id(bottomID)
                 }
                 .frame(maxWidth: layout == .expanded ? 760 : .infinity, alignment: .leading)
                 .padding(layout == .expanded ? 24 : 12)
@@ -162,9 +170,49 @@ struct AssistantDiscussionView: View {
             .onAppear {
                 if let anchor = discussion.activeConversation?.scrollAnchorMessageId {
                     DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .center) }
+                } else {
+                    DispatchQueue.main.async { proxy.scrollTo(bottomID, anchor: .bottom) }
                 }
             }
+            .onChange(of: discussion.activeConversation?.messages.count ?? 0) { _ in
+                scrollAssistantToBottom(proxy, id: bottomID)
+            }
+            .onChange(of: discussion.streamingText) { _ in
+                scrollAssistantToBottom(proxy, id: bottomID)
+            }
+            .onChange(of: discussion.liveActivity) { _ in
+                scrollAssistantToBottom(proxy, id: bottomID)
+            }
+            .onChange(of: discussion.lastError) { _ in
+                scrollAssistantToBottom(proxy, id: bottomID)
+            }
             .accessibilityIdentifier("assistant.conversationScroll")
+        }
+    }
+
+    private func assistantProgress(_ discussion: AssistantDiscussionState) -> some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let label = discussion.liveActivity?.label ?? "Waiting for agent event"
+            let age = discussion.lastActivityAt.map {
+                max(0, Int(context.date.timeIntervalSince1970 - Double($0) / 1_000))
+            }
+            HStack(spacing: 7) {
+                Image(systemName: "sparkles").foregroundStyle(.purple)
+                Text(age.map { "\(label) · activity \($0)s ago" } ?? label)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .help("This status is updated by real agent and tool events. Hidden model reasoning is not exposed.")
+            .accessibilityLabel("Assistant progress")
+            .accessibilityValue(age.map { "\(label), activity \($0) seconds ago" } ?? label)
+        }
+    }
+
+    private func scrollAssistantToBottom(_ proxy: ScrollViewProxy, id: String) {
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.12)) {
+                proxy.scrollTo(id, anchor: .bottom)
+            }
         }
     }
 
@@ -182,23 +230,22 @@ struct AssistantDiscussionView: View {
                     Spacer()
                 }
                 if let rendered = NotebookMarkdownPresentation.attributedString(message.content) {
-                    Text(rendered).textSelection(.enabled)
+                    Text(rendered).workbenchFont(.body).textSelection(.enabled)
                 }
                 ForEach(Array(message.citations.enumerated()), id: \.element.id) { index, citation in
-                    DisclosureGroup(
-                        isExpanded: Binding(
-                            get: { expandedCitationIDs.contains(citation.id) },
-                            set: { expanded in
-                                if expanded { expandedCitationIDs.insert(citation.id) }
-                                else { expandedCitationIDs.remove(citation.id) }
-                            }
-                        )
-                    ) {
-                        Text(citation.excerpt).workbenchFont(.caption).textSelection(.enabled)
+                    Button {
+                        sourceCitation = citation
                     } label: {
-                        Text("[\(index + 1)] \(citation.label) · \(citation.locator)")
-                            .workbenchFont(.caption)
+                        HStack(alignment: .firstTextBaseline, spacing: 5) {
+                            Text("[\(index + 1)] \(citation.label) · \(citation.locator)")
+                                .workbenchFont(.caption)
+                                .multilineTextAlignment(.leading)
+                            Image(systemName: "arrow.up.right.square")
+                                .workbenchFont(.caption2)
+                        }
                     }
+                    .buttonStyle(.link)
+                    .accessibilityIdentifier("assistant.citation.\(citation.id)")
                 }
                 ForEach(message.taskSuggestions) { suggestion in
                     Button("Open \(suggestion.taskId) task") {
@@ -231,7 +278,51 @@ struct AssistantDiscussionView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
             if message.role != "user" { Spacer(minLength: layout == .expanded ? 70 : 0) }
         }
-        .accessibilityIdentifier("assistant.message.\(message.id)")
+    }
+
+    private func citationPreview(_ citation: AssistantCitationState) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Source reference", systemImage: "doc.text.magnifyingglass")
+                .workbenchFont(.headline)
+                .accessibilityIdentifier("assistant.citation.preview")
+            Text(citation.label).workbenchFont(.subheadline, weight: .semibold)
+            Text(citation.locator)
+                .workbenchFont(.caption, design: .monospaced)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            ScrollView {
+                Text(citation.excerpt)
+                    .workbenchFont(.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            HStack {
+                if let url = citationURL(citation) {
+                    Button("Open source") { NSWorkspace.shared.open(url) }
+                        .accessibilityIdentifier("assistant.citation.openSource")
+                }
+                Spacer()
+                Button("Done") { sourceCitation = nil }
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("assistant.citation.done")
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 520, minHeight: 320)
+    }
+
+    private func citationURL(_ citation: AssistantCitationState) -> URL? {
+        guard let path = citation.sourcePath, !path.isEmpty else { return nil }
+        if let url = URL(string: path), let scheme = url.scheme, ["http", "https"].contains(scheme) {
+            return url
+        }
+        let expanded = (path as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/"), FileManager.default.fileExists(atPath: expanded) {
+            return URL(fileURLWithPath: expanded)
+        }
+        let projectPath = URL(fileURLWithPath: store.state.project.rootPath, isDirectory: true)
+            .appendingPathComponent(path).standardizedFileURL
+        return FileManager.default.fileExists(atPath: projectPath.path) ? projectPath : nil
     }
 
     private func composer(_ discussion: AssistantDiscussionState) -> some View {

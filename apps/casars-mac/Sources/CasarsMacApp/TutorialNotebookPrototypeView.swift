@@ -491,65 +491,71 @@ struct TutorialNotebookPrototypeView: View {
     }
 
     private var approvalSheet: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Label("Review dataset acquisition", systemImage: "arrow.down.circle")
-                        .workbenchFont(.title2, weight: .semibold)
-                    Text("Nothing downloads until you approve these exact fixture facts.")
-                        .foregroundStyle(.secondary)
-                }
-
-                if let facts = tutorial?.activeApproval {
-                    VStack(alignment: .leading, spacing: 10) {
-                        approvalRow("Scheme", facts.scheme, id: "scheme")
-                        approvalRow("Requested source", facts.requestedURL, id: "requestedSource")
-                        approvalRow("Resolved source", facts.resolvedURL, id: "resolvedSource")
-                        approvalRow(
-                            "Redirects",
-                            facts.redirects.isEmpty ? "None" : facts.redirects.joined(separator: " → "),
-                            id: "redirects"
-                        )
-                        approvalRow(
-                            "Expected size",
-                            "\(formatBytes(facts.expectedSizeBytes)) (\(facts.expectedSizeBytes) bytes)",
-                            id: "expectedSize"
-                        )
-                        approvalRow("Project destination", facts.destination, id: "destination")
-                        approvalRow("SHA-256", facts.expectedSHA256, id: "checksum")
-                        approvalRow(
-                            "Disk requirement",
-                            "\(formatBytes(facts.requiredDiskBytes)) required · \(formatBytes(facts.freeDiskBytes)) free",
-                            id: "diskRequirement"
-                        )
-                        approvalRow("Extraction plan", facts.extractionPlan, id: "extractionPlan")
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label("Review dataset acquisition", systemImage: "arrow.down.circle")
+                            .workbenchFont(.title2, weight: .semibold)
+                        Text("Nothing downloads until you approve these exact fixture facts.")
+                            .foregroundStyle(.secondary)
                     }
 
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("Optional verification checks")
-                            .workbenchFont(.headline)
-                        ForEach(facts.optionalChecks) { check in
-                            Label(check.label, systemImage: check.isEnabled ? "checkmark.square" : "square")
-                                .workbenchFont(.subheadline)
+                    if let facts = tutorial?.activeApproval {
+                        VStack(alignment: .leading, spacing: 10) {
+                            approvalRow("Scheme", facts.scheme, id: "scheme")
+                            approvalRow("Requested source", facts.requestedURL, id: "requestedSource")
+                            approvalRow("Resolved source", facts.resolvedURL, id: "resolvedSource")
+                            approvalRow(
+                                "Redirects",
+                                facts.redirects.isEmpty ? "None" : facts.redirects.joined(separator: " → "),
+                                id: "redirects"
+                            )
+                            approvalRow(
+                                "Expected size",
+                                "\(formatBytes(facts.expectedSizeBytes)) (\(facts.expectedSizeBytes) bytes)",
+                                id: "expectedSize"
+                            )
+                            approvalRow("Project destination", facts.destination, id: "destination")
+                            approvalRow("SHA-256", facts.expectedSHA256, id: "checksum")
+                            approvalRow(
+                                "Disk requirement",
+                                "\(formatBytes(facts.requiredDiskBytes)) required · \(formatBytes(facts.freeDiskBytes)) free",
+                                id: "diskRequirement"
+                            )
+                            approvalRow("Extraction plan", facts.extractionPlan, id: "extractionPlan")
+                        }
+
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text("Optional verification checks")
+                                .workbenchFont(.headline)
+                            ForEach(facts.optionalChecks) { check in
+                                Label(check.label, systemImage: check.isEnabled ? "checkmark.square" : "square")
+                                    .workbenchFont(.subheadline)
+                            }
                         }
                     }
                 }
-
-                HStack {
-                    Button("Cancel") { store.dismissTutorialPrototypeApproval() }
-                        .accessibilityIdentifier("tutorialPrototype.approval.cancel")
-                    Spacer()
-                    Button("Approve and download") {
-                        store.approveTutorialPrototypeAcquisition()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("tutorialPrototype.approval.approve")
-                }
+                .padding(24)
             }
-            .padding(24)
+            .accessibilityIdentifier("tutorialPrototype.approval.sheet")
+
+            Divider()
+
+            HStack {
+                Button("Cancel") { store.dismissTutorialPrototypeApproval() }
+                    .accessibilityIdentifier("tutorialPrototype.approval.cancel")
+                Spacer()
+                Button("Approve and download") {
+                    store.approveTutorialPrototypeAcquisition()
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("tutorialPrototype.approval.approve")
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
         }
         .frame(minWidth: 680, minHeight: 610)
-        .accessibilityIdentifier("tutorialPrototype.approval.sheet")
     }
 
     private func approvalRow(_ label: String, _ value: String, id: String) -> some View {

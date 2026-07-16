@@ -708,7 +708,7 @@ package final class DeterministicAgentSession: AgentSession {
             "server": profile.mcpServerName, "tool": "corpus.search",
             "result": ["content": [["type": "text", "text": citations]]],
         ]]])
-        let suggestion = #"{"kind":"task_suggestion","task_id":"imager","parameters":{"weighting":"briggs","robust":"-0.5"}}"#
+        let suggestion = #"{"kind":"task_suggestion","task_id":"imager","parameters":{"vis":"input.ms","imagename":"products/image","weighting":"briggs","robust":"-0.5"}}"#
         eventHandler?(["method": "item/completed", "params": ["item": [
             "id": "fixture-task", "type": "mcpToolCall",
             "server": profile.mcpServerName, "tool": "task.suggest",

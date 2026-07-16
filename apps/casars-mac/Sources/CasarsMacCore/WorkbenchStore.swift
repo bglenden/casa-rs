@@ -792,6 +792,17 @@ private struct TaskParameterAttempt {
     var saveLast: Bool
 }
 
+private enum AssistantNotebookPinError: LocalizedError {
+    case invalidTaskSuggestion(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .invalidTaskSuggestion(detail):
+            "Cannot add the suggested task to the notebook: \(detail)"
+        }
+    }
+}
+
 private struct SessionLastDestination: Hashable {
     var surfaceID: String
     var workspace: String
@@ -3936,7 +3947,7 @@ public final class WorkbenchStore: ObservableObject {
               let notebook = state.scientificNotebooks?.activeNotebook
         else { return }
         do {
-            let markdown = assistantPinMarkdown(
+            let markdown = try assistantPinMarkdown(
                 message,
                 conversationID: conversation.id
             )
@@ -3995,6 +4006,13 @@ public final class WorkbenchStore: ObservableObject {
         }
         discussion.activity = .streaming
         discussion.streamingText = ""
+        discussion.liveActivity = AssistantActivityState(
+            id: "request-sent",
+            label: "Request sent",
+            state: "running",
+            summary: nil
+        )
+        discussion.lastActivityAt = Self.assistantTimestamp()
         discussion.lastError = nil
         state.assistantDiscussion = discussion
         assistantStreamFlushWorkItem?.cancel()
@@ -4166,8 +4184,10 @@ public final class WorkbenchStore: ObservableObject {
             let params = event["params"] as? [String: Any] ?? [:]
             switch method {
             case "item/agentMessage/delta":
+                setAssistantLiveActivity(id: "response", label: "Writing response")
                 enqueueAssistantStreamDelta(params["delta"] as? String ?? "")
             case "turn/started":
+                setAssistantLiveActivity(id: "turn", label: "Agent accepted request")
                 if let turn = params["turn"] as? [String: Any] {
                     state.assistantDiscussion?.activeTurnID = turn["id"] as? String
                 }
@@ -4311,6 +4331,8 @@ public final class WorkbenchStore: ObservableObject {
         } else {
             assistantPendingActivities.append(activity)
         }
+        state.assistantDiscussion?.liveActivity = activity
+        state.assistantDiscussion?.lastActivityAt = Self.assistantTimestamp()
         guard completed,
               isTrustedCasaMCP,
               let result = item["result"] as? [String: Any],
@@ -4407,6 +4429,8 @@ public final class WorkbenchStore: ObservableObject {
             persistActiveAssistantConversation()
         }
         state.assistantDiscussion?.streamingText = ""
+        state.assistantDiscussion?.liveActivity = nil
+        state.assistantDiscussion?.lastActivityAt = nil
         state.assistantDiscussion?.activeTurnID = nil
         state.assistantDiscussion?.activity = status == "failed" ? .restartRequired : .completed
         assistantPendingCitations = []
@@ -4724,7 +4748,7 @@ public final class WorkbenchStore: ObservableObject {
     private func assistantPinMarkdown(
         _ message: AssistantMessageState,
         conversationID: String
-    ) -> String {
+    ) throws -> String {
         var markdown = """
 
 
@@ -4737,7 +4761,38 @@ public final class WorkbenchStore: ObservableObject {
         for (index, citation) in message.citations.enumerated() {
             markdown += "\n\n[\(index + 1)] \(citation.label), \(citation.locator)"
         }
+        for suggestion in message.taskSuggestions {
+            markdown += try assistantTaskCellMarkdown(suggestion)
+        }
         return markdown + "\n"
+    }
+
+    private func assistantTaskCellMarkdown(_ suggestion: AssistantTaskSuggestionState) throws -> String {
+        let bundle = try surfaceParameterClient.loadBundle(surfaceID: suggestion.taskId)
+        var parameters: [String: JSONValue] = [:]
+        for (name, text) in suggestion.parameters {
+            guard let concept = bundle.concept(for: name) else {
+                throw AssistantNotebookPinError.invalidTaskSuggestion(
+                    "unknown parameter \(name) for \(suggestion.taskId)"
+                )
+            }
+            parameters[name] = JSONValue(parameterValue: concept.valueDomain.value(from: text))
+        }
+        let intent = NotebookTaskIntent(
+            format: 1,
+            surface: suggestion.taskId,
+            kind: bundle.surface.kind,
+            contract: UInt32(clamping: bundle.surface.contractVersion),
+            parameters: parameters
+        )
+        return """
+
+
+        <!-- casa-rs-cell:v1 id=\(UUID().uuidString.lowercased()) kind=task -->
+        ```toml
+        \(intent.profileTOML)```
+        <!-- /casa-rs-cell -->
+        """
     }
 
     private func appendAssistantMarkdownAtNotebookTail(_ markdown: String) {
@@ -4783,6 +4838,8 @@ public final class WorkbenchStore: ObservableObject {
         if state.assistantDiscussion == nil { state.assistantDiscussion = AssistantDiscussionState() }
         state.assistantDiscussion?.lastError = message
         state.assistantDiscussion?.activity = .restartRequired
+        state.assistantDiscussion?.liveActivity = nil
+        state.assistantDiscussion?.lastActivityAt = nil
     }
 
     private func scheduleAssistantResponseTimeout() {
@@ -4816,7 +4873,19 @@ public final class WorkbenchStore: ObservableObject {
 
     private func noteAssistantResponseActivity() {
         guard state.assistantDiscussion?.activity == .streaming else { return }
+        state.assistantDiscussion?.lastActivityAt = Self.assistantTimestamp()
         scheduleAssistantResponseTimeout()
+    }
+
+    private func setAssistantLiveActivity(id: String, label: String) {
+        guard state.assistantDiscussion?.activity == .streaming else { return }
+        state.assistantDiscussion?.liveActivity = AssistantActivityState(
+            id: id,
+            label: label,
+            state: "running",
+            summary: nil
+        )
+        state.assistantDiscussion?.lastActivityAt = Self.assistantTimestamp()
     }
 
     private func cancelAssistantResponseTimeout() {
@@ -4837,6 +4906,16 @@ public final class WorkbenchStore: ObservableObject {
             surfaceID: surfaceID,
             instanceID: instanceID
         )]?.contains(name) == true
+    }
+
+    private func clearAssistantSuggestedParameters(sessionKey: String, names: Set<String>) {
+        guard var suggested = assistantSuggestedParameters[sessionKey] else { return }
+        suggested.subtract(names)
+        if suggested.isEmpty {
+            assistantSuggestedParameters.removeValue(forKey: sessionKey)
+        } else {
+            assistantSuggestedParameters[sessionKey] = suggested
+        }
     }
 
     package func openAssistantTaskSuggestion(messageID: String, suggestionID: String) {
@@ -6549,6 +6628,7 @@ public final class WorkbenchStore: ObservableObject {
         session.draftText[argumentID] = normalized
         resolveParameterSession(&session, editedParameters: [argumentID])
         state.parameterSessions[sessionKey] = session
+        clearAssistantSuggestedParameters(sessionKey: sessionKey, names: [argumentID])
         state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedTaskID, instanceID: instanceID)
     }
 
@@ -6571,6 +6651,7 @@ public final class WorkbenchStore: ObservableObject {
         session.draftText.removeValue(forKey: argumentID)
         resolveParameterSession(&session, editedParameters: [argumentID])
         state.parameterSessions[sessionKey] = session
+        clearAssistantSuggestedParameters(sessionKey: sessionKey, names: [argumentID])
         state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedTaskID, instanceID: instanceID)
     }
 
@@ -6596,6 +6677,7 @@ public final class WorkbenchStore: ObservableObject {
         session.draftText.removeValue(forKey: name)
         resolveParameterSession(&session, editedParameters: [name])
         state.parameterSessions[sessionKey] = session
+        clearAssistantSuggestedParameters(sessionKey: sessionKey, names: [name])
         state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedSurfaceID, instanceID: instanceID)
     }
 
@@ -6608,6 +6690,7 @@ public final class WorkbenchStore: ObservableObject {
         session.draftText = [:]
         resolveParameterSession(&session)
         state.parameterSessions[sessionKey] = session
+        assistantSuggestedParameters.removeValue(forKey: sessionKey)
         state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedSurfaceID, instanceID: instanceID)
     }
 

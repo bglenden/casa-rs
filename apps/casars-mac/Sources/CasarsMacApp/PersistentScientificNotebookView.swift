@@ -2,6 +2,7 @@ import CasarsMacCore
 import SwiftUI
 
 struct PersistentScientificNotebookView: View {
+    @Environment(\.workbenchFontSize) private var workbenchFontSize
     @ObservedObject var store: WorkbenchStore
     @State private var richDocument = PrototypeNotebookRichDocument(markdown: "")
     @State private var expandedCellIDs: Set<String> = []
@@ -271,7 +272,7 @@ struct PersistentScientificNotebookView: View {
                 get: { self.document?.draftSource ?? "" },
                 set: { store.setScientificNotebookDraft($0) }
             ))
-            .font(.system(size: 13, design: .monospaced))
+            .font(.system(size: CGFloat(workbenchFontSize), design: .monospaced))
             .scrollContentBackground(.hidden)
             .padding(10)
             .frame(minHeight: 680)
@@ -524,18 +525,18 @@ struct PersistentScientificNotebookView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("# \(intent.surface)")
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .workbenchFont(.caption, weight: .semibold, design: .monospaced)
                                 .foregroundStyle(.secondary)
                             Spacer()
                             Image(systemName: "arrow.up.forward.app")
                                 .foregroundStyle(.tertiary)
                         }
                         Text("[parameters]")
-                            .font(.system(size: 12, design: .monospaced))
+                            .workbenchFont(.caption, design: .monospaced)
                             .foregroundStyle(.secondary)
                         ForEach(intent.parameters.sorted(by: { $0.key < $1.key }), id: \.key) { name, value in
                             Text("\(name) = \(value.tomlLiteral)")
-                                .font(.system(size: 12, design: .monospaced))
+                                .workbenchFont(.caption, design: .monospaced)
                                 .lineLimit(1)
                         }
                     }

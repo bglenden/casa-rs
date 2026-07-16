@@ -8497,12 +8497,14 @@ struct GenericTaskPanel: View {
         )
         return HStack(spacing: 4) {
             if isAssistantSuggested {
-                Label("AI-suggested non-default", systemImage: "sparkles")
+                Image(systemName: "sparkles")
                     .workbenchFont(.caption, weight: .semibold)
                     .foregroundStyle(Color.purple)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(Color.purple.opacity(0.09), in: Capsule())
+                    .help("AI-suggested non-default parameter")
+                    .accessibilityLabel("AI-suggested non-default parameter")
                     .accessibilityIdentifier("task.parameterSource.\(parameter)")
                     .accessibilityValue("AI-suggested non-default")
             } else if isTutorialOverride {

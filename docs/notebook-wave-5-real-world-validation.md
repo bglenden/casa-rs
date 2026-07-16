@@ -1,7 +1,7 @@
 # Notebook Wave 5 Real-World Validation
 
 Truth class: implementation evidence
-Last reality check: 2026-07-14
+Last reality check: 2026-07-15
 Wave issue: #414
 
 Wave 5 validates the production scientific-notebook and assistant workflow
@@ -17,6 +17,10 @@ resume or an explicit handoff. Wave 5A repairs found during that review include
 logout, compact adaptive notebook chrome, chronological notebook insertion,
 current nonce/profile attachment on every turn, a visible two-minute
 no-activity failure, and immediate surfacing of `turn/start` JSON-RPC errors.
+The follow-up production review also repaired real event-backed progress age,
+automatic transcript tail following, scalable assistant/notebook task fonts,
+clickable citation previews, typed task-cell insertion from **Add to notebook**,
+compact sparkle-only AI provenance, and provenance clearing after manual edits.
 
 The retained opt-in entrypoints are:
 
@@ -58,19 +62,21 @@ The following focused evidence is green:
   the production persistence boundary
 - exact-nonce `corpus.search` and `source.search` project-MCP calls, including
   scientific section and source commit/line metadata
-- all assistant core tests: 28 executed, 4 opt-in skips, 0 failures
+- all assistant core tests: 31 executed, 4 opt-in skips, 0 failures
 - current `just verify` equivalent: workspace SPDX/fmt/clippy/tests green (the
   two localhost HTTP tests were rerun outside the shell sandbox after its
-  expected socket denial), Python package 100 passed and 2 skipped
+  expected socket denial), with the unchanged Python package evidence retained
+  at 100 passed and 2 skipped
 - full `CasarsMacUITests` app/test bundle: build-for-testing succeeded and one
-  consolidated 25-test foreground run completed (20 passed, 1 opt-in skip,
-  4 failures). Those failures exposed stale accessibility assumptions around
-  Rich-note editing, compact Python controls, assistant diagnostics, and the
-  chat-only task action. The repaired affected workflows then passed in
-  focused batches: complete Rich editing, independent named drafts,
-  production Python execution/reload, tutorial learner notes, and production
-  assistant corpus/pin/task navigation. Repository policy permits reusing the
-  unaffected green results because only those focused surfaces changed.
+  consolidated 25-test foreground run completed (18 passed, 1 opt-in skip,
+  6 failures). One focused production-assistant run then passed citation
+  preview, streaming tail-following, typed task-cell insertion, and provenance
+  clearing. The other five failures all exposed tutorial approval actions that
+  could remain below the sheet viewport; the sheet now keeps approval and
+  cancellation in a fixed footer, and the five affected tutorial workflows
+  passed together (5 passed, 0 failures). Together these results account for
+  every non-skipped GUI workflow; repository policy permits reusing the 18
+  unaffected green results because their surfaces did not change.
 
 The production refresh UI retains the Rust index report and local extraction
 diagnostics. Its ordinary context row stays compact; details are available in
@@ -131,6 +137,19 @@ accumulated, following the repository policy that foreground XCUITests run in
 one exclusive batch.
 
 ## Bounded refactor pass
+
+The 2026-07-15 follow-up pass was bounded to the assistant progress, citation,
+task-pin, parameter-provenance, and font-scaling paths touched by the live GUI
+review. The pre-change checkpoint is branch commit `e34eb30b7`. Public
+application-developer API remains unchanged: App Server events still enter
+through one `AgentSession`, typed task intent still uses `NotebookTaskIntent`,
+and parameter edits still flow through the canonical schema-driven setters.
+The pass found no duplicate implementation, compatibility shim, runtime
+fallback, or scale-dependent planning constant to remove. The two-minute
+no-activity timeout is an explicit interaction policy rather than a workload
+heuristic; one-second displayed event age and the short scroll animation are UI
+presentation intervals. No further refactor edit or performance benchmark was
+warranted for this bounded surface.
 
 The 2026-07-14 pass was bounded to assistant corpus ingestion, refresh state,
 project MCP retrieval, and their tests. No public application-developer API or

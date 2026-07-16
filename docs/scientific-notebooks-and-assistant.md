@@ -274,6 +274,12 @@ Return sends the current message; Shift-Return inserts a newline. Subscription
 model and reasoning-effort selectors remain directly available below the
 composer, alongside a compact summary of subscription usage remaining. The
 usage summary expands to show the active rate-limit windows and reset times.
+Both chat presentations follow new output to the chronological tail. While a
+turn is pending, the status names the latest real App Server or tool activity
+and shows how long ago that event arrived; it never substitutes a decorative
+animation or exposes hidden model reasoning. Command-Plus, Command-Minus, and
+Command-Zero adjust, reduce, and reset the shared Workbench font size,
+including the transcript, composer, raw notebook editor, and typed task blocks.
 Agent, ChatGPT subscription/account state, trust preset, and scientific Python
 live behind one secondary settings control. The account row is status, not a
 model or billing-action picker: Codex owns sign-in and CASA-RS stores no
@@ -305,7 +311,8 @@ a coding agent that may also read files or run commands.
 
 Citations attach to the claims they support. A lightweight preview shows the
 relevant document excerpt, page/section, source path/lines/commit, notebook
-block, or run provenance; opening it uses a normal central preview tab. Pins
+block, or run provenance; citation rows are clickable and open that preview,
+with a direct local-file action when the cited artifact is available. Pins
 may add a conclusion, code, task intent, plot, citations, or a transcript link
 directly to the chronological end of the notebook from the explicit
 **Add to notebook** action.
@@ -315,7 +322,9 @@ chooses a destination action. **Add to notebook** immediately appends once at
 the chronological tail, then the notebook opens and scrolls to the new block;
 there is no redundant destination or preview dialog. Task parameters open
 directly in the normal task tab with suggested
-non-defaults visibly marked; running the task uses its ordinary Run workflow.
+non-defaults marked by a small purple sparkle with explanatory hover text. A
+manual edit clears that parameter's AI provenance immediately. Running the task
+uses its ordinary Run workflow.
 Plots use the notebook's explicit import/update workflow and downloads use the
 acquisition surface. Routine agent steps, commands, and logs stay collapsed by
 default. The same suggestion is never duplicated as proposal cards in both

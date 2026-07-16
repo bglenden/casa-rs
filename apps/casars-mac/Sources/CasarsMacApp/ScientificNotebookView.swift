@@ -534,9 +534,11 @@ struct PrototypeNotebookTaskView: View {
                                           task.id == "receipt-imager-cancelled",
                                           parameter.parameterID == "robust"
                                 {
-                                    Label("AI-suggested non-default", systemImage: "sparkles")
+                                    Image(systemName: "sparkles")
                                         .workbenchFont(.caption2, weight: .semibold)
                                         .foregroundStyle(Color.purple)
+                                        .help("AI-suggested non-default parameter")
+                                        .accessibilityLabel("AI-suggested non-default parameter")
                                         .accessibilityIdentifier(
                                             "prototypeTask.parameterSource.\(parameter.parameterID)"
                                         )

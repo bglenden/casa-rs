@@ -244,6 +244,11 @@ package struct AssistantDiscussionState: Codable, Equatable {
     package var account = AssistantAccountState(email: nil, plan: nil, requiresLogin: true)
     package var usage = AssistantUsageState()
     package var streamingText = ""
+    /// Ephemeral, user-visible progress from actual App Server events. This is
+    /// deliberately distinct from hidden model reasoning, which the host does
+    /// not request or persist.
+    package var liveActivity: AssistantActivityState?
+    package var lastActivityAt: UInt64?
     package var activeTurnID: String?
     package var pendingApproval: AssistantApprovalRequestState?
     package var lastError: String?

@@ -628,7 +628,13 @@ final class CasarsMacUITests: XCTestCase {
         app.activate()
         XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
         try clickIdentified("dock.mode.notebooks")
-        XCTAssertTrue(notebookSelector(notebookID).waitForExistence(timeout: 5), app.debugDescription)
+        let notebook = notebookSelector(notebookID)
+        if !notebook.waitForExistence(timeout: 3) {
+            // Project probing can finish after the first dock selection and restore the
+            // datasets view. Select Notebooks again once the project is fully loaded.
+            try clickIdentified("dock.mode.notebooks")
+        }
+        XCTAssertTrue(notebook.waitForExistence(timeout: 8), app.debugDescription)
         try require("notebook.selector.open").click()
 
         if element("inspector.collapse").isHittable {
@@ -785,6 +791,13 @@ final class CasarsMacUITests: XCTestCase {
             pinToNotebook.waitForExistence(timeout: 15),
             app.debugDescription
         )
+        let citation = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "assistant.citation.")
+        ).firstMatch
+        XCTAssertTrue(citation.waitForExistence(timeout: 5), app.debugDescription)
+        citation.click()
+        XCTAssertTrue(element("assistant.citation.preview").waitForExistence(timeout: 5), app.debugDescription)
+        try clickIdentified("assistant.citation.done")
 
         replaceText("assistant.input", with: "What should I check next?")
         try clickIdentified("assistant.send")
@@ -796,6 +809,11 @@ final class CasarsMacUITests: XCTestCase {
             XCTWaiter.wait(for: [twoAnswers], timeout: 15),
             .completed,
             "A second streamed assistant answer did not remain interactive"
+        )
+        let pinLinks = app.links.matching(NSPredicate(format: "label == %@", "Add to notebook"))
+        XCTAssertTrue(
+            pinLinks.element(boundBy: pinLinks.count - 1).isHittable,
+            "The chat must follow new output to the bottom instead of leaving the latest answer offscreen"
         )
 
         pinToNotebook.click()
@@ -818,6 +836,12 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(waitForValue("task.parameter.robust", containing: "-0.5"))
         XCTAssertEqual(try accessibilityValue("task.parameterSource.weighting"), "AI-suggested non-default")
         XCTAssertEqual(try accessibilityValue("task.parameterSource.robust"), "AI-suggested non-default")
+        replaceText("task.parameter.robust", with: "-0.25")
+        XCTAssertFalse(
+            element("task.parameterSource.robust").waitForExistence(timeout: 1),
+            "Editing an AI-suggested value must clear its AI provenance marker"
+        )
+        XCTAssertEqual(try accessibilityValue("task.parameterSource.weighting"), "AI-suggested non-default")
 
         try clickIdentified("central.tab.tab-scientific-notebook")
         try clickIdentified("assistant.close")
@@ -832,6 +856,12 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(
             appendedRichNote.waitForExistence(timeout: 5),
             "The saved AI pin must appear in the already-open Rich notebook without a mode toggle\n\(app.debugDescription)"
+        )
+        XCTAssertTrue(
+            app.buttons.matching(
+                NSPredicate(format: "identifier BEGINSWITH %@", "notebook.parameters.open.")
+            ).firstMatch.waitForExistence(timeout: 5),
+            "A pinned task suggestion must render as an interactive notebook parameter block\n\(app.debugDescription)"
         )
         let exposedPinMetadata = app.descendants(matching: .any).matching(
             NSPredicate(
@@ -850,6 +880,8 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(saved.contains("casa-rs-ai-pin:v1"), saved)
         XCTAssertTrue(saved.contains("Use **Briggs weighting** with robust -0.5"))
         XCTAssertTrue(saved.contains("CASA-RS Radio Interferometry Primer v1.0"))
+        XCTAssertTrue(saved.contains("surface = \"imager\""), saved)
+        XCTAssertTrue(saved.contains("robust = -0.5"), saved)
         XCTAssertTrue(saved.hasSuffix("\n"), "Notebook append should leave a normal Markdown trailing newline")
         let conversations = project.appendingPathComponent(".casa-rs/conversations", isDirectory: true)
         XCTAssertFalse((try FileManager.default.contentsOfDirectory(atPath: conversations.path)).isEmpty)

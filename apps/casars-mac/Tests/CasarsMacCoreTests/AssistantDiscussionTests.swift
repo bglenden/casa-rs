@@ -369,6 +369,60 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertNil(store.state.assistantDiscussion?.activeTurnID)
     }
 
+    func testVisibleProgressTracksRealAgentEventsWithoutExposingReasoning() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        var conversation = try client.createConversation(
+            projectRoot: project.path,
+            title: "Analysis",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
+        )
+        conversation.backendSession = AssistantBackendSessionState(
+            backendId: "codex_app_server",
+            sessionId: "thread-progress"
+        )
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+        let agent = FixtureAgentSession()
+        store.installAgentSessionForTesting(agent)
+
+        store.setAssistantDraft("List supported tasks")
+        store.sendAssistantPrompt()
+        XCTAssertEqual(store.state.assistantDiscussion?.liveActivity?.label, "Request sent")
+        XCTAssertNotNil(store.state.assistantDiscussion?.lastActivityAt)
+
+        agent.emit(["method": "turn/started", "params": ["turn": ["id": "turn-progress"]]])
+        XCTAssertEqual(store.state.assistantDiscussion?.liveActivity?.label, "Agent accepted request")
+
+        agent.emit(["method": "item/started", "params": ["item": [
+            "id": "tool-progress", "type": "mcpToolCall", "server": "other",
+            "tool": "task.catalog",
+        ]]])
+        XCTAssertEqual(store.state.assistantDiscussion?.liveActivity?.label, "task.catalog")
+        XCTAssertEqual(store.state.assistantDiscussion?.liveActivity?.state, "running")
+        XCTAssertNil(store.state.assistantDiscussion?.liveActivity?.summary)
+        XCTAssertEqual(store.debugSnapshot().assistantDiscussion?.liveActivityLabel, "task.catalog")
+        XCTAssertNotNil(store.debugSnapshot().assistantDiscussion?.lastActivityAt)
+
+        agent.emit(["method": "item/agentMessage/delta", "params": ["delta": "Available tasks"]])
+        XCTAssertEqual(store.state.assistantDiscussion?.liveActivity?.label, "Writing response")
+        agent.emit(["method": "turn/completed", "params": ["turn": ["status": "completed"]]])
+        XCTAssertNil(store.state.assistantDiscussion?.liveActivity)
+        XCTAssertNil(store.state.assistantDiscussion?.lastActivityAt)
+    }
+
     func testAccountLogoutClearsVisibleSubscriptionStateAfterBackendConfirmation() {
         var discussion = AssistantDiscussionState()
         discussion.account = AssistantAccountState(
@@ -756,7 +810,12 @@ final class AssistantDiscussionTests: XCTestCase {
             taskSuggestions: [AssistantTaskSuggestionState(
                 id: "suggestion",
                 taskId: "imager",
-                parameters: ["robust": "-0.5", "weighting": "briggs"]
+                parameters: [
+                    "vis": "input.ms",
+                    "imagename": "products/image",
+                    "robust": "-0.5",
+                    "weighting": "briggs",
+                ]
             )],
             pins: []
         ))
@@ -779,6 +838,88 @@ final class AssistantDiscussionTests: XCTestCase {
             instanceID: tab.id,
             name: "robust"
         ))
+
+        store.setGenericTaskValue(
+            taskID: "imager",
+            instanceID: tab.id,
+            argumentID: "robust",
+            value: "-0.25"
+        )
+        XCTAssertFalse(store.parameterIsAssistantSuggested(
+            surfaceID: "imager",
+            instanceID: tab.id,
+            name: "robust"
+        ))
+        XCTAssertTrue(store.parameterIsAssistantSuggested(
+            surfaceID: "imager",
+            instanceID: tab.id,
+            name: "weighting"
+        ))
+    }
+
+    func testPinningTaskSuggestionAppendsTypedTaskCellAtNotebookTail() throws {
+        let project = try temporaryProject()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let client = UniFFIAssistantPersistenceClient()
+        var conversation = try client.createConversation(
+            projectRoot: project.path,
+            title: "Analysis",
+            attachment: AssistantAttachmentState(
+                kind: "notebook",
+                identifier: "Analysis.md",
+                label: "Analysis",
+                primary: true
+            ),
+            profile: AssistantSessionProfileState()
+        )
+        let messageID = "019f0000-0000-7000-8000-000000000516"
+        conversation.messages.append(AssistantMessageState(
+            id: messageID,
+            role: "assistant",
+            content: "Start with a small ALMA mosaic.",
+            createdAt: 1,
+            agentId: "fixture",
+            model: "fixture",
+            citations: [],
+            usedContext: [],
+            activities: [],
+            taskSuggestions: [AssistantTaskSuggestionState(
+                id: "simobserve-suggestion",
+                taskId: "simobserve",
+                parameters: [
+                    "request_kind": "family",
+                    "telescope": "ALMA",
+                    "array_config": "alma.cycle10.5.cfg",
+                    "band": "Band 6",
+                    "pointing_count": "4",
+                    "output_ms": "products/alma-mosaic.ms",
+                ]
+            )],
+            pins: []
+        ))
+        try client.saveConversation(projectRoot: project.path, transcript: conversation)
+        var discussion = AssistantDiscussionState()
+        discussion.conversations = [conversation]
+        discussion.activeConversationID = conversation.id
+        var state = FixtureWorkbench.makeState()
+        state.project.rootPath = project.path
+        state.assistantDiscussion = discussion
+        let store = WorkbenchStore(state: state)
+        store.createScientificNotebook(filename: "Analysis.md", title: "Analysis")
+
+        store.pinAssistantMessage(messageID)
+
+        let notebook = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook)
+        XCTAssertTrue(notebook.source.contains("casa-rs-ai-pin:v1"), notebook.source)
+        XCTAssertTrue(notebook.source.contains("surface = \"simobserve\""), notebook.source)
+        XCTAssertTrue(notebook.source.contains("pointing_count = 4"), notebook.source)
+        let task = try XCTUnwrap(notebook.cells.last(where: { $0.kind == "task" }))
+        XCTAssertEqual(task.taskIntent?.surface, "simobserve")
+        XCTAssertEqual(task.taskIntent?.parameters["band"], .string("Band 6"))
+        XCTAssertEqual(task.taskIntent?.parameters["pointing_count"], .number(4))
+        XCTAssertFalse(
+            store.state.assistantDiscussion?.activeConversation?.messages.last?.pins.isEmpty ?? true
+        )
     }
 
     func testTaskSuggestionAppliesModeDependentParametersAtomicallyAndRejectsInvalidDrafts() throws {
