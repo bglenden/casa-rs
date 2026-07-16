@@ -145,8 +145,14 @@ if ! "$developer_dir/usr/bin/xcodebuild" -checkFirstLaunchStatus; then
   echo "Xcode license/first-launch setup is incomplete on the remote Mac" >&2
   exit 2
 fi
-if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
+checkout_changes="$(git -C "$repo_root" status --porcelain --untracked-files=all)"
+repo_target="$repo_root/target"
+if [[ -L "$repo_target" && "$repo_target" -ef "$target_dir" ]]; then
+  checkout_changes="$(printf '%s\n' "$checkout_changes" | /usr/bin/awk '$0 != "?? target"')"
+fi
+if [[ -n "$checkout_changes" ]]; then
   echo "remote GUI checkout has local changes: $repo_root" >&2
+  printf '%s\n' "$checkout_changes" >&2
   exit 2
 fi
 
@@ -159,7 +165,6 @@ fi
 git -C "$repo_root" switch --quiet --detach "$revision"
 
 mkdir -p "$storage_root" "$artifact_root" "$target_dir" "$derived_data"
-repo_target="$repo_root/target"
 if [[ -e "$repo_target" || -L "$repo_target" ]]; then
   if [[ ! -L "$repo_target" || ! "$repo_target" -ef "$target_dir" ]]; then
     echo "remote checkout target must be absent or link to $target_dir" >&2
