@@ -207,7 +207,11 @@ exact pushed revision, keeps Cargo/Xcode state and full result artifacts on the
 worker's configured external storage, and copies only the sanitized JSON report
 back into the local ignored `.gui-test/remote/` directory. This avoids taking
 the development Mac's foreground focus while preserving the same production
-acceptance path.
+acceptance path. Disposable projects live under the ordinary user cache at
+`~/Library/Caches/casa-rs-gui-tests/` by default; use
+`CASA_RS_GUI_TEST_PROJECT_BASE` to choose another unprotected parent directory.
+They intentionally do not live inside the XCTest runner's app container because
+that would make the Workbench request cross-app-data permission.
 
 It is deliberately opt-in and requires an interactive macOS session. The
 harness requires a logged-in Codex CLI using the existing ChatGPT subscription,

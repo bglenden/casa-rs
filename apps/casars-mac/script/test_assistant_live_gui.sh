@@ -29,9 +29,11 @@ export CASA_RS_GUI_TEST_ONLY="CasarsMacUITests/CasarsMacUITests/testOptInProduct
 export CASA_RS_GUI_TEST_RESULT_BUNDLE="${CASA_RS_GUI_TEST_ARTIFACT_ROOT:-$ROOT_DIR/.gui-test}/AssistantLiveGUI.xcresult"
 
 LIVE_GATE="$ROOT_DIR/.gui-test/assistant-live-gui.enabled"
-LIVE_PROJECT="$HOME/Library/Containers/org.casa-rs.casars-mac.uitests.xctrunner/Data/tmp/casars-wave5a-live-retained"
+LIVE_PROJECT_BASE="${CASA_RS_GUI_TEST_PROJECT_BASE:-$HOME/Library/Caches/casa-rs-gui-tests}"
+LIVE_PROJECT="$LIVE_PROJECT_BASE/casars-wave5a-live-retained"
 PASS_RECEIPT="$LIVE_PROJECT/.assistant-live-gui.passed"
 mkdir -p "$ROOT_DIR/.gui-test"
+mkdir -p "$LIVE_PROJECT_BASE"
 rm -f "$LIVE_GATE" "$PASS_RECEIPT"
 rm -rf "$LIVE_PROJECT"
 /usr/bin/plutil -create xml1 "$LIVE_GATE"

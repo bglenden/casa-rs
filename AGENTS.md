@@ -155,6 +155,8 @@ Use `Closes #N` only for issues that should auto-close on merge.
   exact pushed revision, and configure its dedicated stable signing identity
   once with `scripts/setup-gui-remote-signing.sh`. Ad-hoc signatures identify
   each rebuilt app as new code and therefore repeat macOS privacy prompts. Keep
+  disposable GUI-test projects in the ordinary user cache selected by
+  `CASA_RS_GUI_TEST_PROJECT_BASE`, never inside another app's container. Keep
   the checkout and Xcode DerivedData on internal storage, while placing the
   large Cargo target, task executables, and retained artifacts on configured
   external storage. A green remote run is the GUI gate; do not repeat it locally

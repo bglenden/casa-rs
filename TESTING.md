@@ -156,7 +156,11 @@ revisions, two explorer-plot revisions, and two full application restarts. A
 successful run removes the disposable project and retains the `.xcresult` plus
 the sanitized `NotebookRoundTripGUI.report.json` under
 `apps/casars-mac/.gui-test/`. A failed run retains the project for focused
-diagnosis. This live acceptance is not part of CI or `just gui-test`.
+diagnosis. Disposable live projects default to
+`~/Library/Caches/casa-rs-gui-tests/` (override the parent with
+`CASA_RS_GUI_TEST_PROJECT_BASE`); they must not live inside the XCTest runner's
+app container, which would create an unrelated macOS cross-app-data privacy
+prompt. This live acceptance is not part of CI or `just gui-test`.
 
 `just notebook-roundtrip-gui-remote` runs that opt-in live acceptance on the
 same remote worker. It additionally requires the worker's Codex CLI to be

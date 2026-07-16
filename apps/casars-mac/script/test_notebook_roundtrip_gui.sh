@@ -37,12 +37,14 @@ export CASA_RS_GUI_TEST_ONLY="CasarsMacUITests/CasarsMacUITests/testOptInProduct
 export CASA_RS_GUI_TEST_RESULT_BUNDLE="${CASA_RS_GUI_TEST_ARTIFACT_ROOT:-$ROOT_DIR/.gui-test}/NotebookRoundTripGUI.xcresult"
 
 LIVE_GATE="$ROOT_DIR/.gui-test/notebook-roundtrip-gui.enabled"
-LIVE_PROJECT="$HOME/Library/Containers/org.casa-rs.casars-mac.uitests.xctrunner/Data/tmp/casars-wave5c-roundtrip-retained"
+LIVE_PROJECT_BASE="${CASA_RS_GUI_TEST_PROJECT_BASE:-$HOME/Library/Caches/casa-rs-gui-tests}"
+LIVE_PROJECT="$LIVE_PROJECT_BASE/casars-wave5c-roundtrip-retained"
 PASS_RECEIPT="$LIVE_PROJECT/.notebook-roundtrip-gui.passed"
 EVIDENCE_REPORT="${CASA_RS_GUI_TEST_ARTIFACT_ROOT:-$ROOT_DIR/.gui-test}/NotebookRoundTripGUI.report.json"
 TEST_EVIDENCE_REPORT="$LIVE_PROJECT/.notebook-roundtrip-gui.report.json"
 RESUME_AFTER_TASK="${CASA_RS_NOTEBOOK_ROUNDTRIP_RESUME_AFTER_TASK:-0}"
 mkdir -p "$ROOT_DIR/.gui-test"
+mkdir -p "$LIVE_PROJECT_BASE"
 rm -f "$LIVE_GATE" "$PASS_RECEIPT" "$EVIDENCE_REPORT" "$TEST_EVIDENCE_REPORT"
 if [[ "$RESUME_AFTER_TASK" == "1" ]]; then
   [[ -d "$LIVE_PROJECT" ]] || {
