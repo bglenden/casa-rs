@@ -5,7 +5,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/test-gui-remote.sh [gui-test|notebook-roundtrip-gui]
+Usage: scripts/test-gui-remote.sh [gui-test|notebook-roundtrip-gui|tutorial-journey-gui]
 
 Run one native macOS GUI gate on a dedicated, logged-in remote Mac. The local
 HEAD must be clean and pushed to its same-named origin branch. Required setup:
@@ -39,7 +39,7 @@ remote_codex="${CASA_RS_GUI_TEST_REMOTE_CODEX:-}"
 remote_only="${CASA_RS_GUI_TEST_REMOTE_ONLY:-}"
 
 case "$mode" in
-  gui-test | notebook-roundtrip-gui) ;;
+  gui-test | notebook-roundtrip-gui | tutorial-journey-gui) ;;
   -h | --help)
     usage
     exit 0
@@ -236,16 +236,24 @@ case "$mode" in
   notebook-roundtrip-gui)
     bash apps/casars-mac/script/test_notebook_roundtrip_gui.sh
     ;;
+  tutorial-journey-gui)
+    bash apps/casars-mac/script/test_tutorial_journey_gui.sh
+    ;;
 esac
 REMOTE_RUN
 status=$?
 set -e
 
 echo "==> Remote artifacts retained at $remote:$remote_artifacts"
-if [[ "$mode" == "notebook-roundtrip-gui" && "$status" == "0" ]]; then
-  local_report="$repo_root/apps/casars-mac/.gui-test/remote/NotebookRoundTripGUI.report.json"
+if [[ "$status" == "0" && ( "$mode" == "notebook-roundtrip-gui" || "$mode" == "tutorial-journey-gui" ) ]]; then
+  if [[ "$mode" == "notebook-roundtrip-gui" ]]; then
+    report_name="NotebookRoundTripGUI.report.json"
+  else
+    report_name="TutorialJourneyGUI.report.json"
+  fi
+  local_report="$repo_root/apps/casars-mac/.gui-test/remote/$report_name"
   mkdir -p "$(dirname "$local_report")"
-  encoded_report="$(encode_remote_arg "$remote_artifacts/NotebookRoundTripGUI.report.json")"
+  encoded_report="$(encode_remote_arg "$remote_artifacts/$report_name")"
   ssh "${ssh_args[@]}" "$remote" /bin/bash -s -- \
     "$encoded_report" >"$local_report" <<'REMOTE_REPORT'
 set -euo pipefail

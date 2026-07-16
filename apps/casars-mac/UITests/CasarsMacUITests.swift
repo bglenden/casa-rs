@@ -1630,6 +1630,452 @@ final class CasarsMacUITests: XCTestCase {
         add(screenshot)
     }
 
+    func testOptInProductionTWHyaTutorialJourney() throws {
+        let artifactDirectory = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent(".gui-test", isDirectory: true)
+        let gate = artifactDirectory.appendingPathComponent("tutorial-journey-gui.enabled")
+        guard FileManager.default.fileExists(atPath: gate.path) else {
+            throw XCTSkip("run `just tutorial-journey-gui` to exercise the production TW Hya journey")
+        }
+        let object = try PropertyListSerialization.propertyList(
+            from: Data(contentsOf: gate),
+            options: [],
+            format: nil
+        )
+        let environment = try XCTUnwrap(object as? [String: String])
+        let project = URL(
+            fileURLWithPath: try XCTUnwrap(environment["projectRoot"]),
+            isDirectory: true
+        )
+        let template = URL(
+            fileURLWithPath: try XCTUnwrap(environment["templateRoot"]),
+            isDirectory: true
+        )
+        let templateManifest = template.appendingPathComponent("tutorial.toml")
+        let templateMarkdown = template.appendingPathComponent("tutorial.md")
+        let expectedSize = try XCTUnwrap(UInt64(try XCTUnwrap(environment["expectedSize"])))
+        let expectedSha256 = try XCTUnwrap(environment["expectedSha256"])
+        let expectedSource = try XCTUnwrap(environment["sourceUri"])
+        let templateManifestData = try Data(contentsOf: templateManifest)
+        let templateMarkdownData = try Data(contentsOf: templateMarkdown)
+        XCTAssertEqual(sha256Hex(templateManifestData), environment["templateManifestSha256"])
+        XCTAssertEqual(sha256Hex(templateMarkdownData), environment["templateMarkdownSha256"])
+
+        let pythonBin = project.appendingPathComponent(".casa-rs/python/bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: pythonBin, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: pythonBin.appendingPathComponent("python3"),
+            withDestinationURL: URL(fileURLWithPath: try XCTUnwrap(environment["pythonCommand"]))
+        )
+        print("CASA_RS_WAVE5D_PROJECT \(project.path)")
+
+        launchLiveTutorialProject(project, template: template, environment: environment)
+        let notebookFile = project
+            .appendingPathComponent("notebooks", isDirectory: true)
+            .appendingPathComponent("tw-hya-first-look.md")
+        XCTAssertTrue(waitForPath(notebookFile, timeout: 15), "The tutorial learner notebook was not forked")
+        let forkedSource = try String(contentsOf: notebookFile, encoding: .utf8)
+        let notebookID = try notebookIdentifier(in: forkedSource)
+        let tutorialLock = project
+            .appendingPathComponent(".casa-rs/tutorials", isDirectory: true)
+            .appendingPathComponent(notebookID, isDirectory: true)
+            .appendingPathComponent("lock.toml")
+        XCTAssertTrue(waitForPath(tutorialLock, timeout: 5), "The tutorial lock was not created")
+        XCTAssertEqual(try Data(contentsOf: templateManifest), templateManifestData)
+        XCTAssertEqual(try Data(contentsOf: templateMarkdown), templateMarkdownData)
+        XCTAssertTrue(forkedSource.contains("# First Look at Imaging: TW Hya"))
+        XCTAssertTrue(forkedSource.contains("019f6666-6666-7666-8666-666666666666"))
+
+        let pythonCellID = "019f0000-0000-7000-8000-000000000418"
+        let pythonSource = """
+        import matplotlib.pyplot as plt
+        import numpy as np
+        observing_frequency_hz = 372.5e9
+        maximum_baseline_m = 500.0
+        wavelength_m = 299792458.0 / observing_frequency_hz
+        resolution_arcsec = 206265.0 * wavelength_m / maximum_baseline_m
+        print(f"tw_hya_resolution_arcsec={resolution_arcsec:.6f}")
+        baselines_m = np.array([50.0, 100.0, 250.0, maximum_baseline_m])
+        resolutions_arcsec = 206265.0 * wavelength_m / baselines_m
+        plt.figure()
+        plt.plot(baselines_m, resolutions_arcsec, marker="o")
+        plt.xlabel("Maximum baseline (m)")
+        plt.ylabel("Nominal resolution (arcsec)")
+        plt.title("TW Hya Band 7 nominal resolution")
+        """ + "\n"
+        let learnerNote = "Wave 5D learner note: inspect the UV coverage before accepting the continuum image."
+        let augmentedSource = forkedSource.trimmingCharacters(in: .newlines) + """
+
+
+        ## Learner log
+
+        \(learnerNote)
+
+        <!-- casa-rs-cell:v1 id=\(pythonCellID) kind=python -->
+        ```python
+        \(pythonSource)```
+        <!-- /casa-rs-cell -->
+        """ + "\n"
+        selectViewMode("Raw")
+        replaceText("notebook.editor.raw", with: augmentedSource)
+        try clickIdentified("notebook.save")
+        XCTAssertTrue(waitForFile(notebookFile, containing: learnerNote))
+        selectViewMode("Rich")
+
+        let datasetID = "twhya-calibrated"
+        try clickIdentified("tutorial.dataset.review.\(datasetID)")
+        XCTAssertTrue(element("tutorial.approval.sheet").waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertTrue(app.staticTexts[expectedSource].exists, "Approval omitted the exact requested source")
+        XCTAssertTrue(app.staticTexts[expectedSha256].exists, "Approval omitted the expected digest")
+        XCTAssertTrue(
+            app.staticTexts["data/twhya_calibrated.ms"].exists,
+            "Approval omitted the project-local destination"
+        )
+        let acquisitionStartedAt = Date()
+        try clickIdentified("tutorial.approval.approve")
+        XCTAssertTrue(
+            waitForValue("tutorial.dataset.\(datasetID)", containing: "ready", timeout: 1_800),
+            app.debugDescription
+        )
+        let acquisitionDurationSeconds = Date().timeIntervalSince(acquisitionStartedAt)
+        let measurementSet = project
+            .appendingPathComponent("data", isDirectory: true)
+            .appendingPathComponent("twhya_calibrated.ms", isDirectory: true)
+        XCTAssertTrue(waitForPath(measurementSet, timeout: 30), "Ready did not stage the MeasurementSet")
+        let lockAfterAcquisition = try String(contentsOf: tutorialLock, encoding: .utf8)
+        XCTAssertTrue(lockAfterAcquisition.contains("phase = \"ready\""), lockAfterAcquisition)
+        XCTAssertTrue(lockAfterAcquisition.contains("staged = true"), lockAfterAcquisition)
+        XCTAssertTrue(lockAfterAcquisition.contains("computed_sha256 = \"\(expectedSha256)\""), lockAfterAcquisition)
+        let runs = project.appendingPathComponent(".casa-rs/notebook-runs", isDirectory: true)
+        let acquisitionReceipt = try waitForReceiptObject(in: runs, timeout: 30) {
+            $0["operation_id"] as? String == "tutorial.acquire.twhya-calibrated"
+                && $0["status"] as? String == "succeeded"
+        }
+        XCTAssertEqual((acquisitionReceipt["approvals"] as? [[String: Any]])?.count, 1)
+        XCTAssertTrue(
+            (acquisitionReceipt["products"] as? [[String: Any]])?.contains {
+                ($0["path"] as? String) == "data/twhya_calibrated.ms"
+            } == true,
+            "The acquisition receipt omitted the staged dataset"
+        )
+
+        try clickIdentified("dock.mode.datasets")
+        let datasetRowID = "dataset.row.\(measurementSet.path)"
+        XCTAssertTrue(element(datasetRowID).waitForExistence(timeout: 60), app.debugDescription)
+        element(datasetRowID).doubleClick()
+        let mode = try require("msExplore.mode.\(measurementSet.path)", timeout: 30)
+        let plotsSegment = mode.descendants(matching: .radioButton).matching(
+            NSPredicate(format: "label == %@", "Plots")
+        ).firstMatch
+        XCTAssertTrue(plotsSegment.waitForExistence(timeout: 10), app.debugDescription)
+        plotsSegment.click()
+        let generatePlotID = "msPlot.generate.\(measurementSet.path)"
+        try clickIdentified(generatePlotID)
+        let savePlotID = "msPlot.saveToNotebook.\(measurementSet.path)"
+        XCTAssertTrue(element(savePlotID).waitForExistence(timeout: 180), app.debugDescription)
+        try clickIdentified(savePlotID)
+        XCTAssertTrue(app.menuItems["New plot"].waitForExistence(timeout: 5), app.debugDescription)
+        app.menuItems["New plot"].click()
+        let explorerVisualizationID = try waitForVisualizationID(in: notebookFile, timeout: 30)
+        let explorerVisualizationFile = project
+            .appendingPathComponent(".casa-rs/notebook-visualizations", isDirectory: true)
+            .appendingPathComponent("\(explorerVisualizationID).json")
+        XCTAssertTrue(waitForPath(explorerVisualizationFile, timeout: 10))
+        let explorerVisualization = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: explorerVisualizationFile)) as? [String: Any]
+        )
+        let explorerRevisions = try XCTUnwrap(explorerVisualization["revisions"] as? [[String: Any]])
+        XCTAssertEqual(explorerRevisions.count, 1)
+        XCTAssertEqual(
+            (explorerRevisions[0]["reopen"] as? [String: Any])?["surface"] as? String,
+            "msexplore"
+        )
+        XCTAssertEqual(explorerRevisions[0]["source_references"] as? [String], [measurementSet.path])
+
+        try clickIdentified("central.tab.tab-scientific-notebook")
+        let taskCellID = "019f6666-6666-7666-8666-666666666666"
+        try bringIntoView(
+            "notebook.parameters.open.\(taskCellID)",
+            in: "notebook.document.scroll",
+            deltaY: -420,
+            attempts: 18
+        )
+        try clickIdentified("notebook.parameters.open.\(taskCellID)")
+        XCTAssertTrue(waitForValue("task.parameter.vis", containing: "data/twhya_calibrated.ms", timeout: 15))
+        XCTAssertEqual(try accessibilityValue("task.parameterSource.vis"), "tutorial override")
+        let taskScroll = try XCTUnwrap(
+            app.scrollViews.allElementsBoundByIndex.max { $0.frame.width < $1.frame.width },
+            app.debugDescription
+        )
+        for parameter in ["imagename", "field", "imsize", "cell", "weighting", "robust"] {
+            let control = element("task.parameter.\(parameter)")
+            for _ in 0..<16 where !control.exists || !control.isHittable {
+                taskScroll.scroll(byDeltaX: 0, deltaY: -320)
+            }
+            XCTAssertTrue(control.exists, "Missing tutorial parameter \(parameter)\n\(app.debugDescription)")
+            XCTAssertEqual(try accessibilityValue("task.parameterSource.\(parameter)"), "tutorial override")
+        }
+        for _ in 0..<12 where !element("task.safety.confirm").isHittable {
+            taskScroll.scroll(byDeltaX: 0, deltaY: -380)
+        }
+        if element("task.safety.confirm").exists { try clickIdentified("task.safety.confirm") }
+        try clickIdentified("task.run")
+        XCTAssertTrue(
+            waitForValue("task.run.status", containing: "succeeded", timeout: 1_800),
+            app.debugDescription
+        )
+        let taskReceipt = try waitForReceiptObject(in: runs, timeout: 30) {
+            $0["operation_id"] as? String == "imager" && $0["status"] as? String == "succeeded"
+        }
+        XCTAssertEqual(taskReceipt["cell_id"] as? String, taskCellID)
+        XCTAssertEqual((taskReceipt["schema_version"] as? NSNumber)?.intValue, 2)
+        XCTAssertFalse((taskReceipt["products"] as? [[String: Any]] ?? []).isEmpty)
+
+        try clickIdentified("central.tab.tab-scientific-notebook")
+        try bringIntoView("notebook.python.cell.\(pythonCellID)", in: "notebook.document.scroll", deltaY: -420, attempts: 18)
+        let pythonRun = try require("notebook.python.run.\(pythonCellID)")
+        let pythonReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"),
+            object: pythonRun
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [pythonReady], timeout: 30), .completed)
+        pythonRun.click()
+        let firstPythonReceipt = try waitForReceiptObject(in: runs, timeout: 90) {
+            guard $0["operation_id"] as? String == "python.execute",
+                  $0["status"] as? String == "succeeded",
+                  let details = ($0["execution_input"] as? [String: Any])?["details"] as? [String: Any]
+            else { return false }
+            return details["source"] as? String == pythonSource
+        }
+        let firstPythonFigure = try XCTUnwrap(
+            (firstPythonReceipt["artifacts"] as? [[String: Any]])?.first {
+                $0["role"] as? String == "figure"
+            }?["path"] as? String
+        )
+        let revisedPythonSource = pythonSource
+            .replacingOccurrences(of: "maximum_baseline_m = 500.0", with: "maximum_baseline_m = 750.0")
+            .replacingOccurrences(of: "TW Hya Band 7 nominal resolution", with: "TW Hya Band 7 revised resolution")
+        try bringIntoView("notebook.python.editor.\(pythonCellID)", in: "notebook.document.scroll", deltaY: 260)
+        replaceText("notebook.python.editor.\(pythonCellID)", with: String(revisedPythonSource.dropLast()))
+        try clickIdentified("notebook.save")
+        try bringIntoView("notebook.python.run.\(pythonCellID)", in: "notebook.document.scroll", deltaY: -240)
+        try clickIdentified("notebook.python.run.\(pythonCellID)")
+        let revisedPythonReceipt = try waitForReceiptObject(in: runs, timeout: 90) {
+            guard $0["operation_id"] as? String == "python.execute",
+                  $0["status"] as? String == "succeeded",
+                  let details = ($0["execution_input"] as? [String: Any])?["details"] as? [String: Any]
+            else { return false }
+            return details["source"] as? String == revisedPythonSource
+        }
+        let revisedPythonFigure = try XCTUnwrap(
+            (revisedPythonReceipt["artifacts"] as? [[String: Any]])?.first {
+                $0["role"] as? String == "figure"
+            }?["path"] as? String
+        )
+        XCTAssertNotEqual(firstPythonFigure, revisedPythonFigure)
+        XCTAssertNotEqual(
+            try Data(contentsOf: project.appendingPathComponent(firstPythonFigure)),
+            try Data(contentsOf: project.appendingPathComponent(revisedPythonFigure))
+        )
+        try bringIntoView("notebook.python.previousRevisions.\(pythonCellID)", in: "notebook.document.scroll", deltaY: -260)
+        XCTAssertTrue(element("notebook.python.previousRevisions.\(pythonCellID)").exists)
+
+        try clickIdentified("assistant.openDrawer")
+        XCTAssertTrue(element("assistant.discussion").waitForExistence(timeout: 15), app.debugDescription)
+        let scientificMarker = "WAVE5D-SCIENCE-\(UUID().uuidString.prefix(8))"
+        try sendLiveAssistantPrompt(
+            "Use only the CASA project MCP tools, not shell or web. Call corpus.search for Briggs robust weighting resolution and sensitivity in radio interferometric imaging. Reply with \(scientificMarker), a concise answer, and citations to the returned baseline documents."
+        )
+        let scientificTranscript = try waitForLiveAssistantTranscript(in: project, timeout: 180) { transcript in
+            transcript.messages.contains { message in
+                message.role == "assistant"
+                    && message.content.contains(scientificMarker)
+                    && !message.citations.isEmpty
+                    && message.activities.contains {
+                        $0.label == "CASA corpus.search" && $0.state == "succeeded"
+                    }
+            }
+        }
+        let scientificAnswer = try XCTUnwrap(
+            scientificTranscript.messages.last { $0.content.contains(scientificMarker) }
+        )
+        XCTAssertTrue(
+            scientificAnswer.citations.contains {
+                baselineCitationExists($0, repoRoot: URL(fileURLWithPath: environment["repoRoot"] ?? ""))
+            },
+            "No scientific citation could be independently matched to the bundled baseline corpus"
+        )
+
+        let implementationMarker = "WAVE5D-SOURCE-\(UUID().uuidString.prefix(8))"
+        try sendLiveAssistantPrompt(
+            "Use only the CASA project MCP tools, not shell or web. Call source.search for TutorialProject advance_acquisition digest verification and safe archive materialization. Reply with \(implementationMarker), explain the current implementation, and cite the returned current casa-rs source."
+        )
+        let implementationTranscript = try waitForLiveAssistantTranscript(in: project, timeout: 180) { transcript in
+            transcript.messages.contains { message in
+                message.role == "assistant"
+                    && message.content.contains(implementationMarker)
+                    && !message.citations.isEmpty
+                    && message.activities.contains {
+                        $0.label == "CASA source.search" && $0.state == "succeeded"
+                    }
+            }
+        }
+        let implementationAnswer = try XCTUnwrap(
+            implementationTranscript.messages.last { $0.content.contains(implementationMarker) }
+        )
+        XCTAssertTrue(
+            implementationAnswer.citations.contains {
+                sourceCitationExists($0, repoRoot: URL(fileURLWithPath: environment["repoRoot"] ?? ""))
+            },
+            "No implementation citation could be independently matched to the current checkout"
+        )
+
+        let calculationMarker = "WAVE5D-CALC-\(UUID().uuidString.prefix(8))"
+        try sendLiveAssistantPrompt(
+            "Propose and execute a Python calculation of the nominal angular resolution in arcseconds at 372.5 GHz for a 750 m baseline. Use the selected scientific Python command through the generic command tool. Before executing, explicitly request native user approval using escalated execution; do not calculate it mentally. After approval and execution, reply with \(calculationMarker), the executed expression, and its result."
+        )
+        XCTAssertTrue(element("assistant.approval").waitForExistence(timeout: 90), app.debugDescription)
+        let approval = element("assistant.approval")
+        let approve = approval.buttons["Approve"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 5), app.debugDescription)
+        approve.click()
+        let calculationTranscript = try waitForLiveAssistantTranscript(in: project, timeout: 180) { transcript in
+            transcript.messages.contains { message in
+                message.role == "assistant" && message.content.contains(calculationMarker)
+            }
+        }
+        let calculationAnswer = try XCTUnwrap(
+            calculationTranscript.messages.last { $0.content.contains(calculationMarker) }
+        )
+        try clickIdentified("assistant.message.\(calculationAnswer.id).pin", timeout: 15)
+        XCTAssertTrue(app.staticTexts["Added to notebook"].firstMatch.waitForExistence(timeout: 10))
+        let pinnedSource = try String(contentsOf: notebookFile, encoding: .utf8)
+        XCTAssertEqual(pinnedSource.components(separatedBy: calculationMarker).count - 1, 1)
+        XCTAssertEqual(pinnedSource.components(separatedBy: "casa-rs-ai-pin:v1").count - 1, 1)
+        XCTAssertTrue(pinnedSource.hasSuffix("<!-- /casa-rs-cell -->\n"), pinnedSource)
+
+        let backendSessionID = calculationTranscript.backendSession?.sessionId
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        launchLiveAssistantProject(project, environment: environment)
+        try openProductionAssistant(notebookID: notebookID)
+        let restartedTranscript = try waitForLiveAssistantTranscript(in: project, timeout: 20) { transcript in
+            transcript.messages.contains { $0.content.contains(scientificMarker) }
+                && transcript.messages.contains { $0.content.contains(implementationMarker) }
+                && transcript.messages.contains { $0.content.contains(calculationMarker) }
+        }
+        let sameBackend = restartedTranscript.backendSession?.sessionId == backendSessionID
+        let visibleHandoff = restartedTranscript.messages.contains {
+            $0.role == "activity" && $0.content.contains("could not be resumed")
+        }
+        XCTAssertTrue(sameBackend || visibleHandoff)
+        try clickIdentified("assistant.close")
+        XCTAssertEqual(try accessibilityValue("tutorial.dataset.\(datasetID)"), "ready")
+        selectViewMode("Raw")
+        let restartedMarkdown = try textValue(try require("notebook.editor.raw"))
+        XCTAssertTrue(restartedMarkdown.contains(learnerNote))
+        XCTAssertTrue(restartedMarkdown.contains(calculationMarker))
+        selectViewMode("Rich")
+        try bringIntoView(
+            "notebook.visualization.\(explorerVisualizationID)",
+            in: "notebook.document.scroll",
+            deltaY: -460,
+            attempts: 20
+        )
+        XCTAssertTrue(element("notebook.visualization.openExplorer.\(explorerVisualizationID)").exists)
+        try bringIntoView("notebook.python.previousRevisions.\(pythonCellID)", in: "notebook.document.scroll", deltaY: 420)
+        XCTAssertTrue(element("notebook.python.latestRevision.\(pythonCellID)").exists)
+        try bringIntoView("notebook.parameters.open.\(taskCellID)", in: "notebook.document.scroll", deltaY: -420)
+        try clickIdentified("notebook.parameters.open.\(taskCellID)")
+        XCTAssertTrue(waitForValue("task.parameter.vis", containing: "data/twhya_calibrated.ms", timeout: 15))
+        XCTAssertFalse(element("task.stop").isEnabled, "Reloading tutorial parameters must not rerun the task")
+
+        let finalReceipts = receiptObjects(in: runs)
+        let pythonReceipts = finalReceipts.filter {
+            $0["operation_id"] as? String == "python.execute" && $0["status"] as? String == "succeeded"
+        }
+        let finalLock = try String(contentsOf: tutorialLock, encoding: .utf8)
+        XCTAssertTrue(finalLock.contains("phase = \"ready\""))
+        XCTAssertEqual(try Data(contentsOf: templateManifest), templateManifestData)
+        XCTAssertEqual(try Data(contentsOf: templateMarkdown), templateMarkdownData)
+        let evidence: [String: Any] = [
+            "schema_version": 1,
+            "repository_revision": environment["repoRevision"] ?? "",
+            "project_root": project.path,
+            "template": [
+                "path": template.path,
+                "manifest_sha256": sha256Hex(templateManifestData),
+                "markdown_sha256": sha256Hex(templateMarkdownData),
+                "source_unchanged": true,
+                "notebook_id": notebookID,
+            ],
+            "acquisition": [
+                "source_uri": expectedSource,
+                "expected_size_bytes": expectedSize,
+                "expected_sha256": expectedSha256,
+                "duration_seconds": acquisitionDurationSeconds,
+                "operation_id": acquisitionReceipt["operation_id"] as? String ?? "",
+                "run_id": acquisitionReceipt["run_id"] as? String ?? "",
+                "ready": true,
+            ],
+            "notebook": [
+                "path": "notebooks/tw-hya-first-look.md",
+                "learner_note_persisted": true,
+                "pin_count": 1,
+            ],
+            "explorer": [
+                "dataset": measurementSet.path,
+                "visualization_id": explorerVisualizationID,
+                "revision_count": explorerRevisions.count,
+                "reopen_surface": "msexplore",
+            ],
+            "task": [
+                "operation_id": "imager",
+                "cell_id": taskReceipt["cell_id"] as? String ?? "",
+                "run_id": taskReceipt["run_id"] as? String ?? "",
+                "receipt_schema_version": (taskReceipt["schema_version"] as? NSNumber)?.intValue ?? 0,
+                "products": (taskReceipt["products"] as? [[String: Any]])?.compactMap { $0["path"] as? String } ?? [],
+            ],
+            "python": [
+                "selected_interpreter": environment["pythonCommand"] ?? "",
+                "successful_revisions": pythonReceipts.count,
+                "first_figure": firstPythonFigure,
+                "revised_figure": revisedPythonFigure,
+            ],
+            "assistant": [
+                "scientific_marker": scientificMarker,
+                "scientific_citations": scientificAnswer.citations.map(\.locator),
+                "implementation_marker": implementationMarker,
+                "implementation_citations": implementationAnswer.citations.map(\.locator),
+                "calculation_marker": calculationMarker,
+                "native_approval_observed": true,
+                "pin_count": 1,
+                "same_backend_after_restart": sameBackend,
+                "visible_handoff_after_restart": visibleHandoff,
+            ],
+            "restart_count": 1,
+            "cleanup": "test-owned project removed by harness after report validation",
+        ]
+        let evidenceData = try JSONSerialization.data(
+            withJSONObject: evidence,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try evidenceData.write(
+            to: URL(fileURLWithPath: try XCTUnwrap(environment["evidenceReport"])),
+            options: .atomic
+        )
+        try Data().write(
+            to: URL(fileURLWithPath: try XCTUnwrap(environment["passReceipt"])),
+            options: .atomic
+        )
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Wave 5D TW Hya production tutorial journey"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testTutorialPrototypeLearnerNotesApprovalAndTaskLoading() throws {
         launchTutorialPrototype()
         let datasetID = "tutorial-dataset-twhya-calibrated"
@@ -2190,6 +2636,43 @@ final class CasarsMacUITests: XCTestCase {
         )
     }
 
+    private func launchLiveTutorialProject(
+        _ project: URL,
+        template: URL,
+        environment: [String: String]
+    ) {
+        app = XCUIApplication()
+        ensureStoppedBeforeLaunch()
+        app.launchEnvironment["PATH"] = environment["path"] ?? "/usr/bin:/bin"
+        app.launchEnvironment["HOME"] = environment["home"] ?? FileManager.default.homeDirectoryForCurrentUser.path
+        app.launchEnvironment["CODEX_HOME"] = environment["codexHome"] ?? ""
+        app.launchEnvironment["CASA_RS_AGENT_COMMAND"] = environment["agentCommand"] ?? "codex"
+        app.launchEnvironment["CASA_RS_GUI_TEST_PYTHON"] = environment["pythonCommand"] ?? "python3"
+        if let repoRoot = environment["repoRoot"] {
+            app.launchEnvironment["CASA_RS_REPO_ROOT"] = repoRoot
+            app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = repoRoot
+        }
+        if let imager = environment["imagerCommand"] {
+            app.launchEnvironment["CASARS_IMAGER_BIN"] = imager
+        }
+        if let msexplore = environment["msexploreCommand"] {
+            app.launchEnvironment["CASARS_MSEXPLORE_BIN"] = msexplore
+        }
+        app.launchEnvironment["OPENAI_API_KEY"] = ""
+        app.launchEnvironment["AZURE_OPENAI_API_KEY"] = ""
+        app.launchEnvironment["OPENAI_BASE_URL"] = ""
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "-NSAutomaticTextCompletionEnabled", "NO",
+            "--open-project", project.path,
+            "--open-tutorial-pack", template.path,
+        ]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(element("notebook.document.scroll").waitForExistence(timeout: 15), app.debugDescription)
+    }
+
     private func launchLiveAssistantProject(_ project: URL, environment: [String: String]) {
         app = XCUIApplication()
         ensureStoppedBeforeLaunch()
@@ -2219,6 +2702,66 @@ final class CasarsMacUITests: XCTestCase {
         app.launch()
         app.activate()
         XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 15), app.debugDescription)
+    }
+
+    private func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func notebookIdentifier(in source: String) throws -> String {
+        let prefix = "<!-- casa-rs-notebook:v1 id="
+        let start = try XCTUnwrap(source.range(of: prefix)?.upperBound)
+        let end = try XCTUnwrap(source[start...].range(of: " -->")?.lowerBound)
+        return String(source[start..<end])
+    }
+
+    private func baselineCitationExists(
+        _ citation: LiveAssistantTranscript.Citation,
+        repoRoot: URL
+    ) -> Bool {
+        let corpusRoot = repoRoot
+            .appendingPathComponent("apps/casars-mac/Sources/CasarsMacCore/Resources/assistant-corpus/standard-v1")
+        guard let enumerator = FileManager.default.enumerator(
+            at: corpusRoot,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return false }
+        let excerptNeedle = normalizedEvidence(citation.excerpt ?? "")
+        for case let file as URL in enumerator where file.pathExtension == "json" {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            if excerptNeedle.count >= 32 {
+                let prefix = String(excerptNeedle.prefix(160))
+                if normalizedEvidence(text).contains(prefix) { return true }
+            } else if !citation.locator.isEmpty {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func sourceCitationExists(
+        _ citation: LiveAssistantTranscript.Citation,
+        repoRoot: URL
+    ) -> Bool {
+        let expectedPath = "crates/casa-notebook/src/tutorial.rs"
+        guard citation.locator.contains(expectedPath) || citation.sourcePath?.contains(expectedPath) == true else {
+            return false
+        }
+        let source = repoRoot.appendingPathComponent(expectedPath)
+        guard let text = try? String(contentsOf: source, encoding: .utf8),
+              text.contains("advance_acquisition"),
+              text.contains("safely_extract_archive")
+        else { return false }
+        let excerpt = normalizedEvidence(citation.excerpt ?? "")
+        return excerpt.isEmpty || normalizedEvidence(text).contains(String(excerpt.prefix(160)))
+    }
+
+    private func normalizedEvidence(_ value: String) -> String {
+        value
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func openProductionAssistant(notebookID: String) throws {
@@ -2672,6 +3215,14 @@ private struct LiveAssistantTranscript: Decodable {
     }
     struct Citation: Decodable {
         var locator: String
+        var excerpt: String?
+        var sourcePath: String?
+        var page: UInt32?
+        var section: String?
+        var lineStart: UInt32?
+        var lineEnd: UInt32?
+        var release: String?
+        var commit: String?
     }
     struct TaskSuggestion: Decodable {
         var id: String

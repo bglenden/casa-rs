@@ -77,6 +77,14 @@ notebook-roundtrip-gui:
 notebook-roundtrip-gui-remote:
     bash scripts/test-gui-remote.sh notebook-roundtrip-gui
 
+# Opt-in end-to-end TW Hya tutorial journey through production adapters.
+tutorial-journey-gui:
+    bash apps/casars-mac/script/test_tutorial_journey_gui.sh
+
+# Run the production TW Hya tutorial journey on the dedicated remote Mac.
+tutorial-journey-gui-remote:
+    bash scripts/test-gui-remote.sh tutorial-journey-gui
+
 graph:
     bash scripts/generate-graphs.sh
 
