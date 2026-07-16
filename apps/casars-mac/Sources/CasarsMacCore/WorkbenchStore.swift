@@ -3961,7 +3961,7 @@ public final class WorkbenchStore: ObservableObject {
                 )
                 let scope: AssistantCorpusRefreshScope = request == .allLayers
                     ? .allLayers : .projectDocuments
-                let result = ingestor.collectIncremental(
+                let result = ingestor.collect(
                     projectRoot: projectRoot,
                     projectInventory: inventory,
                     extractProjectPaths: Set(plan.extractPaths),

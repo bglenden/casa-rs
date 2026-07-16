@@ -95,7 +95,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
             projectRoot: project.path, sources: firstInventory.sources
         )
         XCTAssertEqual(firstPlan.extractPaths, ["documents/control.pdf", "documents/paper.md"])
-        let first = ingestor.collectIncremental(
+        let first = ingestor.collect(
             projectRoot: project.path,
             projectInventory: firstInventory,
             extractProjectPaths: Set(firstPlan.extractPaths),
@@ -116,7 +116,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
             projectRoot: project.path, sources: unchangedInventory.sources
         )
         XCTAssertTrue(unchangedPlan.extractPaths.isEmpty)
-        let unchanged = ingestor.collectIncremental(
+        let unchanged = ingestor.collect(
             projectRoot: project.path,
             projectInventory: unchangedInventory,
             extractProjectPaths: Set(unchangedPlan.extractPaths),
@@ -136,7 +136,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
             projectRoot: project.path, sources: replacementInventory.sources
         )
         XCTAssertEqual(replacementPlan.extractPaths, ["documents/paper.md"])
-        let replacement = ingestor.collectIncremental(
+        let replacement = ingestor.collect(
             projectRoot: project.path,
             projectInventory: replacementInventory,
             extractProjectPaths: Set(replacementPlan.extractPaths),

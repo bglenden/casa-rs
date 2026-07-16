@@ -32,24 +32,6 @@ package struct AssistantCorpusIngestor {
 
     package func collect(
         projectRoot: String,
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> AssistantCorpusIngestionResult {
-        let inventory = projectDocumentInventory(projectRoot: projectRoot)
-        var result = collectIncremental(
-            projectRoot: projectRoot,
-            environment: environment,
-            projectInventory: inventory,
-            extractProjectPaths: Set(inventory.sources.map(\.relativePath)),
-            scope: .allLayers
-        )
-        // The legacy full-layer API still uses layer replacement semantics.
-        // Incremental callers reconcile project_document from projectSources.
-        result.refreshedLayers.insert("project_document")
-        return result
-    }
-
-    package func collectIncremental(
-        projectRoot: String,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         projectInventory: AssistantProjectCorpusInventory,
         extractProjectPaths: Set<String>,

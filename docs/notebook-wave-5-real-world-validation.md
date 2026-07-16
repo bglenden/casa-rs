@@ -178,8 +178,8 @@ Focused evidence on 2026-07-15:
   tamper rejection, and baseline upgrade preserving project documents and an
   assistant conversation;
 - the compact pack measured 3,077,083 bytes versus 359,670,733 bytes of selected
-  original PDFs; clean debug ingestion/indexing took 2.62 seconds and produced
-  a 14,786,560-byte SQLite index;
+  original PDFs; clean debug ingestion/indexing took 2.61 seconds and produced
+  a 14,782,464-byte SQLite index;
 - rendered Perley geometry slide 15 was visually compared with its normalized
   text. Targeted corrections restore `H_0`, `delta_0`, `nu`, and `nu_F` where
   OCR had confused zero/degree and Greek/Latin glyphs.
@@ -189,6 +189,22 @@ Focused evidence on 2026-07-15:
   `Perley-Geometry-SIW2026.pdf, slide 15`; no shell or web tool was used.
 
 ## Bounded refactor pass
+
+The #420/#421 corpus pass used checkpoint commit `8231c5bc9`. The broad bounded
+scope was the package-internal ingestion operation and its Workbench/test
+callers; watcher implementation, SQLite contracts, and provider/public APIs
+were left unchanged. Discovery found two ingestion entry points: a legacy
+full-extraction wrapper and the planned incremental operation. The wrapper and
+its project-layer replacement fallback were deleted, every in-repo caller now
+supplies the source inventory/extraction plan to the single `collect` operation,
+and tests commit project-source snapshots through the same canonical index
+boundary as production. Package-internal ingestion operations fell from two to
+one; public application-developer API remained zero before and after. No shim,
+alias, or fallback was retained. The consolidated 39-test assistant/corpus run
+passed (5 explicit live-test skips); the separately enabled production corpus
+test also passed. No corpus benchmark exists, so the clean-pack timing above is
+the relevant measured performance evidence. The 600 ms debounce is an explicit
+event-coalescing UX policy, not a dataset- or machine-tuned planner constant.
 
 The 2026-07-15 follow-up pass was bounded to the assistant progress, citation,
 task-pin, parameter-provenance, and font-scaling paths touched by the live GUI

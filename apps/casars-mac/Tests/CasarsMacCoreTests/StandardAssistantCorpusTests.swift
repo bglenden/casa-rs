@@ -8,7 +8,7 @@ final class StandardAssistantCorpusTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: project) }
 
         let started = Date()
-        let result = AssistantCorpusIngestor().collect(
+        let result = collectAllCorpus(
             projectRoot: project.path,
             environment: [:]
         )
@@ -95,7 +95,7 @@ final class StandardAssistantCorpusTests: XCTestCase {
             encoding: .utf8
         )
 
-        let result = AssistantCorpusIngestor().collect(
+        let result = collectAllCorpus(
             projectRoot: project.path,
             environment: ["CASA_RS_ASSISTANT_BASELINE_ROOT": baseline.path]
         )
@@ -162,7 +162,7 @@ final class StandardAssistantCorpusTests: XCTestCase {
         }
         let project = try temporaryDirectory("live-agent")
         defer { try? FileManager.default.removeItem(at: project) }
-        let ingestion = AssistantCorpusIngestor().collect(
+        let ingestion = collectAllCorpus(
             projectRoot: project.path,
             environment: ["CASA_RS_SOURCE_ROOT": FileManager.default.currentDirectoryPath]
         )
@@ -170,7 +170,9 @@ final class StandardAssistantCorpusTests: XCTestCase {
         _ = try persistence.indexCorpus(
             projectRoot: project.path,
             documents: ingestion.documents,
-            removeMissingLayers: ingestion.refreshedLayers
+            removeMissingLayers: ingestion.refreshedLayers,
+            projectSources: ingestion.projectSources,
+            failedProjectSources: ingestion.failedProjectSources
         )
         let expectedBook = try XCTUnwrap(persistence.searchCorpus(
             projectRoot: project.path, query: "van Cittert Zernike theorem", limit: 32
@@ -300,6 +302,21 @@ final class StandardAssistantCorpusTests: XCTestCase {
                 commit: nil
             ),
             redistributionCleared: true
+        )
+    }
+
+    private func collectAllCorpus(
+        projectRoot: String,
+        environment: [String: String]
+    ) -> AssistantCorpusIngestionResult {
+        let ingestor = AssistantCorpusIngestor()
+        let inventory = ingestor.projectDocumentInventory(projectRoot: projectRoot)
+        return ingestor.collect(
+            projectRoot: projectRoot,
+            environment: environment,
+            projectInventory: inventory,
+            extractProjectPaths: Set(inventory.sources.map(\.relativePath)),
+            scope: .allLayers
         )
     }
 

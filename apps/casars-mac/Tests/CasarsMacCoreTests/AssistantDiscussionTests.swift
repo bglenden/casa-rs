@@ -583,7 +583,7 @@ final class AssistantDiscussionTests: XCTestCase {
             atomically: true,
             encoding: .utf8
         )
-        let result = AssistantCorpusIngestor().collect(
+        let result = collectAllCorpus(
             projectRoot: project.path,
             environment: ["CASA_RS_SOURCE_ROOT": source.path]
         )
@@ -596,7 +596,7 @@ final class AssistantDiscussionTests: XCTestCase {
             $0.layer == "release_source" && $0.citation.release == "v1.2.3"
                 && $0.citation.commit == "abc123"
         })
-        XCTAssertEqual(result.refreshedLayers, ["baseline", "project_document", "release_source", "live_source"])
+        XCTAssertEqual(result.refreshedLayers, ["baseline", "release_source", "live_source"])
     }
 
     func testProjectPDFCorpusSupportsPageCitationsDiagnosticsAndReplacementLifecycle() throws {
@@ -628,7 +628,7 @@ final class AssistantDiscussionTests: XCTestCase {
 
         let environment = ["CASA_RS_SOURCE_ROOT": source.path]
         let client = UniFFIAssistantPersistenceClient()
-        let first = AssistantCorpusIngestor().collect(
+        let first = collectAllCorpus(
             projectRoot: project.path,
             environment: environment
         )
@@ -641,7 +641,9 @@ final class AssistantDiscussionTests: XCTestCase {
         let firstReport = try decodeCorpusReport(client.indexCorpus(
             projectRoot: project.path,
             documents: first.documents,
-            removeMissingLayers: first.refreshedLayers
+            removeMissingLayers: first.refreshedLayers,
+            projectSources: first.projectSources,
+            failedProjectSources: first.failedProjectSources
         ))
         XCTAssertGreaterThan(firstReport.indexedDocuments, 0)
         let pageTwo = try XCTUnwrap(
@@ -651,14 +653,16 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertEqual(pageTwo.citation.page, 2)
 
         try writeTextPDF(["Replacement phrase ultraviolet marmalade."], to: paper)
-        let changed = AssistantCorpusIngestor().collect(
+        let changed = collectAllCorpus(
             projectRoot: project.path,
             environment: environment
         )
         let changedReport = try decodeCorpusReport(client.indexCorpus(
             projectRoot: project.path,
             documents: changed.documents,
-            removeMissingLayers: changed.refreshedLayers
+            removeMissingLayers: changed.refreshedLayers,
+            projectSources: changed.projectSources,
+            failedProjectSources: changed.failedProjectSources
         ))
         XCTAssertGreaterThanOrEqual(changedReport.indexedDocuments, 1)
         XCTAssertGreaterThanOrEqual(changedReport.removedDocuments, 1)
@@ -674,14 +678,16 @@ final class AssistantDiscussionTests: XCTestCase {
         )
 
         try FileManager.default.removeItem(at: paper)
-        let removed = AssistantCorpusIngestor().collect(
+        let removed = collectAllCorpus(
             projectRoot: project.path,
             environment: environment
         )
         let removedReport = try decodeCorpusReport(client.indexCorpus(
             projectRoot: project.path,
             documents: removed.documents,
-            removeMissingLayers: removed.refreshedLayers
+            removeMissingLayers: removed.refreshedLayers,
+            projectSources: removed.projectSources,
+            failedProjectSources: removed.failedProjectSources
         ))
         XCTAssertGreaterThanOrEqual(removedReport.removedDocuments, 1)
         XCTAssertTrue(try client.searchCorpus(
@@ -704,7 +710,7 @@ final class AssistantDiscussionTests: XCTestCase {
         let staged = documents.appendingPathComponent("sidereal-visibility-averaging.pdf")
         try FileManager.default.copyItem(atPath: pdfPath, toPath: staged.path)
 
-        let result = AssistantCorpusIngestor().collect(
+        let result = collectAllCorpus(
             projectRoot: project.path,
             environment: ["CASA_RS_SOURCE_ROOT": sourceRoot]
         )
@@ -718,7 +724,9 @@ final class AssistantDiscussionTests: XCTestCase {
         let report = try decodeCorpusReport(client.indexCorpus(
             projectRoot: project.path,
             documents: result.documents,
-            removeMissingLayers: result.refreshedLayers
+            removeMissingLayers: result.refreshedLayers,
+            projectSources: result.projectSources,
+            failedProjectSources: result.failedProjectSources
         ))
         let hits = try client.searchCorpus(
             projectRoot: project.path,
@@ -1383,7 +1391,7 @@ final class AssistantDiscussionTests: XCTestCase {
         )
         let sourceRoot = ProcessInfo.processInfo.environment["CASA_RS_SOURCE_ROOT"]
             ?? FileManager.default.currentDirectoryPath
-        let ingestion = AssistantCorpusIngestor().collect(
+        let ingestion = collectAllCorpus(
             projectRoot: project.path,
             environment: ["CASA_RS_SOURCE_ROOT": sourceRoot]
         )
@@ -1394,7 +1402,9 @@ final class AssistantDiscussionTests: XCTestCase {
         _ = try persistence.indexCorpus(
             projectRoot: project.path,
             documents: ingestion.documents,
-            removeMissingLayers: ingestion.refreshedLayers
+            removeMissingLayers: ingestion.refreshedLayers,
+            projectSources: ingestion.projectSources,
+            failedProjectSources: ingestion.failedProjectSources
         )
 
         let session = CodexAppServerSession(configuration: try .discover())
@@ -1532,6 +1542,21 @@ final class AssistantDiscussionTests: XCTestCase {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(AssistantCorpusIndexReportState.self, from: Data(json.utf8))
+    }
+
+    private func collectAllCorpus(
+        projectRoot: String,
+        environment: [String: String]
+    ) -> AssistantCorpusIngestionResult {
+        let ingestor = AssistantCorpusIngestor()
+        let inventory = ingestor.projectDocumentInventory(projectRoot: projectRoot)
+        return ingestor.collect(
+            projectRoot: projectRoot,
+            environment: environment,
+            projectInventory: inventory,
+            extractProjectPaths: Set(inventory.sources.map(\.relativePath)),
+            scope: .allLayers
+        )
     }
 
     private func temporaryProject() throws -> URL {
