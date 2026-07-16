@@ -382,6 +382,17 @@ For each wave:
   parameters does not rerun the task. Focused core tests retain the managed rich
   output cell and explorer-reopen regressions without requiring a provider or
   foreground window.
+- Wave 5 full-tutorial acceptance runs only through the explicit
+  `just tutorial-journey-gui` opt-in, or
+  `just tutorial-journey-gui-remote` on the configured GUI worker. It downloads
+  and digest-verifies the real TW Hya calibrated MeasurementSet after exact
+  approval, stores an explorer plot, runs the tutorial imager task, regenerates
+  a Matplotlib result, obtains cited live baseline and current-source answers,
+  approves one agent-requested calculation, appends that answer once, and then
+  proves all state and parameter replay after a full app restart. The harness
+  removes its disposable project only after writing a sanitized report; the
+  `.xcresult` and report remain on the authoritative worker. This live
+  acceptance is not part of CI or the deterministic `just gui-test` contract.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review

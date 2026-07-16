@@ -268,6 +268,60 @@ restored the preset but left the explorer on its Summary surface. Focused rich
 document and Workbench-store regressions now cover these boundaries, while the
 opt-in XCUITest covers real rendering, persistence, and process restart.
 
+## Complete TW Hya production tutorial journey (#418)
+
+The reusable acceptance entrypoint is:
+
+```sh
+just tutorial-journey-gui
+```
+
+The normal dedicated-worker entrypoint is
+`just tutorial-journey-gui-remote`. It uses the same production app and
+XCUITest path while keeping the exclusive foreground window on the remote Mac.
+The harness preflights the installed ChatGPT-subscription Codex CLI and the
+selected Python, rejects metered API configuration, and verifies the exact
+committed tutorial template before taking focus.
+
+The authoritative uninterrupted run passed on the remote Mac mini at revision
+`3aeefa55712939cc49d803824ca4d70c096e39c6` on 2026-07-16: one test executed in
+715.887 seconds with zero failures. The complete Xcode result and sanitized
+report remain on the worker at
+`/Volumes/Extra Storage (not encrypted)/casa-rs-gui-worker-state/artifacts/20260716T230016Z-3aeefa557129-tutorial-journey-gui/`;
+the report is also copied to the ignored local
+`apps/casars-mac/.gui-test/remote/TutorialJourneyGUI.report.json`.
+
+The run independently demonstrated:
+
+- immutable template manifest and Markdown digests, learner-copy creation, a
+  persisted learner note, and unchanged template sources;
+- exact approval of the 435,742,720-byte NRAO archive with SHA-256
+  `f0cfeee5b9dec09ac9ed4d3e4e048d5eb28023c11cbc8295c09ddefe6b8a97b2`,
+  real download/digest/safe extraction in 453.191 seconds, a succeeded
+  `tutorial.acquire.twhya-calibrated` receipt, and discovery of the staged
+  MeasurementSet;
+- a real UV Coverage explorer plot explicitly stored as one notebook
+  visualization with `msexplore` reopen provenance;
+- tutorial overrides loaded into the normal imager tab, a real succeeded
+  receipt-schema-v2 imager run, ten recorded image/PNG products, and parameter
+  reopen after process loss without re-execution;
+- two successful immutable executions through `/opt/homebrew/bin/python3`, two
+  byte-distinct Matplotlib figures, and visible previous/latest revisions;
+- live bounded baseline and current-source searches with independently matched
+  citations, one native approval for the agent-requested calculation, and one
+  AI snapshot appended at the chronological notebook tail;
+- full application termination and relaunch with the same backend session,
+  preserved conversation/notebook/tutorial/plot/Python/task state, followed by
+  removal of the test-owned project only after the evidence report was written.
+
+The acceptance work exposed only harness gaps after the production behavior
+was already correct: a stale cell-tail assertion did not reflect Markdown AI
+notes, SwiftUI exposes native approval through its visible button label inside
+a combined accessibility container, and the post-restart notebook opens at its
+chronological tail and therefore needs an upward scroll to reopen the original
+tutorial task. Each gap is now asserted on the real production path. No
+approved #418 check was deferred.
+
 ## Bounded refactor pass
 
 The #417 pass used checkpoint commit `9417f2457` and was bounded to the
