@@ -1,7 +1,7 @@
 # Standard Radio-Astronomy Assistant Corpus
 
-Truth class: normative runtime and maintenance contract  
-Last reality check: 2026-07-15  
+Truth class: normative runtime and maintenance contract
+Last reality check: 2026-07-15
 Verification: `python3 scripts/check-assistant-corpus-inventory.py`
 
 ## Installed baseline

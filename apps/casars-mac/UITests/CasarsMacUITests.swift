@@ -459,8 +459,7 @@ final class CasarsMacUITests: XCTestCase {
         let notebookID = "019f0000-0000-7000-8000-000000000001"
         let cellID = "019f0000-0000-7000-8000-000000000002"
         let runID = "019f0000-0000-7000-8000-000000000003"
-        let project = FileManager.default.temporaryDirectory
-            .appendingPathComponent("casars-mac-ui-notebook-\(UUID().uuidString)", isDirectory: true)
+        let project = try makeProductionProjectRoot(prefix: "casars-mac-ui-notebook")
         let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
         try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
         let notebookFile = notebooks.appendingPathComponent("default.md")
@@ -591,8 +590,7 @@ final class CasarsMacUITests: XCTestCase {
     func testProductionPythonCellRunsPersistsReceiptAndSurvivesNotebookReload() throws {
         let notebookID = "019f0000-0000-7000-8000-000000000101"
         let cellID = "019f0000-0000-7000-8000-000000000102"
-        let project = FileManager.default.temporaryDirectory
-            .appendingPathComponent("casars-mac-ui-python-\(UUID().uuidString)", isDirectory: true)
+        let project = try makeProductionProjectRoot(prefix: "casars-mac-ui-python")
         let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
         let pythonBin = project.appendingPathComponent(".casa-rs/python/bin", isDirectory: true)
         try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
@@ -703,8 +701,7 @@ final class CasarsMacUITests: XCTestCase {
 
     func testProductionAssistantPersistsCitedTailPinAndOpensSuggestedTask() throws {
         let notebookID = "019f0000-0000-7000-8000-000000000401"
-        let project = FileManager.default.temporaryDirectory
-            .appendingPathComponent("casars-mac-ui-assistant-\(UUID().uuidString)", isDirectory: true)
+        let project = try makeProductionProjectRoot(prefix: "casars-mac-ui-assistant")
         let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
         try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
         try "<!-- casa-rs-notebook:v1 id=\(notebookID) -->\n\n# Production assistant review\n\nInitial note.\n"
@@ -2180,8 +2177,7 @@ final class CasarsMacUITests: XCTestCase {
     }
 
     func testProductionTutorialForkApprovalReadyAndTaskLoading() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("casars-gui-tutorial-\(UUID().uuidString)", isDirectory: true)
+        let root = try makeProductionProjectRoot(prefix: "casars-gui-tutorial")
         let project = root.appendingPathComponent("project", isDirectory: true)
         let template = root.appendingPathComponent("template", isDirectory: true)
         productionProjectURL = root
@@ -2650,6 +2646,31 @@ final class CasarsMacUITests: XCTestCase {
             app.wait(for: .notRunning, timeout: 5),
             "A previous tested app instance remained alive before launch"
         )
+    }
+
+    private func makeProductionProjectRoot(prefix: String) throws -> URL {
+        let fileManager = FileManager.default
+        let base: URL
+        if let configured = ProcessInfo.processInfo.environment["CASA_RS_GUI_TEST_PROJECT_BASE"],
+           !configured.isEmpty
+        {
+            guard (configured as NSString).isAbsolutePath else {
+                throw NSError(
+                    domain: "CasarsMacUITests",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "CASA_RS_GUI_TEST_PROJECT_BASE must be an absolute path",
+                    ]
+                )
+            }
+            base = URL(fileURLWithPath: configured, isDirectory: true)
+        } else {
+            base = fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Caches/casa-rs-gui-tests", isDirectory: true)
+        }
+        try fileManager.createDirectory(at: base, withIntermediateDirectories: true)
+        return base.appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
     }
 
     private func launchLiveTutorialProject(

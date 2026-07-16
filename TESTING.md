@@ -208,8 +208,12 @@ The executable GUI layer follows these rules:
 
 - Launch deterministic fixture states with `XCUIApplication.launchArguments`.
   Production-boundary persistence tests may create and remove a unique
-  test-owned temporary project; never open user projects, contact providers or
-  networks, run scientific tasks, or leave project/notebook data behind. The
+  test-owned project under `~/Library/Caches/casa-rs-gui-tests/` (or
+  `CASA_RS_GUI_TEST_PROJECT_BASE`); they must not put a project inside the
+  XCTest runner's protected application container because that triggers a
+  cross-app-data privacy prompt in the Workbench. Never open user projects,
+  contact providers or networks, run scientific tasks, or leave
+  project/notebook data behind. The
   separately invoked `just assistant-live-gui` acceptance may contact the
   subscribed provider only under its explicit opt-in environment gate and
   still uses and removes a unique temporary project.
