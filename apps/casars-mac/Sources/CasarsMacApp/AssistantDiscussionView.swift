@@ -141,8 +141,10 @@ struct AssistantDiscussionView: View {
                             Text(approval.summary).workbenchFont(.caption).textSelection(.enabled)
                             HStack {
                                 Button("Deny") { store.resolveAssistantApproval("decline") }
+                                    .accessibilityIdentifier("assistant.approval.deny")
                                 Button("Approve") { store.resolveAssistantApproval("accept") }
                                     .buttonStyle(.borderedProminent)
+                                    .accessibilityIdentifier("assistant.approval.approve")
                             }
                         }
                         .padding(10)

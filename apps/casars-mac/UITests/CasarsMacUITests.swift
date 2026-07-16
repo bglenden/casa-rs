@@ -1939,10 +1939,7 @@ final class CasarsMacUITests: XCTestCase {
             "Propose and execute a Python calculation of the nominal angular resolution in arcseconds at 372.5 GHz for a 750 m baseline. Use the selected scientific Python command through the generic command tool. Before executing, explicitly request native user approval using escalated execution; do not calculate it mentally. After approval and execution, reply with \(calculationMarker), the executed expression, and its result."
         )
         XCTAssertTrue(element("assistant.approval").waitForExistence(timeout: 90), app.debugDescription)
-        let approval = element("assistant.approval")
-        let approve = approval.buttons["Approve"]
-        XCTAssertTrue(approve.waitForExistence(timeout: 5), app.debugDescription)
-        approve.click()
+        try clickIdentified("assistant.approval.approve")
         let calculationTranscript = try waitForLiveAssistantTranscript(in: project, timeout: 180) { transcript in
             transcript.messages.contains { message in
                 message.role == "assistant" && message.content.contains(calculationMarker)
