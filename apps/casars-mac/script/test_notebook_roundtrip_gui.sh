@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 CODEX_COMMAND="${CASA_RS_CODEX_COMMAND:-codex}"
-PYTHON_COMMAND="${CASA_RS_GUI_TEST_PYTHON:-$($REPO_ROOT/scripts/resolve-python.sh 3.10)}"
+PYTHON_COMMAND="${CASA_RS_GUI_TEST_PYTHON:-$("$REPO_ROOT/scripts/resolve-python.sh" 3.10)}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
 if [[ "$TARGET_DIR" != /* ]]; then
   TARGET_DIR="$REPO_ROOT/$TARGET_DIR"
