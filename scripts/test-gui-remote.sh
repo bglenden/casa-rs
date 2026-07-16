@@ -73,6 +73,10 @@ if [[ -n "${CASA_RS_GUI_TEST_REMOTE_IDENTITY:-}" ]]; then
   ssh_args+=(-i "$CASA_RS_GUI_TEST_REMOTE_IDENTITY")
 fi
 
+encode_remote_arg() {
+  printf '%s' "$1" | /usr/bin/base64
+}
+
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-${revision:0:12}-$mode"
 remote_artifacts="$remote_storage/artifacts/$run_id"
 remote_target="$remote_storage/target"
@@ -83,24 +87,35 @@ echo "==> Checkout: $remote_root"
 echo "==> Build cache: $remote_target"
 echo "==> Artifacts: $remote_artifacts"
 
+remote_args=(
+  "$remote_root" "$remote_storage" "$remote_artifacts" "$remote_target"
+  "$developer_dir" "$branch" "$revision" "$mode" "$remote_python"
+  "$remote_codex" "$remote_only"
+)
+encoded_remote_args=()
+for arg in "${remote_args[@]}"; do
+  encoded_remote_args+=("$(encode_remote_arg "$arg")")
+done
+
 set +e
-ssh "${ssh_args[@]}" "$remote" /bin/bash -s -- \
-  "$remote_root" "$remote_storage" "$remote_artifacts" "$remote_target" \
-  "$developer_dir" "$branch" "$revision" "$mode" "$remote_python" "$remote_codex" \
-  "$remote_only" <<'REMOTE_RUN'
+ssh "${ssh_args[@]}" "$remote" /bin/bash -s -- "${encoded_remote_args[@]}" <<'REMOTE_RUN'
 set -euo pipefail
 
-repo_root="$1"
-storage_root="$2"
-artifact_root="$3"
-target_dir="$4"
-developer_dir="$5"
-branch="$6"
-revision="$7"
-mode="$8"
-python_command="$9"
-codex_command="${10}"
-only_testing="${11}"
+decode_arg() {
+  printf '%s' "$1" | /usr/bin/base64 -D
+}
+
+repo_root="$(decode_arg "$1")"
+storage_root="$(decode_arg "$2")"
+artifact_root="$(decode_arg "$3")"
+target_dir="$(decode_arg "$4")"
+developer_dir="$(decode_arg "$5")"
+branch="$(decode_arg "$6")"
+revision="$(decode_arg "$7")"
+mode="$(decode_arg "$8")"
+python_command="$(decode_arg "$9")"
+codex_command="$(decode_arg "${10}")"
+only_testing="$(decode_arg "${11}")"
 
 export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export DEVELOPER_DIR="$developer_dir"
@@ -169,10 +184,12 @@ echo "==> Remote artifacts retained at $remote:$remote_artifacts"
 if [[ "$mode" == "notebook-roundtrip-gui" && "$status" == "0" ]]; then
   local_report="$repo_root/apps/casars-mac/.gui-test/remote/NotebookRoundTripGUI.report.json"
   mkdir -p "$(dirname "$local_report")"
+  encoded_report="$(encode_remote_arg "$remote_artifacts/NotebookRoundTripGUI.report.json")"
   ssh "${ssh_args[@]}" "$remote" /bin/bash -s -- \
-    "$remote_artifacts/NotebookRoundTripGUI.report.json" >"$local_report" <<'REMOTE_REPORT'
+    "$encoded_report" >"$local_report" <<'REMOTE_REPORT'
 set -euo pipefail
-cat "$1"
+report_path="$(printf '%s' "$1" | /usr/bin/base64 -D)"
+cat "$report_path"
 REMOTE_REPORT
   echo "==> Copied sanitized report to $local_report"
 fi
