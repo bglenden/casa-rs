@@ -110,6 +110,7 @@ struct TutorialNotebookPrototypeView: View {
                 .accessibilityHidden(true)
             Text("Prototype — deterministic fixtures only. No network, file, archive, task, or durable project operation is used.")
                 .workbenchFont(.caption, weight: .semibold)
+                .foregroundStyle(Color(nsColor: .labelColor))
             Spacer()
             Text("Boundary calls: \(store.prototypeProductionBoundaryInvocationCount)")
                 .workbenchFont(.caption, weight: .semibold, design: .monospaced)

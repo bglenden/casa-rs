@@ -241,7 +241,7 @@ final class CasarsMacUITests: XCTestCase {
                 return true
             }
             if issue.auditType.contains(.contrast),
-               issue.element?.identifier.hasPrefix("notebook.richElement.") == true,
+               issue.element?.identifier.hasPrefix("notebook.") == true,
                let frame = issue.element?.frame,
                !notebookViewport.contains(frame)
             {
@@ -2436,7 +2436,7 @@ final class CasarsMacUITests: XCTestCase {
             }
             if issue.auditType.contains(.contrast),
                let frame = issue.element?.frame,
-               issue.element?.identifier.hasPrefix("notebook.richElement.") == true,
+               issue.element?.identifier.hasPrefix("notebook.") == true,
                !notebookViewport.contains(frame)
             {
                 // XCTest audits lazily retained and edge-clipped ScrollView

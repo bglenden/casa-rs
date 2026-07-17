@@ -716,6 +716,7 @@ struct RichMarkdownBlockEditor: View {
             } else if let rendered = NotebookMarkdownPresentation.attributedString(source) {
                 Text(rendered)
                     .font(.system(size: 15))
+                    .foregroundStyle(Color(nsColor: .labelColor))
                     .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
                     .contentShape(Rectangle())
                     .onTapGesture {
