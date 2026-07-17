@@ -515,8 +515,10 @@ The installer-managed suite layout is:
   calibrate-rc -> ~/.local/opt/casa-rs/rc/bin/calibrate
 ```
 
-Python task wrappers prefer a sibling suite-installed `calibrate` in that layout
-before they fall back to repo-local binaries or `PATH`.
+Python task wrappers launch the catalog executable from the selected installed
+suite. Development-workspace mode instead uses the exact checkout selected by
+`CASARS_DEVELOPMENT_WORKSPACE`; neither mode falls back to another suite,
+repo-local binaries, or `PATH`.
 
 ## Git Hooks
 

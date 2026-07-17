@@ -732,6 +732,7 @@ final class CasarsMacUITests: XCTestCase {
         app = makeTestApplication()
         ensureStoppedBeforeLaunch()
         app.launchEnvironment["CASA_RS_AGENT_FIXTURE"] = "1"
+        app.launchEnvironment["CASARS_LAUNCH_MODE"] = "installed_suite"
         app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = project.path
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
