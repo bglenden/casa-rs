@@ -217,7 +217,9 @@ The executable GUI layer follows these rules:
   test-owned project under `~/Library/Caches/casa-rs-gui-tests/` (or
   `CASA_RS_GUI_TEST_PROJECT_BASE`); they must not put a project inside the
   XCTest runner's protected application container because that triggers a
-  cross-app-data privacy prompt in the Workbench. Never open user projects,
+  cross-app-data privacy prompt in the Workbench. The test helper resolves the
+  default from the POSIX account home rather than Foundation's sandbox-adjusted
+  `homeDirectoryForCurrentUser`. Never open user projects,
   contact providers or networks, run scientific tasks, or leave
   project/notebook data behind. The
   separately invoked `just assistant-live-gui` acceptance may contact the

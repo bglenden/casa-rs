@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import Darwin
 import XCTest
 
 final class CasarsMacUITests: XCTestCase {
@@ -2666,8 +2667,30 @@ final class CasarsMacUITests: XCTestCase {
             }
             base = URL(fileURLWithPath: configured, isDirectory: true)
         } else {
-            base = fileManager.homeDirectoryForCurrentUser
+            guard let passwordEntry = getpwuid(getuid()),
+                  let homeDirectory = passwordEntry.pointee.pw_dir
+            else {
+                throw NSError(
+                    domain: "CasarsMacUITests",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Could not resolve the console user's non-containerized home directory",
+                    ]
+                )
+            }
+            base = URL(fileURLWithPath: String(cString: homeDirectory), isDirectory: true)
                 .appendingPathComponent("Library/Caches/casa-rs-gui-tests", isDirectory: true)
+        }
+        guard !base.standardizedFileURL.path.contains("/Library/Containers/") else {
+            throw NSError(
+                domain: "CasarsMacUITests",
+                code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "GUI production projects must not live inside an application container",
+                ]
+            )
         }
         try fileManager.createDirectory(at: base, withIntermediateDirectories: true)
         return base.appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
