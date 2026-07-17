@@ -741,7 +741,16 @@ final class CasarsMacUITests: XCTestCase {
         let notebookTitle = try require("notebook.title")
         XCTAssertGreaterThan(notebookTitle.frame.width, 100, app.debugDescription)
         XCTAssertLessThan(notebookTitle.frame.height, 40, app.debugDescription)
-        XCTAssertTrue(element("notebook.viewMode").isHittable, app.debugDescription)
+        let viewMode = element("notebook.viewMode")
+        let viewModeReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"),
+            object: viewMode
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [viewModeReady], timeout: 5),
+            .completed,
+            app.debugDescription
+        )
         XCTAssertTrue(element("notebook.save").exists, app.debugDescription)
         XCTAssertTrue(element("assistant.model").waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(element("assistant.effort").waitForExistence(timeout: 8), app.debugDescription)
