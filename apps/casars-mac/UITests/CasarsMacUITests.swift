@@ -533,7 +533,7 @@ final class CasarsMacUITests: XCTestCase {
             "-ApplePersistenceIgnoreState", "YES",
             "--open-project", project.path,
         ]
-        app.launch()
+        launchTestApplication()
         app.activate()
         XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
         let notebookDock = app.buttons["dock.mode.notebooks"]
@@ -623,7 +623,7 @@ final class CasarsMacUITests: XCTestCase {
             "-ApplePersistenceIgnoreState", "YES",
             "--open-project", project.path,
         ]
-        app.launch()
+        launchTestApplication()
         app.activate()
         XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
         try clickIdentified("dock.mode.notebooks")
@@ -724,7 +724,7 @@ final class CasarsMacUITests: XCTestCase {
             "-NSAutomaticTextCompletionEnabled", "NO",
             "--open-project", project.path,
         ]
-        app.launch()
+        launchTestApplication()
         app.activate()
         XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
         try clickIdentified("dock.mode.notebooks")
@@ -2245,7 +2245,7 @@ final class CasarsMacUITests: XCTestCase {
             "--open-project", project.path,
             "--open-tutorial-pack", template.path,
         ]
-        app.launch()
+        launchTestApplication()
         app.activate()
         XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
         XCTAssertEqual(try accessibilityValue("tutorial.dataset.science"), "missing")
@@ -2574,7 +2574,7 @@ final class CasarsMacUITests: XCTestCase {
             "--show-prototype", "notebook",
             "--prototype-state", scenario,
         ]
-        app.launch()
+        launchTestApplication()
         app.activate()
         XCTAssertTrue(
             app.windows["casa-rs Workbench"].waitForExistence(timeout: 10),
@@ -2591,7 +2591,7 @@ final class CasarsMacUITests: XCTestCase {
             "--show-prototype", "python",
             "--prototype-state", scenario,
         ]
-        app.launch()
+        launchTestApplication()
         app.activate()
         XCTAssertTrue(
             app.windows["casa-rs Workbench"].waitForExistence(timeout: 10),
@@ -2608,7 +2608,7 @@ final class CasarsMacUITests: XCTestCase {
             "--show-prototype", "tutorial",
             "--prototype-state", scenario,
         ]
-        app.launch()
+        launchTestApplication()
         app.activate()
         XCTAssertTrue(
             app.windows["casa-rs Workbench"].waitForExistence(timeout: 10),
@@ -2629,7 +2629,7 @@ final class CasarsMacUITests: XCTestCase {
             "--show-prototype", "ai",
             "--prototype-state", scenario,
         ]
-        app.launch()
+        launchTestApplication()
         app.activate()
         XCTAssertTrue(
             app.windows["casa-rs Workbench"].waitForExistence(timeout: 10),
@@ -2736,7 +2736,7 @@ final class CasarsMacUITests: XCTestCase {
             "--open-project", project.path,
             "--open-tutorial-pack", template.path,
         ]
-        app.launch()
+        launchTestApplication()
         app.activate()
         XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 15), app.debugDescription)
         XCTAssertTrue(element("notebook.document.scroll").waitForExistence(timeout: 15), app.debugDescription)
@@ -2768,7 +2768,7 @@ final class CasarsMacUITests: XCTestCase {
             "-NSAutomaticTextCompletionEnabled", "NO",
             "--open-project", project.path,
         ]
-        app.launch()
+        launchTestApplication()
         app.activate()
         XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 15), app.debugDescription)
     }
@@ -2906,9 +2906,16 @@ final class CasarsMacUITests: XCTestCase {
     }
 
     private func makeTestApplication() -> XCUIApplication {
-        let application = XCUIApplication()
-        application.launchEnvironment["CASA_RS_UI_TESTING"] = "1"
-        return application
+        XCUIApplication()
+    }
+
+    private func launchTestApplication() {
+        app.launchArguments.append(contentsOf: [
+            "-NSRecentApplicationsLimit", "0",
+            "-NSRecentDocumentsLimit", "0",
+            "-NSRecentServersLimit", "0",
+        ])
+        app.launch()
     }
 
     private var workbenchDescendants: XCUIElementQuery {

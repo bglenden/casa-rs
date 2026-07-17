@@ -1050,34 +1050,10 @@ struct DisplaySettingsView: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if ProcessInfo.processInfo.environment["CASA_RS_UI_TESTING"] == "1" {
-            hideSystemRecentItemsDuringUITesting()
-            DispatchQueue.main.async { [weak self] in
-                self?.hideSystemRecentItemsDuringUITesting()
-            }
-        }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         WorkbenchFallbackWindowController.shared.scheduleStartupWindow(arguments: CommandLine.arguments)
         WorkbenchWindowPlacement.scheduleRepairsForAppWindows()
-    }
-
-    func applicationDidBecomeActive(_ notification: Notification) {
-        if ProcessInfo.processInfo.environment["CASA_RS_UI_TESTING"] == "1" {
-            hideSystemRecentItemsDuringUITesting()
-        }
-    }
-
-    private func hideSystemRecentItemsDuringUITesting() {
-        // Xcode 26 snapshots the entire macOS application hierarchy even for a
-        // window-scoped query. Resolving the Apple menu's Recent Items submenu
-        // then asks for access to other application bundles and blocks an
-        // unattended UI test behind a SystemPolicyAppBundles prompt.
-        guard let mainMenu = NSApp.mainMenu,
-              let appleMenuItem = mainMenu.items.first,
-              appleMenuItem.submenu?.items.contains(where: { $0.title == "Recent Items" }) == true
-        else { return }
-        mainMenu.removeItem(appleMenuItem)
     }
 }
 
