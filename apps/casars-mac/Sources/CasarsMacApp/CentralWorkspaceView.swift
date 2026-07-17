@@ -8119,6 +8119,7 @@ struct GenericTaskPanel: View {
                 }
                 .padding(20)
             }
+            .accessibilityIdentifier("task.parameters.scroll")
         }
         .task {
             if !activeTaskID.isEmpty {

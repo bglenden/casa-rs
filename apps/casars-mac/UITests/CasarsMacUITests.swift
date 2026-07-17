@@ -209,6 +209,7 @@ final class CasarsMacUITests: XCTestCase {
 
     func testWaveOneAccessibilityAudit() throws {
         launchPrototype()
+        let notebookViewport = element("notebook.document.scroll").frame.insetBy(dx: 0, dy: 40)
         var unacceptedIssues: [String] = []
         try app.performAccessibilityAudit { issue in
             if issue.compactDescription == "Parent/Child mismatch" {
@@ -237,6 +238,16 @@ final class CasarsMacUITests: XCTestCase {
                identifier == "notebook.boundaryAudit"
                    || identifier.hasPrefix("notebook.selector.")
             {
+                return true
+            }
+            if issue.auditType.contains(.contrast),
+               issue.element?.identifier.hasPrefix("notebook.richElement.") == true,
+               let frame = issue.element?.frame,
+               !notebookViewport.contains(frame)
+            {
+                // The scroll view fades edge-clipped descendants. Their
+                // snapshots do not contain a complete foreground/background
+                // pair, so XCTest cannot evaluate their actual text contrast.
                 return true
             }
 
@@ -830,16 +841,19 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(openTask.waitForExistence(timeout: 5), app.debugDescription)
         openTask.click()
         XCTAssertTrue(element("task.parameter.vis").waitForExistence(timeout: 8), app.debugDescription)
-        let taskScroll = try XCTUnwrap(
-            app.scrollViews.allElementsBoundByIndex.max {
-                $0.frame.width < $1.frame.width
-            },
-            app.debugDescription
+        try bringIntoView(
+            "task.parameter.weighting",
+            in: "task.parameters.scroll",
+            deltaY: -220,
+            attempts: 16
         )
-        for _ in 0..<6 {
-            taskScroll.scroll(byDeltaX: 0, deltaY: -420)
-        }
         XCTAssertTrue(waitForValue("task.parameter.weighting", containing: "briggs"))
+        try bringIntoView(
+            "task.parameter.robust",
+            in: "task.parameters.scroll",
+            deltaY: -120,
+            attempts: 6
+        )
         XCTAssertTrue(waitForValue("task.parameter.robust", containing: "-0.5"))
         XCTAssertEqual(try accessibilityValue("task.parameterSource.weighting"), "AI-suggested non-default")
         XCTAssertEqual(try accessibilityValue("task.parameterSource.robust"), "AI-suggested non-default")
@@ -2395,7 +2409,7 @@ final class CasarsMacUITests: XCTestCase {
             deltaY: -260
         )
 
-        let visibleWindowFrame = app.windows.firstMatch.frame
+        let notebookViewport = element("notebook.document.scroll").frame.insetBy(dx: 0, dy: 40)
         var unacceptedIssues: [String] = []
         try app.performAccessibilityAudit { issue in
             if issue.compactDescription == "Parent/Child mismatch" {
@@ -2422,7 +2436,8 @@ final class CasarsMacUITests: XCTestCase {
             }
             if issue.auditType.contains(.contrast),
                let frame = issue.element?.frame,
-               !visibleWindowFrame.contains(frame)
+               issue.element?.identifier.hasPrefix("notebook.richElement.") == true,
+               !notebookViewport.contains(frame)
             {
                 // XCTest audits lazily retained and edge-clipped ScrollView
                 // descendants. Their element snapshots include unrelated
