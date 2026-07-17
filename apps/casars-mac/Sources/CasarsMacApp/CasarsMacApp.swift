@@ -1052,11 +1052,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if ProcessInfo.processInfo.environment["CASA_RS_UI_TESTING"] == "1" {
             hideSystemRecentItemsDuringUITesting()
+            DispatchQueue.main.async { [weak self] in
+                self?.hideSystemRecentItemsDuringUITesting()
+            }
         }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         WorkbenchFallbackWindowController.shared.scheduleStartupWindow(arguments: CommandLine.arguments)
         WorkbenchWindowPlacement.scheduleRepairsForAppWindows()
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if ProcessInfo.processInfo.environment["CASA_RS_UI_TESTING"] == "1" {
+            hideSystemRecentItemsDuringUITesting()
+        }
     }
 
     private func hideSystemRecentItemsDuringUITesting() {
@@ -1067,8 +1076,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let appleMenu = NSApp.mainMenu?.items.first?.submenu,
               let recentItems = appleMenu.items.first(where: { $0.title == "Recent Items" })
         else { return }
-        recentItems.submenu = nil
-        recentItems.isHidden = true
+        appleMenu.removeItem(recentItems)
     }
 }
 
