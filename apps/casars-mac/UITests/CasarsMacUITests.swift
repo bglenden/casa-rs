@@ -528,7 +528,7 @@ final class CasarsMacUITests: XCTestCase {
         )
         productionProjectURL = project
 
-        app = XCUIApplication()
+        app = makeTestApplication()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
             "--open-project", project.path,
@@ -618,7 +618,7 @@ final class CasarsMacUITests: XCTestCase {
         try source.write(to: notebookFile, atomically: true, encoding: .utf8)
         productionProjectURL = project
 
-        app = XCUIApplication()
+        app = makeTestApplication()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
             "--open-project", project.path,
@@ -715,7 +715,7 @@ final class CasarsMacUITests: XCTestCase {
         try Data([0, 1, 2]).write(to: documents.appendingPathComponent("unsupported.docx"))
         productionProjectURL = project
 
-        app = XCUIApplication()
+        app = makeTestApplication()
         ensureStoppedBeforeLaunch()
         app.launchEnvironment["CASA_RS_AGENT_FIXTURE"] = "1"
         app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = project.path
@@ -2238,7 +2238,7 @@ final class CasarsMacUITests: XCTestCase {
         cell_ids = ["019f7777-7777-7777-8777-777777777777"]
         """.write(to: template.appendingPathComponent("tutorial.toml"), atomically: true, encoding: .utf8)
 
-        app = XCUIApplication()
+        app = makeTestApplication()
         ensureStoppedBeforeLaunch()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
@@ -2567,7 +2567,7 @@ final class CasarsMacUITests: XCTestCase {
     }
 
     private func launchPrototype(scenario: String = "happy-path") {
-        app = XCUIApplication()
+        app = makeTestApplication()
         ensureStoppedBeforeLaunch()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
@@ -2584,7 +2584,7 @@ final class CasarsMacUITests: XCTestCase {
     }
 
     private func launchPythonPrototype(scenario: String = "happy-path") {
-        app = XCUIApplication()
+        app = makeTestApplication()
         ensureStoppedBeforeLaunch()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
@@ -2601,7 +2601,7 @@ final class CasarsMacUITests: XCTestCase {
     }
 
     private func launchTutorialPrototype(scenario: String = "happy-path") {
-        app = XCUIApplication()
+        app = makeTestApplication()
         ensureStoppedBeforeLaunch()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
@@ -2621,7 +2621,7 @@ final class CasarsMacUITests: XCTestCase {
         scenario: String = "happy-path",
         openDrawer: Bool = true
     ) {
-        app = XCUIApplication()
+        app = makeTestApplication()
         ensureStoppedBeforeLaunch()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
@@ -2710,7 +2710,7 @@ final class CasarsMacUITests: XCTestCase {
         template: URL,
         environment: [String: String]
     ) {
-        app = XCUIApplication()
+        app = makeTestApplication()
         ensureStoppedBeforeLaunch()
         app.launchEnvironment["PATH"] = environment["path"] ?? "/usr/bin:/bin"
         app.launchEnvironment["HOME"] = environment["home"] ?? FileManager.default.homeDirectoryForCurrentUser.path
@@ -2743,7 +2743,7 @@ final class CasarsMacUITests: XCTestCase {
     }
 
     private func launchLiveAssistantProject(_ project: URL, environment: [String: String]) {
-        app = XCUIApplication()
+        app = makeTestApplication()
         ensureStoppedBeforeLaunch()
         app.launchEnvironment["PATH"] = environment["path"] ?? "/usr/bin:/bin"
         app.launchEnvironment["HOME"] = environment["home"] ?? FileManager.default.homeDirectoryForCurrentUser.path
@@ -2903,6 +2903,12 @@ final class CasarsMacUITests: XCTestCase {
         let result = element(identifier)
         XCTAssertTrue(result.waitForExistence(timeout: timeout), "Missing accessibility identifier \(identifier)\n\(app.debugDescription)")
         return result
+    }
+
+    private func makeTestApplication() -> XCUIApplication {
+        let application = XCUIApplication()
+        application.launchEnvironment["CASA_RS_UI_TESTING"] = "1"
+        return application
     }
 
     private var workbenchDescendants: XCUIElementQuery {
