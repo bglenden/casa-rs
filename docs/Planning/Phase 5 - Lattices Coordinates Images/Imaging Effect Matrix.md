@@ -1,12 +1,15 @@
 # Imaging Effect Matrix
 
-This matrix is the canonical inventory of required imaging effects for the
-deterministic parity program.
+Truth class: historical
+Last reality check: 2026-07-16
+Verification: none
 
-- Source of truth for backlog/status remains GitHub issues.
-- This matrix is the local implementation contract: required vs deferred,
-  minimal proof seam, and the first gate tuple that must go green.
-- Umbrella program tracker: issue `#39`.
+This matrix is the completion snapshot of required imaging effects for the
+deterministic parity program formerly tracked by issue `#39`. It preserves the
+program's original proof seams and gate tuples; use
+`docs/imaging-effects-inventory.md` and open GitHub issues for current status.
+
+- Historical umbrella tracker: issue `#39` (closed as superseded).
 
 | Mode / Effect | Required | Truth Domain | First Seam Gate | First Gate Tuple | Notes |
 | --- | --- | --- | --- | --- | --- |

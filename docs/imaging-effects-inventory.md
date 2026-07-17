@@ -1,7 +1,7 @@
 # Imaging Effects Inventory
 
 Truth class: current descriptive
-Last reality check: 2026-07-09
+Last reality check: 2026-07-16
 Verification:
 - `just docs-check`
 - `cargo test -p casa-imaging mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule`
@@ -11,9 +11,10 @@ Verification:
 
 ## Purpose
 
-Wave 6 uses tutorial data to force missing imaging capabilities into the open
+Wave 6 used tutorial data to force missing imaging capabilities into the open
 before claiming CASA Guide duplication. This inventory records the CASA imaging
-effects that matter for the first mosaic tranche: #38, #50, #53, #161, and #169.
+effects established by the completed first mosaic tranche: #38, #50, #53,
+#161, and #169.
 
 The tutorial acceptance data are the Antennae Band 7 and 3C391 mosaics. Smaller
 pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
@@ -91,16 +92,11 @@ pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
 
 ## Issue Routing
 
-- #38 owns keeping this inventory source-backed as the tranche grows.
-- #50 owns the pointing contribution rule. Current CASA evidence supports a
-  center-pixel rule for the `SimplePBConvFunc` path, not a broad PB-wing overlap
-  estimate.
-- #53 owns the remaining tutorial-visible `tclean` surface. The current tranche
-  implements cleaned MFS mosaic and PB-corrected products, while mosaic cube,
-  automasking, start models, and outliers remain follow-up scope if required by
-  #161 or #169.
-- #161 and #169 must show the final proof with tutorial data and human-review
-  artifact documents.
-- #163, #177, and #181 are follow-on breadth tutorials that reuse the same
-  inventory and should open narrower imager tickets if they expose effects not
-  already listed here.
+- #38, #50, #53, #161, and #169 are complete. Their issue closeouts and this
+  inventory preserve the source-backed mosaic tranche evidence.
+- #35, #40, #42, #45, #52, #54, #55, #217, #223, and #341 own remaining
+  focused imaging capabilities or parity questions.
+- #386, #387, #398, #401, and their Wave 8 umbrella #411 own current imaging,
+  lattice, image-expression, and performance-harness consolidation.
+- Follow-on breadth tutorials reuse this inventory and should open narrower
+  imager tickets when they expose effects not already owned by an open issue.
