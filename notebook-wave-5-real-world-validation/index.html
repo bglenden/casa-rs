@@ -1,0 +1,1404 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Notebook Wave 5 Real-World Validation - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#notebook-wave-5-real-world-validation" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Notebook Wave 5 Real-World Validation
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#wave-5a-live-subscription-chat-415" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 5A: live subscription chat (#415)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#wave-5b-scientific-documents-and-source-retrieval-416" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 5B: scientific documents and source retrieval (#416)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Wave 5B: scientific documents and source retrieval (#416)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#public-paper-fixture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Public-paper fixture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#current-local-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current local evidence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#live-external-agent-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Live external-agent acceptance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#wave-5c-automatic-incremental-project-corpus-421" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 5C: automatic incremental project corpus (#421)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#wave-5d-versioned-standard-radio-astronomy-corpus-420" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 5D: versioned standard radio-astronomy corpus (#420)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#production-notebooktaskpythonplot-round-trip-417" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Production notebook/task/Python/plot round-trip (#417)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#complete-tw-hya-production-tutorial-journey-418" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Complete TW Hya production tutorial journey (#418)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bounded-refactor-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bounded refactor pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architecture-test-adversary-and-reality-sync-reviews" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture, test-adversary, and reality-sync reviews
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#final-420421-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Final #420/#421 gates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#wave-5-combined-closeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 5 combined closeout
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="notebook-wave-5-real-world-validation">Notebook Wave 5 Real-World Validation<a class="headerlink" href="#notebook-wave-5-real-world-validation" title="Permanent link">&para;</a></h1>
+<p>Truth class: implementation evidence
+Last reality check: 2026-07-16
+Wave issue: #414</p>
+<p>Wave 5 validates the production scientific-notebook and assistant workflow
+against real user-like inputs. The deterministic default gates remain offline;
+tests named <code>OptIn</code> require explicit local inputs or a live ChatGPT
+subscription and skip otherwise.</p>
+<h2 id="wave-5a-live-subscription-chat-415">Wave 5A: live subscription chat (#415)<a class="headerlink" href="#wave-5a-live-subscription-chat-415" title="Permanent link">&para;</a></h2>
+<p>The production GUI has exercised ChatGPT subscription login, model selection,
+two consecutive turns, cancellation, durable transcript reload, and backend
+resume or an explicit handoff. Wave 5A repairs found during that review include
+logout, compact adaptive notebook chrome, chronological notebook insertion,
+current nonce/profile attachment on every turn, a visible two-minute
+no-activity failure, and immediate surfacing of <code>turn/start</code> JSON-RPC errors.
+The follow-up production review also repaired real event-backed progress age,
+automatic transcript tail following, scalable assistant/notebook task fonts,
+clickable citation previews, typed task-cell insertion from <strong>Add to notebook</strong>,
+compact sparkle-only AI provenance, and provenance clearing after manual edits.</p>
+<p>The retained opt-in entrypoints are:</p>
+<ul>
+<li><code>just assistant-live-gui</code></li>
+<li><code>CASA_RS_CODEX_LIVE_SMOKE=1 swift test --package-path apps/casars-mac --filter AssistantDiscussionTests.testOptInCodexSubscriptionSmoke</code></li>
+</ul>
+<h2 id="wave-5b-scientific-documents-and-source-retrieval-416">Wave 5B: scientific documents and source retrieval (#416)<a class="headerlink" href="#wave-5b-scientific-documents-and-source-retrieval-416" title="Permanent link">&para;</a></h2>
+<h3 id="public-paper-fixture">Public-paper fixture<a class="headerlink" href="#public-paper-fixture" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Title: <em>Unlocking ultra-deep wide-field imaging with sidereal visibility averaging</em></li>
+<li>Authors: J. M. G. H. J. de Jong et al.</li>
+<li>Publication: A&amp;A 694, A98 (2025), 9 pages</li>
+<li>DOI: <a href="https://doi.org/10.1051/0004-6361/202452492">https://doi.org/10.1051/0004-6361/202452492</a></li>
+<li>Article and license statement: <a href="https://www.aanda.org/articles/aa/abs/2025/02/aa52492-24/aa52492-24.html">https://www.aanda.org/articles/aa/abs/2025/02/aa52492-24/aa52492-24.html</a></li>
+<li>Direct PDF: <a href="https://www.aanda.org/articles/aa/pdf/2025/02/aa52492-24.pdf">https://www.aanda.org/articles/aa/pdf/2025/02/aa52492-24.pdf</a></li>
+<li>License: CC BY 4.0, stated by the publisher on the article page</li>
+<li>Downloaded for disposable local validation: 2026-07-14T04:21:09Z</li>
+<li>SHA-256: <code>4a805a8f41c420cfc594e500bfc94a1453ea568dd5267007153cd3db40e73a64</code></li>
+<li>Size: 4,862,071 bytes</li>
+<li>Repository policy: the downloaded PDF is not committed; opt-in validation
+  receives its local path through <code>CASA_RS_WAVE5B_PUBLIC_PDF</code>.</li>
+</ul>
+<h3 id="current-local-evidence">Current local evidence<a class="headerlink" href="#current-local-evidence" title="Permanent link">&para;</a></h3>
+<p>The production PDFKit -&gt; host request -&gt; UniFFI -&gt; SQLite/FTS5 path indexed all
+9 pages. A search for the 3000-hour estimate returned page 1, whose publisher
+text independently states a data-volume reduction up to a factor of 169 and a
+14-fold computing-time decrease. The same index run retrieved the shipped
+radio-interferometry primer and <code>crates/casa-notebook/src/corpus.rs</code> with source
+path, line range, and revision identity. Dirty live checkouts are labeled
+<code>&lt;HEAD&gt;+dirty</code> rather than falsely claiming their content is the clean commit.</p>
+<p>The following focused evidence is green:</p>
+<ul>
+<li>deterministic PDF page citation, unreadable/unsupported diagnostics,
+  replacement, removal, and stale-hit eviction</li>
+<li>the real 9-page public PDF plus baseline and current-source retrieval through
+  the production persistence boundary</li>
+<li>exact-nonce <code>corpus.search</code> and <code>source.search</code> project-MCP calls, including
+  scientific section and source commit/line metadata</li>
+<li>all assistant core tests: 31 executed, 4 opt-in skips, 0 failures</li>
+<li>current <code>just verify</code> equivalent: workspace SPDX/fmt/clippy/tests green (the
+  two localhost HTTP tests were rerun outside the shell sandbox after its
+  expected socket denial), with the unchanged Python package evidence retained
+  at 100 passed and 2 skipped</li>
+<li>full <code>CasarsMacUITests</code> app/test bundle: build-for-testing succeeded and one
+  consolidated 25-test foreground run completed (18 passed, 1 opt-in skip,
+  6 failures). One focused production-assistant run then passed citation
+  preview, streaming tail-following, typed task-cell insertion, and provenance
+  clearing. The other five failures all exposed tutorial approval actions that
+  could remain below the sheet viewport; the sheet now keeps approval and
+  cancellation in a fixed footer, and the five affected tutorial workflows
+  passed together (5 passed, 0 failures). Together these results account for
+  every non-skipped GUI workflow; repository policy permits reusing the 18
+  unaffected green results because their surfaces did not change.</li>
+</ul>
+<p>The production refresh UI retains the Rust index report and local extraction
+diagnostics. Its ordinary context row stays compact; details are available in
+AI settings and in debug JSON.</p>
+<h3 id="live-external-agent-acceptance">Live external-agent acceptance<a class="headerlink" href="#live-external-agent-acceptance" title="Permanent link">&para;</a></h3>
+<p>The opt-in test
+<code>AssistantDiscussionTests.testOptInCodexSubscriptionUsesScientificAndSourceCorpusTools</code>
+requires explicit approval because it sends selected paper excerpts and current
+source excerpts to the user's ChatGPT subscription. Brian provided that approval
+on 2026-07-14. The live run completed in 30.241 seconds: the Codex agent called
+both exact nonce-derived retrieval tools and reported the independently verified
+169-fold data-volume and 14-fold computing-time reductions from PDF page 1. It
+also cited <code>crates/casa-notebook/src/corpus.rs</code>, lines 1-61, at revision
+<code>3985f969bfc939ada7ad61934e0d5f3c313cb397+dirty</code>.</p>
+<p>The first authorized run exposed a production adapter defect. CASA-RS supplied
+<code>turn/start.additionalContext</code> to refresh the nonce-bound profile on every turn,
+but initialized Codex App Server with <code>experimentalApi: false</code>; App Server
+therefore rejected the turn and the UI remained in Thinking state. CASA-RS now
+declares the required capability, surfaces a rejected turn immediately, and the
+opt-in test distinguishes thread startup, terminal agent errors, tool use, and
+turn completion. The passing command was:</p>
+<div class="codehilite"><pre><span></span><code><span class="nv">CASA_RS_CODEX_LIVE_CORPUS</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">CASA_RS_WAVE5B_PUBLIC_PDF</span><span class="o">=</span>/absolute/path/to/paper.pdf<span class="w"> </span><span class="se">\</span>
+<span class="nv">CASA_RS_SOURCE_ROOT</span><span class="o">=</span>/absolute/path/to/casa-rs<span class="w"> </span><span class="se">\</span>
+swift<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--package-path<span class="w"> </span>apps/casars-mac<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--filter<span class="w"> </span>AssistantDiscussionTests.testOptInCodexSubscriptionUsesScientificAndSourceCorpusTools
+</code></pre></div>
+
+<p>The later manual review timeout was produced by a Workbench process launched on
+2026-07-13, before the <code>experimentalApi</code> repair was built. The stale process was
+terminated and the current rebuilt app was launched directly for review. Rich
+mode now suppresses metadata-only notebook control comments, rendered Markdown
+enters editing reliably without swallowing Markdown links, and the purple
+notebook-chat affordance has hover help. XCUITest explicitly checks that the
+control-comment element is absent while the saved AI note and its chat-only
+task action remain usable.</p>
+<p>The next manual task-discovery review successfully listed the native
+<code>simobserve</code>, <code>simalma</code>, and <code>simanalyze</code> surfaces and produced an Open task
+action, but exposed a second boundary defect: <code>task.suggest</code> accepted known
+parameter names without checking that they were mutually active in the resolved
+request mode. The Workbench then applied the suggestion one field at a time,
+leaving a partially resolved form with a page of inactive-parameter errors.
+The project MCP now exposes mode predicates in <code>task.schema</code> and validates the
+complete proposed draft before returning an action. The Workbench independently
+applies accepted values as one Defaults-based patch and refuses any invalid
+draft without opening a task tab. Focused Rust tests cover a valid ALMA family
+mosaic and reject the inactive <code>polarization_basis</code> combination; a focused
+Swift test covers atomic application and the GUI-side refusal boundary.</p>
+<p>The consolidated GUI gate is run after the Wave 5B interaction changes have
+accumulated, following the repository policy that foreground XCUITests run in
+one exclusive batch.</p>
+<h2 id="wave-5c-automatic-incremental-project-corpus-421">Wave 5C: automatic incremental project corpus (#421)<a class="headerlink" href="#wave-5c-automatic-incremental-project-corpus-421" title="Permanent link">&para;</a></h2>
+<p>Project documents are reconciled when a real project opens and after debounced
+recursive filesystem events. The watcher is only an event hint: Rust-owned
+SQLite fingerprints over path, type, size, mtime, ctime, and file identity are
+the durable correctness boundary. The host reads/extracts only paths returned by
+the Rust plan, supplies the complete source snapshot for rename/delete removal,
+and marks failed or concurrently changing sources so their last valid content
+survives and is retried. Watcher-triggered refresh is project-only; baseline and
+release/live-source layers remain independent. Manual refresh performs the same
+incremental project planning while also refreshing those shared layers.</p>
+<p>Focused evidence on 2026-07-15:</p>
+<ul>
+<li>11 Rust corpus contract tests passed, including metadata no-op, preserved-
+  mtime/atomic identity, failure retention, rename/delete, and schema-v2
+  multi-page migration.</li>
+<li>5 native Swift corpus tests passed, including a PDF-bearing no-change refresh
+  with zero content/PDF/OCR work, real Workbench startup plus automatic edit
+  retrieval, burst coalescing, <code>documents/</code> creation recovery, and transient
+  disappearance/retry with symlink and unsupported-input exclusion.</li>
+<li>the compact diagnostic records metadata reads, content reads, PDF extractions,
+  and OCR calls for each refresh without adding routine full-width UI.</li>
+</ul>
+<h2 id="wave-5d-versioned-standard-radio-astronomy-corpus-420">Wave 5D: versioned standard radio-astronomy corpus (#420)<a class="headerlink" href="#wave-5d-versioned-standard-radio-astronomy-corpus-420" title="Permanent link">&para;</a></h2>
+<p>The v1 selection is the 27-deck 2026 NRAO workshop epoch plus the open Springer
+book; 2024 remains fully inventoried but excluded as superseded, and the paid
+ASP book is explicitly excluded. Brian authorized NRAO bundling and confirmed
+this smaller selection in issue #420. The clean-install app resource contains
+2,314 external pages/slides plus the CASA-RS primer and requires neither the
+Oracle checkout nor network access.</p>
+<p>Focused evidence on 2026-07-15:</p>
+<ul>
+<li>the self-contained verifier accounted for all 55 candidate sources, checked
+  all 28 selected content files/digests, and matched the 2,314-page/slide pack;</li>
+<li>the installed notice and per-source manifest record contributors, complete
+  license identity/URL, origins, and the normalized-text/image-omission
+  modification notice, including explicit attribution for the Springer book;</li>
+<li>the recorded network audit reached all 28 authoritative selected origins with
+  zero failures;</li>
+<li>3 native Swift pack tests passed: clean-install load and cited retrieval,
+  tamper rejection, and baseline upgrade preserving project documents and an
+  assistant conversation;</li>
+<li>the compact pack measured 3,087,373 bytes versus 359,670,733 bytes of selected
+  original PDFs; clean debug ingestion/indexing took 2.79 seconds and produced
+  a 14,782,464-byte SQLite index;</li>
+<li>rendered Perley geometry slide 15 was visually compared with its normalized
+  text. Targeted corrections restore <code>H_0</code>, <code>delta_0</code>, <code>nu</code>, and <code>nu_F</code> where
+  OCR had confused zero/degree and Greek/Latin glyphs.</li>
+<li>a production ChatGPT-subscription agent completed two separate bounded
+  baseline searches after the ingestion refactor in 24.97 seconds and repeated
+  the independently checked locators <code>Interferometry and Synthesis in Radio
+  Astronomy.pdf, page 806</code> and <code>Perley-Geometry-SIW2026.pdf, slide 15</code>; no shell
+  or web tool was used.</li>
+</ul>
+<h2 id="production-notebooktaskpythonplot-round-trip-417">Production notebook/task/Python/plot round-trip (#417)<a class="headerlink" href="#production-notebooktaskpythonplot-round-trip-417" title="Permanent link">&para;</a></h2>
+<p>The reusable acceptance entrypoint is:</p>
+<div class="codehilite"><pre><span></span><code>just<span class="w"> </span>notebook-roundtrip-gui
+</code></pre></div>
+
+<p>On a configured dedicated macOS worker, use
+<code>just notebook-roundtrip-gui-remote</code> instead. The remote runner checks out the
+exact pushed revision, keeps Cargo/Xcode state and full result artifacts on the
+worker's configured external storage, and copies only the sanitized JSON report
+back into the local ignored <code>.gui-test/remote/</code> directory. This avoids taking
+the development Mac's foreground focus while preserving the same production
+acceptance path. Disposable projects live under the dedicated, unprotected
+<code>~/.casa-rs-gui-tests/</code> directory by default; use
+<code>CASA_RS_GUI_TEST_PROJECT_BASE</code> to choose another unprotected parent directory.
+They intentionally do not live under <code>~/Library</code> or inside the XCTest runner's
+app container because either location makes the Workbench request cross-app-data
+permission. The sandboxed XCTest runner alone has a home-relative read/write
+exception for this test directory; the production Workbench target does not.</p>
+<p>It is deliberately opt-in and requires an interactive macOS session. The
+harness requires a logged-in Codex CLI using the existing ChatGPT subscription,
+chooses the normal user/system Python through <code>scripts/resolve-python.sh</code> unless
+<code>CASA_RS_GUI_TEST_PYTHON=/absolute/path/to/python</code> is supplied, and rejects
+metered API-key configuration. It builds the real <code>simobserve</code>, <code>msexplore</code>,
+frontend-service, app, and XCUITest executables before announcing one exclusive
+foreground window.</p>
+<p>The launched test owns its entire disposable project and performs these steps
+without user parameter entry or receipt inspection:</p>
+<ol>
+<li>Ask the live agent to use the nonce-bound project corpus and canonical task
+   tools, require a genuine citation, and obtain a typed <code>simobserve</code>
+   suggestion.</li>
+<li>Append the answer once at the chronological notebook tail, open the existing
+   task tab directly, prove all seven proposed non-defaults—and no sampled
+   default—carry the compact AI provenance decoration, approve the task's normal
+   safety control, and run it.</li>
+<li>Generate <code>products/wave5c-synthetic.ms</code> with the real task using an ALMA
+   compact family request, Band 6, three pointings, and a deliberately tiny
+   0.00001-GiB target suitable for acceptance testing. Verify receipt schema v2,
+   the recorded product, and later parameter reload without re-execution.</li>
+<li>Select the resolved project Python, record implementation/version/package
+   identity and its environment fingerprint, retain one intentional
+   <code>RuntimeError</code> receipt, replace the exact source, and successfully execute
+   and then regenerate a small angular-resolution calculation and Matplotlib
+   figure. Verify two immutable successful receipts, exact source hashes, and
+   PNG artifacts.</li>
+<li>Generate a real UV Coverage explorer plot, save it explicitly, change to
+   Amplitude vs Time, and update the same notebook visualization. Verify two
+   distinct 960-by-600 PNG assets, source references, latest/previous revision
+   UI, enlargement, and direct reopen into the Plot explorer with the latest
+   preset.</li>
+<li>Terminate and relaunch production <code>casars-mac</code> twice. Verify the cited pin,
+   conversation, notebook Markdown, task receipt/parameters, Python revisions,
+   plot revisions, and direct task/plot reopen behavior after process loss.</li>
+</ol>
+<p>On success, the test-owned project is removed. The Xcode result bundle and a
+sanitized machine-readable evidence summary remain at
+<code>apps/casars-mac/.gui-test/NotebookRoundTripGUI.xcresult</code> and
+<code>apps/casars-mac/.gui-test/NotebookRoundTripGUI.report.json</code>. On failure, the
+project is retained and the same command can run the focused restart-only
+diagnostic with <code>CASA_RS_NOTEBOOK_ROUNDTRIP_RESUME_AFTER_TASK=1</code>; that mode is
+for diagnosing a consolidated failure, not acceptance evidence.</p>
+<p>The live work exposed and repaired four production-boundary defects: output
+visualizations were parsed as raw Markdown in rich mode; the data-first
+MeasurementSet plot backend had no encoded image for notebook storage; nested
+accessibility identifiers hid revision and explorer controls; and plot reopen
+restored the preset but left the explorer on its Summary surface. Focused rich
+document and Workbench-store regressions now cover these boundaries, while the
+opt-in XCUITest covers real rendering, persistence, and process restart.</p>
+<h2 id="complete-tw-hya-production-tutorial-journey-418">Complete TW Hya production tutorial journey (#418)<a class="headerlink" href="#complete-tw-hya-production-tutorial-journey-418" title="Permanent link">&para;</a></h2>
+<p>The reusable acceptance entrypoint is:</p>
+<div class="codehilite"><pre><span></span><code>just<span class="w"> </span>tutorial-journey-gui
+</code></pre></div>
+
+<p>The normal dedicated-worker entrypoint is
+<code>just tutorial-journey-gui-remote</code>. It uses the same production app and
+XCUITest path while keeping the exclusive foreground window on the remote Mac.
+The harness preflights the installed ChatGPT-subscription Codex CLI and the
+selected Python, rejects metered API configuration, and verifies the exact
+committed tutorial template before taking focus.</p>
+<p>The authoritative uninterrupted run passed on the remote Mac mini at revision
+<code>3aeefa55712939cc49d803824ca4d70c096e39c6</code> on 2026-07-16: one test executed in
+715.887 seconds with zero failures. The complete Xcode result and sanitized
+report remain on the worker at
+<code>/Volumes/Extra Storage (not encrypted)/casa-rs-gui-worker-state/artifacts/20260716T230016Z-3aeefa557129-tutorial-journey-gui/</code>;
+the report is also copied to the ignored local
+<code>apps/casars-mac/.gui-test/remote/TutorialJourneyGUI.report.json</code>.</p>
+<p>The run independently demonstrated:</p>
+<ul>
+<li>immutable template manifest and Markdown digests, learner-copy creation, a
+  persisted learner note, and unchanged template sources;</li>
+<li>exact approval of the 435,742,720-byte NRAO archive with SHA-256
+  <code>f0cfeee5b9dec09ac9ed4d3e4e048d5eb28023c11cbc8295c09ddefe6b8a97b2</code>,
+  real download/digest/safe extraction in 453.191 seconds, a succeeded
+  <code>tutorial.acquire.twhya-calibrated</code> receipt, and discovery of the staged
+  MeasurementSet;</li>
+<li>a real UV Coverage explorer plot explicitly stored as one notebook
+  visualization with <code>msexplore</code> reopen provenance;</li>
+<li>tutorial overrides loaded into the normal imager tab, a real succeeded
+  receipt-schema-v2 imager run, ten recorded image/PNG products, and parameter
+  reopen after process loss without re-execution;</li>
+<li>two successful immutable executions through <code>/opt/homebrew/bin/python3</code>, two
+  byte-distinct Matplotlib figures, and visible previous/latest revisions;</li>
+<li>live bounded baseline and current-source searches with independently matched
+  citations, one native approval for the agent-requested calculation, and one
+  AI snapshot appended at the chronological notebook tail;</li>
+<li>full application termination and relaunch with the same backend session,
+  preserved conversation/notebook/tutorial/plot/Python/task state, followed by
+  removal of the test-owned project only after the evidence report was written.</li>
+</ul>
+<p>The acceptance work exposed only harness gaps after the production behavior
+was already correct: a stale cell-tail assertion did not reflect Markdown AI
+notes, SwiftUI exposes native approval through its visible button label inside
+a combined accessibility container, and the post-restart notebook opens at its
+chronological tail and therefore needs an upward scroll to reopen the original
+tutorial task. Each gap is now asserted on the real production path. No
+approved #418 check was deferred.</p>
+<h2 id="bounded-refactor-pass">Bounded refactor pass<a class="headerlink" href="#bounded-refactor-pass" title="Permanent link">&para;</a></h2>
+<p>The #418 pass used pre-journey checkpoint <code>dfdda7373</code> and was bounded to the
+opt-in TW Hya GUI acceptance harness, its dedicated remote entrypoint, and the
+two package-internal native approval accessibility identifiers it exercises.
+The delta adds no public application-developer API, compatibility surface,
+runtime fallback, or second production implementation: the test composes the
+existing tutorial, notebook, explorer, task, Python, corpus, App Server, and
+project-MCP owners directly. The broad alternative—extracting another generic
+live-journey framework from the #417 and #418 tests—would increase indirection
+without consolidating production behavior, so no refactor edit was warranted.
+The exact archive size/digest and tutorial science values are provenance and
+acceptance inputs; wait bounds and scroll distances are automation interaction
+policy rather than dataset- or machine-planning heuristics. Public API remains
+zero before and after, no migration guide applies, and no performance benchmark
+covers or is warranted for this opt-in acceptance-only surface. The green
+authoritative journey, <code>just docs-check</code>, and stale fallback/compatibility scan
+are the verification evidence.</p>
+<p>The #417 pass used checkpoint commit <code>9417f2457</code> and was bounded to the
+package-internal MeasurementSet plot-document -&gt; SwiftUI render -&gt; notebook
+visualization -&gt; explorer-reopen path plus its acceptance harness. The narrower
+test-only alternative was rejected because it would preserve the production
+storage defect. Public application-developer API remains zero before and after;
+the persisted visualization and receipt contracts are unchanged. Discovery
+found two image inputs at the store boundary: the new explicit rendered image
+and a retained optional fallback to legacy <code>MeasurementSetPlotResultSummary</code>
+bytes. Every in-repo caller now supplies the rendered image, the fallback was
+deleted, and the package-internal method requires that single input. The result
+is one storage implementation instead of two, with nine fallback-construction
+lines removed and no shim or migration burden outside the package. The separate
+whole-window evidence renderer remains intentionally distinct because it waits
+for asynchronous view settling and supports a caller-selected HiDPI scale; it
+does not store notebook products. No performance benchmark covers AppKit image
+encoding, and none is warranted for this user-triggered acceptance-scale path.
+The 960-by-600 plot product is the existing explicit render contract, the
+0.00001-GiB MeasurementSet is test-owned fixture sizing, and timeouts/scroll
+distances are automation interaction policies—not dataset- or machine-planning
+heuristics. Focused store/rich-document tests, Xcode test compilation, the
+restart diagnostic, and the final opt-in live journey provide the verification
+evidence.</p>
+<p>The #417 architecture review found no dependency-direction, public-API,
+persisted-format, or provider-contract change: Rust still owns scientific plot
+data, SwiftUI owns native rendering, and <code>casa-notebook</code> owns visualization
+revision persistence. The test-adversary review identified three shallow-proof
+risks in the first acceptance draft. The final journey therefore requires a
+successful cited <code>corpus.search</code> activity, independently recomputes both Python
+source hashes recorded in receipt schema v2, and reads the stored Python and
+MeasurementSet plot artifacts back as distinct PNG byte streams. No accepted
+check was deferred. The reality-sync review found <code>ARCHITECTURE.md</code>, ADR-0007,
+and the provider-contract documentation consistent with the implementation;
+<code>TESTING.md</code> and this procedure are the only documentation updates needed, and
+there are no generated contract artifacts or follow-up drift items.</p>
+<p>The #420/#421 corpus pass used checkpoint commit <code>8231c5bc9</code>. The broad bounded
+scope was the package-internal ingestion operation and its Workbench/test
+callers; watcher implementation, SQLite contracts, and provider/public APIs
+were left unchanged. Discovery found two ingestion entry points: a legacy
+full-extraction wrapper and the planned incremental operation. The wrapper and
+its project-layer replacement fallback were deleted, every in-repo caller now
+supplies the source inventory/extraction plan to the single <code>collect</code> operation,
+and tests commit project-source snapshots through the same canonical index
+boundary as production. Package-internal ingestion operations fell from two to
+one; public application-developer API remained zero before and after. No shim,
+alias, or fallback was retained. The consolidated 40-test assistant/corpus run
+passed (5 explicit live-test skips); the separately enabled production corpus
+test also passed. No corpus benchmark exists, so the clean-pack timing above is
+the relevant measured performance evidence. The 600 ms debounce is an explicit
+event-coalescing UX policy, not a dataset- or machine-tuned planner constant.</p>
+<p>The 2026-07-15 follow-up pass was bounded to the assistant progress, citation,
+task-pin, parameter-provenance, and font-scaling paths touched by the live GUI
+review. The pre-change checkpoint is branch commit <code>e34eb30b7</code>. Public
+application-developer API remains unchanged: App Server events still enter
+through one <code>AgentSession</code>, typed task intent still uses <code>NotebookTaskIntent</code>,
+and parameter edits still flow through the canonical schema-driven setters.
+The pass found no duplicate implementation, compatibility shim, runtime
+fallback, or scale-dependent planning constant to remove. The two-minute
+no-activity timeout is an explicit interaction policy rather than a workload
+heuristic; one-second displayed event age and the short scroll animation are UI
+presentation intervals. No further refactor edit or performance benchmark was
+warranted for this bounded surface.</p>
+<p>The 2026-07-14 pass was bounded to assistant corpus ingestion, refresh state,
+project MCP retrieval, and their tests. No public application-developer API or
+parallel implementation path was introduced: PDF/text extraction remains
+host-owned, indexing/search remains Rust-owned, and the project MCP remains the
+single agent boundary. The report/diagnostic projection is package-internal and
+has one producer and one GUI/debug consumer path. No refactor edit was warranted,
+so a separate pre-refactor checkpoint and migration guide are not applicable.</p>
+<p>The reviewed numeric bounds were retained as real policy constants rather than
+dataset or machine tuning: the 2,000-byte FTS chunk is a claim-local retrieval
+unit, the 32-hit MCP maximum is a bounded tool response, and the two-minute
+watchdog is an agent no-activity UX timeout. This work adds no science-data,
+document-size, memory, worker, or executable-location limit. There is no corpus
+benchmark in the repository; the real 843-document/13,759-chunk checkout-plus-
+paper run completed successfully and serves as functional timing evidence only.</p>
+<h2 id="architecture-test-adversary-and-reality-sync-reviews">Architecture, test-adversary, and reality-sync reviews<a class="headerlink" href="#architecture-test-adversary-and-reality-sync-reviews" title="Permanent link">&para;</a></h2>
+<p>The dedicated architecture review found no dependency-direction, public
+provider-contract, runtime-authority, or approved-scope drift. Swift remains the
+host extraction/watcher owner, Rust remains the fingerprint/index/citation
+owner, and project MCP remains the bounded agent boundary. Its one blocking
+finding was incomplete CC BY-NC attribution/change disclosure for the bundled
+Springer-derived text; the generated manifest and installed <code>NOTICE.md</code> now name
+all authors, the full license and source, and the normalized-text/image-omission
+modifications. No follow-up issue or ADR update is required. Confidence: high.</p>
+<p>The adversarial test review mapped every #421 and #420 acceptance check to
+executable or generated evidence. It found that the transient-read guarantee
+was split between a Rust retention test and Swift extraction diagnostics. A new
+end-to-end regression now removes a changed file after inventory, proves its
+last valid search hit survives, excludes symlink/unsupported inputs with bounded
+diagnostics, and proves the recreated source is retried and replaces the old
+hit. The review found no remaining shallow or approval-scope gaps. Testing
+readiness: ready.</p>
+<p>Reality sync updated the maintained architecture, testing, security,
+scientific-notebook design, and macOS README reality dates. The committed pack,
+inventory, origin audit, generated bindings, tests, and docs describe the same
+2026-plus-book selection and automatic incremental project-corpus behavior.
+Drift classification: no ADR change; generated artifacts and maintained docs
+current; no follow-up issue.</p>
+<h2 id="final-420421-gates">Final #420/#421 gates<a class="headerlink" href="#final-420421-gates" title="Permanent link">&para;</a></h2>
+<p>Current final evidence on 2026-07-15, after the refactor and review fixes:</p>
+<ul>
+<li><code>just verify</code> passed outside the shell sandbox: SPDX, formatting, workspace
+  clippy with warnings denied, the complete Rust workspace test suite, and the
+  Python package suite (100 passed, 2 skipped). The first sandboxed attempt was
+  blocked only by localhost-listener permissions. A later transient
+  <code>casars-imager</code> shared test-lock failure passed immediately in isolation and
+  did not reproduce in the green full rerun.</li>
+<li><code>python3 scripts/check-assistant-corpus-inventory.py</code> accounted for all 55
+  candidate sources; <code>git diff --check</code> passed.</li>
+<li><code>just gui-test</code> built the native app/test bundle and passed the single
+  consolidated foreground batch: 25 tests executed, 1 skipped, 0 failures.</li>
+</ul>
+<h2 id="wave-5-combined-closeout">Wave 5 combined closeout<a class="headerlink" href="#wave-5-combined-closeout" title="Permanent link">&para;</a></h2>
+<p>Wave 5 closes with every issue in the approved #414 scope implemented and no
+accepted outcome or acceptance check deferred. The combined evidence is carried
+by immutable production journeys rather than by rerunning account-backed work:</p>
+<ul>
+<li>
+<h1 id="415416-exercised-the-real-chatgpt-subscription-nonce-bound-project-mcp">415/#416 exercised the real ChatGPT subscription, nonce-bound project MCP,<a class="headerlink" href="#415416-exercised-the-real-chatgpt-subscription-nonce-bound-project-mcp" title="Permanent link">&para;</a></h1>
+  public-paper lifecycle, baseline retrieval, and current casa-rs source
+  retrieval. Citations were independently checked and the resulting defects
+  were repaired before user review.</li>
+<li>
+<h1 id="417-passed-the-dedicated-remote-production-notebooktaskpythonplot">417 passed the dedicated remote production notebook/task/Python/plot<a class="headerlink" href="#417-passed-the-dedicated-remote-production-notebooktaskpythonplot" title="Permanent link">&para;</a></h1>
+  round-trip at <code>790f44bf44a501d4bd87f5f8d275aeac8d7af75f</code>: one XCUITest,
+  zero failures, 210.703 seconds. Its artifact is
+  <code>20260716T203939Z-790f44bf44a5-notebook-roundtrip-gui</code> on the GUI worker.</li>
+<li>
+<h1 id="418-passed-the-dedicated-remote-tw-hya-production-journey-at">418 passed the dedicated remote TW Hya production journey at<a class="headerlink" href="#418-passed-the-dedicated-remote-tw-hya-production-journey-at" title="Permanent link">&para;</a></h1>
+<code>3aeefa55712939cc49d803824ca4d70c096e39c6</code>: dataset acquisition and digest
+  verification, notebook/task replay, Python/plot work, cited assistant use,
+  and application reopen all completed with zero failures in 715.887 seconds.
+  Its artifact is
+  <code>20260716T230016Z-3aeefa557129-tutorial-journey-gui</code> on the GUI worker.</li>
+<li>
+<h1 id="420421-shipped-the-approved-2026-workshop-plus-book-baseline-corpus-and">420/#421 shipped the approved 2026-workshop-plus-book baseline corpus and<a class="headerlink" href="#420421-shipped-the-approved-2026-workshop-plus-book-baseline-corpus-and" title="Permanent link">&para;</a></h1>
+  proved automatic incremental add/change/atomic-replace/rename/remove project
+  document reconciliation, including retention and retry across transient
+  read failures.</li>
+</ul>
+<p>Brian's final production-app review found the scientific interactions generally
+worked as expected. The reported objective defects—assistant activity
+visibility, conversation tail following, font zoom, task-suggestion notebook
+pinning, edited-parameter provenance, and clickable citations—returned to agent
+ownership and were repaired with focused regression coverage. His remaining
+comments were interaction refinements rather than rejected Wave 5 outcomes.</p>
+<p>The authoritative gates remain the 2026-07-15 <code>just verify</code> run, the green
+25-test consolidated <code>just gui-test</code> batch above, the two production remote
+journeys, and hosted PR CI. No production behavior changed after those GUI
+journeys. A later attempt to rerun one deterministic XCUITest on the newly
+provisioned macOS 26.5 remote worker was blocked by the operating system's
+<code>SystemPolicyAppBundles</code> (App Management) modal when XCTest snapshot the
+application menu hierarchy. The final diagnostic artifact is
+<code>20260717T012714Z-5a0877f560f0-gui-test</code>. Test-only menu workarounds were removed
+instead of distorting the product. This host-policy limitation is recorded as a
+GUI-runner exclusion; it does not replace or invalidate the current green local
+batch or the green remote production journeys.</p>
+<p>The bounded refactor, architecture, test-adversary, and reality-sync evidence
+recorded above covers the complete changed surface. No public API, persisted
+format, provider contract, dependency direction, or runtime model changed
+during closeout, and no additional refactor or ADR work is required.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

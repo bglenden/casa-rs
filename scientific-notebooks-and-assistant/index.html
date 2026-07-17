@@ -514,6 +514,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="AI discussions and local corpus">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#interaction-precedents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interaction precedents
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -943,6 +960,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="AI discussions and local corpus">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#interaction-precedents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interaction precedents
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1058,14 +1092,14 @@
 
 <h1 id="scientific-notebooks-tutorials-python-and-ai-assistant">Scientific Notebooks, Tutorials, Python, and AI Assistant<a class="headerlink" href="#scientific-notebooks-tutorials-python-and-ai-assistant" title="Permanent link">&para;</a></h1>
 <p>Truth class: accepted design
-Last reality check: 2026-07-11
+Last reality check: 2026-07-15
 Verification: just docs-check
 Architecture decision: <a href="../adr/0007-scientific-notebooks-and-assistant-boundary/">ADR-0007</a></p>
 <h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
 <p>This document defines the accepted product and implementation contract for the
 CASA-RS scientific notebook program. It covers notes, task execution records,
 parameter reuse, Python calculations and plots, tutorial datasets, and
-provider-neutral AI discussions in the native macOS workbench.</p>
+agent-neutral AI discussions in the native macOS workbench.</p>
 <p>The primary user is a working scientist. A project still opens on its selected
 dataset or explorer; notebooks are a first-class project surface rather than a
 replacement landing page.</p>
@@ -1229,8 +1263,8 @@ niter = 1000
 <span class="n">directory</span><span class="o">.</span><span class="w"> </span><span class="n">The</span><span class="w"> </span><span class="n">code</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">input</span><span class="w"> </span><span class="n">references</span><span class="w"> </span><span class="n">remain</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">cell</span><span class="p">,</span><span class="w"> </span><span class="n">so</span><span class="w"> </span><span class="o">**</span><span class="n">Regenerate</span><span class="o">**</span>
 <span class="n">creates</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="n">new</span><span class="w"> </span><span class="n">execution</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">artifact</span><span class="w"> </span><span class="n">revision</span><span class="w"> </span><span class="n">without</span><span class="w"> </span><span class="n">destroying</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">old</span><span class="w"> </span><span class="n">one</span><span class="o">.</span>
 
-<span class="n">Receipt</span><span class="w"> </span><span class="n">schema</span><span class="w"> </span><span class="n">v2</span><span class="w"> </span><span class="n">stores</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">exact</span><span class="w"> </span><span class="n">Python</span><span class="w"> </span><span class="n">source</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">SHA</span><span class="o">-</span><span class="mi">256</span><span class="p">,</span><span class="w"> </span><span class="err">`</span><span class="n">user</span><span class="err">`</span><span class="w"> </span><span class="ow">or</span>
-<span class="err">`</span><span class="n">ai_worker</span><span class="err">`</span><span class="w"> </span><span class="n">authority</span><span class="p">,</span><span class="w"> </span><span class="n">selected</span><span class="w"> </span><span class="n">input</span><span class="w"> </span><span class="n">references</span><span class="p">,</span><span class="w"> </span><span class="n">interpreter</span><span class="w"> </span><span class="n">identity</span><span class="p">,</span><span class="w"> </span><span class="n">Python</span>
+<span class="n">Receipt</span><span class="w"> </span><span class="n">schema</span><span class="w"> </span><span class="n">v2</span><span class="w"> </span><span class="n">stores</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">exact</span><span class="w"> </span><span class="n">Python</span><span class="w"> </span><span class="n">source</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">SHA</span><span class="o">-</span><span class="mi">256</span><span class="p">,</span><span class="w"> </span><span class="n">execution</span>
+<span class="n">authority</span><span class="p">,</span><span class="w"> </span><span class="n">selected</span><span class="w"> </span><span class="n">input</span><span class="w"> </span><span class="n">references</span><span class="p">,</span><span class="w"> </span><span class="n">interpreter</span><span class="w"> </span><span class="n">identity</span><span class="p">,</span><span class="w"> </span><span class="n">Python</span>
 <span class="n">implementation</span><span class="o">/</span><span class="n">version</span><span class="p">,</span><span class="w"> </span><span class="n">installed</span><span class="w"> </span><span class="n">CASA</span><span class="o">-</span><span class="n">RS</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">plotting</span><span class="w"> </span><span class="n">package</span><span class="w"> </span><span class="n">versions</span><span class="p">,</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">a</span>
 <span class="n">validated</span><span class="w"> </span><span class="n">environment</span><span class="w"> </span><span class="n">fingerprint</span><span class="o">.</span><span class="w"> </span><span class="n">Schema</span><span class="o">-</span><span class="n">v1</span><span class="w"> </span><span class="n">task</span><span class="w"> </span><span class="n">receipts</span><span class="w"> </span><span class="n">remain</span><span class="w"> </span><span class="n">readable</span><span class="o">.</span>
 <span class="n">Ordered</span><span class="w"> </span><span class="n">stream</span><span class="w"> </span><span class="n">events</span><span class="w"> </span><span class="n">are</span><span class="w"> </span><span class="n">retained</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">an</span><span class="w"> </span><span class="n">immutable</span><span class="w"> </span><span class="n">JSON</span><span class="w"> </span><span class="n">execution</span><span class="w"> </span><span class="n">artifact</span><span class="w"> </span><span class="ow">in</span>
@@ -1251,10 +1285,11 @@ niter = 1000
 <span class="err">`</span><span class="n">casa</span><span class="o">-</span><span class="n">rs</span><span class="o">-</span><span class="n">python</span><span class="p">[</span><span class="n">plot</span><span class="p">]</span><span class="err">`</span><span class="p">;</span><span class="w"> </span><span class="n">executable</span><span class="o">-</span><span class="n">rendered</span><span class="w"> </span><span class="n">exports</span><span class="w"> </span><span class="n">remain</span><span class="w"> </span><span class="n">appropriate</span><span class="w"> </span><span class="k">for</span>
 <span class="n">GUI</span><span class="o">/</span><span class="n">TUI</span><span class="w"> </span><span class="n">parity</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">regression</span><span class="w"> </span><span class="n">images</span><span class="o">.</span>
 
-<span class="n">AI</span><span class="w"> </span><span class="n">Python</span><span class="w"> </span><span class="k">is</span><span class="w"> </span><span class="n">separate</span><span class="o">.</span><span class="w"> </span><span class="n">The</span><span class="w"> </span><span class="n">exact</span><span class="w"> </span><span class="n">proposed</span><span class="w"> </span><span class="n">code</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">expected</span><span class="w"> </span><span class="n">artifact</span><span class="w"> </span><span class="n">paths</span><span class="w"> </span><span class="n">are</span>
-<span class="n">shown</span><span class="w"> </span><span class="n">before</span><span class="w"> </span><span class="n">approval</span><span class="o">.</span><span class="w"> </span><span class="n">Approval</span><span class="w"> </span><span class="k">is</span><span class="w"> </span><span class="n">bound</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="n">content</span><span class="w"> </span><span class="nb">hash</span><span class="p">;</span><span class="w"> </span><span class="n">any</span><span class="w"> </span><span class="n">code</span><span class="w"> </span><span class="n">change</span>
-<span class="n">invalidates</span><span class="w"> </span><span class="n">it</span><span class="o">.</span><span class="w"> </span><span class="n">The</span><span class="w"> </span><span class="n">worker</span><span class="w"> </span><span class="n">has</span><span class="w"> </span><span class="n">read</span><span class="o">-</span><span class="n">only</span><span class="w"> </span><span class="n">project</span><span class="w"> </span><span class="n">science</span><span class="w"> </span><span class="n">data</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="n">writable</span>
-<span class="n">artifact</span><span class="w"> </span><span class="n">staging</span><span class="w"> </span><span class="n">directory</span><span class="p">,</span><span class="w"> </span><span class="n">no</span><span class="w"> </span><span class="n">network</span><span class="p">,</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">no</span><span class="w"> </span><span class="n">inherited</span><span class="w"> </span><span class="n">secrets</span><span class="o">.</span>
+<span class="n">The</span><span class="w"> </span><span class="n">coding</span><span class="w"> </span><span class="n">agent</span><span class="w"> </span><span class="n">uses</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">user</span><span class="o">-</span><span class="n">selected</span><span class="w"> </span><span class="n">scientific</span><span class="w"> </span><span class="n">Python</span><span class="w"> </span><span class="n">through</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">selected</span>
+<span class="n">Explore</span><span class="p">,</span><span class="w"> </span><span class="n">Work</span><span class="p">,</span><span class="w"> </span><span class="ow">or</span><span class="w"> </span><span class="n">Full</span><span class="o">-</span><span class="n">access</span><span class="w"> </span><span class="n">authority</span><span class="o">.</span><span class="w"> </span><span class="n">Explore</span><span class="w"> </span><span class="n">has</span><span class="w"> </span><span class="n">no</span><span class="w"> </span><span class="n">generic</span><span class="w"> </span><span class="n">execution</span><span class="p">;</span>
+<span class="n">Work</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">Full</span><span class="w"> </span><span class="n">access</span><span class="w"> </span><span class="n">use</span><span class="w"> </span><span class="n">Codex</span><span class="s1">&#39;s normal visible activity and native approvals.</span>
+<span class="n">Reproducible</span><span class="w"> </span><span class="n">calculations</span><span class="w"> </span><span class="n">belong</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">notebook</span><span class="w"> </span><span class="n">Python</span><span class="w"> </span><span class="n">cells</span><span class="p">,</span><span class="w"> </span><span class="n">where</span><span class="w"> </span><span class="n">exact</span><span class="w"> </span><span class="n">source</span><span class="p">,</span>
+<span class="n">inputs</span><span class="p">,</span><span class="w"> </span><span class="n">interpreter</span><span class="w"> </span><span class="n">provenance</span><span class="p">,</span><span class="w"> </span><span class="n">output</span><span class="p">,</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">plot</span><span class="w"> </span><span class="n">revisions</span><span class="w"> </span><span class="n">are</span><span class="w"> </span><span class="n">recorded</span><span class="o">.</span>
 
 <span class="c1">## Tutorial notebooks and datasets</span>
 
@@ -1285,16 +1320,115 @@ approval; the computed SHA-256 is then pinned in
 <code>.casa-rs/tutorials/&lt;notebook-id&gt;/lock.toml</code>. Extraction rejects path traversal,
 escaping symlinks, device files, archive bombs, and destination collisions.</p>
 <h2 id="ai-discussions-and-local-corpus">AI discussions and local corpus<a class="headerlink" href="#ai-discussions-and-local-corpus" title="Permanent link">&para;</a></h2>
-<p>The assistant appears inline in the notebook workspace but conversations are
-stored separately. A transcript contains only visible messages, citations,
-timestamps, provider/model labels, and pin references. It excludes hidden
-reasoning and raw provider envelopes. Provider/model selection may change
-within a thread.</p>
-<p>The <code>casars-assistant</code> sidecar speaks a versioned CASA-RS JSONL/stdio protocol
-and uses Pi only as an adapter layer. Initial supported authentication is an
-OpenAI ChatGPT/Codex subscription; OpenCode Zen is the non-OpenAI live-smoke
-provider. Credentials stay outside projects, notebooks, indexes, and Python
-workers.</p>
+<p>The normal notebook state is the full-width notes-first document with no AI
+pane. Invoking AI from a notebook, selection, task, output, plot, or source
+opens an on-demand, resizable contextual drawer beside the notebook. The drawer
+can expand into a first-class central AI tab, and the central tab can dock back
+beside the notebook. These are two presentations of the same conversation,
+not copied or synchronized transcripts. Closing either presentation preserves
+the transcript, unsent draft, scroll position, selected context, running agent
+work, and pending approvals.</p>
+<p>Conversations are project-owned and stored separately from Markdown. A
+conversation opened from a notebook receives that notebook as its primary
+attachment and default pin destination, but may explicitly attach other
+notebooks, datasets, task tabs, outputs, history entries, documents, or source
+trees. A transcript contains only visible messages, citations, timestamps,
+agent/model labels, authority preset, used CASA resources, and pin references.
+It excludes hidden reasoning and raw App Server or provider envelopes. Agent or
+model selection creates an explicit backend-session handoff while preserving
+the project-owned visible conversation.</p>
+<p>Both drawer and central-tab presentations use a conventional free-form
+multiline composer fixed at the bottom. Optional suggested questions are
+empty-state aids only: selecting one fills editable composer text and never
+sends it or inserts a predetermined user message. Inline AI remains a
+transient, locally scoped invocation for a selected cell or artifact; durable
+conversation stays in the separate project transcript.
+Return sends the current message; Shift-Return inserts a newline. Subscription
+model and reasoning-effort selectors remain directly available below the
+composer, alongside a compact summary of subscription usage remaining. The
+usage summary expands to show the active rate-limit windows and reset times.
+Both chat presentations follow new output to the chronological tail. While a
+turn is pending, the status names the latest real App Server or tool activity
+and shows how long ago that event arrived; it never substitutes a decorative
+animation or exposes hidden model reasoning. Command-Plus, Command-Minus, and
+Command-Zero adjust, reduce, and reset the shared Workbench font size,
+including the transcript, composer, raw notebook editor, and typed task blocks.
+Agent, ChatGPT subscription/account state, trust preset, and scientific Python
+live behind one secondary settings control. The account row is status, not a
+model or billing-action picker: Codex owns sign-in and CASA-RS stores no
+credential. Signed-in accounts expose a Log out action in that surface; after
+App Server confirms it, the composer remains disabled until the standard Codex
+subscription sign-in flow completes again. These controls project the
+CASA-owned agent profile; App Server types do not cross into durable project
+formats.</p>
+<p>When the conversation is closed, a single purple sparkle in the lower-right of
+the notebook pane opens it and exposes a descriptive tooltip/accessibility
+label. It disappears while the drawer is visible because the drawer owns close
+and expand controls. Purple consistently denotes AI invocation and AI-suggested
+state; safety warnings such as Full access remain orange. The compact drawer
+header shows its primary attachment, history, expand, and close controls.
+The assistant automatically knows the semantic state of every
+open workbench tab and has standing read-only tools for notebooks, task schemas
+and current parameters, explorers, run history, plots, persistent CASA-RS data
+types, the radio-astronomy and project-document corpus, and release/live-
+checkout source. Users do not manually attach each open tab or corpus before
+ordinary questions.</p>
+<p>One compact row above the composer summarizes the typed CASA context and local
+retrieval sources available through the verified project MCP server. Opening
+it shows open-tab resources, corpus layers, source lookup, and the selected
+authority preset. CASA records the domain tools/resources and citations used,
+but does not claim to know the exact hidden model prompt or provider egress of
+a coding agent that may also read files or run commands.</p>
+<p>Citations attach to the claims they support. A lightweight preview shows the
+relevant document excerpt, page/section, source path/lines/commit, notebook
+block, or run provenance; citation rows are clickable and open that preview,
+with a direct local-file action when the cited artifact is available. Pins
+may add a conclusion, code, task intent, plot, citations, or a transcript link
+directly to the chronological end of the notebook from the explicit
+<strong>Add to notebook</strong> action.</p>
+<p>Answers and suggested actions remain ordinary chat messages until the user
+chooses a destination action. <strong>Add to notebook</strong> immediately appends once at
+the chronological tail, then the notebook opens and scrolls to the new block;
+there is no redundant destination or preview dialog. Task parameters open
+directly in the normal task tab with suggested
+non-defaults marked by a small purple sparkle with explanatory hover text. A
+manual edit clears that parameter's AI provenance immediately. Running the task
+uses its ordinary Run workflow.
+Plots use the notebook's explicit import/update workflow and downloads use the
+acquisition surface. Routine agent steps, commands, and logs stay collapsed by
+default. The same suggestion is never duplicated as proposal cards in both
+chat and Markdown.</p>
+<h3 id="interaction-precedents">Interaction precedents<a class="headerlink" href="#interaction-precedents" title="Permanent link">&para;</a></h3>
+<p>The 2026-07-12 interaction review selected this hybrid from established
+notebook and document-chat behavior rather than inventing a CASA-RS-only
+conversation model:</p>
+<ul>
+<li><a href="https://jupyter-ai.readthedocs.io/en/v3/users/">Jupyter AI</a> uses a persistent
+  side-panel conversation with notebook/cell context and explicit code
+  insertion into the active notebook rather than a second action workspace in
+  chat.</li>
+<li><a href="https://code.visualstudio.com/docs/agents/chat-view">VS Code Chat</a>
+  permits one chat session to move between the secondary side bar, editor, and
+  window, while <a href="https://code.visualstudio.com/docs/agents/guides/notebooks-with-ai">notebook AI</a>
+  keeps inline chat scoped to targeted cell work and reviews proposed changes
+  in the notebook/editor with Keep/Undo controls.</li>
+<li><a href="https://docs.databricks.com/aws/en/genie-code/use-genie-code">Databricks Genie Code</a>
+  uses a contextual side pane and can <a href="https://docs.databricks.com/aws/en/genie-code/full-page">maximize the same work into a full-page
+  chat</a>.</li>
+<li><a href="https://deepnote.com/docs/deepnote-agent">Deepnote Agent</a> separates
+  notebook-level side chat from <a href="https://deepnote.com/docs/ai-code-editing">block-local AI editing</a>.</li>
+<li><a href="https://support.google.com/notebooklm/answer/16179559?hl=en">NotebookLM</a>
+  establishes explicit source selection, claim-local citation preview, and
+  promotion of selected chat results into durable notes.</li>
+</ul>
+<p>These references are interaction precedent only. CASA-RS retains its own
+project-owned transcripts, typed scientific context, canonical task/notebook
+surfaces, and approval boundaries.</p>
+<p>CASA-RS launches the official Codex App Server over stdio behind its own
+agent-session interface. The initial path uses Codex's ChatGPT subscription
+login and account state; CASA-RS neither handles the credential nor requires a
+metered API key. A future ACP adapter may add OpenCode or another agent without
+changing transcripts, CASA MCP tools, notebook pins, or the authority model.</p>
 <p>The local corpus has four layers:</p>
 <ol>
 <li>an optional versioned, redistribution-cleared baseline pack</li>
@@ -1302,23 +1436,51 @@ workers.</p>
 <li>release-matched CASA-RS documentation and source</li>
 <li>an optional live-checkout source overlay keyed to its Git commit</li>
 </ol>
-<p>SQLite holds manifests, chunks, metadata, citations, and FTS5 indexes. A
-versioned local embedding model produces a flat float32 matrix searched by exact
-cosine similarity behind a private vector-index interface. Content hashes make
-updates incremental. Extraction and OCR are local by default; cloud OCR is a
-per-document opt-in.</p>
+<p>The installed baseline is the compact versioned pack described in
+<code>assistant-standard-corpus.md</code>: the full 2026 NRAO workshop epoch, the open
+Springer synthesis-imaging book, and the CASA-RS primer. It is an app resource
+installed once, not copied into project <code>documents/</code>; page/slide labels and
+numbers remain exact retrieval citations.</p>
+<p>SQLite holds manifests, chunks, metadata, citations, and FTS5 indexes behind a
+replaceable retrieval interface. Project-document refresh first compares a
+metadata fingerprint (path, type, size, mtime, ctime, and filesystem identity),
+then reads and content-hashes only the changed sources. Debounced recursive
+filesystem events request this reconciliation automatically; startup and the
+manual refresh action use the same path. No-change refresh performs no content
+read, PDF extraction, or OCR. Rename/delete reconciliation and changed-source
+replacement are atomic, while an unreadable or concurrently changing source
+keeps its last valid indexed content for a later retry. Project watcher events
+do not rebuild the baseline or release/live source layers, and no periodic full
+scan is used. Extraction and OCR are local by default; cloud OCR is a
+per-document opt-in. A
+real local embedding model is optional future work only after retrieval
+evaluation shows a material benefit; its dimensions are model metadata rather
+than a fixed architecture constant.</p>
 <p>Scientific factual claims cite source pages or sections. Implementation claims
 cite paths, symbols, line ranges, and release/commit identity. Retrieved text
 and web content are evidence, never instructions.</p>
-<p>The assistant has standing read-only access to bounded metadata, statistics,
-samples, previews, source lookup, corpus retrieval, and public web research.
-Web queries and citations are visible. Uploads, downloads, logins, writes,
-Python, and tasks cross explicit approval boundaries. Hosted models may receive
-selected excerpts and bounded summaries or plots, but never bulk arrays,
-visibilities, full datasets, secrets, or unrestricted project files by default.</p>
-<p>Task proposals show the typed parameter diff, run-safety class, affected paths,
-and expected products. Approval launches the canonical task path so normal
-validation, safety checks, and notebook recording still apply.</p>
+<p>The trusted CASA MCP server gives the agent typed access to bounded metadata,
+statistics, samples, previews, source lookup, corpus retrieval, and canonical
+CASA actions. <strong>Explore</strong> is read-only and disables project instructions,
+shell, writes, and network. <strong>Work</strong> deliberately enables the trusted project,
+the user's shell and selected scientific Python, with native Codex approvals.
+<strong>Full access</strong> is an explicit expert opt-in with a persistent indicator.</p>
+<p>The standing read-only surface includes all open tab projections: notebook
+source and selection, task identity/schema/current values/default differences,
+explorer configuration and selected data products, Python cells and retained
+outputs, plots, and processing history. It also includes task and parameter
+documentation plus persistent table, MeasurementSet, image, coordinate, and
+measures semantics. Open-tab excerpts share a deterministic 64 KiB budget,
+with at most 16 KiB from any one tab. The assistant may retrieve from these sources as needed
+without per-read approval. CASA shows what domain context is available and
+which CASA resources and citations were used, not a fictional exact record of
+all bytes sent by the coding agent to its model.</p>
+<p>Task suggestions open the canonical task tab with non-defaults highlighted.
+The ordinary task Run action remains the single approval and launches normal
+validation, safety checks, and notebook recording. Generic command, file,
+Python, and network approvals remain owned by Codex App Server. <strong>Add to
+notebook</strong> is itself the explicit CASA action and appends once without another
+confirmation; other typed CASA mutations retain their canonical confirmation.</p>
 <h2 id="prototype-first-wave-gate">Prototype-first wave gate<a class="headerlink" href="#prototype-first-wave-gate" title="Permanent link">&para;</a></h2>
 <p>Every wave begins with a real, launchable <code>casars-mac</code> view backed by
 deterministic fixture adapters. All meaningful controls are live. The prototype
@@ -1385,10 +1547,9 @@ output; captures immutable PNG/SVG execution assets; and presents environment
 creation and plotting-package installation only as explicit user actions.
 <code>casa-ms</code> owns the shared numeric MS plot-data contract consumed by both the
 UniFFI GUI projection and PyO3. Python-native image planes include WCS, masks,
-beam metadata, and overlays. The separate macOS AI worker uses Seatbelt with
-network denial, scrubbed credentials, read-only science inputs, one writable
-staging root, exact-source approval, symlink-escape coverage, and inherited
-subprocess restrictions.</p>
+beam metadata, and overlays. Wave 4 agent Python is a separate concern and uses
+the user-selected or inherited scientific environment under the active agent
+authority preset.</p>
 <p>Production explorer snapshots are Rust-owned <code>casa-notebook</code> records. MS and
 image explorers expose <strong>Save to Notebook</strong>; <strong>New</strong> creates a new identity and
 <strong>Update</strong> appends an immutable asset revision. Markdown contains only the
@@ -1400,25 +1561,72 @@ explorer; <strong>Open in Explorer</strong> restores the saved parameters.</p>
 <p>Prototype: learner notebook, annotations, section progress, dataset acquisition
 through download/verify/unpack/ready, cancellation/resume, checksum and disk
 failures, and task-parameter loading.</p>
+<p>Current Phase A reality: <code>casars-mac --show-prototype tutorial</code> launches an
+in-memory TW Hya learner notebook in the existing Notebooks dock. Compact
+inline controls expose the exact source, resolved redirects, size, project
+destination, checksum, disk, extraction, and optional-check plan before a
+deterministic Download/Verify/Unpack/Ready simulation. Attempt generations make
+cancel/resume/restart and retry stale-safe; offline, checksum, unsafe-archive,
+and insufficient-disk states never appear staged. A ready fixture enables a
+parameter block that opens the fixture task tab directly; the loaded tutorial
+overrides are identified in the form without an intermediate preview. This
+projection performs no file, network, archive, task, provider, or durable
+project operation and is not the tutorial-template v1 or acquisition contract.</p>
 <p>Production: tutorial-template v1, clean v0 migration, URI handlers, verified
 project-local acquisition, safe materialization, optional checks, and the TW Hya
 end-to-end walkthrough.</p>
 <h3 id="wave-4-assistant-and-corpus">Wave 4: assistant and corpus<a class="headerlink" href="#wave-4-assistant-and-corpus" title="Permanent link">&para;</a></h3>
-<p>Prototype: provider/model selector, context chips, streaming cited answers,
-corpus/indexing states, source links, approval cards, plot insertion,
-pin-to-notebook, redaction preview, rate limits, and offline/error states.</p>
-<p>Production: Pi sidecar, secure authentication, local corpus, source overlays,
-web/retrieval/data tools, restricted AI Python, canonical task proposals,
-provider-neutral transcripts, and fake-provider plus live-provider smoke tests.</p>
+<p>Prototype: purple sparkle activation, persistent model/reasoning-effort and
+usage-remaining controls, consolidated agent/account/access/Python settings,
+Explore/Work/Full-access controls, context-availability disclosure, streaming cited
+answers, collapsed agent activity, direct task opening, one notebook-tail
+append, corpus/indexing states, rate limits, and cancellation/restart states.</p>
+<p>Approved Phase A reality: the user approved the replacement prototype and its
+runtime/authority interaction on 2026-07-13. It begins from a full-width
+notebook with no AI pane. A purple lower-right sparkle reveals a conventional
+free-form chat in a resizable contextual drawer; the same fixture conversation
+expands into a central AI tab and docks back without losing its draft or state.
+The footer keeps model, reasoning effort, and subscription usage remaining in
+view; a single settings popover contains Codex agent, ChatGPT subscription
+status, trust preset, and scientific-Python fixtures. A compact context panel lists open tabs and
+the standing CASA MCP/corpus/source capabilities without claiming an exact
+provider-egress manifest. Routine agent activity is collapsed. <strong>Add to
+notebook</strong> immediately appends once at the chronological tail, then opens and
+focuses the new notebook block; there is no intermediate popup or duplicate
+proposal card. Task suggestions open
+the normal task tab with non-defaults marked. Full access requires explicit
+confirmation and remains visibly indicated. Deterministic rate-limit,
+cancellation, restart, accessibility, debug-state, and zero-production-call
+fixtures remain retained for deterministic CI.</p>
+<p>Phase B implementation: <code>casa-notebook</code> retains agent-neutral transcript, citation,
+immutable pin, context-use, and scientific-receipt contracts. A CASA-owned
+agent-session interface initially launches the official Codex App Server and
+uses ChatGPT subscription authentication; raw metered OpenAI APIs are excluded.
+<code>casa-rs-agent-profile/v1</code> carries invariant guidance, bundled CASA skill
+identity, the nonce-bearing project MCP identity, authority vector, adapter
+capabilities, and resume metadata. Explore starts from a neutral directory and
+behaviorally denies project instructions, writes, execution, and network. Work
+uses the trusted project plus the user's shell and selected scientific Python
+with native Codex approval events. Full access is an explicit expert opt-in.
+The project MCP supplies typed open-tab/task/data/notebook/tutorial and cited
+corpus/source operations. SQLite/FTS5 indexes the cleared baseline, project
+documents, release source/docs, and commit-keyed live overlay; the removed
+fixed feature hash is not an embedding. A future ACP adapter may add OpenCode
+without changing these CASA-owned contracts. The Xcode app stages a compact
+release/commit-labelled source snapshot, while local checkout runs add a live
+commit overlay. See
+<a href="../assistant-security/"><code>assistant-security.md</code></a> for the executable boundary.</p>
 <h2 id="program-acceptance">Program acceptance<a class="headerlink" href="#program-acceptance" title="Permanent link">&para;</a></h2>
 <p>The TW Hya walkthrough must demonstrate: fork a tutorial; acquire data; edit
 notes; run and record a task; reload parameters; execute Python; regenerate a
 plot; ask a scientific question with document citations; ask an implementation
 question with source citations; approve an AI calculation; and pin its result.</p>
-<p>CI uses deterministic fixture providers. Opt-in live smoke covers OpenAI
-ChatGPT/Codex subscription authentication and OpenCode Zen. Timings for startup,
-indexing, retrieval, recording, and execution are recorded without imposing a
-hard performance budget in these waves.</p>
+<p>CI uses deterministic fixture agents. Opt-in live smoke covers Codex App Server
+with ChatGPT subscription authentication and never requires a metered API key.
+OpenCode over a future ACP adapter is the planned second agent, not a Wave 4
+implementation target. Timings for startup, indexing, retrieval, recording, and
+execution are recorded without imposing a hard performance budget in these
+waves.</p>
 <p>Each code wave runs <code>just quick</code>, <code>just verify</code>, the bounded <code>refactor</code> pass,
 and risk-appropriate architecture, test-adversary, and reality-sync reviews.
 Accepted outcomes or checks cannot move to follow-ups without explicit user

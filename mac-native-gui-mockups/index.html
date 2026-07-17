@@ -801,6 +801,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#2026-07-12-one-conversation-contextual-drawer-and-central-tab" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2026-07-12: One Conversation, Contextual Drawer And Central Tab
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#2026-05-04-gui-work-uses-gui-wave-names" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -924,8 +935,8 @@
 
 <h1 id="mac-native-gui-mockups">Mac-Native GUI Mockups<a class="headerlink" href="#mac-native-gui-mockups" title="Permanent link">&para;</a></h1>
 <p>Truth class: proposed visual agreement
-Last reality check: 2026-05-03
-Verification: image-generation draft</p>
+Last reality check: 2026-07-12
+Verification: just docs-check</p>
 <p>This document captures visual mockups for the mac-native <code>casa-rs</code> workbench.
 It is a companion to <a href="../mac-native-gui-spec/"><code>mac-native-gui-spec.md</code></a>, not a
 replacement for the product and architecture spec.</p>
@@ -946,8 +957,10 @@ provider protocols exist.</p>
 <li>The tab <code>+</code> belongs to the central workspace tab strip. It opens a new central
   work tab; it does not switch left-dock modes.</li>
 <li>Full explorers and task panels live in central tabs.</li>
-<li>AI chat is a first-class central tab. Inline AI suggestions and task diffs
-  are supporting surfaces, not a replacement for chat.</li>
+<li>AI chat is an on-demand contextual drawer that can expand the same
+  conversation into a first-class central tab. The normal notebook has no AI
+  pane. Inline suggestions and task diffs are supporting surfaces, not a
+  replacement for chat.</li>
 <li>Lightweight inspector sits immediately to the right of the active left-dock
   navigation panel and is completely collapsible.</li>
 <li>Bottom panels such as logs or Python should be collapsed or short by default.</li>
@@ -1002,8 +1015,33 @@ provider protocols exist.</p>
 <li>Users need a conversational workspace for exploration, planning, and
   follow-up questions, not only point actions.</li>
 </ul>
+<h3 id="2026-07-12-one-conversation-contextual-drawer-and-central-tab">2026-07-12: One Conversation, Contextual Drawer And Central Tab<a class="headerlink" href="#2026-07-12-one-conversation-contextual-drawer-and-central-tab" title="Permanent link">&para;</a></h3>
+<p>Decision:</p>
+<ul>
+<li>The normal notebook is full width with no AI pane.</li>
+<li>AI opens as a conventional free-form chat drawer attached to the active
+  notebook or document.</li>
+<li>Expanding opens the same conversation in a central AI tab; docking returns
+  it to the drawer without copying or synchronizing messages.</li>
+<li>Suggested prompts may fill the composer but never create or submit
+  predetermined messages.</li>
+<li>Inline AI is transient and locally scoped. Persistent conversations remain
+  project-owned, separately stored transcripts with explicit attachments.</li>
+<li>The assistant automatically understands every open tab and may use standing
+  read-only corpus/source/task/data-type tools; only the bounded per-turn
+  provider payload requires explicit egress disclosure.</li>
+</ul>
+<p>Rationale:</p>
+<ul>
+<li>This reconciles contextual document chat with the first-class work-tab
+  requirement while preserving scarce notebook width in the normal state.</li>
+<li>Jupyter AI, VS Code notebooks, Databricks Genie Code, Deepnote, and
+  NotebookLM establish the side-chat, expandable-chat, explicit-context,
+  citation-preview, and save-to-note precedents.</li>
+</ul>
 <p>Status: accepted for mockups</p>
 <p>Supersedes: inline-suggestions-only interpretation</p>
+<p>Clarifies: 2026-05-04 first-class-work-tab decision</p>
 <h3 id="2026-05-04-gui-work-uses-gui-wave-names">2026-05-04: GUI Work Uses GUI-Wave Names<a class="headerlink" href="#2026-05-04-gui-work-uses-gui-wave-names" title="Permanent link">&para;</a></h3>
 <p>Decision:</p>
 <ul>

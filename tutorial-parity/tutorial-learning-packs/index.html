@@ -21,7 +21,7 @@
     
     
       
-        <title>Tutorial Learning Packs - casa-rs</title>
+        <title>Portable Tutorial Templates - casa-rs</title>
       
     
     
@@ -64,7 +64,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#tutorial-learning-packs" class="md-skip">
+        <a href="#portable-tutorial-templates" class="md-skip">
           Skip to content
         </a>
       
@@ -100,7 +100,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Tutorial Learning Packs
+              Portable Tutorial Templates
             
           </span>
         </div>
@@ -711,10 +711,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#artifact-shape" class="md-nav__link">
+  <a href="#template-shape" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Artifact Shape
+        Template shape
       
     </span>
   </a>
@@ -722,10 +722,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#learner-view" class="md-nav__link">
+  <a href="#dataset-acquisition" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Learner View
+        Dataset acquisition
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#legacy-v0-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legacy v0 migration
       
     </span>
   </a>
@@ -736,40 +747,7 @@
   <a href="#regression-overlay" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Regression Overlay
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#evidence-capture-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Evidence Capture Policy
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#human-checkpoints" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Human Checkpoints
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#first-pilot" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        First Pilot
+        Regression overlay
       
     </span>
   </a>
@@ -793,198 +771,30 @@
 
 
 
-<h1 id="tutorial-learning-packs">Tutorial Learning Packs<a class="headerlink" href="#tutorial-learning-packs" title="Permanent link">&para;</a></h1>
+<h1 id="portable-tutorial-templates">Portable Tutorial Templates<a class="headerlink" href="#portable-tutorial-templates" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-05-09
+Last reality check: 2026-07-12
 Verification: just docs-check</p>
-<p>Tutorial learning packs are the delivery format for walking through CASA Guide
-tutorial material in casa-rs across the GUI, TUI, Python, and command-line
-interfaces. A pack has two customers:</p>
-<ul>
-<li>Learners need data, concise instructions, visible parameters, screenshots,
-  and expected products so they can run the tutorial themselves.</li>
-<li>Maintainers and agents need reproducible correctness, performance,
-  completeness, provenance, and regression evidence.</li>
-</ul>
-<p>The pack manifest is the source of truth for both views. Learner documentation,
-screenshots, evidence summaries, and regression records are projections from
-that manifest and its generated evidence files.</p>
-<h2 id="artifact-shape">Artifact Shape<a class="headerlink" href="#artifact-shape" title="Permanent link">&para;</a></h2>
-<p>Version 0 is a directory pack:</p>
-<div class="codehilite"><pre><span></span><code>&lt;tutorial-pack&gt;/
-  pack.json
-  twhya_cont.image/
-  twhya_n2hp.image/
-  README.md
-  regions/
-  .casa-rs/workspace/
-    native/
-    oracle/
-    scratch/
-  docs/
-    sections/
-  .casa-rs/evidence/
-    data-manifest.json
-    native-runs.jsonl
-    oracle-runs.jsonl
-    comparisons.json
-    timings.jsonl
-    provider-provenance.json
-    review/
-  .casa-rs/screenshots/
-    source/
-    annotated/
-    specs/
+<p>Tutorials are immutable portable template folders that fork into ordinary editable scientific notebooks. The Rust <code>casa-notebook</code> crate owns the v1 manifest, learner fork, managed lock, acquisition state, integrity checks, and safe materialization. Swift and other frontends consume projections of that contract rather than interpreting a second manifest.</p>
+<h2 id="template-shape">Template shape<a class="headerlink" href="#template-shape" title="Permanent link">&para;</a></h2>
+<div class="codehilite"><pre><span></span><code>&lt;template&gt;/
+  tutorial.md
+  tutorial.toml
+  assets/                 # optional portable prose assets
+  regression/             # optional maintainer evidence overlay
 </code></pre></div>
 
-<p><code>pack.json</code> follows
-<a href="https://github.com/bglenden/casa-rs/blob/main/resources/tutorial-pack.schema.json"><code>resources/tutorial-pack.schema.json</code></a>.
-Section review records follow
-<a href="https://github.com/bglenden/casa-rs/blob/main/resources/tutorial-pack-review.schema.json"><code>resources/tutorial-pack-review.schema.json</code></a>.
-The no-data pilot template is
-<a href="https://github.com/bglenden/casa-rs/blob/main/resources/tutorial-packs/alma-first-look-image-analysis.template.json"><code>resources/tutorial-packs/alma-first-look-image-analysis.template.json</code></a>.</p>
-<p>Top-level CASA datasets are immutable once a pack is generated. The pack root is
-also the working directory learners can use for shell and Python examples, so
-paths in tutorial steps stay short and match CASA-style usage. User-visible
-region files live in <code>regions/</code> as CASA CRTF. <code>.casa-rs/workspace/</code> is the writable
-area for internal native casa-rs products, CASA oracle products, and scratch state.
-Generated packs live under the existing tutorial-data policy:</p>
-<div class="codehilite"><pre><span></span><code>${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/...
-</code></pre></div>
-
-<p>or the default user location:</p>
-<div class="codehilite"><pre><span></span><code>~/SoftwareProjects/casa-tutorial-data/tutorial-parity/...
-</code></pre></div>
-
-<p>The repository stores the schema, templates, generators, tests, and docs. It
-does not commit official CASA tutorial datasets. Generated pack manifests must
-record registry keys, source URLs, source artifact URLs, size or checksum
-policy, local staging policy, and directory-manifest identity where applicable.</p>
-<p>Generate the current pilot pack with:</p>
-<div class="codehilite"><pre><span></span><code>scripts/generate-tutorial-pack.py<span class="w"> </span>--pack<span class="w"> </span>alma-first-look-image-analysis
-</code></pre></div>
-
-<p>By default this writes:</p>
-<div class="codehilite"><pre><span></span><code>${CASA_RS_TUTORIAL_DATA_ROOT:-~/SoftwareProjects/casa-tutorial-data}/tutorial-parity/alma/first-look/twhya/image-analysis/alma-first-look-image-analysis.pack
-</code></pre></div>
-
-<p>The generator copies local tutorial inputs when they are already staged under
-the tutorial-data root. Use <code>--no-materialize-inputs</code> to create only the pack
-skeleton and leave each input marked <code>missing</code> in <code>.casa-rs/evidence/data-manifest.json</code>.
-The macOS GUI can open either the pack directory or its <code>pack.json</code> manifest.</p>
-<h2 id="learner-view">Learner View<a class="headerlink" href="#learner-view" title="Permanent link">&para;</a></h2>
-<p>The learner view should be small and runnable. It contains:</p>
-<ul>
-<li>tutorial section index and short setup notes</li>
-<li>exact GUI, TUI, Python, and CLI parameters for each section</li>
-<li>expected products and what to inspect</li>
-<li>annotated parameter-setting screenshots when available</li>
-<li>a compact note about known differences or unsupported options</li>
-</ul>
-<p>Learner docs should not include raw oracle logs, full comparison payloads,
-internal timing records, or every screenshot/capture intermediate. Those stay
-in the regression overlay and can be summarized where helpful.</p>
-<h2 id="regression-overlay">Regression Overlay<a class="headerlink" href="#regression-overlay" title="Permanent link">&para;</a></h2>
-<p>The regression overlay contains:</p>
-<ul>
-<li>native run records for each tutorial step</li>
-<li>CASA oracle run records when CASA is available</li>
-<li>comparison reports and tolerances</li>
-<li>timing records for performance regression checks</li>
-<li>provider provenance for every executable step</li>
-<li>data manifests, checksums, and generated product paths</li>
-<li>human evaluation records for each observable tutorial chunk</li>
-<li>source screenshot captures, annotation specs, and rendered annotated images</li>
-</ul>
-<p>Native tutorial steps must record <code>provider_kind: "native-rust"</code>. A native step
-must fail validation if it routes through <code>casars-casa-task</code>, CASA Python, or
-another adapter path. CASA is allowed only for steps explicitly marked as
-oracle evidence.</p>
-<h2 id="evidence-capture-policy">Evidence Capture Policy<a class="headerlink" href="#evidence-capture-policy" title="Permanent link">&para;</a></h2>
-<p>Tutorial evidence separates executable correctness from visual capture:</p>
-<ul>
-<li>CLI and Python evidence is captured from native task stdout.</li>
-<li>GUI evidence is captured from the same macOS workbench task state used by the
-  visible UI, including the selected tutorial section, applied parameters, task
-  logs, diagnostics, and output JSON.</li>
-<li>For <code>imhead</code>, the GUI learner path is Inspector-first: open the tutorial
-  pack, select the staged image, and inspect <code>Size</code>, <code>Units</code>, <code>Shape</code>, and
-  image details. The task form remains the regression path for exact
-  parameterized JSON output.</li>
-<li>TUI evidence currently records the deterministic startup command and
-  parameter mapping for <code>casars</code>. Text-layout screenshots should use a
-  Ratatui buffer/TestBackend style capture. Terminal-emulator screenshots and
-  terminal graphics should use a real emulator backend such as Ghostty or
-  libghostty rather than a raw PTY transcript.</li>
-<li><code>.casa-rs/screenshots/</code> is reserved for real UI captures and annotations derived from
-  real captures. Synthetic evidence cards may be useful during development,
-  but they must live outside the screenshot evidence path and must not be
-  presented as GUI or TUI screenshots.</li>
-</ul>
-<p>The first-section runner therefore treats TUI terminal screenshots as optional
-visual evidence, not as the default correctness gate. This avoids making
-regression runs depend on terminal escape-sequence cleanup while still leaving a
-clear path for richer captures when inline terminal graphics become relevant.</p>
-<h2 id="human-checkpoints">Human Checkpoints<a class="headerlink" href="#human-checkpoints" title="Permanent link">&para;</a></h2>
-<p>Each observable tutorial chunk ends with a human checkpoint before the next
-chunk advances. The checkpoint records:</p>
-<ol>
-<li>CASA source material and the expected observable result.</li>
-<li>casa-rs GUI, TUI, Python, and CLI equivalents with exact parameters.</li>
-<li>CASA and casa-rs products, plus timings where relevant.</li>
-<li>Draft learner documentation for the chunk.</li>
-<li>Regression evidence: inputs, commands or API calls, outputs, tolerances,
-   checksums, provider provenance, and logs.</li>
-<li>Human outcome: accepted, needs revision, or product gap.</li>
-</ol>
-<p>The review record is intentionally machine-readable. It includes CASA source
-calls, casa-rs equivalents for all four user surfaces, observable product
-references, regression evidence references, and the human evaluation outcome.</p>
-<p>Early ALMA First Look chunks should be reviewed one at a time. Once the pack
-format and review style stabilize, later chunks can be batched while retaining
-explicit checkpoint records.</p>
-<h2 id="first-pilot">First Pilot<a class="headerlink" href="#first-pilot" title="Permanent link">&para;</a></h2>
-<p>The first pilot is <code>alma/first-look/twhya/image-analysis</code> because it uses
-small image inputs and a narrow image-analysis task surface:</p>
-<ul>
-<li><code>twhya_cont.image</code></li>
-<li><code>twhya_n2hp.image</code></li>
-<li><code>imhead</code></li>
-<li><code>imstat</code></li>
-<li><code>immoments</code></li>
-<li><code>exportfits</code></li>
-</ul>
-<p>The pilot currently defines the pack contract, local pack generation, GUI pack
-loading, and the first-step review workflow. It does not claim full ALMA First
-Look parity or make screenshots canonical.</p>
-<p>Open the pilot pack in the macOS GUI from <code>apps/casars-mac</code> with:</p>
-<div class="codehilite"><pre><span></span><code>./script/build_and_run.sh<span class="w"> </span>--tutorial-pack<span class="w"> </span>~/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/image-analysis/alma-first-look-image-analysis.pack
-</code></pre></div>
-
-<p>For non-interactive regression checks, dump the same loaded state with:</p>
-<div class="codehilite"><pre><span></span><code>swift<span class="w"> </span>run<span class="w"> </span>casars-mac<span class="w"> </span>--dump-debug-state<span class="w"> </span>--open-tutorial-pack<span class="w"> </span>~/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/image-analysis/alma-first-look-image-analysis.pack
-</code></pre></div>
-
-<p>The Tutorial tab shows input staging status, the observable section list, the
-learner docs path, the regression evidence paths, and an <code>Open Task</code> action
-that applies the section's GUI parameters to the native task panel.</p>
-<p>Generate the first observable chunk, <code>01-imhead-continuum-header</code>, with:</p>
-<div class="codehilite"><pre><span></span><code>scripts/run-tutorial-pack-section.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--pack<span class="w"> </span>~/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/image-analysis/alma-first-look-image-analysis.pack
-</code></pre></div>
-
-<p>The runner writes:</p>
-<ul>
-<li><code>docs/sections/01-imhead-continuum-header.html</code></li>
-<li><code>docs/sections/01-imhead-continuum-header.md</code></li>
-<li><code>.casa-rs/workspace/native/01-imhead-continuum-header/*.json</code></li>
-<li><code>.casa-rs/workspace/oracle/01-imhead-continuum-header/*.json</code></li>
-<li><code>.casa-rs/evidence/comparisons.json</code></li>
-<li><code>.casa-rs/evidence/invalid-image-checks.json</code></li>
-<li><code>.casa-rs/evidence/review/01-imhead-continuum-header.json</code></li>
-</ul>
-<p>Use <code>--capture-tui-pty</code> only for exploratory raw-PTY TUI capture. It is not the
-default regression path.</p>
+<p><code>tutorial.md</code> is ordinary Markdown and may contain the same typed task cells as any scientific notebook. <code>tutorial.toml</code> declares the tutorial identity, ordered sections, datasets, source URIs, project-local destinations, optional size and SHA-256, bounded unpack plan, and optional checks. The checked-in TW Hya walkthrough is <a href="https://github.com/bglenden/casa-rs/blob/main/resources/tutorials/tw-hya-first-look/tutorial.md"><code>resources/tutorials/tw-hya-first-look</code></a>.</p>
+<p>Forking copies the Markdown and assets into the project while leaving the source template unchanged. The learner copy is stored under <code>notebooks/</code>; Rust-managed state is stored under <code>.casa-rs/tutorials/&lt;notebook-id&gt;/lock.toml</code>.</p>
+<h2 id="dataset-acquisition">Dataset acquisition<a class="headerlink" href="#dataset-acquisition" title="Permanent link">&para;</a></h2>
+<p>Opening or selecting a tutorial never downloads or executes anything. Acquisition requires an explicit approval bound to the exact requested and resolved URI, redirects, size, project destination, digest, disk requirement, extraction bounds, and optional-check choices.</p>
+<p>The v1 registry ships <code>file</code>, <code>http</code>, and <code>https</code> handlers. Applications may register other schemes, but unknown schemes stay inert and handlers never delegate to a shell or system opener. User-supplied source URIs pass through the same registry, approval, integrity, and materialization policy as catalog sources.</p>
+<p>Downloads remain under <code>.casa-rs/tutorials/&lt;notebook-id&gt;/staging/</code> until size and SHA-256 verification, bounded extraction, and optional checks finish. Missing source digests require explicit approval; the computed SHA-256 is then pinned in managed state. Archive extraction rejects traversal, escaping links, special files, entry/expanded-size limits, and destination collisions. Only a final atomic publish changes the declared project destination.</p>
+<h2 id="legacy-v0-migration">Legacy v0 migration<a class="headerlink" href="#legacy-v0-migration" title="Permanent link">&para;</a></h2>
+<p><code>tutorial-pack.v0</code> is not a runtime compatibility format. The explicit one-shot Rust migrator reads a legacy <code>pack.json</code>, produces a new immutable v1 folder, converts native GUI steps to typed notebook task cells, and copies the useful regression evidence overlay. Swift has no v0 parser or v0 GUI state. Once the v1 folder exists, normal opens use only <code>tutorial.md</code> and <code>tutorial.toml</code>.</p>
+<p>Historical regression scripts may still produce v0 input solely for exercising that one-shot migration or preserving old evidence. They are not a peer tutorial truth source.</p>
+<h2 id="regression-overlay">Regression overlay<a class="headerlink" href="#regression-overlay" title="Permanent link">&para;</a></h2>
+<p>The optional <code>regression/</code> directory is maintainer evidence, not the learner notebook authority. It may contain native/oracle run records, comparisons, tolerances, timings, provenance, and review records. Learner prose should summarize useful conclusions without exposing routine diagnostic bulk by default.</p>
 
 
 
