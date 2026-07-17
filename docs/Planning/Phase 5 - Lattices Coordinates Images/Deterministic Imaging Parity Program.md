@@ -1,18 +1,24 @@
 # Deterministic Imaging Parity Program
 
-Truth class: current descriptive
-Last reality check: 2026-04-19
+Truth class: historical
+Last reality check: 2026-07-16
 Verification: none
 
-This document is the current descriptive program reference for
-CASA-compatible synthesis imaging in this repository. Canonical active
-planning and wave status now live in GitHub Issues / Project.
+This document is the completed-program snapshot for the deterministic imaging
+parity work formerly tracked by issue `#39`. It preserves the original wave
+contract and closeout evidence; it is not an active backlog or current
+capability inventory.
+
+Current implementation status lives in `docs/imaging-effects-inventory.md` and
+the architecture and testing contracts. Active work is owned by open GitHub
+issues, including the remaining focused parity, capability, and execution-plan
+tickets.
 
 - Numeric parity uses CASA/casacore imaging behavior as the truth oracle.
 - Metadata, serialization, and `image.open()` parity use CASA/casacore image
   table behavior as the truth oracle.
 - Older imaging wave/checkpoint/backlog documents are historical context only.
-- GitHub umbrella tracker: issue `#39`.
+- Historical umbrella tracker: issue `#39` (closed as superseded).
 
 ## Program Summary
 

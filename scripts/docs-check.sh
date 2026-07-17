@@ -18,7 +18,9 @@ required_headers=(
   "docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/README.md:Truth class: historical"
   "docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/WAVE_TEMPLATE.md:Truth class: historical"
   "docs/Planning/Phase 5 - Lattices Coordinates Images/WAVE_TEMPLATE.md:Truth class: historical"
-  "docs/Planning/Phase 5 - Lattices Coordinates Images/Deterministic Imaging Parity Program.md:Truth class: current descriptive"
+  "docs/Planning/Phase 5 - Lattices Coordinates Images/Deterministic Imaging Parity Program.md:Truth class: historical"
+  "docs/Planning/Phase 5 - Lattices Coordinates Images/Imaging Effect Matrix.md:Truth class: historical"
+  "docs/imaging-effects-inventory.md:Truth class: current descriptive"
 )
 
 for spec in "${required_headers[@]}"; do
