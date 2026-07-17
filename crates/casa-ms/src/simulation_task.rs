@@ -3,22 +3,23 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use casa_provider_contracts::{
-    ParameterValue, ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
+    NoAdditionalProviderSchemas, ParameterValue, ProviderCliMachineActions, ProviderCliProjection,
     ProviderInvocation, ProviderInvocationAdaptation, ProviderProjectionMetadata,
-    ProviderSurfaceKind, TaskOperationDescriptor, TaskSemanticContract, builtin_surface_bundle,
-    derived_ui_schema_annotations, merged_components, project_ui_schema,
+    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
+    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
+    project_ui_form,
 };
-use schemars::{JsonSchema, schema::RootSchema, schema_for};
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use casa_types::measures::position::MPosition;
 
+use crate::presentation::UiCommandSchema;
 use crate::simulation::{
     SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
     SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
@@ -29,36 +30,20 @@ use crate::simulation::{
     SyntheticSpectralSetup, SyntheticWorkerPolicy, generate_synthetic_observation_ms,
     tutorial_vla_a_antennas, zenith_transit_phase_center_rad,
 };
-use crate::ui_schema::UiCommandSchema;
 
 /// Stable protocol name advertised by `simobserve --protocol-info`.
 pub const SIMOBSERVE_TASK_PROTOCOL_NAME: &str = "casa_simobserve_task";
 /// Stable protocol version advertised by `simobserve --protocol-info`.
 pub const SIMOBSERVE_TASK_PROTOCOL_VERSION: u32 = 2;
 
-/// Version/compatibility information for the JSON task protocol.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct SimobserveProtocolInfo {
-    /// Stable protocol identifier.
-    pub protocol_name: String,
-    /// Monotonic protocol version for compatibility checks.
-    pub protocol_version: u32,
-    /// Provider surface kind defined by the shared architecture contract.
-    pub surface_kind: ProviderSurfaceKind,
-    /// Binary version implementing the protocol.
-    pub binary_version: String,
-}
-
-impl SimobserveProtocolInfo {
-    /// Build the current `simobserve` protocol descriptor.
-    pub fn current() -> Self {
-        Self {
-            protocol_name: SIMOBSERVE_TASK_PROTOCOL_NAME.to_string(),
-            protocol_version: SIMOBSERVE_TASK_PROTOCOL_VERSION,
-            surface_kind: ProviderSurfaceKind::Task,
-            binary_version: env!("CARGO_PKG_VERSION").to_string(),
-        }
-    }
+/// Build the current shared `simobserve` protocol descriptor.
+pub fn simobserve_protocol_descriptor() -> ProviderProtocolDescriptor {
+    ProviderProtocolDescriptor::new(
+        SIMOBSERVE_TASK_PROTOCOL_NAME,
+        SIMOBSERVE_TASK_PROTOCOL_VERSION,
+        ProviderSurfaceKind::Task,
+        env!("CARGO_PKG_VERSION"),
+    )
 }
 
 /// One end-to-end synthetic-observation task request.
@@ -1666,26 +1651,6 @@ impl SimobserveTaskRequest {
             Self::Family(request) => Ok(SimobserveTaskResult::Family(Box::new(request.execute()?))),
         }
     }
-
-    /// Read one task request from a file path or `-` for stdin.
-    pub fn read_from_source(source: &str) -> Result<Self, String> {
-        let payload = if source == "-" {
-            let mut payload = String::new();
-            std::io::stdin()
-                .read_to_string(&mut payload)
-                .map_err(|error| format!("failed to read JSON request from stdin: {error}"))?;
-            payload
-        } else {
-            fs::read_to_string(source).map_err(|error| {
-                format!(
-                    "failed to read JSON request from {}: {error}",
-                    Path::new(source).display()
-                )
-            })?
-        };
-        serde_json::from_str(&payload)
-            .map_err(|error| format!("failed to parse simobserve task request: {error}"))
-    }
 }
 
 /// Canonical `simobserve` task result envelope.
@@ -1698,83 +1663,49 @@ pub enum SimobserveTaskResult {
     Family(Box<SimobserveFamilyTaskResult>),
 }
 
-/// JSON-schema bundle for the public `simobserve` task protocol.
-#[derive(Debug, Clone, Serialize)]
-pub struct SimobserveTaskSchemaBundle {
-    /// Compatibility descriptor for the request/result schemas.
-    pub protocol: SimobserveProtocolInfo,
-    /// Canonical semantic task contract.
-    pub semantic: TaskSemanticContract,
-    /// Shared component schemas reusable across projections.
-    pub components: ProviderComponentSchemas,
-    /// Presentation annotations carried with the canonical bundle.
-    pub annotations: JsonValue,
-    /// Derived projection metadata for UI and CLI consumers.
-    pub projections: ProviderProjectionMetadata,
-    /// Canonical parameter contract embedded for self-contained consumers.
-    pub parameter_surfaces: Vec<casa_provider_contracts::SurfaceContractBundle>,
-    /// JSON schema for [`SimobserveTaskRequest`].
-    pub request_schema: RootSchema,
-    /// JSON schema for [`SimobserveTaskResult`].
-    pub result_schema: RootSchema,
-}
-
-impl SimobserveTaskSchemaBundle {
-    /// Build the current request/result schema bundle.
-    pub fn current() -> Self {
-        let request_schema = schema_for!(SimobserveTaskRequest);
-        let result_schema = schema_for!(SimobserveTaskResult);
-        let parameter_surface = builtin_surface_bundle("simobserve")
-            .expect("built-in simobserve parameter surface must remain valid");
-        let ui_schema = project_ui_schema(&parameter_surface);
-        Self {
-            protocol: SimobserveProtocolInfo::current(),
-            semantic: TaskSemanticContract {
-                request_schema: request_schema.clone(),
-                result_schema: result_schema.clone(),
-                operations: vec![
-                    TaskOperationDescriptor {
-                        name: "run".to_string(),
-                        request_kind: "run".to_string(),
-                        result_kind: Some("run".to_string()),
-                    },
-                    TaskOperationDescriptor {
-                        name: "family".to_string(),
-                        request_kind: "family".to_string(),
-                        result_kind: Some("family".to_string()),
-                    },
-                ],
-            },
-            components: merged_components([&request_schema, &result_schema]),
-            annotations: derived_ui_schema_annotations(),
-            projections: ProviderProjectionMetadata {
-                cli: Some(ProviderCliProjection {
-                    machine_actions: ProviderCliMachineActions {
-                        ui_schema: Some("--ui-schema".to_string()),
-                        json_schema: Some("--json-schema".to_string()),
-                        protocol_info: Some("--protocol-info".to_string()),
-                        json_run: Some("--json-run <SOURCE>".to_string()),
-                        session: None,
-                    },
-                }),
-                ui_schema: Some(ui_schema),
-                python: None,
-            },
-            parameter_surfaces: vec![parameter_surface],
+/// Build the current `simobserve` schema bundle with the shared envelope.
+pub fn simobserve_task_schema_bundle() -> TaskProviderContract {
+    let request_schema = schema_for!(SimobserveTaskRequest);
+    let result_schema = schema_for!(SimobserveTaskResult);
+    let parameter_surface = builtin_surface_bundle("simobserve")
+        .expect("built-in simobserve parameter surface must remain valid");
+    TaskProviderContract {
+        protocol: simobserve_protocol_descriptor(),
+        semantic: TaskSemanticContract {
+            request_schema: request_schema.clone(),
+            result_schema: result_schema.clone(),
+            operations: vec![
+                TaskOperationDescriptor {
+                    name: "run".to_string(),
+                    request_kind: "run".to_string(),
+                    result_kind: Some("run".to_string()),
+                },
+                TaskOperationDescriptor {
+                    name: "family".to_string(),
+                    request_kind: "family".to_string(),
+                    result_kind: Some("family".to_string()),
+                },
+            ],
+        },
+        components: merged_components([&request_schema, &result_schema]),
+        annotations: serde_json::json!({}),
+        projections: ProviderProjectionMetadata {
+            cli: Some(ProviderCliProjection {
+                machine_actions: ProviderCliMachineActions {
+                    json_schema: Some("--json-schema".to_string()),
+                    protocol_info: Some("--protocol-info".to_string()),
+                    json_run: Some("--json-run <SOURCE>".to_string()),
+                    session: None,
+                },
+            }),
+            python: None,
+        },
+        parameter_surfaces: vec![parameter_surface],
+        domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-        }
-    }
-
-    /// Return the launcher/TUI compatibility view projected from the bundle.
-    pub fn ui_schema_projection(&self) -> Result<UiCommandSchema, String> {
-        let value = self
-            .projections
-            .ui_schema
-            .clone()
-            .ok_or_else(|| "missing ui_schema projection".to_string())?;
-        serde_json::from_value(value)
-            .map_err(|error| format!("parse simobserve ui schema: {error}"))
+            additional: NoAdditionalProviderSchemas {},
+        },
     }
 }
 
@@ -1785,7 +1716,7 @@ impl SimobserveTaskSchemaBundle {
 pub fn command_schema(program_name: &str) -> UiCommandSchema {
     let bundle = builtin_surface_bundle("simobserve")
         .expect("built-in simobserve parameter surface must remain valid");
-    let mut projection = project_ui_schema(&bundle);
+    let mut projection = project_ui_form(&bundle);
     projection["invocation_name"] = JsonValue::String(program_name.to_string());
     projection["usage"] = JsonValue::String(format!("{program_name} [parameters]"));
     serde_json::from_value(projection)
@@ -1795,53 +1726,22 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
 /// Execute CLI-style arguments for the `simobserve` binary.
 pub fn run_with_cli_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(), String> {
     let args = args.into_iter().collect::<Vec<_>>();
+    let host = casa_task_runtime::TaskCliHost::new(
+        simobserve_task_schema_bundle(),
+        |request: SimobserveTaskRequest| request.execute(),
+    );
+    if let Some(output) = host.dispatch(&args).map_err(|error| error.to_string())? {
+        println!("{output}");
+        return Ok(());
+    }
     if args
         .iter()
         .any(|arg| matches!(arg.to_str(), Some("-h" | "--help")))
     {
-        print!("{}", command_schema("simobserve").render_help());
-        return Ok(());
-    }
-    if args
-        .iter()
-        .any(|arg| matches!(arg.to_str(), Some("--ui-schema")))
-    {
-        println!(
-            "{}",
-            command_schema("simobserve")
-                .render_json_pretty()
-                .map_err(|error| error.to_string())?
-        );
-        return Ok(());
-    }
-    if args
-        .iter()
-        .any(|arg| matches!(arg.to_str(), Some("--json-schema")))
-    {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&SimobserveTaskSchemaBundle::current())
-                .map_err(|error| error.to_string())?
-        );
-        return Ok(());
-    }
-    if args
-        .iter()
-        .any(|arg| matches!(arg.to_str(), Some("--protocol-info")))
-    {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&SimobserveProtocolInfo::current())
-                .map_err(|error| error.to_string())?
-        );
-        return Ok(());
-    }
-    let (json_run, args) = extract_string_option(&args, "--json-run")?;
-    if let Some(source) = json_run {
-        let result = SimobserveTaskRequest::read_from_source(&source)?.execute()?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&result).map_err(|error| error.to_string())?
+        print!(
+            "{}\n\n{}\n",
+            command_schema("simobserve").render_help().trim_end(),
+            casa_task_runtime::task_cli_machine_help("SimobserveTaskRequest")
         );
         return Ok(());
     }
@@ -2043,29 +1943,6 @@ fn default_vla_antennas() -> Vec<SyntheticAntenna> {
     tutorial_vla_a_antennas()
 }
 
-fn extract_string_option(
-    args: &[std::ffi::OsString],
-    flag: &str,
-) -> Result<(Option<String>, Vec<std::ffi::OsString>), String> {
-    let mut output = Vec::new();
-    let mut found = None;
-    let mut index = 0usize;
-    while index < args.len() {
-        if args[index].to_str() == Some(flag) {
-            index += 1;
-            let value = args
-                .get(index)
-                .and_then(|value| value.to_str())
-                .ok_or_else(|| format!("{flag} requires a value"))?;
-            found = Some(value.to_string());
-        } else {
-            output.push(args[index].clone());
-        }
-        index += 1;
-    }
-    Ok((found, output))
-}
-
 fn required_option(args: &[std::ffi::OsString], flag: &str) -> Result<PathBuf, String> {
     option_value(args, flag)
         .map(PathBuf::from)
@@ -2164,17 +2041,18 @@ mod tests {
 
     use super::{
         SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveFamilyManifest,
-        SimobserveProtocolInfo, SimobserveTaskRequest, SimobserveTaskSchemaBundle,
-        SyntheticObservationMode, SyntheticPolarizationBasis, SyntheticWorkerPolicy,
-        command_schema, load_real_family_config, request_from_cli_args,
-        simobserve_provider_invocation,
+        SimobserveTaskRequest, SyntheticObservationMode, SyntheticPolarizationBasis,
+        SyntheticWorkerPolicy, command_schema, load_real_family_config, request_from_cli_args,
+        simobserve_protocol_descriptor, simobserve_provider_invocation,
+        simobserve_task_schema_bundle,
     };
     use crate::columns::main_ids;
-    use crate::ui_schema::{UiArgumentParser, UiValueKind};
+    use crate::presentation::{UiArgumentParser, UiValueKind};
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_projection() {
-        let bundle = SimobserveTaskSchemaBundle::current();
+        let bundle = simobserve_task_schema_bundle();
+        bundle.validate().expect("shared provider envelope");
         assert_eq!(bundle.protocol.protocol_name, SIMOBSERVE_TASK_PROTOCOL_NAME);
         assert_eq!(
             bundle.protocol.protocol_version,
@@ -2201,19 +2079,19 @@ mod tests {
                 .components
                 .contains_key("SimobserveFamilyTaskRequest")
         );
-        let ui_schema = command_schema("simobserve");
-        assert_eq!(ui_schema.command_id, "simobserve");
-        let request_kind = ui_schema.argument("request_kind").expect("request_kind");
+        let form = command_schema("simobserve");
+        assert_eq!(form.command_id, "simobserve");
+        let request_kind = form.argument("request_kind").expect("request_kind");
         assert_eq!(request_kind.value_kind, UiValueKind::Choice);
         let UiArgumentParser::Option { choices, .. } = &request_kind.parser else {
             panic!("request_kind should be a choice option");
         };
         assert_eq!(choices, &["family".to_string(), "run".to_string()]);
-        assert!(ui_schema.argument("source_model").is_some());
-        assert!(ui_schema.argument("target_ms_size_gib").is_some());
-        assert!(ui_schema.argument("observation_mode").is_some());
-        assert!(ui_schema.argument("request_json").is_none());
-        let projected = bundle.projections.ui_schema.as_ref().unwrap();
+        assert!(form.argument("source_model").is_some());
+        assert!(form.argument("target_ms_size_gib").is_some());
+        assert!(form.argument("observation_mode").is_some());
+        assert!(form.argument("request_json").is_none());
+        let projected = casa_provider_contracts::project_ui_form(&bundle.parameter_surfaces[0]);
         assert!(
             projected["arguments"]
                 .as_array()
@@ -2226,7 +2104,7 @@ mod tests {
 
     #[test]
     fn protocol_info_matches_public_constants() {
-        let info = SimobserveProtocolInfo::current();
+        let info = simobserve_protocol_descriptor();
         assert_eq!(info.protocol_name, SIMOBSERVE_TASK_PROTOCOL_NAME);
         assert_eq!(info.protocol_version, SIMOBSERVE_TASK_PROTOCOL_VERSION);
         assert_eq!(info.surface_kind, ProviderSurfaceKind::Task);

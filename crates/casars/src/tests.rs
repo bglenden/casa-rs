@@ -15,8 +15,8 @@ use casa_calibration::{
 };
 use casa_ms::column_def::{ColumnDef, ColumnKind};
 use casa_ms::msexplore::cli::command_schema as msexplore_command_schema;
+use casa_ms::presentation::UiCommandSchema;
 use casa_ms::schema;
-use casa_ms::ui_schema::UiCommandSchema;
 use casa_ms::{
     MeasurementSet, MeasurementSetBuilder, MsPlotPreset, OptionalMainColumn, SubtableId,
 };
@@ -10951,7 +10951,7 @@ fn write_fake_msexplore_script(root: &Path, body: &str) -> PathBuf {
     let bundle_json = fake_canonical_bundle_json(&schema_json, "casa_msexplore_task", "task");
     let path = root.join("fake-msexplore.sh");
     let script = format!(
-        "#!/bin/sh\nif [ \"$1\" = \"--json-schema\" ]; then\ncat <<'EOF'\n{bundle_json}\nEOF\nexit 0\nfi\nif [ \"$1\" = \"--ui-schema\" ]; then\ncat <<'EOF'\n{schema_json}\nEOF\nexit 0\nfi\n{body}"
+        "#!/bin/sh\nif [ \"$1\" = \"--json-schema\" ]; then\ncat <<'EOF'\n{bundle_json}\nEOF\nexit 0\nfi\n{body}"
     );
     fs::write(&path, script).expect("write fake script");
     let mut permissions = fs::metadata(&path).expect("metadata").permissions();
@@ -11023,7 +11023,7 @@ fn write_fake_tablebrowser_script_impl(
 
     let path = root.join("fake-tablebrowser.sh");
     let script = format!(
-        "#!/bin/sh\nif [ \"$1\" = \"--json-schema\" ]; then\ncat <<'EOF'\n{bundle_json}\nEOF\nexit 0\nfi\nif [ \"$1\" = \"--ui-schema\" ]; then\ncat <<'EOF'\n{schema_json}\nEOF\nexit 0\nfi\nif [ \"$1\" = \"--session\" ]; then\n{session_body}exit 0\nfi\necho \"unexpected args: $@\" >&2\nexit 1\n"
+        "#!/bin/sh\nif [ \"$1\" = \"--json-schema\" ]; then\ncat <<'EOF'\n{bundle_json}\nEOF\nexit 0\nfi\nif [ \"$1\" = \"--session\" ]; then\n{session_body}exit 0\nfi\necho \"unexpected args: $@\" >&2\nexit 1\n"
     );
     fs::write(&path, script).expect("write fake tablebrowser script");
     let mut permissions = fs::metadata(&path).expect("metadata").permissions();
@@ -11127,7 +11127,7 @@ fn write_fake_imexplore_script_impl(
 
     let path = root.join("fake-imexplore.sh");
     let script = format!(
-        "#!/bin/sh\nif [ \"$1\" = \"--json-schema\" ]; then\ncat <<'EOF'\n{bundle_json}\nEOF\nexit 0\nfi\nif [ \"$1\" = \"--ui-schema\" ]; then\ncat <<'EOF'\n{schema_json}\nEOF\nexit 0\nfi\nif [ \"$1\" = \"--session\" ]; then\n{session_body}exit 0\nfi\necho \"unexpected args: $@\" >&2\nexit 1\n"
+        "#!/bin/sh\nif [ \"$1\" = \"--json-schema\" ]; then\ncat <<'EOF'\n{bundle_json}\nEOF\nexit 0\nfi\nif [ \"$1\" = \"--session\" ]; then\n{session_body}exit 0\nfi\necho \"unexpected args: $@\" >&2\nexit 1\n"
     );
     fs::write(&path, script).expect("write fake imexplore script");
     let mut permissions = fs::metadata(&path).expect("metadata").permissions();
@@ -11137,12 +11137,10 @@ fn write_fake_imexplore_script_impl(
 }
 
 fn fake_canonical_bundle_json(
-    schema_json: &str,
+    _schema_json: &str,
     protocol_name: &str,
     surface_kind: &str,
 ) -> String {
-    let ui_schema =
-        serde_json::from_str::<serde_json::Value>(schema_json).expect("parse fake ui schema");
     serde_json::to_string_pretty(&serde_json::json!({
         "protocol": {
             "protocol_name": protocol_name,
@@ -11152,14 +11150,8 @@ fn fake_canonical_bundle_json(
         },
         "semantic": {},
         "components": {},
-        "annotations": {
-            "ui_schema": {
-                "status": "derived_compatibility_view"
-            }
-        },
-        "projections": {
-            "ui_schema": ui_schema
-        }
+        "annotations": {},
+        "projections": {}
     }))
     .expect("serialize fake canonical bundle")
 }

@@ -4,15 +4,18 @@ import Foundation
 package struct AgentSessionConfiguration: Equatable {
     package var agentExecutable: String
     package var projectMCPExecutable: String
+    package var projectMCPArguments: [String]
     package var fixtureMode: Bool
 
     package init(
         agentExecutable: String,
         projectMCPExecutable: String,
+        projectMCPArguments: [String] = [],
         fixtureMode: Bool = false
     ) {
         self.agentExecutable = agentExecutable
         self.projectMCPExecutable = projectMCPExecutable
+        self.projectMCPArguments = projectMCPArguments
         self.fixtureMode = fixtureMode
     }
 
@@ -50,16 +53,40 @@ package struct AgentSessionConfiguration: Equatable {
         guard let codex = discoveredCodex ?? (fixtureMode ? "/usr/bin/false" : nil) else {
             throw AgentSessionError.unavailable("Codex CLI was not found in the app bundle, CASA_RS_AGENT_COMMAND, or PATH")
         }
-        guard let mcp = executable(
-            environment["CASA_RS_PROJECT_MCP"],
-            name: "casars-project-mcp",
-            bundled: Bundle.main.resourceURL?.appendingPathComponent("bin/casars-project-mcp").path
-        ) else {
-            throw AgentSessionError.unavailable("The CASA project MCP executable is not built or installed")
+        let mcp: String
+        let mcpArguments: [String]
+        switch try ProcessGenericTaskClient.launchMode(environment: environment) {
+        case .installedSuite:
+            guard let installedMCP = [
+                environment["CASA_RS_PROJECT_MCP"],
+                Bundle.main.resourceURL?.appendingPathComponent("bin/casars-project-mcp").path,
+            ]
+                .compactMap({ $0 })
+                .first(where: manager.isExecutableFile(atPath:))
+            else {
+                throw AgentSessionError.unavailable(
+                    "Installed-suite project MCP is missing; install it in the app bundle or set CASA_RS_PROJECT_MCP"
+                )
+            }
+            mcp = installedMCP
+            mcpArguments = []
+        case .developmentWorkspace:
+            guard let repoRoot = environment["CASA_RS_REPO_ROOT"], !repoRoot.isEmpty else {
+                throw AgentSessionError.unavailable(
+                    "Development project MCP launch requires CASA_RS_REPO_ROOT"
+                )
+            }
+            mcp = "/usr/bin/env"
+            mcpArguments = [
+                environment["CARGO"] ?? "cargo",
+                "run", "--manifest-path", "\(repoRoot)/Cargo.toml", "-q",
+                "-p", "casars-frontend-services", "--bin", "casars-project-mcp", "--",
+            ]
         }
         return Self(
             agentExecutable: codex,
             projectMCPExecutable: mcp,
+            projectMCPArguments: mcpArguments,
             fixtureMode: fixtureMode
         )
     }
@@ -626,7 +653,7 @@ package final class CodexAppServerSession: AgentSession {
     package func threadConfig(_ request: AgentConversationRequest) -> [String: Any] {
         let projectMCP: [String: Any] = [
                 "command": configuration.projectMCPExecutable,
-                "args": [
+                "args": configuration.projectMCPArguments + [
                     "--project-root", request.projectRoot,
                     "--nonce", request.runtimeProfile.sessionNonce,
                 ],

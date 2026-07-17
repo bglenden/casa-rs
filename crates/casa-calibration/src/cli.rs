@@ -3,7 +3,6 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use casa_ms::MsSelectionSpec;
@@ -11,15 +10,15 @@ use casa_ms::msexplore::cli::UiCommandSchema;
 
 use crate::{
     ApplyCalibrationTableSpec, ApplyExecutionReport, ApplyInterpolationMode, ApplyMode, ApplyPlan,
-    BandpassSolveCombine, BandpassSolveReport, BandpassType, CalibrationProtocolInfo,
-    CalibrationStatsAxis, CalibrationStatsReport, CalibrationTableSummary, CalibrationTaskRequest,
-    CalibrationTaskResult, CalibrationTaskSchemaBundle, ContinuumSubtractionDataColumn,
-    ContinuumSubtractionReport, ContinuumSubtractionTaskRequest, ExecuteApplyTaskRequest,
-    ExportCorrectedDataReport, ExportCorrectedDataTaskRequest, FluxScaleReport, FluxScaleRequest,
-    GainFieldSelector, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainSolveReport, GainType, GencalReport, GencalTaskRequest, GencalType, PlanApplyTaskRequest,
-    RefAntSelector, SolveBandpassTaskRequest, SolveGainTaskRequest, StatsTaskRequest,
-    SummaryTaskRequest, load_apply_specs_from_callib,
+    BandpassSolveCombine, BandpassSolveReport, BandpassType, CalibrationStatsAxis,
+    CalibrationStatsReport, CalibrationTableSummary, CalibrationTaskRequest, CalibrationTaskResult,
+    ContinuumSubtractionDataColumn, ContinuumSubtractionReport, ContinuumSubtractionTaskRequest,
+    ExecuteApplyTaskRequest, ExportCorrectedDataReport, ExportCorrectedDataTaskRequest,
+    FluxScaleReport, FluxScaleRequest, GainFieldSelector, GainSolveCombine, GainSolveInterval,
+    GainSolveMode, GainSolveModelSource, GainSolveReport, GainType, GencalReport,
+    GencalTaskRequest, GencalType, PlanApplyTaskRequest, RefAntSelector, SolveBandpassTaskRequest,
+    SolveGainTaskRequest, StatsTaskRequest, SummaryTaskRequest, calibration_task_schema_bundle,
+    load_apply_specs_from_callib,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -338,10 +337,6 @@ impl Command {
 #[derive(Debug)]
 enum CliAction {
     Help,
-    UiSchema,
-    JsonSchema,
-    ProtocolInfo,
-    JsonRun(String),
     Run(Box<RunRequest>),
 }
 
@@ -381,53 +376,28 @@ pub fn run_env(program_name: &str) -> i32 {
 
 /// Run the CLI with already-filtered arguments.
 pub fn run_with_cli_args(program_name: &str, args: impl IntoIterator<Item = OsString>) -> i32 {
+    let args = args.into_iter().collect::<Vec<_>>();
+    let host = casa_task_runtime::TaskCliHost::new(
+        calibration_task_schema_bundle(),
+        |request: CalibrationTaskRequest| request.execute(),
+    );
+    match host.dispatch(&args) {
+        Ok(Some(output)) => {
+            println!("{output}");
+            return 0;
+        }
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("Error: {error}");
+            return error.exit_code();
+        }
+    }
     let schema = command_schema(program_name);
     match parse_args(args) {
         Ok(CliAction::Help) => {
             print!("{}", render_help(&schema));
             0
         }
-        Ok(CliAction::UiSchema) => match schema.render_json_pretty() {
-            Ok(json) => {
-                print!("{json}");
-                0
-            }
-            Err(error) => {
-                eprintln!("Error: failed to serialize --ui-schema output: {error}");
-                1
-            }
-        },
-        Ok(CliAction::JsonSchema) => {
-            match serde_json::to_string_pretty(&CalibrationTaskSchemaBundle::current()) {
-                Ok(json) => {
-                    print!("{json}");
-                    0
-                }
-                Err(error) => {
-                    eprintln!("Error: failed to serialize --json-schema output: {error}");
-                    1
-                }
-            }
-        }
-        Ok(CliAction::ProtocolInfo) => {
-            match serde_json::to_string_pretty(&CalibrationProtocolInfo::current()) {
-                Ok(json) => {
-                    print!("{json}");
-                    0
-                }
-                Err(error) => {
-                    eprintln!("Error: failed to serialize --protocol-info output: {error}");
-                    1
-                }
-            }
-        }
-        Ok(CliAction::JsonRun(source)) => match run_json_request(&source) {
-            Ok(()) => 0,
-            Err(error) => {
-                eprintln!("Error: {error}");
-                1
-            }
-        },
         Ok(CliAction::Run(request)) => match run(*request) {
             Ok(()) => 0,
             Err(error) => {
@@ -448,7 +418,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
     let bundle = casa_provider_contracts::builtin_surface_bundle("calibrate")
         .expect("built-in calibrate parameter surface must remain valid");
     let mut schema: UiCommandSchema =
-        serde_json::from_value(casa_provider_contracts::project_ui_schema(&bundle))
+        serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
             .expect("canonical calibrate UI projection must match UiCommandSchema");
     schema.invocation_name = program_name.to_string();
     schema.usage = format!("{program_name} [parameters]");
@@ -470,54 +440,8 @@ fn run(request: RunRequest) -> Result<(), String> {
     Ok(())
 }
 
-fn run_json_request(source: &str) -> Result<(), String> {
-    tracing::info!(source, "calibration JSON request started");
-    let payload = read_json_request_payload(source)?;
-    let request = serde_json::from_str::<CalibrationTaskRequest>(&payload)
-        .map_err(|error| format!("failed to parse calibration task request: {error}"))?;
-    let result = request.execute()?;
-    let rendered = serde_json::to_string_pretty(&result)
-        .map_err(|error| format!("failed to serialize calibration task result: {error}"))?;
-    println!("{rendered}");
-    tracing::info!(source, "calibration JSON request completed");
-    Ok(())
-}
-
-fn read_json_request_payload(source: &str) -> Result<String, String> {
-    if source == "-" {
-        let mut payload = String::new();
-        std::io::stdin()
-            .read_to_string(&mut payload)
-            .map_err(|error| format!("failed to read JSON request from stdin: {error}"))?;
-        return Ok(payload);
-    }
-
-    fs::read_to_string(source).map_err(|error| {
-        format!(
-            "failed to read JSON request from {}: {error}",
-            Path::new(source).display()
-        )
-    })
-}
-
 fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, String> {
     let args = args.into_iter().collect::<Vec<_>>();
-    if args.iter().any(|arg| arg == "--ui-schema") {
-        return Ok(CliAction::UiSchema);
-    }
-    if args.iter().any(|arg| arg == "--json-schema") {
-        return Ok(CliAction::JsonSchema);
-    }
-    if args.iter().any(|arg| arg == "--protocol-info") {
-        return Ok(CliAction::ProtocolInfo);
-    }
-    if let Some(index) = args.iter().position(|arg| arg == "--json-run") {
-        let source = args
-            .get(index + 1)
-            .and_then(|value| value.to_str())
-            .ok_or_else(|| "missing value for --json-run".to_string())?;
-        return Ok(CliAction::JsonRun(source.to_string()));
-    }
     if args.is_empty() || args.iter().any(|arg| arg == "-h" || arg == "--help") {
         return Ok(CliAction::Help);
     }
@@ -2327,8 +2251,9 @@ fn parse_time_range(value: &str) -> Result<(f64, f64), String> {
 
 fn render_help(schema: &UiCommandSchema) -> String {
     format!(
-        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical calibration task JSON schema\n  --protocol-info          Emit the calibration task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON CalibrationTaskRequest from SOURCE or - for stdin\n\nDeveloper subcommands:\n  {} summary [SUMMARY OPTIONS] <caltable>...\n  {} stats [STATS OPTIONS] <caltable>\n  {} plan-apply --ms <measurement-set> [PLAN OPTIONS] <caltable>...\n  {} uvcontsub --ms <measurement-set> --out <measurement-set> --fitspw <spw:channels> [UVCONTSUB OPTIONS]\n  {} solve-gain --ms <measurement-set> --out <caltable> --refant <antenna> [SOLVE OPTIONS]\n  {} solve-bandpass --ms <measurement-set> --out <caltable> --refant <antenna> [BANDPASS OPTIONS]\n  {} fluxscale --in <gain-table> --out <flux-table> --reference FIELD[,FIELD...] [FLUXSCALE OPTIONS]\n  {} gencal --ms <measurement-set> --out <caltable> --caltype antpos|gceff|opac [GENCAL OPTIONS]\n",
+        "{}\n\n{}\n\nDeveloper subcommands:\n  {} summary [SUMMARY OPTIONS] <caltable>...\n  {} stats [STATS OPTIONS] <caltable>\n  {} plan-apply --ms <measurement-set> [PLAN OPTIONS] <caltable>...\n  {} uvcontsub --ms <measurement-set> --out <measurement-set> --fitspw <spw:channels> [UVCONTSUB OPTIONS]\n  {} solve-gain --ms <measurement-set> --out <caltable> --refant <antenna> [SOLVE OPTIONS]\n  {} solve-bandpass --ms <measurement-set> --out <caltable> --refant <antenna> [BANDPASS OPTIONS]\n  {} fluxscale --in <gain-table> --out <flux-table> --reference FIELD[,FIELD...] [FLUXSCALE OPTIONS]\n  {} gencal --ms <measurement-set> --out <caltable> --caltype antpos|gceff|opac [GENCAL OPTIONS]\n",
         schema.render_help(),
+        casa_task_runtime::task_cli_machine_help("CalibrationTaskRequest"),
         schema.invocation_name,
         schema.invocation_name,
         schema.invocation_name,
@@ -2861,7 +2786,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use casa_ms::{MsSelectionSpec, ui_schema::UiValueKind};
+    use casa_ms::{MsSelectionSpec, presentation::UiValueKind};
     use tempfile::TempDir;
 
     use super::{CliAction, Command, OutputFormat, command_schema, parse_args, render_help};
@@ -3108,18 +3033,18 @@ mod tests {
 
     #[test]
     fn parse_args_exposes_machine_readable_actions() {
-        assert!(matches!(
-            parse_args(["--json-schema".into()]).expect("json schema action"),
-            CliAction::JsonSchema
-        ));
-        assert!(matches!(
-            parse_args(["--protocol-info".into()]).expect("protocol info action"),
-            CliAction::ProtocolInfo
-        ));
-        match parse_args(["--json-run".into(), "-".into()]).expect("json run action") {
-            CliAction::JsonRun(source) => assert_eq!(source, "-"),
-            other => panic!("expected json run action, got {other:?}"),
-        }
+        assert_eq!(
+            casa_task_runtime::parse_task_cli_action(&["--json-schema".into()]).unwrap(),
+            Some(casa_task_runtime::TaskCliAction::JsonSchema)
+        );
+        assert_eq!(
+            casa_task_runtime::parse_task_cli_action(&["--protocol-info".into()]).unwrap(),
+            Some(casa_task_runtime::TaskCliAction::ProtocolInfo)
+        );
+        assert_eq!(
+            casa_task_runtime::parse_task_cli_action(&["--json-run".into(), "-".into()]).unwrap(),
+            Some(casa_task_runtime::TaskCliAction::JsonRun("-".into()))
+        );
     }
 
     #[test]

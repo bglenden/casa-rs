@@ -55,21 +55,6 @@ def test_suite_root_env_precedes_repo_local(monkeypatch: pytest.MonkeyPatch, tmp
     assert importvla.protocol_info().binary_version == "suite"
 
 
-def test_package_relative_suite_layout_is_discovered(tmp_path: Path) -> None:
-    suite_root = tmp_path / "suite"
-    binary = _write_stub_binary(
-        suite_root / "bin" / "casars-importvla",
-        version="suite-relative",
-    )
-    module_file = suite_root / "python" / "site-packages" / "casars" / "_task_runtime.py"
-    module_file.parent.mkdir(parents=True, exist_ok=True)
-    module_file.write_text("# suite layout test\n", encoding="utf-8")
-
-    assert _task_runtime._find_installed_suite_binary(
-        "casars-importvla", module_file=module_file
-    ) == str(binary)
-
-
 def test_protocol_mismatch_fails_fast(tmp_path: Path) -> None:
     binary = _write_stub_binary(
         tmp_path / "bad" / "casars-importvla",

@@ -12,12 +12,12 @@ Creates release bundle archives for one supported platform:
   - casa-rs-binaries-<version>-<platform>.tar.gz
 
 The suite bundle contains:
-  - bin/* entries selected by resources/task-catalog.json include_in_suite=true
+  - bin/* entries selected by the provider application catalog include_in_suite=true
   - wheels/*.whl
   - bundle-manifest.json
 
 The binaries bundle contains:
-  - bin/* entries selected by resources/task-catalog.json include_in_suite=true
+  - bin/* entries selected by the provider application catalog include_in_suite=true
 EOF
 }
 

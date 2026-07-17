@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_ROOT = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources"
 SURFACES_PATH = CONTRACT_ROOT / "parameter-surfaces.json"
 CATALOG_PATH = CONTRACT_ROOT / "parameter-catalog.json"
+APPLICATIONS_PATH = CONTRACT_ROOT / "application-catalog.json"
 TASK_OUTPUT = REPO_ROOT / "crates/casars-python/python/casars/tasks/catalog.py"
 TASK_STUB = REPO_ROOT / "crates/casars-python/python/casars/tasks/catalog.pyi"
 SESSION_OUTPUT = REPO_ROOT / "crates/casars-python/python/casars/_session_catalog.py"
@@ -77,6 +78,30 @@ def load_surfaces() -> list[dict[str, Any]]:
                     f"canonical CASA spelling {name!r}"
                 )
     return surfaces
+
+
+def order_surfaces_by_application_catalog(
+    surfaces: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    payload = load_json(APPLICATIONS_PATH)
+    applications = payload.get("applications")
+    if not isinstance(applications, list):
+        raise GenerationError("application-catalog.json must contain an applications array")
+    task_ids = [
+        application.get("id")
+        for application in applications
+        if isinstance(application, dict) and application.get("kind") == "task"
+    ]
+    if not all(isinstance(surface_id, str) for surface_id in task_ids):
+        raise GenerationError("every task application must have a string id")
+    indexed = {surface["id"]: surface for surface in surfaces}
+    if set(task_ids) != set(indexed):
+        missing = sorted(set(indexed) - set(task_ids))
+        extra = sorted(set(task_ids) - set(indexed))
+        raise GenerationError(
+            f"application catalog/surface mismatch: missing={missing}, extra={extra}"
+        )
+    return [indexed[surface_id] for surface_id in task_ids]
 
 
 def load_concepts() -> dict[tuple[str, int], dict[str, Any]]:
@@ -453,7 +478,7 @@ def update(path: Path, content: str, *, check: bool) -> None:
 def main() -> int:
     args = parse_args()
     try:
-        surfaces = load_surfaces()
+        surfaces = order_surfaces_by_application_catalog(load_surfaces())
         concepts = load_concepts()
         outputs = {
             TASK_OUTPUT: render_task_module(surfaces, concepts, stub=False),

@@ -185,6 +185,7 @@ package struct AssistantTaskSuggestionState: Codable, Equatable, Identifiable {
     package var id: String
     package var taskId: String
     package var parameters: [String: String]
+    package var validatedPatch: SurfaceParameterPatch? = nil
 }
 
 package struct AssistantPinState: Codable, Equatable, Identifiable {

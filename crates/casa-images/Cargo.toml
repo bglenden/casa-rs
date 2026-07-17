@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 casa-coordinates = { path = "../casa-coordinates" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-task-runtime = { path = "../casa-task-runtime" }
 casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
 casa-lattices = { path = "../casa-lattices" }
 casa-tables = { path = "../casa-tables" }

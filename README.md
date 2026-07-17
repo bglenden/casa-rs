@@ -87,10 +87,10 @@ around casacore C++.
 | Calibration | `casa-calibration`, `calibrate` | `applycal`, `gaincal`, `bandpass`, `fluxscale`, callib handling, stats, diagnostics, and guided CLI/TUI workflows. |
 | Flagging | `casa-ms`, `flagdata`, `flagmanager`, GUI/TUI task panels | Flag summary and mutation workflows, manual/clip/quack/tfcrop/rflag-family coverage where implemented, flag-version save/list/restore/delete/rename workflows, and frontend confirmation paths. |
 | Simulation/import | `casa-ms`, `casa-vla`, `simobserve`, `importvla` | Simulation and VLA import paths with CASA comparison harnesses and tutorial-backed parity evidence. |
-| Python | `casars-python` | Python package wrappers that discover suite-installed task binaries and expose task protocols. |
+| Python | `casars-python` | Python package wrappers that launch catalog-owned suite or development executables and expose task protocols. |
 | TUI | `casars`, `casars-*browser-protocol` | Ratatui shells for task operation, table/MS/image browsing, and Kitty-capable graphics workflows. |
 | macOS GUI | `apps/casars-mac`, `casars-frontend-services` | Native SwiftUI workbench backed by Rust frontend services and shared task contracts. |
-| Provider contracts | `casa-provider-contracts`, `resources/task-catalog.json`, `resources/task-execution-matrix.json` | Versioned schema/task contracts shared by standalone binaries, TUI, GUI, and Python. |
+| Provider contracts | `casa-provider-contracts`, `application-catalog.json`, `parameter-surfaces.json` | Canonical application, launch, parameter, and provider contracts shared by standalone binaries, TUI, GUI, and Python. |
 
 Approximate source lines of code, measured with `cloc` over `crates/`, `apps/`,
 and `scripts/`, excluding generated build directories:
@@ -211,13 +211,22 @@ source "$HOME/.local/opt/casa-rs/current/python/bin/activate"
 python -c "import casars; print(casars.__version__)"
 ```
 
-`casars.tasks.calibrate` will discover the sibling suite-installed
-`calibrate` binary automatically in this layout. If you want to target a
-non-default suite root explicitly, set:
+Python task launch defaults to the active suite at
+`~/.local/opt/casa-rs/current`. To target another installed suite root, set:
 
 ```bash
 export CASARS_SUITE_ROOT="$HOME/.local/opt/casa-rs/<version>"
 ```
+
+Development checkouts use a separate explicit policy:
+
+```bash
+export CASARS_LAUNCH_MODE=development_workspace
+export CASARS_DEVELOPMENT_WORKSPACE="$PWD"
+```
+
+The selected policy must contain the requested catalog executable; launch does
+not fall back to package-relative binaries or `PATH`.
 
 ### Stable and RC installs side by side
 
@@ -350,9 +359,9 @@ Mouse interactions:
 - wheel scroll: scroll the pane under the pointer
 - drag the center divider: resize the parameter/result split and persist the ratio
 
-Launcher-integrated commands still expose `--ui-schema`, but new apps should
-not treat a raw schema dump as their primary UX. The shell-family conventions in
-`docs/casars-tui-framework.md` are the required contract for new `casars`
+Launcher-integrated commands derive their forms from the canonical parameter
+surface and application catalog. The shell-family conventions in
+`docs/casars-tui-framework.md` are the required UX contract for new `casars`
 applications.
 
 ## Minimal Example (`casa-types`)

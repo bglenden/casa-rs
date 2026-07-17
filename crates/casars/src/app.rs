@@ -22,7 +22,7 @@ use casa_images::{
     ImageMovieRenderedBundle, ImageMovieSurfaceKind, ImageMovieSurfaceRequest,
 };
 use casa_ms::msexplore::cli::build_explore_spec_from_args;
-use casa_ms::ui_schema::{UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind};
+use casa_ms::presentation::{UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind};
 use casa_ms::{
     MeasurementSet, MeasurementSetSummary, MeasurementSetSummaryOptions, MsExportFormat,
     MsPlotPayload, MsPlotPreset, MsSelectionSpec, build_msexplore_payload_from_spec,
@@ -30,9 +30,9 @@ use casa_ms::{
 };
 use casa_provider_contracts::{ParameterValue, SurfaceKind, builtin_surface_bundle};
 use casa_task_runtime::{
-    BaseSource, ManagedProfileKind, ManagedStateStore, ParameterProfile, ParameterSession,
-    SessionLastState, TaskLastState, parse_profile, provider_parameter_applies,
-    write_parameter_profile_atomic,
+    BaseSource, ManagedProfileKind, OpenSessionRequest, ParameterProfile, ParameterRuntime,
+    ParameterSession, ResolutionPatch, SessionLastCoordinator, TaskLastCoordinator, parse_profile,
+    provider_parameter_applies, write_parameter_profile_atomic,
 };
 use casa_types::measures::direction::{
     angular_increment_arcseconds, format_declination_labeled, format_right_ascension_labeled,
@@ -780,7 +780,8 @@ pub(crate) struct AppState {
     #[cfg(test)]
     _test_parameter_workspace: tempfile::TempDir,
     save_last: bool,
-    session_last_state: Option<SessionLastState>,
+    session_last_coordinator: SessionLastCoordinator,
+    task_last_coordinator: TaskLastCoordinator,
     parameter_profile_path_entry: Option<ParameterProfilePathEntryState>,
     pending_parameter_replacement: Option<ParameterDraftReplacement>,
     sections: Vec<FormSection>,
@@ -830,7 +831,7 @@ struct RunningState {
     renderer: Option<String>,
     file_output_path: Option<String>,
     cancel_requested: bool,
-    task_last_state: Option<TaskLastState>,
+    task_attempt_id: Option<String>,
     notebook_recording: Option<NotebookRecording>,
 }
 
@@ -2375,8 +2376,18 @@ impl AppState {
         let parameter_workspace = test_parameter_workspace.path().to_owned();
         #[cfg(not(test))]
         let parameter_workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let (parameter_session, parameter_warning) =
-            load_interactive_parameter_session(&app.id, &parameter_workspace);
+        let (parameter_session, parameter_warning) = match builtin_surface_bundle(&app.id) {
+            Ok(bundle) => match ParameterRuntime::default()
+                .open_session(OpenSessionRequest::defaults(bundle, &parameter_workspace))
+            {
+                Ok(session) => (Some(session), None),
+                Err(error) => (None, Some(format!("Could not open parameters: {error}"))),
+            },
+            Err(error) => (
+                None,
+                Some(format!("Parameter contract is unavailable: {error}")),
+            ),
+        };
         if let Some(warning) = &parameter_warning {
             ready_status_line = warning.clone();
         }
@@ -2388,15 +2399,9 @@ impl AppState {
         if let Some(session) = parameter_session.as_ref() {
             sync_form_fields_from_parameter_session(&mut fields, session);
         }
-        let automatic_save_enabled = !cfg!(test);
-        let session_last_state = app.is_browser_session().then(|| {
-            SessionLastState::new(
-                ManagedStateStore::for_workspace(&parameter_workspace),
-                app.id.clone(),
-                automatic_save_enabled,
-                Duration::from_millis(350),
-            )
-        });
+        let automatic_save_enabled = true;
+        let session_last_coordinator =
+            SessionLastCoordinator::new(ParameterRuntime::default().session_debounce());
         let sections = build_sections(&app, &fields);
         let selected_form = initial_form_selection(&sections, &fields, false);
 
@@ -2413,7 +2418,8 @@ impl AppState {
             #[cfg(test)]
             _test_parameter_workspace: test_parameter_workspace,
             save_last: automatic_save_enabled,
-            session_last_state,
+            session_last_coordinator,
+            task_last_coordinator: TaskLastCoordinator::new(),
             parameter_profile_path_entry: None,
             pending_parameter_replacement: None,
             sections,
@@ -2505,7 +2511,10 @@ impl AppState {
             #[cfg(test)]
             _test_parameter_workspace: test_parameter_workspace,
             save_last: true,
-            session_last_state: None,
+            session_last_coordinator: SessionLastCoordinator::new(
+                ParameterRuntime::default().session_debounce(),
+            ),
+            task_last_coordinator: TaskLastCoordinator::new(),
             parameter_profile_path_entry: None,
             pending_parameter_replacement: None,
             sections: Vec::new(),
@@ -2572,7 +2581,18 @@ impl AppState {
         self.save_last = save_last;
         let (session, warning) = match session {
             Some(session) => (Some(session), None),
-            None => load_interactive_parameter_session(&self.app.id, &self.parameter_workspace),
+            None => match builtin_surface_bundle(&self.app.id) {
+                Ok(bundle) => match ParameterRuntime::default().open_session(
+                    OpenSessionRequest::defaults(bundle, &self.parameter_workspace),
+                ) {
+                    Ok(session) => (Some(session), None),
+                    Err(error) => (None, Some(format!("Could not open parameters: {error}"))),
+                },
+                Err(error) => (
+                    None,
+                    Some(format!("Parameter contract is unavailable: {error}")),
+                ),
+            },
         };
         self.parameter_session = session;
         self.pending_live_parameter_rollback = None;
@@ -2580,14 +2600,6 @@ impl AppState {
         if let Some(session) = self.parameter_session.as_ref() {
             sync_form_fields_from_parameter_session(&mut self.fields, session);
         }
-        self.session_last_state = self.app.is_browser_session().then(|| {
-            SessionLastState::new(
-                ManagedStateStore::for_workspace(&self.parameter_workspace),
-                self.app.id.clone(),
-                self.save_last,
-                Duration::from_millis(350),
-            )
-        });
         if let Some(warning) = warning {
             self.result.status_line = warning;
             self.result.status_kind = StatusKind::Warning;
@@ -2595,26 +2607,19 @@ impl AppState {
     }
 
     fn record_session_opened(&mut self) {
-        let report = match (
-            self.session_last_state.as_mut(),
-            self.parameter_session.as_ref(),
-        ) {
-            (Some(last), Some(session)) => last.opened(session),
-            _ => return,
+        if !self.app.is_browser_session() {
+            return;
+        }
+        let Some(session) = self.parameter_session.as_ref() else {
+            return;
         };
-        match report {
-            Ok(report) => {
-                if let Some(warning) = report.warning {
-                    self.result.status_line = format!(
-                        "{} Warning: could not save session Last: {warning}",
-                        self.result.status_line
-                    );
-                    self.result.status_kind = StatusKind::Warning;
-                    self.result
-                        .stderr
-                        .push_str(&format!("Automatic parameter save warning: {warning}\n"));
-                }
-            }
+        match self.session_last_coordinator.opened(
+            &self.parameter_workspace,
+            &self.app.id,
+            self.save_last,
+            session,
+        ) {
+            Ok(()) => self.report_session_last_warnings("session open"),
             Err(error) => {
                 self.result.status_line = format!(
                     "{} Warning: could not render session Last: {error}",
@@ -2626,13 +2631,18 @@ impl AppState {
     }
 
     fn queue_accepted_session_parameter_change(&mut self) {
-        let result = match (
-            self.session_last_state.as_mut(),
-            self.parameter_session.as_ref(),
-        ) {
-            (Some(last), Some(session)) => last.accepted_durable_change(session, Instant::now()),
-            _ => return,
+        if !self.app.is_browser_session() {
+            return;
+        }
+        let Some(session) = self.parameter_session.as_ref() else {
+            return;
         };
+        let result = self.session_last_coordinator.accepted_durable_change(
+            &self.parameter_workspace,
+            &self.app.id,
+            self.save_last,
+            session,
+        );
         if let Err(error) = result {
             self.result.status_line =
                 format!("Session updated, but Last could not be prepared: {error}");
@@ -2640,27 +2650,19 @@ impl AppState {
         }
     }
 
-    fn flush_session_last_if_due(&mut self) {
-        let Some(last) = self.session_last_state.as_mut() else {
-            return;
-        };
-        if let Some(warning) = last.flush_if_due(Instant::now()).warning {
+    fn flush_session_last_on_close(&mut self) {
+        self.session_last_coordinator
+            .flush(&self.parameter_workspace, &self.app.id);
+        self.report_session_last_warnings("session close");
+    }
+
+    fn report_session_last_warnings(&mut self, event: &str) {
+        for warning in self.session_last_coordinator.take_warnings() {
             self.result.status_line =
                 format!("Session active. Warning: could not save Last: {warning}");
             self.result.status_kind = StatusKind::Warning;
-            self.result
-                .stderr
-                .push_str(&format!("Automatic parameter save warning: {warning}\n"));
-        }
-    }
-
-    fn flush_session_last_on_close(&mut self) {
-        let Some(last) = self.session_last_state.as_mut() else {
-            return;
-        };
-        if let Some(warning) = last.flush().warning {
             self.result.stderr.push_str(&format!(
-                "Automatic parameter save warning on close: {warning}\n"
+                "Automatic parameter save warning during {event}: {warning}\n"
             ));
         }
     }
@@ -2807,21 +2809,28 @@ impl AppState {
                 self.app.id
             ));
         }
-        let label = match kind {
-            ManagedProfileKind::Last => "Last",
-            ManagedProfileKind::LastSuccessful => "Last Successful",
-        };
-        let source = ManagedStateStore::for_workspace(&self.parameter_workspace)
-            .read(&self.app.id, kind)
-            .map_err(|error| format!("Could not read {label}: {error}"))?
-            .ok_or_else(|| format!("No {label} profile exists for {}.", self.app.id))?;
-        let profile = parse_profile(&source)
-            .map_err(|error| format!("{label} profile is invalid: {error}"))?;
         let base_source = match kind {
             ManagedProfileKind::Last => BaseSource::Last,
             ManagedProfileKind::LastSuccessful => BaseSource::LastSuccessful,
         };
-        self.replace_parameter_base(base_source, Some(&profile))
+        let session = ParameterRuntime::default()
+            .open_session(OpenSessionRequest {
+                bundle: builtin_surface_bundle(&self.app.id)?,
+                workspace: self.parameter_workspace.clone(),
+                source: base_source,
+                profile_text: None,
+                context_patch: ResolutionPatch::default(),
+                override_patch: ResolutionPatch::default(),
+                managed_save: self.save_last,
+            })
+            .map_err(|error| format!("Could not replace parameter source: {error}"))?;
+        self.parameter_session = Some(session);
+        if let Some(session) = self.parameter_session.as_ref() {
+            sync_form_fields_from_parameter_session(&mut self.fields, session);
+        }
+        self.parameter_edit_errors.clear();
+        self.refresh_parameter_field_metadata();
+        Ok(())
     }
 
     fn replace_parameter_base(
@@ -3699,7 +3708,7 @@ impl AppState {
 
     pub(crate) fn on_tick(&mut self) {
         self.spinner_frame = (self.spinner_frame + 1) % spinner_frames(self.theme_mode()).len();
-        self.flush_session_last_if_due();
+        self.report_session_last_warnings("session update");
         self.ensure_current_summary_snapshot_if_needed();
         self.pump_plot_panel();
         if self.image_movie_scheduler_enabled() {
@@ -6251,9 +6260,10 @@ impl AppState {
                         .catalog
                         .concept(&binding.concept)
                         .ok_or_else(|| format!("missing concept for {name}"))?;
-                    match crate::parameters_cli::parse_cli_value(value, &concept.value_domain) {
+                    match casa_task_runtime::parse_parameter_text(value, &concept.value_domain) {
                         Ok(value) => Some(value),
                         Err(error) => {
+                            let error = error.to_string();
                             self.parameter_edit_errors
                                 .insert(name.clone(), error.clone());
                             return Err(error);
@@ -10059,19 +10069,26 @@ impl AppState {
         match self.build_execution_plan() {
             Ok(plan) => {
                 let notebook_bypass_once = std::mem::take(&mut self.notebook_bypass_once);
-                let mut task_last_state = TaskLastState::new(
-                    ManagedStateStore::for_workspace(&self.parameter_workspace),
-                    self.app.id.clone(),
-                    self.save_last,
-                );
+                let task_attempt_id = format!("tui:{}", self.app.id);
                 let attempted = match self.parameter_session.as_ref() {
-                    Some(session) => task_last_state
-                        .before_execution(session)
+                    Some(session) => self
+                        .task_last_coordinator
+                        .before_execution(
+                            &task_attempt_id,
+                            &self.parameter_workspace,
+                            &self.app.id,
+                            self.save_last,
+                            session,
+                        )
                         .map_err(|error| error.to_string()),
                     None => Err("typed parameter session is unavailable".to_string()),
                 };
                 let last_warning = match attempted {
-                    Ok(report) => report.warning,
+                    Ok(()) => self
+                        .task_last_coordinator
+                        .take_warnings()
+                        .into_iter()
+                        .next(),
                     Err(error) => {
                         self.result.status_line = "Cannot save resolved task parameters.".into();
                         self.result.status_kind = StatusKind::Error;
@@ -10132,11 +10149,13 @@ impl AppState {
                             renderer: plan.renderer,
                             file_output_path: plan.file_output_path,
                             cancel_requested: false,
-                            task_last_state: Some(task_last_state),
+                            task_attempt_id: Some(task_attempt_id),
                             notebook_recording,
                         });
                     }
                     Err(error) => {
+                        self.task_last_coordinator
+                            .after_completion(&task_attempt_id, false);
                         if let Some(recording) = notebook_recording.as_mut() {
                             let _ = recording.finalize(
                                 NotebookExecutionStatus::Failed,
@@ -15416,10 +15435,19 @@ impl AppState {
                 Vec::new(),
             )
         });
-        let automatic_save_warning = running
-            .task_last_state
-            .as_mut()
-            .and_then(|state| state.after_completion(completed_successfully).warning);
+        if let Some(attempt_id) = running.task_attempt_id.as_deref() {
+            self.task_last_coordinator
+                .after_completion(attempt_id, completed_successfully);
+        }
+        let automatic_save_warning = self
+            .task_last_coordinator
+            .take_warnings()
+            .into_iter()
+            .reduce(|mut combined, warning| {
+                combined.push_str("; ");
+                combined.push_str(&warning);
+                combined
+            });
         if let Some(warning) = &automatic_save_warning {
             self.result
                 .stderr
@@ -16036,67 +16064,6 @@ fn browser_render_theme(theme_mode: ThemeMode) -> BrowserRenderTheme {
     match theme_mode {
         ThemeMode::DenseAnsi => BrowserRenderTheme::DenseAnsi,
         ThemeMode::RichPanel => BrowserRenderTheme::RichPanel,
-    }
-}
-
-#[cfg(not(test))]
-fn load_interactive_parameter_session(
-    surface_id: &str,
-    workspace: &Path,
-) -> (Option<ParameterSession>, Option<String>) {
-    let bundle = match builtin_surface_bundle(surface_id) {
-        Ok(bundle) => bundle,
-        Err(error) => {
-            return (
-                None,
-                Some(format!(
-                    "Parameter contract for {surface_id} is unavailable: {error}"
-                )),
-            );
-        }
-    };
-    let defaults = || ParameterSession::defaults(bundle.clone());
-    let store = ManagedStateStore::for_workspace(workspace);
-    match store.read(surface_id, ManagedProfileKind::Last) {
-        Ok(Some(source)) => match parse_profile(&source)
-            .map_err(|error| error.to_string())
-            .and_then(|profile| {
-                ParameterSession::from_profile(bundle.clone(), BaseSource::Last, &profile)
-                    .map_err(|error| error.to_string())
-            }) {
-            Ok(session) => (Some(session), None),
-            Err(error) => (
-                defaults().ok(),
-                Some(format!(
-                    "Last profile for {surface_id} is invalid; using Defaults. {error}"
-                )),
-            ),
-        },
-        Ok(None) => (defaults().ok(), None),
-        Err(error) => (
-            defaults().ok(),
-            Some(format!(
-                "Could not read Last profile for {surface_id}; using Defaults. {error}"
-            )),
-        ),
-    }
-}
-
-#[cfg(test)]
-fn load_interactive_parameter_session(
-    surface_id: &str,
-    _workspace: &Path,
-) -> (Option<ParameterSession>, Option<String>) {
-    match builtin_surface_bundle(surface_id)
-        .and_then(|bundle| ParameterSession::defaults(bundle).map_err(|error| error.to_string()))
-    {
-        Ok(session) => (Some(session), None),
-        Err(error) => (
-            None,
-            Some(format!(
-                "Parameter contract for {surface_id} is unavailable: {error}"
-            )),
-        ),
     }
 }
 
@@ -19379,7 +19346,7 @@ fn shell_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use casa_images::ImageMovieSurfaceKind;
-    use casa_ms::ui_schema::UiCommandSchema;
+    use casa_ms::presentation::UiCommandSchema;
     use casars_imagebrowser_protocol::{
         ImageBrowserAxisValue, ImageBrowserCapabilities, ImageBrowserFocus, ImageBrowserParameters,
         ImageBrowserSnapshot, ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState,
@@ -19952,10 +19919,11 @@ mod tests {
 
     #[test]
     fn imager_stage_parameters_exclude_meta_arguments() {
-        let schema: UiCommandSchema = serde_json::from_value(casa_task_runtime::project_ui_schema(
-            &casa_provider_contracts::builtin_surface_bundle("imager").unwrap(),
-        ))
-        .unwrap();
+        let schema: UiCommandSchema =
+            serde_json::from_value(casa_provider_contracts::project_ui_form(
+                &casa_provider_contracts::builtin_surface_bundle("imager").unwrap(),
+            ))
+            .unwrap();
         let fields = schema
             .arguments
             .iter()
@@ -19990,7 +19958,6 @@ mod tests {
         assert!(stage_ids.contains(&"niter"));
         assert!(stage_ids.contains(&"threshold"));
         assert!(ids.contains(&"imsize"));
-        assert!(!ids.contains(&"ui_schema"));
         assert!(!ids.contains(&"help"));
     }
 }

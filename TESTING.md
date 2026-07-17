@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-07-15
+Last reality check: 2026-07-17
 Verification: just verify
 
 ## Test categories
@@ -64,6 +64,14 @@ Verification: just verify
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test plus editable Python package checks
 - GitHub tag CI: PR CI plus smoke, suite-install, and CI-like coverage
+
+`just quick` includes `scripts/test-task-cli-hosts.py`, which builds and runs
+every one-shot binary hosted by `casa-task-runtime::TaskCliHost`. The explicit
+inventory proves common protocol/schema discovery, generated help, malformed
+stdin, missing request sources, diagnostics, and exit classification at the
+process boundary. Runtime unit tests inject execution and serialization
+failures, while repository provider-conformance tests mutate protocol versions,
+actions, surface IDs, and schemas through the shared envelope validator.
 
 ## Evidence source and turnaround
 

@@ -8,8 +8,8 @@ use std::process;
 
 use casa_tables::{TableBrowser, TableBrowserView};
 use casars_tablebrowser_protocol::{
-    BrowserCommand, BrowserProtocolInfo, BrowserRequestEnvelope, BrowserSessionSchemaBundle,
-    BrowserViewport, PROTOCOL_VERSION, schema_bundle_json,
+    BrowserCommand, BrowserRequestEnvelope, BrowserViewport, PROTOCOL_VERSION,
+    browser_protocol_descriptor, schema_bundle_json,
 };
 
 const DEFAULT_ROW_LIMIT: usize = 20;
@@ -83,13 +83,9 @@ fn run() -> Result<(), String> {
     if args.peek().is_some_and(|arg| arg == "--protocol-info") {
         print!(
             "{}",
-            serde_json::to_string_pretty(&BrowserProtocolInfo::current())
+            serde_json::to_string_pretty(&browser_protocol_descriptor())
                 .map_err(|error| format!("serialize tablebrowser protocol info: {error}"))?
         );
-        return Ok(());
-    }
-    if args.peek().is_some_and(|arg| arg == "--ui-schema") {
-        print!("{}", ui_schema_json()?);
         return Ok(());
     }
     if args.peek().is_some_and(|arg| arg == "--session") {
@@ -458,11 +454,6 @@ fn run_session() -> Result<(), String> {
     Ok(())
 }
 
-fn ui_schema_json() -> Result<String, String> {
-    let schema = BrowserSessionSchemaBundle::current().ui_schema_projection()?;
-    serde_json::to_string_pretty(&schema).map_err(|error| format!("serialize ui schema: {error}"))
-}
-
 fn print_section(title: &str, lines: &[String]) {
     println!("== {title} ==");
     for line in lines {
@@ -484,7 +475,6 @@ Usage:
   tablebrowser --session
   tablebrowser --json-schema
   tablebrowser --protocol-info
-  tablebrowser --ui-schema
 
 Options:
   --view VIEW         overview | columns | keywords | cells | subtables | all
@@ -495,7 +485,6 @@ Options:
   --session           run the long-lived JSON Lines browser session on stdio
   --json-schema       print the canonical session schema bundle
   --protocol-info     print the tablebrowser session protocol descriptor
-  --ui-schema         print the launcher schema consumed by casars
   -h, --help          show this help
 
 ",

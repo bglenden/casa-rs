@@ -7,31 +7,9 @@ use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casars_tablebrowser_protocol::{
     BrowserCommand, BrowserRequestEnvelope, BrowserResponse, BrowserResponseEnvelope,
-    BrowserSessionSchemaBundle, BrowserViewport,
+    BrowserViewport,
 };
 use tempfile::tempdir;
-
-#[test]
-fn ui_schema_matches_launcher_contract() {
-    let output = Command::new(tablebrowser_bin())
-        .arg("--ui-schema")
-        .output()
-        .expect("run tablebrowser --ui-schema");
-    assert!(output.status.success());
-
-    let schema = serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("parse schema");
-    let expected = BrowserSessionSchemaBundle::current()
-        .ui_schema_projection()
-        .expect("canonical tablebrowser UI projection");
-    assert_eq!(schema, expected);
-    assert_eq!(schema["schema_version"], 2);
-    assert_eq!(schema["command_id"], "tablebrowser");
-    assert_eq!(schema["invocation_name"], "tablebrowser");
-    assert_eq!(schema["display_name"], "Table Browser");
-    assert_eq!(schema["managed_output"], serde_json::Value::Null);
-    assert_eq!(schema["arguments"][0]["id"], "table");
-    assert_eq!(schema["arguments"][0]["value_kind"], "path");
-}
 
 #[test]
 fn json_schema_emits_canonical_session_bundle() {
@@ -50,7 +28,7 @@ fn json_schema_emits_canonical_session_bundle() {
     assert_eq!(schema["protocol"]["surface_kind"], "session");
     assert_eq!(schema["semantic"]["transport"], "jsonl_stdio");
     assert_eq!(
-        schema["projections"]["ui_schema"]["command_id"],
+        schema["parameter_surfaces"][0]["surface"]["id"],
         "tablebrowser"
     );
 }

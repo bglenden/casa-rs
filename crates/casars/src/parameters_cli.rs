@@ -13,8 +13,8 @@ use casa_provider_contracts::{
     builtin_surface_catalog,
 };
 use casa_task_runtime::{
-    BaseSource, ManagedProfileKind, ManagedStateStore, ParameterProfile, ParameterSession,
-    ResolutionPatch, TaskLastState, parameter_value_is_omitted, parse_profile,
+    BaseSource, OpenSessionRequest, ParameterRuntime, ParameterSession, ResolutionPatch,
+    TaskLastCoordinator, parameter_value_is_omitted, parse_parameter_text, parse_profile,
     project_parameter_value, project_provider_invocation, render_documented_template,
     resolve_profile, write_parameter_profile_atomic,
 };
@@ -92,7 +92,9 @@ fn run_params(args: &[OsString]) -> Result<ParameterCliDispatch, String> {
             let surface = required_utf8(args.get(1), "surface")?;
             let bundle = builtin_surface_bundle(&surface)?;
             let options = parse_surface_options(&bundle, &args[2..], false)?;
-            let session = load_parameter_session(bundle, &options)?;
+            let session = ParameterRuntime::default()
+                .open_session(open_session_request(bundle, &options))
+                .map_err(|error| error.to_string())?;
             Ok(ParameterCliDispatch::Print(show_session(&session)))
         }
         "save" => {
@@ -100,7 +102,9 @@ fn run_params(args: &[OsString]) -> Result<ParameterCliDispatch, String> {
             let destination = required_path(args.get(2), "destination profile")?;
             let bundle = builtin_surface_bundle(&surface)?;
             let options = parse_surface_options(&bundle, &args[3..], false)?;
-            let session = load_parameter_session(bundle, &options)?;
+            let session = ParameterRuntime::default()
+                .open_session(open_session_request(bundle, &options))
+                .map_err(|error| error.to_string())?;
             save_explicit(
                 &destination,
                 &session.render_sparse().map_err(format_session_error)?,
@@ -124,7 +128,9 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
         return Err(format!("{surface_id:?} is a session; use `casars open`"));
     }
     let options = parse_surface_options(&bundle, &args[1..], true)?;
-    let session = load_parameter_session(bundle, &options)?;
+    let session = ParameterRuntime::default()
+        .open_session(open_session_request(bundle, &options))
+        .map_err(|error| error.to_string())?;
     enforce_runtime_confirmations(&session, &options)?;
     let invocation = project_task_invocation(&session)?;
 
@@ -135,12 +141,17 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
         )?;
     }
 
-    let store = ManagedStateStore::for_workspace(&options.workspace);
-    let mut last = TaskLastState::new(store, &surface_id, !options.no_save_last);
-    let attempted = last
-        .before_execution(&session)
-        .map_err(format_session_error)?;
-    if let Some(warning) = attempted.warning {
+    let last = TaskLastCoordinator::new();
+    let attempt_id = format!("cli:{surface_id}");
+    last.before_execution(
+        &attempt_id,
+        &options.workspace,
+        &surface_id,
+        !options.no_save_last,
+        &session,
+    )
+    .map_err(format_session_error)?;
+    for warning in last.take_warnings() {
         eprintln!("Warning: could not save Last for {surface_id}: {warning}");
     }
 
@@ -172,6 +183,7 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
     let execution = match execution {
         Ok(execution) => execution,
         Err(error) => {
+            last.after_completion(&attempt_id, false);
             if let Some(warning) = recording.finalize(
                 ExecutionStatus::Failed,
                 String::new(),
@@ -198,8 +210,8 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
     ) {
         eprintln!("Warning: notebook receipt finalization failed: {warning}");
     }
-    let completed = last.after_completion(successful);
-    if let Some(warning) = completed.warning {
+    last.after_completion(&attempt_id, successful);
+    for warning in last.take_warnings() {
         eprintln!("Warning: could not save Last Successful for {surface_id}: {warning}");
     }
     if successful {
@@ -222,7 +234,9 @@ fn open_session(args: &[OsString]) -> Result<StartupLaunch, String> {
         return Err(format!("{surface_id:?} is a task; use `casars run`"));
     }
     let options = parse_surface_options(&bundle, &args[1..], false)?;
-    let session = load_parameter_session(bundle.clone(), &options)?;
+    let session = ParameterRuntime::default()
+        .open_session(open_session_request(bundle.clone(), &options))
+        .map_err(|error| error.to_string())?;
     if let Some(path) = &options.save_params {
         save_explicit(
             path,
@@ -396,7 +410,8 @@ fn parse_surface_options(
                         required_utf8(args.get(index), &format!("--{flag} value"))?
                     }
                 };
-                parse_cli_value(&value, &concept.value_domain)?
+                parse_parameter_text(&value, &concept.value_domain)
+                    .map_err(|error| error.to_string())?
             };
             overrides.unset.remove(&binding.name);
             overrides.values.insert(binding.name.clone(), value);
@@ -410,7 +425,8 @@ fn parse_surface_options(
             })?;
             overrides.values.insert(
                 binding.name.clone(),
-                parse_cli_value(raw, &concept.value_domain)?,
+                parse_parameter_text(raw, &concept.value_domain)
+                    .map_err(|error| error.to_string())?,
             );
             positional_index += 1;
         }
@@ -444,72 +460,24 @@ fn set_source(target: &mut Option<SourceChoice>, source: SourceChoice) -> Result
     Ok(())
 }
 
-fn load_parameter_session(
+fn open_session_request(
     bundle: SurfaceContractBundle,
     options: &SurfaceOptions,
-) -> Result<ParameterSession, String> {
-    let store = ManagedStateStore::for_workspace(&options.workspace);
-    let mut session = match &options.source {
-        SourceChoice::Defaults => {
-            ParameterSession::defaults(bundle).map_err(format_session_error)?
-        }
-        SourceChoice::Last => {
-            let profile =
-                read_managed_profile(&store, bundle.surface.id(), ManagedProfileKind::Last)?;
-            ParameterSession::from_profile(bundle, BaseSource::Last, &profile)
-                .map_err(format_session_error)?
-        }
-        SourceChoice::LastSuccessful => {
-            if bundle.surface.kind() != SurfaceKind::Task {
-                return Err("Last Successful exists only for task surfaces".to_string());
-            }
-            let profile = read_managed_profile(
-                &store,
-                bundle.surface.id(),
-                ManagedProfileKind::LastSuccessful,
-            )?;
-            ParameterSession::from_profile(bundle, BaseSource::LastSuccessful, &profile)
-                .map_err(format_session_error)?
-        }
-        SourceChoice::File(path) => {
-            let text = fs::read_to_string(path)
-                .map_err(|error| format!("read parameter profile {}: {error}", path.display()))?;
-            let profile = parse_profile(&text).map_err(format_profile_error)?;
-            ParameterSession::from_profile(bundle, BaseSource::File(path.clone()), &profile)
-                .map_err(format_session_error)?
-        }
-    };
-    if !options.context.values.is_empty() || !options.context.unset.is_empty() {
-        session
-            .apply_context_patch(options.context.clone())
-            .map_err(format_session_error)?;
+) -> OpenSessionRequest {
+    OpenSessionRequest {
+        bundle,
+        workspace: options.workspace.clone(),
+        source: match &options.source {
+            SourceChoice::Defaults => BaseSource::Defaults,
+            SourceChoice::Last => BaseSource::Last,
+            SourceChoice::LastSuccessful => BaseSource::LastSuccessful,
+            SourceChoice::File(path) => BaseSource::File(path.clone()),
+        },
+        profile_text: None,
+        context_patch: options.context.clone(),
+        override_patch: options.overrides.clone(),
+        managed_save: !options.no_save_last,
     }
-    if !options.overrides.values.is_empty() || !options.overrides.unset.is_empty() {
-        session
-            .apply_override_patch(options.overrides.clone())
-            .map_err(format_session_error)?;
-    }
-    Ok(session)
-}
-
-fn read_managed_profile(
-    store: &ManagedStateStore,
-    surface: &str,
-    kind: ManagedProfileKind,
-) -> Result<ParameterProfile, String> {
-    let text = store
-        .read(surface, kind)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| {
-            format!(
-                "no managed {} profile exists for {surface}",
-                match kind {
-                    ManagedProfileKind::Last => "Last",
-                    ManagedProfileKind::LastSuccessful => "Last Successful",
-                }
-            )
-        })?;
-    parse_profile(&text).map_err(format_profile_error)
 }
 
 pub(crate) fn project_task_invocation(
@@ -544,102 +512,6 @@ fn enforce_runtime_confirmations(
         );
     }
     Ok(())
-}
-
-pub(crate) fn parse_cli_value(
-    value: &str,
-    domain: &ParameterType,
-) -> Result<ParameterValue, String> {
-    match domain {
-        ParameterType::Bool => match value {
-            "true" => Ok(ParameterValue::Bool(true)),
-            "false" => Ok(ParameterValue::Bool(false)),
-            _ => Err(format!("expected true or false, got {value:?}")),
-        },
-        ParameterType::Integer => value
-            .parse::<i64>()
-            .map(ParameterValue::Integer)
-            .map_err(|error| format!("parse integer {value:?}: {error}")),
-        ParameterType::Float => value
-            .parse::<f64>()
-            .map(ParameterValue::Float)
-            .map_err(|error| format!("parse number {value:?}: {error}")),
-        ParameterType::String
-        | ParameterType::Path { .. }
-        | ParameterType::Choice { .. }
-        | ParameterType::Quantity { .. } => Ok(ParameterValue::String(value.to_string())),
-        ParameterType::Array { element, .. } => {
-            if value.starts_with('[') {
-                let parsed = format!("value = {value}")
-                    .parse::<toml::Value>()
-                    .map_err(|error| format!("parse array {value:?}: {error}"))?;
-                let values = parsed
-                    .get("value")
-                    .and_then(toml::Value::as_array)
-                    .ok_or_else(|| format!("expected TOML array, got {value:?}"))?;
-                return values
-                    .iter()
-                    .map(|value| parse_toml_cli_value(value, element))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(ParameterValue::Array);
-            }
-            if value.contains(',') {
-                return value
-                    .split(',')
-                    .map(|value| parse_cli_value(value.trim(), element))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(ParameterValue::Array);
-            }
-            parse_cli_value(value, element)
-        }
-        ParameterType::Table { .. } => {
-            let parsed = format!("value = {value}")
-                .parse::<toml::Value>()
-                .map_err(|error| format!("parse table {value:?}: {error}"))?;
-            let value = parsed
-                .get("value")
-                .ok_or_else(|| "missing parsed table value".to_string())?;
-            parse_toml_cli_value(value, domain)
-        }
-        ParameterType::Optional {
-            value: inner,
-            states,
-        } => {
-            if states.iter().any(|state| state == value) {
-                Ok(ParameterValue::String(value.to_string()))
-            } else {
-                parse_cli_value(value, inner)
-            }
-        }
-    }
-}
-
-fn parse_toml_cli_value(
-    value: &toml::Value,
-    domain: &ParameterType,
-) -> Result<ParameterValue, String> {
-    match value {
-        toml::Value::String(value) => parse_cli_value(value, domain),
-        toml::Value::Integer(value) => Ok(ParameterValue::Integer(*value)),
-        toml::Value::Float(value) if value.is_finite() => Ok(ParameterValue::Float(*value)),
-        toml::Value::Boolean(value) => Ok(ParameterValue::Bool(*value)),
-        toml::Value::Array(values) => values
-            .iter()
-            .map(|value| parse_toml_cli_value(value, domain))
-            .collect::<Result<Vec<_>, _>>()
-            .map(ParameterValue::Array),
-        toml::Value::Table(values) => values
-            .iter()
-            .map(|(name, value)| {
-                Ok((
-                    name.clone(),
-                    parse_toml_cli_value(value, &ParameterType::String)?,
-                ))
-            })
-            .collect::<Result<BTreeMap<_, _>, String>>()
-            .map(ParameterValue::Table),
-        _ => Err("TOML datetime and non-finite values are not parameters".to_string()),
-    }
 }
 
 fn is_bool_domain(domain: &ParameterType) -> bool {
@@ -906,7 +778,9 @@ mod tests {
             true,
         )
         .unwrap();
-        let session = load_parameter_session(bundle, &options).unwrap();
+        let session = ParameterRuntime::default()
+            .open_session(open_session_request(bundle, &options))
+            .unwrap();
         assert_eq!(
             session.values()["imsize"],
             ParameterValue::Array(vec![ParameterValue::Integer(1024); 2])
@@ -936,7 +810,9 @@ mod tests {
             true,
         )
         .unwrap();
-        let session = load_parameter_session(bundle, &options).unwrap();
+        let session = ParameterRuntime::default()
+            .open_session(open_session_request(bundle, &options))
+            .unwrap();
 
         assert_eq!(
             session.values()["imsize"],
@@ -976,7 +852,9 @@ mod tests {
         let options =
             parse_surface_options(&bundle, &["--request-kind".into(), "family".into()], true)
                 .unwrap();
-        let session = load_parameter_session(bundle, &options).unwrap();
+        let session = ParameterRuntime::default()
+            .open_session(open_session_request(bundle, &options))
+            .unwrap();
         let invocation = project_task_invocation(&session).unwrap();
 
         assert_eq!(invocation.args, ["--json-run", "-"]);
@@ -1001,7 +879,9 @@ mod tests {
             true,
         )
         .unwrap();
-        let session = load_parameter_session(bundle, &options).unwrap();
+        let session = ParameterRuntime::default()
+            .open_session(open_session_request(bundle, &options))
+            .unwrap();
         assert!(enforce_runtime_confirmations(&session, &options).is_err());
         options.confirm_overwrite = true;
         enforce_runtime_confirmations(&session, &options).unwrap();
@@ -1012,7 +892,9 @@ mod tests {
         for surface in ["statwt", "clearcal", "delmod", "ft"] {
             let bundle = builtin_surface_bundle(surface).unwrap();
             let mut options = parse_surface_options(&bundle, &[], true).unwrap();
-            let session = load_parameter_session(bundle, &options).unwrap();
+            let session = ParameterRuntime::default()
+                .open_session(open_session_request(bundle, &options))
+                .unwrap();
             let error = enforce_runtime_confirmations(&session, &options).unwrap_err();
             assert!(error.contains("--confirm-mutation"), "{surface}: {error}");
             options.confirm_mutation = true;

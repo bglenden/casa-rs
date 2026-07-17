@@ -5,7 +5,7 @@ use serde_json::json;
 
 use crate::{
     ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
-    ProviderSurfaceKind, derived_ui_schema_annotations, merged_components,
+    ProviderSurfaceKind, merged_components,
 };
 
 #[test]
@@ -28,7 +28,6 @@ fn provider_surface_kind_uses_snake_case_wire_names() {
 #[test]
 fn cli_machine_actions_omit_absent_projection_flags() {
     let actions = ProviderCliMachineActions {
-        ui_schema: None,
         json_schema: Some("--json-schema".to_string()),
         protocol_info: None,
         json_run: None,
@@ -49,14 +48,12 @@ fn projection_metadata_omits_absent_projection_sections() {
     let projection = ProviderProjectionMetadata {
         cli: Some(ProviderCliProjection {
             machine_actions: ProviderCliMachineActions {
-                ui_schema: Some("--ui-schema".to_string()),
-                json_schema: None,
+                json_schema: Some("--json-schema".to_string()),
                 protocol_info: None,
                 json_run: None,
                 session: None,
             },
         }),
-        ui_schema: None,
         python: None,
     };
 
@@ -65,7 +62,7 @@ fn projection_metadata_omits_absent_projection_sections() {
         json!({
             "cli": {
                 "machine_actions": {
-                    "ui_schema": "--ui-schema"
+                    "json_schema": "--json-schema"
                 }
             }
         })
@@ -96,16 +93,4 @@ fn merged_components_combines_definitions_and_later_schemas_win() {
     assert_eq!(merged.get("FirstOnly"), Some(&Schema::Bool(true)));
     assert_eq!(merged.get("SecondOnly"), Some(&Schema::Bool(false)));
     assert_eq!(merged.get("Shared"), Some(&Schema::Bool(true)));
-}
-
-#[test]
-fn derived_ui_schema_annotations_preserves_compatibility_payload() {
-    assert_eq!(
-        derived_ui_schema_annotations(),
-        json!({
-            "ui_schema": {
-                "status": "derived_compatibility_view"
-            }
-        })
-    );
 }

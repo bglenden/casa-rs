@@ -767,12 +767,6 @@ public protocol SurfaceParameterClient {
         override: SurfaceParameterPatch
     ) throws -> SurfaceParameterSnapshot
     func save(surfaceID: String, values: [String: SurfaceParameterValue], destinationPath: String) throws -> SurfaceParameterWriteResult
-    func writeLast(
-        surfaceID: String,
-        workspace: String,
-        values: [String: SurfaceParameterValue],
-        successful: Bool
-    ) throws -> SurfaceParameterWriteResult
     func runSafety(
         surfaceID: String,
         values: [String: SurfaceParameterValue]
@@ -781,6 +775,39 @@ public protocol SurfaceParameterClient {
         surfaceID: String,
         values: [String: SurfaceParameterValue]
     ) throws -> SurfaceProviderInvocation
+}
+
+/// High-level session Last lifecycle. Implementations own successful-open
+/// persistence, debounce, coalescing, and clean-close flushing.
+public protocol SessionParameterLifecycleClient {
+    func opened(
+        surfaceID: String,
+        workspace: String,
+        values: [String: SurfaceParameterValue],
+        enabled: Bool
+    ) throws -> [String]
+    func acceptedDurableChange(
+        surfaceID: String,
+        workspace: String,
+        values: [String: SurfaceParameterValue],
+        enabled: Bool
+    ) throws -> [String]
+    func flush(surfaceID: String, workspace: String) -> [String]
+    func flushAll() -> [String]
+    func takeWarnings() -> [String]
+}
+
+/// High-level task Last lifecycle. Implementations retain the exact attempted
+/// snapshot and own Last/Last Successful persistence across completion events.
+public protocol TaskParameterLifecycleClient {
+    func beforeExecution(
+        attemptID: String,
+        surfaceID: String,
+        workspace: String,
+        values: [String: SurfaceParameterValue],
+        enabled: Bool
+    ) throws -> [String]
+    func afterCompletion(attemptID: String, successful: Bool) -> [String]
 }
 
 public extension SurfaceParameterClient {
@@ -867,20 +894,6 @@ public struct UniFFISurfaceParameterClient: SurfaceParameterClient {
         ))
     }
 
-    public func writeLast(
-        surfaceID: String,
-        workspace: String,
-        values: [String: SurfaceParameterValue],
-        successful: Bool
-    ) throws -> SurfaceParameterWriteResult {
-        try decode(try CasarsFrontendServices.parameterWriteLastJson(
-            surfaceId: surfaceID,
-            workspace: workspace,
-            valuesJson: try encode(values),
-            successful: successful
-        ))
-    }
-
     private func decode<T: Decodable>(_ json: String) throws -> T {
         try JSONDecoder().decode(T.self, from: Data(json.utf8))
     }
@@ -888,5 +901,85 @@ public struct UniFFISurfaceParameterClient: SurfaceParameterClient {
     private func encode<T: Encodable>(_ value: T) throws -> String {
         let data = try JSONEncoder.sorted.encode(value)
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+public final class UniFFISessionParameterLifecycleClient: SessionParameterLifecycleClient {
+    private let lifecycle = CasarsFrontendServices.ParameterSessionLifecycle()
+
+    public init() {}
+
+    public func opened(
+        surfaceID: String,
+        workspace: String,
+        values: [String: SurfaceParameterValue],
+        enabled: Bool
+    ) throws -> [String] {
+        try lifecycle.opened(
+            surfaceId: surfaceID,
+            workspace: workspace,
+            valuesJson: encode(values),
+            enabled: enabled
+        )
+    }
+
+    public func acceptedDurableChange(
+        surfaceID: String,
+        workspace: String,
+        values: [String: SurfaceParameterValue],
+        enabled: Bool
+    ) throws -> [String] {
+        try lifecycle.acceptedDurableChange(
+            surfaceId: surfaceID,
+            workspace: workspace,
+            valuesJson: encode(values),
+            enabled: enabled
+        )
+    }
+
+    public func flush(surfaceID: String, workspace: String) -> [String] {
+        lifecycle.flush(surfaceId: surfaceID, workspace: workspace)
+    }
+
+    public func flushAll() -> [String] {
+        lifecycle.flushAll()
+    }
+
+    public func takeWarnings() -> [String] {
+        lifecycle.takeWarnings()
+    }
+
+    private func encode<T: Encodable>(_ value: T) throws -> String {
+        String(decoding: try JSONEncoder.sorted.encode(value), as: UTF8.self)
+    }
+}
+
+public final class UniFFITaskParameterLifecycleClient: TaskParameterLifecycleClient {
+    private let lifecycle = CasarsFrontendServices.ParameterTaskLifecycle()
+
+    public init() {}
+
+    public func beforeExecution(
+        attemptID: String,
+        surfaceID: String,
+        workspace: String,
+        values: [String: SurfaceParameterValue],
+        enabled: Bool
+    ) throws -> [String] {
+        try lifecycle.beforeExecution(
+            attemptId: attemptID,
+            surfaceId: surfaceID,
+            workspace: workspace,
+            valuesJson: encode(values),
+            enabled: enabled
+        )
+    }
+
+    public func afterCompletion(attemptID: String, successful: Bool) -> [String] {
+        lifecycle.afterCompletion(attemptId: attemptID, successful: successful)
+    }
+
+    private func encode<T: Encodable>(_ value: T) throws -> String {
+        String(decoding: try JSONEncoder.sorted.encode(value), as: UTF8.self)
     }
 }

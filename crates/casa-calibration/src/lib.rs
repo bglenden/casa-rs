@@ -87,9 +87,9 @@ pub use stats::{
 };
 pub use summary::{CalibrationTableError, summarize_table, summarize_tables};
 pub use task_contract::{
-    CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationProtocolInfo,
-    CalibrationTaskRequest, CalibrationTaskSchemaBundle, ContinuumSubtractionTaskRequest,
-    ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest, GencalTaskRequest,
-    PlanApplyTaskRequest, SolveBandpassTaskRequest, SolveGainTaskRequest, StatsTaskRequest,
-    SummaryTaskRequest,
+    CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationTaskRequest,
+    ContinuumSubtractionTaskRequest, ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest,
+    GencalTaskRequest, PlanApplyTaskRequest, SolveBandpassTaskRequest, SolveGainTaskRequest,
+    StatsTaskRequest, SummaryTaskRequest, calibration_protocol_descriptor,
+    calibration_task_schema_bundle,
 };

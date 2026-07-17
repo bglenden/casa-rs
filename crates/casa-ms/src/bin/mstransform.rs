@@ -5,11 +5,12 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process;
 
+use casa_ms::presentation::UiCommandSchema;
 use casa_ms::selection::MsSelection;
-use casa_ms::ui_schema::UiCommandSchema;
-use casa_ms::{MsTransformRequest, TransformDataColumn, mstransform, parse_numeric_id_selector};
-use schemars::schema_for;
-use serde_json::json;
+use casa_ms::{
+    MsTransformReport, MsTransformRequest, MsTransformTaskRequest, TransformDataColumn,
+    mstransform, mstransform_task_schema_bundle, parse_numeric_id_selector,
+};
 
 fn main() {
     match run() {
@@ -25,7 +26,6 @@ fn run() -> Result<(), String> {
     let (logging_guard, args) =
         casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1))
             .map_err(|error| format!("failed to initialize logging: {error}"))?;
-    let args = os_args_to_strings(args)?;
     tracing::info!("mstransform started");
     let result = run_with_args(args);
     if result.is_ok() {
@@ -39,28 +39,22 @@ fn run() -> Result<(), String> {
     result
 }
 
-fn run_with_args(args: Vec<String>) -> Result<(), String> {
+fn run_with_args(args: Vec<OsString>) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{}", command_schema("mstransform").render_help());
-        return Ok(());
-    }
-    if args.iter().any(|arg| arg == "--ui-schema") {
         println!(
-            "{}",
-            command_schema("mstransform")
-                .render_json_pretty()
-                .map_err(|error| error.to_string())?
+            "{}\n\n{}",
+            command_schema("mstransform").render_help(),
+            casa_task_runtime::task_cli_machine_help("MsTransformTaskRequest")
         );
         return Ok(());
     }
-    if args.iter().any(|arg| arg == "--json-schema") {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&schema_bundle("mstransform"))
-                .map_err(|error| error.to_string())?
-        );
+    let host =
+        casa_task_runtime::TaskCliHost::new(mstransform_task_schema_bundle(), execute_task_request);
+    if let Some(output) = host.dispatch(&args).map_err(|error| error.to_string())? {
+        println!("{output}");
         return Ok(());
     }
+    let args = os_args_to_strings(args)?;
     let request = parse_request(&args)?;
     let report = mstransform(&request).map_err(|error| error.to_string())?;
     println!(
@@ -68,6 +62,47 @@ fn run_with_args(args: Vec<String>) -> Result<(), String> {
         serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
     );
     Ok(())
+}
+
+fn execute_task_request(request: MsTransformTaskRequest) -> Result<MsTransformReport, String> {
+    let mut selection = MsSelection::default();
+    if !request.field.is_empty() {
+        selection = selection.field(
+            &parse_numeric_id_selector(&request.field, "field")
+                .map_err(|error| error.to_string())?,
+        );
+    }
+    if !request.scan.is_empty() {
+        selection = selection.scan(
+            &parse_numeric_id_selector(&request.scan, "scan").map_err(|error| error.to_string())?,
+        );
+    }
+    if !request.antenna.is_empty() {
+        selection = selection.antenna(
+            &parse_numeric_id_selector(&request.antenna, "antenna")
+                .map_err(|error| error.to_string())?,
+        );
+    }
+    if !request.timerange.is_empty() {
+        let (start, end) = parse_time_range(&request.timerange)?;
+        selection = selection.time_range(start, end);
+    }
+    if !request.msselect.is_empty() {
+        selection = selection.taql(&request.msselect);
+    }
+    if request.width == 0 {
+        return Err("width must be at least 1".to_string());
+    }
+    mstransform(&MsTransformRequest {
+        input_ms: request.vis,
+        output_ms: request.outputvis,
+        spw: request.spw,
+        width: request.width,
+        data_column: parse_data_column(&request.datacolumn)?,
+        selection,
+        keep_flags: request.keepflags,
+    })
+    .map_err(|error| error.to_string())
 }
 
 fn os_args_to_strings(args: Vec<OsString>) -> Result<Vec<String>, String> {
@@ -211,74 +246,28 @@ fn command_schema(program_name: &str) -> UiCommandSchema {
     let bundle = casa_provider_contracts::builtin_surface_bundle("mstransform")
         .expect("built-in mstransform parameter surface must remain valid");
     let mut schema: UiCommandSchema =
-        serde_json::from_value(casa_provider_contracts::project_ui_schema(&bundle))
+        serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
             .expect("canonical mstransform UI projection must match UiCommandSchema");
     schema.invocation_name = program_name.to_string();
     schema.usage = format!("{program_name} [parameters]");
     schema
 }
-fn schema_bundle(program_name: &str) -> serde_json::Value {
-    let parameter_surfaces = ["mstransform", "split"]
-        .into_iter()
-        .map(|surface| {
-            casa_provider_contracts::builtin_surface_bundle(surface).unwrap_or_else(|error| {
-                panic!("built-in MS transform parameter surface {surface:?}: {error}")
-            })
-        })
-        .collect::<Vec<_>>();
-    json!({
-        "protocol": {
-            "protocol_name": "casa_ms_transform_task",
-            "protocol_version": 1,
-            "surface_kind": "task"
-        },
-        "projections": {
-            "ui_schema": command_schema(program_name)
-        },
-        "parameter_surfaces": parameter_surfaces,
-        "request_schema": {
-            "type": "object",
-            "required": ["input_ms", "output_ms"],
-            "properties": {
-                "input_ms": {"type": "string"},
-                "output_ms": {"type": "string"},
-                "spw": {"type": "string"},
-                "width": {"type": "integer", "minimum": 1},
-                "data_column": {"type": "string", "enum": ["DATA", "CORRECTED_DATA"]},
-                "keep_flags": {"type": "boolean"}
-            }
-        },
-        "result_schema": schema_for!(casa_ms::MsTransformReport)
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::SurfaceContractBundle;
-
     use super::*;
 
     #[test]
-    fn schema_bundle_embeds_transform_family_parameter_contracts() {
-        let bundle = schema_bundle("mstransform");
+    fn provider_bundle_embeds_transform_family_parameter_contracts() {
+        let bundle = mstransform_task_schema_bundle();
+        assert_eq!(bundle.protocol.protocol_name, "casa_ms_transform_task");
         assert_eq!(
-            bundle["protocol"]["protocol_name"],
-            "casa_ms_transform_task"
-        );
-        assert!(bundle["request_schema"]["properties"]["input_ms"].is_object());
-        assert!(bundle["result_schema"].is_object());
-
-        let surfaces = serde_json::from_value::<Vec<SurfaceContractBundle>>(
-            bundle["parameter_surfaces"].clone(),
-        )
-        .expect("serialized transform parameter surfaces");
-        assert_eq!(
-            surfaces
+            bundle
+                .parameter_surfaces
                 .iter()
                 .map(|surface| surface.surface.id())
                 .collect::<Vec<_>>(),
             ["mstransform", "split"]
         );
-        assert!(surfaces.iter().all(|surface| surface.validate().is_ok()));
+        bundle.validate().expect("valid transform provider");
     }
 }

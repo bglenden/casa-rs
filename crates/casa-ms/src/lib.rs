@@ -56,6 +56,7 @@ pub mod msexplore;
 pub mod plot;
 mod plot_data;
 mod plot_visibility;
+pub mod presentation;
 pub mod schema;
 pub mod selection;
 pub mod selection_helpers;
@@ -64,8 +65,8 @@ pub mod simulation;
 pub mod simulation_task;
 pub mod spectral_selection;
 pub mod subtables;
+pub mod task_contract;
 pub mod transform;
-pub mod ui_schema;
 pub mod validate;
 pub mod visibility_buffer;
 
@@ -89,9 +90,9 @@ pub(crate) use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
 pub use ms::MeasurementSet;
 pub use msexplore::task_contract::{
     MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreFlagEditRequest,
-    MsExplorePlotArtifact, MsExplorePlotExportRequest, MsExploreProtocolInfo,
-    MsExploreRunTaskRequest, MsExploreRunTaskResult, MsExploreTaskRequest, MsExploreTaskResult,
-    MsExploreTaskSchemaBundle,
+    MsExplorePlotArtifact, MsExplorePlotExportRequest, MsExploreRunTaskRequest,
+    MsExploreRunTaskResult, MsExploreTaskRequest, MsExploreTaskResult,
+    msexplore_protocol_descriptor, msexplore_task_schema_bundle,
 };
 pub use msexplore::{
     DEFAULT_MAX_PLOT_POINTS, MsAverageSpec, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
@@ -140,9 +141,9 @@ pub use simulation::{
 };
 pub use simulation_task::{
     SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveFamilyManifest,
-    SimobserveFamilyTaskRequest, SimobserveFamilyTaskResult, SimobserveProtocolInfo,
-    SimobserveRunTaskRequest, SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
-    SimobserveTaskSchemaBundle,
+    SimobserveFamilyTaskRequest, SimobserveFamilyTaskResult, SimobserveRunTaskRequest,
+    SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
+    simobserve_protocol_descriptor, simobserve_task_schema_bundle,
 };
 pub use spectral_selection::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
@@ -158,6 +159,11 @@ pub use subtables::{
     MsPolarization, MsPolarizationMut, MsProcessor, MsProcessorMut, MsSource, MsSourceMut,
     MsSpectralWindow, MsSpectralWindowMut, MsState, MsStateMut, MsSysCal, MsSysCalMut, MsWeather,
     MsWeatherMut, SubTable,
+};
+pub use task_contract::{
+    FlagDataTaskRequest, FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult,
+    MsTransformTaskRequest, flagdata_task_schema_bundle, flagmanager_task_schema_bundle,
+    mstransform_task_schema_bundle,
 };
 pub use transform::{
     MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,

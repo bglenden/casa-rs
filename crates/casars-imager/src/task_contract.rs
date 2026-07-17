@@ -2,9 +2,7 @@
 //! Canonical imager task request/result contracts shared by CLI, shell, and Python.
 
 use std::collections::BTreeMap;
-use std::fs;
-use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use casa_imaging::{
@@ -16,16 +14,14 @@ use casa_ms::{
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz,
 };
 use casa_provider_contracts::{
-    ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
-    ProviderProjectionMetadata, ProviderSurfaceKind, SurfaceContractBundle,
-    TaskOperationDescriptor, TaskSemanticContract, builtin_surface_bundle,
-    derived_ui_schema_annotations, merged_components, project_ui_schema,
+    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
+    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
+    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
 };
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::FrequencyRef;
 use schemars::{JsonSchema, schema::RootSchema, schema_for};
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 use crate::{
     AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, FrontendStageTimings,
@@ -73,112 +69,62 @@ impl FromStr for ImagerProgressDetail {
     }
 }
 
-/// Version/compatibility information for the JSON task protocol.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProtocolInfo {
-    /// Stable protocol identifier.
-    pub protocol_name: String,
-    /// Monotonic protocol version for compatibility checks.
-    pub protocol_version: u32,
-    /// Provider surface kind defined by the shared architecture contract.
-    pub surface_kind: ProviderSurfaceKind,
-    /// Binary version implementing the protocol.
-    pub binary_version: String,
+/// Build the current shared imager protocol descriptor.
+pub fn imager_protocol_descriptor() -> ProviderProtocolDescriptor {
+    ProviderProtocolDescriptor::new(
+        IMAGER_TASK_PROTOCOL_NAME,
+        IMAGER_TASK_PROTOCOL_VERSION,
+        ProviderSurfaceKind::Task,
+        env!("CARGO_PKG_VERSION"),
+    )
 }
 
-impl ImagerProtocolInfo {
-    /// Build the current imager protocol descriptor.
-    pub fn current() -> Self {
-        Self {
-            protocol_name: IMAGER_TASK_PROTOCOL_NAME.to_string(),
-            protocol_version: IMAGER_TASK_PROTOCOL_VERSION,
-            surface_kind: ProviderSurfaceKind::Task,
-            binary_version: env!("CARGO_PKG_VERSION").to_string(),
-        }
-    }
-}
-
-/// JSON-schema bundle for the public imager task protocol.
+/// Typed imager-only schemas flattened into the shared provider envelope.
 #[derive(Debug, Clone, Serialize)]
-pub struct ImagerTaskSchemaBundle {
-    /// Compatibility descriptor for the request/result schemas.
-    pub protocol: ImagerProtocolInfo,
-    /// Canonical semantic task contract.
-    pub semantic: TaskSemanticContract,
-    /// Shared component schemas reusable across projections.
-    pub components: ProviderComponentSchemas,
-    /// Presentation annotations carried with the canonical bundle.
-    pub annotations: JsonValue,
-    /// Derived projection metadata for UI and CLI consumers.
-    pub projections: ProviderProjectionMetadata,
-    /// Canonical parameter contract embedded for self-contained consumers.
-    pub parameter_surfaces: Vec<SurfaceContractBundle>,
-    /// JSON schema for [`ImagerTaskRequest`].
-    pub request_schema: RootSchema,
-    /// JSON schema for [`ImagerTaskResult`].
-    pub result_schema: RootSchema,
-    /// JSON schema for [`ImagerProgressEvent`].
+pub struct ImagerAdditionalSchemas {
     pub progress_event_schema: RootSchema,
 }
 
-impl ImagerTaskSchemaBundle {
-    /// Build the current request/result schema bundle.
-    pub fn current() -> Self {
-        let request_schema = schema_for!(ImagerTaskRequest);
-        let result_schema = schema_for!(ImagerTaskResult);
-        let progress_event_schema = schema_for!(ImagerProgressEvent);
-        let ui_schema = project_ui_schema(
-            &builtin_surface_bundle("imager")
+/// Build the current imager schema bundle with the shared envelope.
+pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchemas> {
+    let request_schema = schema_for!(ImagerTaskRequest);
+    let result_schema = schema_for!(ImagerTaskResult);
+    let progress_event_schema = schema_for!(ImagerProgressEvent);
+    TaskProviderContract {
+        protocol: imager_protocol_descriptor(),
+        semantic: TaskSemanticContract {
+            request_schema: request_schema.clone(),
+            result_schema: result_schema.clone(),
+            operations: vec![TaskOperationDescriptor {
+                name: "run".to_string(),
+                request_kind: "run".to_string(),
+                result_kind: Some("run".to_string()),
+            }],
+        },
+        components: merged_components([&request_schema, &result_schema, &progress_event_schema]),
+        annotations: serde_json::json!({}),
+        projections: ProviderProjectionMetadata {
+            cli: Some(ProviderCliProjection {
+                machine_actions: ProviderCliMachineActions {
+                    json_schema: Some("--json-schema".to_string()),
+                    protocol_info: Some("--protocol-info".to_string()),
+                    json_run: Some("--json-run <SOURCE>".to_string()),
+                    session: None,
+                },
+            }),
+            python: None,
+        },
+        parameter_surfaces: vec![
+            builtin_surface_bundle("imager")
                 .expect("built-in imager parameter surface must remain valid"),
-        );
-        Self {
-            protocol: ImagerProtocolInfo::current(),
-            semantic: TaskSemanticContract {
-                request_schema: request_schema.clone(),
-                result_schema: result_schema.clone(),
-                operations: vec![TaskOperationDescriptor {
-                    name: "run".to_string(),
-                    request_kind: "run".to_string(),
-                    result_kind: Some("run".to_string()),
-                }],
-            },
-            components: merged_components([
-                &request_schema,
-                &result_schema,
-                &progress_event_schema,
-            ]),
-            annotations: derived_ui_schema_annotations(),
-            projections: ProviderProjectionMetadata {
-                cli: Some(ProviderCliProjection {
-                    machine_actions: ProviderCliMachineActions {
-                        ui_schema: Some("--ui-schema".to_string()),
-                        json_schema: Some("--json-schema".to_string()),
-                        protocol_info: Some("--protocol-info".to_string()),
-                        json_run: Some("--json-run <SOURCE>".to_string()),
-                        session: None,
-                    },
-                }),
-                ui_schema: Some(ui_schema),
-                python: None,
-            },
-            parameter_surfaces: vec![
-                builtin_surface_bundle("imager")
-                    .expect("built-in imager parameter surface must remain valid"),
-            ],
+        ],
+        domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-            progress_event_schema,
-        }
-    }
-
-    /// Return the launcher/TUI compatibility view projected from the bundle.
-    pub fn ui_schema_projection(&self) -> Result<casa_ms::ui_schema::UiCommandSchema, String> {
-        let value = self
-            .projections
-            .ui_schema
-            .clone()
-            .ok_or_else(|| "missing ui_schema projection".to_string())?;
-        serde_json::from_value(value).map_err(|error| format!("parse imager ui schema: {error}"))
+            additional: ImagerAdditionalSchemas {
+                progress_event_schema,
+            },
+        },
     }
 }
 
@@ -2559,26 +2505,6 @@ impl ImagerTaskRequest {
             Self::Run(request) => Ok(ImagerTaskResult::Run(request.execute()?)),
         }
     }
-
-    /// Read one task request from a file path or `-` for stdin.
-    pub fn read_from_source(source: &str) -> Result<Self, String> {
-        let payload = if source == "-" {
-            let mut payload = String::new();
-            std::io::stdin()
-                .read_to_string(&mut payload)
-                .map_err(|error| format!("failed to read JSON request from stdin: {error}"))?;
-            payload
-        } else {
-            fs::read_to_string(source).map_err(|error| {
-                format!(
-                    "failed to read JSON request from {}: {error}",
-                    Path::new(source).display()
-                )
-            })?
-        };
-        serde_json::from_str(&payload)
-            .map_err(|error| format!("failed to parse imager task request: {error}"))
-    }
 }
 
 /// Canonical imager task result envelope.
@@ -2895,7 +2821,7 @@ mod tests {
     use casa_provider_contracts::ProviderSurfaceKind;
     use casa_types::measures::doppler::DopplerRef;
     use casa_types::measures::frequency::FrequencyRef;
-    use tempfile::{NamedTempFile, tempdir};
+    use tempfile::tempdir;
 
     use super::{
         IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_TASK_PROTOCOL_NAME,
@@ -2905,8 +2831,8 @@ mod tests {
         ImagerObservedResourceId, ImagerObservedResourceState, ImagerObservedStageKind,
         ImagerPlaneSelection, ImagerProgressDetail, ImagerProgressEvent, ImagerProgressRuntime,
         ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
-        ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
-        ImagerWTermMode, ImagerWeighting,
+        ImagerTaskRequest, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+        imager_task_schema_bundle,
     };
     use crate::{
         CliConfig, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, SaveModelMode, SpectralMode,
@@ -2915,7 +2841,8 @@ mod tests {
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_definitions() {
-        let bundle = ImagerTaskSchemaBundle::current();
+        let bundle = imager_task_schema_bundle();
+        bundle.validate().expect("shared provider envelope");
         assert_eq!(bundle.protocol.protocol_name, IMAGER_TASK_PROTOCOL_NAME);
         assert_eq!(
             bundle.protocol.protocol_version,
@@ -2925,7 +2852,7 @@ mod tests {
         assert_eq!(bundle.semantic.operations.len(), 1);
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
         assert!(bundle.components.contains_key("ImagerRunTaskRequest"));
-        assert!(bundle.projections.ui_schema.is_some());
+        assert!(bundle.projections.cli.is_some());
         assert_eq!(bundle.parameter_surfaces.len(), 1);
         assert_eq!(bundle.parameter_surfaces[0].surface.id(), "imager");
         bundle.parameter_surfaces[0]
@@ -2938,9 +2865,10 @@ mod tests {
                 .len(),
             1
         );
-        let request_schema = serde_json::to_value(&bundle.request_schema).unwrap();
-        let result_schema = serde_json::to_value(&bundle.result_schema).unwrap();
-        let progress_event_schema = serde_json::to_value(&bundle.progress_event_schema).unwrap();
+        let request_schema = serde_json::to_value(&bundle.domain_schemas.request_schema).unwrap();
+        let result_schema = serde_json::to_value(&bundle.domain_schemas.result_schema).unwrap();
+        let progress_event_schema =
+            serde_json::to_value(&bundle.domain_schemas.additional.progress_event_schema).unwrap();
         assert!(request_schema.to_string().contains("ImagerTaskRequest"));
         assert!(result_schema.to_string().contains("ImagerTaskResult"));
         assert!(
@@ -2948,8 +2876,8 @@ mod tests {
                 .to_string()
                 .contains("ImagerProgressEvent")
         );
-        let ui_schema = bundle.ui_schema_projection().expect("ui schema projection");
-        assert_eq!(ui_schema.command_id, "imager");
+        let form = casa_provider_contracts::project_ui_form(&bundle.parameter_surfaces[0]);
+        assert_eq!(form["command_id"], "imager");
     }
 
     #[test]
@@ -3614,32 +3542,7 @@ mod tests {
     }
 
     #[test]
-    fn task_request_read_and_artifact_generation_cover_file_and_layout_branches() {
-        let file = NamedTempFile::new().expect("temp request");
-        fs::write(
-            file.path(),
-            r#"{"kind":"run","request":{"measurement_set":"demo.ms","image_name":"out/demo","image_size":64,"cell_arcsec":1.5}}"#,
-        )
-        .expect("write request");
-        match ImagerTaskRequest::read_from_source(file.path().to_str().unwrap()).unwrap() {
-            ImagerTaskRequest::Run(request) => {
-                assert_eq!(request.measurement_set, PathBuf::from("demo.ms"));
-                assert_eq!(request.image_name, PathBuf::from("out/demo"));
-            }
-        }
-        assert!(
-            ImagerTaskRequest::read_from_source("/definitely/missing/imager.json")
-                .unwrap_err()
-                .contains("failed to read JSON request")
-        );
-        let bad = NamedTempFile::new().expect("bad request");
-        fs::write(bad.path(), "{not-json").expect("write bad request");
-        assert!(
-            ImagerTaskRequest::read_from_source(bad.path().to_str().unwrap())
-                .unwrap_err()
-                .contains("failed to parse imager task request")
-        );
-
+    fn artifact_generation_covers_layout_branches() {
         let temp = tempdir().expect("artifact dir");
         let image_name = temp.path().join("artifact/demo");
         fs::create_dir_all(image_name.parent().unwrap()).expect("artifact parent");

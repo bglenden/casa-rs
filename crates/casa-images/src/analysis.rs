@@ -11,10 +11,10 @@ use casa_coordinates::{
 };
 use casa_lattices::{LatticeStatistics, Statistic, StatsElement, TiledShape};
 use casa_provider_contracts::{
-    ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
-    ProviderProjectionMetadata, ProviderSurfaceKind, SurfaceContractBundle,
-    TaskOperationDescriptor, TaskSemanticContract, builtin_surface_bundle,
-    derived_ui_schema_annotations, merged_components, project_ui_schema,
+    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
+    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
+    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
+    builtin_surface_bundle, merged_components,
 };
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayD, ArrayValue, ScalarValue, Value};
@@ -26,9 +26,8 @@ use fitsio::{
 use ndarray::{Array2, Axis, IxDyn, ShapeBuilder, Zip};
 use num_complex::Complex32;
 use rustfft::FftPlanner;
-use schemars::{JsonSchema, schema::RootSchema, schema_for};
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 use crate::{
     AnyPagedImage, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageInterface, ImagePixel,
@@ -58,175 +57,125 @@ const SPEED_OF_LIGHT_KM_S: f64 = 299_792.458;
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 const LINEAR_REGRID_VALID_WEIGHT_MIN: f64 = f64::MIN_POSITIVE;
 
-/// Version/compatibility information for the JSON image-analysis task protocol.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImageAnalysisProtocolInfo {
-    /// Stable protocol identifier.
-    pub protocol_name: String,
-    /// Monotonic protocol version for compatibility checks.
-    pub protocol_version: u32,
-    /// Provider surface kind defined by the shared architecture contract.
-    pub surface_kind: ProviderSurfaceKind,
-    /// Binary version implementing the protocol.
-    pub binary_version: String,
+/// Build the current image-analysis protocol descriptor.
+pub fn image_analysis_protocol_descriptor() -> ProviderProtocolDescriptor {
+    ProviderProtocolDescriptor::new(
+        IMAGE_ANALYSIS_TASK_PROTOCOL_NAME,
+        IMAGE_ANALYSIS_TASK_PROTOCOL_VERSION,
+        ProviderSurfaceKind::Task,
+        env!("CARGO_PKG_VERSION"),
+    )
 }
 
-impl ImageAnalysisProtocolInfo {
-    /// Build the current image-analysis protocol descriptor.
-    pub fn current() -> Self {
-        Self {
-            protocol_name: IMAGE_ANALYSIS_TASK_PROTOCOL_NAME.to_string(),
-            protocol_version: IMAGE_ANALYSIS_TASK_PROTOCOL_VERSION,
-            surface_kind: ProviderSurfaceKind::Task,
-            binary_version: env!("CARGO_PKG_VERSION").to_string(),
-        }
-    }
-}
-
-/// JSON-schema bundle for the public image-analysis task protocol.
-#[derive(Debug, Clone, Serialize)]
-pub struct ImageAnalysisTaskSchemaBundle {
-    /// Compatibility descriptor for the request/result schemas.
-    pub protocol: ImageAnalysisProtocolInfo,
-    /// Canonical semantic task contract.
-    pub semantic: TaskSemanticContract,
-    /// Shared component schemas reusable across projections.
-    pub components: ProviderComponentSchemas,
-    /// Presentation annotations carried with the canonical bundle.
-    pub annotations: JsonValue,
-    /// Derived projection metadata for UI, CLI, and Python consumers.
-    pub projections: ProviderProjectionMetadata,
-    /// Canonical parameter contracts for every image-analysis task surface.
-    pub parameter_surfaces: Vec<SurfaceContractBundle>,
-    /// JSON schema for [`ImageAnalysisTaskRequest`].
-    pub request_schema: RootSchema,
-    /// JSON schema for [`ImageAnalysisTaskResult`].
-    pub result_schema: RootSchema,
-}
-
-impl ImageAnalysisTaskSchemaBundle {
-    /// Build the current request/result schema bundle.
-    pub fn current(_binary: &str) -> Self {
-        let request_schema = schema_for!(ImageAnalysisTaskRequest);
-        let result_schema = schema_for!(ImageAnalysisTaskResult);
-        Self {
-            protocol: ImageAnalysisProtocolInfo::current(),
-            semantic: TaskSemanticContract {
-                request_schema: request_schema.clone(),
-                result_schema: result_schema.clone(),
-                operations: vec![
-                    TaskOperationDescriptor {
-                        name: "imhead".to_string(),
-                        request_kind: "imhead".to_string(),
-                        result_kind: Some("imhead".to_string()),
-                    },
-                    TaskOperationDescriptor {
-                        name: "imstat".to_string(),
-                        request_kind: "imstat".to_string(),
-                        result_kind: Some("imstat".to_string()),
-                    },
-                    TaskOperationDescriptor {
-                        name: "immoments".to_string(),
-                        request_kind: "immoments".to_string(),
-                        result_kind: Some("immoments".to_string()),
-                    },
-                    TaskOperationDescriptor {
-                        name: "impv".to_string(),
-                        request_kind: "impv".to_string(),
-                        result_kind: Some("impv".to_string()),
-                    },
-                    TaskOperationDescriptor {
-                        name: "imsubimage".to_string(),
-                        request_kind: "imsubimage".to_string(),
-                        result_kind: Some("imsubimage".to_string()),
-                    },
-                    TaskOperationDescriptor {
-                        name: "immath".to_string(),
-                        request_kind: "immath".to_string(),
-                        result_kind: Some("immath".to_string()),
-                    },
-                    TaskOperationDescriptor {
-                        name: "impbcor".to_string(),
-                        request_kind: "impbcor".to_string(),
-                        result_kind: Some("impbcor".to_string()),
-                    },
-                    TaskOperationDescriptor {
-                        name: "imregrid".to_string(),
-                        request_kind: "imregrid".to_string(),
-                        result_kind: Some("imregrid".to_string()),
-                    },
-                    TaskOperationDescriptor {
-                        name: "feather".to_string(),
-                        request_kind: "feather".to_string(),
-                        result_kind: Some("feather".to_string()),
-                    },
-                    TaskOperationDescriptor {
-                        name: "exportfits".to_string(),
-                        request_kind: "exportfits".to_string(),
-                        result_kind: Some("exportfits".to_string()),
-                    },
-                    TaskOperationDescriptor {
-                        name: "importfits".to_string(),
-                        request_kind: "importfits".to_string(),
-                        result_kind: Some("importfits".to_string()),
-                    },
+/// Build the current request/result schema bundle.
+pub fn image_analysis_task_schema_bundle() -> TaskProviderContract {
+    let request_schema = schema_for!(ImageAnalysisTaskRequest);
+    let result_schema = schema_for!(ImageAnalysisTaskResult);
+    TaskProviderContract {
+        protocol: image_analysis_protocol_descriptor(),
+        semantic: TaskSemanticContract {
+            request_schema: request_schema.clone(),
+            result_schema: result_schema.clone(),
+            operations: vec![
+                TaskOperationDescriptor {
+                    name: "imhead".to_string(),
+                    request_kind: "imhead".to_string(),
+                    result_kind: Some("imhead".to_string()),
+                },
+                TaskOperationDescriptor {
+                    name: "imstat".to_string(),
+                    request_kind: "imstat".to_string(),
+                    result_kind: Some("imstat".to_string()),
+                },
+                TaskOperationDescriptor {
+                    name: "immoments".to_string(),
+                    request_kind: "immoments".to_string(),
+                    result_kind: Some("immoments".to_string()),
+                },
+                TaskOperationDescriptor {
+                    name: "impv".to_string(),
+                    request_kind: "impv".to_string(),
+                    result_kind: Some("impv".to_string()),
+                },
+                TaskOperationDescriptor {
+                    name: "imsubimage".to_string(),
+                    request_kind: "imsubimage".to_string(),
+                    result_kind: Some("imsubimage".to_string()),
+                },
+                TaskOperationDescriptor {
+                    name: "immath".to_string(),
+                    request_kind: "immath".to_string(),
+                    result_kind: Some("immath".to_string()),
+                },
+                TaskOperationDescriptor {
+                    name: "impbcor".to_string(),
+                    request_kind: "impbcor".to_string(),
+                    result_kind: Some("impbcor".to_string()),
+                },
+                TaskOperationDescriptor {
+                    name: "imregrid".to_string(),
+                    request_kind: "imregrid".to_string(),
+                    result_kind: Some("imregrid".to_string()),
+                },
+                TaskOperationDescriptor {
+                    name: "feather".to_string(),
+                    request_kind: "feather".to_string(),
+                    result_kind: Some("feather".to_string()),
+                },
+                TaskOperationDescriptor {
+                    name: "exportfits".to_string(),
+                    request_kind: "exportfits".to_string(),
+                    result_kind: Some("exportfits".to_string()),
+                },
+                TaskOperationDescriptor {
+                    name: "importfits".to_string(),
+                    request_kind: "importfits".to_string(),
+                    result_kind: Some("importfits".to_string()),
+                },
+            ],
+        },
+        components: merged_components([&request_schema, &result_schema]),
+        annotations: serde_json::json!({}),
+        projections: ProviderProjectionMetadata {
+            cli: Some(ProviderCliProjection {
+                machine_actions: ProviderCliMachineActions {
+                    json_schema: Some("--json-schema".to_string()),
+                    protocol_info: Some("--protocol-info".to_string()),
+                    json_run: Some("--json-run <SOURCE>".to_string()),
+                    session: None,
+                },
+            }),
+            python: Some(serde_json::json!({
+                "module": "casars.tasks.image_analysis",
+                "functions": [
+                    "imhead",
+                    "imstat",
+                    "immoments",
+                    "impv",
+                    "imsubimage",
+                    "immath",
+                    "impbcor",
+                    "imregrid",
+                    "feather",
+                    "exportfits",
+                    "importfits"
                 ],
-            },
-            components: merged_components([&request_schema, &result_schema]),
-            annotations: derived_ui_schema_annotations(),
-            projections: ProviderProjectionMetadata {
-                cli: Some(ProviderCliProjection {
-                    machine_actions: ProviderCliMachineActions {
-                        ui_schema: None,
-                        json_schema: Some("--json-schema".to_string()),
-                        protocol_info: Some("--protocol-info".to_string()),
-                        json_run: Some("--json-run <SOURCE>".to_string()),
-                        session: None,
-                    },
-                }),
-                ui_schema: None,
-                python: Some(serde_json::json!({
-                    "module": "casars.tasks.image_analysis",
-                    "functions": [
-                        "imhead",
-                        "imstat",
-                        "immoments",
-                        "impv",
-                        "imsubimage",
-                        "immath",
-                        "impbcor",
-                        "imregrid",
-                        "feather",
-                        "exportfits",
-                        "importfits"
-                    ],
-                })),
-            },
-            parameter_surfaces: IMAGE_ANALYSIS_TASK_SURFACES
-                .into_iter()
-                .map(|surface| {
-                    builtin_surface_bundle(surface).unwrap_or_else(|error| {
-                        panic!("built-in image-analysis parameter surface {surface:?}: {error}")
-                    })
+            })),
+        },
+        parameter_surfaces: IMAGE_ANALYSIS_TASK_SURFACES
+            .into_iter()
+            .map(|surface| {
+                builtin_surface_bundle(surface).unwrap_or_else(|error| {
+                    panic!("built-in image-analysis parameter surface {surface:?}: {error}")
                 })
-                .collect(),
+            })
+            .collect(),
+        domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-        }
+            additional: NoAdditionalProviderSchemas::default(),
+        },
     }
-}
-
-/// Return the launcher-compatible UI projection of a canonical image-analysis surface.
-pub fn image_analysis_ui_schema_json(surface: &str) -> Result<String, ImageError> {
-    if !IMAGE_ANALYSIS_TASK_SURFACES.contains(&surface) {
-        return Err(ImageError::InvalidMetadata(format!(
-            "unknown image-analysis parameter surface {surface:?}"
-        )));
-    }
-    let bundle = builtin_surface_bundle(surface).map_err(ImageError::InvalidMetadata)?;
-    let schema = project_ui_schema(&bundle);
-    serde_json::to_string_pretty(&schema)
-        .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
 }
 
 /// Top-level image-analysis JSON task request.
@@ -817,20 +766,30 @@ pub fn run_image_analysis_task(
     }
 }
 
-/// Read a JSON task request from a file path or `-` for stdin.
-pub fn read_image_analysis_request_source(
-    source: impl AsRef<Path>,
-) -> Result<ImageAnalysisTaskRequest, ImageError> {
-    let source = source.as_ref();
-    let text = if source == Path::new("-") {
-        let mut text = String::new();
-        std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
-            .map_err(|error| ImageError::Io(error.to_string()))?;
-        text
-    } else {
-        fs::read_to_string(source).map_err(|error| ImageError::Io(error.to_string()))?
-    };
-    serde_json::from_str(&text).map_err(|error| ImageError::InvalidMetadata(error.to_string()))
+/// Dispatch shared help and the machine-readable shell for every image-analysis task binary.
+pub fn dispatch_image_analysis_task_cli(
+    args: &[String],
+    human_help: &str,
+) -> Result<Option<String>, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        return Ok(Some(format!(
+            "{}\n\n{}",
+            human_help.trim_end(),
+            casa_task_runtime::task_cli_machine_help("ImageAnalysisTaskRequest")
+        )));
+    }
+    let args = args
+        .iter()
+        .map(std::ffi::OsString::from)
+        .collect::<Vec<_>>();
+    casa_task_runtime::TaskCliHost::new(
+        image_analysis_task_schema_bundle(),
+        |request: ImageAnalysisTaskRequest| {
+            run_image_analysis_task(request).map_err(|error| error.to_string())
+        },
+    )
+    .dispatch(&args)
+    .map_err(|error| error.to_string())
 }
 
 /// Return a CASA `imhead(..., mode="summary")`-style metadata summary.
@@ -4374,7 +4333,8 @@ mod tests {
 
     #[test]
     fn image_analysis_schema_and_ui_surfaces_advertise_task_contracts() {
-        let bundle = ImageAnalysisTaskSchemaBundle::current("image-analysis");
+        let bundle = image_analysis_task_schema_bundle();
+        bundle.validate().expect("image-analysis provider contract");
         assert_eq!(
             bundle.protocol.protocol_name,
             IMAGE_ANALYSIS_TASK_PROTOCOL_NAME
@@ -4413,32 +4373,6 @@ mod tests {
             bundle.projections.python.as_ref().unwrap()["module"],
             "casars.tasks.image_analysis"
         );
-
-        for surface in [
-            "imhead",
-            "imstat",
-            "immoments",
-            "impv",
-            "imsubimage",
-            "immath",
-            "impbcor",
-            "imregrid",
-            "feather",
-            "exportfits",
-            "importfits",
-        ] {
-            let actual: serde_json::Value = serde_json::from_str(
-                &image_analysis_ui_schema_json(surface).expect("provider UI schema"),
-            )
-            .expect("provider UI schema JSON");
-            let expected = project_ui_schema(
-                &builtin_surface_bundle(surface).expect("canonical image-analysis surface"),
-            );
-            assert_eq!(actual, expected, "{surface} provider projection diverged");
-            assert_eq!(actual["schema_version"], 2);
-            assert_eq!(actual["command_id"], surface);
-        }
-        assert!(image_analysis_ui_schema_json("unknown-tool").is_err());
     }
 
     #[test]
@@ -4680,8 +4614,9 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
+        let payload = casa_task_runtime::read_task_request(request_path.to_str().unwrap()).unwrap();
         assert!(matches!(
-            read_image_analysis_request_source(&request_path).unwrap(),
+            serde_json::from_str::<ImageAnalysisTaskRequest>(&payload).unwrap(),
             ImageAnalysisTaskRequest::Imhead(_)
         ));
     }

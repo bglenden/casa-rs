@@ -5,14 +5,13 @@ use std::path::PathBuf;
 
 use casa_ms::{MsSelectionSpec, selection::MsSelection};
 use casa_provider_contracts::{
-    ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
-    ProviderProjectionMetadata, ProviderSurfaceKind, SurfaceContractBundle,
-    TaskOperationDescriptor, TaskSemanticContract, builtin_surface_bundle,
-    derived_ui_schema_annotations, merged_components, project_ui_schema,
+    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
+    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
+    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
+    builtin_surface_bundle, merged_components,
 };
-use schemars::{JsonSchema, schema::RootSchema, schema_for};
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 use crate::managed_output::CalibrationTaskResult;
 use crate::{
@@ -30,113 +29,61 @@ pub const CALIBRATION_TASK_PROTOCOL_NAME: &str = "casa_calibration_task";
 /// Stable protocol version advertised by `calibrate --protocol-info`.
 pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 1;
 
-/// Version/compatibility information for the JSON task protocol.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct CalibrationProtocolInfo {
-    /// Stable protocol identifier.
-    pub protocol_name: String,
-    /// Monotonic protocol version for compatibility checks.
-    pub protocol_version: u32,
-    /// Provider surface kind defined by the shared architecture contract.
-    pub surface_kind: ProviderSurfaceKind,
-    /// Binary version implementing the protocol.
-    pub binary_version: String,
+/// Build the current shared calibration protocol descriptor.
+pub fn calibration_protocol_descriptor() -> ProviderProtocolDescriptor {
+    ProviderProtocolDescriptor::new(
+        CALIBRATION_TASK_PROTOCOL_NAME,
+        CALIBRATION_TASK_PROTOCOL_VERSION,
+        ProviderSurfaceKind::Task,
+        env!("CARGO_PKG_VERSION"),
+    )
 }
 
-impl CalibrationProtocolInfo {
-    /// Build the current calibration protocol descriptor.
-    pub fn current() -> Self {
-        Self {
-            protocol_name: CALIBRATION_TASK_PROTOCOL_NAME.to_string(),
-            protocol_version: CALIBRATION_TASK_PROTOCOL_VERSION,
-            surface_kind: ProviderSurfaceKind::Task,
-            binary_version: env!("CARGO_PKG_VERSION").to_string(),
-        }
-    }
-}
-
-/// JSON-schema bundle for the public calibration task protocol.
-#[derive(Debug, Clone, Serialize)]
-pub struct CalibrationTaskSchemaBundle {
-    /// Compatibility descriptor for the request/result schemas.
-    pub protocol: CalibrationProtocolInfo,
-    /// Canonical semantic task contract.
-    pub semantic: TaskSemanticContract,
-    /// Shared component schemas reusable across projections.
-    pub components: ProviderComponentSchemas,
-    /// Presentation annotations carried with the canonical bundle.
-    pub annotations: JsonValue,
-    /// Derived projection metadata for UI and CLI consumers.
-    pub projections: ProviderProjectionMetadata,
-    /// Canonical parameter contracts for every calibration-family surface.
-    pub parameter_surfaces: Vec<SurfaceContractBundle>,
-    /// JSON schema for [`CalibrationTaskRequest`].
-    pub request_schema: RootSchema,
-    /// JSON schema for [`CalibrationTaskResult`].
-    pub result_schema: RootSchema,
-}
-
-impl CalibrationTaskSchemaBundle {
-    /// Build the current request/result schema bundle.
-    pub fn current() -> Self {
-        let request_schema = schema_for!(CalibrationTaskRequest);
-        let result_schema = schema_for!(CalibrationTaskResult);
-        let ui_schema = project_ui_schema(
-            &builtin_surface_bundle("calibrate")
-                .expect("built-in calibrate parameter surface must remain valid"),
-        );
-        Self {
-            protocol: CalibrationProtocolInfo::current(),
-            semantic: TaskSemanticContract {
-                request_schema: request_schema.clone(),
-                result_schema: result_schema.clone(),
-                operations: calibration_task_operations(),
-            },
-            components: merged_components([&request_schema, &result_schema]),
-            annotations: derived_ui_schema_annotations(),
-            projections: ProviderProjectionMetadata {
-                cli: Some(ProviderCliProjection {
-                    machine_actions: ProviderCliMachineActions {
-                        ui_schema: Some("--ui-schema".to_string()),
-                        json_schema: Some("--json-schema".to_string()),
-                        protocol_info: Some("--protocol-info".to_string()),
-                        json_run: Some("--json-run <SOURCE>".to_string()),
-                        session: None,
-                    },
-                }),
-                ui_schema: Some(ui_schema),
-                python: None,
-            },
-            parameter_surfaces: [
-                "calibrate",
-                "uvcontsub",
-                "applycal",
-                "gaincal",
-                "bandpass",
-                "fluxscale",
-                "gencal",
-            ]
-            .into_iter()
-            .map(|surface| {
-                builtin_surface_bundle(surface).unwrap_or_else(|error| {
-                    panic!("built-in calibration parameter surface {surface:?}: {error}")
-                })
+/// Build the current calibration schema bundle with the shared envelope.
+pub fn calibration_task_schema_bundle() -> TaskProviderContract {
+    let request_schema = schema_for!(CalibrationTaskRequest);
+    let result_schema = schema_for!(CalibrationTaskResult);
+    TaskProviderContract {
+        protocol: calibration_protocol_descriptor(),
+        semantic: TaskSemanticContract {
+            request_schema: request_schema.clone(),
+            result_schema: result_schema.clone(),
+            operations: calibration_task_operations(),
+        },
+        components: merged_components([&request_schema, &result_schema]),
+        annotations: serde_json::json!({}),
+        projections: ProviderProjectionMetadata {
+            cli: Some(ProviderCliProjection {
+                machine_actions: ProviderCliMachineActions {
+                    json_schema: Some("--json-schema".to_string()),
+                    protocol_info: Some("--protocol-info".to_string()),
+                    json_run: Some("--json-run <SOURCE>".to_string()),
+                    session: None,
+                },
+            }),
+            python: None,
+        },
+        parameter_surfaces: [
+            "calibrate",
+            "uvcontsub",
+            "applycal",
+            "gaincal",
+            "bandpass",
+            "fluxscale",
+            "gencal",
+        ]
+        .into_iter()
+        .map(|surface| {
+            builtin_surface_bundle(surface).unwrap_or_else(|error| {
+                panic!("built-in calibration parameter surface {surface:?}: {error}")
             })
-            .collect(),
+        })
+        .collect(),
+        domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-        }
-    }
-
-    /// Return the launcher/TUI compatibility view projected from the bundle.
-    pub fn ui_schema_projection(&self) -> Result<casa_ms::ui_schema::UiCommandSchema, String> {
-        let value = self
-            .projections
-            .ui_schema
-            .clone()
-            .ok_or_else(|| "missing ui_schema projection".to_string())?;
-        serde_json::from_value(value)
-            .map_err(|error| format!("parse calibration ui schema: {error}"))
+            additional: NoAdditionalProviderSchemas {},
+        },
     }
 }
 
@@ -626,9 +573,9 @@ mod tests {
     use casa_provider_contracts::ProviderSurfaceKind;
 
     use super::{
-        CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationProtocolInfo,
-        CalibrationTaskRequest, CalibrationTaskResult, CalibrationTaskSchemaBundle,
-        SummaryTaskRequest, selection_from_spec,
+        CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationTaskRequest,
+        CalibrationTaskResult, SummaryTaskRequest, calibration_protocol_descriptor,
+        calibration_task_schema_bundle, selection_from_spec,
     };
     use crate::{
         CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
@@ -680,7 +627,7 @@ mod tests {
 
     #[test]
     fn protocol_info_matches_public_constants() {
-        let info = CalibrationProtocolInfo::current();
+        let info = calibration_protocol_descriptor();
         assert_eq!(info.protocol_name, CALIBRATION_TASK_PROTOCOL_NAME);
         assert_eq!(info.protocol_version, CALIBRATION_TASK_PROTOCOL_VERSION);
         assert_eq!(info.surface_kind, ProviderSurfaceKind::Task);
@@ -709,7 +656,8 @@ mod tests {
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_definitions() {
-        let bundle = CalibrationTaskSchemaBundle::current();
+        let bundle = calibration_task_schema_bundle();
+        bundle.validate().expect("shared provider envelope");
         assert_eq!(
             bundle.protocol.protocol_name,
             CALIBRATION_TASK_PROTOCOL_NAME
@@ -742,7 +690,7 @@ mod tests {
                 .any(|operation| operation.request_kind == "gencal")
         );
         assert!(bundle.components.contains_key("SummaryTaskRequest"));
-        assert!(bundle.projections.ui_schema.is_some());
+        assert!(bundle.projections.cli.is_some());
         assert_eq!(
             bundle
                 .parameter_surfaces
@@ -774,6 +722,7 @@ mod tests {
         );
         assert!(
             bundle
+                .domain_schemas
                 .request_schema
                 .schema
                 .metadata
@@ -783,12 +732,14 @@ mod tests {
         );
         assert!(
             bundle
+                .domain_schemas
                 .request_schema
                 .definitions
                 .contains_key("SummaryTaskRequest")
         );
         assert!(
             bundle
+                .domain_schemas
                 .result_schema
                 .schema
                 .metadata
@@ -798,12 +749,13 @@ mod tests {
         );
         assert!(
             bundle
+                .domain_schemas
                 .result_schema
                 .definitions
                 .contains_key("CalibrationTableSummary")
         );
-        let ui_schema = bundle.ui_schema_projection().expect("ui schema projection");
-        assert_eq!(ui_schema.command_id, "calibrate");
+        let form = casa_provider_contracts::project_ui_form(&bundle.parameter_surfaces[0]);
+        assert_eq!(form["command_id"], "calibrate");
     }
 
     #[test]

@@ -2,18 +2,16 @@
 //! Canonical `msexplore` task request/result contracts shared by CLI and UIs.
 
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use casa_provider_contracts::{
-    ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
-    ProviderProjectionMetadata, ProviderSurfaceKind, SurfaceContractBundle,
-    TaskOperationDescriptor, TaskSemanticContract, builtin_surface_bundle,
-    derived_ui_schema_annotations, merged_components, project_ui_schema,
+    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
+    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
+    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
+    builtin_surface_bundle, merged_components,
 };
-use schemars::{JsonSchema, schema::RootSchema, schema_for};
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 use super::{
     MsExploreSpec, MsExportFormat, MsFlagEditPreview, MsFlagEditSpec, build_msexplore_payload,
@@ -26,29 +24,14 @@ pub const MSEXPLORE_TASK_PROTOCOL_NAME: &str = "casa_msexplore_task";
 /// Stable protocol version advertised by `msexplore --protocol-info`.
 pub const MSEXPLORE_TASK_PROTOCOL_VERSION: u32 = 1;
 
-/// Version/compatibility information for the JSON task protocol.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct MsExploreProtocolInfo {
-    /// Stable protocol identifier.
-    pub protocol_name: String,
-    /// Monotonic protocol version for compatibility checks.
-    pub protocol_version: u32,
-    /// Provider surface kind defined by the shared architecture contract.
-    pub surface_kind: ProviderSurfaceKind,
-    /// Binary version implementing the protocol.
-    pub binary_version: String,
-}
-
-impl MsExploreProtocolInfo {
-    /// Build the current `msexplore` protocol descriptor.
-    pub fn current() -> Self {
-        Self {
-            protocol_name: MSEXPLORE_TASK_PROTOCOL_NAME.to_string(),
-            protocol_version: MSEXPLORE_TASK_PROTOCOL_VERSION,
-            surface_kind: ProviderSurfaceKind::Task,
-            binary_version: env!("CARGO_PKG_VERSION").to_string(),
-        }
-    }
+/// Build the current shared `msexplore` protocol descriptor.
+pub fn msexplore_protocol_descriptor() -> ProviderProtocolDescriptor {
+    ProviderProtocolDescriptor::new(
+        MSEXPLORE_TASK_PROTOCOL_NAME,
+        MSEXPLORE_TASK_PROTOCOL_VERSION,
+        ProviderSurfaceKind::Task,
+        env!("CARGO_PKG_VERSION"),
+    )
 }
 
 /// Optional staged flag edit performed as part of one `msexplore` task request.
@@ -219,26 +202,6 @@ impl MsExploreTaskRequest {
             Self::Run(request) => Ok(MsExploreTaskResult::Run(request.execute()?)),
         }
     }
-
-    /// Read one task request from a file path or `-` for stdin.
-    pub fn read_from_source(source: &str) -> Result<Self, String> {
-        let payload = if source == "-" {
-            let mut payload = String::new();
-            std::io::stdin()
-                .read_to_string(&mut payload)
-                .map_err(|error| format!("failed to read JSON request from stdin: {error}"))?;
-            payload
-        } else {
-            fs::read_to_string(source).map_err(|error| {
-                format!(
-                    "failed to read JSON request from {}: {error}",
-                    Path::new(source).display()
-                )
-            })?
-        };
-        serde_json::from_str(&payload)
-            .map_err(|error| format!("failed to parse msexplore task request: {error}"))
-    }
 }
 
 /// Canonical `msexplore` task result envelope.
@@ -249,83 +212,47 @@ pub enum MsExploreTaskResult {
     Run(MsExploreRunTaskResult),
 }
 
-/// JSON-schema bundle for the public `msexplore` task protocol.
-#[derive(Debug, Clone, Serialize)]
-pub struct MsExploreTaskSchemaBundle {
-    /// Compatibility descriptor for the request/result schemas.
-    pub protocol: MsExploreProtocolInfo,
-    /// Canonical semantic task contract.
-    pub semantic: TaskSemanticContract,
-    /// Shared component schemas reusable across projections.
-    pub components: ProviderComponentSchemas,
-    /// Presentation annotations carried with the canonical bundle.
-    pub annotations: JsonValue,
-    /// Derived projection metadata for UI and CLI consumers.
-    pub projections: ProviderProjectionMetadata,
-    /// Canonical parameter contracts for the MS explorer task family.
-    pub parameter_surfaces: Vec<SurfaceContractBundle>,
-    /// JSON schema for [`MsExploreTaskRequest`].
-    pub request_schema: RootSchema,
-    /// JSON schema for [`MsExploreTaskResult`].
-    pub result_schema: RootSchema,
-}
-
-impl MsExploreTaskSchemaBundle {
-    /// Build the current request/result schema bundle.
-    pub fn current() -> Self {
-        let request_schema = schema_for!(MsExploreTaskRequest);
-        let result_schema = schema_for!(MsExploreTaskResult);
-        let ui_schema = project_ui_schema(
-            &builtin_surface_bundle("msexplore")
-                .expect("built-in msexplore parameter surface must remain valid"),
-        );
-        Self {
-            protocol: MsExploreProtocolInfo::current(),
-            semantic: TaskSemanticContract {
-                request_schema: request_schema.clone(),
-                result_schema: result_schema.clone(),
-                operations: vec![TaskOperationDescriptor {
-                    name: "run".to_string(),
-                    request_kind: "run".to_string(),
-                    result_kind: Some("run".to_string()),
-                }],
-            },
-            components: merged_components([&request_schema, &result_schema]),
-            annotations: derived_ui_schema_annotations(),
-            projections: ProviderProjectionMetadata {
-                cli: Some(ProviderCliProjection {
-                    machine_actions: ProviderCliMachineActions {
-                        ui_schema: Some("--ui-schema".to_string()),
-                        json_schema: Some("--json-schema".to_string()),
-                        protocol_info: Some("--protocol-info".to_string()),
-                        json_run: Some("--json-run <SOURCE>".to_string()),
-                        session: None,
-                    },
-                }),
-                ui_schema: Some(ui_schema),
-                python: None,
-            },
-            parameter_surfaces: ["msexplore", "plotms"]
-                .into_iter()
-                .map(|surface| {
-                    builtin_surface_bundle(surface).unwrap_or_else(|error| {
-                        panic!("built-in MS explorer parameter surface {surface:?}: {error}")
-                    })
+/// Build the current `msexplore` schema bundle with the shared envelope.
+pub fn msexplore_task_schema_bundle() -> TaskProviderContract {
+    let request_schema = schema_for!(MsExploreTaskRequest);
+    let result_schema = schema_for!(MsExploreTaskResult);
+    TaskProviderContract {
+        protocol: msexplore_protocol_descriptor(),
+        semantic: TaskSemanticContract {
+            request_schema: request_schema.clone(),
+            result_schema: result_schema.clone(),
+            operations: vec![TaskOperationDescriptor {
+                name: "run".to_string(),
+                request_kind: "run".to_string(),
+                result_kind: Some("run".to_string()),
+            }],
+        },
+        components: merged_components([&request_schema, &result_schema]),
+        annotations: serde_json::json!({}),
+        projections: ProviderProjectionMetadata {
+            cli: Some(ProviderCliProjection {
+                machine_actions: ProviderCliMachineActions {
+                    json_schema: Some("--json-schema".to_string()),
+                    protocol_info: Some("--protocol-info".to_string()),
+                    json_run: Some("--json-run <SOURCE>".to_string()),
+                    session: None,
+                },
+            }),
+            python: None,
+        },
+        parameter_surfaces: ["msexplore", "plotms"]
+            .into_iter()
+            .map(|surface| {
+                builtin_surface_bundle(surface).unwrap_or_else(|error| {
+                    panic!("built-in MS explorer parameter surface {surface:?}: {error}")
                 })
-                .collect(),
+            })
+            .collect(),
+        domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-        }
-    }
-
-    /// Return the launcher/TUI compatibility view projected from the bundle.
-    pub fn ui_schema_projection(&self) -> Result<crate::ui_schema::UiCommandSchema, String> {
-        let value = self
-            .projections
-            .ui_schema
-            .clone()
-            .ok_or_else(|| "missing ui_schema projection".to_string())?;
-        serde_json::from_value(value).map_err(|error| format!("parse msexplore ui schema: {error}"))
+            additional: NoAdditionalProviderSchemas {},
+        },
     }
 }
 
@@ -345,8 +272,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreProtocolInfo,
-        MsExploreRunTaskRequest, MsExploreTaskRequest, MsExploreTaskSchemaBundle, write_output,
+        MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreRunTaskRequest,
+        MsExploreTaskRequest, msexplore_protocol_descriptor, msexplore_task_schema_bundle,
+        write_output,
     };
     use crate::{
         MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotPreset,
@@ -368,7 +296,8 @@ mod tests {
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_projection() {
-        let bundle = MsExploreTaskSchemaBundle::current();
+        let bundle = msexplore_task_schema_bundle();
+        bundle.validate().expect("shared provider envelope");
         assert_eq!(bundle.protocol.protocol_name, MSEXPLORE_TASK_PROTOCOL_NAME);
         assert_eq!(
             bundle.protocol.protocol_version,
@@ -399,13 +328,13 @@ mod tests {
                 .len(),
             2
         );
-        let ui_schema = bundle.ui_schema_projection().expect("ui schema projection");
-        assert_eq!(ui_schema.command_id, "msexplore");
+        let form = casa_provider_contracts::project_ui_form(&bundle.parameter_surfaces[0]);
+        assert_eq!(form["command_id"], "msexplore");
     }
 
     #[test]
     fn protocol_info_matches_public_constants() {
-        let info = MsExploreProtocolInfo::current();
+        let info = msexplore_protocol_descriptor();
         assert_eq!(info.protocol_name, MSEXPLORE_TASK_PROTOCOL_NAME);
         assert_eq!(info.protocol_version, MSEXPLORE_TASK_PROTOCOL_VERSION);
         assert_eq!(info.surface_kind, ProviderSurfaceKind::Task);
@@ -430,43 +359,6 @@ mod tests {
     }
 
     #[test]
-    fn read_from_source_reports_file_and_json_errors_and_parses_valid_files() {
-        let dir = tempdir().expect("tempdir");
-        let missing = dir.path().join("missing.json");
-        let missing_error =
-            MsExploreTaskRequest::read_from_source(missing.to_str().expect("utf8 path"))
-                .expect_err("missing file should fail");
-        assert!(missing_error.contains("failed to read JSON request"));
-        assert!(missing_error.contains("missing.json"));
-
-        let invalid = dir.path().join("invalid.json");
-        std::fs::write(&invalid, "{not json").expect("write invalid json");
-        let parse_error =
-            MsExploreTaskRequest::read_from_source(invalid.to_str().expect("utf8 path"))
-                .expect_err("invalid JSON should fail");
-        assert!(parse_error.contains("failed to parse msexplore task request"));
-
-        let valid = dir.path().join("valid.json");
-        let request = MsExploreTaskRequest::Run(MsExploreRunTaskRequest {
-            spec: test_spec("valid.ms"),
-            summary_output_path: Some("summary.md".into()),
-            overwrite_outputs: false,
-            flag_edit: None,
-            plot_export: None,
-        });
-        std::fs::write(
-            &valid,
-            serde_json::to_string(&request).expect("serialize valid request"),
-        )
-        .expect("write valid json");
-        assert_eq!(
-            MsExploreTaskRequest::read_from_source(valid.to_str().expect("utf8 path"))
-                .expect("read valid request"),
-            request
-        );
-    }
-
-    #[test]
     fn write_output_refuses_existing_files_unless_overwrite_is_enabled() {
         let dir = tempdir().expect("tempdir");
         let output = dir.path().join("summary.txt");
@@ -483,23 +375,5 @@ mod tests {
             std::fs::read_to_string(&output).expect("read output"),
             "second"
         );
-    }
-
-    #[test]
-    fn ui_schema_projection_reports_missing_or_malformed_projection() {
-        let mut bundle = MsExploreTaskSchemaBundle::current();
-        bundle.projections.ui_schema = None;
-        assert_eq!(
-            bundle
-                .ui_schema_projection()
-                .expect_err("missing projection"),
-            "missing ui_schema projection"
-        );
-
-        bundle.projections.ui_schema = Some(serde_json::json!({"command_id": 5}));
-        let error = bundle
-            .ui_schema_projection()
-            .expect_err("malformed projection");
-        assert!(error.contains("parse msexplore ui schema"));
     }
 }

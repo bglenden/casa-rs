@@ -5,14 +5,13 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process;
 
+use casa_ms::presentation::UiCommandSchema;
 use casa_ms::selection::MsSelection;
-use casa_ms::ui_schema::UiCommandSchema;
 use casa_ms::{
-    FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataRequest, QuackMode, flagdata_path,
+    FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
+    FlagDataTaskRequest, QuackMode, flagdata_path, flagdata_task_schema_bundle,
     parse_numeric_id_selector,
 };
-use schemars::schema_for;
-use serde_json::json;
 
 fn main() {
     if let Err(error) = run() {
@@ -25,7 +24,6 @@ fn run() -> Result<(), String> {
     let (logging_guard, args) =
         casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1))
             .map_err(|error| format!("failed to initialize logging: {error}"))?;
-    let args = os_args_to_strings(args)?;
     tracing::info!("flagdata started");
     let result = run_with_args(args);
     if result.is_ok() {
@@ -39,28 +37,22 @@ fn run() -> Result<(), String> {
     result
 }
 
-fn run_with_args(args: Vec<String>) -> Result<(), String> {
+fn run_with_args(args: Vec<OsString>) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{}", command_schema("flagdata").render_help());
-        return Ok(());
-    }
-    if args.iter().any(|arg| arg == "--ui-schema") {
         println!(
-            "{}",
-            command_schema("flagdata")
-                .render_json_pretty()
-                .map_err(|error| error.to_string())?
+            "{}\n\n{}",
+            command_schema("flagdata").render_help(),
+            casa_task_runtime::task_cli_machine_help("FlagDataTaskRequest")
         );
         return Ok(());
     }
-    if args.iter().any(|arg| arg == "--json-schema") {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&schema_bundle("flagdata"))
-                .map_err(|error| error.to_string())?
-        );
+    let host =
+        casa_task_runtime::TaskCliHost::new(flagdata_task_schema_bundle(), execute_task_request);
+    if let Some(output) = host.dispatch(&args).map_err(|error| error.to_string())? {
+        println!("{output}");
         return Ok(());
     }
+    let args = os_args_to_strings(args)?;
     let (vis, request) = parse_args(&args)?;
     let report = flagdata_path(vis, &request).map_err(|error| error.to_string())?;
     println!(
@@ -68,6 +60,49 @@ fn run_with_args(args: Vec<String>) -> Result<(), String> {
         serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
     );
     Ok(())
+}
+
+fn execute_task_request(request: FlagDataTaskRequest) -> Result<FlagDataReport, String> {
+    let mut selection = MsSelection::new();
+    if !request.field.is_empty() {
+        selection = selection.field(
+            &parse_numeric_id_selector(&request.field, "field")
+                .map_err(|error| error.to_string())?,
+        );
+    }
+    if !request.scan.is_empty() {
+        selection = selection.scan(
+            &parse_numeric_id_selector(&request.scan, "scan").map_err(|error| error.to_string())?,
+        );
+    }
+    if !request.antenna.is_empty() {
+        selection = apply_antenna_selection(selection, &request.antenna)?;
+    }
+    let spw = (!request.spw.is_empty()).then_some(request.spw);
+    let domain_request = FlagDataRequest {
+        selection,
+        spw,
+        mode: parse_mode(&request.mode)?,
+        action: parse_action(&request.action)?,
+        data_column: parse_data_column(&request.datacolumn)?,
+        flagbackup: request.flagbackup,
+        clipzeros: request.clipzeros,
+        quackinterval: request.quackinterval,
+        quackmode: parse_quackmode(&request.quackmode)?,
+        timecutoff: request.timecutoff,
+        freqcutoff: request.freqcutoff,
+        timedevscale: request.timedevscale,
+        freqdevscale: request.freqdevscale,
+        spectralmax: request.spectralmax,
+        spectralmin: request.spectralmin,
+        timedev: request.timedev,
+        freqdev: request.freqdev,
+        extendflags: request.extendflags,
+        extendpols: request.extendpols,
+        growtime: request.growtime,
+        growfreq: request.growfreq,
+    };
+    flagdata_path(request.vis, &domain_request).map_err(|error| error.to_string())
 }
 
 fn os_args_to_strings(args: Vec<OsString>) -> Result<Vec<String>, String> {
@@ -263,66 +298,22 @@ fn command_schema(program_name: &str) -> UiCommandSchema {
     let bundle = casa_provider_contracts::builtin_surface_bundle("flagdata")
         .expect("built-in flagdata parameter surface must remain valid");
     let mut schema: UiCommandSchema =
-        serde_json::from_value(casa_provider_contracts::project_ui_schema(&bundle))
+        serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
             .expect("canonical flagdata UI projection must match UiCommandSchema");
     schema.invocation_name = program_name.to_string();
     schema.usage = format!("{program_name} [parameters]");
     schema
 }
-fn schema_bundle(program_name: &str) -> serde_json::Value {
-    let parameter_surfaces = vec![
-        casa_provider_contracts::builtin_surface_bundle("flagdata")
-            .expect("built-in flagdata parameter surface must remain valid"),
-    ];
-    json!({
-        "protocol": {
-            "protocol_name": "casa_ms_flagdata_task",
-            "protocol_version": 1,
-            "surface_kind": "task"
-        },
-        "projections": {
-            "ui_schema": command_schema(program_name)
-        },
-        "parameter_surfaces": parameter_surfaces,
-        "request_schema": {
-            "type": "object",
-            "required": ["vis", "mode"],
-            "properties": {
-                "vis": {"type": "string"},
-                "mode": {"type": "string", "enum": ["manual", "clip", "quack", "tfcrop", "rflag", "extend", "summary"]},
-                "spw": {"type": "string"},
-                "field": {"type": "string"},
-                "scan": {"type": "string"},
-                "antenna": {"type": "string"},
-                "datacolumn": {"type": "string", "enum": ["data", "corrected"]},
-                "flagbackup": {"type": "boolean"}
-            }
-        },
-        "result_schema": schema_for!(casa_ms::FlagDataReport)
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::SurfaceContractBundle;
-
     use super::*;
 
     #[test]
-    fn schema_bundle_embeds_flagdata_parameter_contract() {
-        let bundle = schema_bundle("flagdata");
-        assert_eq!(bundle["protocol"]["protocol_name"], "casa_ms_flagdata_task");
-        assert!(bundle["request_schema"]["properties"]["mode"].is_object());
-        assert!(bundle["result_schema"].is_object());
-
-        let surfaces = serde_json::from_value::<Vec<SurfaceContractBundle>>(
-            bundle["parameter_surfaces"].clone(),
-        )
-        .expect("serialized flagdata parameter surface");
-        assert_eq!(surfaces.len(), 1);
-        assert_eq!(surfaces[0].surface.id(), "flagdata");
-        surfaces[0]
-            .validate()
-            .expect("embedded flagdata parameter surface");
+    fn provider_bundle_embeds_flagdata_parameter_contract() {
+        let bundle = flagdata_task_schema_bundle();
+        assert_eq!(bundle.protocol.protocol_name, "casa_ms_flagdata_task");
+        assert_eq!(bundle.parameter_surfaces.len(), 1);
+        assert_eq!(bundle.parameter_surfaces[0].surface.id(), "flagdata");
+        bundle.validate().expect("valid flagdata provider");
     }
 }

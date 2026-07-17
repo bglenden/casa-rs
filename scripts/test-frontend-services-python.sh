@@ -54,16 +54,35 @@ with tempfile.TemporaryDirectory() as tmp:
             preset=frontend.MeasurementSetPlotPreset.AMPLITUDE_VS_FREQUENCY,
             field=None,
             spectral_window=None,
+            timerange=None,
+            uvrange=None,
+            antenna=None,
+            scan=None,
             correlation=None,
+            array=None,
+            observation=None,
+            intent=None,
+            feed=None,
+            msselect=None,
             data_column="DATA",
+            color_by=None,
+            avgchannel=None,
+            avgtime=None,
+            avgscan=False,
+            avgfield=False,
+            avgbaseline=False,
+            avgantenna=False,
+            avgspw=False,
+            scalar=False,
+            iteraxis=None,
             width=640,
             height=420,
             max_plot_points=10000,
         )
     )
     assert plot.preset == frontend.MeasurementSetPlotPreset.AMPLITUDE_VS_FREQUENCY
-    assert plot.render.image_format == "png"
-    assert plot.image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    assert plot.render.image_format == "none"
+    assert plot.image_bytes == b""
     assert plot.x_axis.label
     assert plot.y_axis.label
     assert plot.series

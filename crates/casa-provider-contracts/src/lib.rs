@@ -3,19 +3,25 @@
 //!
 //! These structs intentionally stay small and transport-oriented so task and
 //! session providers can expose one machine-readable schema bundle while
-//! retaining compatibility projections such as the legacy `--ui-schema` view.
+//! while deriving presentation-specific views from those canonical contracts.
 
+mod application;
 mod builtin;
 mod components;
 mod parameters;
 mod projection;
+mod provider;
 mod semantic;
 
 pub use components::{ProviderComponentSchemas, merged_components};
 pub use parameters::*;
 pub use projection::{
-    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
-    derived_ui_schema_annotations, project_ui_schema,
+    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata, project_ui_form,
+};
+pub use provider::{
+    NoAdditionalProviderSchemas, ProviderContractEnvelope, ProviderContractValidationError,
+    ProviderProtocolDescriptor, SessionProviderContract, SessionProviderSchemas,
+    TaskProviderContract, TaskProviderSchemas,
 };
 pub use semantic::{
     ObjectConstructorDescriptor, ObjectMethodDescriptor, ObjectPropertyDescriptor,
@@ -25,4 +31,9 @@ pub use semantic::{
 
 #[cfg(test)]
 mod tests;
+pub use application::{
+    ApplicationBrowserKind, ApplicationCatalog, ApplicationDefinition, ApplicationInteraction,
+    ApplicationKind, ApplicationLaunchDescriptor, ApplicationLaunchMode, ApplicationShellKind,
+    builtin_application_catalog,
+};
 pub use builtin::{builtin_surface_bundle, builtin_surface_catalog};

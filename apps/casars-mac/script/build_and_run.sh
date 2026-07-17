@@ -272,17 +272,17 @@ if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" && -z "$SHOW_PROTOTYPE" ]]; then
   while IFS= read -r spec; do
     TASK_HELPER_SPECS+=("$spec")
   done < <(
-    python3 - "$REPO_ROOT/resources/task-catalog.json" <<'PY'
+    python3 - "$REPO_ROOT/crates/casa-provider-contracts/resources/application-catalog.json" <<'PY'
 import json
 import sys
 
 catalog = json.load(open(sys.argv[1], encoding="utf-8"))
 seen = set()
-for task in catalog["tasks"]:
+for task in catalog["applications"]:
     if not task.get("show_in_swift"):
         continue
-    package = task["cargo_package"]
-    binary = task["binary_name"]
+    package = task["launch"]["cargo_package"]
+    binary = task["launch"]["executable"]
     key = (package, binary)
     if key in seen:
         continue

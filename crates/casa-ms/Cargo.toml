@@ -19,6 +19,7 @@ casa-coordinates = { path = "../casa-coordinates" }
 casa-imaging = { path = "../casa-imaging" }
 casa-logging = { path = "../casa-logging" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-task-runtime = { path = "../casa-task-runtime" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
 image = { version = "0.25", default-features = false, features = ["png"] }

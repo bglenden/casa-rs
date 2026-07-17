@@ -92,6 +92,7 @@ final class AssistantDiscussionTests: XCTestCase {
         let configuration = try AgentSessionConfiguration.discover(environment: [
             "CASA_RS_AGENT_COMMAND": codex.path,
             "CASA_RS_PROJECT_MCP": mcp.path,
+            "CASARS_LAUNCH_MODE": "installed_suite",
             "PATH": "",
         ])
         XCTAssertEqual(configuration.agentExecutable, codex.path)
@@ -102,6 +103,26 @@ final class AssistantDiscussionTests: XCTestCase {
                 environment: ["PATH": directory.path]
             ),
             python.path
+        )
+    }
+
+    func testDevelopmentProjectMCPLaunchUsesExactCargoPackageAndBinary() throws {
+        let configuration = try AgentSessionConfiguration.discover(environment: [
+            "CASA_RS_AGENT_COMMAND": "/usr/bin/false",
+            "CASARS_LAUNCH_MODE": "development_workspace",
+            "CASA_RS_REPO_ROOT": "/checkout",
+            "CARGO": "/toolchain/cargo",
+            "PATH": "",
+        ])
+
+        XCTAssertEqual(configuration.projectMCPExecutable, "/usr/bin/env")
+        XCTAssertEqual(
+            configuration.projectMCPArguments,
+            [
+                "/toolchain/cargo",
+                "run", "--manifest-path", "/checkout/Cargo.toml", "-q",
+                "-p", "casars-frontend-services", "--bin", "casars-project-mcp", "--",
+            ]
         )
     }
 
@@ -823,7 +844,13 @@ final class AssistantDiscussionTests: XCTestCase {
                     "imagename": "products/image",
                     "robust": "-0.5",
                     "weighting": "briggs",
-                ]
+                ],
+                validatedPatch: SurfaceParameterPatch(values: [
+                    "vis": .string("input.ms"),
+                    "imagename": .string("products/image"),
+                    "robust": .float(-0.5),
+                    "weighting": .string("briggs"),
+                ])
             )],
             pins: []
         ))
@@ -975,7 +1002,15 @@ final class AssistantDiscussionTests: XCTestCase {
                         "band": "Band 6",
                         "pointing_count": "4",
                         "output_ms": "products/alma-mosaic.ms",
-                    ]
+                    ],
+                    validatedPatch: SurfaceParameterPatch(values: [
+                        "request_kind": .string("family"),
+                        "telescope": .string("ALMA"),
+                        "array_config": .string("alma.cycle10.5.cfg"),
+                        "band": .string("Band 6"),
+                        "pointing_count": .integer(4),
+                        "output_ms": .string("products/alma-mosaic.ms"),
+                    ])
                 ),
             ],
             pins: []

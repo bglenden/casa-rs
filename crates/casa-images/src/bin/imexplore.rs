@@ -8,12 +8,11 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use casa_images::{
-    ImageBrowserSession, ImmomentsRequest, ImpvRequest, image_analysis_ui_schema_json,
-    imexplore_ui_schema_json, imhead, imhead_put, immoments, impv, imstat,
+    ImageBrowserSession, ImmomentsRequest, ImpvRequest, imhead, imhead_put, immoments, impv, imstat,
 };
 use casars_imagebrowser_protocol::{
-    ImageBrowserCommand, ImageBrowserProtocolInfo, ImageBrowserRequestEnvelope,
-    ImageBrowserResponseEnvelope, ImageBrowserViewport, PROTOCOL_VERSION, schema_bundle_json,
+    ImageBrowserCommand, ImageBrowserRequestEnvelope, ImageBrowserResponseEnvelope,
+    ImageBrowserViewport, PROTOCOL_VERSION, image_browser_protocol_descriptor, schema_bundle_json,
 };
 
 fn main() {
@@ -28,19 +27,6 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let raw_args = env::args().skip(1).collect::<Vec<_>>();
-    if raw_args.len() == 2
-        && raw_args[1] == "--ui-schema"
-        && matches!(
-            raw_args[0].as_str(),
-            "imhead" | "imstat" | "immoments" | "impv"
-        )
-    {
-        print!(
-            "{}",
-            image_analysis_ui_schema_json(&raw_args[0]).map_err(|error| error.to_string())?
-        );
-        return Ok(());
-    }
     let mut args = raw_args.into_iter().peekable();
     if args.peek().is_some_and(|arg| arg == "--json-schema") {
         print!(
@@ -53,13 +39,9 @@ fn run() -> Result<(), String> {
     if args.peek().is_some_and(|arg| arg == "--protocol-info") {
         print!(
             "{}",
-            serde_json::to_string_pretty(&ImageBrowserProtocolInfo::current())
+            serde_json::to_string_pretty(&image_browser_protocol_descriptor())
                 .map_err(|error| format!("serialize imexplore protocol info: {error}"))?
         );
-        return Ok(());
-    }
-    if args.peek().is_some_and(|arg| arg == "--ui-schema") {
-        print!("{}", imexplore_ui_schema_json("imexplore")?);
         return Ok(());
     }
     if args.peek().is_some_and(|arg| arg == "--session") {
@@ -480,7 +462,7 @@ fn parse_path(args: impl IntoIterator<Item = String>) -> Result<PathBuf, String>
     let args = args.into_iter().collect::<Vec<_>>();
     if args.len() != 1 {
         return Err(
-            "usage: imexplore <image-path> | imexplore imhead <image-path> [--json] [--mode summary|list|put] [--hdkey bunit --hdvalue <value>] | imexplore imstat <image-path> [--box x0,y0,x1,y1] [--chans 0~4] [--json] | imexplore immoments <image-path> --outfile <path> [--json] | imexplore impv <image-path> --outfile <path> --start x,y --end x,y [--json] | imexplore --session | imexplore --json-schema | imexplore --protocol-info | imexplore --ui-schema".into(),
+            "usage: imexplore <image-path> | imexplore imhead <image-path> [--json] [--mode summary|list|put] [--hdkey bunit --hdvalue <value>] | imexplore imstat <image-path> [--box x0,y0,x1,y1] [--chans 0~4] [--json] | imexplore immoments <image-path> --outfile <path> [--json] | imexplore impv <image-path> --outfile <path> --start x,y --end x,y [--json] | imexplore --session | imexplore --json-schema | imexplore --protocol-info".into(),
         );
     }
     Ok(PathBuf::from(&args[0]))

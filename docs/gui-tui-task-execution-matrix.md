@@ -1,13 +1,12 @@
-# GUI/TUI Task Execution Matrix
+# Historical GUI/TUI Task Execution Closeout
 
-Truth class: checked artifact
+Truth class: historical closeout note
 Last reality check: 2026-05-09
-Verification: `just quick`; `cargo test -p casars-frontend-services`; `cargo test -p casars`; `swift test --package-path apps/casars-mac`
 
-`resources/task-execution-matrix.json` is the canonical machine-readable list
-for issue #226 and the already-landed shared-catalog work from issue #231. It
-contains one row for every current shared catalog task plus the additional CASA
-task families named by the GUI/TUI parity inventory.
+This document preserves the closeout conclusions from issues #226 and #231.
+It is not runtime metadata. Current application identity, launch configuration,
+and suite membership come from the canonical provider-owned application catalog;
+presentation metadata comes from each referenced parameter surface.
 
 Each row records the scope-control fields required by #226: surface kind,
 interaction model, row disposition, approved closeout scope, provider/schema
@@ -61,8 +60,7 @@ explicit work or signoff points. In particular:
   payload builder because the local CASA 6.7.5 task package no longer exports a
   `plotcal` function.
 
-The Swift GUI and other frontends can read the matrix through
-`task_execution_matrix_json()`. Dataset-grounded option lists and defaults are
-available through `task_context_options_json(dataset_path)`, which derives
+Dataset-grounded option lists and defaults are available through
+`task_context_options_json(dataset_path)`, which derives
 fields, spectral windows, scans, antennas, correlations, data columns, and other
 selector values from the same dataset probe used by the GUI.

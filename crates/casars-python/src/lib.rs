@@ -8,13 +8,14 @@ use std::path::{Path, PathBuf};
 use casa_images::{AnyPagedImage, ImageError, ImagePixelType};
 use casa_ms::{MsPlotSpec, MsSelectionSpec, build_msexplore_plot_data_from_path};
 use casa_provider_contracts::{
-    ParameterValue, SurfaceContractBundle, SurfaceKind, builtin_surface_bundle,
-    builtin_surface_catalog,
+    ParameterValue, SurfaceContractBundle, SurfaceKind, builtin_application_catalog,
+    builtin_surface_bundle, builtin_surface_catalog,
 };
 use casa_tables::{RowRange, Table as CasaTable, TableError, TableOptions};
 use casa_task_runtime::{
-    BaseSource, ManagedProfileKind, ManagedStateStore, ParameterSession, ResolutionPatch,
-    parse_profile, render_documented_template, write_parameter_profile_atomic,
+    BaseSource, ManagedProfileKind, ManagedStateStore, OpenSessionRequest, ParameterRuntime,
+    ParameterSession, ResolutionPatch, SessionLastCoordinator, parse_profile,
+    render_documented_template, write_parameter_profile_atomic,
 };
 use casa_types::{
     ArrayD, ArrayValue, Complex32, Complex64, RecordField, RecordValue, ScalarValue, Value,
@@ -43,6 +44,61 @@ struct PyTable {
     path: PathBuf,
     inner: CasaTable,
     writable: bool,
+}
+
+#[pyclass(name = "ParameterSessionLifecycle", module = "casars._core")]
+struct PyParameterSessionLifecycle {
+    coordinator: SessionLastCoordinator,
+}
+
+#[pymethods]
+impl PyParameterSessionLifecycle {
+    #[new]
+    fn new() -> Self {
+        Self {
+            coordinator: SessionLastCoordinator::new(
+                ParameterRuntime::default().session_debounce(),
+            ),
+        }
+    }
+
+    fn opened(
+        &self,
+        surface_id: &str,
+        workspace: PathBuf,
+        values_json: &str,
+        enabled: bool,
+    ) -> PyResult<Vec<String>> {
+        let session = parameter_session_from_values(surface_id, values_json)?;
+        self.coordinator
+            .opened(workspace, surface_id, enabled, &session)
+            .map_err(|error| parameter_runtime_error("record opened parameter session", error))?;
+        Ok(self.coordinator.take_warnings())
+    }
+
+    fn accepted_durable_change(
+        &self,
+        surface_id: &str,
+        workspace: PathBuf,
+        values_json: &str,
+        enabled: bool,
+    ) -> PyResult<Vec<String>> {
+        let session = parameter_session_from_values(surface_id, values_json)?;
+        self.coordinator
+            .accepted_durable_change(workspace, surface_id, enabled, &session)
+            .map_err(|error| parameter_runtime_error("record accepted parameter change", error))?;
+        Ok(self.coordinator.take_warnings())
+    }
+
+    fn flush(&self, surface_id: &str, workspace: PathBuf) -> Vec<String> {
+        self.coordinator.flush(workspace, surface_id);
+        self.coordinator.take_warnings()
+    }
+
+    fn flush_all(&self) -> Vec<String> {
+        self.coordinator.flush_all();
+        self.coordinator.take_warnings()
+    }
 }
 
 #[pymethods]
@@ -982,24 +1038,11 @@ fn parameter_session_from_source(
     source: &str,
     profile_toml: Option<&str>,
     profile_path: Option<PathBuf>,
+    workspace: PathBuf,
 ) -> PyResult<ParameterSession> {
     let bundle = parameter_bundle(surface_id)?;
-    if source == "defaults" {
-        if profile_toml.is_some() {
-            return Err(PyValueError::new_err(
-                "the defaults source cannot carry profile TOML",
-            ));
-        }
-        return ParameterSession::defaults(bundle)
-            .map_err(|error| parameter_runtime_error("resolve parameter defaults", error));
-    }
-
-    let profile_toml = profile_toml.ok_or_else(|| {
-        PyValueError::new_err(format!("parameter source {source:?} requires profile TOML"))
-    })?;
-    let profile = parse_profile(profile_toml)
-        .map_err(|error| parameter_runtime_error("parse parameter profile", error))?;
     let source = match source {
+        "defaults" => BaseSource::Defaults,
         "file" => BaseSource::File(profile_path.unwrap_or_else(|| PathBuf::from("<memory>"))),
         "last" => BaseSource::Last,
         "last_successful" => BaseSource::LastSuccessful,
@@ -1009,8 +1052,17 @@ fn parameter_session_from_source(
             )));
         }
     };
-    ParameterSession::from_profile(bundle, source, &profile)
-        .map_err(|error| parameter_runtime_error("resolve parameter profile", error))
+    ParameterRuntime::default()
+        .open_session(OpenSessionRequest {
+            bundle,
+            workspace,
+            source,
+            profile_text: profile_toml.map(str::to_owned),
+            context_patch: ResolutionPatch::default(),
+            override_patch: ResolutionPatch::default(),
+            managed_save: true,
+        })
+        .map_err(|error| parameter_runtime_error("open parameter session", error))
 }
 
 fn parse_parameter_patch(source: &str) -> PyResult<ResolutionPatch> {
@@ -1024,20 +1076,30 @@ fn parse_parameter_values(source: &str) -> PyResult<BTreeMap<String, ParameterVa
 }
 
 fn render_parameter_values(surface_id: &str, values_json: &str) -> PyResult<String> {
-    let values = parse_parameter_values(values_json)?;
-    let mut session = ParameterSession::defaults(parameter_bundle(surface_id)?)
-        .map_err(|error| parameter_runtime_error("resolve parameter defaults", error))?;
-    if !values.is_empty() {
-        session
-            .apply_override_patch(ResolutionPatch {
-                values,
-                unset: BTreeSet::new(),
-            })
-            .map_err(|error| parameter_runtime_error("resolve parameter values", error))?;
-    }
-    session
+    parameter_session_from_values(surface_id, values_json)?
         .render_sparse()
         .map_err(|error| parameter_runtime_error("render sparse parameter profile", error))
+}
+
+fn parameter_session_from_values(
+    surface_id: &str,
+    values_json: &str,
+) -> PyResult<ParameterSession> {
+    let values = parse_parameter_values(values_json)?;
+    ParameterRuntime::default()
+        .open_session(OpenSessionRequest {
+            bundle: parameter_bundle(surface_id)?,
+            workspace: PathBuf::from("."),
+            source: BaseSource::Defaults,
+            profile_text: None,
+            context_patch: ResolutionPatch::default(),
+            override_patch: ResolutionPatch {
+                values,
+                unset: BTreeSet::new(),
+            },
+            managed_save: false,
+        })
+        .map_err(|error| parameter_runtime_error("resolve parameter values", error))
 }
 
 #[pyfunction]
@@ -1053,6 +1115,13 @@ fn parameter_catalog_json() -> PyResult<String> {
         .map_err(|error| parameter_runtime_error("load parameter catalog", error))?;
     serde_json::to_string(catalog)
         .map_err(|error| parameter_runtime_error("serialize parameter catalog", error))
+}
+
+#[pyfunction]
+fn application_catalog_json() -> PyResult<String> {
+    let catalog = builtin_application_catalog().map_err(PyRuntimeError::new_err)?;
+    serde_json::to_string(catalog)
+        .map_err(|error| PyRuntimeError::new_err(format!("serialize application catalog: {error}")))
 }
 
 #[pyfunction]
@@ -1074,7 +1143,8 @@ fn parameter_surface_bundle_json(surface_id: &str) -> PyResult<String> {
 
 #[pyfunction]
 fn parameter_defaults_json(surface_id: &str) -> PyResult<String> {
-    let session = parameter_session_from_source(surface_id, "defaults", None, None)?;
+    let session =
+        parameter_session_from_source(surface_id, "defaults", None, None, PathBuf::from("."))?;
     parameter_snapshot_json(&session)
 }
 
@@ -1084,8 +1154,13 @@ fn parameter_load_json(
     profile_toml: &str,
     source_path: PathBuf,
 ) -> PyResult<String> {
-    let session =
-        parameter_session_from_source(surface_id, "file", Some(profile_toml), Some(source_path))?;
+    let session = parameter_session_from_source(
+        surface_id,
+        "file",
+        Some(profile_toml),
+        Some(source_path),
+        PathBuf::from("."),
+    )?;
     parameter_snapshot_json(&session)
 }
 
@@ -1101,24 +1176,12 @@ fn parameter_last_json(
             "session surface {surface_id:?} does not have Last Successful"
         )));
     }
-    let kind = if successful {
-        ManagedProfileKind::LastSuccessful
-    } else {
-        ManagedProfileKind::Last
-    };
-    let store = ManagedStateStore::for_workspace(workspace);
-    let Some(profile_toml) = store
-        .read(surface_id, kind)
-        .map_err(|error| parameter_runtime_error("read managed parameter profile", error))?
-    else {
-        return Ok(None);
-    };
     let source = if successful {
         "last_successful"
     } else {
         "last"
     };
-    let session = parameter_session_from_source(surface_id, source, Some(&profile_toml), None)?;
+    let session = parameter_session_from_source(surface_id, source, None, None, workspace)?;
     parameter_snapshot_json(&session).map(Some)
 }
 
@@ -1153,14 +1216,29 @@ fn parameter_resolve_json(
     profile_path: Option<PathBuf>,
     patch_json: &str,
 ) -> PyResult<String> {
-    let mut session =
-        parameter_session_from_source(surface_id, base_source, profile_toml, profile_path)?;
     let patch = parse_parameter_patch(patch_json)?;
-    if !patch.values.is_empty() || !patch.unset.is_empty() {
-        session
-            .apply_override_patch(patch)
-            .map_err(|error| parameter_runtime_error("resolve parameter mutations", error))?;
-    }
+    let source = match base_source {
+        "defaults" => BaseSource::Defaults,
+        "file" => BaseSource::File(profile_path.unwrap_or_else(|| PathBuf::from("<memory>"))),
+        "last" => BaseSource::Last,
+        "last_successful" => BaseSource::LastSuccessful,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "unknown parameter source {other:?}"
+            )));
+        }
+    };
+    let session = ParameterRuntime::default()
+        .open_session(OpenSessionRequest {
+            bundle: parameter_bundle(surface_id)?,
+            workspace: PathBuf::from("."),
+            source,
+            profile_text: profile_toml.map(str::to_owned),
+            context_patch: ResolutionPatch::default(),
+            override_patch: patch,
+            managed_save: false,
+        })
+        .map_err(|error| parameter_runtime_error("resolve parameter session", error))?;
     parameter_snapshot_json(&session)
 }
 
@@ -1233,9 +1311,11 @@ fn msexplore_plot_data_json(
 fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyImage>()?;
     module.add_class::<PyTable>()?;
+    module.add_class::<PyParameterSessionLifecycle>()?;
     module.add_function(wrap_pyfunction!(data_protocol_info_json, module)?)?;
     module.add_function(wrap_pyfunction!(data_schema_bundle_json, module)?)?;
     module.add_function(wrap_pyfunction!(msexplore_plot_data_json, module)?)?;
+    module.add_function(wrap_pyfunction!(application_catalog_json, module)?)?;
     module.add_function(wrap_pyfunction!(parameter_catalog_json, module)?)?;
     module.add_function(wrap_pyfunction!(parameter_surface_definition_json, module)?)?;
     module.add_function(wrap_pyfunction!(parameter_surface_bundle_json, module)?)?;

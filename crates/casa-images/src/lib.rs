@@ -61,7 +61,6 @@
 pub mod analysis;
 pub mod beam;
 pub mod browser_render;
-pub mod command_schema;
 pub mod error;
 pub mod expr_file;
 pub mod expr_parser;
@@ -80,14 +79,13 @@ mod mask;
 
 pub use analysis::{
     ExportFitsRequest, FeatherRequest, FeatherSummary, FitsExportSummary, FitsImportSummary,
-    ImageAnalysisProtocolInfo, ImageAnalysisTaskRequest, ImageAnalysisTaskResult,
-    ImageAnalysisTaskSchemaBundle, ImageHeaderSummary, ImageMathSummary, ImageRegridSummary,
-    ImageStatisticsSummary, ImageSubimageSummary, ImheadRequest, ImmathRequest, ImmomentsRequest,
-    ImpbcorRequest, ImportFitsRequest, ImpvRequest, ImregridRequest, ImstatRequest,
-    ImsubimageRequest, MomentMapSummary, PbcorSummary, PvImageSummary, export_fits, feather,
-    image_analysis_ui_schema_json, imhead, imhead_put, immath, immoments, impbcor, import_fits,
-    impv, imregrid, imstat, imsubimage, read_image_analysis_request_source,
-    run_image_analysis_task,
+    ImageAnalysisTaskRequest, ImageAnalysisTaskResult, ImageHeaderSummary, ImageMathSummary,
+    ImageRegridSummary, ImageStatisticsSummary, ImageSubimageSummary, ImheadRequest, ImmathRequest,
+    ImmomentsRequest, ImpbcorRequest, ImportFitsRequest, ImpvRequest, ImregridRequest,
+    ImstatRequest, ImsubimageRequest, MomentMapSummary, PbcorSummary, PvImageSummary,
+    dispatch_image_analysis_task_cli, export_fits, feather, image_analysis_protocol_descriptor,
+    image_analysis_task_schema_bundle, imhead, imhead_put, immath, immoments, impbcor, import_fits,
+    impv, imregrid, imstat, imsubimage, run_image_analysis_task,
 };
 pub use beam::{GaussianBeam, ImageBeamSet};
 pub use browser_render::{
@@ -97,7 +95,6 @@ pub use browser_render::{
     image_plane_layout, image_spectrum_layout, render_image_plane_image,
     render_image_spectrum_image,
 };
-pub use command_schema::ui_schema_json as imexplore_ui_schema_json;
 pub use error::ImageError;
 pub use image::{
     AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,

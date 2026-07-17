@@ -7,22 +7,16 @@ use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
-use crate::task_contract::{
-    ImportVlaProtocolInfo, ImportVlaTaskRequest, ImportVlaTaskSchemaBundle,
-};
+use crate::task_contract::{ImportVlaTaskRequest, importvla_task_schema_bundle};
 use crate::{
     AntennaNameScheme, BandName, ImportVlaOptions, VlaError,
     import_archive_files_to_measurement_set_from_options,
 };
-pub use casa_ms::ui_schema::UiCommandSchema;
+pub use casa_ms::presentation::UiCommandSchema;
 
 #[derive(Debug)]
 enum CliAction {
     Help,
-    UiSchema,
-    JsonSchema,
-    ProtocolInfo,
-    JsonRun(String),
     Run {
         options: ImportVlaOptions,
         json: bool,
@@ -59,53 +53,28 @@ pub fn run_env(program_name: &str) -> i32 {
 
 /// Run `importvla` with already-filtered CLI arguments.
 pub fn run_with_cli_args(program_name: &str, args: impl IntoIterator<Item = OsString>) -> i32 {
+    let args = args.into_iter().collect::<Vec<_>>();
+    let host = casa_task_runtime::TaskCliHost::new(
+        importvla_task_schema_bundle(),
+        |request: ImportVlaTaskRequest| request.execute(),
+    );
+    match host.dispatch(&args) {
+        Ok(Some(output)) => {
+            println!("{output}");
+            return 0;
+        }
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("Error: {error}");
+            return error.exit_code();
+        }
+    }
     let schema = command_schema(program_name);
     match parse_args(args) {
         Ok(CliAction::Help) => {
             print!("{}", render_help(&schema));
             0
         }
-        Ok(CliAction::UiSchema) => match schema.render_json_pretty() {
-            Ok(payload) => {
-                print!("{payload}");
-                0
-            }
-            Err(error) => {
-                eprintln!("Error: failed to serialize --ui-schema output: {error}");
-                1
-            }
-        },
-        Ok(CliAction::JsonSchema) => {
-            match serde_json::to_string_pretty(&ImportVlaTaskSchemaBundle::current()) {
-                Ok(payload) => {
-                    print!("{payload}");
-                    0
-                }
-                Err(error) => {
-                    eprintln!("Error: failed to serialize --json-schema output: {error}");
-                    1
-                }
-            }
-        }
-        Ok(CliAction::ProtocolInfo) => {
-            match serde_json::to_string_pretty(&ImportVlaProtocolInfo::current()) {
-                Ok(payload) => {
-                    print!("{payload}");
-                    0
-                }
-                Err(error) => {
-                    eprintln!("Error: failed to serialize --protocol-info output: {error}");
-                    1
-                }
-            }
-        }
-        Ok(CliAction::JsonRun(source)) => match run_json_request(&source) {
-            Ok(()) => 0,
-            Err(error) => {
-                eprintln!("Error: {error}");
-                1
-            }
-        },
         Ok(CliAction::Run { options, json }) => match run(options, json) {
             Ok(()) => 0,
             Err(error) => {
@@ -126,7 +95,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
     let bundle = casa_provider_contracts::builtin_surface_bundle("importvla")
         .expect("built-in importvla parameter surface must remain valid");
     let mut schema: UiCommandSchema =
-        serde_json::from_value(casa_provider_contracts::project_ui_schema(&bundle))
+        serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
             .expect("canonical importvla UI projection must match UiCommandSchema");
     schema.invocation_name = program_name.to_string();
     schema.usage = format!("{program_name} [parameters]");
@@ -150,25 +119,6 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Vla
     {
         return Ok(CliAction::Help);
     }
-    if string_args.contains(&"--ui-schema") {
-        return Ok(CliAction::UiSchema);
-    }
-    if string_args.contains(&"--json-schema") {
-        return Ok(CliAction::JsonSchema);
-    }
-    if string_args.contains(&"--protocol-info") {
-        return Ok(CliAction::ProtocolInfo);
-    }
-    if let Some(index) = string_args.iter().position(|arg| *arg == "--json-run") {
-        let source = string_args
-            .get(index + 1)
-            .ok_or_else(|| VlaError::InvalidArgument {
-                argument: "json-run",
-                message: "missing value".to_string(),
-            })?;
-        return Ok(CliAction::JsonRun((*source).to_string()));
-    }
-
     parse_run_args(args)
 }
 
@@ -255,33 +205,6 @@ fn append_archivefiles(options: &mut ImportVlaOptions, value: &str) {
         .filter(|item| !item.is_empty())
     {
         options.archivefiles.push(PathBuf::from(item));
-    }
-}
-
-fn run_json_request(source: &str) -> Result<(), String> {
-    let payload = read_json_source(source)?;
-    let request = serde_json::from_str::<ImportVlaTaskRequest>(&payload)
-        .map_err(|error| format!("parse importvla task request: {error}"))?;
-    let result = request.execute()?;
-    serde_json::to_string_pretty(&result)
-        .map(|json| {
-            println!("{json}");
-        })
-        .map_err(|error| format!("serialize importvla task result: {error}"))
-}
-
-fn read_json_source(source: &str) -> Result<String, String> {
-    if source == "-" {
-        let mut stdin = std::io::stdin();
-        let mut payload = String::new();
-        use std::io::Read as _;
-        stdin
-            .read_to_string(&mut payload)
-            .map_err(|error| format!("read importvla task request from stdin: {error}"))?;
-        Ok(payload)
-    } else {
-        fs::read_to_string(source)
-            .map_err(|error| format!("read importvla task request from {source}: {error}"))
     }
 }
 
@@ -420,8 +343,9 @@ fn render_import_text(report: &crate::ImportReport) {
 
 fn render_help(schema: &UiCommandSchema) -> String {
     format!(
-        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical importvla task JSON schema\n  --protocol-info          Emit the importvla task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON ImportVlaTaskRequest from SOURCE or - for stdin\n\nCompatibility:\n  --archivefile PATH       Add one VLA export file on disk (repeatable CLI alias)\n  --json                   Emit legacy text-command output as JSON\n",
-        schema.render_help()
+        "{}\n\n{}\n\nCompatibility:\n  --archivefile PATH       Add one VLA export file on disk (repeatable CLI alias)\n  --json                   Emit legacy text-command output as JSON\n",
+        schema.render_help(),
+        casa_task_runtime::task_cli_machine_help("ImportVlaTaskRequest")
     )
 }
 
@@ -545,24 +469,18 @@ mod tests {
 
     #[test]
     fn parse_args_recognizes_machine_actions() {
-        assert!(matches!(
-            parse_args([OsString::from("--ui-schema")]).expect("ui schema action"),
-            CliAction::UiSchema
-        ));
-        assert!(matches!(
-            parse_args([OsString::from("--json-schema")]).expect("json schema action"),
-            CliAction::JsonSchema
-        ));
-        assert!(matches!(
-            parse_args([OsString::from("--protocol-info")]).expect("protocol info action"),
-            CliAction::ProtocolInfo
-        ));
-        match parse_args([OsString::from("--json-run"), OsString::from("-")])
-            .expect("json run action")
-        {
-            CliAction::JsonRun(source) => assert_eq!(source, "-"),
-            other => panic!("expected json run action, got {other:?}"),
-        }
+        assert_eq!(
+            casa_task_runtime::parse_task_cli_action(&[OsString::from("--json-schema")]).unwrap(),
+            Some(casa_task_runtime::TaskCliAction::JsonSchema)
+        );
+        assert_eq!(
+            casa_task_runtime::parse_task_cli_action(&[
+                OsString::from("--json-run"),
+                OsString::from("-"),
+            ])
+            .unwrap(),
+            Some(casa_task_runtime::TaskCliAction::JsonRun("-".into()))
+        );
     }
 
     #[test]
@@ -656,13 +574,6 @@ mod tests {
     #[test]
     fn parse_args_and_helpers_report_expected_errors() {
         assert!(matches!(
-            parse_args([OsString::from("--json-run")]).unwrap_err(),
-            VlaError::InvalidArgument {
-                argument: "json-run",
-                ..
-            }
-        ));
-        assert!(matches!(
             parse_run_args(vec![
                 OsString::from("--archivefiles"),
                 OsString::from("a.xp1"),
@@ -718,15 +629,21 @@ mod tests {
     }
 
     #[test]
-    fn read_json_source_reads_files_and_reports_missing_paths() {
+    fn shared_request_reader_reads_files_and_reports_missing_paths() {
         let file = NamedTempFile::new().expect("temp json");
         fs::write(file.path(), "{\"kind\":\"scan\",\"request\":{}}").expect("write temp json");
         let payload =
-            read_json_source(file.path().to_str().expect("utf8 path")).expect("read file");
+            casa_task_runtime::read_task_request(file.path().to_str().expect("utf8 path"))
+                .expect("read file");
         assert!(payload.contains("\"kind\":\"scan\""));
 
-        let missing = read_json_source("/definitely/missing/importvla.json").unwrap_err();
-        assert!(missing.contains("read importvla task request from"));
+        let missing =
+            casa_task_runtime::read_task_request("/definitely/missing/importvla.json").unwrap_err();
+        assert!(
+            missing
+                .to_string()
+                .contains("failed to read JSON request from")
+        );
     }
 
     #[test]
@@ -759,8 +676,16 @@ mod tests {
             serde_json::to_string(&request).expect("serialize scan request"),
         )
         .expect("write request file");
-        run_json_request(request_file.path().to_str().expect("utf8 request path"))
-            .expect("run json request");
+        let host = casa_task_runtime::TaskCliHost::new(
+            importvla_task_schema_bundle(),
+            |request: ImportVlaTaskRequest| request.execute(),
+        );
+        host.dispatch(&[
+            OsString::from("--json-run"),
+            request_file.path().as_os_str().to_owned(),
+        ])
+        .expect("run json request")
+        .expect("machine output");
     }
 
     #[test]

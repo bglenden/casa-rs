@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-07-15
+Last reality check: 2026-07-17
 Verification: just docs-check
 
 ## System purpose
@@ -18,8 +18,8 @@ coordinates, measures, and related workflows.
 | foundation crates (`casa-types`, `casa-table-read`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures types, minimal read-only table loading, and runtime measures data access | core codecs |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
-| boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | Versioned provider bundles, parameter catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
-| parameter runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, typed parameter sessions, and managed Last storage | boundary contracts and `casa-types`; must not implement provider science behavior |
+| boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
+| parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, typed task/session lifecycle coordination, managed Last storage, and the common one-shot task CLI host | boundary contracts and `casa-types`; must not implement provider science behavior |
 | notebook runtime (`casa-notebook`) | Source-preserving Markdown/cell parsing, stable notebook/cell/run identity, atomic project persistence, immutable execution receipts, conflict handling, and portable/advanced exports | parameter value serialization and general-purpose ecosystem crates; must not own provider execution or frontend state |
 | apps and runtimes (`casars`, `casars-imager`, `casars-importvla`, `casars-python`, `casars-frontend-services`, `ratatui-graphics`, `apps/casars-mac`) | Terminal shells, orchestration binaries, Python bindings/package, frontend service bindings, rendering/runtime support, and the native macOS GUI prototype | boundary contracts, domain libraries, foundation crates; lightweight frontend services may expose read-only domain-library probes through UniFFI |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers, and performance guards | any workspace crates needed for testing only |
@@ -41,6 +41,11 @@ Additional constraints:
 - Within `casa-tables`, row/column/cell accessor objects are the public table-data surface; prepared-row accessors provide the reusable selected-column row fast path, and the old table-level convenience wrappers have been removed from the public API.
 - Versioned provider bundles are boundary contracts; UI projections are derived
   views, not separate truth sources.
+- `casa-provider-contracts::ApplicationCatalog` is the sole application
+  inventory and launch-metadata owner. TUI, Swift, Python, project MCP,
+  assistant, packaging, and generators project it directly. Installed-suite
+  and development-workspace launch modes resolve exact paths and never fall
+  back to each other, PATH discovery, or repository probing.
 - Parameter concepts live in the checked aggregate `ParameterCatalog` in
   `casa-provider-contracts`. Each provider bundle embeds the exact referenced
   concepts so the boundary remains self-contained. Task and session
@@ -48,9 +53,14 @@ Additional constraints:
   narrowing refinements, migrations, presentation, and projection metadata;
   they cannot redefine concept meaning, normalization, units, role, or
   persistence. Frontends may not redefine those semantics locally.
-- `casa-task-runtime` owns profile mechanics and managed state, while providers
-  retain ownership of task adapters and session startup semantics. The runtime
-  must not become a central implementation of domain behavior.
+- `casa-task-runtime` owns profile mechanics, managed state, and application
+  lifecycle transitions from source parsing and resolution through Last/
+  LastSuccessful persistence, task completion, and session debounce/coalescing.
+  It also owns task-provider discovery actions, JSON source loading,
+  diagnostics, serialization, exit classification, and the generated common
+  help block. Providers retain typed science adapters, domain-specific human
+  parsing, and session command/event semantics; apps may not add alternate
+  lifecycle maps, timers, writers, CLI hosts, or launch fallbacks.
 - `apps/casars-mac` keeps fixture schemas inside its SwiftPM core when modeling
   proposed UI behavior. Real, read-only dataset discovery enters through
   `casars-frontend-services`, whose Rust API is exposed to Swift and Python
@@ -68,12 +78,14 @@ Long-running interoperability, parity, and packaging work is driven by
 shell/Python scripts, integration tests, or subprocess orchestration rather
 than a shared background service model.
 
-ADR-0006 adds one synchronous parameter-session model shared by task and
-browser-session consumers. A task resolves sparse user intent into one
-provider invocation. A browser session resolves only durable startup settings;
-its subsequent command/event stream remains owned by the session protocol.
-Parameter resolution and Last persistence do not introduce a provider daemon
-or repo-wide async runtime.
+ADR-0006 adds one synchronous parameter lifecycle shared by task and
+browser-session consumers. `casa-task-runtime` is the sole lifecycle owner: a
+task resolves sparse user intent, records its attempted state, and applies the
+completion transition around one provider invocation; a browser session
+resolves durable startup settings and delegates accepted-setting debounce and
+coalescing to the same runtime. The subsequent command/event stream remains
+owned by the session protocol. Parameter resolution and Last persistence do
+not introduce a provider daemon or repo-wide async runtime.
 
 `apps/casars-mac` is a SwiftPM package for the macOS-native GUI prototype. Its
 workbench state remains headlessly testable in SwiftPM. GUI-Wave-1 introduces a

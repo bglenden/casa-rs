@@ -31,16 +31,19 @@ is never overwritten without an explicit save.
 
 ## Provider protocol compatibility
 
-`casars.tasks.calibrate` resolves binaries in this order:
+Python task launch metadata comes from the provider-owned application catalog.
+An explicit `binary=` argument or module `configure(binary=...)` value selects
+that exact file. Otherwise `CASARS_LAUNCH_MODE` selects exactly one policy:
 
-1. explicit `binary=` argument on the function call
-2. module configuration via `casars.tasks.calibrate.configure(binary=...)`
-3. the `CASARS_CALIBRATE_BIN` environment variable
-4. the suite root override `CASARS_SUITE_ROOT`, resolved as `<suite-root>/bin/calibrate`
-5. a suite-installed sibling binary discovered relative to the installed Python package
-6. the conventional user install root `~/.local/opt/casa-rs/current/bin/calibrate`
-7. repo-local development binaries in `target/debug` or `target/release`
-8. `PATH`
+- `installed_suite` (the default) uses the catalog entry's override variable,
+  or the single path `<CASARS_SUITE_ROOT>/bin/<executable>`. Without an explicit
+  suite root, `~/.local/opt/casa-rs/current` is the root.
+- `development_workspace` uses the single path
+  `<CASARS_DEVELOPMENT_WORKSPACE>/target/debug/<executable>`.
+
+A missing file is an error in the selected mode. Python does not inspect the
+current directory, package ancestors, neighboring build profiles, or `PATH`,
+and it never switches launch modes automatically.
 
 Before the first task execution for a resolved binary, the wrapper requires a matching protocol descriptor from `calibrate --protocol-info`.
 
