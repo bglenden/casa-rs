@@ -1050,6 +1050,25 @@ struct DisplaySettingsView: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if ProcessInfo.processInfo.environment["CASA_RS_UI_TESTING"] == "1" {
+            // XCTest snapshots the application menu bar even when a query is
+            // scoped to the workbench window. Expanding AppKit's generated
+            // Services menu enumerates unrelated application bundles and can
+            // raise a SystemPolicyAppBundles prompt on unattended workers.
+            // The product does not use Services during UI tests, so detach
+            // only that system-owned submenu while keeping the Apple menu.
+            let servicesMenu = NSApp.servicesMenu
+            NSApp.servicesMenu = nil
+            if let servicesMenu,
+               let servicesItem = NSApp.mainMenu?.items
+               .compactMap(\.submenu)
+               .flatMap(\.items)
+               .first(where: { $0.submenu === servicesMenu })
+            {
+                servicesItem.submenu = nil
+                servicesItem.isHidden = true
+            }
+        }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         WorkbenchFallbackWindowController.shared.scheduleStartupWindow(arguments: CommandLine.arguments)
