@@ -149,6 +149,26 @@ Use `Closes #N` only for issues that should auto-close on merge.
   use core tests, debug-state checks, and deterministic capture; accumulate
   interaction changes for prototype-handoff and pre-Review GUI gates. Use a
   focused XCUITest run only to diagnose a failure from the consolidated gate.
+- Native GUI testing is remote-first. When the configured logged-in Mac worker
+  is reachable, do not run Xcode/XCTest GUI gates on the development Mac; use
+  `just gui-test-remote` or
+  `just notebook-roundtrip-gui-remote`. Keep its checkout clean, select the
+  exact pushed revision, and configure its dedicated stable signing identity
+  once with `scripts/setup-gui-remote-signing.sh`. Ad-hoc signatures identify
+  each rebuilt app as new code and therefore repeat macOS privacy prompts. Keep
+  disposable GUI-test projects in the dedicated, unprotected
+  `~/.casa-rs-gui-tests/` directory selected by
+  `CASA_RS_GUI_TEST_PROJECT_BASE`, never under `~/Library` or inside another
+  app's container. Both locations trigger macOS app-data privacy prompts. The
+  XCUITest target's test-only file exception must stay limited to that test
+  directory and must not be copied to the Workbench product target. Keep
+  the checkout and Xcode DerivedData on internal storage, while placing the
+  large Cargo target, task executables, and retained artifacts on configured
+  external storage. A green remote run is the GUI gate; do not repeat it locally
+  solely for duplicate assurance. Run local foreground automation only when
+  the remote worker is unavailable or a remote failure specifically requires
+  local focused diagnosis; record that reason and announce the focus-taking
+  window before launch.
 - Before implementing behavior that exists in CASA/casacore C++, inspect the
   relevant upstream task/tool/library path first and preserve its semantics
   unless there is an explicit reason to diverge.

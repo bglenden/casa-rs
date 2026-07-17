@@ -91,6 +91,8 @@ struct ScientificNotebookView: View {
                         .padding(9)
                         .background(Color.purple.opacity(0.12), in: Circle())
                         .overlay(Circle().stroke(Color.purple.opacity(0.35)))
+                        .contentShape(Circle())
+                        .help("Open notebook chat")
                 }
                 .buttonStyle(.plain)
                 .help("Discuss this notebook with AI")
@@ -532,9 +534,11 @@ struct PrototypeNotebookTaskView: View {
                                           task.id == "receipt-imager-cancelled",
                                           parameter.parameterID == "robust"
                                 {
-                                    Label("AI-suggested non-default", systemImage: "sparkles")
+                                    Image(systemName: "sparkles")
                                         .workbenchFont(.caption2, weight: .semibold)
                                         .foregroundStyle(Color.purple)
+                                        .help("AI-suggested non-default parameter")
+                                        .accessibilityLabel("AI-suggested non-default parameter")
                                         .accessibilityIdentifier(
                                             "prototypeTask.parameterSource.\(parameter.parameterID)"
                                         )
@@ -672,6 +676,8 @@ struct RichMarkdownBlockEditor: View {
     let headingLevel: Int?
     let isInsertionSurface: Bool
     let accessibilityID: String
+    @State private var isEditing = false
+    @FocusState private var editorFocused: Bool
 
     var body: some View {
         if let headingLevel {
@@ -684,19 +690,45 @@ struct RichMarkdownBlockEditor: View {
             .fontWeight(.semibold)
             .accessibilityIdentifier(accessibilityID)
         } else {
-            ZStack(alignment: .topLeading) {
-                if source.isEmpty {
-                    Text(isInsertionSurface ? "Add notes here…" : "Continue writing notes…")
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 8)
+            if isEditing || source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ZStack(alignment: .topLeading) {
+                    if source.isEmpty {
+                        Text(isInsertionSurface ? "Add notes here…" : "Continue writing notes…")
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 8)
+                    }
+                    TextEditor(text: $source)
+                        .font(.system(size: 15))
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: editorHeight)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .focused($editorFocused)
+                        .accessibilityIdentifier(accessibilityID)
+                        .onAppear {
+                            guard isEditing else { return }
+                            DispatchQueue.main.async { editorFocused = true }
+                        }
                 }
-                TextEditor(text: $source)
+                .onChange(of: editorFocused) { focused in
+                    if !focused, !source.isEmpty { isEditing = false }
+                }
+            } else if let rendered = NotebookMarkdownPresentation.attributedString(source) {
+                Text(rendered)
                     .font(.system(size: 15))
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: editorHeight)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(Color(nsColor: .labelColor))
+                    .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        isEditing = true
+                    }
+                    .help("Click to edit this Markdown block")
                     .accessibilityIdentifier(accessibilityID)
+                    .accessibilityHint("Click to edit this Markdown block")
+            } else {
+                // Metadata-only fragments remain in the Markdown source but do
+                // not occupy visible space in Rich mode.
+                EmptyView()
             }
         }
     }

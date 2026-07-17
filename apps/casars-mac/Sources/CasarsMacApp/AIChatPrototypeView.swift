@@ -817,6 +817,7 @@ struct AIChatPrototypeView: View {
 }
 
 struct AIComposerEditor: NSViewRepresentable {
+    @Environment(\.workbenchFontSize) private var workbenchFontSize
     @Binding var text: String
     let accessibilityID: String
     let onSubmit: () -> Void
@@ -833,7 +834,7 @@ struct AIComposerEditor: NSViewRepresentable {
         textView.isEditable = true
         textView.isSelectable = true
         textView.drawsBackground = false
-        textView.font = .preferredFont(forTextStyle: .body)
+        textView.font = .systemFont(ofSize: CGFloat(workbenchFontSize))
         textView.textContainerInset = NSSize(width: 5, height: 6)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -861,6 +862,7 @@ struct AIComposerEditor: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? UserActivatedTextView else { return }
         textView.onSubmit = onSubmit
+        textView.font = .systemFont(ofSize: CGFloat(workbenchFontSize))
         if textView.string != text {
             textView.string = text
         }

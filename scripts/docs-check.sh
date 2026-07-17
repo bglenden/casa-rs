@@ -35,6 +35,7 @@ for spec in "${required_headers[@]}"; do
 done
 
 python3 scripts/check-tutorial-pack-contract.py
+python3 scripts/check-assistant-corpus-inventory.py
 python3 scripts/generate-parameter-reference.py --check
 python3 scripts/generate-python-parameter-wrappers.py --check
 

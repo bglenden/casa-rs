@@ -359,6 +359,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "casa-rs Workbench";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.science";
+				INFOPLIST_KEY_NSRemovableVolumesUsageDescription = "casa-rs accesses scientific datasets and task tools stored on external volumes.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -385,6 +386,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "casa-rs Workbench";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.science";
+				INFOPLIST_KEY_NSRemovableVolumesUsageDescription = "casa-rs accesses scientific datasets and task tools stored on external volumes.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -400,6 +402,7 @@
 		0000000000000000000000A4 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = UITests/CasarsMacUITests.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -419,6 +422,7 @@
 		0000000000000000000000A5 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = UITests/CasarsMacUITests.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				GENERATE_INFOPLIST_FILE = YES;

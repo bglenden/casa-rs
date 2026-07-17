@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-07-13
+Last reality check: 2026-07-15
 Verification: just verify
 
 ## Test categories
@@ -38,6 +38,12 @@ Verification: just verify
   must not select them implicitly.
 - Heavy parity suites stay behind explicit opt-in gates such as `scripts/test-slow.sh`.
 - Release-only Cargo integration suites should stay out of the default compile path via explicit `[[test]]` entries and `required-features`, not only file-local `cfg` guards.
+- Standard workspace gates set `RUST_TEST_THREADS=1`. The imager progress
+  observer is process-global so that worker threads contribute to one run; a
+  parallel libtest harness can otherwise attach unrelated imaging work to an
+  active progress-test context and poison the shared test lock after the first
+  assertion failure. This serializes test cases, not the worker concurrency
+  exercised inside an imaging run.
 
 ## Mocking policy
 
@@ -101,6 +107,91 @@ debug-state assertions, and deterministic capture; batch user-visible
 interaction changes and run the GUI suite at coherent prototype-handoff and
 pre-Review checkpoints. Use isolated focused XCUITest runs only to diagnose a
 failure found by a consolidated run, not as the normal edit loop.
+The deterministic assistant journey includes logout, the signed-out composer,
+and fixture reauthorization before continuing normal chat; real credentials are
+never required by `just gui-test`.
+
+For unattended development, `just gui-test-remote` runs the same gate on a
+dedicated, logged-in macOS worker and leaves Xcode, Cargo, and result artifacts
+on that worker. Set `CASA_RS_GUI_TEST_REMOTE=user@host`; optionally set an SSH
+identity, checkout, storage root, Xcode developer directory, or Python with the
+`CASA_RS_GUI_TEST_REMOTE_*` variables listed by
+`scripts/test-gui-remote.sh --help`. The local checkout must be clean and its
+HEAD must be the pushed tip of the same-named origin branch. The runner refuses
+an uninitialized Xcode installation or a dirty remote checkout, switches the
+dedicated checkout to the exact requested commit, stores build state outside
+the checkout (with an ignored `target` link for the Xcode project's existing
+linker contract), reuses incremental Xcode build state, and reports the remote
+artifact path. By default the checkout and Xcode DerivedData live on the
+worker's internal disk so regenerated app bundles do not repeatedly request
+removable-volume access; the large Cargo target and retained artifacts remain
+on configured external storage. Use the remote worker as
+the normal exclusive GUI surface when available; a current green local or
+remote run satisfies the single GUI gate. The worker needs full initialized
+Xcode, Developer Tools mode, SSH access, and a real logged-in console session;
+automatic login is a worker-provisioning choice rather than a repository
+requirement. The console must be unlocked when the gate starts. The runner
+holds a test-scoped `caffeinate` assertion while it owns the GUI window; it does
+not permanently disable the worker's normal screen-lock policy. For setup or
+failure diagnosis only,
+`CASA_RS_GUI_TEST_REMOTE_ONLY=TestTarget/TestClass/testMethod` selects a focused
+test without changing the normal consolidated-gate policy.
+
+`just assistant-live-gui` is the opt-in real-account acceptance exception. It
+uses the installed Codex CLI's existing ChatGPT subscription, an isolated
+temporary project, and the user-selected Python; API-key environment variables
+are removed before launch. It verifies a real exact-identity CASA MCP call,
+in-flight cancellation, durable transcript state, full app restart, and either
+same-backend-session resume or an honest visible handoff followed by a fresh
+backend turn. The command is agent-pre-runnable, retains
+`apps/casars-mac/.gui-test/AssistantLiveGUI.xcresult`, and is not part of CI or
+the deterministic `just gui-test` contract. On failure it retains and
+production-decodes the disposable transcript for diagnosis. The local
+foreground harness hides and later restores Codex during the exclusive test
+window.
+
+`just notebook-roundtrip-gui` is the broader opt-in production-science
+acceptance for issue #417. It uses the existing ChatGPT subscription, the
+repository's real `simobserve` and MeasurementSet plot helpers, and the
+user/system Python selected by `scripts/resolve-python.sh` (override with
+`CASA_RS_GUI_TEST_PYTHON`). It removes metered API variables, builds every
+helper before taking the exclusive foreground window, and drives a disposable
+project through cited agent retrieval, a canonical typed task suggestion, real
+task execution, one intentional Python failure and retry, two Python plot
+revisions, two explorer-plot revisions, and two full application restarts. A
+successful run removes the disposable project and retains the `.xcresult` plus
+the sanitized `NotebookRoundTripGUI.report.json` under
+`apps/casars-mac/.gui-test/`. A failed run retains the project for focused
+diagnosis. Disposable live projects default to `~/.casa-rs-gui-tests/`
+(override the parent with `CASA_RS_GUI_TEST_PROJECT_BASE`); they must not live
+under `~/Library` or inside the XCTest runner's app container, either of which
+would create an unrelated macOS cross-app-data privacy prompt. The sandboxed
+UI-test runner has a test-only, home-relative read/write exception limited to
+that test directory; the Workbench product target does not receive it. This
+live acceptance is not part of CI or `just gui-test`.
+
+`just notebook-roundtrip-gui-remote` runs that opt-in live acceptance on the
+same remote worker. It additionally requires the worker's Codex CLI to be
+logged into an approved ChatGPT subscription and its selected Python to provide
+NumPy and Matplotlib. On success the full artifacts remain on the worker's
+configured storage and the sanitized JSON report is copied into
+`apps/casars-mac/.gui-test/remote/` locally.
+
+Run `scripts/setup-gui-remote-signing.sh` once while logged in to a dedicated
+worker before its first remote GUI gate. The setup creates a self-signed
+development identity in a dedicated keychain, stores that keychain's random
+password in `~/.config/casa-rs/gui-worker-signing.env` with mode `0600`, and
+does not use or retain the user's login password. Run the one-time setup from
+Terminal in the worker's logged-in desktop session, including when operating
+the worker through Screen Sharing; macOS refuses trust-setting changes from an
+SSH session because it cannot present SecurityAgent authorization. The public
+development certificate is trusted only for that user, not installed as a
+system-wide root. Remote gates require this configuration, unlock only the
+dedicated keychain, and reject a rebuilt app if its designated requirement is
+tied to a one-build ad-hoc `cdhash`. This lets macOS retain a one-time
+removable-volume decision while the large Cargo target, task executables, and
+test artifacts stay on external storage. Override the config location with
+`CASA_RS_GUI_TEST_REMOTE_SIGNING_CONFIG`.
 
 ## Coverage / confidence policy
 
@@ -123,8 +214,18 @@ The executable GUI layer follows these rules:
 
 - Launch deterministic fixture states with `XCUIApplication.launchArguments`.
   Production-boundary persistence tests may create and remove a unique
-  test-owned temporary project; never open user projects, contact providers or
-  networks, run scientific tasks, or leave project/notebook data behind.
+  test-owned project under `~/.casa-rs-gui-tests/` (or
+  `CASA_RS_GUI_TEST_PROJECT_BASE`); they must not put a project under
+  `~/Library` or inside the XCTest runner's protected application container
+  because those locations trigger a cross-app-data privacy prompt in the
+  Workbench. The test helper resolves the
+  default from the POSIX account home rather than Foundation's sandbox-adjusted
+  `homeDirectoryForCurrentUser`. Never open user projects,
+  contact providers or networks, run scientific tasks, or leave
+  project/notebook data behind. The
+  separately invoked `just assistant-live-gui` acceptance may contact the
+  subscribed provider only under its explicit opt-in environment gate and
+  still uses and removes a unique temporary project.
 - Select normal controls through stable accessibility identifiers. Coordinate-
   only automation is not an acceptable default path.
 - Cover the smallest critical set of complete user workflows: editing and
@@ -263,7 +364,48 @@ For each wave:
   Codex smoke is explicit, uses the user's existing ChatGPT subscription, and
   never requires or accepts a metered API key. Per the project verification
   policy, one current local or hosted GUI result is sufficient and duplicate
-  runs are not required without an intervening relevant change.
+  assurance is not required.
+- Wave 5 project-corpus maintenance tests prove that a no-change refresh reads
+  metadata but performs zero content reads, PDF extractions, and OCR calls;
+  preserved-mtime atomic replacement is still detected; schema-v2 multi-page
+  citations migrate without stale pages; and extraction failures retain the
+  previous usable index. Native Swift tests exercise startup reconciliation,
+  automatic edit refresh, recursive watcher recovery when `documents/` appears,
+  and debounce/coalescing for bursty filesystem events. Rust contract tests
+  cover add, edit, rename, delete, unrelated-document preservation, and retry
+  behavior. Corpus watcher tests are headless core tests and do not take GUI
+  focus.
+- Wave 5 standard-corpus tests load the committed pack without an Oracle
+  checkout or network access, verify all 2,314 external pages/slides plus the
+  primer, reject a tampered content digest, retrieve a visually checked 2026
+  slide with its exact citation, and prove a baseline-version replacement
+  preserves project documents and assistant conversations. The docs check
+  validates all 55 inventory decisions, the 28 selected bundle files and
+  digests, the 2,314 page/slide count, and the recorded authoritative-origin
+  audit.
+- Wave 5 production round-trip acceptance runs only through the explicit
+  `just notebook-roundtrip-gui` opt-in. It proves a cited live response is
+  appended exactly once, a typed `simobserve` suggestion decorates only the
+  proposed non-defaults, a real synthetic MeasurementSet and receipt-v2 record
+  survive reload, the selected Python identity and exact source hashes survive
+  one failed and two successful immutable revisions, and a changed
+  MeasurementSet plot retains two assets plus reopen provenance. It terminates
+  and relaunches production `casars-mac` twice, reopens the latest plot directly
+  in the Plot explorer surface, and verifies that opening recorded task
+  parameters does not rerun the task. Focused core tests retain the managed rich
+  output cell and explorer-reopen regressions without requiring a provider or
+  foreground window.
+- Wave 5 full-tutorial acceptance runs only through the explicit
+  `just tutorial-journey-gui` opt-in, or
+  `just tutorial-journey-gui-remote` on the configured GUI worker. It downloads
+  and digest-verifies the real TW Hya calibrated MeasurementSet after exact
+  approval, stores an explorer plot, runs the tutorial imager task, regenerates
+  a Matplotlib result, obtains cited live baseline and current-source answers,
+  approves one agent-requested calculation, appends that answer once, and then
+  proves all state and parameter replay after a full app restart. The harness
+  removes its disposable project only after writing a sanitized report; the
+  `.xcresult` and report remain on the authoritative worker. This live
+  acceptance is not part of CI or the deterministic `just gui-test` contract.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review

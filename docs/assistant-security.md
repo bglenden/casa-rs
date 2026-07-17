@@ -1,7 +1,7 @@
 # Assistant Agent Runtime, Authority, and Corpus
 
 Truth class: current descriptive
-Last reality check: 2026-07-13
+Last reality check: 2026-07-15
 Verification: just docs-check
 Architecture decision: [ADR-0007](adr/0007-scientific-notebooks-and-assistant-boundary.md)
 
@@ -37,7 +37,9 @@ billing or provider picker. Model and reasoning effort remain immediately
 selectable, and compact remaining-usage state stays visible with detailed
 rate-limit windows and reset times available on demand. Agent/account,
 authority, and Python configuration are consolidated behind one secondary
-settings surface.
+settings surface. That surface delegates both sign-in and logout to App Server;
+CASA-RS only updates visible account state after the logout response and never
+handles the credential itself.
 
 ## CASA agent profile and capability contract
 
@@ -217,4 +219,8 @@ smoke using a user's existing ChatGPT subscription. Acceptance covers:
 - fixture-only GUI review state proving zero production boundary calls
 
 `just gui-test` remains the native interaction gate. Live account/model tests
-are opt-in and never require a metered API key.
+are opt-in and never require a metered API key. `just assistant-live-gui`
+preflights the installed Codex CLI subscription and selected Python, then uses
+a disposable project to verify exact CASA MCP activity, cancellation, app
+restart, and either same-session resume or a visible handoff before a fresh
+backend continues; it is never a default CI gate.

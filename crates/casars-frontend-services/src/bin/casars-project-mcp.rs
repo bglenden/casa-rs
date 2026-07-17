@@ -13,7 +13,8 @@ use std::{
 };
 
 use casars_frontend_services::{
-    assistant_corpus_search_json, parameter_surface_catalog_json, task_ui_schema_json,
+    assistant_corpus_search_json, parameter_resolve_json, parameter_surface_bundle_json,
+    parameter_surface_catalog_json, task_ui_schema_json,
 };
 use serde_json::{Value, json};
 
@@ -115,7 +116,7 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "task.schema",
-            "Read the canonical CASA task UI schema and parameters for one task.",
+            "Read the canonical CASA task UI schema, parameter types, and mode-dependent activity and requirement predicates for one task.",
             json!({"task_id": {"type": "string"}}),
             &["task_id"],
         ),
@@ -127,7 +128,7 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "task.suggest",
-            "Return a typed, non-mutating task recommendation that CASA-RS will show as an explicit Open task action. Use this instead of encoding task parameters only in prose.",
+            "Validate and return a complete, non-mutating task recommendation that CASA-RS will show as an explicit Open task action. Call task.schema first. Every supplied parameter must be active for the resolved mode and every active required parameter must be supplied. Use this instead of encoding task parameters only in prose.",
             json!({
                 "task_id": {"type": "string"},
                 "parameters": {
@@ -224,7 +225,7 @@ fn call_tool(project_root: &Path, nonce: &str, request: &Value) -> Result<Value,
                 .get("task_id")
                 .and_then(Value::as_str)
                 .ok_or_else(|| (-32602, "task.schema requires task_id".to_owned()))?;
-            task_ui_schema_json(task_id.to_owned()).map_err(frontend_error)?
+            task_schema_for_agent(task_id)?
         }
         "task.catalog" => {
             compact_task_catalog(&parameter_surface_catalog_json().map_err(frontend_error)?)?
@@ -234,7 +235,7 @@ fn call_tool(project_root: &Path, nonce: &str, request: &Value) -> Result<Value,
                 .get("task_id")
                 .and_then(Value::as_str)
                 .ok_or_else(|| (-32602, "task.suggest requires task_id".to_owned()))?;
-            let schema_json = task_ui_schema_json(task_id.to_owned()).map_err(frontend_error)?;
+            let schema_json = task_schema_for_agent(task_id)?;
             let schema: Value = serde_json::from_str(&schema_json)
                 .map_err(|error| (-32003, format!("parse task schema: {error}")))?;
             let parameters = arguments
@@ -268,6 +269,7 @@ fn call_tool(project_root: &Path, nonce: &str, request: &Value) -> Result<Value,
                     ),
                 ));
             }
+            validate_task_suggestion(task_id, &schema, parameters)?;
             json!({
                 "kind": "task_suggestion",
                 "task_id": task_id,
@@ -278,6 +280,232 @@ fn call_tool(project_root: &Path, nonce: &str, request: &Value) -> Result<Value,
         _ => return Err((-32602, format!("unknown CASA project tool {name}"))),
     };
     Ok(json!({"content": [{"type": "text", "text": output}]}))
+}
+
+fn task_schema_for_agent(task_id: &str) -> Result<String, (i64, String)> {
+    let mut schema: Value =
+        serde_json::from_str(&task_ui_schema_json(task_id.to_owned()).map_err(frontend_error)?)
+            .map_err(|error| (-32003, format!("parse task schema: {error}")))?;
+    let bundle: Value = serde_json::from_str(
+        &parameter_surface_bundle_json(task_id.to_owned()).map_err(frontend_error)?,
+    )
+    .map_err(|error| (-32003, format!("parse task bundle: {error}")))?;
+    let concepts = bundle["catalog"]["concepts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|concept| {
+            Some((
+                (
+                    concept.get("id")?.as_str()?.to_owned(),
+                    concept.get("semantic_revision")?.as_u64()?,
+                ),
+                concept.get("value_domain")?.clone(),
+            ))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let predicates = bundle["surface"]
+        .get("bindings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|binding| {
+            Some((
+                binding.get("name")?.as_str()?.to_owned(),
+                (
+                    binding.get("active_when")?.clone(),
+                    binding.get("required_when")?.clone(),
+                    concepts
+                        .get(&(
+                            binding.get("concept")?.get("id")?.as_str()?.to_owned(),
+                            binding.get("concept")?.get("semantic_revision")?.as_u64()?,
+                        ))?
+                        .clone(),
+                ),
+            ))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for argument in schema
+        .get_mut("arguments")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        let Some(id) = argument.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some((active_when, required_when, value_domain)) = predicates.get(id) {
+            argument["active_when"] = active_when.clone();
+            argument["required_when"] = required_when.clone();
+            argument["value_domain"] = value_domain.clone();
+        }
+    }
+    serde_json::to_string(&schema)
+        .map_err(|error| (-32003, format!("serialize task schema: {error}")))
+}
+
+fn validate_task_suggestion(
+    task_id: &str,
+    schema: &Value,
+    parameters: &serde_json::Map<String, Value>,
+) -> Result<(), (i64, String)> {
+    let arguments = schema
+        .get("arguments")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|argument| Some((argument.get("id")?.as_str()?.to_owned(), argument)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut values = serde_json::Map::new();
+    for (name, value) in parameters {
+        let text = value.as_str().expect("string parameters checked by caller");
+        let argument = arguments
+            .get(name)
+            .ok_or_else(|| (-32602, format!("unknown {task_id} parameter {name}")))?;
+        let typed = text_parameter_value(
+            task_id,
+            name,
+            argument.get("value_domain").ok_or_else(|| {
+                (
+                    -32003,
+                    format!("task schema omits the value domain for {name}"),
+                )
+            })?,
+            text,
+        )?;
+        values.insert(name.clone(), typed);
+    }
+    let empty_patch = json!({"values": {}, "unset": []}).to_string();
+    let override_patch = json!({"values": values, "unset": []}).to_string();
+    let snapshot: Value = serde_json::from_str(
+        &parameter_resolve_json(
+            task_id.to_owned(),
+            "defaults".to_owned(),
+            None,
+            None,
+            empty_patch,
+            override_patch,
+        )
+        .map_err(|error| {
+            (
+                -32602,
+                format!(
+                    "task.suggest parameters do not form a runnable {task_id} request: {error}"
+                ),
+            )
+        })?,
+    )
+    .map_err(|error| (-32003, format!("parse resolved task suggestion: {error}")))?;
+    let errors = snapshot
+        .get("diagnostics")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|diagnostic| diagnostic.get("level").and_then(Value::as_str) == Some("error"))
+        .filter_map(|diagnostic| diagnostic.get("message").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err((
+            -32602,
+            format!(
+                "task.suggest parameters do not form a runnable {task_id} request: {}",
+                errors.join("; ")
+            ),
+        ))
+    }
+}
+
+fn text_parameter_value(
+    task_id: &str,
+    name: &str,
+    domain: &Value,
+    text: &str,
+) -> Result<Value, (i64, String)> {
+    let kind = domain
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("string");
+    match kind {
+        "bool" => Ok(json!({
+            "kind": "bool",
+            "value": match text.to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => true,
+                "false" | "0" | "no" | "off" => false,
+                _ => return Err((-32602, format!("{task_id}.{name} requires a boolean value"))),
+            }
+        })),
+        "integer" => Ok(json!({
+            "kind": "integer",
+            "value": text.parse::<i64>().map_err(|_| {
+                (-32602, format!("{task_id}.{name} requires an integer value"))
+            })?
+        })),
+        "float" => Ok(json!({
+            "kind": "float",
+            "value": text.parse::<f64>().map_err(|_| {
+                (-32602, format!("{task_id}.{name} requires a numeric value"))
+            })?
+        })),
+        "optional" => {
+            if domain["states"]
+                .as_array()
+                .is_some_and(|states| states.iter().any(|state| state.as_str() == Some(text)))
+            {
+                Ok(json!({"kind": "string", "value": text}))
+            } else {
+                text_parameter_value(task_id, name, &domain["value"], text)
+            }
+        }
+        "array" => {
+            let body = text
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .unwrap_or(text);
+            let parts = body.split(',').map(str::trim).collect::<Vec<_>>();
+            if domain["allow_scalar"].as_bool() == Some(true) && parts.len() == 1 {
+                return text_parameter_value(task_id, name, &domain["element"], parts[0]);
+            }
+            Ok(json!({
+                "kind": "array",
+                "value": parts
+                    .into_iter()
+                    .map(|part| text_parameter_value(task_id, name, &domain["element"], part))
+                    .collect::<Result<Vec<_>, _>>()?
+            }))
+        }
+        "table" => {
+            let object: serde_json::Map<String, Value> =
+                serde_json::from_str(text).map_err(|_| {
+                    (
+                        -32602,
+                        format!("{task_id}.{name} requires a JSON object value"),
+                    )
+                })?;
+            let fields = domain["fields"].as_object().ok_or_else(|| {
+                (
+                    -32003,
+                    format!("task schema has an invalid table domain for {name}"),
+                )
+            })?;
+            let mut values = serde_json::Map::new();
+            for (field, field_domain) in fields {
+                let value = object.get(field).and_then(Value::as_str).ok_or_else(|| {
+                    (
+                        -32602,
+                        format!("{task_id}.{name}.{field} requires a string-encoded value"),
+                    )
+                })?;
+                values.insert(
+                    field.clone(),
+                    text_parameter_value(task_id, &format!("{name}.{field}"), field_domain, value)?,
+                );
+            }
+            Ok(json!({"kind": "table", "value": values}))
+        }
+        _ => Ok(json!({"kind": "string", "value": text})),
+    }
 }
 
 fn source_hits_only(output: &str, limit: usize) -> Result<String, (i64, String)> {
@@ -388,6 +616,98 @@ mod tests {
     }
 
     #[test]
+    fn exact_nonce_tools_retrieve_scientific_and_source_citations() {
+        let project = tempfile::tempdir().expect("project");
+        let project_root = project.path().canonicalize().expect("canonical project");
+        casars_frontend_services::assistant_corpus_index_json(
+            json!({
+                "project_root": project_root,
+                "documents": [
+                    {
+                        "id": "baseline:primer",
+                        "layer": "baseline",
+                        "title": "Radio primer",
+                        "source_identity": "baseline/primer.md",
+                        "content": "Briggs weighting trades sensitivity against angular resolution.",
+                        "citation": {
+                            "label": "Radio primer",
+                            "locator": "baseline/primer.md, Imaging",
+                            "source_path": "baseline/primer.md",
+                            "section": "Imaging",
+                            "release": "1.0.0"
+                        },
+                        "redistribution_cleared": true
+                    },
+                    {
+                        "id": "source:corpus",
+                        "layer": "live_source",
+                        "title": "corpus.rs",
+                        "source_identity": "crates/casa-notebook/src/corpus.rs@abc123",
+                        "content": "pub const CORPUS_SCHEMA_VERSION: u32 = 2;",
+                        "citation": {
+                            "label": "corpus.rs",
+                            "locator": "crates/casa-notebook/src/corpus.rs",
+                            "source_path": "crates/casa-notebook/src/corpus.rs",
+                            "commit": "abc123"
+                        },
+                        "redistribution_cleared": true
+                    }
+                ],
+                "remove_missing_layers": ["baseline", "live_source"]
+            })
+            .to_string(),
+        )
+        .expect("index corpus");
+        let nonce = "abcdefghijklmnopqrstuvwx";
+
+        let corpus_response = handle(
+            &project_root,
+            nonce,
+            &json!({
+                "jsonrpc": "2.0", "id": 11, "method": "tools/call",
+                "params": {"name": "corpus.search", "arguments": {
+                    "nonce": nonce, "query": "Briggs sensitivity resolution"
+                }}
+            }),
+        )
+        .expect("corpus response");
+        let corpus_hits: Vec<Value> = serde_json::from_str(
+            corpus_response["result"]["content"][0]["text"]
+                .as_str()
+                .expect("corpus text"),
+        )
+        .expect("corpus hits");
+        assert_eq!(corpus_hits[0]["layer"], "baseline");
+        assert_eq!(corpus_hits[0]["citation"]["section"], "Imaging");
+
+        let source_response = handle(
+            &project_root,
+            nonce,
+            &json!({
+                "jsonrpc": "2.0", "id": 12, "method": "tools/call",
+                "params": {"name": "source.search", "arguments": {
+                    "nonce": nonce, "query": "CORPUS_SCHEMA_VERSION"
+                }}
+            }),
+        )
+        .expect("source response");
+        let source_hits: Vec<Value> = serde_json::from_str(
+            source_response["result"]["content"][0]["text"]
+                .as_str()
+                .expect("source text"),
+        )
+        .expect("source hits");
+        assert_eq!(source_hits.len(), 1);
+        assert_eq!(source_hits[0]["layer"], "live_source");
+        assert_eq!(source_hits[0]["citation"]["commit"], "abc123");
+        assert_eq!(source_hits[0]["citation"]["line_start"], 1);
+        assert_eq!(
+            source_hits[0]["citation"]["source_path"],
+            "crates/casa-notebook/src/corpus.rs"
+        );
+    }
+
+    #[test]
     fn task_catalog_is_a_compact_discovery_surface() {
         let compact = compact_task_catalog(
             &json!({
@@ -426,6 +746,73 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("not_a_parameter")
+        );
+    }
+
+    #[test]
+    fn task_schema_exposes_mode_predicates_to_the_agent() {
+        let schema: Value = serde_json::from_str(&task_schema_for_agent("simobserve").unwrap())
+            .expect("agent task schema");
+        let arguments = schema["arguments"].as_array().expect("arguments");
+        let output_ms = arguments
+            .iter()
+            .find(|argument| argument["id"] == "output_ms")
+            .expect("output_ms");
+        assert_eq!(output_ms["active_when"]["kind"], "equals");
+        assert_eq!(output_ms["active_when"]["parameter"], "request_kind");
+        assert_eq!(output_ms["active_when"]["value"]["value"], "family");
+        let array_config = arguments
+            .iter()
+            .find(|argument| argument["id"] == "array_config")
+            .expect("array_config");
+        assert!(array_config["value_domain"].is_object(), "{array_config}");
+    }
+
+    #[test]
+    fn task_suggestions_validate_the_complete_resolved_mode() {
+        let project = tempfile::tempdir().expect("project");
+        let request = |parameters: Value| {
+            json!({
+                "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+                "params": {"name": "task.suggest", "arguments": {
+                    "nonce": "abcdefghijklmnopqrstuvwx",
+                    "task_id": "simobserve",
+                    "parameters": parameters
+                }}
+            })
+        };
+
+        let accepted = handle(
+            project.path(),
+            "abcdefghijklmnopqrstuvwx",
+            &request(json!({
+                "request_kind": "family",
+                "telescope": "ALMA",
+                "array_config": "alma.cycle10.5.cfg",
+                "band": "Band 6",
+                "pointing_count": "4",
+                "output_ms": "products/alma-mosaic.ms"
+            })),
+        )
+        .unwrap();
+        assert!(accepted.get("result").is_some(), "{accepted}");
+
+        let rejected = handle(
+            project.path(),
+            "abcdefghijklmnopqrstuvwx",
+            &request(json!({
+                "request_kind": "family",
+                "telescope": "ALMA",
+                "polarization_basis": "linear"
+            })),
+        )
+        .unwrap();
+        assert_eq!(rejected["error"]["code"], -32602);
+        assert!(
+            rejected["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("polarization_basis")
         );
     }
 }

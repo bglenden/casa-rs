@@ -3958,6 +3958,16 @@ public func assistantLoadConversationJson(requestJson: String)throws  -> String 
 })
 }
 /**
+ * Plan project-document extraction using metadata only.
+ */
+public func assistantProjectCorpusPlanJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_assistant_project_corpus_plan_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
+/**
  * Describe the versioned agent-neutral persistence and project-MCP boundary.
  */
 public func assistantProtocolInfoJson()throws  -> String  {
@@ -4478,6 +4488,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_assistant_load_conversation_json() != 65080) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_assistant_project_corpus_plan_json() != 2429) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_assistant_protocol_info_json() != 59469) {

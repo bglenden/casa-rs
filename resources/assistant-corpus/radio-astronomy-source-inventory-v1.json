@@ -1,0 +1,2998 @@
+{
+  "schema_version": 1,
+  "id": "casa-rs-standard-radio-astronomy",
+  "version": "2026.07.1",
+  "source_inventory": {
+    "origin": "RadioAstronomyOracle registry export",
+    "registry_sha256": "57ca4241b5ea15f826cc553b50b0d83c9d501990359be6f8e037c91fbbe598d5",
+    "counts": {
+      "sources": 55,
+      "pages_or_slides": 4892,
+      "books": 2,
+      "nrao_synthesis_2024": 26,
+      "nrao_synthesis_2026": 27
+    }
+  },
+  "retrieval_precedence": {
+    "current_practice": [
+      "nrao-synthesis-2026",
+      "nrao-synthesis-2024",
+      "books"
+    ],
+    "theory_and_derivations": [
+      "books",
+      "nrao-synthesis-2026",
+      "nrao-synthesis-2024"
+    ]
+  },
+  "policy": {
+    "public_availability_is_not_redistribution_permission": true,
+    "shared_install_only": true,
+    "project_document_copying": false,
+    "full_corpus_enabled_by_default": true,
+    "selection": "2026 workshop plus open Springer book; 2024 retained as superseded inventory"
+  },
+  "sources": [
+    {
+      "id": "books:interferometry-and-synthesis-in-radio-astronomy",
+      "oracle_source_id": "interferometry-and-synthesis-in-radio-astronomy-855e570763d3",
+      "title": "Interferometry and Synthesis in Radio Astronomy",
+      "source_class": "book",
+      "collection_id": "books",
+      "year": null,
+      "contributors": [
+        "A. Richard Thompson",
+        "James M. Moran",
+        "George W. Swenson Jr."
+      ],
+      "topic_tags": [],
+      "authority_level": "foundation",
+      "specificity_scope": "broad",
+      "filename": "Interferometry and Synthesis in Radio Astronomy.pdf",
+      "page_or_slide_count": 910,
+      "source_size_bytes": 19792413,
+      "oracle_working_copy_sha256": "855e570763d36b1422e81a0b5da6b3aee976a604dcc7234581a33d1792773aba",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "3750ad7e3889f416c06e9c8c6a33096f6bcacf9bc2454532e0e911e6ccfa208f",
+      "origin_url": "https://link.springer.com/book/10.1007/978-3-319-44431-4",
+      "download_url": "https://link.springer.com/content/pdf/10.1007/978-3-319-44431-4.pdf",
+      "citation": {
+        "label": "Interferometry and Synthesis in Radio Astronomy.pdf",
+        "locator_kind": "book_page"
+      },
+      "license": {
+        "id": "CC-BY-NC-4.0",
+        "name": "Creative Commons Attribution-NonCommercial 4.0 International",
+        "url": "https://creativecommons.org/licenses/by-nc/4.0/",
+        "evidence": "Publisher PDF copyright page and Springer book record"
+      },
+      "acquisition": {
+        "method": "authoritative_download_with_license_acknowledgement",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Bundled under the publisher-recorded CC BY-NC 4.0 license."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/interferometry-and-synthesis-in-radio-astronomy-855e570763d3.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "54584f86a00104a73731a98e2f1ca35d409c2c8c0f7bd0174799a22b4ca8ad2f"
+      }
+    },
+    {
+      "id": "books:synthesis-imaging-ii-1998",
+      "oracle_source_id": "synthesis-imaging-ii-1998-f739aa16ac0a",
+      "title": "Synthesis-Imaging-II-1998",
+      "source_class": "book",
+      "collection_id": "books",
+      "year": null,
+      "contributors": [],
+      "topic_tags": [],
+      "authority_level": "foundation",
+      "specificity_scope": "broad",
+      "filename": "Synthesis-Imaging-II-1998.pdf",
+      "page_or_slide_count": 729,
+      "source_size_bytes": 33313817,
+      "oracle_working_copy_sha256": "f739aa16ac0a68d22f9b6457bfc6e8edd5dd6e8708dda0f5e04e797b7ec82744",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "e81a397f36f7f886fa7f5399209612b722da5c590dcd3140955592839c031267",
+      "origin_url": "https://www.aspbooks.org/a/volumes/table_of_contents/?book_id=292",
+      "download_url": null,
+      "citation": {
+        "label": "Synthesis-Imaging-II-1998.pdf",
+        "locator_kind": "book_page"
+      },
+      "license": {
+        "id": "LicenseRef-ASP-Paid-eAccess",
+        "name": "Astronomical Society of the Pacific paid electronic access",
+        "url": "https://www.aspbooks.org/a/volumes/table_of_contents/?book_id=292",
+        "evidence": "Publisher volume page offers paid volume/article electronic access and no open redistribution license."
+      },
+      "acquisition": {
+        "method": "user_supplied_licensed_copy",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "No lawful unattended public acquisition or redistribution basis was found; users may add a licensed copy as a project document."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "No redistribution permission recorded."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:alma-manual-tutorial-siss2024",
+      "oracle_source_id": "alma-manual-tutorial-siss2024-0468e3b311fc",
+      "title": "ALMA Manual Tutorial",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "ALMA Team"
+      ],
+      "topic_tags": [
+        "alma",
+        "manual",
+        "workflow"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "ALMA-Manual-tutorial-SISS2024.pdf",
+      "page_or_slide_count": 169,
+      "source_size_bytes": 12896451,
+      "oracle_working_copy_sha256": "0468e3b311fc73f5a7f52112b72cadecd6247423c2122fa245027fbdcb783b69",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "8c76432478f24a845c1f57ca4fff8f6b1c1f6dceaf9c89638dad8ad3476c6cc4",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/ALMA-Manual-tutorial-SISS2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/ALMA-Manual-tutorial-SISS2024.pdf",
+      "citation": {
+        "label": "ALMA-Manual-tutorial-SISS2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:alma-pipeline-tutorial-siss2024",
+      "oracle_source_id": "alma-pipeline-tutorial-siss2024-98032b71b747",
+      "title": "ALMA Pipeline Imaging",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "ALMA Team"
+      ],
+      "topic_tags": [
+        "alma",
+        "pipeline",
+        "imaging"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "ALMA-Pipeline-tutorial-SISS2024.pdf",
+      "page_or_slide_count": 98,
+      "source_size_bytes": 16220983,
+      "oracle_working_copy_sha256": "98032b71b74796d2604a76d81f9cea393095d66d4b71fe37a0a747ffa3a7cb53",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "a8b09be3e9ec90a43a71ec3ca4e38cd7b6308f13bfdedaaabf277526ebea9cda",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/ALMA-Pipeline-tutorial-SISS2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/ALMA-Pipeline-tutorial-SISS2024.pdf",
+      "citation": {
+        "label": "ALMA-Pipeline-tutorial-SISS2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:blanchard-antennasreceivers2024",
+      "oracle_source_id": "blanchard-antennasreceivers2024-2e5159976e1b",
+      "title": "Antennas and Receivers",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Blanchard"
+      ],
+      "topic_tags": [
+        "antennas",
+        "receivers",
+        "fundamentals"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Blanchard-AntennasReceivers2024.pdf",
+      "page_or_slide_count": 36,
+      "source_size_bytes": 2649821,
+      "oracle_working_copy_sha256": "2e5159976e1b170ac9d2798612dbde6991ffff264f3e1c148c80c2b1ac11b4d4",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "e7cc55f40dda2b3680f45619a12f40dd4001d24ae84159e66c47c937e4a03d26",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Blanchard-AntennasReceivers2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Blanchard-AntennasReceivers2024.pdf",
+      "citation": {
+        "label": "Blanchard-AntennasReceivers2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:brentjens-polarimetry2024",
+      "oracle_source_id": "brentjens-polarimetry2024-d14c880cd671",
+      "title": "Polarimetry",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Brentjens"
+      ],
+      "topic_tags": [
+        "polarimetry",
+        "stokes",
+        "calibration"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Brentjens-Polarimetry2024.pdf",
+      "page_or_slide_count": 208,
+      "source_size_bytes": 62238861,
+      "oracle_working_copy_sha256": "d14c880cd671cdc0d9c3876ea0ed27f4b0ded0d7490b97f04dbfe0a7d28cd605",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "fcdf8e12439449a3185e3638803e7609d575626c866f447bba9e971b0d98c47d",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Brentjens-Polarimetry2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Brentjens-Polarimetry2024.pdf",
+      "citation": {
+        "label": "Brentjens-Polarimetry2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:butler-solarsystemb2024",
+      "oracle_source_id": "butler-solarsystemb2024-29c278262254",
+      "title": "Solar System Observations",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Butler"
+      ],
+      "topic_tags": [
+        "solar-system",
+        "high-frequency",
+        "specialized"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Butler-solarsystemb2024.pdf",
+      "page_or_slide_count": 58,
+      "source_size_bytes": 2685225,
+      "oracle_working_copy_sha256": "29c27826225440549bd2ed251b042e72f0f3fa25078c1cf141dfe87acdfe8b2d",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "e1ae2e3cb0f7ea2ec1c2b70d20b0c8036254a226e8af748cf6b8a8a1dbec5066",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Butler-solarsystemb2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Butler-solarsystemb2024.pdf",
+      "citation": {
+        "label": "Butler-solarsystemb2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:butterfield-errorrecognition2024",
+      "oracle_source_id": "butterfield-errorrecognition2024-1eb10e7f7cc0",
+      "title": "Error Recognition",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Butterfield"
+      ],
+      "topic_tags": [
+        "error-recognition",
+        "diagnostics",
+        "workflow"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Butterfield-ErrorRecognition2024.pptx",
+      "page_or_slide_count": 57,
+      "source_size_bytes": 55003604,
+      "oracle_working_copy_sha256": "1eb10e7f7cc06b1e2333020c42f8a1cc94089b28733f17e1b92bbe6fd4eec98b",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "06558448cd12e6dec08ed6e4543a18888f0a74cc9e18b2cd742b32983caa3f2b",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Butterfield-ErrorRecognition2024.pptx",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Butterfield-ErrorRecognition2024.pptx",
+      "citation": {
+        "label": "Butterfield-ErrorRecognition2024.pptx",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:deller-correlators2024",
+      "oracle_source_id": "deller-correlators2024-8c6d6cb80278",
+      "title": "Correlators",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Deller"
+      ],
+      "topic_tags": [
+        "correlators",
+        "fundamentals",
+        "hardware"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Deller-Correlators2024.pdf",
+      "page_or_slide_count": 72,
+      "source_size_bytes": 2673048,
+      "oracle_working_copy_sha256": "8c6d6cb80278c138ebe815fb2056bc0c2e840df417f9e1adad99341cb7bce3f6",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "f0e7c4c3e579d4eb35355f0f693ac175c86e010a0e1526b5779b69e24a2b775f",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Deller-Correlators2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Deller-Correlators2024.pdf",
+      "citation": {
+        "label": "Deller-Correlators2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:deller-vlbi2024",
+      "oracle_source_id": "deller-vlbi2024-875caa171daf",
+      "title": "VLBI",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Deller"
+      ],
+      "topic_tags": [
+        "vlbi",
+        "very-long-baseline",
+        "calibration"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Deller-VLBI2024.pdf",
+      "page_or_slide_count": 78,
+      "source_size_bytes": 4454249,
+      "oracle_working_copy_sha256": "875caa171daf741b62989ab7ebe89c4f21336cf549d6d29c754fea282bed724a",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "9b22d72345935068ef5e017fcb41831576a92fe3daac65840be269fe36872a88",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Deller-VLBI2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Deller-VLBI2024.pdf",
+      "citation": {
+        "label": "Deller-VLBI2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:heywood-calibrationi-2024",
+      "oracle_source_id": "heywood-calibrationi-2024-daf66765433d",
+      "title": "Calibration I",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Heywood"
+      ],
+      "topic_tags": [
+        "calibration",
+        "workflow",
+        "practical"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Heywood-CalibrationI-2024.pdf",
+      "page_or_slide_count": 116,
+      "source_size_bytes": 10935793,
+      "oracle_working_copy_sha256": "daf66765433d960fb9952bf493fb9ef2c8ba38148b6ec9ca2a1ec6bd413402bf",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "e1185b0578b4cad211531a39590dc93271b6d101be0dec02f54cf7079251c6b1",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Heywood-CalibrationI-2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Heywood-CalibrationI-2024.pdf",
+      "citation": {
+        "label": "Heywood-CalibrationI-2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:heywood-calibrationii-2024",
+      "oracle_source_id": "heywood-calibrationii-2024-9aca18dc188a",
+      "title": "Calibration II",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Heywood"
+      ],
+      "topic_tags": [
+        "calibration",
+        "workflow",
+        "practical"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Heywood-CalibrationII-2024.pdf",
+      "page_or_slide_count": 222,
+      "source_size_bytes": 30839563,
+      "oracle_working_copy_sha256": "9aca18dc188a7f32053858beeb8d1eb85ec18ca5a232481c894ac6b2ae754de2",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "b79a609244619f36a66d7afa5df1475f8b51a600ab8f6df6df412a96190b8865",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Heywood-CalibrationII-2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Heywood-CalibrationII-2024.pdf",
+      "citation": {
+        "label": "Heywood-CalibrationII-2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:jagannathan-widefield2024",
+      "oracle_source_id": "jagannathan-widefield2024-8d1bffb6beec",
+      "title": "Widefield Imaging",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Jagannathan"
+      ],
+      "topic_tags": [
+        "widefield",
+        "imaging",
+        "w-projection"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Jagannathan-Widefield2024.pdf",
+      "page_or_slide_count": 34,
+      "source_size_bytes": 2123936,
+      "oracle_working_copy_sha256": "8d1bffb6beec822c928e5573804ed52deda3d5d2133b0098df179f317cd236d0",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "78965aa90e61fcca942910be9ede0b2d62926da1e8f157bb1a39eee74fea288c",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Jagannathan-Widefield2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Jagannathan-Widefield2024.pdf",
+      "citation": {
+        "label": "Jagannathan-Widefield2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:lam-pulsars2024",
+      "oracle_source_id": "lam-pulsars2024-169d859921d3",
+      "title": "Pulsars",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Lam"
+      ],
+      "topic_tags": [
+        "pulsars",
+        "time-domain",
+        "specialized"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "narrow",
+      "filename": "Lam-pulsars2024.pdf",
+      "page_or_slide_count": 41,
+      "source_size_bytes": 27666239,
+      "oracle_working_copy_sha256": "169d859921d304db552e325c972e73071d51ca6460a70555aa739f2ef004ef44",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "7d3d24b14280dae7dd92f820b0cdf857c5ed48668b23af4027246d7e54beea23",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Lam-pulsars2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Lam-pulsars2024.pdf",
+      "citation": {
+        "label": "Lam-pulsars2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:ludovici-introductionra2024",
+      "oracle_source_id": "ludovici-introductionra2024-29d0a6238fe4",
+      "title": "Introduction to Radio Astronomy",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Ludovici"
+      ],
+      "topic_tags": [
+        "fundamentals",
+        "radio-astronomy",
+        "intro"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Ludovici-IntroductionRA2024.pdf",
+      "page_or_slide_count": 34,
+      "source_size_bytes": 3250038,
+      "oracle_working_copy_sha256": "29d0a6238fe4fc11a49485f8fa98f7d28c7cf8082a4fa11090304de104712253",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "e48d6927bd69fc603ee90a0846e7466362b071c8ca8a8ed4a64b15de3553ae6d",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Ludovici-IntroductionRA2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Ludovici-IntroductionRA2024.pdf",
+      "citation": {
+        "label": "Ludovici-IntroductionRA2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:marvil-imaging2024",
+      "oracle_source_id": "marvil-imaging2024-0d5dc78407de",
+      "title": "Imaging",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Marvil"
+      ],
+      "topic_tags": [
+        "imaging",
+        "deconvolution",
+        "practical"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Marvil_Imaging2024.pdf",
+      "page_or_slide_count": 33,
+      "source_size_bytes": 4632140,
+      "oracle_working_copy_sha256": "0d5dc78407deb92fb818bc222e8d54ba94278c91fe566427a0eee4198b2b8ff2",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "149fdb095ec8cf87af940240f28b24db9946417a7e77590065ce9eb08904a55c",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Marvil_Imaging2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Marvil_Imaging2024.pdf",
+      "citation": {
+        "label": "Marvil_Imaging2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:marvil-wideband2024",
+      "oracle_source_id": "marvil-wideband2024-6142f23151c0",
+      "title": "Wideband Imaging",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Marvil"
+      ],
+      "topic_tags": [
+        "wideband",
+        "imaging",
+        "mtmfs",
+        "practical"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Marvil_Wideband2024.pdf",
+      "page_or_slide_count": 29,
+      "source_size_bytes": 4769314,
+      "oracle_working_copy_sha256": "6142f23151c05d848da7d81f14ad7adc86e9333b5c6a2663bd60623de8776ac2",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "72908442fdc1a658bc211dc4f3d7b36dbece99f425d077c75782661ec33c05e4",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Marvil_Wideband2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Marvil_Wideband2024.pdf",
+      "citation": {
+        "label": "Marvil_Wideband2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:ottt-carta2024",
+      "oracle_source_id": "ottt-carta2024-cce3f1ad14ca",
+      "title": "CARTA",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Ott"
+      ],
+      "topic_tags": [
+        "carta",
+        "visualization",
+        "tooling"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Ottt-Carta2024.pdf",
+      "page_or_slide_count": 66,
+      "source_size_bytes": 46171267,
+      "oracle_working_copy_sha256": "cce3f1ad14caec164a5d764bd172bfcb3ad351f6a5ebda5c36b01f22d57025f2",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "613735d88e4bf053323993e4dfb3ac160abd42a2d2bbef9c54429b64c80282a7",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Ottt-Carta2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Ottt-Carta2024.pdf",
+      "citation": {
+        "label": "Ottt-Carta2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:perley-fundamentals-1-2024",
+      "oracle_source_id": "perley-fundamentals-1-2024-d9c366e9da0c",
+      "title": "Fundamentals I",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Perley"
+      ],
+      "topic_tags": [
+        "fundamentals",
+        "synthesis",
+        "theory"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Perley-Fundamentals-1-2024.pdf",
+      "page_or_slide_count": 43,
+      "source_size_bytes": 2179601,
+      "oracle_working_copy_sha256": "d9c366e9da0c709c0e2b78e272b4176cc916d6634a78a4603c9d5b650e73a98c",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "9107f849cb7f24aa63397b2c5fb78ce82fcc314254d7a071f491552f6144a260",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Perley-Fundamentals-1-2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Perley-Fundamentals-1-2024.pdf",
+      "citation": {
+        "label": "Perley-Fundamentals-1-2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:perley-geometry2024",
+      "oracle_source_id": "perley-geometry2024-4732a7cfa820",
+      "title": "Geometry",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Perley"
+      ],
+      "topic_tags": [
+        "geometry",
+        "uvw",
+        "fundamentals"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Perley-Geometry2024.pdf",
+      "page_or_slide_count": 40,
+      "source_size_bytes": 1798473,
+      "oracle_working_copy_sha256": "4732a7cfa820e0212dc41562e09661af9311e583daa0ab53b0ffdec9a6d19825",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "8d1959765c8703c6f7c21a27eb10f8f46f192419494a900f159a22ab270bbb58",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Perley-Geometry2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Perley-Geometry2024.pdf",
+      "citation": {
+        "label": "Perley-Geometry2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:perley-practical2024",
+      "oracle_source_id": "perley-practical2024-5c69a3441bfc",
+      "title": "Practical Synthesis",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Perley"
+      ],
+      "topic_tags": [
+        "practical",
+        "synthesis",
+        "workflow"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Perley-Practical2024.pdf",
+      "page_or_slide_count": 25,
+      "source_size_bytes": 937435,
+      "oracle_working_copy_sha256": "5c69a3441bfcd3a272dc595dd5b0fe8f5b408ee1315fe116945c75994c488397",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "ec9ff3d0fa6f4301a6ce19c6711ed676bfd58c05d51fbf1f9d6edab92d9a8b56",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Perley-Practical2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Perley-Practical2024.pdf",
+      "citation": {
+        "label": "Perley-Practical2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:pesce-nonimganalysis2024",
+      "oracle_source_id": "pesce-nonimganalysis2024-8606e8589ce8",
+      "title": "Non-Image Analysis",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Pesce"
+      ],
+      "topic_tags": [
+        "non-image-analysis",
+        "uv-domain",
+        "workflow"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Pesce-Nonimganalysis2024.pdf",
+      "page_or_slide_count": 87,
+      "source_size_bytes": 8276072,
+      "oracle_working_copy_sha256": "8606e8589ce85439a50d39f774427ff9fdccc0f1297e7f95fea96a3b4a63252d",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "2da862eb54250466800cfeb3e69f6ed61637072f39a10b16579cfc2de0f9d1c1",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Pesce-Nonimganalysis2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Pesce-Nonimganalysis2024.pdf",
+      "citation": {
+        "label": "Pesce-Nonimganalysis2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:pihlstrom-spectrallines2024",
+      "oracle_source_id": "pihlstrom-spectrallines2024-36c108be0ab7",
+      "title": "Spectral Line Imaging",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Pihlstrom"
+      ],
+      "topic_tags": [
+        "spectral-line",
+        "imaging",
+        "science"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Pihlstrom-SpectralLines2024.pdf",
+      "page_or_slide_count": 55,
+      "source_size_bytes": 5091767,
+      "oracle_working_copy_sha256": "36c108be0ab7128a6be3a0fa143b40b2eeca3fe4b572f0ae66eacf8db2cd4477",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "8f4fa374011b99590d51bd4d7b0992734e398fa8ab773d0a6e1d2da21a0a9cfa",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Pihlstrom-SpectralLines2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Pihlstrom-SpectralLines2024.pdf",
+      "citation": {
+        "label": "Pihlstrom-SpectralLines2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:plunket-mosaicking2024",
+      "oracle_source_id": "plunket-mosaicking2024-35d7af5d3a90",
+      "title": "Mosaicking",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Plunkett"
+      ],
+      "topic_tags": [
+        "mosaicking",
+        "widefield",
+        "workflow"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Plunket-Mosaicking2024.pdf",
+      "page_or_slide_count": 69,
+      "source_size_bytes": 20138679,
+      "oracle_working_copy_sha256": "35d7af5d3a90b542497cbb1bbb27606cf668d4b5a55fc80faa2eb5c0b5920703",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "62e983cbdbb2fcb4bb4151a0c416833ba981584383c79f3774c45dbc9a97fbc4",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Plunket-Mosaicking2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Plunket-Mosaicking2024.pdf",
+      "citation": {
+        "label": "Plunket-Mosaicking2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:rosero-ngvla2024",
+      "oracle_source_id": "rosero-ngvla2024-c399b88d3d64",
+      "title": "ngVLA",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Rosero"
+      ],
+      "topic_tags": [
+        "ngvla",
+        "future-facility",
+        "instrumentation"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Rosero-ngVLA2024.pdf",
+      "page_or_slide_count": 31,
+      "source_size_bytes": 15358988,
+      "oracle_working_copy_sha256": "c399b88d3d64679f1635c13ced69c4a105973298a520d97038fd61be0b73428e",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "3572ab4532509c69324bc7ba6a75e83bb9147e3624add830b4c58a1780322893",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Rosero-ngVLA2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Rosero-ngVLA2024.pdf",
+      "citation": {
+        "label": "Rosero-ngVLA2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:sekhar-rfi2024",
+      "oracle_source_id": "sekhar-rfi2024-de06d2fbc82f",
+      "title": "RFI",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Sekhar"
+      ],
+      "topic_tags": [
+        "rfi",
+        "mitigation",
+        "diagnostics"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "narrow",
+      "filename": "Sekhar-RFI2024.pdf",
+      "page_or_slide_count": 35,
+      "source_size_bytes": 2686616,
+      "oracle_working_copy_sha256": "de06d2fbc82f5dc6c9be1971ae9c2ee5fd0dbb57f03a1582be89c3a2cf46535a",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "9a790f64cb4a35a7cd33829cc7c1783e913036705fae14e2707bfbea17392142",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Sekhar-RFI2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Sekhar-RFI2024.pdf",
+      "citation": {
+        "label": "Sekhar-RFI2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:tobin-highfreqs2024",
+      "oracle_source_id": "tobin-highfreqs2024-08aac607ba32",
+      "title": "High Frequency",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Tobin"
+      ],
+      "topic_tags": [
+        "high-frequency",
+        "calibration",
+        "atmosphere"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Tobin-highfreqs2024.pdf",
+      "page_or_slide_count": 62,
+      "source_size_bytes": 6467326,
+      "oracle_working_copy_sha256": "08aac607ba3271940e09af81dc05fea4dc05d05aae712c3fad7ce15c19b2a6b4",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "b7d1910faa69e82d53e6ab26cf9654096d129c29f5001f003a390aedfa0f77a1",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Tobin-highfreqs2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Tobin-highfreqs2024.pdf",
+      "citation": {
+        "label": "Tobin-highfreqs2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2024:tremblay-lowfreqs2024",
+      "oracle_source_id": "tremblay-lowfreqs2024-3ff1f118f188",
+      "title": "Low Frequency",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2024",
+      "year": 2024,
+      "contributors": [
+        "Tremblay"
+      ],
+      "topic_tags": [
+        "low-frequency",
+        "calibration",
+        "ionosphere"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Tremblay_LowFreqs2024.pdf",
+      "page_or_slide_count": 51,
+      "source_size_bytes": 19280169,
+      "oracle_working_copy_sha256": "3ff1f118f1882497287836c2cb118903204f4408e9d0a2f55d42e7c845bfdd4a",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "be7e16d64cb1343d19d6547c2661f207a2f6589e6cf30de56f0e676a3e0330a2",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Tremblay_LowFreqs2024.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2024/Tremblay_LowFreqs2024.pdf",
+      "citation": {
+        "label": "Tremblay_LowFreqs2024.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "excluded_superseded_epoch",
+        "included_in_baseline": false,
+        "enabled_by_default": false,
+        "exclusion_reason": "Superseded by the 2026 Synthesis Imaging Workshop epoch for the compact v1 baseline; retain in the inventory for selective future inclusion."
+      },
+      "redistribution": {
+        "bundled": false,
+        "reason": "Not selected for the compact v1 baseline."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": false,
+        "oracle_normalized_text_digest_is_audit_only": true
+      },
+      "bundle": null
+    },
+    {
+      "id": "nrao-2026:alma-manual-calibration-tutorial-siss-2026",
+      "oracle_source_id": "alma-manual-calibration-tutorial-siss-2026-c443e0cda06a",
+      "title": "ALMA Manual Calibration",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Dominic Ludovici"
+      ],
+      "topic_tags": [
+        "alma",
+        "calibration",
+        "self-calibration",
+        "tutorial"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "ALMA-Manual-Calibration-Tutorial_SISS-2026.pdf",
+      "page_or_slide_count": 128,
+      "source_size_bytes": 8115254,
+      "oracle_working_copy_sha256": "c443e0cda06aa804e0f12d8e6b1946842d924268a7cb3d7d03d9279147b67754",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "3df0d0736045647c274f3b266d86de22ea44c2a077fc0f417f226e8c75294c8f",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/ALMA-Manual-Calibration-Tutorial_SISS-2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/ALMA-Manual-Calibration-Tutorial_SISS-2026.pdf",
+      "citation": {
+        "label": "ALMA-Manual-Calibration-Tutorial_SISS-2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/alma-manual-calibration-tutorial-siss-2026-c443e0cda06a.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "e2045561211c9e1c7a00fd5b88c57f60565bf112b29ba6cfa0f086dfc8f0d9ac"
+      }
+    },
+    {
+      "id": "nrao-2026:alma-manual-imaging-tutorial-siss-2026",
+      "oracle_source_id": "alma-manual-imaging-tutorial-siss-2026-981b33dcf769",
+      "title": "ALMA Manual Imaging",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Dominic Ludovici"
+      ],
+      "topic_tags": [
+        "alma",
+        "imaging",
+        "deconvolution",
+        "tutorial"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "ALMA-Manual-Imaging-Tutorial_SISS-2026.pdf",
+      "page_or_slide_count": 100,
+      "source_size_bytes": 7630272,
+      "oracle_working_copy_sha256": "981b33dcf76945733dec7b7e907ad91d53a7afcc1e38d1cfdf105d53c3d117bc",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "5af42c6dacd573a44563d6d04425dc19b067aaee42d770c889b8ce1f75420987",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/ALMA-Manual-Imaging-Tutorial_SISS-2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/ALMA-Manual-Imaging-Tutorial_SISS-2026.pdf",
+      "citation": {
+        "label": "ALMA-Manual-Imaging-Tutorial_SISS-2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/alma-manual-imaging-tutorial-siss-2026-981b33dcf769.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "8ed7408e147e0b71b11b748c8104253f75eb75f9930d97ad78567410d66e2a97"
+      }
+    },
+    {
+      "id": "nrao-2026:blanchard-antennas-receiver",
+      "oracle_source_id": "blanchard-antennas-receiver-85a03c09e309",
+      "title": "Antennas and receiver systems",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Jay Blanchard"
+      ],
+      "topic_tags": [
+        "antennas",
+        "receivers"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Blanchard-Antennas-Receiver.pptx",
+      "page_or_slide_count": 40,
+      "source_size_bytes": 17642635,
+      "oracle_working_copy_sha256": "85a03c09e309a38f1e577f28eea2a4277a8b86f780143bbd1d88edae396ca379",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "43df77a57813bf278b63c2c1f5c27b40fa2b65d65a9844971b84f49f8031c271",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Blanchard-Antennas-Receiver.pptx",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Blanchard-Antennas-Receiver.pptx",
+      "citation": {
+        "label": "Blanchard-Antennas-Receiver.pptx",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/blanchard-antennas-receiver-85a03c09e309.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "a9558a75d69fc1ad895c8047e30260cde1815d2c87898437303d807ebfa0f829"
+      }
+    },
+    {
+      "id": "nrao-2026:butterfield-errorrecognition-siw2026",
+      "oracle_source_id": "butterfield-errorrecognition-siw2026-e10a7be06702",
+      "title": "Error Recognition",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Natalie Butterfield"
+      ],
+      "topic_tags": [
+        "rfi",
+        "mitigation",
+        "error-recognition",
+        "diagnostics"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "narrow",
+      "filename": "Butterfield-ErrorRecognition-SIW2026.pptx",
+      "page_or_slide_count": 65,
+      "source_size_bytes": 62815077,
+      "oracle_working_copy_sha256": "e10a7be06702957bcc7e23ea7ca4687956122d20a25ef8484ed7d3f66f43f3c0",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "e9ab2d7307a569863125776e8a77f1496aa3638b85b68c1a5453b25effaa2d8a",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Butterfield-ErrorRecognition-SIW2026.pptx",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Butterfield-ErrorRecognition-SIW2026.pptx",
+      "citation": {
+        "label": "Butterfield-ErrorRecognition-SIW2026.pptx",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/butterfield-errorrecognition-siw2026-e10a7be06702.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "e6f7ccb70cadf159252df55a853ac6e5e32ec49f968f1e606a1c663d216e8fcb"
+      }
+    },
+    {
+      "id": "nrao-2026:creecheak-optcalibration-siw2026",
+      "oracle_source_id": "creecheak-optcalibration-siw2026-1297376c6bf9",
+      "title": "Special Session: Calibration in Optical Interferometry",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Michelle Creech-Eakman"
+      ],
+      "topic_tags": [
+        "calibration",
+        "self-calibration",
+        "optical-interferometry"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "narrow",
+      "filename": "CreechEak-OptCalibration-SIW2026.pdf",
+      "page_or_slide_count": 18,
+      "source_size_bytes": 2829160,
+      "oracle_working_copy_sha256": "1297376c6bf9a04d5d393638dc088e924b2c2b63e5461316484efc955c25a3a6",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "3d44b669e2cc67fff6a0bcf962fd72c70b83aec4c22ba9cd084d067c2c9bc825",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/CreechEak-OptCalibration-SIW2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/CreechEak-OptCalibration-SIW2026.pdf",
+      "citation": {
+        "label": "CreechEak-OptCalibration-SIW2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/creecheak-optcalibration-siw2026-1297376c6bf9.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "4f94520f45affac8b28713ec91480a0c960402054d9c6b9fcbd5dcecd19138c4"
+      }
+    },
+    {
+      "id": "nrao-2026:jagannathan-widefield",
+      "oracle_source_id": "jagannathan-widefield-3b281d7d14f6",
+      "title": "Wide-field imaging",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Preshanth Jagannathan"
+      ],
+      "topic_tags": [
+        "imaging",
+        "deconvolution",
+        "widefield"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Jagannathan-Widefield.pdf",
+      "page_or_slide_count": 61,
+      "source_size_bytes": 18397559,
+      "oracle_working_copy_sha256": "3b281d7d14f6906d24ed92f7e0aa0590a332d6c6916cc4c7cd225469ea7bb042",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "776a6ce3df2311bb902b836416a42fb2bda66e8005eab0d4b8ec1c64b6768a48",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Jagannathan-Widefield.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Jagannathan-Widefield.pdf",
+      "citation": {
+        "label": "Jagannathan-Widefield.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/jagannathan-widefield-3b281d7d14f6.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "55d9ac41655c5602042468f692e3c79c4a5a055af576c7703a7962966f5e4adc"
+      }
+    },
+    {
+      "id": "nrao-2026:linford-vlbi-siw2026",
+      "oracle_source_id": "linford-vlbi-siw2026-b95a6ab2cde9",
+      "title": "Very Long Baseline Interferometry",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Justin Linford"
+      ],
+      "topic_tags": [
+        "vlbi",
+        "very-long-baseline"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Linford-VLBI-SIW2026.pdf",
+      "page_or_slide_count": 69,
+      "source_size_bytes": 6713078,
+      "oracle_working_copy_sha256": "b95a6ab2cde964a6fc8a01e2ee1390f6258ffa61f911e7ca41e1bdea6b94f811",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "3ef499693c1fd8a81eab2c277e075db248c2f21d6024d4feadfa0d3eced2a887",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Linford-VLBI-SIW2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Linford-VLBI-SIW2026.pdf",
+      "citation": {
+        "label": "Linford-VLBI-SIW2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/linford-vlbi-siw2026-b95a6ab2cde9.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "391588704137a91b6fa52e4655335bcfe71f7a1cd6d14461f36bd703d6501307"
+      }
+    },
+    {
+      "id": "nrao-2026:ludovici-introductionradioastro-siw2026",
+      "oracle_source_id": "ludovici-introductionradioastro-siw2026-dfa676377ad9",
+      "title": "Introduction to Radio Astronomy",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Dominic Ludovici"
+      ],
+      "topic_tags": [
+        "fundamentals",
+        "radio-astronomy",
+        "intro"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Ludovici-IntroductionRadioAstro-SIW2026.pdf",
+      "page_or_slide_count": 39,
+      "source_size_bytes": 8517701,
+      "oracle_working_copy_sha256": "dfa676377ad91ce2ba9181036fa6bcc2cc9f884cb2fc278cf24cdd57686746f7",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "08020021711f856fdeef6ec0d297107b4c8ac70d9e24653da4c15d26d0600e74",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Ludovici-IntroductionRadioAstro-SIW2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Ludovici-IntroductionRadioAstro-SIW2026.pdf",
+      "citation": {
+        "label": "Ludovici-IntroductionRadioAstro-SIW2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/ludovici-introductionradioastro-siw2026-dfa676377ad9.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "9077349ed0d6cdfeae6c6e393c002082311e0410229c340749b8a429ead23877"
+      }
+    },
+    {
+      "id": "nrao-2026:marvil-imaging2026",
+      "oracle_source_id": "marvil-imaging2026-57343c49c331",
+      "title": "Introduction to Imaging and Deconvolution",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Joshua Marvil"
+      ],
+      "topic_tags": [
+        "imaging",
+        "deconvolution",
+        "fundamentals",
+        "radio-astronomy",
+        "intro"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Marvil_Imaging2026.pdf",
+      "page_or_slide_count": 39,
+      "source_size_bytes": 2315431,
+      "oracle_working_copy_sha256": "57343c49c331b76284ffb105bf1feb81f33c944d1ef46f2b55071fb385cd1058",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "368745ccd9f7c1d87813ca60e360f4772a800f1e9f5117db5aaef880a4d4ba88",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Marvil_Imaging2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Marvil_Imaging2026.pdf",
+      "citation": {
+        "label": "Marvil_Imaging2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/marvil-imaging2026-57343c49c331.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "10da50ecae7f2a0bb5208fe426998e93fba7e41a552d01839161b8b0fa9664b3"
+      }
+    },
+    {
+      "id": "nrao-2026:marvilcalibration2026",
+      "oracle_source_id": "marvilcalibration2026-c9d5ad1cb055",
+      "title": "Calibration",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Joshua Marvil"
+      ],
+      "topic_tags": [
+        "calibration",
+        "self-calibration"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "MarvilCalibration2026.pdf",
+      "page_or_slide_count": 40,
+      "source_size_bytes": 1613852,
+      "oracle_working_copy_sha256": "c9d5ad1cb055735582080e0010f854fe417ef154bf1f3f9a2763dbe7419f079f",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "69bcf2bbe2d3e0ba059190c25a828ae90e2cfdcc7c47fa56685cf2b731f4e969",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/MarvilCalibration2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/MarvilCalibration2026.pdf",
+      "citation": {
+        "label": "MarvilCalibration2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/marvilcalibration2026-c9d5ad1cb055.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "42fb457c9e0c5a2d1b930f57beffc15e21f135ac58eef4ee5cc935eb99b63ef9"
+      }
+    },
+    {
+      "id": "nrao-2026:marvilselfcal2026",
+      "oracle_source_id": "marvilselfcal2026-f6c9c563d8fd",
+      "title": "Self-calibration",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Joshua Marvil"
+      ],
+      "topic_tags": [
+        "calibration",
+        "self-calibration"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "MarvilSelfcal2026.pdf",
+      "page_or_slide_count": 23,
+      "source_size_bytes": 1089093,
+      "oracle_working_copy_sha256": "f6c9c563d8fd05a5aeac0645ba38a3d2385b845d905951c7135c0306e170c5fe",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "508c11d2c823803266f2abcca271a20fb82bdfc948ee6c6418ad1d3600655ecc",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/MarvilSelfcal2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/MarvilSelfcal2026.pdf",
+      "citation": {
+        "label": "MarvilSelfcal2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/marvilselfcal2026-f6c9c563d8fd.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "a28ded34c02c1e1a05979ce855046803e308a1fdd117c6c02c7e58adad6c206f"
+      }
+    },
+    {
+      "id": "nrao-2026:perley-fundamentals-siw2026",
+      "oracle_source_id": "perley-fundamentals-siw2026-657e0c7eb91e",
+      "title": "Fundamentals of radio interferometry I",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Rick Perley"
+      ],
+      "topic_tags": [
+        "fundamentals",
+        "synthesis",
+        "theory"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Perley-Fundamentals-SIW2026.pdf",
+      "page_or_slide_count": 43,
+      "source_size_bytes": 2167208,
+      "oracle_working_copy_sha256": "657e0c7eb91e6b535621dcd9598cdfac732588be2510699468b522ddc7f97837",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "520bff303ed6effeffd7fa0da73a6e0f56cc2d1e335ddfb5ede7eea5c0993300",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Fundamentals-SIW2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Fundamentals-SIW2026.pdf",
+      "citation": {
+        "label": "Perley-Fundamentals-SIW2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/perley-fundamentals-siw2026-657e0c7eb91e.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "d6ab8c01432678809ba3d5593ea2bed27c52753b26b111dd26b2c060454a206b"
+      }
+    },
+    {
+      "id": "nrao-2026:perley-geometry-siw2026",
+      "oracle_source_id": "perley-geometry-siw2026-63fb00084c9e",
+      "title": "Basic radio interferometry - Geometry",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Rick Perley"
+      ],
+      "topic_tags": [
+        "geometry",
+        "uvw",
+        "fundamentals"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Perley-Geometry-SIW2026.pdf",
+      "page_or_slide_count": 40,
+      "source_size_bytes": 1801080,
+      "oracle_working_copy_sha256": "63fb00084c9eac18a78516206fbf0c83dbcd4e423c71ce8fbdaf38f510f44e12",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "752cedf66ab87365f88242b1252a0369421fc88ae730f052eeb83eda3f327eea",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Geometry-SIW2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Geometry-SIW2026.pdf",
+      "citation": {
+        "label": "Perley-Geometry-SIW2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/perley-geometry-siw2026-63fb00084c9e.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "c08d117c37e67c897054aa3e701616b7cb20d33047d127497474201824a5f58e"
+      }
+    },
+    {
+      "id": "nrao-2026:perley-polarization-siw2026",
+      "oracle_source_id": "perley-polarization-siw2026-5b17d117b65b",
+      "title": "Polarization in radio interferometry",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Rick Perley"
+      ],
+      "topic_tags": [
+        "polarization",
+        "stokes"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Perley-Polarization-SIW2026.pdf",
+      "page_or_slide_count": 48,
+      "source_size_bytes": 1752056,
+      "oracle_working_copy_sha256": "5b17d117b65babfa62097fdd375320289a64ed1fe8c391d16388662aea44ea34",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "69d29a9ebd769465cc325282cdae131da28031a9acbad92f9080afecb63e874f",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Polarization-SIW2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Polarization-SIW2026.pdf",
+      "citation": {
+        "label": "Perley-Polarization-SIW2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/perley-polarization-siw2026-5b17d117b65b.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "f04e573d80d14fd1d9dae946a407a6648eb77e771841b1b08cf9c41ebd0e75c7"
+      }
+    },
+    {
+      "id": "nrao-2026:perley-practical-siw2026",
+      "oracle_source_id": "perley-practical-siw2026-ee3d87fe6492",
+      "title": "Fundamentals of radio interferometry II",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Rick Perley"
+      ],
+      "topic_tags": [
+        "fundamentals",
+        "synthesis",
+        "theory"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Perley-Practical-SIW2026.pdf",
+      "page_or_slide_count": 25,
+      "source_size_bytes": 868311,
+      "oracle_working_copy_sha256": "ee3d87fe64920b86d1134979f3a48e426e533f806f5b6f7e3e473c241eb72fee",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "27f0ff733726dc12e49def206b5889792dbcb0748043fd51ec2328837ba6bfe8",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Practical-SIW2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Perley-Practical-SIW2026.pdf",
+      "citation": {
+        "label": "Perley-Practical-SIW2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/perley-practical-siw2026-ee3d87fe6492.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "d30737782ce65075377ce51b1000116b56795e0883a6a0cfac3eec457c84a390"
+      }
+    },
+    {
+      "id": "nrao-2026:pesc-nonimganalysis-siw2026",
+      "oracle_source_id": "pesc-nonimganalysis-siw2026-1384a9e4620f",
+      "title": "Image and non-imaging analysis",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Dominic Pesce"
+      ],
+      "topic_tags": [
+        "imaging",
+        "deconvolution",
+        "non-image-analysis",
+        "uv-domain"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Pesc-nonImgAnalysis-SIW2026.pdf",
+      "page_or_slide_count": 87,
+      "source_size_bytes": 4989162,
+      "oracle_working_copy_sha256": "1384a9e4620fd5cfbb10010658be050136a519e08dc079e270c9bec1f8b43631",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "f5af37e96547249f6e714a4868c8c94404a9d34ea4fc3a9eb688d2d4c929d2d3",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Pesc-nonImgAnalysis-SIW2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Pesc-nonImgAnalysis-SIW2026.pdf",
+      "citation": {
+        "label": "Pesc-nonImgAnalysis-SIW2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/pesc-nonimganalysis-siw2026-1384a9e4620f.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "3dd0b96e7a4abc2d1aea7ad586bc50f316fb1643f843035428744487a809e8f9"
+      }
+    },
+    {
+      "id": "nrao-2026:plant-correlators",
+      "oracle_source_id": "plant-correlators-dbd92a0312c8",
+      "title": "Cross Correlators & Digital Signal Processing",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Kathryn Plant"
+      ],
+      "topic_tags": [
+        "correlators",
+        "hardware"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "Plant-Correlators.pptx",
+      "page_or_slide_count": 74,
+      "source_size_bytes": 43387657,
+      "oracle_working_copy_sha256": "dbd92a0312c80ad5e0320d61108a291ea750a14c132351d6cde67f32d7c3fffd",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "4b004f4ca27c7ece00f3bdecbee74169f753e937dbae96cfdc21a34f1081a4db",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Plant-Correlators.pptx",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Plant-Correlators.pptx",
+      "citation": {
+        "label": "Plant-Correlators.pptx",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/plant-correlators-dbd92a0312c8.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "4f05ebf8c98bb6e4f869d0ae6052c4891ec45ec533f48454a2cff0b835d2d252"
+      }
+    },
+    {
+      "id": "nrao-2026:schaefer-optimaging-siw2026",
+      "oracle_source_id": "schaefer-optimaging-siw2026-2f9dab475d49",
+      "title": "Special Session: Imaging in Optical Interferometry",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Gail Schaefer"
+      ],
+      "topic_tags": [
+        "imaging",
+        "deconvolution",
+        "optical-interferometry"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "narrow",
+      "filename": "Schaefer-OptImaging-SIW2026.pdf",
+      "page_or_slide_count": 33,
+      "source_size_bytes": 6108543,
+      "oracle_working_copy_sha256": "2f9dab475d49cb775a60a997a08a6274b00208cfb439f271a518387435bfd92b",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "0d37f1b286236efbad71c731447b4cc522bf87475f355ac9652ed4be57f372c2",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Schaefer-OptImaging-SIW2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Schaefer-OptImaging-SIW2026.pdf",
+      "citation": {
+        "label": "Schaefer-OptImaging-SIW2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/schaefer-optimaging-siw2026-2f9dab475d49.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "2c2bb642885cb6489c2bb6f7d6c283aa9489ed9043dbd212b48a55e48b898526"
+      }
+    },
+    {
+      "id": "nrao-2026:sekhar-rfi2026",
+      "oracle_source_id": "sekhar-rfi2026-d769e0a6bf14",
+      "title": "Radio Frequency Interference",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Krishna Sekhar"
+      ],
+      "topic_tags": [
+        "rfi",
+        "mitigation"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Sekhar_RFI2026.pdf",
+      "page_or_slide_count": 35,
+      "source_size_bytes": 2686611,
+      "oracle_working_copy_sha256": "d769e0a6bf140c49aa3690894d31f4fae874660a88a417b254cac203cd5d00f3",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "e864cc9358fc86e2dd3398be5e3ad4084fcfebcbff210ca6fd99e4d447c0fa2b",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Sekhar_RFI2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Sekhar_RFI2026.pdf",
+      "citation": {
+        "label": "Sekhar_RFI2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/sekhar-rfi2026-d769e0a6bf14.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "2602830d2bf5e1db8e88ee70ab44a2f307c0ce7bb0792c6935759611a5375e5f"
+      }
+    },
+    {
+      "id": "nrao-2026:siw21-vlba-casa",
+      "oracle_source_id": "siw21-vlba-casa-a819c110d9b6",
+      "title": "VLBA Basic Phase-Referencing Calibration and Imaging (CASA)",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Justin Linford"
+      ],
+      "topic_tags": [
+        "calibration",
+        "self-calibration",
+        "imaging",
+        "deconvolution"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "SIW21_VLBA_CASA.pdf",
+      "page_or_slide_count": 14,
+      "source_size_bytes": 1298133,
+      "oracle_working_copy_sha256": "a819c110d9b6c07259f2e4eeeefcc6958e260f2901ac6b081f0129b734de6f74",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "b5202b94fc9111fe5bba471efbaee0490f5995f0f68d4d9ded4749475846bdd5",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/SIW21_VLBA_CASA.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/SIW21_VLBA_CASA.pdf",
+      "citation": {
+        "label": "SIW21_VLBA_CASA.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/siw21-vlba-casa-a819c110d9b6.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "8d648c130d3d748302edfd82ed6e3d52dbf8c6537ffeff3baa51358e8ad32529"
+      }
+    },
+    {
+      "id": "nrao-2026:svoboda-spectral-lines",
+      "oracle_source_id": "svoboda-spectral-lines-52967ab30fd7",
+      "title": "Special Topics: Spectral Lines",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Brian Svoboda"
+      ],
+      "topic_tags": [
+        "spectral-line",
+        "science"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Svoboda_Spectral_Lines.pdf",
+      "page_or_slide_count": 59,
+      "source_size_bytes": 9263271,
+      "oracle_working_copy_sha256": "52967ab30fd7873fc00008322f51a043f0bd3a62c12a05dc3ce29257facb0920",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "ea5b48d252c552e2ae2076edb504223bc302157f536df21d6bfa2c26a8bdb60a",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Svoboda_Spectral_Lines.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Svoboda_Spectral_Lines.pdf",
+      "citation": {
+        "label": "Svoboda_Spectral_Lines.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/svoboda-spectral-lines-52967ab30fd7.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "ed99f26edadc6b844c3ba0d959dd198a47f29cc649273c27a6aaf860afa3a7a7"
+      }
+    },
+    {
+      "id": "nrao-2026:tobin-siw-hf-radio-interferomety-2026",
+      "oracle_source_id": "tobin-siw-hf-radio-interferomety-2026-8b326242db77",
+      "title": "High frequency radio interferometry",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "John Tobin"
+      ],
+      "topic_tags": [
+        "high-frequency",
+        "atmosphere"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Tobin_SIW_HF_Radio_Interferomety_2026.pdf",
+      "page_or_slide_count": 61,
+      "source_size_bytes": 6320404,
+      "oracle_working_copy_sha256": "8b326242db7760898cf878dbdc134a32acc93f7d90be0ac85be761e70e2b44b2",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "b022c747cf6cc70650f1197173919e481000953962c2cc540fe50d1948017f4c",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Tobin_SIW_HF_Radio_Interferomety_2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Tobin_SIW_HF_Radio_Interferomety_2026.pdf",
+      "citation": {
+        "label": "Tobin_SIW_HF_Radio_Interferomety_2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/tobin-siw-hf-radio-interferomety-2026-8b326242db77.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "eef2b7860a958599594672ef71864456d1296c38323120b75b9e90d1de46db41"
+      }
+    },
+    {
+      "id": "nrao-2026:tobin-siw-srdp-2026",
+      "oracle_source_id": "tobin-siw-srdp-2026-3ddbf94e39bb",
+      "title": "Science Ready Data Products & other NRAO Initiatives",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Tobin"
+      ],
+      "topic_tags": [
+        "srdp",
+        "workflow"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Tobin_SIW_SRDP_2026.pdf",
+      "page_or_slide_count": 48,
+      "source_size_bytes": 9108574,
+      "oracle_working_copy_sha256": "3ddbf94e39bb859b1242b0c79ec8693a77e267b27281ed7ef3809404e5dc4c5c",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "1127ef0747756ef6d345c9758c1f1c9a5148c3aaf4628d8517166a6a0f6a1254",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Tobin_SIW_SRDP_2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Tobin_SIW_SRDP_2026.pdf",
+      "citation": {
+        "label": "Tobin_SIW_SRDP_2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/tobin-siw-srdp-2026-3ddbf94e39bb.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "3c2695ad49e6813627c08932abf22a8906d476762a869f1df65d3f3b9231375e"
+      }
+    },
+    {
+      "id": "nrao-2026:tremblay-lowfreq-siw2026",
+      "oracle_source_id": "tremblay-lowfreq-siw2026-a928d25b5b1f",
+      "title": "Low frequency radio interferometry",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Steven Tremblay",
+        "Preshanth Jagannathan"
+      ],
+      "topic_tags": [
+        "low-frequency",
+        "ionosphere"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "Tremblay-LowFreq-SIW2026.pptx",
+      "page_or_slide_count": 51,
+      "source_size_bytes": 90831960,
+      "oracle_working_copy_sha256": "a928d25b5b1f637d2b3bdc841a3ff845dec4f69b2c666daacc940d461579b3d7",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "601eb9230ef4e30ba2cb654b2ebcadf375f25390e505a30b266af19e5ed8b701",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Tremblay-LowFreq-SIW2026.pptx",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/Tremblay-LowFreq-SIW2026.pptx",
+      "citation": {
+        "label": "Tremblay-LowFreq-SIW2026.pptx",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/tremblay-lowfreq-siw2026-a928d25b5b1f.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "cd1f4351e5c260927437b951351d3f8dba15d35d39d2409daef8e9c6f1cb6c34"
+      }
+    },
+    {
+      "id": "nrao-2026:urv-overview-siw2026",
+      "oracle_source_id": "urv-overview-siw2026-b9cc7db0fdc6",
+      "title": "Workshop Overview",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Urvashi Rau"
+      ],
+      "topic_tags": [
+        "overview",
+        "workflow"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "URV-Overview-SIW2026.pdf",
+      "page_or_slide_count": 46,
+      "source_size_bytes": 1478571,
+      "oracle_working_copy_sha256": "b9cc7db0fdc6bdc8267e071fe1a244a9ea0307003692fa683ee1ed4fba5d9b6d",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "6d6f71c7153bdedd7a3cad43a6fca7dbbb1309572729818b4f18d80d357697d4",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/URV-Overview-SIW2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/URV-Overview-SIW2026.pdf",
+      "citation": {
+        "label": "URV-Overview-SIW2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/urv-overview-siw2026-b9cc7db0fdc6.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "b4d28babf73cc5b942ff7a2ade4dbd823e08de26aab930711fda7ccc297c734d"
+      }
+    },
+    {
+      "id": "nrao-2026:urv-wideband-imaging-siw2026",
+      "oracle_source_id": "urv-wideband-imaging-siw2026-646f8466fba1",
+      "title": "Wide-band imaging",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Urvashi Rau"
+      ],
+      "topic_tags": [
+        "imaging",
+        "deconvolution",
+        "wideband"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "topic",
+      "filename": "URV_Wideband_Imaging_SIW2026.pdf",
+      "page_or_slide_count": 52,
+      "source_size_bytes": 1876877,
+      "oracle_working_copy_sha256": "646f8466fba12ecbf542b355149699339d91cbc2604258d956f5f9466a7e8ada",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "d1507b5480bac311dda62dc86e2a43b7101a5adbe5375e53a35519999be25f17",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/URV_Wideband_Imaging_SIW2026.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/URV_Wideband_Imaging_SIW2026.pdf",
+      "citation": {
+        "label": "URV_Wideband_Imaging_SIW2026.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/urv-wideband-imaging-siw2026-646f8466fba1.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "bf737f806b323de74baaa69bb0a8c02f2ad3bb0c0f594cee532cf2e548882a32"
+      }
+    },
+    {
+      "id": "nrao-2026:vanbelle-optical-instruments",
+      "oracle_source_id": "vanbelle-optical-instruments-f3957eaca8a6",
+      "title": "Special Session: Overview of Optical Interferometry & Facilities",
+      "source_class": "slide_deck",
+      "collection_id": "nrao-synthesis-2026",
+      "year": 2026,
+      "contributors": [
+        "Gerard van Belle"
+      ],
+      "topic_tags": [
+        "optical-interferometry",
+        "overview",
+        "workflow"
+      ],
+      "authority_level": "current_tutorial",
+      "specificity_scope": "broad",
+      "filename": "vanBelle-optical-instruments.pdf",
+      "page_or_slide_count": 66,
+      "source_size_bytes": 18260790,
+      "oracle_working_copy_sha256": "f3957eaca8a66694c52dff8e3a40ce4958f29ab4bfaf2ace5b18d8ff468a9e9a",
+      "authoritative_download_sha256": null,
+      "normalized_text_sha256": "9f199404d0d524d50731b9ea755eb39ec36f0c22004f5a999219a8e9f7c7d98f",
+      "origin_url": "https://www.aoc.nrao.edu/events/synthesis/2026/vanBelle-optical-instruments.pdf",
+      "download_url": "https://www.aoc.nrao.edu/events/synthesis/2026/vanBelle-optical-instruments.pdf",
+      "citation": {
+        "label": "vanBelle-optical-instruments.pdf",
+        "locator_kind": "slide"
+      },
+      "license": {
+        "id": "LicenseRef-NRAO-Public-Workshop-Authorized",
+        "name": "NRAO publicly hosted workshop material; CASA-RS bundling authorized by the project owner",
+        "url": "https://library.nrao.edu/public/misc/policy/Copyright_Policy_v1.1.pdf",
+        "evidence": "The project owner, formerly responsible for NRAO data management and software, explicitly authorized bundling on 2026-07-15 (casa-rs issue #420)."
+      },
+      "acquisition": {
+        "method": "bundled_normalized_text_from_authorized_public_workshop_source",
+        "included_in_baseline": true,
+        "enabled_by_default": true,
+        "exclusion_reason": null
+      },
+      "redistribution": {
+        "bundled": true,
+        "reason": "Compact page-level text is bundled under the project-owner authorization recorded in issue #420."
+      },
+      "text_generation": {
+        "method": "local_page_or_slide_extraction",
+        "oracle_normalized_text_bundled": true,
+        "oracle_normalized_text_digest_is_audit_only": false
+      },
+      "bundle": {
+        "path": "standard-v1/vanbelle-optical-instruments-f3957eaca8a6.pages.json",
+        "format": "normalized_pages_json",
+        "sha256": "e3bb1c48f8af8cd178c29c932e864bc53d2dc38013eb2b2d99801b84977d1bbe"
+      }
+    }
+  ]
+}

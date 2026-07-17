@@ -1,7 +1,7 @@
 # Scientific Notebooks, Tutorials, Python, and AI Assistant
 
 Truth class: accepted design
-Last reality check: 2026-07-13
+Last reality check: 2026-07-15
 Verification: just docs-check
 Architecture decision: [ADR-0007](adr/0007-scientific-notebooks-and-assistant-boundary.md)
 
@@ -274,11 +274,20 @@ Return sends the current message; Shift-Return inserts a newline. Subscription
 model and reasoning-effort selectors remain directly available below the
 composer, alongside a compact summary of subscription usage remaining. The
 usage summary expands to show the active rate-limit windows and reset times.
+Both chat presentations follow new output to the chronological tail. While a
+turn is pending, the status names the latest real App Server or tool activity
+and shows how long ago that event arrived; it never substitutes a decorative
+animation or exposes hidden model reasoning. Command-Plus, Command-Minus, and
+Command-Zero adjust, reduce, and reset the shared Workbench font size,
+including the transcript, composer, raw notebook editor, and typed task blocks.
 Agent, ChatGPT subscription/account state, trust preset, and scientific Python
 live behind one secondary settings control. The account row is status, not a
 model or billing-action picker: Codex owns sign-in and CASA-RS stores no
-credential. These controls project the CASA-owned agent profile; App Server
-types do not cross into durable project formats.
+credential. Signed-in accounts expose a Log out action in that surface; after
+App Server confirms it, the composer remains disabled until the standard Codex
+subscription sign-in flow completes again. These controls project the
+CASA-owned agent profile; App Server types do not cross into durable project
+formats.
 
 When the conversation is closed, a single purple sparkle in the lower-right of
 the notebook pane opens it and exposes a descriptive tooltip/accessibility
@@ -302,7 +311,8 @@ a coding agent that may also read files or run commands.
 
 Citations attach to the claims they support. A lightweight preview shows the
 relevant document excerpt, page/section, source path/lines/commit, notebook
-block, or run provenance; opening it uses a normal central preview tab. Pins
+block, or run provenance; citation rows are clickable and open that preview,
+with a direct local-file action when the cited artifact is available. Pins
 may add a conclusion, code, task intent, plot, citations, or a transcript link
 directly to the chronological end of the notebook from the explicit
 **Add to notebook** action.
@@ -312,7 +322,9 @@ chooses a destination action. **Add to notebook** immediately appends once at
 the chronological tail, then the notebook opens and scrolls to the new block;
 there is no redundant destination or preview dialog. Task parameters open
 directly in the normal task tab with suggested
-non-defaults visibly marked; running the task uses its ordinary Run workflow.
+non-defaults marked by a small purple sparkle with explanatory hover text. A
+manual edit clears that parameter's AI provenance immediately. Running the task
+uses its ordinary Run workflow.
 Plots use the notebook's explicit import/update workflow and downloads use the
 acquisition surface. Routine agent steps, commands, and logs stay collapsed by
 default. The same suggestion is never duplicated as proposal cards in both
@@ -359,9 +371,24 @@ The local corpus has four layers:
 3. release-matched CASA-RS documentation and source
 4. an optional live-checkout source overlay keyed to its Git commit
 
+The installed baseline is the compact versioned pack described in
+`assistant-standard-corpus.md`: the full 2026 NRAO workshop epoch, the open
+Springer synthesis-imaging book, and the CASA-RS primer. It is an app resource
+installed once, not copied into project `documents/`; page/slide labels and
+numbers remain exact retrieval citations.
+
 SQLite holds manifests, chunks, metadata, citations, and FTS5 indexes behind a
-replaceable retrieval interface. Content hashes make updates incremental.
-Extraction and OCR are local by default; cloud OCR is a per-document opt-in. A
+replaceable retrieval interface. Project-document refresh first compares a
+metadata fingerprint (path, type, size, mtime, ctime, and filesystem identity),
+then reads and content-hashes only the changed sources. Debounced recursive
+filesystem events request this reconciliation automatically; startup and the
+manual refresh action use the same path. No-change refresh performs no content
+read, PDF extraction, or OCR. Rename/delete reconciliation and changed-source
+replacement are atomic, while an unreadable or concurrently changing source
+keeps its last valid indexed content for a later retry. Project watcher events
+do not rebuild the baseline or release/live source layers, and no periodic full
+scan is used. Extraction and OCR are local by default; cloud OCR is a
+per-document opt-in. A
 real local embedding model is optional future work only after retrieval
 evaluation shows a material benefit; its dimensions are model metadata rather
 than a fixed architecture constant.

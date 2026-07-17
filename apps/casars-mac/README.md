@@ -1,7 +1,7 @@
 # casars-mac
 
 Truth class: current descriptive
-Last reality check: 2026-07-12
+Last reality check: 2026-07-15
 Verification: swift test; just gui-test; swift run casars-mac --dump-debug-state --simulate-main-flow; swift run casars-mac --dump-debug-state --show-prototype notebook; swift run casars-mac --dump-debug-state --show-prototype python; swift run casars-mac --dump-debug-state --show-prototype tutorial; swift run casars-mac --dump-debug-state --show-prototype ai; ./script/build_and_run.sh --verify
 
 `casars-mac` is the SwiftUI prototype for the native macOS `casa-rs`
@@ -72,11 +72,31 @@ file is opened or written: prototype tests launch `--show-prototype notebook`,
 the production-boundary audit remains zero. Production notebook tests use only
 unique test-owned temporary projects and remove them after each test.
 
+Wave 5 adds a separate opt-in production acceptance path:
+
+```bash
+just assistant-live-gui
+```
+
+It preflights the installed Codex CLI, existing ChatGPT subscription login,
+and selected scientific Python, removes metered API environment variables,
+then runs one disposable-project XCUITest. The test sends a real answer through
+the exact CASA project MCP, cancels an in-flight turn, fully terminates and
+relaunches the app, and proves either same-backend resume or an explicit visible
+handoff before a fresh backend continues the durable conversation. Its
+retained evidence is `apps/casars-mac/.gui-test/AssistantLiveGUI.xcresult`.
+Unlike `just gui-test`, this command intentionally contacts the subscribed
+provider and is never a default CI gate. A failure retains the disposable
+project in the UI runner container and validates its transcripts through the
+production Rust/UniFFI boundary before returning.
+
 Local execution is deliberately batched into one exclusive foreground window.
 The harness completes Rust and Xcode `build-for-testing` work first, then shows
 a notification and ten-second countdown before running the whole suite with
 `test-without-building`. Do not use the keyboard, mouse, or switch applications
-until the completion notification. Set
+until the completion notification. The local harness hides Codex for this
+window and restores it afterward so progress updates cannot cover the app under
+test. Set
 `CASA_RS_GUI_TEST_COUNTDOWN_SECONDS=<seconds>` to change the countdown, or
 `CASA_RS_GUI_TEST_EXCLUSIVE_NOTICE=0` only for an already isolated session.
 Normal edit loops should use `swift test`, debug-state checks, and deterministic

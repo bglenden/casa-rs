@@ -1605,20 +1605,33 @@ final class WorkbenchStoreTests: XCTestCase {
             result: makePlotResult(
                 preset: .amplitudeVsTime,
                 title: "Amplitude vs time",
-                datasetPath: msPath
+                datasetPath: msPath,
+                imageBytes: Data()
             )
         )
         let store = WorkbenchStore(state: state)
         store.createScientificNotebook(filename: "Plots.md", title: "Plots")
+        let renderedImage = NotebookVisualizationImage(
+            data: Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+            fileExtension: "png",
+            mediaType: "image/png",
+            width: 960,
+            height: 600,
+            renderer: "test Workbench renderer"
+        )
 
-        store.saveMeasurementSetPlotToNotebook(datasetID: dataset.id)
+        store.saveMeasurementSetPlotToNotebook(datasetID: dataset.id, renderedImage: renderedImage)
         let first = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook?.visualizations.first)
         XCTAssertEqual(first.revisions.count, 1)
         XCTAssertEqual(first.revisions[0].reopen.parameters["selectedField"], .string("0"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: rootURL
             .appendingPathComponent(first.revisions[0].assetPath).path))
 
-        store.saveMeasurementSetPlotToNotebook(datasetID: dataset.id, updating: first.id)
+        store.saveMeasurementSetPlotToNotebook(
+            datasetID: dataset.id,
+            updating: first.id,
+            renderedImage: renderedImage
+        )
         let updated = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook?.visualizations.first)
         XCTAssertEqual(updated.id, first.id)
         XCTAssertEqual(updated.revisions.count, 2)
@@ -1627,6 +1640,84 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openNotebookVisualization(updated.id)
         XCTAssertEqual(store.state.measurementSetPlots[dataset.id]?.preset, .amplitudeVsTime)
         XCTAssertTrue(store.state.tabs.contains(where: { $0.kind == .datasetExplorer }))
+        XCTAssertTrue(store.shouldPresentMeasurementSetPlotSurface(datasetID: dataset.id))
+    }
+
+    func testLocalRealMeasurementSetVisualizationSaveDiagnostic() throws {
+        guard let msPath = ProcessInfo.processInfo.environment["CASA_RS_WAVE5C_MS"] else {
+            throw XCTSkip("Set CASA_RS_WAVE5C_MS to diagnose a real MeasurementSet visualization save.")
+        }
+        guard FileManager.default.fileExists(atPath: msPath) else {
+            throw XCTSkip("\(msPath) is not staged")
+        }
+
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-real-visualization-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let dataset = DatasetSummary(
+            id: msPath,
+            name: URL(fileURLWithPath: msPath).lastPathComponent,
+            path: msPath,
+            kind: .measurementSet,
+            size: "diagnostic",
+            units: "Jy",
+            notes: "real Wave 5C plot"
+        )
+        let result = try UniFFIMeasurementSetPlotClient().buildPlot(
+            request: MeasurementSetPlotBuildRequest(
+                datasetPath: msPath,
+                preset: .uvCoverage,
+                field: nil,
+                spectralWindow: nil,
+                correlation: nil,
+                dataColumn: "DATA"
+            )
+        )
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "Real visualization diagnostic",
+            rootPath: rootURL.path,
+            datasets: [dataset],
+            source: .probed
+        )
+        state.measurementSetPlots[dataset.id] = MeasurementSetExplorerPlotState(
+            datasetID: dataset.id,
+            preset: .uvCoverage,
+            selectedField: "",
+            selectedSpectralWindow: "",
+            selectedCorrelation: "",
+            dataColumn: "DATA",
+            status: .ready,
+            lastError: nil,
+            result: result
+        )
+        let store = WorkbenchStore(state: state)
+        store.createScientificNotebook(filename: "Plots.md", title: "Plots")
+
+        XCTAssertTrue(result.imageBytes.isEmpty, "the production plot contract is data-first")
+        store.saveMeasurementSetPlotToNotebook(
+            datasetID: dataset.id,
+            renderedImage: NotebookVisualizationImage(
+                data: Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+                fileExtension: "png",
+                mediaType: "image/png",
+                width: result.imageWidth,
+                height: result.imageHeight,
+                renderer: "test Workbench renderer"
+            )
+        )
+
+        let visualization = try XCTUnwrap(
+            store.state.scientificNotebooks?.activeNotebook?.visualizations.first,
+            "save errors: \(store.state.lastErrors)"
+        )
+        XCTAssertEqual(visualization.revisions.count, 1)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: rootURL.appendingPathComponent(visualization.revisions[0].assetPath).path
+            )
+        )
     }
 
     func testImageVisualizationSaveCreatesStableNotebookPNG() throws {

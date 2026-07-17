@@ -118,6 +118,25 @@ package struct AssistantContextItemState: Codable, Equatable, Identifiable {
     package var contentSha256: String
     package var untrustedEvidence: Bool
     package var selected: Bool = true
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, label, summary, excerpt, byteCount, contentSha256, untrustedEvidence, selected
+    }
+}
+
+extension AssistantContextItemState {
+    package init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        kind = try values.decode(String.self, forKey: .kind)
+        label = try values.decode(String.self, forKey: .label)
+        summary = try values.decode(String.self, forKey: .summary)
+        excerpt = try values.decode(String.self, forKey: .excerpt)
+        byteCount = try values.decode(UInt64.self, forKey: .byteCount)
+        contentSha256 = try values.decode(String.self, forKey: .contentSha256)
+        untrustedEvidence = try values.decode(Bool.self, forKey: .untrustedEvidence)
+        selected = try values.decodeIfPresent(Bool.self, forKey: .selected) ?? true
+    }
 }
 
 /// Deterministically shares one bounded context window across every open tab.
@@ -225,15 +244,54 @@ package struct AssistantDiscussionState: Codable, Equatable {
     package var account = AssistantAccountState(email: nil, plan: nil, requiresLogin: true)
     package var usage = AssistantUsageState()
     package var streamingText = ""
+    /// Ephemeral, user-visible progress from actual App Server events. This is
+    /// deliberately distinct from hidden model reasoning, which the host does
+    /// not request or persist.
+    package var liveActivity: AssistantActivityState?
+    package var lastActivityAt: UInt64?
     package var activeTurnID: String?
     package var pendingApproval: AssistantApprovalRequestState?
     package var lastError: String?
     package var corpusStatus = "Not indexed"
+    package var corpusIndexReport: AssistantCorpusIndexReportState?
+    package var corpusDiagnostics: [String] = []
     package var pendingAuthenticationURL: String?
 
     package var activeConversation: AssistantConversationState? {
         conversations.first { $0.id == activeConversationID }
     }
+}
+
+package struct AssistantCorpusIndexReportState: Codable, Equatable {
+    package var schemaVersion: UInt32
+    package var retrievalEngine: String
+    package var indexedDocuments: Int
+    package var unchangedDocuments: Int
+    package var removedDocuments: Int
+    package var chunkCount: Int
+}
+
+package struct AssistantProjectCorpusSourceRequest: Codable, Equatable {
+    package var relativePath: String
+    package var fileType: String
+    package var sizeBytes: UInt64
+    package var modifiedUnixNs: Int64
+    package var statusChangedUnixNs: Int64
+    package var fileIdentity: String
+}
+
+package struct AssistantProjectCorpusPlanState: Codable, Equatable {
+    package var schemaVersion: UInt32
+    package var extractPaths: [String]
+    package var unchangedPaths: [String]
+    package var removedPaths: [String]
+}
+
+package struct AssistantCorpusRefreshMetricsState: Codable, Equatable {
+    package var projectMetadataReads = 0
+    package var projectContentReads = 0
+    package var projectPDFExtractions = 0
+    package var projectOCRCalls = 0
 }
 
 package struct AssistantCorpusDocumentRequest: Encodable {
@@ -281,10 +339,32 @@ package protocol AssistantPersistenceClient {
     func indexCorpus(
         projectRoot: String,
         documents: [AssistantCorpusDocumentRequest],
-        removeMissingLayers: Set<String>
+        removeMissingLayers: Set<String>,
+        projectSources: [AssistantProjectCorpusSourceRequest]?,
+        failedProjectSources: Set<String>
     ) throws -> String
+    func projectCorpusPlan(
+        projectRoot: String,
+        sources: [AssistantProjectCorpusSourceRequest]
+    ) throws -> AssistantProjectCorpusPlanState
     func searchCorpus(projectRoot: String, query: String, limit: Int) throws -> [AssistantCorpusSearchHitState]
     func createPin(_ request: AssistantCreatePinEnvelope) throws -> AssistantPinState
+}
+
+extension AssistantPersistenceClient {
+    package func indexCorpus(
+        projectRoot: String,
+        documents: [AssistantCorpusDocumentRequest],
+        removeMissingLayers: Set<String>
+    ) throws -> String {
+        try indexCorpus(
+            projectRoot: projectRoot,
+            documents: documents,
+            removeMissingLayers: removeMissingLayers,
+            projectSources: nil,
+            failedProjectSources: []
+        )
+    }
 }
 
 package struct UniFFIAssistantPersistenceClient: AssistantPersistenceClient {
@@ -331,16 +411,34 @@ package struct UniFFIAssistantPersistenceClient: AssistantPersistenceClient {
     package func indexCorpus(
         projectRoot: String,
         documents: [AssistantCorpusDocumentRequest],
-        removeMissingLayers: Set<String>
+        removeMissingLayers: Set<String>,
+        projectSources: [AssistantProjectCorpusSourceRequest]?,
+        failedProjectSources: Set<String>
     ) throws -> String {
         let request = AssistantCorpusIndexEnvelope(
             projectRoot: projectRoot,
             documents: documents,
-            removeMissingLayers: removeMissingLayers
+            removeMissingLayers: removeMissingLayers,
+            projectSources: projectSources,
+            failedProjectSources: failedProjectSources
         )
         return try CasarsFrontendServices.assistantCorpusIndexJson(
             requestJson: String(decoding: try encoder.encode(request), as: UTF8.self)
         )
+    }
+
+    package func projectCorpusPlan(
+        projectRoot: String,
+        sources: [AssistantProjectCorpusSourceRequest]
+    ) throws -> AssistantProjectCorpusPlanState {
+        let request = AssistantProjectCorpusPlanEnvelope(
+            projectRoot: projectRoot,
+            sources: sources
+        )
+        let json = try CasarsFrontendServices.assistantProjectCorpusPlanJson(
+            requestJson: String(decoding: try encoder.encode(request), as: UTF8.self)
+        )
+        return try decoder.decode(AssistantProjectCorpusPlanState.self, from: Data(json.utf8))
     }
 
     package func searchCorpus(
@@ -379,6 +477,13 @@ private struct AssistantCorpusIndexEnvelope: Encodable {
     var projectRoot: String
     var documents: [AssistantCorpusDocumentRequest]
     var removeMissingLayers: Set<String>
+    var projectSources: [AssistantProjectCorpusSourceRequest]?
+    var failedProjectSources: Set<String>
+}
+
+private struct AssistantProjectCorpusPlanEnvelope: Encodable {
+    var projectRoot: String
+    var sources: [AssistantProjectCorpusSourceRequest]
 }
 
 private struct AssistantCorpusSearchEnvelope: Encodable {

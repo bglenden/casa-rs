@@ -612,6 +612,31 @@ public protocol MeasurementSetMetadataClient {
     func probeTimeRange(datasetPath: String) throws -> MeasurementSetTimeRangeSummary
 }
 
+package struct NotebookVisualizationImage {
+    package let data: Data
+    package let fileExtension: String
+    package let mediaType: String
+    package let width: UInt32
+    package let height: UInt32
+    package let renderer: String
+
+    package init(
+        data: Data,
+        fileExtension: String,
+        mediaType: String,
+        width: UInt32,
+        height: UInt32,
+        renderer: String
+    ) {
+        self.data = data
+        self.fileExtension = fileExtension
+        self.mediaType = mediaType
+        self.width = width
+        self.height = height
+        self.renderer = renderer
+    }
+}
+
 public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
     public init() {}
 
@@ -792,6 +817,17 @@ private struct TaskParameterAttempt {
     var saveLast: Bool
 }
 
+private enum AssistantNotebookPinError: LocalizedError {
+    case invalidTaskSuggestion(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .invalidTaskSuggestion(detail):
+            "Cannot add the suggested task to the notebook: \(detail)"
+        }
+    }
+}
+
 private struct SessionLastDestination: Hashable {
     var surfaceID: String
     var workspace: String
@@ -814,6 +850,18 @@ private enum WorkbenchRuntimeKind {
     case aiPrototype
 }
 
+private enum AssistantCorpusRefreshRequest {
+    case allLayers
+    case projectDocuments
+
+    func merged(with other: Self) -> Self {
+        if self == .allLayers || other == .allLayers { return .allLayers }
+        return .projectDocuments
+    }
+}
+
+extension AssistantCorpusRefreshRequest: Equatable {}
+
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
     @Published package private(set) var pythonNotebookRuntime = NotebookPythonRuntimeState()
@@ -833,15 +881,24 @@ public final class WorkbenchStore: ObservableObject {
     private var agentSession: AgentSession?
     private var activeAgentCommand: String?
     private var assistantProjectNonce = UUID().uuidString + UUID().uuidString
+    private var assistantConversationStartPending = false
     private var assistantPendingCitations: [AssistantCitationState] = []
     private var assistantPendingActivities: [AssistantActivityState] = []
     private var assistantPendingTaskSuggestions: [AssistantTaskSuggestionState] = []
+    private var assistantPendingStreamText = ""
+    private var assistantStreamFlushWorkItem: DispatchWorkItem?
+    private var assistantResponseTimeoutWorkItem: DispatchWorkItem?
+    private var assistantResponseTimeout: TimeInterval = 120
     private var assistantSuggestedParameters: [String: Set<String>] = [:]
     private var assistantDraftSaveWorkItem: DispatchWorkItem?
     private let imagerProgressSource: ImagerProgressSource
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private let tableBrowserQueue = DispatchQueue(label: "casars.mac.tablebrowser-cell-window", qos: .userInitiated)
     private let assistantCorpusQueue = DispatchQueue(label: "casars.mac.assistant-corpus", qos: .utility)
+    private var projectCorpusWatcher: ProjectCorpusWatcher?
+    private var assistantCorpusRefreshRunning = false
+    private var pendingAssistantCorpusRefresh: AssistantCorpusRefreshRequest?
+    private var fullyRefreshedAssistantCorpusProject: String?
     private var activeTaskExecutions: [String: TaskExecution] = [:]
     private var taskParameterAttempts: [String: TaskParameterAttempt] = [:]
     private var notebookAttemptHandles: [String: NotebookAttemptHandle] = [:]
@@ -849,6 +906,7 @@ public final class WorkbenchStore: ObservableObject {
     private var pythonKernelStatuses: [String: NotebookPythonKernelStatus] = [:]
     private var pythonExecutableOverride: String?
     private var measurementSetParameterAttempts: [String: TaskParameterAttempt] = [:]
+    private var measurementSetPlotSurfaceRequests: Set<String> = []
     private var acceptedSessionParameterValues: [String: [String: SurfaceParameterValue]] = [:]
     private var acceptedSessionParameterSequence: [String: UInt64] = [:]
     private var nextSessionParameterSequence: UInt64 = 0
@@ -942,7 +1000,20 @@ public final class WorkbenchStore: ObservableObject {
         pythonExecutableOverride = path
     }
 
+    package func installAssistantResponseTimeoutForTesting(_ timeout: TimeInterval) {
+        assistantResponseTimeout = timeout
+    }
+
+    package func expireAssistantResponseForTesting() {
+        handleAssistantResponseTimeout(
+            conversationID: state.assistantDiscussion?.activeConversation?.id
+        )
+    }
+
     deinit {
+        projectCorpusWatcher?.stop()
+        assistantStreamFlushWorkItem?.cancel()
+        assistantResponseTimeoutWorkItem?.cancel()
         pythonKernels.values.forEach { $0.terminate() }
         agentSession?.terminate()
         guard runtimeKind == .production else { return }
@@ -1268,6 +1339,10 @@ public final class WorkbenchStore: ObservableObject {
 
     public func openProject(path: String) {
         guard !rejectPrototypeProductionAction("Project opening") else { return }
+        projectCorpusWatcher?.stop()
+        projectCorpusWatcher = nil
+        pendingAssistantCorpusRefresh = nil
+        fullyRefreshedAssistantCorpusProject = nil
         let interfaceFontSize = state.interfaceFontSize
         let taskCatalog = state.taskCatalog
         cleanupTemporaryDemoProject()
@@ -1285,6 +1360,9 @@ public final class WorkbenchStore: ObservableObject {
             if let dataset = state.selectedDataset {
                 openExplorer(for: dataset)
             }
+            state.assistantDiscussion = AssistantDiscussionState()
+            startProjectCorpusWatcher()
+            requestAssistantCorpusRefresh(.projectDocuments)
             state.history.append(
                 ProcessingHistoryEvent(
                     id: "hist-project-open-\(state.history.count + 1)",
@@ -2748,34 +2826,46 @@ public final class WorkbenchStore: ObservableObject {
 
     package func saveMeasurementSetPlotToNotebook(
         datasetID: String,
-        updating visualizationID: String? = nil
+        updating visualizationID: String? = nil,
+        renderedImage: NotebookVisualizationImage
     ) {
         guard let project = state.scientificNotebooks,
-              var plotState = state.measurementSetPlots[datasetID],
-              let result = plotState.result,
-              !result.imageBytes.isEmpty
+              let plotState = state.measurementSetPlots[datasetID],
+              let result = plotState.result
         else {
             state.lastErrors.append("Generate a MeasurementSet plot before saving it to a notebook")
             return
         }
-        plotState.result = nil
-        plotState.status = .idle
-        plotState.lastError = nil
+        guard !renderedImage.data.isEmpty else {
+            state.lastErrors.append("Render the MeasurementSet plot before saving it to a notebook")
+            return
+        }
+        var reopenState = plotState
+        reopenState.result = nil
+        reopenState.status = .idle
+        reopenState.lastError = nil
         saveVisualizationData(
-            result.imageBytes,
-            extension: result.imageFormat.lowercased() == "svg" ? "svg" : "png",
+            renderedImage.data,
+            extension: renderedImage.fileExtension,
             title: result.title,
             notebookID: project.activeNotebookID,
             visualizationID: visualizationID,
             sourceReferences: [result.datasetPath],
             surface: "msexplore",
-            parameters: Self.jsonValue(plotState).objectValue ?? [:],
-            renderer: result.renderer,
-            mediaType: result.imageFormat.lowercased() == "svg" ? "image/svg+xml" : "image/png",
-            width: result.imageWidth,
-            height: result.imageHeight,
+            parameters: Self.jsonValue(reopenState).objectValue ?? [:],
+            renderer: renderedImage.renderer,
+            mediaType: renderedImage.mediaType,
+            width: renderedImage.width,
+            height: renderedImage.height,
             settings: ["selection_summary": .string(result.selectionSummary)]
         )
+    }
+
+    package func reportMeasurementSetPlotSaveError(datasetID: String, message: String) {
+        let diagnostic = "Save MeasurementSet plot to notebook: \(message)"
+        state.lastErrors.append(diagnostic)
+        state.measurementSetPlots[datasetID]?.lastError = diagnostic
+        measurementSetPlotLogger.error("\(diagnostic, privacy: .public)")
     }
 
     package func saveImageExplorerToNotebook(
@@ -2831,6 +2921,7 @@ public final class WorkbenchStore: ObservableObject {
                 .object(revision.reopen.parameters)
             ) else { return }
             state.measurementSetPlots[restored.datasetID] = restored
+            measurementSetPlotSurfaceRequests.insert(restored.datasetID)
             openDatasetExplorer(restored.datasetID)
         case "imexplore":
             openImageExplorerPath(source)
@@ -2856,6 +2947,11 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
+    package func shouldPresentMeasurementSetPlotSurface(datasetID: String) -> Bool {
+        measurementSetPlotSurfaceRequests.contains(datasetID)
+    }
+
+    @discardableResult
     private func saveVisualizationData(
         _ data: Data,
         extension fileExtension: String,
@@ -2870,7 +2966,7 @@ public final class WorkbenchStore: ObservableObject {
         width: UInt32,
         height: UInt32,
         settings: [String: JSONValue]
-    ) {
+    ) -> Bool {
         let temporary = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-visualization-\(UUID().uuidString).\(fileExtension)")
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -2900,8 +2996,15 @@ public final class WorkbenchStore: ObservableObject {
                 )
             ))
             loadScientificNotebooks()
+            measurementSetPlotLogger.info(
+                "Saved notebook visualization surface=\(surface, privacy: .public) bytes=\(data.count, privacy: .public)"
+            )
+            return true
         } catch {
-            state.lastErrors.append("Save visualization to notebook: \(error)")
+            let diagnostic = "Save visualization to notebook: \(error)"
+            state.lastErrors.append(diagnostic)
+            measurementSetPlotLogger.error("\(diagnostic, privacy: .public)")
+            return false
         }
     }
 
@@ -3715,7 +3818,10 @@ public final class WorkbenchStore: ObservableObject {
             discussion.contexts = assistantOpenTabContexts()
             state.assistantDiscussion = discussion
         } catch {
-            state.lastErrors.append("Load assistant conversations: \(error)")
+            let message = "Load assistant conversations: \(error)"
+            state.lastErrors.append(message)
+            if state.assistantDiscussion == nil { state.assistantDiscussion = AssistantDiscussionState() }
+            state.assistantDiscussion?.lastError = message
         }
     }
 
@@ -3723,10 +3829,16 @@ public final class WorkbenchStore: ObservableObject {
         presentation: AssistantDiscussionPresentation = .drawer
     ) {
         guard state.hasProject else { return }
-        if state.assistantDiscussion == nil { loadAssistantDiscussions() }
+        if state.assistantDiscussion == nil
+            || state.assistantDiscussion?.presentation == .closed
+        {
+            loadAssistantDiscussions()
+        }
         if state.assistantDiscussion?.activeConversation == nil { newAssistantConversation() }
         state.assistantDiscussion?.presentation = presentation
-        if state.assistantDiscussion?.corpusStatus == "Not indexed" { refreshAssistantCorpus() }
+        if fullyRefreshedAssistantCorpusProject != state.project.rootPath {
+            requestAssistantCorpusRefresh(.allLayers)
+        }
         prepareAgentSession()
     }
 
@@ -3757,7 +3869,7 @@ public final class WorkbenchStore: ObservableObject {
         }
         state.assistantDiscussion?.activeConversationID = id
         state.assistantDiscussion?.contexts = assistantOpenTabContexts()
-        startActiveAgentConversation()
+        restartActiveAgentConversation()
     }
 
     package func newAssistantConversation() {
@@ -3779,7 +3891,7 @@ public final class WorkbenchStore: ObservableObject {
             state.assistantDiscussion?.conversations.append(conversation)
             state.assistantDiscussion?.activeConversationID = conversation.id
             state.assistantDiscussion?.contexts = assistantOpenTabContexts()
-            startActiveAgentConversation()
+            restartActiveAgentConversation()
         } catch {
             recordAssistantError("Create discussion: \(error)")
         }
@@ -3791,19 +3903,13 @@ public final class WorkbenchStore: ObservableObject {
             if let model = state.assistantDiscussion?.models.first(where: { $0.id == modelID }) {
                 conversation.profile.effort = model.defaultEffort
             }
-            conversation.backendSession = nil
         }
         persistActiveAssistantConversation()
-        startActiveAgentConversation()
     }
 
     package func selectAssistantEffort(_ effort: String) {
-        updateActiveAssistantConversation {
-            $0.profile.effort = effort
-            $0.backendSession = nil
-        }
+        updateActiveAssistantConversation { $0.profile.effort = effort }
         persistActiveAssistantConversation()
-        startActiveAgentConversation()
     }
 
     package func selectAssistantAuthority(_ authority: AssistantAuthorityState) {
@@ -3812,7 +3918,7 @@ public final class WorkbenchStore: ObservableObject {
             $0.backendSession = nil
         }
         persistActiveAssistantConversation()
-        startActiveAgentConversation()
+        restartActiveAgentConversation()
     }
 
     package func setAssistantAgentCommand(_ command: String) {
@@ -3828,6 +3934,7 @@ public final class WorkbenchStore: ObservableObject {
         agentSession?.terminate()
         agentSession = nil
         activeAgentCommand = nil
+        assistantConversationStartPending = false
         prepareAgentSession()
     }
 
@@ -3843,7 +3950,7 @@ public final class WorkbenchStore: ObservableObject {
         }
         persistActiveAssistantConversation()
         probeAssistantPythonIfNeeded()
-        startActiveAgentConversation()
+        restartActiveAgentConversation()
     }
 
     package func toggleAssistantContext(_ contextID: String) {
@@ -3856,6 +3963,7 @@ public final class WorkbenchStore: ObservableObject {
         updateActiveAssistantConversation { $0.selectedContextIds = selected }
         persistActiveAssistantConversation()
         writeAssistantContextProjection()
+        scheduleAssistantResponseTimeout()
     }
 
     package func refreshAssistantDiscussionContexts() {
@@ -3864,28 +3972,110 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func refreshAssistantCorpus() {
-        guard state.hasProject else { return }
+        requestAssistantCorpusRefresh(.allLayers)
+    }
+
+    private func startProjectCorpusWatcher() {
+        guard runtimeKind == .production, state.hasProject else { return }
+        let watcher = ProjectCorpusWatcher(projectRoot: state.project.rootPath) { [weak self] in
+            DispatchQueue.main.async {
+                self?.requestAssistantCorpusRefresh(.projectDocuments)
+            }
+        }
+        projectCorpusWatcher = watcher
+        watcher.start()
+    }
+
+    private func requestAssistantCorpusRefresh(_ request: AssistantCorpusRefreshRequest) {
+        guard runtimeKind == .production, state.hasProject else { return }
+        if state.assistantDiscussion == nil { state.assistantDiscussion = AssistantDiscussionState() }
+        if assistantCorpusRefreshRunning {
+            pendingAssistantCorpusRefresh = pendingAssistantCorpusRefresh.map {
+                $0.merged(with: request)
+            } ?? request
+            return
+        }
+        assistantCorpusRefreshRunning = true
+        let projectRoot = state.project.rootPath
         state.assistantDiscussion?.corpusStatus = "Indexing local corpus…"
+        state.assistantDiscussion?.corpusIndexReport = nil
+        state.assistantDiscussion?.corpusDiagnostics = []
         assistantCorpusQueue.async { [weak self] in
             guard let self else { return }
+            var diagnostics: [String] = []
             do {
-                let result = AssistantCorpusIngestor().collect(
-                    projectRoot: self.state.project.rootPath
+                let ingestor = AssistantCorpusIngestor()
+                let inventory = ingestor.projectDocumentInventory(projectRoot: projectRoot)
+                let plan = try self.assistantPersistenceClient.projectCorpusPlan(
+                    projectRoot: projectRoot,
+                    sources: inventory.sources
                 )
-                _ = try self.assistantPersistenceClient.indexCorpus(
-                    projectRoot: self.state.project.rootPath,
+                let scope: AssistantCorpusRefreshScope = request == .allLayers
+                    ? .allLayers : .projectDocuments
+                let result = ingestor.collect(
+                    projectRoot: projectRoot,
+                    projectInventory: inventory,
+                    extractProjectPaths: Set(plan.extractPaths),
+                    scope: scope
+                )
+                diagnostics = result.diagnostics
+                diagnostics.append(Self.assistantCorpusMetrics(result.metrics))
+                let reportJSON = try self.assistantPersistenceClient.indexCorpus(
+                    projectRoot: projectRoot,
                     documents: result.documents,
-                    removeMissingLayers: result.refreshedLayers
+                    removeMissingLayers: result.refreshedLayers,
+                    projectSources: result.projectSources,
+                    failedProjectSources: result.failedProjectSources
+                )
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                let report = try decoder.decode(
+                    AssistantCorpusIndexReportState.self,
+                    from: Data(reportJSON.utf8)
                 )
                 DispatchQueue.main.async {
-                    self.state.assistantDiscussion?.corpusStatus = "Local corpus ready"
+                    if self.state.project.rootPath == projectRoot {
+                        self.state.assistantDiscussion?.corpusStatus = Self.assistantCorpusStatus(report)
+                        self.state.assistantDiscussion?.corpusIndexReport = report
+                        self.state.assistantDiscussion?.corpusDiagnostics = diagnostics
+                        if request == .allLayers {
+                            self.fullyRefreshedAssistantCorpusProject = projectRoot
+                        }
+                    }
+                    self.finishAssistantCorpusRefresh()
                 }
             } catch {
+                let retainedDiagnostics = diagnostics
                 DispatchQueue.main.async {
-                    self.recordAssistantError("Refresh corpus: \(error)")
+                    if self.state.project.rootPath == projectRoot {
+                        self.state.assistantDiscussion?.corpusStatus = "Local corpus refresh failed"
+                        self.state.assistantDiscussion?.corpusIndexReport = nil
+                        self.state.assistantDiscussion?.corpusDiagnostics = retainedDiagnostics
+                        self.recordAssistantError("Refresh corpus: \(error)")
+                    }
+                    self.finishAssistantCorpusRefresh()
                 }
             }
         }
+    }
+
+    private func finishAssistantCorpusRefresh() {
+        assistantCorpusRefreshRunning = false
+        guard let pending = pendingAssistantCorpusRefresh else { return }
+        pendingAssistantCorpusRefresh = nil
+        requestAssistantCorpusRefresh(pending)
+    }
+
+    private static func assistantCorpusMetrics(_ metrics: AssistantCorpusRefreshMetricsState) -> String {
+        "Project refresh: \(metrics.projectMetadataReads) metadata reads, "
+            + "\(metrics.projectContentReads) content reads, "
+            + "\(metrics.projectPDFExtractions) PDF extractions, "
+            + "\(metrics.projectOCRCalls) OCR calls."
+    }
+
+    private static func assistantCorpusStatus(_ report: AssistantCorpusIndexReportState) -> String {
+        let changed = report.indexedDocuments + report.removedDocuments
+        return "Local corpus ready · \(report.chunkCount) chunks · \(changed) changed"
     }
 
     package func pinAssistantMessage(_ messageID: String) {
@@ -3895,7 +4085,7 @@ public final class WorkbenchStore: ObservableObject {
               let notebook = state.scientificNotebooks?.activeNotebook
         else { return }
         do {
-            let markdown = assistantPinMarkdown(
+            let markdown = try assistantPinMarkdown(
                 message,
                 conversationID: conversation.id
             )
@@ -3921,6 +4111,10 @@ public final class WorkbenchStore: ObservableObject {
 
     package func authenticateAssistantAccount() {
         agentSession?.requestAccountLogin()
+    }
+
+    package func logoutAssistantAccount() {
+        agentSession?.requestAccountLogout()
     }
 
     package func sendAssistantPrompt() {
@@ -3950,8 +4144,18 @@ public final class WorkbenchStore: ObservableObject {
         }
         discussion.activity = .streaming
         discussion.streamingText = ""
+        discussion.liveActivity = AssistantActivityState(
+            id: "request-sent",
+            label: "Request sent",
+            state: "running",
+            summary: nil
+        )
+        discussion.lastActivityAt = Self.assistantTimestamp()
         discussion.lastError = nil
         state.assistantDiscussion = discussion
+        assistantStreamFlushWorkItem?.cancel()
+        assistantStreamFlushWorkItem = nil
+        assistantPendingStreamText = ""
         assistantPendingCitations = []
         assistantPendingActivities = []
         assistantPendingTaskSuggestions = []
@@ -3988,14 +4192,14 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func restartAssistantAgent() {
-        agentSession?.restart()
-        startActiveAgentConversation()
+        restartActiveAgentConversation()
     }
 
     private func prepareAgentSession() {
         let command = state.assistantDiscussion?.activeConversation?.profile.agentCommand ?? "codex"
         if agentSession == nil || activeAgentCommand != command {
             agentSession?.terminate()
+            assistantConversationStartPending = false
             do {
                 let configuration = try AgentSessionConfiguration.discover(
                     preferredAgentCommand: command
@@ -4029,12 +4233,16 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func startActiveAgentConversation() {
-        guard let conversation = state.assistantDiscussion?.activeConversation else { return }
+        guard !assistantConversationStartPending,
+              let conversation = state.assistantDiscussion?.activeConversation,
+              let agentSession
+        else { return }
+        assistantConversationStartPending = true
         probeAssistantPythonIfNeeded()
         assistantProjectNonce = UUID().uuidString + UUID().uuidString
         state.assistantDiscussion?.contexts = assistantOpenTabContexts()
         writeAssistantContextProjection()
-        agentSession?.startConversation(AgentConversationRequest(
+        agentSession.startConversation(AgentConversationRequest(
             projectRoot: state.project.rootPath,
             model: conversation.profile.model,
             effort: conversation.profile.effort,
@@ -4045,6 +4253,16 @@ public final class WorkbenchStore: ObservableObject {
                 pythonCommand: conversation.profile.pythonCommand
             )
         ))
+    }
+
+    /// App Server retains project MCP processes for its live threads. Restart it
+    /// before changing the nonce-bound runtime profile so only one project MCP
+    /// helper is alive for this Workbench session.
+    private func restartActiveAgentConversation() {
+        cancelAssistantResponseTimeout()
+        assistantConversationStartPending = false
+        agentSession?.restart()
+        startActiveAgentConversation()
     }
 
     private func probeAssistantPythonIfNeeded() {
@@ -4099,12 +4317,15 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func handleAgentEvent(_ event: [String: Any]) {
+        noteAssistantResponseActivity()
         if let method = event["method"] as? String {
             let params = event["params"] as? [String: Any] ?? [:]
             switch method {
             case "item/agentMessage/delta":
-                state.assistantDiscussion?.streamingText += params["delta"] as? String ?? ""
+                setAssistantLiveActivity(id: "response", label: "Writing response")
+                enqueueAssistantStreamDelta(params["delta"] as? String ?? "")
             case "turn/started":
+                setAssistantLiveActivity(id: "turn", label: "Agent accepted request")
                 if let turn = params["turn"] as? [String: Any] {
                     state.assistantDiscussion?.activeTurnID = turn["id"] as? String
                 }
@@ -4120,9 +4341,19 @@ public final class WorkbenchStore: ObservableObject {
                 applyAssistantUsage(params)
             case "account/login/completed":
                 refreshAssistantAccount()
+            case "casa/accountLogout/completed":
+                state.assistantDiscussion?.account = AssistantAccountState(
+                    email: nil,
+                    plan: nil,
+                    requiresLogin: true
+                )
+                state.assistantDiscussion?.usage = AssistantUsageState()
+                state.assistantDiscussion?.pendingAuthenticationURL = nil
             case "casa/error", "error":
+                assistantConversationStartPending = false
                 recordAssistantError((params["message"] as? String) ?? String(describing: params))
             case "casa/resumeFailed":
+                assistantConversationStartPending = false
                 let detail = (params["message"] as? String) ?? "backend session is incompatible"
                 let message = AssistantMessageState(
                     id: UUID().uuidString.lowercased(),
@@ -4147,7 +4378,7 @@ public final class WorkbenchStore: ObservableObject {
                     $0.backendSession = nil
                 }
                 persistActiveAssistantConversation()
-                startActiveAgentConversation()
+                restartActiveAgentConversation()
             case "item/commandExecution/requestApproval",
                  "item/fileChange/requestApproval",
                  "item/permissions/requestApproval",
@@ -4168,6 +4399,7 @@ public final class WorkbenchStore: ObservableObject {
         if let thread = result["thread"] as? [String: Any],
            let threadID = thread["id"] as? String
         {
+            assistantConversationStartPending = false
             updateActiveAssistantConversation {
                 $0.backendSession = AssistantBackendSessionState(
                     backendId: "codex_app_server",
@@ -4237,6 +4469,8 @@ public final class WorkbenchStore: ObservableObject {
         } else {
             assistantPendingActivities.append(activity)
         }
+        state.assistantDiscussion?.liveActivity = activity
+        state.assistantDiscussion?.lastActivityAt = Self.assistantTimestamp()
         guard completed,
               isTrustedCasaMCP,
               let result = item["result"] as? [String: Any],
@@ -4297,6 +4531,8 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func finishAssistantTurn(_ params: [String: Any]) {
+        cancelAssistantResponseTimeout()
+        flushAssistantStreamTextNow()
         let text = state.assistantDiscussion?.streamingText ?? ""
         let turn = params["turn"] as? [String: Any]
         let status = turn?["status"] as? String ?? "completed"
@@ -4331,6 +4567,8 @@ public final class WorkbenchStore: ObservableObject {
             persistActiveAssistantConversation()
         }
         state.assistantDiscussion?.streamingText = ""
+        state.assistantDiscussion?.liveActivity = nil
+        state.assistantDiscussion?.lastActivityAt = nil
         state.assistantDiscussion?.activeTurnID = nil
         state.assistantDiscussion?.activity = status == "failed" ? .restartRequired : .completed
         assistantPendingCitations = []
@@ -4339,6 +4577,31 @@ public final class WorkbenchStore: ObservableObject {
         if status == "failed" {
             recordAssistantError(errorMessage ?? "Agent turn failed")
         }
+    }
+
+    private func enqueueAssistantStreamDelta(_ delta: String) {
+        guard !delta.isEmpty else { return }
+        assistantPendingStreamText += delta
+        guard assistantStreamFlushWorkItem == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.assistantStreamFlushWorkItem = nil
+            self.flushAssistantStreamText()
+        }
+        assistantStreamFlushWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+    }
+
+    private func flushAssistantStreamTextNow() {
+        assistantStreamFlushWorkItem?.cancel()
+        assistantStreamFlushWorkItem = nil
+        flushAssistantStreamText()
+    }
+
+    private func flushAssistantStreamText() {
+        guard !assistantPendingStreamText.isEmpty else { return }
+        state.assistantDiscussion?.streamingText += assistantPendingStreamText
+        assistantPendingStreamText = ""
     }
 
     private func refreshAssistantAccount() {
@@ -4623,7 +4886,7 @@ public final class WorkbenchStore: ObservableObject {
     private func assistantPinMarkdown(
         _ message: AssistantMessageState,
         conversationID: String
-    ) -> String {
+    ) throws -> String {
         var markdown = """
 
 
@@ -4636,7 +4899,38 @@ public final class WorkbenchStore: ObservableObject {
         for (index, citation) in message.citations.enumerated() {
             markdown += "\n\n[\(index + 1)] \(citation.label), \(citation.locator)"
         }
+        for suggestion in message.taskSuggestions {
+            markdown += try assistantTaskCellMarkdown(suggestion)
+        }
         return markdown + "\n"
+    }
+
+    private func assistantTaskCellMarkdown(_ suggestion: AssistantTaskSuggestionState) throws -> String {
+        let bundle = try surfaceParameterClient.loadBundle(surfaceID: suggestion.taskId)
+        var parameters: [String: JSONValue] = [:]
+        for (name, text) in suggestion.parameters {
+            guard let concept = bundle.concept(for: name) else {
+                throw AssistantNotebookPinError.invalidTaskSuggestion(
+                    "unknown parameter \(name) for \(suggestion.taskId)"
+                )
+            }
+            parameters[name] = JSONValue(parameterValue: concept.valueDomain.value(from: text))
+        }
+        let intent = NotebookTaskIntent(
+            format: 1,
+            surface: suggestion.taskId,
+            kind: bundle.surface.kind,
+            contract: UInt32(clamping: bundle.surface.contractVersion),
+            parameters: parameters
+        )
+        return """
+
+
+        <!-- casa-rs-cell:v1 id=\(UUID().uuidString.lowercased()) kind=task -->
+        ```toml
+        \(intent.profileTOML)```
+        <!-- /casa-rs-cell -->
+        """
     }
 
     private func appendAssistantMarkdownAtNotebookTail(_ markdown: String) {
@@ -4678,9 +4972,63 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func recordAssistantError(_ message: String) {
+        cancelAssistantResponseTimeout()
         if state.assistantDiscussion == nil { state.assistantDiscussion = AssistantDiscussionState() }
         state.assistantDiscussion?.lastError = message
         state.assistantDiscussion?.activity = .restartRequired
+        state.assistantDiscussion?.liveActivity = nil
+        state.assistantDiscussion?.lastActivityAt = nil
+    }
+
+    private func scheduleAssistantResponseTimeout() {
+        assistantResponseTimeoutWorkItem?.cancel()
+        guard state.assistantDiscussion?.activity == .streaming else { return }
+        let conversationID = state.assistantDiscussion?.activeConversation?.id
+        let work = DispatchWorkItem { [weak self] in
+            self?.handleAssistantResponseTimeout(conversationID: conversationID)
+        }
+        assistantResponseTimeoutWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + assistantResponseTimeout, execute: work)
+    }
+
+    private func handleAssistantResponseTimeout(conversationID: String?) {
+        guard state.assistantDiscussion?.activity == .streaming,
+              state.assistantDiscussion?.activeConversation?.id == conversationID
+        else { return }
+        if let threadID = state.assistantDiscussion?.activeConversation?.backendSession?.sessionId,
+           let turnID = state.assistantDiscussion?.activeTurnID
+        {
+            agentSession?.cancel(threadID: threadID, turnID: turnID)
+        } else {
+            agentSession?.restart()
+            assistantConversationStartPending = false
+        }
+        state.assistantDiscussion?.activeTurnID = nil
+        recordAssistantError(
+            "The assistant did not report any activity for two minutes. Restart the agent and try again."
+        )
+    }
+
+    private func noteAssistantResponseActivity() {
+        guard state.assistantDiscussion?.activity == .streaming else { return }
+        state.assistantDiscussion?.lastActivityAt = Self.assistantTimestamp()
+        scheduleAssistantResponseTimeout()
+    }
+
+    private func setAssistantLiveActivity(id: String, label: String) {
+        guard state.assistantDiscussion?.activity == .streaming else { return }
+        state.assistantDiscussion?.liveActivity = AssistantActivityState(
+            id: id,
+            label: label,
+            state: "running",
+            summary: nil
+        )
+        state.assistantDiscussion?.lastActivityAt = Self.assistantTimestamp()
+    }
+
+    private func cancelAssistantResponseTimeout() {
+        assistantResponseTimeoutWorkItem?.cancel()
+        assistantResponseTimeoutWorkItem = nil
     }
 
     private static func assistantTimestamp() -> UInt64 {
@@ -4698,6 +5046,16 @@ public final class WorkbenchStore: ObservableObject {
         )]?.contains(name) == true
     }
 
+    private func clearAssistantSuggestedParameters(sessionKey: String, names: Set<String>) {
+        guard var suggested = assistantSuggestedParameters[sessionKey] else { return }
+        suggested.subtract(names)
+        if suggested.isEmpty {
+            assistantSuggestedParameters.removeValue(forKey: sessionKey)
+        } else {
+            assistantSuggestedParameters[sessionKey] = suggested
+        }
+    }
+
     package func openAssistantTaskSuggestion(messageID: String, suggestionID: String) {
         guard let suggestion = state.assistantDiscussion?.activeConversation?.messages
             .first(where: { $0.id == messageID })?.taskSuggestions
@@ -4708,6 +5066,7 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
         let tabID = "tab-assistant-\(suggestion.taskId)-\(UUID().uuidString.lowercased())"
+        guard applyAssistantTaskSuggestion(suggestion, instanceID: tabID) else { return }
         openTab(WorkbenchTab(
             id: tabID,
             title: taskTitle(suggestion.taskId),
@@ -4715,18 +5074,61 @@ public final class WorkbenchStore: ObservableObject {
             taskID: suggestion.taskId
         ))
         selectTask(suggestion.taskId, tabID: tabID)
-        for (name, value) in suggestion.parameters.sorted(by: { $0.key < $1.key }) {
-            setGenericTaskValue(
-                taskID: suggestion.taskId,
-                instanceID: tabID,
-                argumentID: name,
-                value: value
-            )
-        }
         assistantSuggestedParameters[parameterSessionKey(
             surfaceID: suggestion.taskId,
             instanceID: tabID
         )] = Set(suggestion.parameters.keys)
+    }
+
+    private func applyAssistantTaskSuggestion(
+        _ suggestion: AssistantTaskSuggestionState,
+        instanceID: String
+    ) -> Bool {
+        let sessionKey = parameterSessionKey(
+            surfaceID: suggestion.taskId,
+            instanceID: instanceID
+        )
+        do {
+            let bundle = try surfaceParameterClient.loadBundle(surfaceID: suggestion.taskId)
+            let defaults = try surfaceParameterClient.defaults(surfaceID: suggestion.taskId)
+            var session = SurfaceParameterSession(
+                bundle: bundle,
+                snapshot: defaults,
+                selectedSource: .defaults,
+                baseProfileTOML: nil,
+                baseProfilePath: nil,
+                workspace: parameterWorkspacePath()
+            )
+            for (name, text) in suggestion.parameters {
+                guard let concept = bundle.concept(for: name) else {
+                    recordAssistantError("The suggested task contains unknown parameter \(name)")
+                    return false
+                }
+                let normalized = concept.valueDomain.isPathLike && !Self.isInlineRegionSyntax(text)
+                    ? projectRelativePath(text)
+                    : text
+                session.overridePatch.values[name] = concept.valueDomain.value(from: normalized)
+            }
+            guard resolveParameterSession(
+                &session,
+                editedParameters: Set(suggestion.parameters.keys)
+            ) else { return false }
+            let errors = session.snapshot.diagnostics
+                .filter { $0.level == "error" }
+                .map(\.message)
+            guard errors.isEmpty else {
+                recordAssistantError(
+                    "The suggested \(suggestion.taskId) parameters are not runnable: "
+                        + errors.joined(separator: "; ")
+                )
+                return false
+            }
+            state.parameterSessions[sessionKey] = session
+            return true
+        } catch {
+            recordAssistantError("Open suggested \(suggestion.taskId) task: \(error)")
+            return false
+        }
     }
 
     package func selectAIPrototypeAgent(_ agentID: String) {
@@ -6364,6 +6766,7 @@ public final class WorkbenchStore: ObservableObject {
         session.draftText[argumentID] = normalized
         resolveParameterSession(&session, editedParameters: [argumentID])
         state.parameterSessions[sessionKey] = session
+        clearAssistantSuggestedParameters(sessionKey: sessionKey, names: [argumentID])
         state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedTaskID, instanceID: instanceID)
     }
 
@@ -6386,6 +6789,7 @@ public final class WorkbenchStore: ObservableObject {
         session.draftText.removeValue(forKey: argumentID)
         resolveParameterSession(&session, editedParameters: [argumentID])
         state.parameterSessions[sessionKey] = session
+        clearAssistantSuggestedParameters(sessionKey: sessionKey, names: [argumentID])
         state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedTaskID, instanceID: instanceID)
     }
 
@@ -6411,6 +6815,7 @@ public final class WorkbenchStore: ObservableObject {
         session.draftText.removeValue(forKey: name)
         resolveParameterSession(&session, editedParameters: [name])
         state.parameterSessions[sessionKey] = session
+        clearAssistantSuggestedParameters(sessionKey: sessionKey, names: [name])
         state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedSurfaceID, instanceID: instanceID)
     }
 
@@ -6423,6 +6828,7 @@ public final class WorkbenchStore: ObservableObject {
         session.draftText = [:]
         resolveParameterSession(&session)
         state.parameterSessions[sessionKey] = session
+        assistantSuggestedParameters.removeValue(forKey: sessionKey)
         state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedSurfaceID, instanceID: instanceID)
     }
 

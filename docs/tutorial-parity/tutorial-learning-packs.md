@@ -16,7 +16,7 @@ Tutorials are immutable portable template folders that fork into ordinary editab
   regression/             # optional maintainer evidence overlay
 ```
 
-`tutorial.md` is ordinary Markdown and may contain the same typed task cells as any scientific notebook. `tutorial.toml` declares the tutorial identity, ordered sections, datasets, source URIs, project-local destinations, optional size and SHA-256, bounded unpack plan, and optional checks. The checked-in TW Hya walkthrough is [`resources/tutorials/tw-hya-first-look`](../../resources/tutorials/tw-hya-first-look/tutorial.md).
+`tutorial.md` is ordinary Markdown and may contain the same typed task cells as any scientific notebook. `tutorial.toml` declares the tutorial identity, ordered sections, datasets, source URIs, project-local destinations, optional size and SHA-256, bounded unpack plan, and optional checks. The checked-in TW Hya walkthrough is [`resources/tutorials/tw-hya-first-look`](https://github.com/bglenden/casa-rs/blob/main/resources/tutorials/tw-hya-first-look/tutorial.md).
 
 Forking copies the Markdown and assets into the project while leaving the source template unchanged. The learner copy is stored under `notebooks/`; Rust-managed state is stored under `.casa-rs/tutorials/<notebook-id>/lock.toml`.
 

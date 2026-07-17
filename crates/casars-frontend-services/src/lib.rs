@@ -25,9 +25,10 @@ use casa_notebook::{
     AssistantMessageId, AssistantPinReference, AssistantSessionProfile, AssistantStore,
     AttemptHandle, CORPUS_SCHEMA_VERSION, ConflictResolution, ConversationId,
     ConversationTranscript, CorpusDocumentInput, CorpusIndex, CorpusLayer, ExecutionReceipt,
-    ExportMode, NotebookDocument, NotebookId, NotebookStore, ReceiptFinalization, RecordingPolicy,
-    RecordingRequest, SaveResult, SaveVisualizationRequest, TaskCellIntent,
-    TutorialAcquisitionApproval, TutorialProject, TutorialTemplate, VisualizationSnapshot,
+    ExportMode, NotebookDocument, NotebookId, NotebookStore, ProjectCorpusSource,
+    ReceiptFinalization, RecordingPolicy, RecordingRequest, SaveResult, SaveVisualizationRequest,
+    TaskCellIntent, TutorialAcquisitionApproval, TutorialProject, TutorialTemplate,
+    VisualizationSnapshot,
 };
 use casa_provider_contracts::{
     ParameterValue, ProviderInvocationAdaptation, RunSafetyClass, SurfaceContractBundle,
@@ -888,6 +889,16 @@ struct AssistantCorpusIndexRequest {
     documents: Vec<CorpusDocumentInput>,
     #[serde(default)]
     remove_missing_layers: BTreeSet<CorpusLayer>,
+    #[serde(default)]
+    project_sources: Option<Vec<ProjectCorpusSource>>,
+    #[serde(default)]
+    failed_project_sources: BTreeSet<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AssistantProjectCorpusPlanRequest {
+    project_root: String,
+    sources: Vec<ProjectCorpusSource>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1292,11 +1303,33 @@ pub fn assistant_corpus_index_json(request_json: String) -> FrontendResult<Strin
         .map_err(|error| corpus_error("parse corpus index request", error))?;
     let index = CorpusIndex::open(&request.project_root)
         .map_err(|error| corpus_error("open corpus index", error))?;
-    let report = index
-        .index_documents(&request.documents, &request.remove_missing_layers)
-        .map_err(|error| corpus_error("index corpus documents", error))?;
+    let report = if let Some(project_sources) = request.project_sources {
+        index.index_documents_with_project_sources(
+            &request.documents,
+            &request.remove_missing_layers,
+            &project_sources,
+            &request.failed_project_sources,
+        )
+    } else {
+        index.index_documents(&request.documents, &request.remove_missing_layers)
+    }
+    .map_err(|error| corpus_error("index corpus documents", error))?;
     serde_json::to_string(&report)
         .map_err(|error| corpus_error("serialize corpus index report", error))
+}
+
+/// Plan project-document extraction using metadata only.
+#[uniffi::export]
+pub fn assistant_project_corpus_plan_json(request_json: String) -> FrontendResult<String> {
+    let request: AssistantProjectCorpusPlanRequest = serde_json::from_str(&request_json)
+        .map_err(|error| corpus_error("parse project corpus plan request", error))?;
+    let index = CorpusIndex::open(&request.project_root)
+        .map_err(|error| corpus_error("open corpus index", error))?;
+    let plan = index
+        .plan_project_sources(&request.sources)
+        .map_err(|error| corpus_error("plan project corpus extraction", error))?;
+    serde_json::to_string(&plan)
+        .map_err(|error| corpus_error("serialize project corpus plan", error))
 }
 
 /// Execute the bounded `corpus.search` operation exposed through project MCP.
