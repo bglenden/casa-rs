@@ -741,7 +741,7 @@ final class CasarsMacUITests: XCTestCase {
         let notebookTitle = try require("notebook.title")
         XCTAssertGreaterThan(notebookTitle.frame.width, 100, app.debugDescription)
         XCTAssertLessThan(notebookTitle.frame.height, 40, app.debugDescription)
-        let viewMode = element("notebook.viewMode")
+        let viewMode = element("notebook.viewMode.rich")
         let viewModeReady = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "hittable == true"),
             object: viewMode
