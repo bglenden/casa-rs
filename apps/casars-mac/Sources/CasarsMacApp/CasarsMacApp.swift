@@ -1073,10 +1073,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // window-scoped query. Resolving the Apple menu's Recent Items submenu
         // then asks for access to other application bundles and blocks an
         // unattended UI test behind a SystemPolicyAppBundles prompt.
-        guard let appleMenu = NSApp.mainMenu?.items.first?.submenu,
-              let recentItems = appleMenu.items.first(where: { $0.title == "Recent Items" })
+        guard let mainMenu = NSApp.mainMenu,
+              let appleMenuItem = mainMenu.items.first,
+              appleMenuItem.submenu?.items.contains(where: { $0.title == "Recent Items" }) == true
         else { return }
-        appleMenu.removeItem(recentItems)
+        mainMenu.removeItem(appleMenuItem)
     }
 }
 
