@@ -721,61 +721,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#source-seams" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Source Seams
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#current-mode-matrix" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Current Mode Matrix
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#runtime-effects" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Runtime Effects
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#theory-tutorial-cross-checks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Theory / Tutorial Cross-Checks
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#issue-routing" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Issue Routing
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -795,7 +740,7 @@
 
 <h1 id="imaging-effects-inventory">Imaging Effects Inventory<a class="headerlink" href="#imaging-effects-inventory" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-07-09
+Last reality check: 2026-07-16
 Verification:
 - <code>just docs-check</code>
 - <code>cargo test -p casa-imaging mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule</code>
@@ -803,9 +748,10 @@ Verification:
 - <code>cargo test -p casars-imager pbcor_products_apply_primary_beam_cutoff</code>
 - <code>CASA_RS_WAVE6_DATASET=alma scripts/run-wave6-issue53-mosaic-panels.sh target/wave6-issue53-mosaic-panels</code></p>
 <h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
-<p>Wave 6 uses tutorial data to force missing imaging capabilities into the open
+<p>Wave 6 used tutorial data to force missing imaging capabilities into the open
 before claiming CASA Guide duplication. This inventory records the CASA imaging
-effects that matter for the first mosaic tranche: #38, #50, #53, #161, and #169.</p>
+effects established by the completed first mosaic tranche: #38, #50, #53,</p>
+<h1 id="161-and-169">161, and #169.<a class="headerlink" href="#161-and-169" title="Permanent link">&para;</a></h1>
 <p>The tutorial acceptance data are the Antennae Band 7 and 3C391 mosaics. Smaller
 pinned datasets such as <code>refim_alma_mosaic.ms</code>, <code>papersky_mosaic.ms</code>, and
 <code>refim_oneshiftpoint.mosaic.ms</code> remain the fast regression oracles.</p>
@@ -1034,24 +980,16 @@ pinned datasets such as <code>refim_alma_mosaic.ms</code>, <code>papersky_mosaic
 <h2 id="issue-routing">Issue Routing<a class="headerlink" href="#issue-routing" title="Permanent link">&para;</a></h2>
 <ul>
 <li>
-<h1 id="38-owns-keeping-this-inventory-source-backed-as-the-tranche-grows">38 owns keeping this inventory source-backed as the tranche grows.<a class="headerlink" href="#38-owns-keeping-this-inventory-source-backed-as-the-tranche-grows" title="Permanent link">&para;</a></h1>
-</li>
+<h1 id="38-50-53-161-and-169-are-complete-their-issue-closeouts-and-this">38, #50, #53, #161, and #169 are complete. Their issue closeouts and this<a class="headerlink" href="#38-50-53-161-and-169-are-complete-their-issue-closeouts-and-this" title="Permanent link">&para;</a></h1>
+  inventory preserve the source-backed mosaic tranche evidence.</li>
 <li>
-<h1 id="50-owns-the-pointing-contribution-rule-current-casa-evidence-supports-a">50 owns the pointing contribution rule. Current CASA evidence supports a<a class="headerlink" href="#50-owns-the-pointing-contribution-rule-current-casa-evidence-supports-a" title="Permanent link">&para;</a></h1>
-  center-pixel rule for the <code>SimplePBConvFunc</code> path, not a broad PB-wing overlap
-  estimate.</li>
+<h1 id="35-40-42-45-52-54-55-217-223-and-341-own-remaining">35, #40, #42, #45, #52, #54, #55, #217, #223, and #341 own remaining<a class="headerlink" href="#35-40-42-45-52-54-55-217-223-and-341-own-remaining" title="Permanent link">&para;</a></h1>
+  focused imaging capabilities or parity questions.</li>
 <li>
-<h1 id="53-owns-the-remaining-tutorial-visible-tclean-surface-the-current-tranche">53 owns the remaining tutorial-visible <code>tclean</code> surface. The current tranche<a class="headerlink" href="#53-owns-the-remaining-tutorial-visible-tclean-surface-the-current-tranche" title="Permanent link">&para;</a></h1>
-  implements cleaned MFS mosaic and PB-corrected products, while mosaic cube,
-  automasking, start models, and outliers remain follow-up scope if required by
-  #161 or #169.</li>
-<li>
-<h1 id="161-and-169-must-show-the-final-proof-with-tutorial-data-and-human-review">161 and #169 must show the final proof with tutorial data and human-review<a class="headerlink" href="#161-and-169-must-show-the-final-proof-with-tutorial-data-and-human-review" title="Permanent link">&para;</a></h1>
-  artifact documents.</li>
-<li>
-<h1 id="163-177-and-181-are-follow-on-breadth-tutorials-that-reuse-the-same">163, #177, and #181 are follow-on breadth tutorials that reuse the same<a class="headerlink" href="#163-177-and-181-are-follow-on-breadth-tutorials-that-reuse-the-same" title="Permanent link">&para;</a></h1>
-  inventory and should open narrower imager tickets if they expose effects not
-  already listed here.</li>
+<h1 id="386-387-398-401-and-their-wave-8-umbrella-411-own-current-imaging">386, #387, #398, #401, and their Wave 8 umbrella #411 own current imaging,<a class="headerlink" href="#386-387-398-401-and-their-wave-8-umbrella-411-own-current-imaging" title="Permanent link">&para;</a></h1>
+  lattice, image-expression, and performance-harness consolidation.</li>
+<li>Follow-on breadth tutorials reuse this inventory and should open narrower
+  imager tickets when they expose effects not already owned by an open issue.</li>
 </ul>
 
 
