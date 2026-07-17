@@ -58,7 +58,7 @@ export CASA_RS_GUI_TEST_ONLY="CasarsMacUITests/CasarsMacUITests/testOptInProduct
 export CASA_RS_GUI_TEST_RESULT_BUNDLE="${CASA_RS_GUI_TEST_ARTIFACT_ROOT:-$ROOT_DIR/.gui-test}/TutorialJourneyGUI.xcresult"
 
 LIVE_GATE="$ROOT_DIR/.gui-test/tutorial-journey-gui.enabled"
-LIVE_PROJECT_BASE="${CASA_RS_GUI_TEST_PROJECT_BASE:-$HOME/Library/Caches/casa-rs-gui-tests}"
+LIVE_PROJECT_BASE="${CASA_RS_GUI_TEST_PROJECT_BASE:-$HOME/.casa-rs-gui-tests}"
 LIVE_PROJECT="$LIVE_PROJECT_BASE/casars-wave5d-tutorial-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 PASS_RECEIPT="$LIVE_PROJECT/.tutorial-journey-gui.passed"
 EVIDENCE_REPORT="${CASA_RS_GUI_TEST_ARTIFACT_ROOT:-$ROOT_DIR/.gui-test}/TutorialJourneyGUI.report.json"

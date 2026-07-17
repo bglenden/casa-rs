@@ -4,7 +4,7 @@
 <dict>
 	<key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
 	<array>
-		<string>/Library/Caches/casa-rs-gui-tests/</string>
+		<string>/.casa-rs-gui-tests/</string>
 	</array>
 </dict>
 </plist>

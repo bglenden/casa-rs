@@ -162,13 +162,13 @@ revisions, two explorer-plot revisions, and two full application restarts. A
 successful run removes the disposable project and retains the `.xcresult` plus
 the sanitized `NotebookRoundTripGUI.report.json` under
 `apps/casars-mac/.gui-test/`. A failed run retains the project for focused
-diagnosis. Disposable live projects default to
-`~/Library/Caches/casa-rs-gui-tests/` (override the parent with
-`CASA_RS_GUI_TEST_PROJECT_BASE`); they must not live inside the XCTest runner's
-app container, which would create an unrelated macOS cross-app-data privacy
-prompt. The sandboxed UI-test runner has a test-only, home-relative read/write
-exception limited to that cache directory; the Workbench product target does
-not receive it. This live acceptance is not part of CI or `just gui-test`.
+diagnosis. Disposable live projects default to `~/.casa-rs-gui-tests/`
+(override the parent with `CASA_RS_GUI_TEST_PROJECT_BASE`); they must not live
+under `~/Library` or inside the XCTest runner's app container, either of which
+would create an unrelated macOS cross-app-data privacy prompt. The sandboxed
+UI-test runner has a test-only, home-relative read/write exception limited to
+that test directory; the Workbench product target does not receive it. This
+live acceptance is not part of CI or `just gui-test`.
 
 `just notebook-roundtrip-gui-remote` runs that opt-in live acceptance on the
 same remote worker. It additionally requires the worker's Codex CLI to be
@@ -214,10 +214,11 @@ The executable GUI layer follows these rules:
 
 - Launch deterministic fixture states with `XCUIApplication.launchArguments`.
   Production-boundary persistence tests may create and remove a unique
-  test-owned project under `~/Library/Caches/casa-rs-gui-tests/` (or
-  `CASA_RS_GUI_TEST_PROJECT_BASE`); they must not put a project inside the
-  XCTest runner's protected application container because that triggers a
-  cross-app-data privacy prompt in the Workbench. The test helper resolves the
+  test-owned project under `~/.casa-rs-gui-tests/` (or
+  `CASA_RS_GUI_TEST_PROJECT_BASE`); they must not put a project under
+  `~/Library` or inside the XCTest runner's protected application container
+  because those locations trigger a cross-app-data privacy prompt in the
+  Workbench. The test helper resolves the
   default from the POSIX account home rather than Foundation's sandbox-adjusted
   `homeDirectoryForCurrentUser`. Never open user projects,
   contact providers or networks, run scientific tasks, or leave

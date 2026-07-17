@@ -37,7 +37,7 @@ export CASA_RS_GUI_TEST_ONLY="CasarsMacUITests/CasarsMacUITests/testOptInProduct
 export CASA_RS_GUI_TEST_RESULT_BUNDLE="${CASA_RS_GUI_TEST_ARTIFACT_ROOT:-$ROOT_DIR/.gui-test}/NotebookRoundTripGUI.xcresult"
 
 LIVE_GATE="$ROOT_DIR/.gui-test/notebook-roundtrip-gui.enabled"
-LIVE_PROJECT_BASE="${CASA_RS_GUI_TEST_PROJECT_BASE:-$HOME/Library/Caches/casa-rs-gui-tests}"
+LIVE_PROJECT_BASE="${CASA_RS_GUI_TEST_PROJECT_BASE:-$HOME/.casa-rs-gui-tests}"
 LIVE_PROJECT="$LIVE_PROJECT_BASE/casars-wave5c-roundtrip-retained"
 PASS_RECEIPT="$LIVE_PROJECT/.notebook-roundtrip-gui.passed"
 EVIDENCE_REPORT="${CASA_RS_GUI_TEST_ARTIFACT_ROOT:-$ROOT_DIR/.gui-test}/NotebookRoundTripGUI.report.json"

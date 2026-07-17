@@ -156,9 +156,11 @@ Use `Closes #N` only for issues that should auto-close on merge.
   exact pushed revision, and configure its dedicated stable signing identity
   once with `scripts/setup-gui-remote-signing.sh`. Ad-hoc signatures identify
   each rebuilt app as new code and therefore repeat macOS privacy prompts. Keep
-  disposable GUI-test projects in the ordinary user cache selected by
-  `CASA_RS_GUI_TEST_PROJECT_BASE`, never inside another app's container. The
-  XCUITest target's test-only file exception must stay limited to that cache
+  disposable GUI-test projects in the dedicated, unprotected
+  `~/.casa-rs-gui-tests/` directory selected by
+  `CASA_RS_GUI_TEST_PROJECT_BASE`, never under `~/Library` or inside another
+  app's container. Both locations trigger macOS app-data privacy prompts. The
+  XCUITest target's test-only file exception must stay limited to that test
   directory and must not be copied to the Workbench product target. Keep
   the checkout and Xcode DerivedData on internal storage, while placing the
   large Cargo target, task executables, and retained artifacts on configured

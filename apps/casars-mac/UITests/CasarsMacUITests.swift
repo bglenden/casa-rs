@@ -2689,7 +2689,7 @@ final class CasarsMacUITests: XCTestCase {
                 )
             }
             base = URL(fileURLWithPath: String(cString: homeDirectory), isDirectory: true)
-                .appendingPathComponent("Library/Caches/casa-rs-gui-tests", isDirectory: true)
+                .appendingPathComponent(".casa-rs-gui-tests", isDirectory: true)
         }
         guard !base.standardizedFileURL.path.contains("/Library/Containers/") else {
             throw NSError(
