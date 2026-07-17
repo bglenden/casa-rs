@@ -1050,7 +1050,18 @@ struct DisplaySettingsView: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if ProcessInfo.processInfo.environment["CASA_RS_UI_TESTING"] == "1" {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        scheduleAutomationMenuIfNeeded()
+        WorkbenchFallbackWindowController.shared.scheduleStartupWindow(arguments: CommandLine.arguments)
+        WorkbenchWindowPlacement.scheduleRepairsForAppWindows()
+    }
+
+    private func scheduleAutomationMenuIfNeeded() {
+        guard ProcessInfo.processInfo.environment["CASA_RS_UI_TESTING"] == "1" else { return }
+        // SwiftUI installs its Commands menu after applicationDidFinishLaunching.
+        // Replace it after that pass but before XCTest's first hierarchy query.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
             // XCTest snapshots the application menu bar even when a query is
             // scoped to the workbench window. AppKit's generated Services,
             // AutoFill, and Writing Tools submenus enumerate unrelated
@@ -1071,10 +1082,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.servicesMenu = nil
             NSApp.mainMenu = automationMenu
         }
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        WorkbenchFallbackWindowController.shared.scheduleStartupWindow(arguments: CommandLine.arguments)
-        WorkbenchWindowPlacement.scheduleRepairsForAppWindows()
     }
 }
 
