@@ -533,7 +533,7 @@ dependencies = [
 
 [[package]]
 name = "casa-aipsio"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-values",
  "ndarray",
@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "casa-calibration"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-logging",
  "casa-ms",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "casa-coordinates"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-types",
  "ndarray",
@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "casa-images"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-coordinates",
  "casa-lattices",
@@ -595,7 +595,7 @@ dependencies = [
 
 [[package]]
 name = "casa-imaging"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-coordinates",
  "casa-images",
@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "casa-lattices"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-tables",
  "casa-types",
@@ -633,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "casa-logging"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-tables",
  "casa-types",
@@ -645,7 +645,7 @@ dependencies = [
 
 [[package]]
 name = "casa-measures-data"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-table-read",
  "flate2",
@@ -659,7 +659,7 @@ dependencies = [
 
 [[package]]
 name = "casa-measures-tools"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-measures-data",
  "flate2",
@@ -670,7 +670,7 @@ dependencies = [
 
 [[package]]
 name = "casa-ms"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-coordinates",
  "casa-imaging",
@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "casa-notebook"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "flate2",
  "fs2",
@@ -718,7 +718,7 @@ dependencies = [
 
 [[package]]
 name = "casa-provider-contracts"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-types",
  "schemars",
@@ -728,14 +728,14 @@ dependencies = [
 
 [[package]]
 name = "casa-table-read"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "casa-tables"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-aipsio",
  "casa-types",
@@ -756,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "casa-task-runtime"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-provider-contracts",
  "casa-types",
@@ -770,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "casa-test-support"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-aipsio",
  "casa-coordinates",
@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "casa-types"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-measures-data",
  "casa-values",
@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "casa-values"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "ndarray",
  "num-complex",
@@ -811,7 +811,7 @@ dependencies = [
 
 [[package]]
 name = "casa-vla"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-logging",
  "casa-ms",
@@ -831,7 +831,7 @@ dependencies = [
 
 [[package]]
 name = "casars"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "arboard",
  "casa-calibration",
@@ -870,7 +870,7 @@ dependencies = [
 
 [[package]]
 name = "casars-frontend-services"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "camino",
@@ -899,7 +899,7 @@ dependencies = [
 
 [[package]]
 name = "casars-imagebrowser-protocol"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-provider-contracts",
  "schemars",
@@ -909,7 +909,7 @@ dependencies = [
 
 [[package]]
 name = "casars-imager"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-coordinates",
  "casa-images",
@@ -936,7 +936,7 @@ dependencies = [
 
 [[package]]
 name = "casars-importvla"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-logging",
  "casa-vla",
@@ -945,7 +945,7 @@ dependencies = [
 
 [[package]]
 name = "casars-python"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-coordinates",
  "casa-images",
@@ -964,7 +964,7 @@ dependencies = [
 
 [[package]]
 name = "casars-tablebrowser-protocol"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "casa-provider-contracts",
  "schemars",
@@ -3773,7 +3773,7 @@ dependencies = [
 
 [[package]]
 name = "ratatui-graphics"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "base64-simd",
