@@ -180,7 +180,7 @@ final class CasarsMacUITests: XCTestCase {
         let datasetExplorer = app.menuItems["Dataset Explorer"]
         XCTAssertTrue(datasetExplorer.waitForExistence(timeout: 2))
         datasetExplorer.click()
-        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "central.tab.dataset-prototype-twhya-ms").firstMatch.exists)
+        XCTAssertFalse(workbenchDescendants.matching(identifier: "central.tab.dataset-prototype-twhya-ms").firstMatch.exists)
         assertZeroProductionBoundaryCalls()
     }
 
@@ -798,7 +798,7 @@ final class CasarsMacUITests: XCTestCase {
             pinToNotebook.waitForExistence(timeout: 15),
             app.debugDescription
         )
-        let citation = app.descendants(matching: .any).matching(
+        let citation = workbenchDescendants.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "assistant.citation.")
         ).firstMatch
         XCTAssertTrue(citation.waitForExistence(timeout: 5), app.debugDescription)
@@ -852,7 +852,7 @@ final class CasarsMacUITests: XCTestCase {
 
         try clickIdentified("central.tab.tab-scientific-notebook")
         try clickIdentified("assistant.close")
-        let appendedRichNote = app.descendants(matching: .any).matching(
+        let appendedRichNote = workbenchDescendants.matching(
             NSPredicate(
                 format: "identifier BEGINSWITH %@ AND (value CONTAINS %@ OR label CONTAINS %@)",
                 "notebook.richElement.",
@@ -870,7 +870,7 @@ final class CasarsMacUITests: XCTestCase {
             ).firstMatch.waitForExistence(timeout: 5),
             "A pinned task suggestion must render as an interactive notebook parameter block\n\(app.debugDescription)"
         )
-        let exposedPinMetadata = app.descendants(matching: .any).matching(
+        let exposedPinMetadata = workbenchDescendants.matching(
             NSPredicate(
                 format: "identifier BEGINSWITH %@ AND (value CONTAINS %@ OR label CONTAINS %@)",
                 "notebook.richElement.",
@@ -2905,17 +2905,25 @@ final class CasarsMacUITests: XCTestCase {
         return result
     }
 
+    private var workbenchDescendants: XCUIElementQuery {
+        // Restrict broad accessibility searches to the application window.
+        // Walking `app.descendants(.any)` also snapshots the macOS menu bar;
+        // AppKit then resolves Recent Items from other application bundles and
+        // prompts for SystemPolicyAppBundles access on unattended test hosts.
+        app.windows.firstMatch.descendants(matching: .any)
+    }
+
     private func element(_ identifier: String) -> XCUIElement {
         // XCTest's direct identifier query traps when the identifier is longer
         // than 128 characters. Real project paths can legitimately make stable
         // path-derived identifiers longer than that, so use the equivalent
         // predicate form for those controls.
         if identifier.utf16.count > 128 {
-            return app.descendants(matching: .any).matching(
+            return workbenchDescendants.matching(
                 NSPredicate(format: "identifier == %@", identifier)
             ).firstMatch
         }
-        return app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        return workbenchDescendants.matching(identifier: identifier).firstMatch
     }
 
     private func clickIdentified(_ identifier: String, timeout: TimeInterval = 5) throws {
@@ -3189,7 +3197,7 @@ final class CasarsMacUITests: XCTestCase {
     }
 
     private func assertZeroProductionBoundaryCalls() {
-        let audit = app.descendants(matching: .any).matching(identifier: "notebook.boundaryAudit").firstMatch
+        let audit = workbenchDescendants.matching(identifier: "notebook.boundaryAudit").firstMatch
         XCTAssertTrue(audit.waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertEqual(audit.value as? String ?? audit.label, "0")
     }
