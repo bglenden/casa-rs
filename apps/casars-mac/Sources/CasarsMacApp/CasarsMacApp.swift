@@ -1052,36 +1052,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        scheduleAutomationMenuIfNeeded()
         WorkbenchFallbackWindowController.shared.scheduleStartupWindow(arguments: CommandLine.arguments)
         WorkbenchWindowPlacement.scheduleRepairsForAppWindows()
-    }
-
-    private func scheduleAutomationMenuIfNeeded() {
-        guard ProcessInfo.processInfo.environment["CASA_RS_UI_TESTING"] == "1" else { return }
-        // SwiftUI installs its Commands menu after applicationDidFinishLaunching.
-        // Replace it after that pass but before XCTest's first hierarchy query.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
-            // XCTest snapshots the application menu bar even when a query is
-            // scoped to the workbench window. AppKit's generated Services,
-            // AutoFill, and Writing Tools submenus enumerate unrelated
-            // application bundles and can raise a SystemPolicyAppBundles
-            // prompt on unattended workers. Preserve a valid application
-            // menu and Quit command, but omit system-generated submenus that
-            // the product does not exercise during UI tests.
-            let automationMenu = NSMenu()
-            let applicationItem = NSMenuItem()
-            let applicationMenu = NSMenu()
-            applicationMenu.addItem(
-                withTitle: "Quit casa-rs Workbench",
-                action: #selector(NSApplication.terminate(_:)),
-                keyEquivalent: "q"
-            )
-            applicationItem.submenu = applicationMenu
-            automationMenu.addItem(applicationItem)
-            NSApp.servicesMenu = nil
-            NSApp.mainMenu = automationMenu
-        }
     }
 }
 

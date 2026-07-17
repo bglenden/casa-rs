@@ -2910,7 +2910,6 @@ final class CasarsMacUITests: XCTestCase {
     }
 
     private func launchTestApplication() {
-        app.launchEnvironment["CASA_RS_UI_TESTING"] = "1"
         app.launchArguments.append(contentsOf: [
             "-NSRecentApplicationsLimit", "0",
             "-NSRecentDocumentsLimit", "0",
