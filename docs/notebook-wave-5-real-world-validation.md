@@ -463,3 +463,52 @@ Current final evidence on 2026-07-15, after the refactor and review fixes:
   candidate sources; `git diff --check` passed.
 - `just gui-test` built the native app/test bundle and passed the single
   consolidated foreground batch: 25 tests executed, 1 skipped, 0 failures.
+
+## Wave 5 combined closeout
+
+Wave 5 closes with every issue in the approved #414 scope implemented and no
+accepted outcome or acceptance check deferred. The combined evidence is carried
+by immutable production journeys rather than by rerunning account-backed work:
+
+- #415/#416 exercised the real ChatGPT subscription, nonce-bound project MCP,
+  public-paper lifecycle, baseline retrieval, and current casa-rs source
+  retrieval. Citations were independently checked and the resulting defects
+  were repaired before user review.
+- #417 passed the dedicated remote production notebook/task/Python/plot
+  round-trip at `790f44bf44a501d4bd87f5f8d275aeac8d7af75f`: one XCUITest,
+  zero failures, 210.703 seconds. Its artifact is
+  `20260716T203939Z-790f44bf44a5-notebook-roundtrip-gui` on the GUI worker.
+- #418 passed the dedicated remote TW Hya production journey at
+  `3aeefa55712939cc49d803824ca4d70c096e39c6`: dataset acquisition and digest
+  verification, notebook/task replay, Python/plot work, cited assistant use,
+  and application reopen all completed with zero failures in 715.887 seconds.
+  Its artifact is
+  `20260716T230016Z-3aeefa557129-tutorial-journey-gui` on the GUI worker.
+- #420/#421 shipped the approved 2026-workshop-plus-book baseline corpus and
+  proved automatic incremental add/change/atomic-replace/rename/remove project
+  document reconciliation, including retention and retry across transient
+  read failures.
+
+Brian's final production-app review found the scientific interactions generally
+worked as expected. The reported objective defects—assistant activity
+visibility, conversation tail following, font zoom, task-suggestion notebook
+pinning, edited-parameter provenance, and clickable citations—returned to agent
+ownership and were repaired with focused regression coverage. His remaining
+comments were interaction refinements rather than rejected Wave 5 outcomes.
+
+The authoritative gates remain the 2026-07-15 `just verify` run, the green
+25-test consolidated `just gui-test` batch above, the two production remote
+journeys, and hosted PR CI. No production behavior changed after those GUI
+journeys. A later attempt to rerun one deterministic XCUITest on the newly
+provisioned macOS 26.5 remote worker was blocked by the operating system's
+`SystemPolicyAppBundles` (App Management) modal when XCTest snapshot the
+application menu hierarchy. The final diagnostic artifact is
+`20260717T012714Z-5a0877f560f0-gui-test`. Test-only menu workarounds were removed
+instead of distorting the product. This host-policy limitation is recorded as a
+GUI-runner exclusion; it does not replace or invalidate the current green local
+batch or the green remote production journeys.
+
+The bounded refactor, architecture, test-adversary, and reality-sync evidence
+recorded above covers the complete changed surface. No public API, persisted
+format, provider contract, dependency direction, or runtime model changed
+during closeout, and no additional refactor or ADR work is required.
