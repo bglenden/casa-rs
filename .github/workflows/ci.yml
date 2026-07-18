@@ -62,6 +62,27 @@ jobs:
       - name: Test Python package
         run: scripts/test-python-package.sh
 
+  docs:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build rustdoc
+        run: cargo doc --workspace --no-deps
+
+      - name: Build MkDocs site
+        run: scripts/build-python-docs.sh site
+
   native_gui:
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: macos-15

@@ -60,9 +60,6 @@ So for future `imexplore` graphics optimization:
 
 ## Related Production Follow-Up
 
-See backlog item `12.13` in:
-
-- [docs/Planning/Phase 5 - Lattices Coordinates Images/BACKLOG.md](/Users/brianglendenning/.codex/worktrees/a4fd/casa-rs/docs/Planning/Phase%205%20-%20Lattices%20Coordinates%20Images/BACKLOG.md)
-
-That backlog item is the production follow-up for using these protocol details
-to revisit high-performance plane-movie playback.
+See [issue #385](https://github.com/bglenden/casa-rs/issues/385) for the
+production follow-up that uses these protocol details while consolidating the
+movie-render scheduler and planner.
