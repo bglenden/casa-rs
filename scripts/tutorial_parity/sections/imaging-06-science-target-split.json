@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "06-science-target-split",
+  "pack": {"id": "alma-first-look-imaging", "relative_path": "tutorial-parity/alma/first-look/twhya/imaging/alma-first-look-imaging.pack"},
+  "title": "Split science target and average channels",
+  "source": {"url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging", "anchor": "Image_the_Science_Target"},
+  "prerequisites": [{"kind": "measurement_set", "path": "twhya_calibrated.ms"}],
+  "surfaces": {
+    "casa": {"operations": [{"task": "split", "parameters": {"vis": "twhya_calibrated.ms", "outputvis": ".casa-rs/workspace/oracle/06-science-target-split/casa-twhya_smoothed.ms", "field": "5", "width": 8, "datacolumn": "data", "keepflags": true}, "outputs": [".casa-rs/workspace/oracle/06-science-target-split/casa-twhya_smoothed.ms"]}, {"task": "listobs", "parameters": {"vis": ".casa-rs/workspace/oracle/06-science-target-split/casa-twhya_smoothed.ms", "listfile": ".casa-rs/workspace/oracle/06-science-target-split/casa-listobs.txt", "overwrite": true}, "outputs": [".casa-rs/workspace/oracle/06-science-target-split/casa-listobs.txt"]}]},
+    "cli": {"operations": [{"task": "split", "parameters": {"vis": "twhya_calibrated.ms", "outputvis": "twhya_smoothed.cli.ms", "field": "5", "width": 8, "datacolumn": "DATA", "keepflags": true}, "outputs": ["twhya_smoothed.cli.ms"]}, {"task": "msexplore", "parameters": {"vis": "twhya_smoothed.cli.ms", "format": "text", "output": ".casa-rs/workspace/native/06-science-target-split/cli-listobs.txt", "overwrite": true}, "outputs": [".casa-rs/workspace/native/06-science-target-split/cli-listobs.txt"]}]},
+    "python": {"operations": [{"task": "split", "parameters": {"vis": "twhya_calibrated.ms", "outputvis": "twhya_smoothed.python.ms", "field": "5", "width": 8, "datacolumn": "data", "keepflags": true}, "outputs": ["twhya_smoothed.python.ms"]}, {"task": "msexplore", "parameters": {"vis": "twhya_smoothed.python.ms", "format": "text", "output": ".casa-rs/workspace/native/06-science-target-split/python-listobs.txt", "overwrite": true}, "outputs": [".casa-rs/workspace/native/06-science-target-split/python-listobs.txt"]}]},
+    "tui": {"operations": [{"task": "split", "parameters": {"vis": "twhya_calibrated.ms", "outputvis": "twhya_smoothed.tui.ms", "field": "5", "width": 8, "datacolumn": "DATA", "keepflags": true}, "outputs": ["twhya_smoothed.tui.ms"]}], "screenshot": ".casa-rs/screenshots/headless/06-science-target-split-tui.png", "input_events": []},
+    "gui": {"journey": "tutorial-journey-gui", "required_artifacts": ["TutorialJourneyGUI.xcresult", "TutorialJourneyGUI.report.json", "tutorial-journey-gui.evidence.json"]}
+  },
+  "comparison": {"plugin": "measurement_set", "config": {"fields": ["row_count", "field_ids", "field_names", "data_description_ids", "scan_numbers"], "absolute_tolerance": 0.0, "relative_tolerance": 0.0}, "inputs": {"native": "twhya_smoothed.cli.ms", "oracle": ".casa-rs/workspace/oracle/06-science-target-split/casa-twhya_smoothed.ms"}},
+  "evidence": {"result": ".casa-rs/evidence/tutorial-parity/06-science-target-split.result.json", "review": ".casa-rs/evidence/review/06-science-target-split.json", "documentation": ["docs/sections/06-science-target-split.md", "docs/sections/06-science-target-split.html"], "screenshot_spec": ".casa-rs/screenshots/specs/06-science-target-split.json"}
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "02-uv-coverage",
+  "pack": {"id": "alma-first-look-imaging", "relative_path": "tutorial-parity/alma/first-look/twhya/imaging/alma-first-look-imaging.pack"},
+  "title": "Plot calibrated MeasurementSet UV coverage",
+  "source": {"url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging", "anchor": "A_First_Look_at_the_Data"},
+  "prerequisites": [{"kind": "measurement_set", "path": "twhya_calibrated.ms"}],
+  "surfaces": {
+    "casa": {"operations": [{"task": "plotms", "parameters": {"vis": "twhya_calibrated.ms", "xaxis": "u", "yaxis": "v", "avgchannel": "10000", "avgspw": false, "avgtime": "1e9", "avgscan": false, "coloraxis": "field", "plotfile": ".casa-rs/workspace/oracle/02-uv-coverage/casa-plotms-uv-coverage.txt", "expformat": "txt", "overwrite": true, "showgui": false}, "outputs": [".casa-rs/workspace/oracle/02-uv-coverage/casa-plotms-uv-coverage.txt"]}]},
+    "cli": {"operations": [{"task": "msexplore", "parameters": {"vis": "twhya_calibrated.ms", "preset": "uv_coverage", "avgchannel": 10000, "avgspw": false, "avgtime": 1000000000.0, "avgscan": false, "color_by": "field", "plot_output": ".casa-rs/workspace/native/02-uv-coverage/cli-msexplore-uv-coverage.png", "plot_width": 1200, "plot_height": 1200, "overwrite": true}, "outputs": [".casa-rs/workspace/native/02-uv-coverage/cli-msexplore-uv-coverage.png", ".casa-rs/workspace/native/02-uv-coverage/cli-msexplore-uv-coverage.txt"]}]},
+    "python": {"operations": [{"task": "msexplore", "parameters": {"vis": "twhya_calibrated.ms", "preset": "uv_coverage", "avgchannel": 10000, "avgspw": false, "avgtime": 1000000000.0, "avgscan": false, "color_by": "field", "plot_output": ".casa-rs/workspace/native/02-uv-coverage/python-msexplore-uv-coverage.png", "plot_width": 1200, "plot_height": 1200, "overwrite": true}, "outputs": [".casa-rs/workspace/native/02-uv-coverage/python-msexplore-uv-coverage.png", ".casa-rs/workspace/native/02-uv-coverage/python-msexplore-uv-coverage.txt"]}]},
+    "tui": {"operations": [{"task": "msexplore", "parameters": {"vis": "twhya_calibrated.ms", "preset": "uv_coverage", "avgchannel": 10000, "avgspw": false, "avgtime": 1000000000.0, "avgscan": false, "color_by": "field", "plot_output": ".casa-rs/workspace/native/02-uv-coverage/tui-msexplore-uv-coverage.png", "plot_width": 1200, "plot_height": 1200, "overwrite": true}, "outputs": [".casa-rs/workspace/native/02-uv-coverage/tui-msexplore-uv-coverage.png"]}], "screenshot": ".casa-rs/screenshots/headless/02-uv-coverage-tui.png", "input_events": []},
+    "gui": {"journey": "tutorial-journey-gui", "required_artifacts": ["TutorialJourneyGUI.xcresult", "TutorialJourneyGUI.report.json", "tutorial-journey-gui.evidence.json"]}
+  },
+  "comparison": {"plugin": "plot_products", "config": {"fields": [], "absolute_tolerance": 0.0011, "relative_tolerance": 0.0005, "require_png": true}, "inputs": {"native": ".casa-rs/workspace/native/02-uv-coverage/cli-msexplore-uv-coverage.txt", "oracle": ".casa-rs/workspace/oracle/02-uv-coverage/casa-plotms-uv-coverage.txt", "pngs": [".casa-rs/workspace/native/02-uv-coverage/cli-msexplore-uv-coverage.png"]}},
+  "evidence": {"result": ".casa-rs/evidence/tutorial-parity/02-uv-coverage.result.json", "review": ".casa-rs/evidence/review/02-uv-coverage.json", "documentation": ["docs/sections/02-uv-coverage.md", "docs/sections/02-uv-coverage.html"], "screenshot_spec": ".casa-rs/screenshots/specs/02-uv-coverage.json"}
+}
