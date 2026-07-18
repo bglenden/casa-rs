@@ -43,7 +43,7 @@ final class NotebookPersistenceTests: XCTestCase {
 
         let start = try client.beginRecording(request: NotebookBeginRecordingRequest(
             projectRoot: root.path,
-            policy: "record",
+            policy: .record,
             request: NotebookRecordingRequest(
                 initiatingSurface: "gui",
                 operationId: "imager",
@@ -81,8 +81,8 @@ final class NotebookPersistenceTests: XCTestCase {
                 )],
                 artifacts: [],
                 diagnostics: [],
-                stdout: Array("ok".utf8),
-                stderr: [],
+                stdout: Data("ok".utf8),
+                stderr: Data(),
                 casaLog: nil
             )
         ))
@@ -105,7 +105,7 @@ final class NotebookPersistenceTests: XCTestCase {
         let client = UniFFINotebookPersistenceClient()
         let result = try client.beginRecording(request: NotebookBeginRecordingRequest(
             projectRoot: root.path,
-            policy: "bypass_once",
+            policy: .bypassOnce,
             request: NotebookRecordingRequest(
                 initiatingSurface: "gui",
                 operationId: "imstat",

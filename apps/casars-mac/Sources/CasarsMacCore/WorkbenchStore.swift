@@ -2893,7 +2893,7 @@ public final class WorkbenchStore: ObservableObject {
                         surface: surface,
                         contractVersion: 1,
                         parameters: parameters,
-                        profileTOML: nil
+                        profileToml: nil
                     ),
                     render: NotebookVisualizationRenderMetadata(
                         renderer: renderer,
@@ -3020,7 +3020,7 @@ public final class WorkbenchStore: ObservableObject {
             kind: "python",
             details: NotebookPythonExecutionInput(
                 source: source,
-                sourceSHA256: sourceHash,
+                sourceSha256: sourceHash,
                 authority: "user",
                 inputReferences: inputs,
                 environment: environment
@@ -3029,7 +3029,7 @@ public final class WorkbenchStore: ObservableObject {
         do {
             let result = try notebookPersistenceClient.beginRecording(request: NotebookBeginRecordingRequest(
                 projectRoot: project.projectRoot,
-                policy: "record",
+                policy: .record,
                 request: NotebookRecordingRequest(
                     initiatingSurface: "macos_gui",
                     operationId: "python.execute",
@@ -3127,8 +3127,8 @@ public final class WorkbenchStore: ObservableObject {
                     products: [],
                     artifacts: artifacts,
                     diagnostics: execution.diagnostic.map { [$0] } ?? [],
-                    stdout: Array(execution.outputs.filter { $0.channel == "stdout" }.map(\.text).joined().utf8),
-                    stderr: Array(execution.outputs.filter { $0.channel == "stderr" }.map(\.text).joined().utf8),
+                    stdout: Data(execution.outputs.filter { $0.channel == "stdout" }.map(\.text).joined().utf8),
+                    stderr: Data(execution.outputs.filter { $0.channel == "stderr" }.map(\.text).joined().utf8),
                     casaLog: nil
                 )
             ))
@@ -7182,7 +7182,7 @@ public final class WorkbenchStore: ObservableObject {
         do {
             let result = try notebookPersistenceClient.beginRecording(request: NotebookBeginRecordingRequest(
                 projectRoot: state.project.rootPath,
-                policy: bypass ? "bypass_once" : "record",
+                policy: bypass ? .bypassOnce : .record,
                 request: NotebookRecordingRequest(
                     initiatingSurface: "gui",
                     operationId: taskID,
@@ -7223,7 +7223,7 @@ public final class WorkbenchStore: ObservableObject {
         do {
             let result = try notebookPersistenceClient.beginRecording(request: NotebookBeginRecordingRequest(
                 projectRoot: state.project.rootPath,
-                policy: bypass ? "bypass_once" : "record",
+                policy: bypass ? .bypassOnce : .record,
                 request: NotebookRecordingRequest(
                     initiatingSurface: "gui",
                     operationId: operationID,
@@ -7276,8 +7276,8 @@ public final class WorkbenchStore: ObservableObject {
                     },
                     artifacts: [],
                     diagnostics: diagnostics,
-                    stdout: [],
-                    stderr: [],
+                    stdout: Data(),
+                    stderr: Data(),
                     casaLog: Self.configuredCasaLogPath
                 )
             ))
@@ -7310,8 +7310,8 @@ public final class WorkbenchStore: ObservableObject {
                     },
                     artifacts: [],
                     diagnostics: diagnostics,
-                    stdout: Array(stdout.utf8),
-                    stderr: Array(stderr.utf8),
+                    stdout: Data(stdout.utf8),
+                    stderr: Data(stderr.utf8),
                     casaLog: Self.configuredCasaLogPath
                 )
             ))

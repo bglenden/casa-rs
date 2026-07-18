@@ -1352,7 +1352,7 @@ final class WorkbenchStoreTests: XCTestCase {
         }
         XCTAssertEqual(notebookClient.beginRequests.first?.request.initiatingSurface, "gui")
         XCTAssertEqual(notebookClient.beginRequests.first?.request.operationId, "imhead")
-        XCTAssertEqual(notebookClient.beginRequests.first?.policy, "record")
+        XCTAssertEqual(notebookClient.beginRequests.first?.policy, .record)
         let notebookDebug = try XCTUnwrap(store.debugSnapshot().scientificNotebook)
         XCTAssertEqual(notebookDebug.notebookFilenames, ["default.md"])
         XCTAssertEqual(notebookDebug.receiptStatuses.values.sorted(), ["succeeded"])
@@ -1365,7 +1365,7 @@ final class WorkbenchStoreTests: XCTestCase {
         store.setNotebookRecordingBypassOnce(tabID: tabID, enabled: true)
         let finalizedCount = notebookClient.finalizeRequests.count
         store.runTask()
-        XCTAssertEqual(notebookClient.beginRequests.last?.policy, "bypass_once")
+        XCTAssertEqual(notebookClient.beginRequests.last?.policy, .bypassOnce)
         store.stopTask()
         XCTAssertEqual(notebookClient.finalizeRequests.count, finalizedCount)
         XCTAssertFalse(store.notebookRecordingBypassOnce(tabID: tabID))
@@ -1539,7 +1539,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(receipt.executionInput?.details.source, source)
         XCTAssertEqual(receipt.executionInput?.details.authority, "user")
         XCTAssertEqual(receipt.executionInput?.details.inputReferences, [selectedInput])
-        XCTAssertTrue(receipt.executionInput?.details.environment.fingerprintSHA256.isEmpty == false)
+        XCTAssertTrue(receipt.executionInput?.details.environment.fingerprintSha256.isEmpty == false)
         XCTAssertTrue(receipt.orderedOutputs?.map(\.text).joined().contains("42") == true)
         XCTAssertTrue(receipt.artifacts.contains { $0.role == "ordered_output" })
 
@@ -3656,7 +3656,7 @@ final class WorkbenchStoreTests: XCTestCase {
         store.setNotebookRecordingBypassOnce(tabID: imageDataset.explorerTabID, enabled: true)
         let finalizedBeforeBypass = notebookClient.finalizeRequests.count
         store.runImageExplorerCommandOnce(.unsetDefaultMask, datasetID: imageDataset.id)
-        XCTAssertEqual(notebookClient.beginRequests.last?.policy, "bypass_once")
+        XCTAssertEqual(notebookClient.beginRequests.last?.policy, .bypassOnce)
         XCTAssertEqual(notebookClient.finalizeRequests.count, finalizedBeforeBypass)
         XCTAssertFalse(store.notebookRecordingBypassOnce(tabID: imageDataset.explorerTabID))
 

@@ -2391,6 +2391,2614 @@ public func FfiConverterTypeMeasurementSetUvRangeProbe_lower(_ value: Measuremen
 }
 
 
+public struct NotebookApprovalRecord {
+    public var kind: String
+    public var actor: String
+    public var timestamp: UInt64
+    public var contentHash: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: String, actor: String, timestamp: UInt64, contentHash: String?) {
+        self.kind = kind
+        self.actor = actor
+        self.timestamp = timestamp
+        self.contentHash = contentHash
+    }
+}
+
+#if compiler(>=6)
+extension NotebookApprovalRecord: Sendable {}
+#endif
+
+
+extension NotebookApprovalRecord: Equatable, Hashable {
+    public static func ==(lhs: NotebookApprovalRecord, rhs: NotebookApprovalRecord) -> Bool {
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.actor != rhs.actor {
+            return false
+        }
+        if lhs.timestamp != rhs.timestamp {
+            return false
+        }
+        if lhs.contentHash != rhs.contentHash {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(actor)
+        hasher.combine(timestamp)
+        hasher.combine(contentHash)
+    }
+}
+
+extension NotebookApprovalRecord: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookApprovalRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookApprovalRecord {
+        return
+            try NotebookApprovalRecord(
+                kind: FfiConverterString.read(from: &buf),
+                actor: FfiConverterString.read(from: &buf),
+                timestamp: FfiConverterUInt64.read(from: &buf),
+                contentHash: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookApprovalRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.actor, into: &buf)
+        FfiConverterUInt64.write(value.timestamp, into: &buf)
+        FfiConverterOptionString.write(value.contentHash, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookApprovalRecord_lift(_ buf: RustBuffer) throws -> NotebookApprovalRecord {
+    return try FfiConverterTypeNotebookApprovalRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookApprovalRecord_lower(_ value: NotebookApprovalRecord) -> RustBuffer {
+    return FfiConverterTypeNotebookApprovalRecord.lower(value)
+}
+
+
+public struct NotebookAttemptHandle {
+    public var runId: String
+    public var revision: UInt64
+    public var notebookId: String
+    public var cellId: String
+    public var startedAt: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(runId: String, revision: UInt64, notebookId: String, cellId: String, startedAt: UInt64) {
+        self.runId = runId
+        self.revision = revision
+        self.notebookId = notebookId
+        self.cellId = cellId
+        self.startedAt = startedAt
+    }
+}
+
+#if compiler(>=6)
+extension NotebookAttemptHandle: Sendable {}
+#endif
+
+
+extension NotebookAttemptHandle: Equatable, Hashable {
+    public static func ==(lhs: NotebookAttemptHandle, rhs: NotebookAttemptHandle) -> Bool {
+        if lhs.runId != rhs.runId {
+            return false
+        }
+        if lhs.revision != rhs.revision {
+            return false
+        }
+        if lhs.notebookId != rhs.notebookId {
+            return false
+        }
+        if lhs.cellId != rhs.cellId {
+            return false
+        }
+        if lhs.startedAt != rhs.startedAt {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(runId)
+        hasher.combine(revision)
+        hasher.combine(notebookId)
+        hasher.combine(cellId)
+        hasher.combine(startedAt)
+    }
+}
+
+extension NotebookAttemptHandle: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookAttemptHandle: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookAttemptHandle {
+        return
+            try NotebookAttemptHandle(
+                runId: FfiConverterString.read(from: &buf),
+                revision: FfiConverterUInt64.read(from: &buf),
+                notebookId: FfiConverterString.read(from: &buf),
+                cellId: FfiConverterString.read(from: &buf),
+                startedAt: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookAttemptHandle, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.runId, into: &buf)
+        FfiConverterUInt64.write(value.revision, into: &buf)
+        FfiConverterString.write(value.notebookId, into: &buf)
+        FfiConverterString.write(value.cellId, into: &buf)
+        FfiConverterUInt64.write(value.startedAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookAttemptHandle_lift(_ buf: RustBuffer) throws -> NotebookAttemptHandle {
+    return try FfiConverterTypeNotebookAttemptHandle.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookAttemptHandle_lower(_ value: NotebookAttemptHandle) -> RustBuffer {
+    return FfiConverterTypeNotebookAttemptHandle.lower(value)
+}
+
+
+public struct NotebookBeginRecordingRequest {
+    public var projectRoot: String
+    public var policy: NotebookRecordingPolicy
+    public var request: NotebookRecordingRequest
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(projectRoot: String, policy: NotebookRecordingPolicy, request: NotebookRecordingRequest) {
+        self.projectRoot = projectRoot
+        self.policy = policy
+        self.request = request
+    }
+}
+
+#if compiler(>=6)
+extension NotebookBeginRecordingRequest: Sendable {}
+#endif
+
+
+extension NotebookBeginRecordingRequest: Equatable, Hashable {
+    public static func ==(lhs: NotebookBeginRecordingRequest, rhs: NotebookBeginRecordingRequest) -> Bool {
+        if lhs.projectRoot != rhs.projectRoot {
+            return false
+        }
+        if lhs.policy != rhs.policy {
+            return false
+        }
+        if lhs.request != rhs.request {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(projectRoot)
+        hasher.combine(policy)
+        hasher.combine(request)
+    }
+}
+
+extension NotebookBeginRecordingRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookBeginRecordingRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookBeginRecordingRequest {
+        return
+            try NotebookBeginRecordingRequest(
+                projectRoot: FfiConverterString.read(from: &buf),
+                policy: FfiConverterTypeNotebookRecordingPolicy.read(from: &buf),
+                request: FfiConverterTypeNotebookRecordingRequest.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookBeginRecordingRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.projectRoot, into: &buf)
+        FfiConverterTypeNotebookRecordingPolicy.write(value.policy, into: &buf)
+        FfiConverterTypeNotebookRecordingRequest.write(value.request, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookBeginRecordingRequest_lift(_ buf: RustBuffer) throws -> NotebookBeginRecordingRequest {
+    return try FfiConverterTypeNotebookBeginRecordingRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookBeginRecordingRequest_lower(_ value: NotebookBeginRecordingRequest) -> RustBuffer {
+    return FfiConverterTypeNotebookBeginRecordingRequest.lower(value)
+}
+
+
+public struct NotebookBeginRecordingResult {
+    public var handle: NotebookAttemptHandle?
+    public var warning: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(handle: NotebookAttemptHandle?, warning: String?) {
+        self.handle = handle
+        self.warning = warning
+    }
+}
+
+#if compiler(>=6)
+extension NotebookBeginRecordingResult: Sendable {}
+#endif
+
+
+extension NotebookBeginRecordingResult: Equatable, Hashable {
+    public static func ==(lhs: NotebookBeginRecordingResult, rhs: NotebookBeginRecordingResult) -> Bool {
+        if lhs.handle != rhs.handle {
+            return false
+        }
+        if lhs.warning != rhs.warning {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(handle)
+        hasher.combine(warning)
+    }
+}
+
+extension NotebookBeginRecordingResult: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookBeginRecordingResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookBeginRecordingResult {
+        return
+            try NotebookBeginRecordingResult(
+                handle: FfiConverterOptionTypeNotebookAttemptHandle.read(from: &buf),
+                warning: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookBeginRecordingResult, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeNotebookAttemptHandle.write(value.handle, into: &buf)
+        FfiConverterOptionString.write(value.warning, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookBeginRecordingResult_lift(_ buf: RustBuffer) throws -> NotebookBeginRecordingResult {
+    return try FfiConverterTypeNotebookBeginRecordingResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookBeginRecordingResult_lower(_ value: NotebookBeginRecordingResult) -> RustBuffer {
+    return FfiConverterTypeNotebookBeginRecordingResult.lower(value)
+}
+
+
+public struct NotebookCellState {
+    public var id: String
+    public var kind: String
+    public var body: String
+    public var taskIntent: NotebookTaskIntent?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, kind: String, body: String, taskIntent: NotebookTaskIntent?) {
+        self.id = id
+        self.kind = kind
+        self.body = body
+        self.taskIntent = taskIntent
+    }
+}
+
+#if compiler(>=6)
+extension NotebookCellState: Sendable {}
+#endif
+
+
+extension NotebookCellState: Equatable, Hashable {
+    public static func ==(lhs: NotebookCellState, rhs: NotebookCellState) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.body != rhs.body {
+            return false
+        }
+        if lhs.taskIntent != rhs.taskIntent {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(kind)
+        hasher.combine(body)
+        hasher.combine(taskIntent)
+    }
+}
+
+extension NotebookCellState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookCellState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookCellState {
+        return
+            try NotebookCellState(
+                id: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                body: FfiConverterString.read(from: &buf),
+                taskIntent: FfiConverterOptionTypeNotebookTaskIntent.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookCellState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterOptionTypeNotebookTaskIntent.write(value.taskIntent, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookCellState_lift(_ buf: RustBuffer) throws -> NotebookCellState {
+    return try FfiConverterTypeNotebookCellState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookCellState_lower(_ value: NotebookCellState) -> RustBuffer {
+    return FfiConverterTypeNotebookCellState.lower(value)
+}
+
+
+public struct NotebookCreateRequest {
+    public var projectRoot: String
+    public var filename: String?
+    public var title: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(projectRoot: String, filename: String?, title: String) {
+        self.projectRoot = projectRoot
+        self.filename = filename
+        self.title = title
+    }
+}
+
+#if compiler(>=6)
+extension NotebookCreateRequest: Sendable {}
+#endif
+
+
+extension NotebookCreateRequest: Equatable, Hashable {
+    public static func ==(lhs: NotebookCreateRequest, rhs: NotebookCreateRequest) -> Bool {
+        if lhs.projectRoot != rhs.projectRoot {
+            return false
+        }
+        if lhs.filename != rhs.filename {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(projectRoot)
+        hasher.combine(filename)
+        hasher.combine(title)
+    }
+}
+
+extension NotebookCreateRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookCreateRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookCreateRequest {
+        return
+            try NotebookCreateRequest(
+                projectRoot: FfiConverterString.read(from: &buf),
+                filename: FfiConverterOptionString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookCreateRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.projectRoot, into: &buf)
+        FfiConverterOptionString.write(value.filename, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookCreateRequest_lift(_ buf: RustBuffer) throws -> NotebookCreateRequest {
+    return try FfiConverterTypeNotebookCreateRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookCreateRequest_lower(_ value: NotebookCreateRequest) -> RustBuffer {
+    return FfiConverterTypeNotebookCreateRequest.lower(value)
+}
+
+
+public struct NotebookDocumentProjection {
+    public var id: String
+    public var filename: String
+    public var source: String
+    public var contentHash: String
+    public var cells: [NotebookCellState]
+    public var receipts: [NotebookExecutionReceipt]
+    public var visualizations: [NotebookVisualizationSnapshot]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, filename: String, source: String, contentHash: String, cells: [NotebookCellState], receipts: [NotebookExecutionReceipt], visualizations: [NotebookVisualizationSnapshot]) {
+        self.id = id
+        self.filename = filename
+        self.source = source
+        self.contentHash = contentHash
+        self.cells = cells
+        self.receipts = receipts
+        self.visualizations = visualizations
+    }
+}
+
+#if compiler(>=6)
+extension NotebookDocumentProjection: Sendable {}
+#endif
+
+
+extension NotebookDocumentProjection: Equatable, Hashable {
+    public static func ==(lhs: NotebookDocumentProjection, rhs: NotebookDocumentProjection) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.filename != rhs.filename {
+            return false
+        }
+        if lhs.source != rhs.source {
+            return false
+        }
+        if lhs.contentHash != rhs.contentHash {
+            return false
+        }
+        if lhs.cells != rhs.cells {
+            return false
+        }
+        if lhs.receipts != rhs.receipts {
+            return false
+        }
+        if lhs.visualizations != rhs.visualizations {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(filename)
+        hasher.combine(source)
+        hasher.combine(contentHash)
+        hasher.combine(cells)
+        hasher.combine(receipts)
+        hasher.combine(visualizations)
+    }
+}
+
+extension NotebookDocumentProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookDocumentProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookDocumentProjection {
+        return
+            try NotebookDocumentProjection(
+                id: FfiConverterString.read(from: &buf),
+                filename: FfiConverterString.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                contentHash: FfiConverterString.read(from: &buf),
+                cells: FfiConverterSequenceTypeNotebookCellState.read(from: &buf),
+                receipts: FfiConverterSequenceTypeNotebookExecutionReceipt.read(from: &buf),
+                visualizations: FfiConverterSequenceTypeNotebookVisualizationSnapshot.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookDocumentProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.filename, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterString.write(value.contentHash, into: &buf)
+        FfiConverterSequenceTypeNotebookCellState.write(value.cells, into: &buf)
+        FfiConverterSequenceTypeNotebookExecutionReceipt.write(value.receipts, into: &buf)
+        FfiConverterSequenceTypeNotebookVisualizationSnapshot.write(value.visualizations, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookDocumentProjection_lift(_ buf: RustBuffer) throws -> NotebookDocumentProjection {
+    return try FfiConverterTypeNotebookDocumentProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookDocumentProjection_lower(_ value: NotebookDocumentProjection) -> RustBuffer {
+    return FfiConverterTypeNotebookDocumentProjection.lower(value)
+}
+
+
+public struct NotebookExecutionInput {
+    public var kind: String
+    public var details: NotebookPythonExecutionInput
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: String, details: NotebookPythonExecutionInput) {
+        self.kind = kind
+        self.details = details
+    }
+}
+
+#if compiler(>=6)
+extension NotebookExecutionInput: Sendable {}
+#endif
+
+
+extension NotebookExecutionInput: Equatable, Hashable {
+    public static func ==(lhs: NotebookExecutionInput, rhs: NotebookExecutionInput) -> Bool {
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.details != rhs.details {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(details)
+    }
+}
+
+extension NotebookExecutionInput: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookExecutionInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookExecutionInput {
+        return
+            try NotebookExecutionInput(
+                kind: FfiConverterString.read(from: &buf),
+                details: FfiConverterTypeNotebookPythonExecutionInput.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookExecutionInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterTypeNotebookPythonExecutionInput.write(value.details, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookExecutionInput_lift(_ buf: RustBuffer) throws -> NotebookExecutionInput {
+    return try FfiConverterTypeNotebookExecutionInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookExecutionInput_lower(_ value: NotebookExecutionInput) -> RustBuffer {
+    return FfiConverterTypeNotebookExecutionInput.lower(value)
+}
+
+
+public struct NotebookExecutionReceipt {
+    public var schemaVersion: UInt32
+    public var runId: String
+    public var revision: UInt64
+    public var notebookId: String
+    public var cellId: String
+    public var initiatingSurface: String
+    public var operationId: String
+    public var startedAt: UInt64
+    public var finishedAt: UInt64
+    public var status: String
+    public var sparseIntent: NotebookTaskIntent?
+    public var executionInput: NotebookExecutionInput?
+    public var orderedOutputs: [NotebookPythonOutputEvent]?
+    public var resolvedParameters: [String: NotebookValue]
+    public var providerContractVersion: UInt32
+    public var affectedPaths: [String]
+    public var products: [NotebookReceiptArtifact]
+    public var artifacts: [NotebookReceiptArtifact]
+    public var diagnostics: [String]
+    public var replayClaim: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt32, runId: String, revision: UInt64, notebookId: String, cellId: String, initiatingSurface: String, operationId: String, startedAt: UInt64, finishedAt: UInt64, status: String, sparseIntent: NotebookTaskIntent?, executionInput: NotebookExecutionInput?, orderedOutputs: [NotebookPythonOutputEvent]?, resolvedParameters: [String: NotebookValue], providerContractVersion: UInt32, affectedPaths: [String], products: [NotebookReceiptArtifact], artifacts: [NotebookReceiptArtifact], diagnostics: [String], replayClaim: String) {
+        self.schemaVersion = schemaVersion
+        self.runId = runId
+        self.revision = revision
+        self.notebookId = notebookId
+        self.cellId = cellId
+        self.initiatingSurface = initiatingSurface
+        self.operationId = operationId
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.status = status
+        self.sparseIntent = sparseIntent
+        self.executionInput = executionInput
+        self.orderedOutputs = orderedOutputs
+        self.resolvedParameters = resolvedParameters
+        self.providerContractVersion = providerContractVersion
+        self.affectedPaths = affectedPaths
+        self.products = products
+        self.artifacts = artifacts
+        self.diagnostics = diagnostics
+        self.replayClaim = replayClaim
+    }
+}
+
+#if compiler(>=6)
+extension NotebookExecutionReceipt: Sendable {}
+#endif
+
+
+extension NotebookExecutionReceipt: Equatable, Hashable {
+    public static func ==(lhs: NotebookExecutionReceipt, rhs: NotebookExecutionReceipt) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.runId != rhs.runId {
+            return false
+        }
+        if lhs.revision != rhs.revision {
+            return false
+        }
+        if lhs.notebookId != rhs.notebookId {
+            return false
+        }
+        if lhs.cellId != rhs.cellId {
+            return false
+        }
+        if lhs.initiatingSurface != rhs.initiatingSurface {
+            return false
+        }
+        if lhs.operationId != rhs.operationId {
+            return false
+        }
+        if lhs.startedAt != rhs.startedAt {
+            return false
+        }
+        if lhs.finishedAt != rhs.finishedAt {
+            return false
+        }
+        if lhs.status != rhs.status {
+            return false
+        }
+        if lhs.sparseIntent != rhs.sparseIntent {
+            return false
+        }
+        if lhs.executionInput != rhs.executionInput {
+            return false
+        }
+        if lhs.orderedOutputs != rhs.orderedOutputs {
+            return false
+        }
+        if lhs.resolvedParameters != rhs.resolvedParameters {
+            return false
+        }
+        if lhs.providerContractVersion != rhs.providerContractVersion {
+            return false
+        }
+        if lhs.affectedPaths != rhs.affectedPaths {
+            return false
+        }
+        if lhs.products != rhs.products {
+            return false
+        }
+        if lhs.artifacts != rhs.artifacts {
+            return false
+        }
+        if lhs.diagnostics != rhs.diagnostics {
+            return false
+        }
+        if lhs.replayClaim != rhs.replayClaim {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(runId)
+        hasher.combine(revision)
+        hasher.combine(notebookId)
+        hasher.combine(cellId)
+        hasher.combine(initiatingSurface)
+        hasher.combine(operationId)
+        hasher.combine(startedAt)
+        hasher.combine(finishedAt)
+        hasher.combine(status)
+        hasher.combine(sparseIntent)
+        hasher.combine(executionInput)
+        hasher.combine(orderedOutputs)
+        hasher.combine(resolvedParameters)
+        hasher.combine(providerContractVersion)
+        hasher.combine(affectedPaths)
+        hasher.combine(products)
+        hasher.combine(artifacts)
+        hasher.combine(diagnostics)
+        hasher.combine(replayClaim)
+    }
+}
+
+extension NotebookExecutionReceipt: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookExecutionReceipt: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookExecutionReceipt {
+        return
+            try NotebookExecutionReceipt(
+                schemaVersion: FfiConverterUInt32.read(from: &buf),
+                runId: FfiConverterString.read(from: &buf),
+                revision: FfiConverterUInt64.read(from: &buf),
+                notebookId: FfiConverterString.read(from: &buf),
+                cellId: FfiConverterString.read(from: &buf),
+                initiatingSurface: FfiConverterString.read(from: &buf),
+                operationId: FfiConverterString.read(from: &buf),
+                startedAt: FfiConverterUInt64.read(from: &buf),
+                finishedAt: FfiConverterUInt64.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                sparseIntent: FfiConverterOptionTypeNotebookTaskIntent.read(from: &buf),
+                executionInput: FfiConverterOptionTypeNotebookExecutionInput.read(from: &buf),
+                orderedOutputs: FfiConverterOptionSequenceTypeNotebookPythonOutputEvent.read(from: &buf),
+                resolvedParameters: FfiConverterDictionaryStringTypeNotebookValue.read(from: &buf),
+                providerContractVersion: FfiConverterUInt32.read(from: &buf),
+                affectedPaths: FfiConverterSequenceString.read(from: &buf),
+                products: FfiConverterSequenceTypeNotebookReceiptArtifact.read(from: &buf),
+                artifacts: FfiConverterSequenceTypeNotebookReceiptArtifact.read(from: &buf),
+                diagnostics: FfiConverterSequenceString.read(from: &buf),
+                replayClaim: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookExecutionReceipt, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.schemaVersion, into: &buf)
+        FfiConverterString.write(value.runId, into: &buf)
+        FfiConverterUInt64.write(value.revision, into: &buf)
+        FfiConverterString.write(value.notebookId, into: &buf)
+        FfiConverterString.write(value.cellId, into: &buf)
+        FfiConverterString.write(value.initiatingSurface, into: &buf)
+        FfiConverterString.write(value.operationId, into: &buf)
+        FfiConverterUInt64.write(value.startedAt, into: &buf)
+        FfiConverterUInt64.write(value.finishedAt, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterOptionTypeNotebookTaskIntent.write(value.sparseIntent, into: &buf)
+        FfiConverterOptionTypeNotebookExecutionInput.write(value.executionInput, into: &buf)
+        FfiConverterOptionSequenceTypeNotebookPythonOutputEvent.write(value.orderedOutputs, into: &buf)
+        FfiConverterDictionaryStringTypeNotebookValue.write(value.resolvedParameters, into: &buf)
+        FfiConverterUInt32.write(value.providerContractVersion, into: &buf)
+        FfiConverterSequenceString.write(value.affectedPaths, into: &buf)
+        FfiConverterSequenceTypeNotebookReceiptArtifact.write(value.products, into: &buf)
+        FfiConverterSequenceTypeNotebookReceiptArtifact.write(value.artifacts, into: &buf)
+        FfiConverterSequenceString.write(value.diagnostics, into: &buf)
+        FfiConverterString.write(value.replayClaim, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookExecutionReceipt_lift(_ buf: RustBuffer) throws -> NotebookExecutionReceipt {
+    return try FfiConverterTypeNotebookExecutionReceipt.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookExecutionReceipt_lower(_ value: NotebookExecutionReceipt) -> RustBuffer {
+    return FfiConverterTypeNotebookExecutionReceipt.lower(value)
+}
+
+
+public struct NotebookExportRequest {
+    public var projectRoot: String
+    public var destination: String
+    public var mode: NotebookExportMode
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(projectRoot: String, destination: String, mode: NotebookExportMode) {
+        self.projectRoot = projectRoot
+        self.destination = destination
+        self.mode = mode
+    }
+}
+
+#if compiler(>=6)
+extension NotebookExportRequest: Sendable {}
+#endif
+
+
+extension NotebookExportRequest: Equatable, Hashable {
+    public static func ==(lhs: NotebookExportRequest, rhs: NotebookExportRequest) -> Bool {
+        if lhs.projectRoot != rhs.projectRoot {
+            return false
+        }
+        if lhs.destination != rhs.destination {
+            return false
+        }
+        if lhs.mode != rhs.mode {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(projectRoot)
+        hasher.combine(destination)
+        hasher.combine(mode)
+    }
+}
+
+extension NotebookExportRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookExportRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookExportRequest {
+        return
+            try NotebookExportRequest(
+                projectRoot: FfiConverterString.read(from: &buf),
+                destination: FfiConverterString.read(from: &buf),
+                mode: FfiConverterTypeNotebookExportMode.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookExportRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.projectRoot, into: &buf)
+        FfiConverterString.write(value.destination, into: &buf)
+        FfiConverterTypeNotebookExportMode.write(value.mode, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookExportRequest_lift(_ buf: RustBuffer) throws -> NotebookExportRequest {
+    return try FfiConverterTypeNotebookExportRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookExportRequest_lower(_ value: NotebookExportRequest) -> RustBuffer {
+    return FfiConverterTypeNotebookExportRequest.lower(value)
+}
+
+
+public struct NotebookFinalizeRecordingRequest {
+    public var projectRoot: String
+    public var handle: NotebookAttemptHandle
+    public var finalization: NotebookReceiptFinalization
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(projectRoot: String, handle: NotebookAttemptHandle, finalization: NotebookReceiptFinalization) {
+        self.projectRoot = projectRoot
+        self.handle = handle
+        self.finalization = finalization
+    }
+}
+
+#if compiler(>=6)
+extension NotebookFinalizeRecordingRequest: Sendable {}
+#endif
+
+
+extension NotebookFinalizeRecordingRequest: Equatable, Hashable {
+    public static func ==(lhs: NotebookFinalizeRecordingRequest, rhs: NotebookFinalizeRecordingRequest) -> Bool {
+        if lhs.projectRoot != rhs.projectRoot {
+            return false
+        }
+        if lhs.handle != rhs.handle {
+            return false
+        }
+        if lhs.finalization != rhs.finalization {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(projectRoot)
+        hasher.combine(handle)
+        hasher.combine(finalization)
+    }
+}
+
+extension NotebookFinalizeRecordingRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookFinalizeRecordingRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookFinalizeRecordingRequest {
+        return
+            try NotebookFinalizeRecordingRequest(
+                projectRoot: FfiConverterString.read(from: &buf),
+                handle: FfiConverterTypeNotebookAttemptHandle.read(from: &buf),
+                finalization: FfiConverterTypeNotebookReceiptFinalization.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookFinalizeRecordingRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.projectRoot, into: &buf)
+        FfiConverterTypeNotebookAttemptHandle.write(value.handle, into: &buf)
+        FfiConverterTypeNotebookReceiptFinalization.write(value.finalization, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookFinalizeRecordingRequest_lift(_ buf: RustBuffer) throws -> NotebookFinalizeRecordingRequest {
+    return try FfiConverterTypeNotebookFinalizeRecordingRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookFinalizeRecordingRequest_lower(_ value: NotebookFinalizeRecordingRequest) -> RustBuffer {
+    return FfiConverterTypeNotebookFinalizeRecordingRequest.lower(value)
+}
+
+
+public struct NotebookPythonEnvironmentIdentity {
+    public var environmentId: String
+    public var interpreter: String
+    public var implementation: String
+    public var version: String
+    public var casaRsVersion: String?
+    public var packages: [String: String]
+    public var fingerprintSha256: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(environmentId: String, interpreter: String, implementation: String, version: String, casaRsVersion: String?, packages: [String: String], fingerprintSha256: String) {
+        self.environmentId = environmentId
+        self.interpreter = interpreter
+        self.implementation = implementation
+        self.version = version
+        self.casaRsVersion = casaRsVersion
+        self.packages = packages
+        self.fingerprintSha256 = fingerprintSha256
+    }
+}
+
+#if compiler(>=6)
+extension NotebookPythonEnvironmentIdentity: Sendable {}
+#endif
+
+
+extension NotebookPythonEnvironmentIdentity: Equatable, Hashable {
+    public static func ==(lhs: NotebookPythonEnvironmentIdentity, rhs: NotebookPythonEnvironmentIdentity) -> Bool {
+        if lhs.environmentId != rhs.environmentId {
+            return false
+        }
+        if lhs.interpreter != rhs.interpreter {
+            return false
+        }
+        if lhs.implementation != rhs.implementation {
+            return false
+        }
+        if lhs.version != rhs.version {
+            return false
+        }
+        if lhs.casaRsVersion != rhs.casaRsVersion {
+            return false
+        }
+        if lhs.packages != rhs.packages {
+            return false
+        }
+        if lhs.fingerprintSha256 != rhs.fingerprintSha256 {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(environmentId)
+        hasher.combine(interpreter)
+        hasher.combine(implementation)
+        hasher.combine(version)
+        hasher.combine(casaRsVersion)
+        hasher.combine(packages)
+        hasher.combine(fingerprintSha256)
+    }
+}
+
+extension NotebookPythonEnvironmentIdentity: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookPythonEnvironmentIdentity: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookPythonEnvironmentIdentity {
+        return
+            try NotebookPythonEnvironmentIdentity(
+                environmentId: FfiConverterString.read(from: &buf),
+                interpreter: FfiConverterString.read(from: &buf),
+                implementation: FfiConverterString.read(from: &buf),
+                version: FfiConverterString.read(from: &buf),
+                casaRsVersion: FfiConverterOptionString.read(from: &buf),
+                packages: FfiConverterDictionaryStringString.read(from: &buf),
+                fingerprintSha256: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookPythonEnvironmentIdentity, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.environmentId, into: &buf)
+        FfiConverterString.write(value.interpreter, into: &buf)
+        FfiConverterString.write(value.implementation, into: &buf)
+        FfiConverterString.write(value.version, into: &buf)
+        FfiConverterOptionString.write(value.casaRsVersion, into: &buf)
+        FfiConverterDictionaryStringString.write(value.packages, into: &buf)
+        FfiConverterString.write(value.fingerprintSha256, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookPythonEnvironmentIdentity_lift(_ buf: RustBuffer) throws -> NotebookPythonEnvironmentIdentity {
+    return try FfiConverterTypeNotebookPythonEnvironmentIdentity.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookPythonEnvironmentIdentity_lower(_ value: NotebookPythonEnvironmentIdentity) -> RustBuffer {
+    return FfiConverterTypeNotebookPythonEnvironmentIdentity.lower(value)
+}
+
+
+public struct NotebookPythonExecutionInput {
+    public var source: String
+    public var sourceSha256: String
+    public var authority: String
+    public var inputReferences: [String]
+    public var environment: NotebookPythonEnvironmentIdentity
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(source: String, sourceSha256: String, authority: String, inputReferences: [String], environment: NotebookPythonEnvironmentIdentity) {
+        self.source = source
+        self.sourceSha256 = sourceSha256
+        self.authority = authority
+        self.inputReferences = inputReferences
+        self.environment = environment
+    }
+}
+
+#if compiler(>=6)
+extension NotebookPythonExecutionInput: Sendable {}
+#endif
+
+
+extension NotebookPythonExecutionInput: Equatable, Hashable {
+    public static func ==(lhs: NotebookPythonExecutionInput, rhs: NotebookPythonExecutionInput) -> Bool {
+        if lhs.source != rhs.source {
+            return false
+        }
+        if lhs.sourceSha256 != rhs.sourceSha256 {
+            return false
+        }
+        if lhs.authority != rhs.authority {
+            return false
+        }
+        if lhs.inputReferences != rhs.inputReferences {
+            return false
+        }
+        if lhs.environment != rhs.environment {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(source)
+        hasher.combine(sourceSha256)
+        hasher.combine(authority)
+        hasher.combine(inputReferences)
+        hasher.combine(environment)
+    }
+}
+
+extension NotebookPythonExecutionInput: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookPythonExecutionInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookPythonExecutionInput {
+        return
+            try NotebookPythonExecutionInput(
+                source: FfiConverterString.read(from: &buf),
+                sourceSha256: FfiConverterString.read(from: &buf),
+                authority: FfiConverterString.read(from: &buf),
+                inputReferences: FfiConverterSequenceString.read(from: &buf),
+                environment: FfiConverterTypeNotebookPythonEnvironmentIdentity.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookPythonExecutionInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterString.write(value.sourceSha256, into: &buf)
+        FfiConverterString.write(value.authority, into: &buf)
+        FfiConverterSequenceString.write(value.inputReferences, into: &buf)
+        FfiConverterTypeNotebookPythonEnvironmentIdentity.write(value.environment, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookPythonExecutionInput_lift(_ buf: RustBuffer) throws -> NotebookPythonExecutionInput {
+    return try FfiConverterTypeNotebookPythonExecutionInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookPythonExecutionInput_lower(_ value: NotebookPythonExecutionInput) -> RustBuffer {
+    return FfiConverterTypeNotebookPythonExecutionInput.lower(value)
+}
+
+
+public struct NotebookPythonOutputEvent {
+    public var order: Int64
+    public var channel: String
+    public var text: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(order: Int64, channel: String, text: String) {
+        self.order = order
+        self.channel = channel
+        self.text = text
+    }
+}
+
+#if compiler(>=6)
+extension NotebookPythonOutputEvent: Sendable {}
+#endif
+
+
+extension NotebookPythonOutputEvent: Equatable, Hashable {
+    public static func ==(lhs: NotebookPythonOutputEvent, rhs: NotebookPythonOutputEvent) -> Bool {
+        if lhs.order != rhs.order {
+            return false
+        }
+        if lhs.channel != rhs.channel {
+            return false
+        }
+        if lhs.text != rhs.text {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(order)
+        hasher.combine(channel)
+        hasher.combine(text)
+    }
+}
+
+extension NotebookPythonOutputEvent: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookPythonOutputEvent: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookPythonOutputEvent {
+        return
+            try NotebookPythonOutputEvent(
+                order: FfiConverterInt64.read(from: &buf),
+                channel: FfiConverterString.read(from: &buf),
+                text: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookPythonOutputEvent, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.order, into: &buf)
+        FfiConverterString.write(value.channel, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookPythonOutputEvent_lift(_ buf: RustBuffer) throws -> NotebookPythonOutputEvent {
+    return try FfiConverterTypeNotebookPythonOutputEvent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookPythonOutputEvent_lower(_ value: NotebookPythonOutputEvent) -> RustBuffer {
+    return FfiConverterTypeNotebookPythonOutputEvent.lower(value)
+}
+
+
+public struct NotebookReceiptArtifact {
+    public var role: String
+    public var path: String
+    public var mediaType: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(role: String, path: String, mediaType: String?) {
+        self.role = role
+        self.path = path
+        self.mediaType = mediaType
+    }
+}
+
+#if compiler(>=6)
+extension NotebookReceiptArtifact: Sendable {}
+#endif
+
+
+extension NotebookReceiptArtifact: Equatable, Hashable {
+    public static func ==(lhs: NotebookReceiptArtifact, rhs: NotebookReceiptArtifact) -> Bool {
+        if lhs.role != rhs.role {
+            return false
+        }
+        if lhs.path != rhs.path {
+            return false
+        }
+        if lhs.mediaType != rhs.mediaType {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(role)
+        hasher.combine(path)
+        hasher.combine(mediaType)
+    }
+}
+
+extension NotebookReceiptArtifact: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookReceiptArtifact: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookReceiptArtifact {
+        return
+            try NotebookReceiptArtifact(
+                role: FfiConverterString.read(from: &buf),
+                path: FfiConverterString.read(from: &buf),
+                mediaType: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookReceiptArtifact, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.role, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterOptionString.write(value.mediaType, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookReceiptArtifact_lift(_ buf: RustBuffer) throws -> NotebookReceiptArtifact {
+    return try FfiConverterTypeNotebookReceiptArtifact.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookReceiptArtifact_lower(_ value: NotebookReceiptArtifact) -> RustBuffer {
+    return FfiConverterTypeNotebookReceiptArtifact.lower(value)
+}
+
+
+public struct NotebookReceiptFinalization {
+    public var status: String
+    public var finishedAt: UInt64
+    public var affectedPaths: [String]
+    public var products: [NotebookReceiptArtifact]
+    public var artifacts: [NotebookReceiptArtifact]
+    public var diagnostics: [String]
+    public var stdout: Data
+    public var stderr: Data
+    public var casaLog: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(status: String, finishedAt: UInt64, affectedPaths: [String], products: [NotebookReceiptArtifact], artifacts: [NotebookReceiptArtifact], diagnostics: [String], stdout: Data, stderr: Data, casaLog: String?) {
+        self.status = status
+        self.finishedAt = finishedAt
+        self.affectedPaths = affectedPaths
+        self.products = products
+        self.artifacts = artifacts
+        self.diagnostics = diagnostics
+        self.stdout = stdout
+        self.stderr = stderr
+        self.casaLog = casaLog
+    }
+}
+
+#if compiler(>=6)
+extension NotebookReceiptFinalization: Sendable {}
+#endif
+
+
+extension NotebookReceiptFinalization: Equatable, Hashable {
+    public static func ==(lhs: NotebookReceiptFinalization, rhs: NotebookReceiptFinalization) -> Bool {
+        if lhs.status != rhs.status {
+            return false
+        }
+        if lhs.finishedAt != rhs.finishedAt {
+            return false
+        }
+        if lhs.affectedPaths != rhs.affectedPaths {
+            return false
+        }
+        if lhs.products != rhs.products {
+            return false
+        }
+        if lhs.artifacts != rhs.artifacts {
+            return false
+        }
+        if lhs.diagnostics != rhs.diagnostics {
+            return false
+        }
+        if lhs.stdout != rhs.stdout {
+            return false
+        }
+        if lhs.stderr != rhs.stderr {
+            return false
+        }
+        if lhs.casaLog != rhs.casaLog {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(status)
+        hasher.combine(finishedAt)
+        hasher.combine(affectedPaths)
+        hasher.combine(products)
+        hasher.combine(artifacts)
+        hasher.combine(diagnostics)
+        hasher.combine(stdout)
+        hasher.combine(stderr)
+        hasher.combine(casaLog)
+    }
+}
+
+extension NotebookReceiptFinalization: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookReceiptFinalization: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookReceiptFinalization {
+        return
+            try NotebookReceiptFinalization(
+                status: FfiConverterString.read(from: &buf),
+                finishedAt: FfiConverterUInt64.read(from: &buf),
+                affectedPaths: FfiConverterSequenceString.read(from: &buf),
+                products: FfiConverterSequenceTypeNotebookReceiptArtifact.read(from: &buf),
+                artifacts: FfiConverterSequenceTypeNotebookReceiptArtifact.read(from: &buf),
+                diagnostics: FfiConverterSequenceString.read(from: &buf),
+                stdout: FfiConverterData.read(from: &buf),
+                stderr: FfiConverterData.read(from: &buf),
+                casaLog: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookReceiptFinalization, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterUInt64.write(value.finishedAt, into: &buf)
+        FfiConverterSequenceString.write(value.affectedPaths, into: &buf)
+        FfiConverterSequenceTypeNotebookReceiptArtifact.write(value.products, into: &buf)
+        FfiConverterSequenceTypeNotebookReceiptArtifact.write(value.artifacts, into: &buf)
+        FfiConverterSequenceString.write(value.diagnostics, into: &buf)
+        FfiConverterData.write(value.stdout, into: &buf)
+        FfiConverterData.write(value.stderr, into: &buf)
+        FfiConverterOptionString.write(value.casaLog, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookReceiptFinalization_lift(_ buf: RustBuffer) throws -> NotebookReceiptFinalization {
+    return try FfiConverterTypeNotebookReceiptFinalization.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookReceiptFinalization_lower(_ value: NotebookReceiptFinalization) -> RustBuffer {
+    return FfiConverterTypeNotebookReceiptFinalization.lower(value)
+}
+
+
+public struct NotebookRecordingRequest {
+    public var initiatingSurface: String
+    public var operationId: String
+    public var notebookId: String?
+    public var cellId: String?
+    public var taskIntent: NotebookTaskIntent?
+    public var executionInput: NotebookExecutionInput?
+    public var providerContractVersion: UInt32
+    public var resolvedParameters: [String: NotebookValue]
+    public var runSafety: NotebookRunSafetyRecord
+    public var approvals: [NotebookApprovalRecord]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(initiatingSurface: String, operationId: String, notebookId: String?, cellId: String?, taskIntent: NotebookTaskIntent?, executionInput: NotebookExecutionInput?, providerContractVersion: UInt32, resolvedParameters: [String: NotebookValue], runSafety: NotebookRunSafetyRecord, approvals: [NotebookApprovalRecord]) {
+        self.initiatingSurface = initiatingSurface
+        self.operationId = operationId
+        self.notebookId = notebookId
+        self.cellId = cellId
+        self.taskIntent = taskIntent
+        self.executionInput = executionInput
+        self.providerContractVersion = providerContractVersion
+        self.resolvedParameters = resolvedParameters
+        self.runSafety = runSafety
+        self.approvals = approvals
+    }
+}
+
+#if compiler(>=6)
+extension NotebookRecordingRequest: Sendable {}
+#endif
+
+
+extension NotebookRecordingRequest: Equatable, Hashable {
+    public static func ==(lhs: NotebookRecordingRequest, rhs: NotebookRecordingRequest) -> Bool {
+        if lhs.initiatingSurface != rhs.initiatingSurface {
+            return false
+        }
+        if lhs.operationId != rhs.operationId {
+            return false
+        }
+        if lhs.notebookId != rhs.notebookId {
+            return false
+        }
+        if lhs.cellId != rhs.cellId {
+            return false
+        }
+        if lhs.taskIntent != rhs.taskIntent {
+            return false
+        }
+        if lhs.executionInput != rhs.executionInput {
+            return false
+        }
+        if lhs.providerContractVersion != rhs.providerContractVersion {
+            return false
+        }
+        if lhs.resolvedParameters != rhs.resolvedParameters {
+            return false
+        }
+        if lhs.runSafety != rhs.runSafety {
+            return false
+        }
+        if lhs.approvals != rhs.approvals {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(initiatingSurface)
+        hasher.combine(operationId)
+        hasher.combine(notebookId)
+        hasher.combine(cellId)
+        hasher.combine(taskIntent)
+        hasher.combine(executionInput)
+        hasher.combine(providerContractVersion)
+        hasher.combine(resolvedParameters)
+        hasher.combine(runSafety)
+        hasher.combine(approvals)
+    }
+}
+
+extension NotebookRecordingRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookRecordingRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookRecordingRequest {
+        return
+            try NotebookRecordingRequest(
+                initiatingSurface: FfiConverterString.read(from: &buf),
+                operationId: FfiConverterString.read(from: &buf),
+                notebookId: FfiConverterOptionString.read(from: &buf),
+                cellId: FfiConverterOptionString.read(from: &buf),
+                taskIntent: FfiConverterOptionTypeNotebookTaskIntent.read(from: &buf),
+                executionInput: FfiConverterOptionTypeNotebookExecutionInput.read(from: &buf),
+                providerContractVersion: FfiConverterUInt32.read(from: &buf),
+                resolvedParameters: FfiConverterDictionaryStringTypeNotebookValue.read(from: &buf),
+                runSafety: FfiConverterTypeNotebookRunSafetyRecord.read(from: &buf),
+                approvals: FfiConverterSequenceTypeNotebookApprovalRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookRecordingRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.initiatingSurface, into: &buf)
+        FfiConverterString.write(value.operationId, into: &buf)
+        FfiConverterOptionString.write(value.notebookId, into: &buf)
+        FfiConverterOptionString.write(value.cellId, into: &buf)
+        FfiConverterOptionTypeNotebookTaskIntent.write(value.taskIntent, into: &buf)
+        FfiConverterOptionTypeNotebookExecutionInput.write(value.executionInput, into: &buf)
+        FfiConverterUInt32.write(value.providerContractVersion, into: &buf)
+        FfiConverterDictionaryStringTypeNotebookValue.write(value.resolvedParameters, into: &buf)
+        FfiConverterTypeNotebookRunSafetyRecord.write(value.runSafety, into: &buf)
+        FfiConverterSequenceTypeNotebookApprovalRecord.write(value.approvals, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookRecordingRequest_lift(_ buf: RustBuffer) throws -> NotebookRecordingRequest {
+    return try FfiConverterTypeNotebookRecordingRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookRecordingRequest_lower(_ value: NotebookRecordingRequest) -> RustBuffer {
+    return FfiConverterTypeNotebookRecordingRequest.lower(value)
+}
+
+
+public struct NotebookRunSafetyRecord {
+    public var classification: String
+    public var affectedPaths: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(classification: String, affectedPaths: [String]) {
+        self.classification = classification
+        self.affectedPaths = affectedPaths
+    }
+}
+
+#if compiler(>=6)
+extension NotebookRunSafetyRecord: Sendable {}
+#endif
+
+
+extension NotebookRunSafetyRecord: Equatable, Hashable {
+    public static func ==(lhs: NotebookRunSafetyRecord, rhs: NotebookRunSafetyRecord) -> Bool {
+        if lhs.classification != rhs.classification {
+            return false
+        }
+        if lhs.affectedPaths != rhs.affectedPaths {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(classification)
+        hasher.combine(affectedPaths)
+    }
+}
+
+extension NotebookRunSafetyRecord: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookRunSafetyRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookRunSafetyRecord {
+        return
+            try NotebookRunSafetyRecord(
+                classification: FfiConverterString.read(from: &buf),
+                affectedPaths: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookRunSafetyRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.classification, into: &buf)
+        FfiConverterSequenceString.write(value.affectedPaths, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookRunSafetyRecord_lift(_ buf: RustBuffer) throws -> NotebookRunSafetyRecord {
+    return try FfiConverterTypeNotebookRunSafetyRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookRunSafetyRecord_lower(_ value: NotebookRunSafetyRecord) -> RustBuffer {
+    return FfiConverterTypeNotebookRunSafetyRecord.lower(value)
+}
+
+
+public struct NotebookSaveRequest {
+    public var projectRoot: String
+    public var filename: String
+    public var baseHash: String
+    public var source: String
+    public var resolution: NotebookConflictResolution
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(projectRoot: String, filename: String, baseHash: String, source: String, resolution: NotebookConflictResolution) {
+        self.projectRoot = projectRoot
+        self.filename = filename
+        self.baseHash = baseHash
+        self.source = source
+        self.resolution = resolution
+    }
+}
+
+#if compiler(>=6)
+extension NotebookSaveRequest: Sendable {}
+#endif
+
+
+extension NotebookSaveRequest: Equatable, Hashable {
+    public static func ==(lhs: NotebookSaveRequest, rhs: NotebookSaveRequest) -> Bool {
+        if lhs.projectRoot != rhs.projectRoot {
+            return false
+        }
+        if lhs.filename != rhs.filename {
+            return false
+        }
+        if lhs.baseHash != rhs.baseHash {
+            return false
+        }
+        if lhs.source != rhs.source {
+            return false
+        }
+        if lhs.resolution != rhs.resolution {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(projectRoot)
+        hasher.combine(filename)
+        hasher.combine(baseHash)
+        hasher.combine(source)
+        hasher.combine(resolution)
+    }
+}
+
+extension NotebookSaveRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookSaveRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookSaveRequest {
+        return
+            try NotebookSaveRequest(
+                projectRoot: FfiConverterString.read(from: &buf),
+                filename: FfiConverterString.read(from: &buf),
+                baseHash: FfiConverterString.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                resolution: FfiConverterTypeNotebookConflictResolution.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookSaveRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.projectRoot, into: &buf)
+        FfiConverterString.write(value.filename, into: &buf)
+        FfiConverterString.write(value.baseHash, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterTypeNotebookConflictResolution.write(value.resolution, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookSaveRequest_lift(_ buf: RustBuffer) throws -> NotebookSaveRequest {
+    return try FfiConverterTypeNotebookSaveRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookSaveRequest_lower(_ value: NotebookSaveRequest) -> RustBuffer {
+    return FfiConverterTypeNotebookSaveRequest.lower(value)
+}
+
+
+public struct NotebookSaveVisualizationEnvelope {
+    public var projectRoot: String
+    public var request: NotebookSaveVisualizationRequest
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(projectRoot: String, request: NotebookSaveVisualizationRequest) {
+        self.projectRoot = projectRoot
+        self.request = request
+    }
+}
+
+#if compiler(>=6)
+extension NotebookSaveVisualizationEnvelope: Sendable {}
+#endif
+
+
+extension NotebookSaveVisualizationEnvelope: Equatable, Hashable {
+    public static func ==(lhs: NotebookSaveVisualizationEnvelope, rhs: NotebookSaveVisualizationEnvelope) -> Bool {
+        if lhs.projectRoot != rhs.projectRoot {
+            return false
+        }
+        if lhs.request != rhs.request {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(projectRoot)
+        hasher.combine(request)
+    }
+}
+
+extension NotebookSaveVisualizationEnvelope: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookSaveVisualizationEnvelope: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookSaveVisualizationEnvelope {
+        return
+            try NotebookSaveVisualizationEnvelope(
+                projectRoot: FfiConverterString.read(from: &buf),
+                request: FfiConverterTypeNotebookSaveVisualizationRequest.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookSaveVisualizationEnvelope, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.projectRoot, into: &buf)
+        FfiConverterTypeNotebookSaveVisualizationRequest.write(value.request, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookSaveVisualizationEnvelope_lift(_ buf: RustBuffer) throws -> NotebookSaveVisualizationEnvelope {
+    return try FfiConverterTypeNotebookSaveVisualizationEnvelope.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookSaveVisualizationEnvelope_lower(_ value: NotebookSaveVisualizationEnvelope) -> RustBuffer {
+    return FfiConverterTypeNotebookSaveVisualizationEnvelope.lower(value)
+}
+
+
+public struct NotebookSaveVisualizationRequest {
+    public var notebookId: String?
+    public var visualizationId: String?
+    public var title: String
+    public var sourceAsset: String
+    public var sourceReferences: [String]
+    public var reopen: NotebookVisualizationReopenIntent
+    public var render: NotebookVisualizationRenderMetadata
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(notebookId: String?, visualizationId: String?, title: String, sourceAsset: String, sourceReferences: [String], reopen: NotebookVisualizationReopenIntent, render: NotebookVisualizationRenderMetadata) {
+        self.notebookId = notebookId
+        self.visualizationId = visualizationId
+        self.title = title
+        self.sourceAsset = sourceAsset
+        self.sourceReferences = sourceReferences
+        self.reopen = reopen
+        self.render = render
+    }
+}
+
+#if compiler(>=6)
+extension NotebookSaveVisualizationRequest: Sendable {}
+#endif
+
+
+extension NotebookSaveVisualizationRequest: Equatable, Hashable {
+    public static func ==(lhs: NotebookSaveVisualizationRequest, rhs: NotebookSaveVisualizationRequest) -> Bool {
+        if lhs.notebookId != rhs.notebookId {
+            return false
+        }
+        if lhs.visualizationId != rhs.visualizationId {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.sourceAsset != rhs.sourceAsset {
+            return false
+        }
+        if lhs.sourceReferences != rhs.sourceReferences {
+            return false
+        }
+        if lhs.reopen != rhs.reopen {
+            return false
+        }
+        if lhs.render != rhs.render {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(notebookId)
+        hasher.combine(visualizationId)
+        hasher.combine(title)
+        hasher.combine(sourceAsset)
+        hasher.combine(sourceReferences)
+        hasher.combine(reopen)
+        hasher.combine(render)
+    }
+}
+
+extension NotebookSaveVisualizationRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookSaveVisualizationRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookSaveVisualizationRequest {
+        return
+            try NotebookSaveVisualizationRequest(
+                notebookId: FfiConverterOptionString.read(from: &buf),
+                visualizationId: FfiConverterOptionString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                sourceAsset: FfiConverterString.read(from: &buf),
+                sourceReferences: FfiConverterSequenceString.read(from: &buf),
+                reopen: FfiConverterTypeNotebookVisualizationReopenIntent.read(from: &buf),
+                render: FfiConverterTypeNotebookVisualizationRenderMetadata.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookSaveVisualizationRequest, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.notebookId, into: &buf)
+        FfiConverterOptionString.write(value.visualizationId, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.sourceAsset, into: &buf)
+        FfiConverterSequenceString.write(value.sourceReferences, into: &buf)
+        FfiConverterTypeNotebookVisualizationReopenIntent.write(value.reopen, into: &buf)
+        FfiConverterTypeNotebookVisualizationRenderMetadata.write(value.render, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookSaveVisualizationRequest_lift(_ buf: RustBuffer) throws -> NotebookSaveVisualizationRequest {
+    return try FfiConverterTypeNotebookSaveVisualizationRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookSaveVisualizationRequest_lower(_ value: NotebookSaveVisualizationRequest) -> RustBuffer {
+    return FfiConverterTypeNotebookSaveVisualizationRequest.lower(value)
+}
+
+
+public struct NotebookTaskIntent {
+    public var format: UInt32
+    public var surface: String
+    public var kind: String
+    public var contract: UInt32
+    public var parameters: [String: NotebookValue]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(format: UInt32, surface: String, kind: String, contract: UInt32, parameters: [String: NotebookValue]) {
+        self.format = format
+        self.surface = surface
+        self.kind = kind
+        self.contract = contract
+        self.parameters = parameters
+    }
+}
+
+#if compiler(>=6)
+extension NotebookTaskIntent: Sendable {}
+#endif
+
+
+extension NotebookTaskIntent: Equatable, Hashable {
+    public static func ==(lhs: NotebookTaskIntent, rhs: NotebookTaskIntent) -> Bool {
+        if lhs.format != rhs.format {
+            return false
+        }
+        if lhs.surface != rhs.surface {
+            return false
+        }
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.contract != rhs.contract {
+            return false
+        }
+        if lhs.parameters != rhs.parameters {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(format)
+        hasher.combine(surface)
+        hasher.combine(kind)
+        hasher.combine(contract)
+        hasher.combine(parameters)
+    }
+}
+
+extension NotebookTaskIntent: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookTaskIntent: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookTaskIntent {
+        return
+            try NotebookTaskIntent(
+                format: FfiConverterUInt32.read(from: &buf),
+                surface: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                contract: FfiConverterUInt32.read(from: &buf),
+                parameters: FfiConverterDictionaryStringTypeNotebookValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookTaskIntent, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.format, into: &buf)
+        FfiConverterString.write(value.surface, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterUInt32.write(value.contract, into: &buf)
+        FfiConverterDictionaryStringTypeNotebookValue.write(value.parameters, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookTaskIntent_lift(_ buf: RustBuffer) throws -> NotebookTaskIntent {
+    return try FfiConverterTypeNotebookTaskIntent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookTaskIntent_lower(_ value: NotebookTaskIntent) -> RustBuffer {
+    return FfiConverterTypeNotebookTaskIntent.lower(value)
+}
+
+
+public struct NotebookValueEntry {
+    public var name: String
+    public var value: NotebookValue
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, value: NotebookValue) {
+        self.name = name
+        self.value = value
+    }
+}
+
+#if compiler(>=6)
+extension NotebookValueEntry: Sendable {}
+#endif
+
+
+extension NotebookValueEntry: Equatable, Hashable {
+    public static func ==(lhs: NotebookValueEntry, rhs: NotebookValueEntry) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(value)
+    }
+}
+
+extension NotebookValueEntry: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookValueEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookValueEntry {
+        return
+            try NotebookValueEntry(
+                name: FfiConverterString.read(from: &buf),
+                value: FfiConverterTypeNotebookValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookValueEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeNotebookValue.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookValueEntry_lift(_ buf: RustBuffer) throws -> NotebookValueEntry {
+    return try FfiConverterTypeNotebookValueEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookValueEntry_lower(_ value: NotebookValueEntry) -> RustBuffer {
+    return FfiConverterTypeNotebookValueEntry.lower(value)
+}
+
+
+public struct NotebookVisualizationRenderMetadata {
+    public var renderer: String
+    public var mediaType: String
+    public var width: UInt32
+    public var height: UInt32
+    public var settings: [String: NotebookValue]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(renderer: String, mediaType: String, width: UInt32, height: UInt32, settings: [String: NotebookValue]) {
+        self.renderer = renderer
+        self.mediaType = mediaType
+        self.width = width
+        self.height = height
+        self.settings = settings
+    }
+}
+
+#if compiler(>=6)
+extension NotebookVisualizationRenderMetadata: Sendable {}
+#endif
+
+
+extension NotebookVisualizationRenderMetadata: Equatable, Hashable {
+    public static func ==(lhs: NotebookVisualizationRenderMetadata, rhs: NotebookVisualizationRenderMetadata) -> Bool {
+        if lhs.renderer != rhs.renderer {
+            return false
+        }
+        if lhs.mediaType != rhs.mediaType {
+            return false
+        }
+        if lhs.width != rhs.width {
+            return false
+        }
+        if lhs.height != rhs.height {
+            return false
+        }
+        if lhs.settings != rhs.settings {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(renderer)
+        hasher.combine(mediaType)
+        hasher.combine(width)
+        hasher.combine(height)
+        hasher.combine(settings)
+    }
+}
+
+extension NotebookVisualizationRenderMetadata: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookVisualizationRenderMetadata: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookVisualizationRenderMetadata {
+        return
+            try NotebookVisualizationRenderMetadata(
+                renderer: FfiConverterString.read(from: &buf),
+                mediaType: FfiConverterString.read(from: &buf),
+                width: FfiConverterUInt32.read(from: &buf),
+                height: FfiConverterUInt32.read(from: &buf),
+                settings: FfiConverterDictionaryStringTypeNotebookValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookVisualizationRenderMetadata, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.renderer, into: &buf)
+        FfiConverterString.write(value.mediaType, into: &buf)
+        FfiConverterUInt32.write(value.width, into: &buf)
+        FfiConverterUInt32.write(value.height, into: &buf)
+        FfiConverterDictionaryStringTypeNotebookValue.write(value.settings, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookVisualizationRenderMetadata_lift(_ buf: RustBuffer) throws -> NotebookVisualizationRenderMetadata {
+    return try FfiConverterTypeNotebookVisualizationRenderMetadata.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookVisualizationRenderMetadata_lower(_ value: NotebookVisualizationRenderMetadata) -> RustBuffer {
+    return FfiConverterTypeNotebookVisualizationRenderMetadata.lower(value)
+}
+
+
+public struct NotebookVisualizationReopenIntent {
+    public var surface: String
+    public var contractVersion: UInt32
+    public var parameters: [String: NotebookValue]
+    public var profileToml: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(surface: String, contractVersion: UInt32, parameters: [String: NotebookValue], profileToml: String?) {
+        self.surface = surface
+        self.contractVersion = contractVersion
+        self.parameters = parameters
+        self.profileToml = profileToml
+    }
+}
+
+#if compiler(>=6)
+extension NotebookVisualizationReopenIntent: Sendable {}
+#endif
+
+
+extension NotebookVisualizationReopenIntent: Equatable, Hashable {
+    public static func ==(lhs: NotebookVisualizationReopenIntent, rhs: NotebookVisualizationReopenIntent) -> Bool {
+        if lhs.surface != rhs.surface {
+            return false
+        }
+        if lhs.contractVersion != rhs.contractVersion {
+            return false
+        }
+        if lhs.parameters != rhs.parameters {
+            return false
+        }
+        if lhs.profileToml != rhs.profileToml {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(surface)
+        hasher.combine(contractVersion)
+        hasher.combine(parameters)
+        hasher.combine(profileToml)
+    }
+}
+
+extension NotebookVisualizationReopenIntent: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookVisualizationReopenIntent: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookVisualizationReopenIntent {
+        return
+            try NotebookVisualizationReopenIntent(
+                surface: FfiConverterString.read(from: &buf),
+                contractVersion: FfiConverterUInt32.read(from: &buf),
+                parameters: FfiConverterDictionaryStringTypeNotebookValue.read(from: &buf),
+                profileToml: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookVisualizationReopenIntent, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.surface, into: &buf)
+        FfiConverterUInt32.write(value.contractVersion, into: &buf)
+        FfiConverterDictionaryStringTypeNotebookValue.write(value.parameters, into: &buf)
+        FfiConverterOptionString.write(value.profileToml, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookVisualizationReopenIntent_lift(_ buf: RustBuffer) throws -> NotebookVisualizationReopenIntent {
+    return try FfiConverterTypeNotebookVisualizationReopenIntent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookVisualizationReopenIntent_lower(_ value: NotebookVisualizationReopenIntent) -> RustBuffer {
+    return FfiConverterTypeNotebookVisualizationReopenIntent.lower(value)
+}
+
+
+public struct NotebookVisualizationRevision {
+    public var revision: UInt64
+    public var createdAt: UInt64
+    public var assetPath: String
+    public var sourceReferences: [String]
+    public var reopen: NotebookVisualizationReopenIntent
+    public var render: NotebookVisualizationRenderMetadata
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(revision: UInt64, createdAt: UInt64, assetPath: String, sourceReferences: [String], reopen: NotebookVisualizationReopenIntent, render: NotebookVisualizationRenderMetadata) {
+        self.revision = revision
+        self.createdAt = createdAt
+        self.assetPath = assetPath
+        self.sourceReferences = sourceReferences
+        self.reopen = reopen
+        self.render = render
+    }
+}
+
+#if compiler(>=6)
+extension NotebookVisualizationRevision: Sendable {}
+#endif
+
+
+extension NotebookVisualizationRevision: Equatable, Hashable {
+    public static func ==(lhs: NotebookVisualizationRevision, rhs: NotebookVisualizationRevision) -> Bool {
+        if lhs.revision != rhs.revision {
+            return false
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return false
+        }
+        if lhs.assetPath != rhs.assetPath {
+            return false
+        }
+        if lhs.sourceReferences != rhs.sourceReferences {
+            return false
+        }
+        if lhs.reopen != rhs.reopen {
+            return false
+        }
+        if lhs.render != rhs.render {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(revision)
+        hasher.combine(createdAt)
+        hasher.combine(assetPath)
+        hasher.combine(sourceReferences)
+        hasher.combine(reopen)
+        hasher.combine(render)
+    }
+}
+
+extension NotebookVisualizationRevision: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookVisualizationRevision: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookVisualizationRevision {
+        return
+            try NotebookVisualizationRevision(
+                revision: FfiConverterUInt64.read(from: &buf),
+                createdAt: FfiConverterUInt64.read(from: &buf),
+                assetPath: FfiConverterString.read(from: &buf),
+                sourceReferences: FfiConverterSequenceString.read(from: &buf),
+                reopen: FfiConverterTypeNotebookVisualizationReopenIntent.read(from: &buf),
+                render: FfiConverterTypeNotebookVisualizationRenderMetadata.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookVisualizationRevision, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.revision, into: &buf)
+        FfiConverterUInt64.write(value.createdAt, into: &buf)
+        FfiConverterString.write(value.assetPath, into: &buf)
+        FfiConverterSequenceString.write(value.sourceReferences, into: &buf)
+        FfiConverterTypeNotebookVisualizationReopenIntent.write(value.reopen, into: &buf)
+        FfiConverterTypeNotebookVisualizationRenderMetadata.write(value.render, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookVisualizationRevision_lift(_ buf: RustBuffer) throws -> NotebookVisualizationRevision {
+    return try FfiConverterTypeNotebookVisualizationRevision.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookVisualizationRevision_lower(_ value: NotebookVisualizationRevision) -> RustBuffer {
+    return FfiConverterTypeNotebookVisualizationRevision.lower(value)
+}
+
+
+public struct NotebookVisualizationSnapshot {
+    public var schemaVersion: UInt32
+    public var id: String
+    public var notebookId: String
+    public var cellId: String
+    public var title: String
+    public var revisions: [NotebookVisualizationRevision]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt32, id: String, notebookId: String, cellId: String, title: String, revisions: [NotebookVisualizationRevision]) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.notebookId = notebookId
+        self.cellId = cellId
+        self.title = title
+        self.revisions = revisions
+    }
+}
+
+#if compiler(>=6)
+extension NotebookVisualizationSnapshot: Sendable {}
+#endif
+
+
+extension NotebookVisualizationSnapshot: Equatable, Hashable {
+    public static func ==(lhs: NotebookVisualizationSnapshot, rhs: NotebookVisualizationSnapshot) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.notebookId != rhs.notebookId {
+            return false
+        }
+        if lhs.cellId != rhs.cellId {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.revisions != rhs.revisions {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(id)
+        hasher.combine(notebookId)
+        hasher.combine(cellId)
+        hasher.combine(title)
+        hasher.combine(revisions)
+    }
+}
+
+extension NotebookVisualizationSnapshot: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookVisualizationSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookVisualizationSnapshot {
+        return
+            try NotebookVisualizationSnapshot(
+                schemaVersion: FfiConverterUInt32.read(from: &buf),
+                id: FfiConverterString.read(from: &buf),
+                notebookId: FfiConverterString.read(from: &buf),
+                cellId: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                revisions: FfiConverterSequenceTypeNotebookVisualizationRevision.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotebookVisualizationSnapshot, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.schemaVersion, into: &buf)
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.notebookId, into: &buf)
+        FfiConverterString.write(value.cellId, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterSequenceTypeNotebookVisualizationRevision.write(value.revisions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookVisualizationSnapshot_lift(_ buf: RustBuffer) throws -> NotebookVisualizationSnapshot {
+    return try FfiConverterTypeNotebookVisualizationSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookVisualizationSnapshot_lower(_ value: NotebookVisualizationSnapshot) -> RustBuffer {
+    return FfiConverterTypeNotebookVisualizationSnapshot.lower(value)
+}
+
+
 public struct PlotAxisMetadata {
     public var id: String
     public var label: String
@@ -3604,6 +6212,86 @@ public func FfiConverterTypeProjectProbe_lift(_ buf: RustBuffer) throws -> Proje
 #endif
 public func FfiConverterTypeProjectProbe_lower(_ value: ProjectProbe) -> RustBuffer {
     return FfiConverterTypeProjectProbe.lower(value)
+}
+
+
+public struct ScientificNotebookProjectProjection {
+    public var schemaVersion: UInt32
+    public var projectRoot: String
+    public var notebooks: [NotebookDocumentProjection]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt32, projectRoot: String, notebooks: [NotebookDocumentProjection]) {
+        self.schemaVersion = schemaVersion
+        self.projectRoot = projectRoot
+        self.notebooks = notebooks
+    }
+}
+
+#if compiler(>=6)
+extension ScientificNotebookProjectProjection: Sendable {}
+#endif
+
+
+extension ScientificNotebookProjectProjection: Equatable, Hashable {
+    public static func ==(lhs: ScientificNotebookProjectProjection, rhs: ScientificNotebookProjectProjection) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.projectRoot != rhs.projectRoot {
+            return false
+        }
+        if lhs.notebooks != rhs.notebooks {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(projectRoot)
+        hasher.combine(notebooks)
+    }
+}
+
+extension ScientificNotebookProjectProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeScientificNotebookProjectProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ScientificNotebookProjectProjection {
+        return
+            try ScientificNotebookProjectProjection(
+                schemaVersion: FfiConverterUInt32.read(from: &buf),
+                projectRoot: FfiConverterString.read(from: &buf),
+                notebooks: FfiConverterSequenceTypeNotebookDocumentProjection.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ScientificNotebookProjectProjection, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.schemaVersion, into: &buf)
+        FfiConverterString.write(value.projectRoot, into: &buf)
+        FfiConverterSequenceTypeNotebookDocumentProjection.write(value.notebooks, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeScientificNotebookProjectProjection_lift(_ buf: RustBuffer) throws -> ScientificNotebookProjectProjection {
+    return try FfiConverterTypeScientificNotebookProjectProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeScientificNotebookProjectProjection_lower(_ value: ScientificNotebookProjectProjection) -> RustBuffer {
+    return FfiConverterTypeScientificNotebookProjectProjection.lower(value)
 }
 
 
@@ -7200,6 +9888,440 @@ extension MeasurementSetPlotPreset: CaseIterable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum NotebookConflictResolution {
+
+    case reject
+    case keepLocal
+    case reloadExternal
+}
+
+
+#if compiler(>=6)
+extension NotebookConflictResolution: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookConflictResolution: FfiConverterRustBuffer {
+    typealias SwiftType = NotebookConflictResolution
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookConflictResolution {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .reject
+
+        case 2: return .keepLocal
+
+        case 3: return .reloadExternal
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: NotebookConflictResolution, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .reject:
+            writeInt(&buf, Int32(1))
+
+
+        case .keepLocal:
+            writeInt(&buf, Int32(2))
+
+
+        case .reloadExternal:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookConflictResolution_lift(_ buf: RustBuffer) throws -> NotebookConflictResolution {
+    return try FfiConverterTypeNotebookConflictResolution.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookConflictResolution_lower(_ value: NotebookConflictResolution) -> RustBuffer {
+    return FfiConverterTypeNotebookConflictResolution.lower(value)
+}
+
+
+extension NotebookConflictResolution: Equatable, Hashable {}
+
+extension NotebookConflictResolution: Codable {}
+
+
+
+
+extension NotebookConflictResolution: CaseIterable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum NotebookExportMode {
+
+    case portable
+    case advancedWithReceipts
+}
+
+
+#if compiler(>=6)
+extension NotebookExportMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookExportMode: FfiConverterRustBuffer {
+    typealias SwiftType = NotebookExportMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookExportMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .portable
+
+        case 2: return .advancedWithReceipts
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: NotebookExportMode, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .portable:
+            writeInt(&buf, Int32(1))
+
+
+        case .advancedWithReceipts:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookExportMode_lift(_ buf: RustBuffer) throws -> NotebookExportMode {
+    return try FfiConverterTypeNotebookExportMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookExportMode_lower(_ value: NotebookExportMode) -> RustBuffer {
+    return FfiConverterTypeNotebookExportMode.lower(value)
+}
+
+
+extension NotebookExportMode: Equatable, Hashable {}
+
+extension NotebookExportMode: Codable {}
+
+
+
+
+extension NotebookExportMode: CaseIterable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum NotebookRecordingPolicy {
+
+    case record
+    case bypassOnce
+}
+
+
+#if compiler(>=6)
+extension NotebookRecordingPolicy: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookRecordingPolicy: FfiConverterRustBuffer {
+    typealias SwiftType = NotebookRecordingPolicy
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookRecordingPolicy {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .record
+
+        case 2: return .bypassOnce
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: NotebookRecordingPolicy, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .record:
+            writeInt(&buf, Int32(1))
+
+
+        case .bypassOnce:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookRecordingPolicy_lift(_ buf: RustBuffer) throws -> NotebookRecordingPolicy {
+    return try FfiConverterTypeNotebookRecordingPolicy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookRecordingPolicy_lower(_ value: NotebookRecordingPolicy) -> RustBuffer {
+    return FfiConverterTypeNotebookRecordingPolicy.lower(value)
+}
+
+
+extension NotebookRecordingPolicy: Equatable, Hashable {}
+
+extension NotebookRecordingPolicy: Codable {}
+
+
+
+
+extension NotebookRecordingPolicy: CaseIterable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum NotebookSaveProjection {
+
+    case saved(notebook: NotebookDocumentProjection
+    )
+    case reloaded(notebook: NotebookDocumentProjection
+    )
+    case conflict(baseHash: String, external: NotebookDocumentProjection, proposedSource: String
+    )
+}
+
+
+#if compiler(>=6)
+extension NotebookSaveProjection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookSaveProjection: FfiConverterRustBuffer {
+    typealias SwiftType = NotebookSaveProjection
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookSaveProjection {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .saved(notebook: try FfiConverterTypeNotebookDocumentProjection.read(from: &buf)
+        )
+
+        case 2: return .reloaded(notebook: try FfiConverterTypeNotebookDocumentProjection.read(from: &buf)
+        )
+
+        case 3: return .conflict(baseHash: try FfiConverterString.read(from: &buf), external: try FfiConverterTypeNotebookDocumentProjection.read(from: &buf), proposedSource: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: NotebookSaveProjection, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .saved(notebook):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeNotebookDocumentProjection.write(notebook, into: &buf)
+
+
+        case let .reloaded(notebook):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeNotebookDocumentProjection.write(notebook, into: &buf)
+
+
+        case let .conflict(baseHash,external,proposedSource):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(baseHash, into: &buf)
+            FfiConverterTypeNotebookDocumentProjection.write(external, into: &buf)
+            FfiConverterString.write(proposedSource, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookSaveProjection_lift(_ buf: RustBuffer) throws -> NotebookSaveProjection {
+    return try FfiConverterTypeNotebookSaveProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookSaveProjection_lower(_ value: NotebookSaveProjection) -> RustBuffer {
+    return FfiConverterTypeNotebookSaveProjection.lower(value)
+}
+
+
+extension NotebookSaveProjection: Equatable, Hashable {}
+
+extension NotebookSaveProjection: Codable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum NotebookValue {
+
+    case string(value: String
+    )
+    case number(value: Double
+    )
+    case bool(value: Bool
+    )
+    case array(values: [NotebookValue]
+    )
+    case object(entries: [NotebookValueEntry]
+    )
+    case null
+}
+
+
+#if compiler(>=6)
+extension NotebookValue: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotebookValue: FfiConverterRustBuffer {
+    typealias SwiftType = NotebookValue
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookValue {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .string(value: try FfiConverterString.read(from: &buf)
+        )
+
+        case 2: return .number(value: try FfiConverterDouble.read(from: &buf)
+        )
+
+        case 3: return .bool(value: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 4: return .array(values: try FfiConverterSequenceTypeNotebookValue.read(from: &buf)
+        )
+
+        case 5: return .object(entries: try FfiConverterSequenceTypeNotebookValueEntry.read(from: &buf)
+        )
+
+        case 6: return .null
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: NotebookValue, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .string(value):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(value, into: &buf)
+
+
+        case let .number(value):
+            writeInt(&buf, Int32(2))
+            FfiConverterDouble.write(value, into: &buf)
+
+
+        case let .bool(value):
+            writeInt(&buf, Int32(3))
+            FfiConverterBool.write(value, into: &buf)
+
+
+        case let .array(values):
+            writeInt(&buf, Int32(4))
+            FfiConverterSequenceTypeNotebookValue.write(values, into: &buf)
+
+
+        case let .object(entries):
+            writeInt(&buf, Int32(5))
+            FfiConverterSequenceTypeNotebookValueEntry.write(entries, into: &buf)
+
+
+        case .null:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookValue_lift(_ buf: RustBuffer) throws -> NotebookValue {
+    return try FfiConverterTypeNotebookValue.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotebookValue_lower(_ value: NotebookValue) -> RustBuffer {
+    return FfiConverterTypeNotebookValue.lower(value)
+}
+
+
+extension NotebookValue: Equatable, Hashable {}
+
+extension NotebookValue: Codable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum PlotAxisScale {
 
     case linear
@@ -8352,6 +11474,78 @@ fileprivate struct FfiConverterOptionTypeDatasetProbe: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeNotebookAttemptHandle: FfiConverterRustBuffer {
+    typealias SwiftType = NotebookAttemptHandle?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeNotebookAttemptHandle.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeNotebookAttemptHandle.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeNotebookExecutionInput: FfiConverterRustBuffer {
+    typealias SwiftType = NotebookExecutionInput?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeNotebookExecutionInput.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeNotebookExecutionInput.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeNotebookTaskIntent: FfiConverterRustBuffer {
+    typealias SwiftType = NotebookTaskIntent?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeNotebookTaskIntent.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeNotebookTaskIntent.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeSurfaceParameterCliProjection: FfiConverterRustBuffer {
     typealias SwiftType = SurfaceParameterCliProjection?
 
@@ -8544,6 +11738,30 @@ fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceTypeNotebookPythonOutputEvent: FfiConverterRustBuffer {
+    typealias SwiftType = [NotebookPythonOutputEvent]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeNotebookPythonOutputEvent.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeNotebookPythonOutputEvent.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceUInt64: FfiConverterRustBuffer {
     typealias SwiftType = [UInt64]
 
@@ -8661,6 +11879,231 @@ fileprivate struct FfiConverterSequenceTypeDatasetProbe: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeDatasetProbe.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNotebookApprovalRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [NotebookApprovalRecord]
+
+    public static func write(_ value: [NotebookApprovalRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNotebookApprovalRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotebookApprovalRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NotebookApprovalRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNotebookApprovalRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNotebookCellState: FfiConverterRustBuffer {
+    typealias SwiftType = [NotebookCellState]
+
+    public static func write(_ value: [NotebookCellState], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNotebookCellState.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotebookCellState] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NotebookCellState]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNotebookCellState.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNotebookDocumentProjection: FfiConverterRustBuffer {
+    typealias SwiftType = [NotebookDocumentProjection]
+
+    public static func write(_ value: [NotebookDocumentProjection], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNotebookDocumentProjection.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotebookDocumentProjection] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NotebookDocumentProjection]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNotebookDocumentProjection.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNotebookExecutionReceipt: FfiConverterRustBuffer {
+    typealias SwiftType = [NotebookExecutionReceipt]
+
+    public static func write(_ value: [NotebookExecutionReceipt], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNotebookExecutionReceipt.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotebookExecutionReceipt] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NotebookExecutionReceipt]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNotebookExecutionReceipt.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNotebookPythonOutputEvent: FfiConverterRustBuffer {
+    typealias SwiftType = [NotebookPythonOutputEvent]
+
+    public static func write(_ value: [NotebookPythonOutputEvent], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNotebookPythonOutputEvent.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotebookPythonOutputEvent] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NotebookPythonOutputEvent]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNotebookPythonOutputEvent.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNotebookReceiptArtifact: FfiConverterRustBuffer {
+    typealias SwiftType = [NotebookReceiptArtifact]
+
+    public static func write(_ value: [NotebookReceiptArtifact], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNotebookReceiptArtifact.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotebookReceiptArtifact] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NotebookReceiptArtifact]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNotebookReceiptArtifact.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNotebookValueEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [NotebookValueEntry]
+
+    public static func write(_ value: [NotebookValueEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNotebookValueEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotebookValueEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NotebookValueEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNotebookValueEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNotebookVisualizationRevision: FfiConverterRustBuffer {
+    typealias SwiftType = [NotebookVisualizationRevision]
+
+    public static func write(_ value: [NotebookVisualizationRevision], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNotebookVisualizationRevision.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotebookVisualizationRevision] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NotebookVisualizationRevision]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNotebookVisualizationRevision.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNotebookVisualizationSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = [NotebookVisualizationSnapshot]
+
+    public static func write(_ value: [NotebookVisualizationSnapshot], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNotebookVisualizationSnapshot.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotebookVisualizationSnapshot] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NotebookVisualizationSnapshot]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNotebookVisualizationSnapshot.read(from: &buf))
         }
         return seq
     }
@@ -9069,6 +12512,31 @@ fileprivate struct FfiConverterSequenceTypeTaskUIInjectedArgument: FfiConverterR
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeNotebookValue: FfiConverterRustBuffer {
+    typealias SwiftType = [NotebookValue]
+
+    public static func write(_ value: [NotebookValue], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNotebookValue.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotebookValue] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NotebookValue]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNotebookValue.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeSurfaceParameterPredicate: FfiConverterRustBuffer {
     typealias SwiftType = [SurfaceParameterPredicate]
 
@@ -9212,6 +12680,32 @@ fileprivate struct FfiConverterDictionaryStringTypeSurfaceParameterState: FfiCon
         for _ in 0..<len {
             let key = try FfiConverterString.read(from: &buf)
             let value = try FfiConverterTypeSurfaceParameterState.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringTypeNotebookValue: FfiConverterRustBuffer {
+    public static func write(_ value: [String: NotebookValue], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterTypeNotebookValue.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: NotebookValue] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: NotebookValue]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterTypeNotebookValue.read(from: &buf)
             dict[key] = value
         }
         return dict
@@ -9416,19 +12910,19 @@ public func buildTableBrowserSnapshotJson(datasetPath: String, width: UInt16, he
 /**
  * Begin best-effort project recording or apply the visible one-run bypass.
  */
-public func notebookBeginRecordingJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_notebook_begin_recording_json(
-        FfiConverterString.lower(requestJson),$0
+public func notebookBeginRecording(request: NotebookBeginRecordingRequest)throws  -> NotebookBeginRecordingResult  {
+    return try  FfiConverterTypeNotebookBeginRecordingResult_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_begin_recording(
+        FfiConverterTypeNotebookBeginRecordingRequest_lower(request),$0
     )
 })
 }
 /**
  * Parse one complete in-memory Markdown draft through the Rust-owned cell contract.
  */
-public func notebookCellsJson(source: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_notebook_cells_json(
+public func notebookCells(source: String)throws  -> [NotebookCellState]  {
+    return try  FfiConverterSequenceTypeNotebookCellState.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_cells(
         FfiConverterString.lower(source),$0
     )
 })
@@ -9436,38 +12930,37 @@ public func notebookCellsJson(source: String)throws  -> String  {
 /**
  * Lazily create the default notebook or create a named Markdown notebook.
  */
-public func notebookCreateJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_notebook_create_json(
-        FfiConverterString.lower(requestJson),$0
+public func notebookCreate(request: NotebookCreateRequest)throws  -> NotebookDocumentProjection  {
+    return try  FfiConverterTypeNotebookDocumentProjection_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_create(
+        FfiConverterTypeNotebookCreateRequest_lower(request),$0
     )
 })
 }
 /**
  * Export portable Markdown/assets or explicitly include managed receipts.
  */
-public func notebookExport(requestJson: String)throws   {try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+public func notebookExport(request: NotebookExportRequest)throws   {try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_notebook_export(
-        FfiConverterString.lower(requestJson),$0
+        FfiConverterTypeNotebookExportRequest_lower(request),$0
     )
 }
 }
 /**
  * Finalize exactly one immutable receipt revision.
  */
-public func notebookFinalizeRecordingJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_notebook_finalize_recording_json(
-        FfiConverterString.lower(requestJson),$0
+public func notebookFinalizeRecording(request: NotebookFinalizeRecordingRequest)throws   {try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_finalize_recording(
+        FfiConverterTypeNotebookFinalizeRecordingRequest_lower(request),$0
     )
-})
+}
 }
 /**
  * Project notebook list, complete Markdown sources, conflict tokens, and receipts.
  */
-public func notebookProjectJson(projectRoot: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_notebook_project_json(
+public func notebookProject(projectRoot: String)throws  -> ScientificNotebookProjectProjection  {
+    return try  FfiConverterTypeScientificNotebookProjectProjection_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_project(
         FfiConverterString.lower(projectRoot),$0
     )
 })
@@ -9475,20 +12968,20 @@ public func notebookProjectJson(projectRoot: String)throws  -> String  {
 /**
  * Atomically save one complete Markdown source with explicit conflict handling.
  */
-public func notebookSaveJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_notebook_save_json(
-        FfiConverterString.lower(requestJson),$0
+public func notebookSave(request: NotebookSaveRequest)throws  -> NotebookSaveProjection  {
+    return try  FfiConverterTypeNotebookSaveProjection_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_save(
+        FfiConverterTypeNotebookSaveRequest_lower(request),$0
     )
 })
 }
 /**
  * Copy one explicit explorer visualization into a new immutable notebook revision.
  */
-public func notebookSaveVisualizationJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_notebook_save_visualization_json(
-        FfiConverterString.lower(requestJson),$0
+public func notebookSaveVisualization(request: NotebookSaveVisualizationEnvelope)throws  -> NotebookVisualizationSnapshot  {
+    return try  FfiConverterTypeNotebookVisualizationSnapshot_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_notebook_save_visualization(
+        FfiConverterTypeNotebookSaveVisualizationEnvelope_lower(request),$0
     )
 })
 }
@@ -9838,28 +13331,28 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_build_table_browser_snapshot_json() != 45866) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_notebook_begin_recording_json() != 6921) {
+    if (uniffi_casars_frontend_services_checksum_func_notebook_begin_recording() != 45172) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_notebook_cells_json() != 12501) {
+    if (uniffi_casars_frontend_services_checksum_func_notebook_cells() != 39913) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_notebook_create_json() != 57099) {
+    if (uniffi_casars_frontend_services_checksum_func_notebook_create() != 1695) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_notebook_export() != 9852) {
+    if (uniffi_casars_frontend_services_checksum_func_notebook_export() != 39883) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_notebook_finalize_recording_json() != 44107) {
+    if (uniffi_casars_frontend_services_checksum_func_notebook_finalize_recording() != 12481) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_notebook_project_json() != 4287) {
+    if (uniffi_casars_frontend_services_checksum_func_notebook_project() != 15119) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_notebook_save_json() != 28987) {
+    if (uniffi_casars_frontend_services_checksum_func_notebook_save() != 8317) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_notebook_save_visualization_json() != 16081) {
+    if (uniffi_casars_frontend_services_checksum_func_notebook_save_visualization() != 39730) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_parameter_defaults() != 26772) {
