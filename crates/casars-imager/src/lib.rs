@@ -16007,16 +16007,14 @@ fn direct_dirty_cube_plane_push_planned_samples(
                     block_timings.plan_sample += plan_started.elapsed();
                     block_timings.samples_rejected += 1;
                 }
+            } else if planned_sample_builder
+                .push_sample(planned, sample)
+                .map_err(|error| error.to_string())?
+            {
+                block_timings.planned_samples += 1;
+                block_timings.fast_samples += 1;
             } else {
-                if planned_sample_builder
-                    .push_sample(planned, sample)
-                    .map_err(|error| error.to_string())?
-                {
-                    block_timings.planned_samples += 1;
-                    block_timings.fast_samples += 1;
-                } else {
-                    block_timings.samples_rejected += 1;
-                }
+                block_timings.samples_rejected += 1;
             }
         }
         planned.finish_run(run_start);
@@ -16136,16 +16134,14 @@ fn direct_cube_plane_replay_planned_run_blocks(
                     block_timings.plan_sample += plan_started.elapsed();
                     block_timings.samples_rejected += 1;
                 }
+            } else if planned_sample_builder
+                .push_sample(run_block, sample)
+                .map_err(|error| error.to_string())?
+            {
+                block_timings.planned_samples += 1;
+                block_timings.fast_samples += 1;
             } else {
-                if planned_sample_builder
-                    .push_sample(run_block, sample)
-                    .map_err(|error| error.to_string())?
-                {
-                    block_timings.planned_samples += 1;
-                    block_timings.fast_samples += 1;
-                } else {
-                    block_timings.samples_rejected += 1;
-                }
+                block_timings.samples_rejected += 1;
             }
         }
         run_block.finish_run(run_start);
