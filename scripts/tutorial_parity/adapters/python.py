@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
-from ..commands import environment_with_pythonpath
+from ..commands import environment_with_pythonpath, run_command
 from ..evidence import write_json_atomic
 from ..model import RuntimeResources, SectionManifest, Surface
 from ..resources import ResourceError
@@ -22,16 +21,13 @@ class PythonAdapter:
             raise ResourceError("native_python_missing", "Python surface requires resolved native Python")
         native_python = resources.native_python or Path("$CASA_RS_NATIVE_PYTHON")
         if not resources.dry_run:
-            completed = subprocess.run(
+            completed = run_command(
                 [str(native_python), "-c", "import casars._core"],
                 cwd=resources.repo_root,
                 env=environment_with_pythonpath(resources.repo_root),
-                text=True,
-                capture_output=True,
-                timeout=30,
-                check=False,
+                timeout_seconds=30,
             )
-            if completed.returncode != 0:
+            if completed.return_code != 0:
                 raise ResourceError(
                     "native_python_binding_missing",
                     "native Python surface requires an installed casars._core extension",

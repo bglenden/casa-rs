@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .artifacts import ArtifactError, atomic_write_json, load_json_object
+from .subprocesses import run_command
 
 
 @dataclass(frozen=True)
@@ -57,15 +58,11 @@ def run_json_file_protocol(
             log_path,
         )
     try:
-        completed = subprocess.run(
+        completed = run_command(
             [casa_python, str(script), str(request_path), str(output_path)],
             cwd=cwd,
-            env=environment,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            timeout=timeout_seconds,
-            check=False,
+            environment=environment,
+            timeout_seconds=timeout_seconds,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         log_path.write_text(str(error) + "\n", encoding="utf-8")

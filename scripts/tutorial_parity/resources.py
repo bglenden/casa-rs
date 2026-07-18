@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
+from .commands import run_command
 from .model import RuntimeResources, SectionManifest
 
 
@@ -94,14 +94,12 @@ def _resolve_native_python(require_existing: bool) -> Path | None:
     resolver = REPO_ROOT / "scripts" / "resolve-python.sh"
     if not require_existing:
         return None
-    completed = subprocess.run(
+    completed = run_command(
         [str(resolver), "3.10"],
         cwd=REPO_ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
+        timeout_seconds=30,
     )
-    if completed.returncode != 0 or not completed.stdout.strip():
+    if completed.return_code != 0 or not completed.stdout.strip():
         raise ResourceError("native_python_missing", completed.stderr.strip() or "native Python resolution failed")
     return Path(completed.stdout.strip()).expanduser().absolute()
 

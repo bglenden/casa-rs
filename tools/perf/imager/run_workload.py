@@ -770,29 +770,12 @@ def comparison_evidence_status(
 def run_benchmark_command(
     argv: list[str], *, env: dict[str, str], stream_log: bool
 ) -> subprocess.CompletedProcess[str]:
-    if not stream_log:
-        return run_command(
-            argv,
-            cwd=REPO_ROOT,
-            environment=env,
-        )
-
-    process = subprocess.Popen(
+    return run_command(
         argv,
         cwd=REPO_ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=1,
+        environment=env,
+        stream_stdout=stream_log,
     )
-    output_chunks = []
-    assert process.stdout is not None
-    for line in process.stdout:
-        output_chunks.append(line)
-        print(line, end="", flush=True)
-    returncode = process.wait()
-    return subprocess.CompletedProcess(argv, returncode, "".join(output_chunks), None)
 
 
 def benchmark_failure_reason(text: str, returncode: int) -> str:

@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import pathlib
 import py_compile
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -98,6 +101,32 @@ class CasaProtocolTests(unittest.TestCase):
         )
         self.assertEqual("PAYLOAD", completed.stdout.strip())
         self.assertEqual("diagnostic", completed.stderr.strip())
+
+    def test_shared_process_runner_streams_and_retains_merged_output(self) -> None:
+        visible = io.StringIO()
+        with contextlib.redirect_stdout(visible):
+            completed = run_command(
+                [
+                    sys.executable,
+                    "-u",
+                    "-c",
+                    "import sys; print('first'); print('second', file=sys.stderr)",
+                ],
+                stream_stdout=True,
+            )
+
+        self.assertEqual(0, completed.returncode)
+        self.assertEqual("first\nsecond\n", completed.stdout)
+        self.assertEqual(completed.stdout, visible.getvalue())
+        self.assertIsNone(completed.stderr)
+
+    def test_shared_streaming_process_honors_timeout(self) -> None:
+        with self.assertRaises(subprocess.TimeoutExpired):
+            run_command(
+                [sys.executable, "-c", "import time; time.sleep(10)"],
+                timeout_seconds=0.01,
+                stream_stdout=True,
+            )
 
     def test_ms_comparator_exposes_full_and_sampled_modes(self) -> None:
         protocol = CasaProtocolResult(
