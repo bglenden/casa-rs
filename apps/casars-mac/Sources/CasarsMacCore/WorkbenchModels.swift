@@ -1,4 +1,5 @@
 import Foundation
+import CasarsFrontendServices
 
 public enum DockMode: String, CaseIterable, Codable, Equatable, Identifiable {
     case datasets
@@ -334,254 +335,6 @@ public enum TaskRunState: String, Codable, Equatable {
     case cancelled
 }
 
-public struct ApplicationCatalogEnvelope: Codable, Equatable {
-    public var schemaVersion: UInt64
-    public var applications: [ApplicationCatalogEntry]
-
-    enum CodingKeys: String, CodingKey {
-        case schemaVersion = "schema_version"
-        case applications
-    }
-}
-
-public struct ApplicationCatalogEntry: Codable, Equatable, Identifiable {
-    public var id: String
-    public var kind: String
-    public var category: String
-    public var displayName: String
-    public var executable: String
-    public var cargoPackage: String
-    public var overrideEnv: String
-    public var shellKind: String
-    public var interaction: String
-    public var browserKind: String?
-    public var datasetKinds: [String]
-    public var showInTUI: Bool
-    public var showInSwift: Bool
-    public var includeInSuite: Bool
-
-    public init(
-        id: String,
-        kind: String = "task",
-        category: String,
-        displayName: String,
-        executable: String,
-        cargoPackage: String,
-        overrideEnv: String,
-        shellKind: String,
-        interaction: String,
-        browserKind: String?,
-        datasetKinds: [String],
-        showInTUI: Bool,
-        showInSwift: Bool,
-        includeInSuite: Bool
-    ) {
-        self.id = id
-        self.kind = kind
-        self.category = category
-        self.displayName = displayName
-        self.executable = executable
-        self.cargoPackage = cargoPackage
-        self.overrideEnv = overrideEnv
-        self.shellKind = shellKind
-        self.interaction = interaction
-        self.browserKind = browserKind
-        self.datasetKinds = datasetKinds
-        self.showInTUI = showInTUI
-        self.showInSwift = showInSwift
-        self.includeInSuite = includeInSuite
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case kind
-        case category
-        case displayName = "display_name"
-        case executable
-        case cargoPackage = "cargo_package"
-        case overrideEnv = "override_env"
-        case shellKind = "shell_kind"
-        case interaction
-        case browserKind = "browser_kind"
-        case datasetKinds = "dataset_kinds"
-        case showInTUI = "show_in_tui"
-        case showInSwift = "show_in_swift"
-        case includeInSuite = "include_in_suite"
-    }
-}
-
-public struct TaskContextOptionsEnvelope: Codable, Equatable {
-    public var schemaVersion: UInt64
-    public var datasetPath: String
-    public var datasetKind: String
-    public var fields: [String]
-    public var spectralWindows: [String]
-    public var scans: [String]
-    public var arrays: [String]
-    public var observations: [String]
-    public var antennas: [String]
-    public var intents: [String]
-    public var feeds: [String]
-    public var correlations: [String]
-    public var columns: [String]
-    public var dataColumns: [String]
-    public var subtables: [String]
-    public var shape: [UInt64]
-    public var defaults: [String: String]
-    public var diagnostics: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case schemaVersion = "schema_version"
-        case datasetPath = "dataset_path"
-        case datasetKind = "dataset_kind"
-        case fields
-        case spectralWindows = "spectral_windows"
-        case scans
-        case arrays
-        case observations
-        case antennas
-        case intents
-        case feeds
-        case correlations
-        case columns
-        case dataColumns = "data_columns"
-        case subtables
-        case shape
-        case defaults
-        case diagnostics
-    }
-}
-
-public struct TaskUISchema: Codable, Equatable {
-    public var schemaVersion: UInt64
-    public var commandID: String
-    public var invocationName: String
-    public var displayName: String
-    public var category: String
-    public var summary: String
-    public var usage: String
-    public var arguments: [TaskUIArgument]
-    public var managedOutput: TaskUIManagedOutput?
-
-    enum CodingKeys: String, CodingKey {
-        case schemaVersion = "schema_version"
-        case commandID = "command_id"
-        case invocationName = "invocation_name"
-        case displayName = "display_name"
-        case category
-        case summary
-        case usage
-        case arguments
-        case managedOutput = "managed_output"
-    }
-}
-
-public struct TaskUIManagedOutput: Codable, Equatable {
-    public var renderer: String
-    public var stdoutFormat: String
-    public var injectArguments: [TaskUIInjectedArgument]
-    public var rawStdoutAvailable: Bool
-    public var rawStderrAvailable: Bool
-
-    enum CodingKeys: String, CodingKey {
-        case renderer
-        case stdoutFormat = "stdout_format"
-        case injectArguments = "inject_arguments"
-        case rawStdoutAvailable = "raw_stdout_available"
-        case rawStderrAvailable = "raw_stderr_available"
-    }
-}
-
-public struct TaskUIInjectedArgument: Codable, Equatable {
-    public var flag: String
-    public var value: String?
-}
-
-public struct TaskUIArgument: Codable, Equatable, Identifiable {
-    public var id: String
-    public var label: String
-    public var order: Int
-    public var parser: TaskUIArgumentParser
-    public var valueKind: String
-    public var required: Bool
-    public var `default`: String?
-    public var help: String
-    public var group: String
-    public var parameterType: String?
-    public var conceptID: String?
-    public var conceptRevision: UInt64?
-    public var unitDimension: String?
-    public var contextRole: String?
-    public var advanced: Bool
-    public var hiddenInTUI: Bool
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case label
-        case order
-        case parser
-        case valueKind = "value_kind"
-        case required
-        case `default`
-        case help
-        case group
-        case parameterType = "parameter_type"
-        case conceptID = "concept_id"
-        case conceptRevision = "concept_revision"
-        case unitDimension = "unit_dimension"
-        case contextRole = "context_role"
-        case advanced
-        case hiddenInTUI = "hidden_in_tui"
-    }
-
-}
-
-public struct TaskUIArgumentParser: Codable, Equatable {
-    public var kind: String
-    public var flags: [String]?
-    public var metavar: String?
-    public var choices: [String]?
-    public var trueFlags: [String]?
-    public var falseFlags: [String]?
-    public var action: String?
-    public var positionalMetavar: String?
-
-    enum CodingKeys: String, CodingKey {
-        case kind
-        case flags
-        case metavar
-        case choices
-        case trueFlags = "true_flags"
-        case falseFlags = "false_flags"
-        case action
-        case positionalMetavar = "positional_metavar"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        kind = try container.decode(String.self, forKey: .kind)
-        flags = try container.decodeIfPresent([String].self, forKey: .flags)
-        metavar = try container.decodeIfPresent(String.self, forKey: .metavar)
-        choices = try container.decodeIfPresent([String].self, forKey: .choices)
-        trueFlags = try container.decodeIfPresent([String].self, forKey: .trueFlags)
-        falseFlags = try container.decodeIfPresent([String].self, forKey: .falseFlags)
-        action = try container.decodeIfPresent(String.self, forKey: .action)
-        positionalMetavar = try container.decodeIfPresent(String.self, forKey: .positionalMetavar)
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(kind, forKey: .kind)
-        try container.encodeIfPresent(flags, forKey: .flags)
-        try container.encodeIfPresent(metavar, forKey: .metavar)
-        try container.encodeIfPresent(choices, forKey: .choices)
-        try container.encodeIfPresent(trueFlags, forKey: .trueFlags)
-        try container.encodeIfPresent(falseFlags, forKey: .falseFlags)
-        try container.encodeIfPresent(action, forKey: .action)
-        try container.encodeIfPresent(positionalMetavar, forKey: .positionalMetavar)
-    }
-}
-
 public struct TaskParameters: Codable, Equatable {
     public var taskName: String
     public var selectedField: String
@@ -615,6 +368,7 @@ public struct TaskRun: Codable, Equatable {
     public var outputPaths: [String]
     public var requestSummary: String?
     public var imagerProgress: ImagerProgressSnapshot?
+    public var rawOutput: String?
 
     public init(
         runID: String? = nil,
@@ -626,7 +380,8 @@ public struct TaskRun: Codable, Equatable {
         diagnostics: [String] = [],
         outputPaths: [String] = [],
         requestSummary: String? = nil,
-        imagerProgress: ImagerProgressSnapshot? = nil
+        imagerProgress: ImagerProgressSnapshot? = nil,
+        rawOutput: String? = nil
     ) {
         self.runID = runID
         self.state = state
@@ -638,6 +393,7 @@ public struct TaskRun: Codable, Equatable {
         self.outputPaths = outputPaths
         self.requestSummary = requestSummary
         self.imagerProgress = imagerProgress
+        self.rawOutput = rawOutput
     }
 }
 
@@ -650,6 +406,7 @@ public struct RunProductReference: Identifiable, Codable, Equatable {
     public var exists: Bool
     public var previewPngPath: String?
     public var previewPngExists: Bool
+    public var diagnostic: String?
 
     public init(
         id: String,
@@ -659,7 +416,8 @@ public struct RunProductReference: Identifiable, Codable, Equatable {
         datasetID: String?,
         exists: Bool,
         previewPngPath: String?,
-        previewPngExists: Bool
+        previewPngExists: Bool,
+        diagnostic: String? = nil
     ) {
         self.id = id
         self.artifactKind = artifactKind
@@ -669,6 +427,7 @@ public struct RunProductReference: Identifiable, Codable, Equatable {
         self.exists = exists
         self.previewPngPath = previewPngPath
         self.previewPngExists = previewPngExists
+        self.diagnostic = diagnostic
     }
 }
 
@@ -2753,7 +2512,7 @@ public struct WorkbenchState: Codable, Equatable {
     /// Production provider-neutral conversations persisted by `casa-notebook`.
     package var assistantDiscussion: AssistantDiscussionState?
     public var activeTaskID: String
-    public var taskUISchemas: [String: TaskUISchema]
+    public var taskUISchemas: [String: TaskUiSchema]
     public var parameterSessions: [String: SurfaceParameterSession]
     public var genericTaskConfirmations: [String: Bool]
     public var notebookRecordingBypassTabs: Set<String>
@@ -2787,7 +2546,7 @@ public struct WorkbenchState: Codable, Equatable {
         runProductGroups: [RunProductGroup] = [],
         applicationCatalog: [ApplicationCatalogEntry] = [],
         activeTaskID: String = "imager",
-        taskUISchemas: [String: TaskUISchema] = [:],
+        taskUISchemas: [String: TaskUiSchema] = [:],
         parameterSessions: [String: SurfaceParameterSession] = [:],
         genericTaskConfirmations: [String: Bool] = [:],
         notebookRecordingBypassTabs: Set<String> = [],
@@ -2845,7 +2604,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var genericTaskValues: [String: [String: String]] {
         var valuesBySurface: [String: [String: String]] = [:]
         for (_, session) in orderedParameterSessionsForProjection {
-            valuesBySurface[session.snapshot.surfaceID] = session.snapshot.states.compactMapValues { state in
+            valuesBySurface[session.snapshot.surfaceId] = session.snapshot.states.compactMapValues { state in
                 guard state.value?.boolValue == nil else { return nil }
                 return state.value?.displayText
             }
@@ -2857,7 +2616,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var genericTaskToggles: [String: [String: Bool]] {
         var togglesBySurface: [String: [String: Bool]] = [:]
         for (_, session) in orderedParameterSessionsForProjection {
-            togglesBySurface[session.snapshot.surfaceID] = session.snapshot.states.compactMapValues {
+            togglesBySurface[session.snapshot.surfaceId] = session.snapshot.states.compactMapValues {
                 $0.value?.boolValue
             }
         }
@@ -3373,6 +3132,7 @@ public struct DebugRunProductReferenceSnapshot: Codable, Equatable {
     public var exists: Bool
     public var previewPngPath: String?
     public var previewPngExists: Bool
+    public var diagnostic: String?
 
     public init(product: RunProductReference) {
         id = product.id
@@ -3383,6 +3143,7 @@ public struct DebugRunProductReferenceSnapshot: Codable, Equatable {
         exists = product.exists
         previewPngPath = product.previewPngPath
         previewPngExists = product.previewPngExists
+        diagnostic = product.diagnostic
     }
 }
 

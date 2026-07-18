@@ -60,10 +60,7 @@ public struct UniFFIApplicationCatalogClient: ApplicationCatalogClient {
     public init() {}
 
     public func loadApplicationCatalog() throws -> [ApplicationCatalogEntry] {
-        let json = try CasarsFrontendServices.applicationCatalogJson()
-        let data = Data(json.utf8)
-        let envelope = try JSONDecoder().decode(ApplicationCatalogEnvelope.self, from: data)
-        return envelope.applications.filter(\.showInSwift)
+        try CasarsFrontendServices.applicationCatalog().applications.filter(\.showInSwift)
     }
 }
 
@@ -163,7 +160,7 @@ private struct NotebookPrototypeDeniedProductionClient:
         try denied("task process")
     }
 
-    func loadTaskUISchema(taskID: String) throws -> TaskUISchema {
+    func loadTaskUISchema(taskID: String) throws -> TaskUiSchema {
         try denied("task schema")
     }
 
@@ -273,23 +270,19 @@ public struct UniFFITaskContextOptionsClient: TaskContextOptionsClient {
     public init() {}
 
     public func loadTaskContextOptions(datasetPath: String) throws -> TaskContextOptionsEnvelope {
-        let json = try CasarsFrontendServices.taskContextOptionsJson(datasetPath: datasetPath)
-        let data = Data(json.utf8)
-        return try JSONDecoder().decode(TaskContextOptionsEnvelope.self, from: data)
+        try CasarsFrontendServices.taskContextOptions(datasetPath: datasetPath)
     }
 }
 
 public protocol TaskUISchemaClient {
-    func loadTaskUISchema(taskID: String) throws -> TaskUISchema
+    func loadTaskUISchema(taskID: String) throws -> TaskUiSchema
 }
 
 public struct UniFFITaskUISchemaClient: TaskUISchemaClient {
     public init() {}
 
-    public func loadTaskUISchema(taskID: String) throws -> TaskUISchema {
-        let json = try CasarsFrontendServices.parameterFormJson(surfaceId: taskID)
-        let data = Data(json.utf8)
-        return try JSONDecoder().decode(TaskUISchema.self, from: data)
+    public func loadTaskUISchema(taskID: String) throws -> TaskUiSchema {
+        try CasarsFrontendServices.taskUiSchema(surfaceId: taskID)
     }
 }
 
@@ -1313,37 +1306,26 @@ public final class WorkbenchStore: ObservableObject {
         let standardizedPath = Self.standardizedDatasetPath(path)
         let url = URL(fileURLWithPath: standardizedPath)
         let rootPath = url.deletingLastPathComponent().path
-        var dataset = DatasetSummary(
-            id: standardizedPath,
-            name: url.lastPathComponent,
-            path: standardizedPath,
-            kind: .measurementSet,
-            size: "external MeasurementSet",
-            units: "Jy, Hz, seconds",
-            columns: ["UVW", "DATA", "FLAG"],
-            dataColumns: ["DATA"],
-            notes: "Opened directly as an imager input without probing the full project tree.",
-            diagnostics: [
-                "Project tree probe skipped for launch; task request uses exact-path metadata when available."
-            ]
-        )
+        let dataset: DatasetSummary
         do {
-            if var probed = try probeClient.probePath(path: standardizedPath),
-               probed.kind == .measurementSet {
-                probed.notes += " Opened directly as an imager input; parent project probe skipped."
-                probed.diagnostics.append(
-                    "Direct launch used exact MeasurementSet probe only; parent folder refresh is disabled."
+            guard var probed = try probeClient.probePath(path: standardizedPath),
+                  probed.kind == .measurementSet
+            else {
+                state.lastErrors.append(
+                    "Exact MeasurementSet probe did not recognize \(standardizedPath); the dataset was not opened."
                 )
-                dataset = probed
-            } else {
-                dataset.diagnostics.append(
-                    "Exact MeasurementSet probe did not recognize the path; using direct-launch placeholder metadata."
-                )
+                return
             }
-        } catch {
-            dataset.diagnostics.append(
-                "Exact MeasurementSet probe failed; using direct-launch placeholder metadata: \(error)"
+            probed.notes += " Opened directly as an imager input; parent project probe skipped."
+            probed.diagnostics.append(
+                "Direct launch used exact MeasurementSet probe only; parent folder refresh is disabled."
             )
+            dataset = probed
+        } catch {
+            state.lastErrors.append(
+                "Exact MeasurementSet probe failed for \(standardizedPath); the dataset was not opened: \(error)"
+            )
+            return
         }
         state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
         state.applicationCatalog = applicationCatalog
@@ -1841,19 +1823,36 @@ public final class WorkbenchStore: ObservableObject {
 
     public func openRunProduct(runID: String, productID: String) {
         guard !rejectPrototypeProductionAction("Run products") else { return }
-        guard let group = state.runProductGroups.first(where: { $0.runID == runID }) else {
+        guard let groupIndex = state.runProductGroups.firstIndex(where: { $0.runID == runID }) else {
             state.lastErrors.append("Unknown run \(runID)")
             return
         }
-        guard let product = group.products.first(where: { $0.id == productID }) else {
+        guard let productIndex = state.runProductGroups[groupIndex].products.firstIndex(where: { $0.id == productID }) else {
             state.lastErrors.append("Unknown product \(productID)")
             return
         }
+        var product = state.runProductGroups[groupIndex].products[productIndex]
+        if product.datasetID == nil {
+            do {
+                if let dataset = try probeClient.probePath(path: product.path) {
+                    if !state.project.datasets.contains(where: { $0.id == dataset.id }) {
+                        state.project.datasets.append(dataset)
+                    }
+                    product.datasetID = dataset.id
+                    product.diagnostic = nil
+                    state.runProductGroups[groupIndex].products[productIndex] = product
+                }
+            } catch {
+                product.diagnostic = "Retry probe failed: \(error)"
+                state.runProductGroups[groupIndex].products[productIndex] = product
+            }
+        }
         guard let datasetID = product.datasetID else {
-            state.lastErrors.append("Product \(product.label) is not a recognized dataset")
+            state.lastErrors.append(
+                product.diagnostic ?? "Product \(product.label) is not a recognized dataset"
+            )
             return
         }
-
         openDatasetExplorer(datasetID)
     }
 
@@ -2286,7 +2285,7 @@ public final class WorkbenchStore: ObservableObject {
         for sessionKey in closingSessionKeys {
             if let session = state.parameterSessions[sessionKey] {
                 state.lastErrors.append(contentsOf: sessionParameterLifecycleClient.flush(
-                    surfaceID: session.snapshot.surfaceID,
+                    surfaceID: session.snapshot.surfaceId,
                     workspace: session.workspace
                 ))
             }
@@ -4387,14 +4386,17 @@ public final class WorkbenchStore: ObservableObject {
               let content = result["content"] as? [[String: Any]]
         else { return }
         for block in content where block["type"] as? String == "text" {
-            guard let text = block["text"] as? String,
-                  let data = text.data(using: .utf8),
+            guard let text = block["text"] as? String else { continue }
+            if tool == "task.suggest",
+               let suggestion = try? CasarsFrontendServices.assistantTaskSuggestion(toolOutput: text) {
+                appendAssistantTaskSuggestion(suggestion, id: itemID)
+                continue
+            }
+            guard let data = text.data(using: .utf8),
                   let value = try? JSONSerialization.jsonObject(with: data)
             else { continue }
             if let hits = value as? [[String: Any]] {
                 for hit in hits { appendAssistantCitation(hit) }
-            } else if tool == "task.suggest", let suggestion = value as? [String: Any] {
-                appendAssistantTaskSuggestion(suggestion, id: itemID)
             }
         }
     }
@@ -4403,20 +4405,15 @@ public final class WorkbenchStore: ObservableObject {
         "casa_rs_\(assistantProjectNonce.prefix(12))"
     }
 
-    private func appendAssistantTaskSuggestion(_ value: [String: Any], id: String) {
-        guard value["kind"] as? String == "task_suggestion",
-              let taskID = value["task_id"] as? String,
-              let parameters = value["parameters"] as? [String: String],
-              let patchObject = value["validated_patch"],
-              JSONSerialization.isValidJSONObject(patchObject),
-              let patchData = try? JSONSerialization.data(withJSONObject: patchObject),
-              let validatedPatch = try? JSONDecoder().decode(SurfaceParameterPatch.self, from: patchData)
-        else { return }
+    private func appendAssistantTaskSuggestion(
+        _ value: AssistantTaskSuggestionProjection,
+        id: String
+    ) {
         let suggestion = AssistantTaskSuggestionState(
             id: id,
-            taskId: taskID,
-            parameters: parameters,
-            validatedPatch: validatedPatch
+            taskId: value.taskId,
+            parameters: value.parameters,
+            validatedPatch: value.validatedPatch
         )
         if let index = assistantPendingTaskSuggestions.firstIndex(where: { $0.id == id }) {
             assistantPendingTaskSuggestions[index] = suggestion
@@ -6675,7 +6672,7 @@ public final class WorkbenchStore: ObservableObject {
         let normalized = concept.valueDomain.isPathLike && !Self.isInlineRegionSyntax(value)
             ? projectRelativePath(value)
             : value
-        session.overridePatch.unset.remove(argumentID)
+        session.overridePatch.removeUnset(argumentID)
         session.overridePatch.values[argumentID] = concept.valueDomain.value(from: normalized)
         session.draftText[argumentID] = normalized
         resolveParameterSession(&session, editedParameters: [argumentID])
@@ -6698,7 +6695,7 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("Parameter session for \(resolvedTaskID) is unavailable")
             return
         }
-        session.overridePatch.unset.remove(argumentID)
+        session.overridePatch.removeUnset(argumentID)
         session.overridePatch.values[argumentID] = .bool(value)
         session.draftText.removeValue(forKey: argumentID)
         resolveParameterSession(&session, editedParameters: [argumentID])
@@ -6725,7 +6722,7 @@ public final class WorkbenchStore: ObservableObject {
         let sessionKey = parameterSessionKey(surfaceID: resolvedSurfaceID, instanceID: instanceID)
         guard var session = state.parameterSessions[sessionKey] else { return }
         session.overridePatch.values.removeValue(forKey: name)
-        session.overridePatch.unset.insert(name)
+        session.overridePatch.insertUnset(name)
         session.draftText.removeValue(forKey: name)
         resolveParameterSession(&session, editedParameters: [name])
         state.parameterSessions[sessionKey] = session
@@ -6822,7 +6819,7 @@ public final class WorkbenchStore: ObservableObject {
                     return
                 }
                 snapshot = loaded
-                baseTOML = loaded.profileTOML
+                baseTOML = loaded.profileToml
                 basePath = nil
             case .file:
                 guard let profilePath else {
@@ -7196,7 +7193,7 @@ public final class WorkbenchStore: ObservableObject {
                     providerContractVersion: UInt32(clamping: session.bundle.surface.contractVersion),
                     resolvedParameters: resolvedParameters,
                     runSafety: NotebookRunSafetyRecord(
-                        classification: runSafety.classes.joined(separator: ","),
+                        classification: runSafety.classes.map(\.protocolValue).joined(separator: ","),
                         affectedPaths: outputPaths
                     ),
                     approvals: approvals
@@ -8175,7 +8172,7 @@ public final class WorkbenchStore: ObservableObject {
                     bundle: bundle,
                     snapshot: snapshot,
                     selectedSource: .last,
-                    baseProfileTOML: snapshot.profileTOML,
+                    baseProfileTOML: snapshot.profileToml,
                     baseProfilePath: nil,
                     workspace: workspace
                 )
@@ -8225,7 +8222,9 @@ public final class WorkbenchStore: ObservableObject {
                 level: "error",
                 code: "draft_resolution_failed",
                 message: message,
-                parameter: unresolvedParameters.count == 1 ? unresolvedParameters[0] : nil
+                parameter: unresolvedParameters.count == 1 ? unresolvedParameters[0] : nil,
+                location: nil,
+                suggestions: []
             ))
             session.snapshot.dirty = true
             state.lastErrors.append("Resolve parameters for \(session.bundle.surface.id): \(error)")
@@ -8247,23 +8246,23 @@ public final class WorkbenchStore: ObservableObject {
         for (name, text) in textValues {
             guard let concept = session.bundle.concept(for: name) else { continue }
             if preserveOverrides, session.overridePatch.values[name] != nil { continue }
-            session.contextPatch.unset.remove(name)
+            session.contextPatch.removeUnset(name)
             session.contextPatch.values[name] = concept.valueDomain.value(from: text)
             editedParameters.insert(name)
             if !preserveOverrides {
                 session.overridePatch.values.removeValue(forKey: name)
-                session.overridePatch.unset.remove(name)
+                session.overridePatch.removeUnset(name)
             }
         }
         for (name, value) in boolValues {
             guard session.bundle.concept(for: name) != nil else { continue }
             if preserveOverrides, session.overridePatch.values[name] != nil { continue }
-            session.contextPatch.unset.remove(name)
+            session.contextPatch.removeUnset(name)
             session.contextPatch.values[name] = .bool(value)
             editedParameters.insert(name)
             if !preserveOverrides {
                 session.overridePatch.values.removeValue(forKey: name)
-                session.overridePatch.unset.remove(name)
+                session.overridePatch.removeUnset(name)
             }
         }
         resolveParameterSession(&session, editedParameters: editedParameters)
@@ -8376,7 +8375,7 @@ public final class WorkbenchStore: ObservableObject {
         loadParameterSessionIfNeeded(surfaceID, instanceID: instanceID)
         let sessionKey = parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)
         guard var session = state.parameterSessions[sessionKey] else { return }
-        session.overridePatch.unset.remove(name)
+        session.overridePatch.removeUnset(name)
         session.overridePatch.values[name] = value
         resolveParameterSession(&session, editedParameters: [name])
         state.parameterSessions[sessionKey] = session
@@ -8408,7 +8407,7 @@ public final class WorkbenchStore: ObservableObject {
         else { return }
         do {
             state.lastErrors.append(contentsOf: try sessionParameterLifecycleClient.acceptedDurableChange(
-                surfaceID: session.snapshot.surfaceID,
+                surfaceID: session.snapshot.surfaceId,
                 workspace: session.workspace,
                 values: session.values,
                 enabled: session.saveLast
@@ -8621,7 +8620,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func activeTaskOutput() -> String? {
-        let output = state.taskRun.diagnostics.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let output = state.taskRun.rawOutput?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !output.isEmpty else {
             return nil
         }
@@ -9316,7 +9315,7 @@ public final class WorkbenchStore: ObservableObject {
                     job.logLines.append(result.stderr)
                 }
                 state.jobs[runID] = job
-                let managedImagerResult = decodeManagedImagerResult(result)
+                let completion = result.completion
                 if state.taskRun.runID == runID {
                     let progressSnapshot = terminalImagerProgressSnapshot(
                         taskID: result.taskID,
@@ -9324,50 +9323,32 @@ public final class WorkbenchStore: ObservableObject {
                         taskState: .succeeded,
                         progress: 1.0
                     )
-                    if let managedImagerResult {
-                        state.taskRun = TaskRun(
-                            runID: runID,
-                            state: .succeeded,
-                            progress: 1.0,
-                            logLines: [
-                                "\(result.taskID) completed.",
-                                "Arguments: \(result.arguments.joined(separator: " "))",
-                                managedImagerResult.run.summary
-                            ],
-                            warnings: result.stderr.isEmpty ? [] : [result.stderr],
-                            products: managedImagerResult.artifacts.map(\.path),
-                            diagnostics: managedImagerResult.run.warnings,
-                            outputPaths: managedImagerResult.outputPaths,
-                            requestSummary: state.taskRun.requestSummary,
-                            imagerProgress: progressSnapshot
-                        )
-                    } else {
-                        let genericProducts = genericTaskProducts(from: result)
-                        let outputPaths = genericProducts.map(\.path)
-                        state.taskRun = TaskRun(
-                            runID: runID,
-                            state: .succeeded,
-                            progress: 1.0,
-                            logLines: ["\(result.taskID) completed.", "Arguments: \(result.arguments.joined(separator: " "))"],
-                            warnings: result.stderr.isEmpty ? [] : [result.stderr],
-                            products: genericProducts.map(\.path),
-                            diagnostics: result.stdout.isEmpty ? [] : [result.stdout],
-                            outputPaths: outputPaths,
-                            requestSummary: state.taskRun.requestSummary,
-                            imagerProgress: progressSnapshot
-                        )
-                    }
+                    state.taskRun = TaskRun(
+                        runID: runID,
+                        state: .succeeded,
+                        progress: 1.0,
+                        logLines: [
+                            "\(result.taskID) completed.",
+                            "Arguments: \(result.arguments.joined(separator: " "))",
+                            completion.summary
+                        ],
+                        warnings: result.stderr.isEmpty ? [] : [result.stderr],
+                        products: completion.products.map(\.path),
+                        diagnostics: completion.diagnostics + completion.products.compactMap(\.diagnostic),
+                        outputPaths: completion.products.map(\.path),
+                        requestSummary: state.taskRun.requestSummary,
+                        imagerProgress: progressSnapshot,
+                        rawOutput: result.stdout
+                    )
                 }
-                let affectedPaths: [String]
-                if let managedImagerResult {
-                    let products = appendProducedDatasets(from: managedImagerResult)
-                    recordRunProductGroup(from: managedImagerResult, products: products)
-                    affectedPaths = managedImagerResult.outputPaths
-                } else {
-                    let products = appendProducedDatasets(from: genericTaskProducts(from: result), runID: runID)
-                    recordGenericRunProductGroup(runID: runID, taskID: result.taskID, products: products)
-                    affectedPaths = products.map(\.path)
-                }
+                let products = ingestTaskProducts(completion.products)
+                recordTaskProductGroup(
+                    runID: runID,
+                    taskID: result.taskID,
+                    products: products,
+                    diagnostics: completion.diagnostics + products.compactMap(\.diagnostic)
+                )
+                let affectedPaths = completion.products.filter(\.exists).map(\.path)
                 state.history.append(ProcessingHistoryEvent(
                     id: "hist-run-\(state.history.count + 1)",
                     timestamp: currentTimestamp(),
@@ -9442,29 +9423,55 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
-    private func decodeManagedImagerResult(_ result: GenericTaskResult) -> ManagedImagingOutput? {
-        guard result.taskID == "imager",
-              !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            return nil
+    private func recordTaskProductGroup(
+        runID: String,
+        taskID: String,
+        products: [RunProductReference],
+        diagnostics: [String]
+    ) {
+        guard !products.isEmpty else { return }
+        let group = RunProductGroup(
+            id: "products-\(runID)",
+            runID: runID,
+            title: "\(taskID) products",
+            sourceDatasetID: state.selectedDatasetID ?? "",
+            sourcePath: state.selectedDataset?.path ?? "",
+            products: products,
+            diagnostics: diagnostics
+        )
+        if let index = state.runProductGroups.firstIndex(where: { $0.runID == runID }) {
+            state.runProductGroups[index] = group
+        } else {
+            state.runProductGroups.append(group)
         }
-        guard let output = try? JSONDecoder().decode(ManagedImagingOutput.self, from: Data(result.stdout.utf8)) else {
-            return nil
-        }
-        return resolvedManagedImagingOutput(output)
     }
 
-    private func resolvedManagedImagingOutput(_ output: ManagedImagingOutput) -> ManagedImagingOutput {
-        var resolved = output
-        resolved.artifacts = output.artifacts.map { artifact in
-            var artifact = artifact
-            artifact.path = resolvedTaskPathString(artifact.path)
-            if let previewPath = artifact.previewPngPath {
-                artifact.previewPngPath = resolvedTaskPathString(previewPath)
+    private func ingestTaskProducts(
+        _ completionProducts: [CasarsFrontendServices.TaskCompletionProduct]
+    ) -> [RunProductReference] {
+        var products: [RunProductReference] = []
+        for product in completionProducts {
+            var datasetID = state.project.datasets.first(where: { $0.path == product.path })?.id
+            if datasetID == nil, let probe = product.dataset {
+                let dataset = DatasetSummary(probe: probe)
+                state.project.datasets.append(dataset)
+                datasetID = dataset.id
             }
-            return artifact
+            products.append(
+                RunProductReference(
+                    id: product.id,
+                    artifactKind: String(describing: product.resourceKind),
+                    label: product.label,
+                    path: product.path,
+                    datasetID: datasetID,
+                    exists: product.exists,
+                    previewPngPath: product.previewPath,
+                    previewPngExists: product.previewExists,
+                    diagnostic: product.diagnostic
+                )
+            )
         }
-        return resolved
+        return products
     }
 
     private func resolvedTaskPathString(_ path: String) -> String {
@@ -9474,208 +9481,15 @@ public final class WorkbenchStore: ObservableObject {
         if expanded.hasPrefix("/") {
             return URL(fileURLWithPath: expanded).standardizedFileURL.path
         }
-        let root = state.project.rootPath.isEmpty ? FileManager.default.currentDirectoryPath : state.project.rootPath
+        let root = state.project.rootPath.isEmpty
+            ? FileManager.default.currentDirectoryPath
+            : state.project.rootPath
         return URL(
             fileURLWithPath: expanded,
             relativeTo: URL(fileURLWithPath: root, isDirectory: true)
         )
         .standardizedFileURL
         .path
-    }
-
-    private func genericTaskProducts(from result: GenericTaskResult) -> [ManagedImagingArtifact] {
-        guard let data = result.stdout.data(using: .utf8),
-              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let taskResult = payload["result"] as? [String: Any]
-        else {
-            return []
-        }
-        return genericTaskProductKeys(taskID: result.taskID)
-            .compactMap { key -> ManagedImagingArtifact? in
-                guard let outputPath = taskResult[key] as? String, !outputPath.isEmpty else {
-                    return nil
-                }
-                let outputURL = URL(
-                    fileURLWithPath: outputPath,
-                    relativeTo: URL(fileURLWithPath: state.project.rootPath, isDirectory: true)
-                ).standardizedFileURL
-                let path = outputURL.path
-                return ManagedImagingArtifact(
-                    kind: genericTaskProductKind(taskID: result.taskID, key: key, path: path),
-                    label: URL(fileURLWithPath: path).lastPathComponent,
-                    path: path,
-                    exists: FileManager.default.fileExists(atPath: path),
-                    previewPngPath: nil,
-                    previewPngExists: false
-                )
-            }
-    }
-
-    private func genericTaskProductKeys(taskID: String) -> [String] {
-        switch taskID {
-        case "exportfits":
-            return ["fitsimage"]
-        case "importfits":
-            return ["imagename"]
-        case "immoments", "impv", "imsubimage", "immath":
-            return ["outfile"]
-        case "imregrid":
-            return ["output"]
-        case "feather":
-            return ["imagename"]
-        case "simobserve":
-            return ["output_ms", "manifest_path"]
-        default:
-            return ["outfile"]
-        }
-    }
-
-    private func genericTaskProductKind(taskID: String, key: String, path: String) -> String {
-        if taskID == "simobserve" && key == "output_ms" {
-            return "measurement-set"
-        }
-        if taskID == "simobserve" && key == "manifest_path" {
-            return "json"
-        }
-        if taskID == "exportfits" || ["fits", "fit", "fts"].contains(URL(fileURLWithPath: path).pathExtension.lowercased()) {
-            return "fits"
-        }
-        if key == "imagename" || key == "outfile" || key == "output" {
-            return "casa-image"
-        }
-        return "run-product"
-    }
-
-    private func appendProducedDatasets(from artifacts: [ManagedImagingArtifact], runID: String) -> [RunProductReference] {
-        var products: [RunProductReference] = []
-        for artifact in artifacts where artifact.exists {
-            if let existing = state.project.datasets.first(where: { $0.path == artifact.path }) {
-                products.append(runProductReference(artifact: artifact, datasetID: existing.id))
-                continue
-            }
-            if let probed = try? probeClient.probePath(path: artifact.path) {
-                state.project.datasets.append(probed)
-                products.append(runProductReference(artifact: artifact, datasetID: probed.id))
-                continue
-            }
-            let fallback = DatasetSummary(
-                id: artifact.path,
-                name: URL(fileURLWithPath: artifact.path).lastPathComponent,
-                path: artifact.path,
-                kind: fallbackDatasetKind(for: artifact),
-                size: "Unprobed \(artifact.kind) product",
-                units: fallbackDatasetUnits(for: artifact),
-                notes: "Produced by \(runID).",
-                diagnostics: []
-            )
-            state.project.datasets.append(fallback)
-            products.append(runProductReference(artifact: artifact, datasetID: fallback.id))
-        }
-        return products
-    }
-
-    private func recordGenericRunProductGroup(runID: String, taskID: String, products: [RunProductReference]) {
-        guard !products.isEmpty else { return }
-        let group = RunProductGroup(
-            id: "products-\(runID)",
-            runID: runID,
-            title: "\(taskID) products",
-            sourceDatasetID: state.selectedDatasetID ?? "",
-            sourcePath: state.selectedDataset?.path ?? "",
-            products: products,
-            diagnostics: []
-        )
-        if let index = state.runProductGroups.firstIndex(where: { $0.runID == runID }) {
-            state.runProductGroups[index] = group
-        } else {
-            state.runProductGroups.append(group)
-        }
-    }
-
-    private func appendProducedDatasets(from result: ManagedImagingOutput) -> [RunProductReference] {
-        var products: [RunProductReference] = []
-        for artifact in result.artifacts where artifact.exists {
-            if let existing = state.project.datasets.first(where: { $0.path == artifact.path }) {
-                products.append(runProductReference(artifact: artifact, datasetID: existing.id))
-                continue
-            }
-            if let probed = try? probeClient.probePath(path: artifact.path) {
-                state.project.datasets.append(probed)
-                products.append(runProductReference(artifact: artifact, datasetID: probed.id))
-                continue
-            }
-            let fallback = DatasetSummary(
-                id: artifact.path,
-                name: URL(fileURLWithPath: artifact.path).lastPathComponent,
-                path: artifact.path,
-                kind: fallbackDatasetKind(for: artifact),
-                size: "Unprobed \(artifact.kind) product",
-                units: fallbackDatasetUnits(for: artifact),
-                notes: "Produced by imager from \(result.request.measurementSet).",
-                diagnostics: artifact.previewPngExists
-                    ? ["preview: \(artifact.previewPngPath ?? "")"]
-                    : []
-            )
-            state.project.datasets.append(fallback)
-            products.append(runProductReference(artifact: artifact, datasetID: fallback.id))
-        }
-        return products
-    }
-
-    private func recordRunProductGroup(from result: ManagedImagingOutput, products: [RunProductReference]) {
-        guard let runID = state.taskRun.runID else { return }
-        let group = RunProductGroup(
-            id: "products-\(runID)",
-            runID: runID,
-            title: "Imager products",
-            sourceDatasetID: state.selectedDatasetID ?? "",
-            sourcePath: result.request.measurementSet,
-            products: products,
-            diagnostics: result.run.warnings
-        )
-        if let index = state.runProductGroups.firstIndex(where: { $0.runID == runID }) {
-            state.runProductGroups[index] = group
-        } else {
-            state.runProductGroups.append(group)
-        }
-    }
-
-    private func runProductReference(artifact: ManagedImagingArtifact, datasetID: String?) -> RunProductReference {
-        RunProductReference(
-            id: artifact.path,
-            artifactKind: artifact.kind,
-            label: artifact.label,
-            path: artifact.path,
-            datasetID: datasetID,
-            exists: artifact.exists,
-            previewPngPath: artifact.previewPngPath,
-            previewPngExists: artifact.previewPngExists
-        )
-    }
-
-    private func fallbackDatasetKind(for artifact: ManagedImagingArtifact) -> DatasetKind {
-        let kind = artifact.kind.lowercased()
-        if kind.contains("table") {
-            return .table
-        }
-        if kind.contains("ms") || kind.contains("measurement") {
-            return .measurementSet
-        }
-        if kind.contains("fits") || kind.contains("output") {
-            return .runProduct
-        }
-        return .imageCube
-    }
-
-    private func fallbackDatasetUnits(for artifact: ManagedImagingArtifact) -> String {
-        let kind = artifact.kind.lowercased()
-        if kind.contains("image") {
-            return "CASA image"
-        }
-        if kind.contains("table") {
-            return "CASA table"
-        }
-        return artifact.kind
     }
 
     private func currentTimestamp() -> String {
@@ -9747,7 +9561,7 @@ public final class WorkbenchStore: ObservableObject {
             "max_points": .integer(Int64(plotState.maxPlotPoints)),
         ]
         for (name, value) in values where session.bundle.concept(for: name) != nil {
-            session.overridePatch.unset.remove(name)
+            session.overridePatch.removeUnset(name)
             session.overridePatch.values[name] = value
         }
         resolveParameterSession(&session)
@@ -10135,7 +9949,7 @@ extension WorkbenchPlotLayer {
                 sourceSampleCount: payload.sourceSampleCount,
                 displaySampleCount: max(points.count, pointCloud?.count ?? 0, intervals.count),
                 pointBudget: layerKind == .line ? 100_000 : denseScatterPointThreshold,
-                strategy: WorkbenchPlotPayloadStrategy(payloadStrategy: payload.payloadStrategy, fallback: pointCloud == nil ? .inlineDisplayPoints : .viewportLevelOfDetail),
+                strategy: WorkbenchPlotPayloadStrategy(payloadStrategy: payload.payloadStrategy),
                 sourceDescription: payload.provenanceSummary,
                 provenanceKey: payload.colorGroup
             )
@@ -10190,18 +10004,12 @@ extension WorkbenchPlotLayerKind {
 }
 
 extension WorkbenchPlotPayloadStrategy {
-    init(payloadStrategy: String, fallback: WorkbenchPlotPayloadStrategy) {
+    init(payloadStrategy: CasarsFrontendServices.PlotPayloadStrategy) {
         switch payloadStrategy {
-        case "point_cloud":
+        case .pointCloud:
             self = .viewportLevelOfDetail
-        case "intervals":
+        case .intervals:
             self = .inlineDisplayPoints
-        case "single_pixel_point_raster":
-            self = .singlePixelPointRaster
-        case "density_grid":
-            self = .densityGrid
-        default:
-            self = fallback
         }
     }
 }

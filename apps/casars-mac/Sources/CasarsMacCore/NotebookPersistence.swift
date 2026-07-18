@@ -54,7 +54,10 @@ package enum JSONValue: Codable, Equatable {
         case let .float(value): self = .number(value)
         case let .string(value): self = .string(value)
         case let .array(values): self = .array(values.map(JSONValue.init(parameterValue:)))
-        case let .table(values): self = .object(values.mapValues(JSONValue.init(parameterValue:)))
+        case let .table(entries):
+            self = .object(Dictionary(uniqueKeysWithValues: entries.map {
+                ($0.name, JSONValue(parameterValue: $0.value))
+            }))
         }
     }
 

@@ -3,7 +3,21 @@
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
-out_root="${1:-$repo_root/target/frontend-bindings}"
+mode="write"
+if [[ "${1:-}" == "--check" ]]; then
+  mode="check"
+  shift
+fi
+if [[ "$mode" == "check" ]]; then
+  if [[ $# -ne 0 ]]; then
+    echo "usage: $0 [--check] [output-directory]" >&2
+    exit 2
+  fi
+  out_root="$(mktemp -d "${TMPDIR:-/tmp}/casars-frontend-bindings.XXXXXX")"
+  trap 'rm -rf "$out_root"' EXIT
+else
+  out_root="${1:-$repo_root/target/frontend-bindings}"
+fi
 python_out="$out_root/python"
 swift_out="$out_root/swift"
 
@@ -38,7 +52,7 @@ cargo run -p casars-frontend-services --bin casars-frontend-bindgen -- swift "$l
 perl -pi -e 's/[ \t]+$//' "$swift_out/CasarsFrontendServices.swift"
 perl -pi -e 's/[ \t]+$//' "$swift_out/CasarsFrontendServicesFFI.h"
 
-if [[ -d "$repo_root/apps/casars-mac/Sources/CasarsFrontendServices" ]]; then
+if [[ "$mode" == "write" && -d "$repo_root/apps/casars-mac/Sources/CasarsFrontendServices" ]]; then
   cp "$swift_out/CasarsFrontendServices.swift" \
     "$repo_root/apps/casars-mac/Sources/CasarsFrontendServices/CasarsFrontendServices.swift"
   cp "$swift_out/CasarsFrontendServicesFFI.h" \
@@ -47,4 +61,30 @@ if [[ -d "$repo_root/apps/casars-mac/Sources/CasarsFrontendServices" ]]; then
     "$repo_root/apps/casars-mac/Sources/CasarsFrontendServicesFFI/module.modulemap"
 fi
 
-echo "generated bindings under $out_root"
+if [[ "$mode" == "check" ]]; then
+  check_root="${CASARS_FRONTEND_BINDINGS_CHECK_ROOT:-$repo_root/apps/casars-mac/Sources}"
+  status=0
+  compare_artifact() {
+    local generated="$1"
+    local committed="$2"
+    if ! diff -u "$committed" "$generated"; then
+      status=1
+    fi
+  }
+  compare_artifact \
+    "$swift_out/CasarsFrontendServices.swift" \
+    "$check_root/CasarsFrontendServices/CasarsFrontendServices.swift"
+  compare_artifact \
+    "$swift_out/CasarsFrontendServicesFFI.h" \
+    "$check_root/CasarsFrontendServicesFFI/CasarsFrontendServicesFFI.h"
+  compare_artifact \
+    "$swift_out/CasarsFrontendServicesFFI.modulemap" \
+    "$check_root/CasarsFrontendServicesFFI/module.modulemap"
+  if [[ "$status" -ne 0 ]]; then
+    echo "frontend bindings are stale; run scripts/generate-frontend-bindings.sh" >&2
+    exit "$status"
+  fi
+  echo "frontend bindings are current"
+else
+  echo "generated bindings under $out_root"
+fi

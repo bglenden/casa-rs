@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_provider_contracts::{
-    NarrowingConstraint, ParameterValue, Predicate, ProviderInvocation,
+    ManagedOutputArgument, NarrowingConstraint, ParameterValue, Predicate, ProviderInvocation,
     ProviderInvocationAdaptation, ValueAdapter,
 };
 use thiserror::Error;
@@ -263,34 +263,20 @@ fn evaluate_any(predicates: &[Predicate], session: &ParameterSession) -> Option<
 
 fn append_managed_output_arguments(
     args: &mut Vec<String>,
-    managed_output: Option<&serde_json::Value>,
+    managed_output: Option<&casa_provider_contracts::ManagedOutputContract>,
 ) -> Result<(), ProviderInvocationError> {
     let Some(managed_output) = managed_output else {
         return Ok(());
     };
-    let Some(injected) = managed_output.get("inject_arguments") else {
-        return Ok(());
-    };
-    let entries = injected.as_array().ok_or_else(|| {
-        ProviderInvocationError::ManagedOutput("inject_arguments must be an array".to_string())
-    })?;
-    for entry in entries {
-        let flag = entry
-            .get("flag")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                ProviderInvocationError::ManagedOutput(
-                    "every injected argument requires a string flag".to_string(),
-                )
-            })?;
-        args.push(flag.to_string());
-        if let Some(value) = entry.get("value") {
-            let value = value.as_str().ok_or_else(|| {
-                ProviderInvocationError::ManagedOutput(
-                    "an injected argument value must be a string".to_string(),
-                )
-            })?;
-            args.push(value.to_string());
+    for ManagedOutputArgument { flag, value } in &managed_output.inject_arguments {
+        if flag.is_empty() {
+            return Err(ProviderInvocationError::ManagedOutput(
+                "an injected argument flag cannot be empty".to_string(),
+            ));
+        }
+        args.push(flag.clone());
+        if let Some(value) = value {
+            args.push(value.clone());
         }
     }
     Ok(())

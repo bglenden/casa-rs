@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shared frontend services exposed to Swift and Python through UniFFI.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,14 +32,15 @@ use casa_notebook::{
     VisualizationSnapshot,
 };
 use casa_provider_contracts::{
-    ParameterValue, ProviderInvocationAdaptation, RunSafetyClass, SurfaceContractBundle,
-    SurfaceKind, builtin_application_catalog, builtin_surface_bundle, builtin_surface_catalog,
+    ParameterValue, ProviderInvocationAdaptation, RunProductKind, RunProductRole, RunSafetyClass,
+    SurfaceContractBundle, SurfaceKind, builtin_application_catalog, builtin_surface_bundle,
 };
 use casa_tables::{ArrayShapeContract, ColumnType, Table, TableBrowser, TableOptions};
 use casa_task_runtime::{
     BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, OpenSessionRequest,
     ParameterRuntime, ParameterSession, ResolutionPatch, SessionLastCoordinator,
-    TaskLastCoordinator, project_provider_invocation, write_parameter_profile_atomic,
+    TaskLastCoordinator, TaskOutputValue, decode_task_completion, project_provider_invocation,
+    write_parameter_profile_atomic,
 };
 use casa_types::measures::direction::{
     angular_increment_arcseconds, declination_increment_arcseconds, format_declination_labeled,
@@ -278,26 +279,435 @@ pub struct ProjectProbe {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct TaskContextOptions {
-    schema_version: u64,
-    dataset_path: String,
-    dataset_kind: String,
-    fields: Vec<String>,
-    spectral_windows: Vec<String>,
-    scans: Vec<String>,
-    arrays: Vec<String>,
-    observations: Vec<String>,
-    antennas: Vec<String>,
-    intents: Vec<String>,
-    feeds: Vec<String>,
-    correlations: Vec<String>,
-    columns: Vec<String>,
-    data_columns: Vec<String>,
-    subtables: Vec<String>,
-    shape: Vec<u64>,
-    defaults: BTreeMap<String, String>,
-    diagnostics: Vec<String>,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum TaskProductRole {
+    Primary,
+    Auxiliary,
+    Preview,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum TaskProductKind {
+    MeasurementSet,
+    CasaImage,
+    CasaTable,
+    FitsImage,
+    File,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TaskParameterValue {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SurfaceParameterValue {
+    Bool { value: bool },
+    Integer { value: i64 },
+    Float { value: f64 },
+    String { value: String },
+    Array { values: Vec<SurfaceParameterValue> },
+    Table { entries: Vec<SurfaceParameterEntry> },
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterEntry {
+    pub name: String,
+    pub value: SurfaceParameterValue,
+}
+
+impl From<ParameterValue> for SurfaceParameterValue {
+    fn from(value: ParameterValue) -> Self {
+        match value {
+            ParameterValue::Bool(value) => Self::Bool { value },
+            ParameterValue::Integer(value) => Self::Integer { value },
+            ParameterValue::Float(value) => Self::Float { value },
+            ParameterValue::String(value) => Self::String { value },
+            ParameterValue::Array(values) => Self::Array {
+                values: values.into_iter().map(Self::from).collect(),
+            },
+            ParameterValue::Table(entries) => Self::Table {
+                entries: entries
+                    .into_iter()
+                    .map(|(name, value)| SurfaceParameterEntry {
+                        name,
+                        value: Self::from(value),
+                    })
+                    .collect(),
+            },
+        }
+    }
+}
+
+impl From<SurfaceParameterValue> for ParameterValue {
+    fn from(value: SurfaceParameterValue) -> Self {
+        match value {
+            SurfaceParameterValue::Bool { value } => Self::Bool(value),
+            SurfaceParameterValue::Integer { value } => Self::Integer(value),
+            SurfaceParameterValue::Float { value } => Self::Float(value),
+            SurfaceParameterValue::String { value } => Self::String(value),
+            SurfaceParameterValue::Array { values } => {
+                Self::Array(values.into_iter().map(Self::from).collect())
+            }
+            SurfaceParameterValue::Table { entries } => Self::Table(
+                entries
+                    .into_iter()
+                    .map(|entry| (entry.name, Self::from(entry.value)))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SurfaceParameterType {
+    Bool,
+    Integer,
+    Float,
+    String,
+    Path {
+        resource_kind: Option<String>,
+    },
+    Choice {
+        values: Vec<String>,
+    },
+    Quantity {
+        dimension: String,
+        canonical_unit: String,
+        special_values: Vec<String>,
+    },
+    Array {
+        elements: Vec<SurfaceParameterType>,
+        min_items: u64,
+        max_items: Option<u64>,
+        allow_scalar: bool,
+    },
+    Table {
+        fields: Vec<SurfaceParameterTypeField>,
+    },
+    Optional {
+        values: Vec<SurfaceParameterType>,
+        states: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterTypeField {
+    pub name: String,
+    pub value: SurfaceParameterType,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SurfaceParameterPredicate {
+    Always,
+    Never,
+    IsSet {
+        parameter: String,
+    },
+    Equals {
+        parameter: String,
+        value: SurfaceParameterValue,
+    },
+    Not {
+        predicates: Vec<SurfaceParameterPredicate>,
+    },
+    All {
+        predicates: Vec<SurfaceParameterPredicate>,
+    },
+    Any {
+        predicates: Vec<SurfaceParameterPredicate>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SurfaceParameterDocumentation {
+    pub summary: String,
+    pub details: Option<String>,
+    pub examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterConcept {
+    pub id: String,
+    pub semantic_revision: u64,
+    pub casa_name: String,
+    pub value_domain: SurfaceParameterType,
+    pub unit_dimension: Option<String>,
+    pub semantic_role: String,
+    pub documentation: SurfaceParameterDocumentation,
+    pub persistence_class: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterCatalog {
+    pub schema_version: u64,
+    pub concepts: Vec<SurfaceParameterConcept>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SurfaceParameterConceptReference {
+    pub id: String,
+    pub semantic_revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SurfaceParameterPresentation {
+    pub label: String,
+    pub group: String,
+    pub advanced: bool,
+    pub hidden: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SurfaceParameterCliProjection {
+    pub positional: Option<u64>,
+    pub flags: Vec<String>,
+    pub false_flags: Vec<String>,
+    pub metavar: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterProviderProjection {
+    pub field: String,
+    pub adapter: String,
+    pub emit_when: Option<SurfaceParameterPredicate>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterProjections {
+    pub cli: Option<SurfaceParameterCliProjection>,
+    pub provider: Option<SurfaceParameterProviderProjection>,
+    pub presentation: SurfaceParameterPresentation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SurfaceNarrowingConstraint {
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterBinding {
+    pub name: String,
+    pub concept: SurfaceParameterConceptReference,
+    pub order: u64,
+    pub refinements: Vec<SurfaceNarrowingConstraint>,
+    pub context_role: Option<String>,
+    pub surface_note: Option<String>,
+    pub projections: SurfaceParameterProjections,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SurfaceExecutionProjection {
+    pub invocation_name: String,
+    pub fixed_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterDefinition {
+    pub kind: String,
+    pub id: String,
+    pub contract_version: u64,
+    pub display_name: String,
+    pub category: String,
+    pub summary: String,
+    pub execution: SurfaceExecutionProjection,
+    pub bindings: Vec<SurfaceParameterBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterBundle {
+    pub schema_version: u64,
+    pub surface: SurfaceParameterDefinition,
+    pub catalog: SurfaceParameterCatalog,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SurfaceParameterBaseSource {
+    Defaults,
+    Last,
+    LastSuccessful,
+    File,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum SurfaceParameterSourceRecord {
+    Defaults,
+    Last,
+    LastSuccessful,
+    File { path: String },
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterPatch {
+    pub values: HashMap<String, SurfaceParameterValue>,
+    pub unset: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterState {
+    pub value: Option<SurfaceParameterValue>,
+    pub origin: String,
+    pub active: bool,
+    pub required: bool,
+    pub explicit: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SurfaceParameterLocation {
+    pub line: u64,
+    pub column: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SurfaceParameterDiagnostic {
+    pub level: String,
+    pub code: String,
+    pub message: String,
+    pub parameter: Option<String>,
+    pub location: Option<SurfaceParameterLocation>,
+    pub suggestions: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterSnapshot {
+    pub schema_version: u64,
+    pub surface_id: String,
+    pub surface_kind: String,
+    pub contract_version: u64,
+    pub base_source: SurfaceParameterSourceRecord,
+    pub dirty: bool,
+    pub states: HashMap<String, SurfaceParameterState>,
+    pub diagnostics: Vec<SurfaceParameterDiagnostic>,
+    pub profile_toml: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TaskCompletionProduct {
+    pub id: String,
+    pub role: TaskProductRole,
+    pub resource_kind: TaskProductKind,
+    pub label: String,
+    pub path: String,
+    pub exists: bool,
+    pub preview_path: Option<String>,
+    pub preview_exists: bool,
+    pub dataset: Option<DatasetProbe>,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TaskCompletionProjection {
+    pub surface_id: String,
+    pub summary: String,
+    pub products: Vec<TaskCompletionProduct>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct TaskContextOptionsEnvelope {
+    pub schema_version: u64,
+    pub dataset_path: String,
+    pub dataset_kind: String,
+    pub fields: Vec<String>,
+    pub spectral_windows: Vec<String>,
+    pub scans: Vec<String>,
+    pub arrays: Vec<String>,
+    pub observations: Vec<String>,
+    pub antennas: Vec<String>,
+    pub intents: Vec<String>,
+    pub feeds: Vec<String>,
+    pub correlations: Vec<String>,
+    pub columns: Vec<String>,
+    pub data_columns: Vec<String>,
+    pub subtables: Vec<String>,
+    pub shape: Vec<u64>,
+    pub defaults: HashMap<String, String>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
+pub struct ApplicationCatalogEnvelope {
+    pub schema_version: u64,
+    pub applications: Vec<ApplicationCatalogEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
+pub struct ApplicationCatalogEntry {
+    pub id: String,
+    pub kind: String,
+    pub category: String,
+    pub display_name: String,
+    pub executable: String,
+    pub cargo_package: String,
+    pub override_env: String,
+    pub shell_kind: String,
+    pub interaction: String,
+    pub browser_kind: Option<String>,
+    pub dataset_kinds: Vec<String>,
+    pub show_in_tui: bool,
+    pub show_in_swift: bool,
+    pub include_in_suite: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct TaskUISchema {
+    pub schema_version: u64,
+    pub command_id: String,
+    pub invocation_name: String,
+    pub display_name: String,
+    pub category: String,
+    pub summary: String,
+    pub usage: String,
+    pub arguments: Vec<TaskUIArgument>,
+    pub managed_output: Option<TaskUIManagedOutput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct TaskUIManagedOutput {
+    pub decoder: String,
+    pub stdout_format: String,
+    pub inject_arguments: Vec<TaskUIInjectedArgument>,
+    pub raw_stdout_available: bool,
+    pub raw_stderr_available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct TaskUIInjectedArgument {
+    pub flag: String,
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct TaskUIArgument {
+    pub id: String,
+    pub label: String,
+    pub order: i64,
+    pub parser: TaskUIArgumentParser,
+    pub value_kind: String,
+    pub required: bool,
+    pub default: Option<String>,
+    pub help: String,
+    pub group: String,
+    pub parameter_type: Option<String>,
+    pub concept_id: Option<String>,
+    pub concept_revision: Option<u64>,
+    pub unit_dimension: Option<String>,
+    pub context_role: Option<String>,
+    pub advanced: bool,
+    pub hidden_in_tui: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct TaskUIArgumentParser {
+    pub kind: String,
+    pub flags: Option<Vec<String>>,
+    pub metavar: Option<String>,
+    pub choices: Option<Vec<String>>,
+    pub true_flags: Option<Vec<String>>,
+    pub false_flags: Option<Vec<String>>,
+    pub action: Option<String>,
+    pub positional_metavar: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -459,6 +869,12 @@ pub enum PlotLayerKind {
     Interval,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum PlotPayloadStrategy {
+    PointCloud,
+    Intervals,
+}
+
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct PlotDocumentAxis {
     pub id: String,
@@ -501,7 +917,7 @@ pub struct PlotDocumentLayer {
     pub line_width: f64,
     pub opacity: f64,
     pub source_sample_count: u64,
-    pub payload_strategy: String,
+    pub payload_strategy: PlotPayloadStrategy,
     pub provenance_summary: String,
 }
 
@@ -603,6 +1019,8 @@ pub enum FrontendServiceError {
     Assistant { reason: String },
     #[error("assistant corpus service failed: {reason}")]
     Corpus { reason: String },
+    #[error("task completion failed: {reason}")]
+    TaskCompletion { reason: String },
 }
 
 type FrontendResult<T> = Result<T, FrontendServiceError>;
@@ -850,6 +1268,21 @@ struct AssistantProtocolProjection {
     backend_session_binding: &'static str,
     authority_presets: Vec<&'static str>,
     project_mcp_tools: Vec<&'static str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AssistantTaskSuggestionWire {
+    kind: String,
+    task_id: String,
+    parameters: HashMap<String, String>,
+    validated_patch: ResolutionPatch,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AssistantTaskSuggestionProjection {
+    pub task_id: String,
+    pub parameters: HashMap<String, String>,
+    pub validated_patch: SurfaceParameterPatch,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1148,6 +1581,34 @@ pub fn assistant_protocol_info_json() -> FrontendResult<String> {
         ],
     })
     .map_err(|error| assistant_error("serialize assistant protocol information", error))
+}
+
+/// Parse one trusted `task.suggest` MCP result into the generated application contract.
+#[uniffi::export]
+pub fn assistant_task_suggestion(
+    tool_output: String,
+) -> FrontendResult<AssistantTaskSuggestionProjection> {
+    let suggestion: AssistantTaskSuggestionWire = serde_json::from_str(&tool_output)
+        .map_err(|error| assistant_error("parse task suggestion", error))?;
+    if suggestion.kind != "task_suggestion" {
+        return Err(assistant_error(
+            "parse task suggestion",
+            format!("unexpected suggestion kind {:?}", suggestion.kind),
+        ));
+    }
+    Ok(AssistantTaskSuggestionProjection {
+        task_id: suggestion.task_id,
+        parameters: suggestion.parameters,
+        validated_patch: SurfaceParameterPatch {
+            values: suggestion
+                .validated_patch
+                .values
+                .into_iter()
+                .map(|(name, value)| (name, value.into()))
+                .collect(),
+            unset: suggestion.validated_patch.unset.into_iter().collect(),
+        },
+    })
 }
 
 /// Construct one immutable notebook pin snapshot with transcript provenance.
@@ -1475,49 +1936,84 @@ pub fn tutorial_advance_acquisition_json(request_json: String) -> FrontendResult
 }
 
 #[uniffi::export]
-pub fn application_catalog_json() -> FrontendResult<String> {
+pub fn application_catalog() -> FrontendResult<ApplicationCatalogEnvelope> {
     let catalog =
         builtin_application_catalog().map_err(|reason| FrontendServiceError::Probe { reason })?;
     let applications = catalog
         .applications
         .iter()
         .map(|application| {
-            let surface = application.surface_bundle().map_err(|reason| {
-                FrontendServiceError::Probe {
-                    reason: format!("resolve application {}: {reason}", application.id),
-                }
-            })?;
-            Ok(serde_json::json!({
-                "id": application.id,
-                "kind": application.kind,
-                "display_name": surface.as_ref().map(|bundle| bundle.surface.display_name()).unwrap_or("CASA-RS"),
-                "category": surface.as_ref().map(|bundle| bundle.surface.category()).unwrap_or("Launcher"),
-                "executable": application.launch.executable,
-                "cargo_package": application.launch.cargo_package,
-                "override_env": application.launch.override_env,
-                "protocol_family": surface.as_ref().map(|bundle| bundle.surface.provider_family()),
-                "launch_modes": application.supported_launch_modes(),
-                "shell_kind": application.shell_kind,
-                "interaction": application.interaction,
-                "browser_kind": application.browser_kind,
-                "dataset_kinds": application.dataset_kinds,
-                "show_in_tui": application.show_in_tui,
-                "show_in_swift": application.show_in_swift,
-                "include_in_suite": application.include_in_suite,
-            }))
+            let surface =
+                application
+                    .surface_bundle()
+                    .map_err(|reason| FrontendServiceError::Probe {
+                        reason: format!("resolve application {}: {reason}", application.id),
+                    })?;
+            let wire_string = |value: serde_json::Value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| FrontendServiceError::Probe {
+                        reason: format!(
+                            "application {} has a non-string enum projection",
+                            application.id
+                        ),
+                    })
+            };
+            Ok(ApplicationCatalogEntry {
+                id: application.id.clone(),
+                kind: wire_string(serde_json::to_value(application.kind).map_err(|error| {
+                    FrontendServiceError::Probe {
+                        reason: format!("project application kind: {error}"),
+                    }
+                })?)?,
+                display_name: surface
+                    .as_ref()
+                    .map(|bundle| bundle.surface.display_name())
+                    .unwrap_or("CASA-RS")
+                    .to_string(),
+                category: surface
+                    .as_ref()
+                    .map(|bundle| bundle.surface.category())
+                    .unwrap_or("Launcher")
+                    .to_string(),
+                executable: application.launch.executable.clone(),
+                cargo_package: application.launch.cargo_package.clone(),
+                override_env: application.launch.override_env.clone(),
+                shell_kind: wire_string(serde_json::to_value(application.shell_kind).map_err(
+                    |error| FrontendServiceError::Probe {
+                        reason: format!("project shell kind: {error}"),
+                    },
+                )?)?,
+                interaction: wire_string(serde_json::to_value(application.interaction).map_err(
+                    |error| FrontendServiceError::Probe {
+                        reason: format!("project interaction: {error}"),
+                    },
+                )?)?,
+                browser_kind: application
+                    .browser_kind
+                    .map(|kind| serde_json::to_value(kind))
+                    .transpose()
+                    .map_err(|error| FrontendServiceError::Probe {
+                        reason: format!("project browser kind: {error}"),
+                    })?
+                    .map(wire_string)
+                    .transpose()?,
+                dataset_kinds: application.dataset_kinds.clone(),
+                show_in_tui: application.show_in_tui,
+                show_in_swift: application.show_in_swift,
+                include_in_suite: application.include_in_suite,
+            })
         })
         .collect::<FrontendResult<Vec<_>>>()?;
-    serde_json::to_string(&serde_json::json!({
-        "schema_version": catalog.schema_version,
-        "applications": applications,
-    }))
-    .map_err(|error| FrontendServiceError::Probe {
-        reason: format!("serialize application catalog: {error}"),
+    Ok(ApplicationCatalogEnvelope {
+        schema_version: u64::from(catalog.schema_version),
+        applications,
     })
 }
 
 #[uniffi::export]
-pub fn task_context_options_json(dataset_path: String) -> FrontendResult<String> {
+pub fn task_context_options(dataset_path: String) -> FrontendResult<TaskContextOptionsEnvelope> {
     let path = PathBuf::from(&dataset_path);
     let probe = probe_dataset_path(&path)
         .map_err(|error| FrontendServiceError::Probe {
@@ -1536,7 +2032,7 @@ pub fn task_context_options_json(dataset_path: String) -> FrontendResult<String>
     insert_first_default(&mut defaults, "data_column", &probe.data_columns);
     insert_first_default(&mut defaults, "column", &probe.columns);
 
-    let options = TaskContextOptions {
+    Ok(TaskContextOptionsEnvelope {
         schema_version: 1,
         dataset_path: probe.path,
         dataset_kind: match probe.kind {
@@ -1558,42 +2054,319 @@ pub fn task_context_options_json(dataset_path: String) -> FrontendResult<String>
         data_columns: probe.data_columns,
         subtables: probe.subtables,
         shape: probe.shape,
-        defaults,
+        defaults: defaults.into_iter().collect(),
         diagnostics: probe.diagnostics,
-    };
-
-    serde_json::to_string(&options).map_err(|error| FrontendServiceError::Probe {
-        reason: format!("serialize task context options: {error}"),
     })
 }
 
-#[derive(Debug, Serialize)]
-struct ParameterBridgeSnapshot<'a> {
-    schema_version: u32,
-    surface_id: &'a str,
-    surface_kind: SurfaceKind,
-    contract_version: u32,
-    base_source: &'a BaseSource,
-    dirty: bool,
-    states: &'a BTreeMap<String, casa_task_runtime::ParameterState>,
-    diagnostics: &'a [casa_task_runtime::Diagnostic],
-    profile_toml: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct ParameterWriteResult {
-    path: String,
-    bytes_written: u64,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
+pub struct SurfaceParameterWriteResult {
+    pub path: String,
+    pub bytes_written: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    managed_kind: Option<String>,
+    pub managed_kind: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct ParameterRunSafetyBridge {
-    classes: Vec<RunSafetyClass>,
-    requires_interactive_confirmation: bool,
-    requires_overwrite_confirmation: bool,
-    requires_input_mutation_confirmation: bool,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
+pub struct SurfaceRunSafety {
+    pub classes: Vec<SurfaceRunSafetyClass>,
+    pub requires_interactive_confirmation: bool,
+    pub requires_overwrite_confirmation: bool,
+    pub requires_input_mutation_confirmation: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, uniffi::Enum)]
+pub enum SurfaceRunSafetyClass {
+    ProductWrite,
+    Overwrite,
+    InputMutation,
+}
+
+impl From<RunSafetyClass> for SurfaceRunSafetyClass {
+    fn from(value: RunSafetyClass) -> Self {
+        match value {
+            RunSafetyClass::ProductWrite => Self::ProductWrite,
+            RunSafetyClass::Overwrite => Self::Overwrite,
+            RunSafetyClass::InputMutation => Self::InputMutation,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
+pub struct SurfaceProviderInvocation {
+    pub args: Vec<String>,
+    pub stdin: Option<String>,
+}
+
+fn snake_case_debug(value: impl std::fmt::Debug) -> String {
+    let source = format!("{value:?}");
+    let mut output = String::with_capacity(source.len());
+    for (index, character) in source.chars().enumerate() {
+        if character.is_uppercase() {
+            if index > 0 {
+                output.push('_');
+            }
+            for lower in character.to_lowercase() {
+                output.push(lower);
+            }
+        } else {
+            output.push(character);
+        }
+    }
+    output
+}
+
+fn surface_parameter_type(value: &casa_provider_contracts::ParameterType) -> SurfaceParameterType {
+    use casa_provider_contracts::ParameterType;
+    match value {
+        ParameterType::Bool => SurfaceParameterType::Bool,
+        ParameterType::Integer => SurfaceParameterType::Integer,
+        ParameterType::Float => SurfaceParameterType::Float,
+        ParameterType::String => SurfaceParameterType::String,
+        ParameterType::Path { resource_kind } => SurfaceParameterType::Path {
+            resource_kind: resource_kind.map(snake_case_debug),
+        },
+        ParameterType::Choice { values } => SurfaceParameterType::Choice {
+            values: values.clone(),
+        },
+        ParameterType::Quantity {
+            dimension,
+            canonical_unit,
+            special_values,
+        } => SurfaceParameterType::Quantity {
+            dimension: snake_case_debug(dimension),
+            canonical_unit: canonical_unit.clone(),
+            special_values: special_values.clone(),
+        },
+        ParameterType::Array {
+            element,
+            min_items,
+            max_items,
+            allow_scalar,
+        } => SurfaceParameterType::Array {
+            elements: vec![surface_parameter_type(element)],
+            min_items: *min_items as u64,
+            max_items: max_items.map(|value| value as u64),
+            allow_scalar: *allow_scalar,
+        },
+        ParameterType::Table { fields } => SurfaceParameterType::Table {
+            fields: fields
+                .iter()
+                .map(|(name, value)| SurfaceParameterTypeField {
+                    name: name.clone(),
+                    value: surface_parameter_type(value),
+                })
+                .collect(),
+        },
+        ParameterType::Optional { value, states } => SurfaceParameterType::Optional {
+            values: vec![surface_parameter_type(value)],
+            states: states.clone(),
+        },
+    }
+}
+
+fn surface_parameter_predicate(
+    value: &casa_provider_contracts::Predicate,
+) -> SurfaceParameterPredicate {
+    use casa_provider_contracts::Predicate;
+    match value {
+        Predicate::Always => SurfaceParameterPredicate::Always,
+        Predicate::Never => SurfaceParameterPredicate::Never,
+        Predicate::IsSet { parameter } => SurfaceParameterPredicate::IsSet {
+            parameter: parameter.clone(),
+        },
+        Predicate::Equals { parameter, value } => SurfaceParameterPredicate::Equals {
+            parameter: parameter.clone(),
+            value: value.clone().into(),
+        },
+        Predicate::Not { predicate } => SurfaceParameterPredicate::Not {
+            predicates: vec![surface_parameter_predicate(predicate)],
+        },
+        Predicate::All { predicates } => SurfaceParameterPredicate::All {
+            predicates: predicates.iter().map(surface_parameter_predicate).collect(),
+        },
+        Predicate::Any { predicates } => SurfaceParameterPredicate::Any {
+            predicates: predicates.iter().map(surface_parameter_predicate).collect(),
+        },
+    }
+}
+
+fn surface_parameter_binding(
+    value: &casa_provider_contracts::SurfaceParameterBinding,
+) -> SurfaceParameterBinding {
+    SurfaceParameterBinding {
+        name: value.name.clone(),
+        concept: SurfaceParameterConceptReference {
+            id: value.concept.id.0.clone(),
+            semantic_revision: value.concept.semantic_revision.0 as u64,
+        },
+        order: value.order as u64,
+        refinements: value
+            .refinements
+            .iter()
+            .map(|constraint| SurfaceNarrowingConstraint {
+                kind: match constraint {
+                    casa_provider_contracts::NarrowingConstraint::NumberRange { .. } => {
+                        "number_range"
+                    }
+                    casa_provider_contracts::NarrowingConstraint::Length { .. } => "length",
+                    casa_provider_contracts::NarrowingConstraint::AllowedValues { .. } => {
+                        "allowed_values"
+                    }
+                    casa_provider_contracts::NarrowingConstraint::SelectorCapabilities {
+                        ..
+                    } => "selector_capabilities",
+                    casa_provider_contracts::NarrowingConstraint::SquarePair => "square_pair",
+                }
+                .to_string(),
+            })
+            .collect(),
+        context_role: value.context_role.map(snake_case_debug),
+        surface_note: value.surface_note.clone(),
+        projections: SurfaceParameterProjections {
+            cli: value
+                .projections
+                .cli
+                .as_ref()
+                .map(|projection| SurfaceParameterCliProjection {
+                    positional: projection.positional.map(|value| value as u64),
+                    flags: projection.flags.clone(),
+                    false_flags: projection.false_flags.clone(),
+                    metavar: projection.metavar.clone(),
+                }),
+            provider: value.projections.provider.as_ref().map(|projection| {
+                SurfaceParameterProviderProjection {
+                    field: projection.field.clone(),
+                    adapter: snake_case_debug(projection.adapter.clone()),
+                    emit_when: projection
+                        .emit_when
+                        .as_ref()
+                        .map(surface_parameter_predicate),
+                }
+            }),
+            presentation: SurfaceParameterPresentation {
+                label: value.projections.presentation.label.clone(),
+                group: value.projections.presentation.group.clone(),
+                advanced: value.projections.presentation.advanced,
+                hidden: value.projections.presentation.hidden,
+            },
+        },
+    }
+}
+
+fn surface_parameter_bundle(value: SurfaceContractBundle) -> SurfaceParameterBundle {
+    let surface = SurfaceParameterDefinition {
+        kind: value.surface.kind().to_string(),
+        id: value.surface.id().to_string(),
+        contract_version: value.surface.contract_version() as u64,
+        display_name: value.surface.display_name().to_string(),
+        category: value.surface.category().to_string(),
+        summary: value.surface.summary().to_string(),
+        execution: SurfaceExecutionProjection {
+            invocation_name: value.surface.execution().invocation_name.clone(),
+            fixed_args: value.surface.execution().fixed_args.clone(),
+        },
+        bindings: value
+            .surface
+            .bindings()
+            .iter()
+            .map(surface_parameter_binding)
+            .collect(),
+    };
+    let catalog = SurfaceParameterCatalog {
+        schema_version: value.catalog.schema_version as u64,
+        concepts: value
+            .catalog
+            .concepts
+            .into_iter()
+            .map(|concept| SurfaceParameterConcept {
+                id: concept.id.0,
+                semantic_revision: concept.semantic_revision.0 as u64,
+                casa_name: concept.casa_name,
+                value_domain: surface_parameter_type(&concept.value_domain),
+                unit_dimension: concept.unit_dimension.map(snake_case_debug),
+                semantic_role: snake_case_debug(concept.semantic_role),
+                documentation: SurfaceParameterDocumentation {
+                    summary: concept.documentation.summary,
+                    details: concept.documentation.details,
+                    examples: concept.documentation.examples,
+                },
+                persistence_class: snake_case_debug(concept.persistence_class),
+            })
+            .collect(),
+    };
+    SurfaceParameterBundle {
+        schema_version: value.schema_version as u64,
+        surface,
+        catalog,
+    }
+}
+
+fn surface_parameter_snapshot(
+    session: &ParameterSession,
+) -> FrontendResult<SurfaceParameterSnapshot> {
+    let profile_toml = match session.render_sparse() {
+        Ok(profile_toml) => Some(profile_toml),
+        Err(_)
+            if session
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code == DiagnosticCode::MissingRequired) =>
+        {
+            None
+        }
+        Err(error) => return Err(parameter_error("render sparse parameter profile", error)),
+    };
+    let base_source = match session.base_source() {
+        BaseSource::Defaults => SurfaceParameterSourceRecord::Defaults,
+        BaseSource::Last => SurfaceParameterSourceRecord::Last,
+        BaseSource::LastSuccessful => SurfaceParameterSourceRecord::LastSuccessful,
+        BaseSource::File(path) => SurfaceParameterSourceRecord::File {
+            path: path.to_string_lossy().into_owned(),
+        },
+    };
+    Ok(SurfaceParameterSnapshot {
+        schema_version: session.bundle().schema_version as u64,
+        surface_id: session.bundle().surface.id().to_string(),
+        surface_kind: session.bundle().surface.kind().to_string(),
+        contract_version: session.bundle().surface.contract_version() as u64,
+        base_source,
+        dirty: session.is_dirty(),
+        states: session
+            .states()
+            .iter()
+            .map(|(name, state)| {
+                (
+                    name.clone(),
+                    SurfaceParameterState {
+                        value: state.value.clone().map(Into::into),
+                        origin: snake_case_debug(state.origin.clone()),
+                        active: state.active,
+                        required: state.required,
+                        explicit: state.explicit,
+                    },
+                )
+            })
+            .collect(),
+        diagnostics: session
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| SurfaceParameterDiagnostic {
+                level: snake_case_debug(diagnostic.level),
+                code: snake_case_debug(diagnostic.code),
+                message: diagnostic.message.clone(),
+                parameter: diagnostic.parameter.clone(),
+                location: diagnostic
+                    .location
+                    .map(|location| SurfaceParameterLocation {
+                        line: location.line as u64,
+                        column: location.column as u64,
+                    }),
+                suggestions: diagnostic.suggestions.clone(),
+            })
+            .collect(),
+        profile_toml,
+    })
 }
 
 fn parameter_error(context: &str, error: impl std::fmt::Display) -> FrontendServiceError {
@@ -1605,36 +2378,6 @@ fn parameter_error(context: &str, error: impl std::fmt::Display) -> FrontendServ
 fn parameter_bundle(surface_id: &str) -> FrontendResult<SurfaceContractBundle> {
     builtin_surface_bundle(surface_id)
         .map_err(|error| parameter_error("load parameter surface", error))
-}
-
-fn parameter_snapshot_json(session: &ParameterSession) -> FrontendResult<String> {
-    let profile_toml = match session.render_sparse() {
-        Ok(profile_toml) => Some(profile_toml),
-        Err(_)
-            if session
-                .diagnostics()
-                .iter()
-                .any(|diagnostic| diagnostic.code == DiagnosticCode::MissingRequired) =>
-        {
-            None
-        }
-        Err(error) => {
-            return Err(parameter_error("render sparse parameter profile", error));
-        }
-    };
-    let snapshot = ParameterBridgeSnapshot {
-        schema_version: session.bundle().schema_version,
-        surface_id: session.bundle().surface.id(),
-        surface_kind: session.bundle().surface.kind(),
-        contract_version: session.bundle().surface.contract_version(),
-        base_source: session.base_source(),
-        dirty: session.is_dirty(),
-        states: session.states(),
-        diagnostics: session.diagnostics(),
-        profile_toml,
-    };
-    serde_json::to_string(&snapshot)
-        .map_err(|error| parameter_error("serialize parameter state", error))
 }
 
 fn parameter_session_from_source(
@@ -1672,28 +2415,26 @@ fn parameter_session_from_source(
         .map_err(|error| parameter_error("open parameter session", error))
 }
 
-fn parse_parameter_patch(source: &str, kind: &str) -> FrontendResult<ResolutionPatch> {
-    serde_json::from_str(source)
-        .map_err(|error| parameter_error(&format!("parse {kind} parameter patch"), error))
+fn typed_parameter_values(
+    values: HashMap<String, SurfaceParameterValue>,
+) -> BTreeMap<String, ParameterValue> {
+    values
+        .into_iter()
+        .map(|(name, value)| (name, ParameterValue::from(value)))
+        .collect()
 }
 
-fn parse_parameter_values(source: &str) -> FrontendResult<BTreeMap<String, ParameterValue>> {
-    serde_json::from_str(source)
-        .map_err(|error| parameter_error("parse resolved parameter values", error))
+fn typed_parameter_patch(patch: SurfaceParameterPatch) -> ResolutionPatch {
+    ResolutionPatch {
+        values: typed_parameter_values(patch.values),
+        unset: patch.unset.into_iter().collect(),
+    }
 }
 
-fn render_parameter_values(surface_id: &str, values_json: &str) -> FrontendResult<String> {
-    let session = parameter_session_from_values(surface_id, values_json)?;
-    session
-        .render_sparse()
-        .map_err(|error| parameter_error("render sparse parameter profile", error))
-}
-
-fn parameter_session_from_values(
+fn parameter_session_from_typed_values(
     surface_id: &str,
-    values_json: &str,
+    values: HashMap<String, SurfaceParameterValue>,
 ) -> FrontendResult<ParameterSession> {
-    let values = parse_parameter_values(values_json)?;
     ParameterRuntime::default()
         .open_session(OpenSessionRequest {
             bundle: parameter_bundle(surface_id)?,
@@ -1702,7 +2443,7 @@ fn parameter_session_from_values(
             profile_text: None,
             context_patch: ResolutionPatch::default(),
             override_patch: ResolutionPatch {
-                values,
+                values: typed_parameter_values(values),
                 unset: BTreeSet::new(),
             },
             managed_save: false,
@@ -1737,10 +2478,10 @@ impl ParameterTaskLifecycle {
         attempt_id: String,
         surface_id: String,
         workspace: String,
-        values_json: String,
+        values: HashMap<String, SurfaceParameterValue>,
         enabled: bool,
     ) -> FrontendResult<Vec<String>> {
-        let session = parameter_session_from_values(&surface_id, &values_json)?;
+        let session = parameter_session_from_typed_values(&surface_id, values)?;
         self.coordinator
             .before_execution(attempt_id, workspace, &surface_id, enabled, &session)
             .map_err(|error| parameter_error("record parameter task attempt", error))?;
@@ -1770,10 +2511,10 @@ impl ParameterSessionLifecycle {
         &self,
         surface_id: String,
         workspace: String,
-        values_json: String,
+        values: HashMap<String, SurfaceParameterValue>,
         enabled: bool,
     ) -> FrontendResult<Vec<String>> {
-        let session = parameter_session_from_values(&surface_id, &values_json)?;
+        let session = parameter_session_from_typed_values(&surface_id, values)?;
         self.coordinator
             .opened(workspace, &surface_id, enabled, &session)
             .map_err(|error| parameter_error("record opened parameter session", error))?;
@@ -1785,10 +2526,10 @@ impl ParameterSessionLifecycle {
         &self,
         surface_id: String,
         workspace: String,
-        values_json: String,
+        values: HashMap<String, SurfaceParameterValue>,
         enabled: bool,
     ) -> FrontendResult<Vec<String>> {
-        let session = parameter_session_from_values(&surface_id, &values_json)?;
+        let session = parameter_session_from_typed_values(&surface_id, values)?;
         self.coordinator
             .accepted_durable_change(workspace, &surface_id, enabled, &session)
             .map_err(|error| parameter_error("record accepted parameter session change", error))?;
@@ -1813,58 +2554,27 @@ impl ParameterSessionLifecycle {
     }
 }
 
-/// Return the validated aggregate catalog of canonical parameter concepts and surfaces.
-#[uniffi::export]
-pub fn parameter_catalog_json() -> FrontendResult<String> {
-    let catalog = builtin_surface_catalog()
-        .map_err(|error| parameter_error("load parameter catalog", error))?;
-    serde_json::to_string(catalog)
-        .map_err(|error| parameter_error("serialize parameter catalog", error))
-}
-
-/// Return the aggregate parameter catalog under a surface-oriented API name.
-#[uniffi::export]
-pub fn parameter_surface_catalog_json() -> FrontendResult<String> {
-    parameter_catalog_json()
-}
-
-/// Return one canonical task or session definition without duplicating its concepts.
-#[uniffi::export]
-pub fn parameter_surface_definition_json(surface_id: String) -> FrontendResult<String> {
-    let catalog = builtin_surface_catalog()
-        .map_err(|error| parameter_error("load parameter catalog", error))?;
-    let surface = catalog.surface(&surface_id).ok_or_else(|| {
-        parameter_error(
-            "load parameter surface",
-            format!("unknown configurable surface {surface_id:?}"),
-        )
-    })?;
-    serde_json::to_string(surface)
-        .map_err(|error| parameter_error("serialize parameter definition", error))
-}
-
 /// Return one self-contained surface definition and its referenced concepts.
 #[uniffi::export]
-pub fn parameter_surface_bundle_json(surface_id: String) -> FrontendResult<String> {
-    serde_json::to_string(&parameter_bundle(&surface_id)?)
-        .map_err(|error| parameter_error("serialize parameter contract", error))
+pub fn parameter_surface_bundle(surface_id: String) -> FrontendResult<SurfaceParameterBundle> {
+    Ok(surface_parameter_bundle(parameter_bundle(&surface_id)?))
 }
 
 /// Resolve the current defaults and UI state for one surface.
 #[uniffi::export]
-pub fn parameter_defaults_json(surface_id: String) -> FrontendResult<String> {
+pub fn parameter_defaults(surface_id: String) -> FrontendResult<SurfaceParameterSnapshot> {
     let session =
         parameter_session_from_source(&surface_id, "defaults", None, None, PathBuf::from("."))?;
-    parameter_snapshot_json(&session)
+    surface_parameter_snapshot(&session)
 }
 
 /// Load and resolve an explicit sparse TOML profile supplied by the frontend.
 #[uniffi::export]
-pub fn parameter_load_json(
+pub fn parameter_load(
     surface_id: String,
     profile_toml: String,
     source_path: String,
-) -> FrontendResult<String> {
+) -> FrontendResult<SurfaceParameterSnapshot> {
     let session = parameter_session_from_source(
         &surface_id,
         "file",
@@ -1872,16 +2582,16 @@ pub fn parameter_load_json(
         Some(PathBuf::from(source_path)),
         PathBuf::from("."),
     )?;
-    parameter_snapshot_json(&session)
+    surface_parameter_snapshot(&session)
 }
 
 /// Load Last or Last Successful from the managed store, if present.
 #[uniffi::export]
-pub fn parameter_last_json(
+pub fn parameter_last(
     surface_id: String,
     workspace: String,
     successful: bool,
-) -> FrontendResult<Option<String>> {
+) -> FrontendResult<Option<SurfaceParameterSnapshot>> {
     let bundle = parameter_bundle(&surface_id)?;
     if successful && bundle.surface.kind() == SurfaceKind::Session {
         return Err(parameter_error(
@@ -1903,36 +2613,28 @@ pub fn parameter_last_json(
     };
     let session =
         parameter_session_from_source(&surface_id, source, Some(&profile), None, workspace)?;
-    parameter_snapshot_json(&session).map(Some)
+    surface_parameter_snapshot(&session).map(Some)
 }
 
 /// Resolve typed context and explicit override patches over one selected base source.
 #[uniffi::export]
-pub fn parameter_resolve_json(
+pub fn parameter_resolve(
     surface_id: String,
-    base_source: String,
+    base_source: SurfaceParameterBaseSource,
     profile_toml: Option<String>,
     profile_path: Option<String>,
-    context_patch_json: String,
-    override_patch_json: String,
-) -> FrontendResult<String> {
-    let context_patch = parse_parameter_patch(&context_patch_json, "context")?;
-    let override_patch = parse_parameter_patch(&override_patch_json, "override")?;
-    let source = match base_source.as_str() {
-        "defaults" => BaseSource::Defaults,
-        "file" => BaseSource::File(
+    context_patch: SurfaceParameterPatch,
+    override_patch: SurfaceParameterPatch,
+) -> FrontendResult<SurfaceParameterSnapshot> {
+    let source = match base_source {
+        SurfaceParameterBaseSource::Defaults => BaseSource::Defaults,
+        SurfaceParameterBaseSource::File => BaseSource::File(
             profile_path
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("<memory>")),
         ),
-        "last" => BaseSource::Last,
-        "last_successful" => BaseSource::LastSuccessful,
-        other => {
-            return Err(parameter_error(
-                "resolve parameter source",
-                format!("unknown parameter source {other:?}"),
-            ));
-        }
+        SurfaceParameterBaseSource::Last => BaseSource::Last,
+        SurfaceParameterBaseSource::LastSuccessful => BaseSource::LastSuccessful,
     };
     let session = ParameterRuntime::default()
         .open_session(OpenSessionRequest {
@@ -1940,47 +2642,50 @@ pub fn parameter_resolve_json(
             workspace: PathBuf::from("."),
             source,
             profile_text: profile_toml,
-            context_patch,
-            override_patch,
+            context_patch: typed_parameter_patch(context_patch),
+            override_patch: typed_parameter_patch(override_patch),
             managed_save: false,
         })
         .map_err(|error| parameter_error("resolve parameter session", error))?;
-    parameter_snapshot_json(&session)
+    surface_parameter_snapshot(&session)
 }
 
 /// Render typed resolved values as a sparse current-contract TOML profile.
 #[uniffi::export]
-pub fn parameter_render_toml(surface_id: String, values_json: String) -> FrontendResult<String> {
-    render_parameter_values(&surface_id, &values_json)
+pub fn parameter_render_toml(
+    surface_id: String,
+    values: HashMap<String, SurfaceParameterValue>,
+) -> FrontendResult<String> {
+    parameter_session_from_typed_values(&surface_id, values)?
+        .render_sparse()
+        .map_err(|error| parameter_error("render sparse parameter profile", error))
 }
 
 /// Evaluate catalog-owned run risks for one resolved task value set.
 #[uniffi::export]
-pub fn parameter_run_safety_json(
+pub fn parameter_run_safety(
     surface_id: String,
-    values_json: String,
-) -> FrontendResult<String> {
-    let session = parameter_session_from_values(&surface_id, &values_json)?;
+    values: HashMap<String, SurfaceParameterValue>,
+) -> FrontendResult<SurfaceRunSafety> {
+    let session = parameter_session_from_typed_values(&surface_id, values)?;
     let safety = session
         .required_run_safety()
         .map_err(|error| parameter_error("evaluate task run safety", error))?;
-    let bridge = ParameterRunSafetyBridge {
-        classes: safety.classes().iter().copied().collect(),
+    Ok(SurfaceRunSafety {
+        classes: safety.classes().iter().copied().map(Into::into).collect(),
         requires_interactive_confirmation: safety.requires_interactive_confirmation(),
         requires_overwrite_confirmation: safety.requires_overwrite_confirmation(),
         requires_input_mutation_confirmation: safety.requires_input_mutation_confirmation(),
-    };
-    serde_json::to_string(&bridge)
-        .map_err(|error| parameter_error("serialize task run safety", error))
+    })
 }
 
 /// Project one complete task invocation for CLI/TUI/GUI consumers.
 #[uniffi::export]
-pub fn parameter_provider_invocation_json(
+pub fn parameter_provider_invocation(
     surface_id: String,
-    values_json: String,
-) -> FrontendResult<String> {
-    let session = parameter_session_from_values(&surface_id, &values_json)?;
+    values: HashMap<String, SurfaceParameterValue>,
+) -> FrontendResult<SurfaceProviderInvocation> {
+    let session = parameter_session_from_typed_values(&surface_id, values)?;
     session
         .render_sparse()
         .map_err(|error| parameter_error("validate provider invocation parameters", error))?;
@@ -1991,35 +2696,38 @@ pub fn parameter_provider_invocation_json(
         _ => Ok(ProviderInvocationAdaptation::direct(direct)),
     })
     .map_err(|error| parameter_error("project provider invocation", error))?;
-    serde_json::to_string(&invocation)
-        .map_err(|error| parameter_error("serialize provider invocation", error))
+    Ok(SurfaceProviderInvocation {
+        args: invocation.args,
+        stdin: invocation.stdin,
+    })
 }
 
 /// Atomically save typed resolved values to an explicit sparse TOML profile.
 #[uniffi::export]
-pub fn parameter_save_json(
+pub fn parameter_save(
     surface_id: String,
-    values_json: String,
+    values: HashMap<String, SurfaceParameterValue>,
     destination_path: String,
-) -> FrontendResult<String> {
-    let profile = render_parameter_values(&surface_id, &values_json)?;
-    let result = write_parameter_profile(Path::new(&destination_path), &profile)?;
-    serde_json::to_string(&result)
-        .map_err(|error| parameter_error("serialize parameter save result", error))
+) -> FrontendResult<SurfaceParameterWriteResult> {
+    let profile = parameter_render_toml(surface_id, values)?;
+    write_parameter_profile(Path::new(&destination_path), &profile)
 }
 
-/// Project a canonical task or session definition into the launcher form shape.
 #[uniffi::export]
-pub fn parameter_form_json(surface_id: String) -> FrontendResult<String> {
-    let schema = casa_provider_contracts::project_ui_form(&parameter_bundle(&surface_id)?);
-    serde_json::to_string(&schema)
-        .map_err(|error| parameter_error("serialize parameter form projection", error))
+pub fn task_ui_schema(surface_id: String) -> FrontendResult<TaskUISchema> {
+    serde_json::from_value(casa_provider_contracts::project_ui_form(&parameter_bundle(
+        &surface_id,
+    )?))
+    .map_err(|error| parameter_error("project typed task form", error))
 }
 
-fn write_parameter_profile(path: &Path, contents: &str) -> FrontendResult<ParameterWriteResult> {
+fn write_parameter_profile(
+    path: &Path,
+    contents: &str,
+) -> FrontendResult<SurfaceParameterWriteResult> {
     let outcome = write_parameter_profile_atomic(path, contents)
         .map_err(|error| parameter_error("save parameter profile", error))?;
-    Ok(ParameterWriteResult {
+    Ok(SurfaceParameterWriteResult {
         path: path.to_string_lossy().into_owned(),
         bytes_written: outcome.bytes_written as u64,
         managed_kind: None,
@@ -2042,6 +2750,95 @@ pub fn probe_path(path: String) -> FrontendResult<Option<DatasetProbe>> {
     let path = PathBuf::from(path);
     probe_dataset_path(&path).map_err(|error| FrontendServiceError::Probe {
         reason: format!("{}: {error}", path.display()),
+    })
+}
+
+/// Decode one successful provider result and probe only contract-declared products.
+#[uniffi::export]
+pub fn task_completion(
+    surface_id: String,
+    stdout: String,
+    workspace: String,
+    values: Vec<TaskParameterValue>,
+) -> FrontendResult<TaskCompletionProjection> {
+    let bundle = builtin_surface_bundle(&surface_id)
+        .map_err(|reason| FrontendServiceError::TaskCompletion { reason })?;
+    let values = values
+        .into_iter()
+        .map(|entry| TaskOutputValue {
+            name: entry.name,
+            value: entry.value,
+        })
+        .collect::<Vec<_>>();
+    let completion = decode_task_completion(&bundle, &stdout, Path::new(&workspace), &values)
+        .map_err(|error| FrontendServiceError::TaskCompletion {
+            reason: error.to_string(),
+        })?;
+    let products = completion
+        .products
+        .into_iter()
+        .map(|product| {
+            let mut diagnostic = product.diagnostic;
+            let dataset = if product.exists
+                && matches!(
+                    product.resource_kind,
+                    RunProductKind::MeasurementSet
+                        | RunProductKind::CasaImage
+                        | RunProductKind::CasaTable
+                )
+            {
+                match probe_dataset_path(&product.path) {
+                    Ok(dataset) => {
+                        if dataset.is_none() {
+                            diagnostic = Some(format!(
+                                "{} is a declared product but no supported dataset probe recognized it",
+                                product.path.display()
+                            ));
+                        }
+                        dataset
+                    }
+                    Err(error) => {
+                        diagnostic = Some(format!(
+                            "failed to probe declared product {}: {error}",
+                            product.path.display()
+                        ));
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            TaskCompletionProduct {
+                id: product.id,
+                role: match product.role {
+                    RunProductRole::Primary => TaskProductRole::Primary,
+                    RunProductRole::Auxiliary => TaskProductRole::Auxiliary,
+                    RunProductRole::Preview => TaskProductRole::Preview,
+                },
+                resource_kind: match product.resource_kind {
+                    RunProductKind::MeasurementSet => TaskProductKind::MeasurementSet,
+                    RunProductKind::CasaImage => TaskProductKind::CasaImage,
+                    RunProductKind::CasaTable => TaskProductKind::CasaTable,
+                    RunProductKind::FitsImage => TaskProductKind::FitsImage,
+                    RunProductKind::File => TaskProductKind::File,
+                },
+                label: product.label,
+                path: product.path.to_string_lossy().into_owned(),
+                exists: product.exists,
+                preview_path: product
+                    .preview_path
+                    .map(|path| path.to_string_lossy().into_owned()),
+                preview_exists: product.preview_exists,
+                dataset,
+                diagnostic,
+            }
+        })
+        .collect();
+    Ok(TaskCompletionProjection {
+        surface_id: completion.surface_id,
+        summary: completion.summary,
+        products,
+        diagnostics: completion.diagnostics,
     })
 }
 
@@ -4249,7 +5046,7 @@ fn point_layer(spec: PointLayerSpec<'_>) -> PlotDocumentLayer {
         line_width: spec.line_width,
         opacity: 0.82,
         source_sample_count,
-        payload_strategy: "point_cloud".to_string(),
+        payload_strategy: PlotPayloadStrategy::PointCloud,
         provenance_summary: spec.provenance_summary,
     }
 }
@@ -4291,7 +5088,7 @@ fn interval_layer(spec: IntervalLayerSpec<'_>) -> PlotDocumentLayer {
         line_width: 1.0,
         opacity: 0.78,
         source_sample_count,
-        payload_strategy: "intervals".to_string(),
+        payload_strategy: PlotPayloadStrategy::Intervals,
         provenance_summary: spec.provenance_summary,
     }
 }
@@ -5685,139 +6482,113 @@ mod tests {
     }
 
     #[test]
-    fn application_catalog_json_exposes_canonical_frontend_projection() {
-        let catalog_json = application_catalog_json().expect("application catalog");
-        let catalog: serde_json::Value =
-            serde_json::from_str(&catalog_json).expect("application catalog json");
-        let applications = catalog["applications"]
-            .as_array()
-            .expect("applications array");
+    fn application_catalog_exposes_canonical_frontend_projection() {
+        let catalog = application_catalog().expect("application catalog");
+        let applications = catalog.applications;
         assert_eq!(applications.len(), 43);
         assert!(applications.iter().any(|application| {
-            application["id"] == "imager"
-                && application["kind"] == "task"
-                && application["display_name"] == "Imager"
-                && application["executable"] == "casars-imager"
+            application.id == "imager"
+                && application.kind == "task"
+                && application.display_name == "Imager"
+                && application.executable == "casars-imager"
         }));
         assert!(applications.iter().any(|application| {
-            application["id"] == "casars"
-                && application["kind"] == "launcher"
-                && application["include_in_suite"] == true
+            application.id == "casars"
+                && application.kind == "launcher"
+                && application.include_in_suite
         }));
     }
 
     #[test]
-    fn task_context_options_json_is_grounded_in_dataset_probe() {
+    fn task_context_options_are_grounded_in_dataset_probe() {
         let (_dir, ms_path) = unpack_small_ms();
 
-        let options_json =
-            task_context_options_json(ms_path.display().to_string()).expect("task options");
-        let options: serde_json::Value =
-            serde_json::from_str(&options_json).expect("task options json");
+        let options = task_context_options(ms_path.display().to_string()).expect("task options");
 
-        assert_eq!(options["dataset_kind"], "measurement_set");
-        assert_eq!(options["dataset_path"], ms_path.display().to_string());
-        let spectral_windows = options["spectral_windows"]
-            .as_array()
-            .expect("spectral window options");
-        assert!(!spectral_windows.is_empty());
+        assert_eq!(options.dataset_kind, "measurement_set");
+        assert_eq!(options.dataset_path, ms_path.display().to_string());
+        assert!(!options.spectral_windows.is_empty());
         assert_eq!(
-            options["defaults"]["spectral_window"],
-            spectral_windows[0].as_str().expect("first spw")
+            options.defaults["spectral_window"],
+            options.spectral_windows[0]
         );
-        assert_eq!(options["data_columns"], serde_json::json!(["DATA"]));
-        assert_eq!(options["defaults"]["data_column"], "DATA");
-        assert!(
-            options["fields"]
-                .as_array()
-                .expect("field options")
-                .iter()
-                .all(|value| value.as_str().is_some_and(|label| label.contains(':')))
-        );
+        assert_eq!(options.data_columns, ["DATA"]);
+        assert_eq!(options.defaults["data_column"], "DATA");
+        assert!(options.fields.iter().all(|label| label.contains(':')));
     }
 
     #[test]
     fn parameter_catalog_and_definitions_cover_task_and_session_surfaces() {
-        let catalog_json = parameter_surface_catalog_json().expect("parameter catalog");
-        let catalog: serde_json::Value =
-            serde_json::from_str(&catalog_json).expect("parameter catalog json");
-        let surfaces = catalog["surfaces"].as_array().expect("surface array");
+        let catalog =
+            casa_provider_contracts::builtin_surface_catalog().expect("parameter catalog");
+        let surfaces = &catalog.surfaces;
         assert_eq!(surfaces.len(), 42);
         assert_eq!(
             surfaces
                 .iter()
-                .filter(|surface| surface["kind"] == "task")
+                .filter(|surface| surface.kind() == SurfaceKind::Task)
                 .count(),
             40
         );
         assert_eq!(
             surfaces
                 .iter()
-                .filter(|surface| surface["kind"] == "session")
+                .filter(|surface| surface.kind() == SurfaceKind::Session)
                 .count(),
             2
         );
 
-        let definition_json =
-            parameter_surface_definition_json("imexplore".to_string()).expect("definition");
-        let definition: serde_json::Value =
-            serde_json::from_str(&definition_json).expect("definition json");
-        assert_eq!(definition["id"], "imexplore");
-        assert_eq!(definition["kind"], "session");
-        assert!(
-            definition["bindings"]
-                .as_array()
-                .expect("bindings")
-                .iter()
-                .any(|binding| {
-                    binding["name"] == "image" && binding["concept"]["id"] == "imexplore.image"
-                })
-        );
+        let definition = surfaces
+            .iter()
+            .find(|surface| surface.id() == "imexplore")
+            .expect("definition");
+        assert_eq!(definition.id(), "imexplore");
+        assert_eq!(definition.kind(), SurfaceKind::Session);
+        assert!(definition.bindings().iter().any(|binding| {
+            binding.name == "image" && binding.concept.id.as_str() == "imexplore.image"
+        }));
     }
 
     #[test]
     fn task_form_is_the_runtime_projection_of_the_builtin_definition() {
-        let schema_json = parameter_form_json("flagdata".to_string()).expect("flagdata schema");
-        let schema: serde_json::Value =
-            serde_json::from_str(&schema_json).expect("flagdata schema json");
-        assert_eq!(schema["schema_version"], 2);
-        assert_eq!(schema["command_id"], "flagdata");
-        let arguments = schema["arguments"].as_array().expect("arguments");
+        let schema = task_ui_schema("flagdata".to_string()).expect("flagdata schema");
+        assert_eq!(schema.schema_version, 2);
+        assert_eq!(schema.command_id, "flagdata");
+        let arguments = schema.arguments;
         let vis = arguments
             .iter()
-            .find(|argument| argument["id"] == "vis")
+            .find(|argument| argument.id == "vis")
             .expect("vis projection");
-        assert_eq!(vis["concept_id"], "data.input.vis");
-        assert_eq!(vis["concept_revision"], 1);
-        assert_eq!(vis["context_role"], "input_dataset");
-        assert_eq!(vis["parameter_type"], "array");
-        assert_eq!(vis["parser"]["flags"][0], "--vis");
+        assert_eq!(vis.concept_id.as_deref(), Some("data.input.vis"));
+        assert_eq!(vis.concept_revision, Some(1));
+        assert_eq!(vis.context_role.as_deref(), Some("input_dataset"));
+        assert_eq!(vis.parameter_type.as_deref(), Some("array"));
+        assert_eq!(
+            vis.parser
+                .flags
+                .as_ref()
+                .and_then(|flags| flags.first())
+                .map(String::as_str),
+            Some("--vis")
+        );
 
         let mode = arguments
             .iter()
-            .find(|argument| argument["id"] == "mode")
+            .find(|argument| argument.id == "mode")
             .expect("mode projection");
-        assert_eq!(mode["concept_id"], "flagdata.mode");
+        assert_eq!(mode.concept_id.as_deref(), Some("flagdata.mode"));
         assert!(
-            mode["parser"]["choices"]
-                .as_array()
-                .expect("mode choices")
-                .contains(&serde_json::json!("summary"))
+            mode.parser
+                .choices
+                .as_ref()
+                .is_some_and(|choices| choices.contains(&"summary".to_string()))
         );
 
-        let session_json = parameter_form_json("imexplore".to_string()).expect("session schema");
-        let session: serde_json::Value =
-            serde_json::from_str(&session_json).expect("session schema json");
-        assert_eq!(session["command_id"], "imexplore");
-        assert!(
-            session["arguments"]
-                .as_array()
-                .expect("session arguments")
-                .iter()
-                .any(|argument| {
-                    argument["id"] == "image" && argument["concept_id"] == "imexplore.image"
-                })
-        );
+        let session = task_ui_schema("imexplore".to_string()).expect("session schema");
+        assert_eq!(session.command_id, "imexplore");
+        assert!(session.arguments.iter().any(|argument| {
+            argument.id == "image" && argument.concept_id.as_deref() == Some("imexplore.image")
+        }));
     }
 
     #[test]
@@ -5832,17 +6603,15 @@ mod tests {
             ("flagdata", "mode", "flagdata.mode"),
             ("imhead", "mode", "imhead.mode"),
         ] {
-            let schema_json = parameter_form_json(surface_id.to_string()).expect("form projection");
-            let schema: serde_json::Value =
-                serde_json::from_str(&schema_json).expect("UI projection JSON");
-            let argument = schema["arguments"]
-                .as_array()
-                .expect("arguments")
+            let schema = task_ui_schema(surface_id.to_string()).expect("form projection");
+            let argument = schema
+                .arguments
                 .iter()
-                .find(|argument| argument["id"] == parameter)
+                .find(|argument| argument.id == parameter)
                 .unwrap_or_else(|| panic!("{surface_id} is missing {parameter}"));
             assert_eq!(
-                argument["concept_id"], expected_concept,
+                argument.concept_id.as_deref(),
+                Some(expected_concept),
                 "{surface_id}.{parameter} must retain its reviewed concept"
             );
         }
@@ -5850,84 +6619,97 @@ mod tests {
 
     #[test]
     fn parameter_resolution_preserves_context_and_override_origins() {
-        let defaults_json = parameter_defaults_json("imager".to_string()).expect("defaults");
-        let defaults: serde_json::Value =
-            serde_json::from_str(&defaults_json).expect("defaults json");
-        assert_eq!(defaults["base_source"]["kind"], "defaults");
-        assert_eq!(defaults["dirty"], false);
-        assert_eq!(defaults["states"]["niter"]["origin"], "default");
+        let defaults = parameter_defaults("imager".to_string()).expect("defaults");
+        assert_eq!(defaults.base_source, SurfaceParameterSourceRecord::Defaults);
+        assert!(!defaults.dirty);
+        assert_eq!(defaults.states["niter"].origin, "default");
 
-        let context = serde_json::json!({
-            "values": {
-                "vis": {"kind": "string", "value": "input.ms"},
-                "imagename": {"kind": "string", "value": "products/image"}
-            },
-            "unset": []
-        });
-        let overrides = serde_json::json!({
-            "values": {"niter": {"kind": "integer", "value": 7}},
-            "unset": []
-        });
-        let resolved_json = parameter_resolve_json(
+        let context = SurfaceParameterPatch {
+            values: HashMap::from([
+                (
+                    "vis".to_string(),
+                    SurfaceParameterValue::String {
+                        value: "input.ms".to_string(),
+                    },
+                ),
+                (
+                    "imagename".to_string(),
+                    SurfaceParameterValue::String {
+                        value: "products/image".to_string(),
+                    },
+                ),
+            ]),
+            unset: Vec::new(),
+        };
+        let overrides = SurfaceParameterPatch {
+            values: HashMap::from([(
+                "niter".to_string(),
+                SurfaceParameterValue::Integer { value: 7 },
+            )]),
+            unset: Vec::new(),
+        };
+        let resolved = parameter_resolve(
             "imager".to_string(),
-            "defaults".to_string(),
+            SurfaceParameterBaseSource::Defaults,
             None,
             None,
-            context.to_string(),
-            overrides.to_string(),
+            context,
+            overrides,
         )
         .expect("resolved parameters");
-        let resolved: serde_json::Value =
-            serde_json::from_str(&resolved_json).expect("resolved json");
-        assert_eq!(resolved["dirty"], true);
-        assert_eq!(resolved["states"]["vis"]["origin"], "context");
-        assert_eq!(resolved["states"]["niter"]["origin"], "override");
-        assert_eq!(resolved["states"]["niter"]["value"]["value"], 7);
+        assert!(resolved.dirty);
+        assert_eq!(resolved.states["vis"].origin, "context");
+        assert_eq!(resolved.states["niter"].origin, "override");
+        assert_eq!(
+            resolved.states["niter"].value,
+            Some(SurfaceParameterValue::Integer { value: 7 })
+        );
         assert!(
-            resolved["profile_toml"]
-                .as_str()
+            resolved
+                .profile_toml
+                .as_deref()
                 .expect("profile TOML")
                 .contains("niter = 7")
         );
     }
 
     #[test]
-    fn parameter_run_safety_json_exposes_catalog_owned_frontend_gates() {
-        let values = serde_json::json!({
-            "savemodel": {"kind": "string", "value": "modelcolumn"}
-        });
-        let safety_json = parameter_run_safety_json("imager".to_string(), values.to_string())
-            .expect("imager safety");
-        let safety: serde_json::Value = serde_json::from_str(&safety_json).unwrap();
-        assert_eq!(safety["requires_interactive_confirmation"], true);
-        assert_eq!(safety["requires_overwrite_confirmation"], false);
-        assert_eq!(safety["requires_input_mutation_confirmation"], true);
+    fn parameter_run_safety_exposes_catalog_owned_frontend_gates() {
+        let values = HashMap::from([(
+            "savemodel".to_string(),
+            SurfaceParameterValue::String {
+                value: "modelcolumn".to_string(),
+            },
+        )]);
+        let safety = parameter_run_safety("imager".to_string(), values).expect("imager safety");
+        assert!(safety.requires_interactive_confirmation);
+        assert!(!safety.requires_overwrite_confirmation);
+        assert!(safety.requires_input_mutation_confirmation);
         assert!(
-            safety["classes"]
-                .as_array()
-                .unwrap()
-                .contains(&serde_json::json!("product_write"))
+            safety
+                .classes
+                .contains(&SurfaceRunSafetyClass::ProductWrite)
         );
         assert!(
-            safety["classes"]
-                .as_array()
-                .unwrap()
-                .contains(&serde_json::json!("input_mutation"))
+            safety
+                .classes
+                .contains(&SurfaceRunSafetyClass::InputMutation)
         );
     }
 
     #[test]
-    fn parameter_provider_invocation_json_uses_simobserve_family_stdin() {
-        let values = serde_json::json!({
-            "request_kind": {"kind": "string", "value": "family"}
-        });
-        let invocation_json =
-            parameter_provider_invocation_json("simobserve".to_string(), values.to_string())
-                .expect("family invocation");
-        let invocation: serde_json::Value = serde_json::from_str(&invocation_json).unwrap();
-        assert_eq!(invocation["args"], serde_json::json!(["--json-run", "-"]));
+    fn parameter_provider_invocation_uses_simobserve_family_stdin() {
+        let values = HashMap::from([(
+            "request_kind".to_string(),
+            SurfaceParameterValue::String {
+                value: "family".to_string(),
+            },
+        )]);
+        let invocation = parameter_provider_invocation("simobserve".to_string(), values)
+            .expect("family invocation");
+        assert_eq!(invocation.args, ["--json-run", "-"]);
         let request: serde_json::Value =
-            serde_json::from_str(invocation["stdin"].as_str().expect("stdin JSON")).unwrap();
+            serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
         assert_eq!(request["kind"], "family");
         assert_eq!(request["request"]["telescope"], "VLA");
         assert_eq!(request["request"]["output_ms"], "simobserve-family.ms");
@@ -5936,7 +6718,7 @@ mod tests {
     }
 
     #[test]
-    fn one_profile_matches_runtime_ui_projection_and_uniffi_json() {
+    fn one_profile_matches_runtime_ui_projection_and_typed_uniffi() {
         let source_path = PathBuf::from("profiles/imager.toml");
         let profile_toml = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -5970,35 +6752,34 @@ mod tests {
             ]))
         );
 
-        let uniffi_snapshot_json = parameter_load_json(
+        let uniffi_snapshot = parameter_load(
             "imager".to_string(),
             profile_toml.to_string(),
             source_path.to_string_lossy().into_owned(),
         )
         .expect("UniFFI profile resolution");
-        let uniffi_snapshot: serde_json::Value =
-            serde_json::from_str(&uniffi_snapshot_json).expect("snapshot json");
         assert_eq!(
-            uniffi_snapshot["states"],
-            serde_json::to_value(direct.states()).expect("direct states json")
+            uniffi_snapshot.states["imsize"].value,
+            Some(SurfaceParameterValue::Array {
+                values: vec![
+                    SurfaceParameterValue::Integer { value: 1024 },
+                    SurfaceParameterValue::Integer { value: 1024 },
+                ],
+            })
         );
         assert_eq!(
-            uniffi_snapshot["diagnostics"],
-            serde_json::to_value(direct.diagnostics()).expect("direct diagnostics json")
+            uniffi_snapshot.diagnostics.len(),
+            direct.diagnostics().len()
         );
-        let canonical_profile = uniffi_snapshot["profile_toml"]
-            .as_str()
+        let canonical_profile = uniffi_snapshot
+            .profile_toml
+            .as_deref()
             .expect("canonical profile TOML");
         assert!(canonical_profile.contains("imsize = [1024, 1024]"));
         assert!(!canonical_profile.contains("cell ="));
 
-        let direct_ui = casa_provider_contracts::project_ui_form(&bundle);
-        let uniffi_ui_json =
-            parameter_form_json("imager".to_string()).expect("UniFFI form projection");
-        let uniffi_ui: serde_json::Value =
-            serde_json::from_str(&uniffi_ui_json).expect("UI projection json");
-        assert_eq!(uniffi_ui, direct_ui);
-        let arguments = uniffi_ui["arguments"].as_array().expect("UI arguments");
+        let uniffi_ui = task_ui_schema("imager".to_string()).expect("UniFFI form projection");
+        let arguments = uniffi_ui.arguments;
         for binding in bundle.surface.bindings().iter().filter(|binding| {
             matches!(
                 binding.name.as_str(),
@@ -6007,12 +6788,15 @@ mod tests {
         }) {
             let argument = arguments
                 .iter()
-                .find(|argument| argument["id"] == binding.name)
+                .find(|argument| argument.id == binding.name)
                 .unwrap_or_else(|| panic!("UI projection missing {}", binding.name));
-            assert_eq!(argument["concept_id"], binding.concept.id.as_str());
             assert_eq!(
-                argument["concept_revision"],
-                binding.concept.semantic_revision.0
+                argument.concept_id.as_deref(),
+                Some(binding.concept.id.as_str())
+            );
+            assert_eq!(
+                argument.concept_revision,
+                Some(u64::from(binding.concept.semantic_revision.0))
             );
         }
     }
@@ -6020,42 +6804,54 @@ mod tests {
     #[test]
     fn explicit_and_managed_parameter_profiles_round_trip() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let values = serde_json::json!({
-            "vis": {"kind": "string", "value": "input.ms"},
-            "imagename": {"kind": "string", "value": "products/image"},
-            "niter": {"kind": "integer", "value": 42}
-        })
-        .to_string();
+        let values = HashMap::from([
+            (
+                "vis".to_string(),
+                SurfaceParameterValue::String {
+                    value: "input.ms".to_string(),
+                },
+            ),
+            (
+                "imagename".to_string(),
+                SurfaceParameterValue::String {
+                    value: "products/image".to_string(),
+                },
+            ),
+            (
+                "niter".to_string(),
+                SurfaceParameterValue::Integer { value: 42 },
+            ),
+        ]);
         let profile_path = temp.path().join("profiles/imager.toml");
-        let save_json = parameter_save_json(
+        let save = parameter_save(
             "imager".to_string(),
             values.clone(),
             profile_path.to_string_lossy().into_owned(),
         )
         .expect("save profile");
-        let save: serde_json::Value = serde_json::from_str(&save_json).expect("save json");
-        assert_eq!(save["path"], profile_path.to_string_lossy().as_ref());
-        assert!(
-            save["bytes_written"]
-                .as_u64()
-                .is_some_and(|bytes| bytes > 0)
-        );
-        assert!(save.get("managed_kind").is_none());
+        assert_eq!(save.path, profile_path.to_string_lossy());
+        assert!(save.bytes_written > 0);
+        assert_eq!(save.managed_kind, None);
 
         let profile_toml = fs::read_to_string(&profile_path).expect("read profile");
         assert!(profile_toml.contains("surface = \"imager\""));
         assert!(profile_toml.contains("niter = 42"));
         assert!(!profile_toml.contains("cell ="));
-        let loaded_json = parameter_load_json(
+        let loaded = parameter_load(
             "imager".to_string(),
             profile_toml,
             profile_path.to_string_lossy().into_owned(),
         )
         .expect("load profile");
-        let loaded: serde_json::Value = serde_json::from_str(&loaded_json).expect("loaded json");
-        assert_eq!(loaded["base_source"]["kind"], "file");
-        assert_eq!(loaded["states"]["niter"]["origin"], "base_profile");
-        assert_eq!(loaded["states"]["niter"]["value"]["value"], 42);
+        assert!(matches!(
+            loaded.base_source,
+            SurfaceParameterSourceRecord::File { .. }
+        ));
+        assert_eq!(loaded.states["niter"].origin, "base_profile");
+        assert_eq!(
+            loaded.states["niter"].value,
+            Some(SurfaceParameterValue::Integer { value: 42 })
+        );
 
         let workspace = temp.path().join("workspace");
         let lifecycle = ParameterTaskLifecycle::new();
@@ -6069,16 +6865,18 @@ mod tests {
             )
             .expect("write Last through lifecycle");
 
-        let last_json = parameter_last_json(
+        let last = parameter_last(
             "imager".to_string(),
             workspace.to_string_lossy().into_owned(),
             false,
         )
         .expect("load Last")
         .expect("Last exists");
-        let last: serde_json::Value = serde_json::from_str(&last_json).expect("Last json");
-        assert_eq!(last["base_source"]["kind"], "last");
-        assert_eq!(last["states"]["niter"]["value"]["value"], 42);
+        assert_eq!(last.base_source, SurfaceParameterSourceRecord::Last);
+        assert_eq!(
+            last.states["niter"].value,
+            Some(SurfaceParameterValue::Integer { value: 42 })
+        );
 
         assert!(
             lifecycle
@@ -6086,7 +6884,7 @@ mod tests {
                 .is_empty()
         );
         assert!(
-            parameter_last_json(
+            parameter_last(
                 "imager".to_string(),
                 workspace.to_string_lossy().into_owned(),
                 true,
@@ -6095,7 +6893,7 @@ mod tests {
             .is_some()
         );
 
-        let error = parameter_last_json(
+        let error = parameter_last(
             "imexplore".to_string(),
             workspace.to_string_lossy().into_owned(),
             true,
@@ -6108,7 +6906,7 @@ mod tests {
     fn managed_parameter_lookup_distinguishes_missing_from_corrupt() {
         let workspace = tempfile::tempdir().unwrap();
         assert!(
-            parameter_last_json(
+            parameter_last(
                 "imager".to_string(),
                 workspace.path().to_string_lossy().into_owned(),
                 false,
@@ -6120,7 +6918,7 @@ mod tests {
         ManagedStateStore::for_workspace(workspace.path())
             .write("imager", ManagedProfileKind::Last, "not valid profile TOML")
             .unwrap();
-        let error = parameter_last_json(
+        let error = parameter_last(
             "imager".to_string(),
             workspace.path().to_string_lossy().into_owned(),
             false,
@@ -6419,6 +7217,56 @@ mod tests {
                 .iter()
                 .any(|dataset| dataset.name == "notes.txt")
         );
+    }
+
+    #[test]
+    fn task_completion_uses_declared_product_and_exact_probe_metadata() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let table_path = dir.path().join("gain.cal");
+        make_table(&table_path);
+        let completion = task_completion(
+            "gaincal".to_string(),
+            r#"{"kind":"solve_gain","report":{}}"#.to_string(),
+            dir.path().display().to_string(),
+            vec![TaskParameterValue {
+                name: "output".to_string(),
+                value: "gain.cal".to_string(),
+            }],
+        )
+        .expect("typed completion");
+
+        assert_eq!(completion.products.len(), 1);
+        let product = &completion.products[0];
+        assert_eq!(product.path, table_path.display().to_string());
+        assert_eq!(product.resource_kind, TaskProductKind::CasaTable);
+        assert_eq!(
+            product.dataset.as_ref().map(|dataset| &dataset.kind),
+            Some(&DatasetKind::Table)
+        );
+        assert!(product.diagnostic.is_none());
+    }
+
+    #[test]
+    fn task_completion_retains_unrecognized_declared_dataset_with_diagnostic() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image_path = dir.path().join("mom0.image");
+        std::fs::create_dir(&image_path).expect("empty image directory");
+        let completion = task_completion(
+            "immoments".to_string(),
+            r#"{"kind":"immoments","result":{}}"#.to_string(),
+            dir.path().display().to_string(),
+            vec![TaskParameterValue {
+                name: "outfile".to_string(),
+                value: "mom0.image".to_string(),
+            }],
+        )
+        .expect("typed completion");
+
+        assert_eq!(completion.products.len(), 1);
+        let product = &completion.products[0];
+        assert!(product.exists);
+        assert!(product.dataset.is_none());
+        assert!(product.diagnostic.is_some());
     }
 
     #[test]

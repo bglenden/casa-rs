@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import CoreGraphics
+import CasarsFrontendServices
 @testable import CasarsMacCore
 import XCTest
 
@@ -1284,12 +1285,10 @@ final class AssistantDiscussionTests: XCTestCase {
         let content = try XCTUnwrap(result["content"] as? [[String: Any]])
         let text = try XCTUnwrap(content.first?["text"] as? String)
         let data = try XCTUnwrap(text.data(using: .utf8))
-        let suggestion = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let suggestion = try CasarsFrontendServices.assistantTaskSuggestion(
+            toolOutput: String(decoding: data, as: UTF8.self)
         )
-        let patchObject = try XCTUnwrap(suggestion["validated_patch"])
-        let patchData = try JSONSerialization.data(withJSONObject: patchObject)
-        let patch = try JSONDecoder().decode(SurfaceParameterPatch.self, from: patchData)
+        let patch = suggestion.validatedPatch
 
         XCTAssertEqual(patch.values["vis"], .string("input.ms"))
         XCTAssertEqual(patch.values["weighting"], .string("briggs"))

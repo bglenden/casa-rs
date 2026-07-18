@@ -1,4 +1,5 @@
 import CasarsMacCore
+import CasarsFrontendServices
 import AppKit
 import Foundation
 import SwiftUI
@@ -8014,7 +8015,7 @@ private struct RuntimeProgressView: View {
 
 private struct TaskParameterGroup: Identifiable {
     let name: String
-    var arguments: [TaskUIArgument]
+    var arguments: [TaskUiArgument]
     var id: String { name }
 }
 
@@ -8037,7 +8038,7 @@ struct GenericTaskPanel: View {
         store.state.applicationCatalog.first { $0.id == activeTaskID }
     }
 
-    private var schema: TaskUISchema? {
+    private var schema: TaskUiSchema? {
         store.state.taskUISchemas[activeTaskID]
     }
 
@@ -8178,7 +8179,7 @@ struct GenericTaskPanel: View {
         !showingTaskList && activeTaskID == "imager" && store.state.taskRun.imagerProgress != nil
     }
 
-    private func genericParameterBlock(schema: TaskUISchema) -> some View {
+    private func genericParameterBlock(schema: TaskUiSchema) -> some View {
         let groups = parameterGroups(for: schema)
         let hiddenAdvancedCount = schema.arguments
             .filter {
@@ -8211,7 +8212,7 @@ struct GenericTaskPanel: View {
                             .foregroundStyle(.secondary)
                     }
                     LazyVGrid(columns: parameterGridColumns, alignment: .leading, spacing: 8) {
-                        ForEach(group.arguments) { argument in
+                        ForEach(group.arguments, id: \.id) { argument in
                             genericControl(argument: argument)
                         }
                     }
@@ -8221,7 +8222,7 @@ struct GenericTaskPanel: View {
         .taskCard()
     }
 
-    private func parameterGroups(for schema: TaskUISchema) -> [TaskParameterGroup] {
+    private func parameterGroups(for schema: TaskUiSchema) -> [TaskParameterGroup] {
         let arguments = schema.arguments
             .filter { shouldShowArgument($0) }
             .sorted { parameterOrder(for: $0) < parameterOrder(for: $1) }
@@ -8239,7 +8240,7 @@ struct GenericTaskPanel: View {
         return groups
     }
 
-    private func shouldShowArgument(_ argument: TaskUIArgument) -> Bool {
+    private func shouldShowArgument(_ argument: TaskUiArgument) -> Bool {
         guard let session = store.parameterSession(surfaceID: activeTaskID, instanceID: tabID),
               let binding = session.bundle.surface.bindings.first(where: { $0.name == argument.id }),
               binding.projections.presentation.hidden == false,
@@ -8252,11 +8253,11 @@ struct GenericTaskPanel: View {
             || shouldRevealAdvancedArgument(argument)
     }
 
-    private func shouldRevealAdvancedArgument(_ argument: TaskUIArgument) -> Bool {
+    private func shouldRevealAdvancedArgument(_ argument: TaskUiArgument) -> Bool {
         hasNonDefaultGenericValue(argument)
     }
 
-    private func hasNonDefaultGenericValue(_ argument: TaskUIArgument) -> Bool {
+    private func hasNonDefaultGenericValue(_ argument: TaskUiArgument) -> Bool {
         store.parameterOrigin(surfaceID: activeTaskID, instanceID: tabID, name: argument.id) != "default"
     }
 
@@ -8412,7 +8413,7 @@ struct GenericTaskPanel: View {
                     .workbenchFont(.headline)
                 Toggle("Confirm catalog-declared run risks", isOn: confirmed)
                     .accessibilityIdentifier("task.safety.confirm")
-                Text(safety.classes.joined(separator: ", "))
+                Text(safety.classes.map(\.protocolValue).joined(separator: ", "))
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -8421,7 +8422,7 @@ struct GenericTaskPanel: View {
     }
 
     @ViewBuilder
-    private func genericControl(argument: TaskUIArgument) -> some View {
+    private func genericControl(argument: TaskUiArgument) -> some View {
         let taskID = activeTaskID
         let value = Binding(
             get: { store.parameterText(surfaceID: taskID, instanceID: tabID, name: argument.id) },
@@ -8561,7 +8562,7 @@ struct GenericTaskPanel: View {
     private func genericChannelSelectionControl(
         label: String,
         value: Binding<String>,
-        argument: TaskUIArgument
+        argument: TaskUiArgument
     ) -> some View {
         let limit = genericImageChannelLimit()
         let isValid = isValidGenericChannelSelection(value.wrappedValue, channelLimit: limit)
@@ -8775,11 +8776,11 @@ struct GenericTaskPanel: View {
             }
     }
 
-    private func isChannelSelectionArgument(_ argument: TaskUIArgument) -> Bool {
+    private func isChannelSelectionArgument(_ argument: TaskUiArgument) -> Bool {
         parameterConcept(for: argument)?.id == "image.selection.chans"
     }
 
-    private func prompt(for argument: TaskUIArgument) -> String {
+    private func prompt(for argument: TaskUiArgument) -> String {
         if let example = parameterConcept(for: argument)?.documentation.examples.first,
            !example.isEmpty {
             return example
@@ -8792,7 +8793,7 @@ struct GenericTaskPanel: View {
         return displayLabel(for: argument)
     }
 
-    private func helpText(for argument: TaskUIArgument) -> String {
+    private func helpText(for argument: TaskUiArgument) -> String {
         guard let concept = parameterConcept(for: argument) else { return argument.help }
         return [concept.documentation.summary, concept.documentation.details, parameterBinding(for: argument)?.surfaceNote]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -8820,7 +8821,7 @@ struct GenericTaskPanel: View {
             return concept.valueDomain.resourceKind == "image" && concept.semanticRole == "input_data"
         }
         if let argument = imageArgument {
-            let value = store.parameterText(surfaceID: schema.commandID, instanceID: tabID, name: argument.id)
+            let value = store.parameterText(surfaceID: schema.commandId, instanceID: tabID, name: argument.id)
             if !value.isEmpty, let dataset = imageDataset(matching: value) {
                 return dataset
             }
@@ -8838,7 +8839,7 @@ struct GenericTaskPanel: View {
         }
     }
 
-    private func choices(for argument: TaskUIArgument) -> [String] {
+    private func choices(for argument: TaskUiArgument) -> [String] {
         let concept = parameterConcept(for: argument)
         let binding = parameterBinding(for: argument)
         switch concept?.valueDomain.resourceKind {
@@ -8925,7 +8926,7 @@ struct GenericTaskPanel: View {
         return []
     }
 
-    private func datasetPathChoices(for argument: TaskUIArgument) -> [DatasetPathChoice] {
+    private func datasetPathChoices(for argument: TaskUiArgument) -> [DatasetPathChoice] {
         choices(for: argument).map { path in
             DatasetPathChoice(name: displayPath(path), path: storedPathValue(fromDisplayedPath: path))
         }
@@ -8943,7 +8944,7 @@ struct GenericTaskPanel: View {
         }
     }
 
-    private func displayLabel(for argument: TaskUIArgument) -> String {
+    private func displayLabel(for argument: TaskUiArgument) -> String {
         let label = (parameterBinding(for: argument)?.projections.presentation.label ?? argument.label)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if !label.isEmpty {
@@ -8957,22 +8958,22 @@ struct GenericTaskPanel: View {
             .joined(separator: " ")
     }
 
-    private func isPathArgument(_ argument: TaskUIArgument) -> Bool {
+    private func isPathArgument(_ argument: TaskUiArgument) -> Bool {
         parameterConcept(for: argument)?.valueDomain.isPathLike == true
     }
 
-    private func isRegionArgument(_ argument: TaskUIArgument) -> Bool {
+    private func isRegionArgument(_ argument: TaskUiArgument) -> Bool {
         parameterBinding(for: argument)?.contextRole == "region_reference"
     }
 
-    private func canBrowse(argument: TaskUIArgument) -> Bool {
+    private func canBrowse(argument: TaskUiArgument) -> Bool {
         guard isPathArgument(argument) else {
             return false
         }
         return true
     }
 
-    private func pathIntent(for argument: TaskUIArgument) -> TaskParameterPathIntent {
+    private func pathIntent(for argument: TaskUiArgument) -> TaskParameterPathIntent {
         let concept = parameterConcept(for: argument)
         return TaskParameterPathIntent(
             resourceKind: concept?.valueDomain.resourceKind,
@@ -8997,7 +8998,7 @@ struct GenericTaskPanel: View {
         )
     }
 
-    private func pathDisplayBinding(rawValue: Binding<String>, argument: TaskUIArgument) -> Binding<String> {
+    private func pathDisplayBinding(rawValue: Binding<String>, argument: TaskUiArgument) -> Binding<String> {
         guard isRegionArgument(argument) else {
             return pathValueBinding(rawValue: rawValue)
         }
@@ -9011,20 +9012,20 @@ struct GenericTaskPanel: View {
         )
     }
 
-    private func parameterBinding(for argument: TaskUIArgument) -> SurfaceParameterBinding? {
+    private func parameterBinding(for argument: TaskUiArgument) -> SurfaceParameterBinding? {
         store.parameterSession(surfaceID: activeTaskID, instanceID: tabID)?
             .bundle.surface.bindings.first { $0.name == argument.id }
     }
 
-    private func parameterConcept(for argument: TaskUIArgument) -> SurfaceParameterConcept? {
+    private func parameterConcept(for argument: TaskUiArgument) -> SurfaceParameterConcept? {
         store.parameterSession(surfaceID: activeTaskID, instanceID: tabID)?.bundle.concept(for: argument.id)
     }
 
-    private func parameterOrder(for argument: TaskUIArgument) -> Int {
-        parameterBinding(for: argument)?.order ?? argument.order
+    private func parameterOrder(for argument: TaskUiArgument) -> Int {
+        parameterBinding(for: argument).map { Int($0.order) } ?? Int(argument.order)
     }
 
-    private func isBooleanArgument(_ argument: TaskUIArgument) -> Bool {
+    private func isBooleanArgument(_ argument: TaskUiArgument) -> Bool {
         parameterConcept(for: argument)?.valueDomain == .bool
     }
 
@@ -9449,7 +9450,7 @@ struct ApplicationCatalogBlock: View {
                     .foregroundStyle(.secondary)
             }
 
-            ForEach(taskRows) { task in
+            ForEach(taskRows, id: \.id) { task in
                 Button {
                     selectTask?(task.id)
                 } label: {

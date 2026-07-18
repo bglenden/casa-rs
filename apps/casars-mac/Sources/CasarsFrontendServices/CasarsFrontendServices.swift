@@ -448,6 +448,22 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
+    typealias FfiType = Int64
+    typealias SwiftType = Int64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int64, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterDouble: FfiConverterPrimitive {
     typealias FfiType = Double
     typealias SwiftType = Double
@@ -555,7 +571,7 @@ public protocol ParameterSessionLifecycleProtocol: AnyObject, Sendable {
     /**
      * Queue one backend-accepted durable session change.
      */
-    func acceptedDurableChange(surfaceId: String, workspace: String, valuesJson: String, enabled: Bool) throws  -> [String]
+    func acceptedDurableChange(surfaceId: String, workspace: String, values: [String: SurfaceParameterValue], enabled: Bool) throws  -> [String]
 
     /**
      * Flush one destination on clean session close.
@@ -570,7 +586,7 @@ public protocol ParameterSessionLifecycleProtocol: AnyObject, Sendable {
     /**
      * Record one successfully opened session root.
      */
-    func opened(surfaceId: String, workspace: String, valuesJson: String, enabled: Bool) throws  -> [String]
+    func opened(surfaceId: String, workspace: String, values: [String: SurfaceParameterValue], enabled: Bool) throws  -> [String]
 
     /**
      * Drain any asynchronous persistence warnings.
@@ -643,12 +659,12 @@ public convenience init() {
     /**
      * Queue one backend-accepted durable session change.
      */
-open func acceptedDurableChange(surfaceId: String, workspace: String, valuesJson: String, enabled: Bool)throws  -> [String]  {
+open func acceptedDurableChange(surfaceId: String, workspace: String, values: [String: SurfaceParameterValue], enabled: Bool)throws  -> [String]  {
     return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_method_parametersessionlifecycle_accepted_durable_change(self.uniffiClonePointer(),
         FfiConverterString.lower(surfaceId),
         FfiConverterString.lower(workspace),
-        FfiConverterString.lower(valuesJson),
+        FfiConverterDictionaryStringTypeSurfaceParameterValue.lower(values),
         FfiConverterBool.lower(enabled),$0
     )
 })
@@ -679,12 +695,12 @@ open func flushAll() -> [String]  {
     /**
      * Record one successfully opened session root.
      */
-open func opened(surfaceId: String, workspace: String, valuesJson: String, enabled: Bool)throws  -> [String]  {
+open func opened(surfaceId: String, workspace: String, values: [String: SurfaceParameterValue], enabled: Bool)throws  -> [String]  {
     return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_method_parametersessionlifecycle_opened(self.uniffiClonePointer(),
         FfiConverterString.lower(surfaceId),
         FfiConverterString.lower(workspace),
-        FfiConverterString.lower(valuesJson),
+        FfiConverterDictionaryStringTypeSurfaceParameterValue.lower(values),
         FfiConverterBool.lower(enabled),$0
     )
 })
@@ -771,7 +787,7 @@ public protocol ParameterTaskLifecycleProtocol: AnyObject, Sendable {
     /**
      * Capture and persist the exact validated snapshot immediately before execution.
      */
-    func beforeExecution(attemptId: String, surfaceId: String, workspace: String, valuesJson: String, enabled: Bool) throws  -> [String]
+    func beforeExecution(attemptId: String, surfaceId: String, workspace: String, values: [String: SurfaceParameterValue], enabled: Bool) throws  -> [String]
 
 }
 /**
@@ -851,13 +867,13 @@ open func afterCompletion(attemptId: String, successful: Bool) -> [String]  {
     /**
      * Capture and persist the exact validated snapshot immediately before execution.
      */
-open func beforeExecution(attemptId: String, surfaceId: String, workspace: String, valuesJson: String, enabled: Bool)throws  -> [String]  {
+open func beforeExecution(attemptId: String, surfaceId: String, workspace: String, values: [String: SurfaceParameterValue], enabled: Bool)throws  -> [String]  {
     return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_method_parametertasklifecycle_before_execution(self.uniffiClonePointer(),
         FfiConverterString.lower(attemptId),
         FfiConverterString.lower(surfaceId),
         FfiConverterString.lower(workspace),
-        FfiConverterString.lower(valuesJson),
+        FfiConverterDictionaryStringTypeSurfaceParameterValue.lower(values),
         FfiConverterBool.lower(enabled),$0
     )
 })
@@ -917,6 +933,326 @@ public func FfiConverterTypeParameterTaskLifecycle_lower(_ value: ParameterTaskL
 }
 
 
+
+
+public struct ApplicationCatalogEntry {
+    public var id: String
+    public var kind: String
+    public var category: String
+    public var displayName: String
+    public var executable: String
+    public var cargoPackage: String
+    public var overrideEnv: String
+    public var shellKind: String
+    public var interaction: String
+    public var browserKind: String?
+    public var datasetKinds: [String]
+    public var showInTui: Bool
+    public var showInSwift: Bool
+    public var includeInSuite: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, kind: String, category: String, displayName: String, executable: String, cargoPackage: String, overrideEnv: String, shellKind: String, interaction: String, browserKind: String?, datasetKinds: [String], showInTui: Bool, showInSwift: Bool, includeInSuite: Bool) {
+        self.id = id
+        self.kind = kind
+        self.category = category
+        self.displayName = displayName
+        self.executable = executable
+        self.cargoPackage = cargoPackage
+        self.overrideEnv = overrideEnv
+        self.shellKind = shellKind
+        self.interaction = interaction
+        self.browserKind = browserKind
+        self.datasetKinds = datasetKinds
+        self.showInTui = showInTui
+        self.showInSwift = showInSwift
+        self.includeInSuite = includeInSuite
+    }
+}
+
+#if compiler(>=6)
+extension ApplicationCatalogEntry: Sendable {}
+#endif
+
+
+extension ApplicationCatalogEntry: Equatable, Hashable {
+    public static func ==(lhs: ApplicationCatalogEntry, rhs: ApplicationCatalogEntry) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.category != rhs.category {
+            return false
+        }
+        if lhs.displayName != rhs.displayName {
+            return false
+        }
+        if lhs.executable != rhs.executable {
+            return false
+        }
+        if lhs.cargoPackage != rhs.cargoPackage {
+            return false
+        }
+        if lhs.overrideEnv != rhs.overrideEnv {
+            return false
+        }
+        if lhs.shellKind != rhs.shellKind {
+            return false
+        }
+        if lhs.interaction != rhs.interaction {
+            return false
+        }
+        if lhs.browserKind != rhs.browserKind {
+            return false
+        }
+        if lhs.datasetKinds != rhs.datasetKinds {
+            return false
+        }
+        if lhs.showInTui != rhs.showInTui {
+            return false
+        }
+        if lhs.showInSwift != rhs.showInSwift {
+            return false
+        }
+        if lhs.includeInSuite != rhs.includeInSuite {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(kind)
+        hasher.combine(category)
+        hasher.combine(displayName)
+        hasher.combine(executable)
+        hasher.combine(cargoPackage)
+        hasher.combine(overrideEnv)
+        hasher.combine(shellKind)
+        hasher.combine(interaction)
+        hasher.combine(browserKind)
+        hasher.combine(datasetKinds)
+        hasher.combine(showInTui)
+        hasher.combine(showInSwift)
+        hasher.combine(includeInSuite)
+    }
+}
+
+extension ApplicationCatalogEntry: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeApplicationCatalogEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ApplicationCatalogEntry {
+        return
+            try ApplicationCatalogEntry(
+                id: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                category: FfiConverterString.read(from: &buf),
+                displayName: FfiConverterString.read(from: &buf),
+                executable: FfiConverterString.read(from: &buf),
+                cargoPackage: FfiConverterString.read(from: &buf),
+                overrideEnv: FfiConverterString.read(from: &buf),
+                shellKind: FfiConverterString.read(from: &buf),
+                interaction: FfiConverterString.read(from: &buf),
+                browserKind: FfiConverterOptionString.read(from: &buf),
+                datasetKinds: FfiConverterSequenceString.read(from: &buf),
+                showInTui: FfiConverterBool.read(from: &buf),
+                showInSwift: FfiConverterBool.read(from: &buf),
+                includeInSuite: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ApplicationCatalogEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.category, into: &buf)
+        FfiConverterString.write(value.displayName, into: &buf)
+        FfiConverterString.write(value.executable, into: &buf)
+        FfiConverterString.write(value.cargoPackage, into: &buf)
+        FfiConverterString.write(value.overrideEnv, into: &buf)
+        FfiConverterString.write(value.shellKind, into: &buf)
+        FfiConverterString.write(value.interaction, into: &buf)
+        FfiConverterOptionString.write(value.browserKind, into: &buf)
+        FfiConverterSequenceString.write(value.datasetKinds, into: &buf)
+        FfiConverterBool.write(value.showInTui, into: &buf)
+        FfiConverterBool.write(value.showInSwift, into: &buf)
+        FfiConverterBool.write(value.includeInSuite, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApplicationCatalogEntry_lift(_ buf: RustBuffer) throws -> ApplicationCatalogEntry {
+    return try FfiConverterTypeApplicationCatalogEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApplicationCatalogEntry_lower(_ value: ApplicationCatalogEntry) -> RustBuffer {
+    return FfiConverterTypeApplicationCatalogEntry.lower(value)
+}
+
+
+public struct ApplicationCatalogEnvelope {
+    public var schemaVersion: UInt64
+    public var applications: [ApplicationCatalogEntry]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt64, applications: [ApplicationCatalogEntry]) {
+        self.schemaVersion = schemaVersion
+        self.applications = applications
+    }
+}
+
+#if compiler(>=6)
+extension ApplicationCatalogEnvelope: Sendable {}
+#endif
+
+
+extension ApplicationCatalogEnvelope: Equatable, Hashable {
+    public static func ==(lhs: ApplicationCatalogEnvelope, rhs: ApplicationCatalogEnvelope) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.applications != rhs.applications {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(applications)
+    }
+}
+
+extension ApplicationCatalogEnvelope: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeApplicationCatalogEnvelope: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ApplicationCatalogEnvelope {
+        return
+            try ApplicationCatalogEnvelope(
+                schemaVersion: FfiConverterUInt64.read(from: &buf),
+                applications: FfiConverterSequenceTypeApplicationCatalogEntry.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ApplicationCatalogEnvelope, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.schemaVersion, into: &buf)
+        FfiConverterSequenceTypeApplicationCatalogEntry.write(value.applications, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApplicationCatalogEnvelope_lift(_ buf: RustBuffer) throws -> ApplicationCatalogEnvelope {
+    return try FfiConverterTypeApplicationCatalogEnvelope.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApplicationCatalogEnvelope_lower(_ value: ApplicationCatalogEnvelope) -> RustBuffer {
+    return FfiConverterTypeApplicationCatalogEnvelope.lower(value)
+}
+
+
+public struct AssistantTaskSuggestionProjection {
+    public var taskId: String
+    public var parameters: [String: String]
+    public var validatedPatch: SurfaceParameterPatch
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(taskId: String, parameters: [String: String], validatedPatch: SurfaceParameterPatch) {
+        self.taskId = taskId
+        self.parameters = parameters
+        self.validatedPatch = validatedPatch
+    }
+}
+
+#if compiler(>=6)
+extension AssistantTaskSuggestionProjection: Sendable {}
+#endif
+
+
+extension AssistantTaskSuggestionProjection: Equatable, Hashable {
+    public static func ==(lhs: AssistantTaskSuggestionProjection, rhs: AssistantTaskSuggestionProjection) -> Bool {
+        if lhs.taskId != rhs.taskId {
+            return false
+        }
+        if lhs.parameters != rhs.parameters {
+            return false
+        }
+        if lhs.validatedPatch != rhs.validatedPatch {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(taskId)
+        hasher.combine(parameters)
+        hasher.combine(validatedPatch)
+    }
+}
+
+extension AssistantTaskSuggestionProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssistantTaskSuggestionProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantTaskSuggestionProjection {
+        return
+            try AssistantTaskSuggestionProjection(
+                taskId: FfiConverterString.read(from: &buf),
+                parameters: FfiConverterDictionaryStringString.read(from: &buf),
+                validatedPatch: FfiConverterTypeSurfaceParameterPatch.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AssistantTaskSuggestionProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.taskId, into: &buf)
+        FfiConverterDictionaryStringString.write(value.parameters, into: &buf)
+        FfiConverterTypeSurfaceParameterPatch.write(value.validatedPatch, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantTaskSuggestionProjection_lift(_ buf: RustBuffer) throws -> AssistantTaskSuggestionProjection {
+    return try FfiConverterTypeAssistantTaskSuggestionProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantTaskSuggestionProjection_lower(_ value: AssistantTaskSuggestionProjection) -> RustBuffer {
+    return FfiConverterTypeAssistantTaskSuggestionProjection.lower(value)
+}
 
 
 public struct DatasetProbe {
@@ -2364,12 +2700,12 @@ public struct PlotDocumentLayer {
     public var lineWidth: Double
     public var opacity: Double
     public var sourceSampleCount: UInt64
-    public var payloadStrategy: String
+    public var payloadStrategy: PlotPayloadStrategy
     public var provenanceSummary: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, title: String, kind: PlotLayerKind, xAxisId: String, yAxisId: String, xValues: [Double], yValues: [Double], pointLabels: [String], pointSymbolSizes: [Double], intervalXStart: [Double], intervalXEnd: [Double], intervalY: [Double], intervalHeight: [Double], intervalLabels: [String], provenance: [PlotPointProvenance], colorGroup: String, symbolSize: Double, lineWidth: Double, opacity: Double, sourceSampleCount: UInt64, payloadStrategy: String, provenanceSummary: String) {
+    public init(id: String, title: String, kind: PlotLayerKind, xAxisId: String, yAxisId: String, xValues: [Double], yValues: [Double], pointLabels: [String], pointSymbolSizes: [Double], intervalXStart: [Double], intervalXEnd: [Double], intervalY: [Double], intervalHeight: [Double], intervalLabels: [String], provenance: [PlotPointProvenance], colorGroup: String, symbolSize: Double, lineWidth: Double, opacity: Double, sourceSampleCount: UInt64, payloadStrategy: PlotPayloadStrategy, provenanceSummary: String) {
         self.id = id
         self.title = title
         self.kind = kind
@@ -2528,7 +2864,7 @@ public struct FfiConverterTypePlotDocumentLayer: FfiConverterRustBuffer {
                 lineWidth: FfiConverterDouble.read(from: &buf),
                 opacity: FfiConverterDouble.read(from: &buf),
                 sourceSampleCount: FfiConverterUInt64.read(from: &buf),
-                payloadStrategy: FfiConverterString.read(from: &buf),
+                payloadStrategy: FfiConverterTypePlotPayloadStrategy.read(from: &buf),
                 provenanceSummary: FfiConverterString.read(from: &buf)
         )
     }
@@ -2554,7 +2890,7 @@ public struct FfiConverterTypePlotDocumentLayer: FfiConverterRustBuffer {
         FfiConverterDouble.write(value.lineWidth, into: &buf)
         FfiConverterDouble.write(value.opacity, into: &buf)
         FfiConverterUInt64.write(value.sourceSampleCount, into: &buf)
-        FfiConverterString.write(value.payloadStrategy, into: &buf)
+        FfiConverterTypePlotPayloadStrategy.write(value.payloadStrategy, into: &buf)
         FfiConverterString.write(value.provenanceSummary, into: &buf)
     }
 }
@@ -3270,6 +3606,3086 @@ public func FfiConverterTypeProjectProbe_lower(_ value: ProjectProbe) -> RustBuf
     return FfiConverterTypeProjectProbe.lower(value)
 }
 
+
+public struct SurfaceExecutionProjection {
+    public var invocationName: String
+    public var fixedArgs: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(invocationName: String, fixedArgs: [String]) {
+        self.invocationName = invocationName
+        self.fixedArgs = fixedArgs
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceExecutionProjection: Sendable {}
+#endif
+
+
+extension SurfaceExecutionProjection: Equatable, Hashable {
+    public static func ==(lhs: SurfaceExecutionProjection, rhs: SurfaceExecutionProjection) -> Bool {
+        if lhs.invocationName != rhs.invocationName {
+            return false
+        }
+        if lhs.fixedArgs != rhs.fixedArgs {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(invocationName)
+        hasher.combine(fixedArgs)
+    }
+}
+
+extension SurfaceExecutionProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceExecutionProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceExecutionProjection {
+        return
+            try SurfaceExecutionProjection(
+                invocationName: FfiConverterString.read(from: &buf),
+                fixedArgs: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceExecutionProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.invocationName, into: &buf)
+        FfiConverterSequenceString.write(value.fixedArgs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceExecutionProjection_lift(_ buf: RustBuffer) throws -> SurfaceExecutionProjection {
+    return try FfiConverterTypeSurfaceExecutionProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceExecutionProjection_lower(_ value: SurfaceExecutionProjection) -> RustBuffer {
+    return FfiConverterTypeSurfaceExecutionProjection.lower(value)
+}
+
+
+public struct SurfaceNarrowingConstraint {
+    public var kind: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: String) {
+        self.kind = kind
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceNarrowingConstraint: Sendable {}
+#endif
+
+
+extension SurfaceNarrowingConstraint: Equatable, Hashable {
+    public static func ==(lhs: SurfaceNarrowingConstraint, rhs: SurfaceNarrowingConstraint) -> Bool {
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+    }
+}
+
+extension SurfaceNarrowingConstraint: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceNarrowingConstraint: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceNarrowingConstraint {
+        return
+            try SurfaceNarrowingConstraint(
+                kind: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceNarrowingConstraint, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceNarrowingConstraint_lift(_ buf: RustBuffer) throws -> SurfaceNarrowingConstraint {
+    return try FfiConverterTypeSurfaceNarrowingConstraint.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceNarrowingConstraint_lower(_ value: SurfaceNarrowingConstraint) -> RustBuffer {
+    return FfiConverterTypeSurfaceNarrowingConstraint.lower(value)
+}
+
+
+public struct SurfaceParameterBinding {
+    public var name: String
+    public var concept: SurfaceParameterConceptReference
+    public var order: UInt64
+    public var refinements: [SurfaceNarrowingConstraint]
+    public var contextRole: String?
+    public var surfaceNote: String?
+    public var projections: SurfaceParameterProjections
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, concept: SurfaceParameterConceptReference, order: UInt64, refinements: [SurfaceNarrowingConstraint], contextRole: String?, surfaceNote: String?, projections: SurfaceParameterProjections) {
+        self.name = name
+        self.concept = concept
+        self.order = order
+        self.refinements = refinements
+        self.contextRole = contextRole
+        self.surfaceNote = surfaceNote
+        self.projections = projections
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterBinding: Sendable {}
+#endif
+
+
+extension SurfaceParameterBinding: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterBinding, rhs: SurfaceParameterBinding) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.concept != rhs.concept {
+            return false
+        }
+        if lhs.order != rhs.order {
+            return false
+        }
+        if lhs.refinements != rhs.refinements {
+            return false
+        }
+        if lhs.contextRole != rhs.contextRole {
+            return false
+        }
+        if lhs.surfaceNote != rhs.surfaceNote {
+            return false
+        }
+        if lhs.projections != rhs.projections {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(concept)
+        hasher.combine(order)
+        hasher.combine(refinements)
+        hasher.combine(contextRole)
+        hasher.combine(surfaceNote)
+        hasher.combine(projections)
+    }
+}
+
+extension SurfaceParameterBinding: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterBinding: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterBinding {
+        return
+            try SurfaceParameterBinding(
+                name: FfiConverterString.read(from: &buf),
+                concept: FfiConverterTypeSurfaceParameterConceptReference.read(from: &buf),
+                order: FfiConverterUInt64.read(from: &buf),
+                refinements: FfiConverterSequenceTypeSurfaceNarrowingConstraint.read(from: &buf),
+                contextRole: FfiConverterOptionString.read(from: &buf),
+                surfaceNote: FfiConverterOptionString.read(from: &buf),
+                projections: FfiConverterTypeSurfaceParameterProjections.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterBinding, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeSurfaceParameterConceptReference.write(value.concept, into: &buf)
+        FfiConverterUInt64.write(value.order, into: &buf)
+        FfiConverterSequenceTypeSurfaceNarrowingConstraint.write(value.refinements, into: &buf)
+        FfiConverterOptionString.write(value.contextRole, into: &buf)
+        FfiConverterOptionString.write(value.surfaceNote, into: &buf)
+        FfiConverterTypeSurfaceParameterProjections.write(value.projections, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterBinding_lift(_ buf: RustBuffer) throws -> SurfaceParameterBinding {
+    return try FfiConverterTypeSurfaceParameterBinding.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterBinding_lower(_ value: SurfaceParameterBinding) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterBinding.lower(value)
+}
+
+
+public struct SurfaceParameterBundle {
+    public var schemaVersion: UInt64
+    public var surface: SurfaceParameterDefinition
+    public var catalog: SurfaceParameterCatalog
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt64, surface: SurfaceParameterDefinition, catalog: SurfaceParameterCatalog) {
+        self.schemaVersion = schemaVersion
+        self.surface = surface
+        self.catalog = catalog
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterBundle: Sendable {}
+#endif
+
+
+extension SurfaceParameterBundle: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterBundle, rhs: SurfaceParameterBundle) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.surface != rhs.surface {
+            return false
+        }
+        if lhs.catalog != rhs.catalog {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(surface)
+        hasher.combine(catalog)
+    }
+}
+
+extension SurfaceParameterBundle: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterBundle: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterBundle {
+        return
+            try SurfaceParameterBundle(
+                schemaVersion: FfiConverterUInt64.read(from: &buf),
+                surface: FfiConverterTypeSurfaceParameterDefinition.read(from: &buf),
+                catalog: FfiConverterTypeSurfaceParameterCatalog.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterBundle, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.schemaVersion, into: &buf)
+        FfiConverterTypeSurfaceParameterDefinition.write(value.surface, into: &buf)
+        FfiConverterTypeSurfaceParameterCatalog.write(value.catalog, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterBundle_lift(_ buf: RustBuffer) throws -> SurfaceParameterBundle {
+    return try FfiConverterTypeSurfaceParameterBundle.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterBundle_lower(_ value: SurfaceParameterBundle) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterBundle.lower(value)
+}
+
+
+public struct SurfaceParameterCatalog {
+    public var schemaVersion: UInt64
+    public var concepts: [SurfaceParameterConcept]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt64, concepts: [SurfaceParameterConcept]) {
+        self.schemaVersion = schemaVersion
+        self.concepts = concepts
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterCatalog: Sendable {}
+#endif
+
+
+extension SurfaceParameterCatalog: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterCatalog, rhs: SurfaceParameterCatalog) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.concepts != rhs.concepts {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(concepts)
+    }
+}
+
+extension SurfaceParameterCatalog: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterCatalog: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterCatalog {
+        return
+            try SurfaceParameterCatalog(
+                schemaVersion: FfiConverterUInt64.read(from: &buf),
+                concepts: FfiConverterSequenceTypeSurfaceParameterConcept.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterCatalog, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.schemaVersion, into: &buf)
+        FfiConverterSequenceTypeSurfaceParameterConcept.write(value.concepts, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterCatalog_lift(_ buf: RustBuffer) throws -> SurfaceParameterCatalog {
+    return try FfiConverterTypeSurfaceParameterCatalog.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterCatalog_lower(_ value: SurfaceParameterCatalog) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterCatalog.lower(value)
+}
+
+
+public struct SurfaceParameterCliProjection {
+    public var positional: UInt64?
+    public var flags: [String]
+    public var falseFlags: [String]
+    public var metavar: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(positional: UInt64?, flags: [String], falseFlags: [String], metavar: String?) {
+        self.positional = positional
+        self.flags = flags
+        self.falseFlags = falseFlags
+        self.metavar = metavar
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterCliProjection: Sendable {}
+#endif
+
+
+extension SurfaceParameterCliProjection: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterCliProjection, rhs: SurfaceParameterCliProjection) -> Bool {
+        if lhs.positional != rhs.positional {
+            return false
+        }
+        if lhs.flags != rhs.flags {
+            return false
+        }
+        if lhs.falseFlags != rhs.falseFlags {
+            return false
+        }
+        if lhs.metavar != rhs.metavar {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(positional)
+        hasher.combine(flags)
+        hasher.combine(falseFlags)
+        hasher.combine(metavar)
+    }
+}
+
+extension SurfaceParameterCliProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterCliProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterCliProjection {
+        return
+            try SurfaceParameterCliProjection(
+                positional: FfiConverterOptionUInt64.read(from: &buf),
+                flags: FfiConverterSequenceString.read(from: &buf),
+                falseFlags: FfiConverterSequenceString.read(from: &buf),
+                metavar: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterCliProjection, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt64.write(value.positional, into: &buf)
+        FfiConverterSequenceString.write(value.flags, into: &buf)
+        FfiConverterSequenceString.write(value.falseFlags, into: &buf)
+        FfiConverterOptionString.write(value.metavar, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterCliProjection_lift(_ buf: RustBuffer) throws -> SurfaceParameterCliProjection {
+    return try FfiConverterTypeSurfaceParameterCliProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterCliProjection_lower(_ value: SurfaceParameterCliProjection) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterCliProjection.lower(value)
+}
+
+
+public struct SurfaceParameterConcept {
+    public var id: String
+    public var semanticRevision: UInt64
+    public var casaName: String
+    public var valueDomain: SurfaceParameterType
+    public var unitDimension: String?
+    public var semanticRole: String
+    public var documentation: SurfaceParameterDocumentation
+    public var persistenceClass: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, semanticRevision: UInt64, casaName: String, valueDomain: SurfaceParameterType, unitDimension: String?, semanticRole: String, documentation: SurfaceParameterDocumentation, persistenceClass: String) {
+        self.id = id
+        self.semanticRevision = semanticRevision
+        self.casaName = casaName
+        self.valueDomain = valueDomain
+        self.unitDimension = unitDimension
+        self.semanticRole = semanticRole
+        self.documentation = documentation
+        self.persistenceClass = persistenceClass
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterConcept: Sendable {}
+#endif
+
+
+extension SurfaceParameterConcept: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterConcept, rhs: SurfaceParameterConcept) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.semanticRevision != rhs.semanticRevision {
+            return false
+        }
+        if lhs.casaName != rhs.casaName {
+            return false
+        }
+        if lhs.valueDomain != rhs.valueDomain {
+            return false
+        }
+        if lhs.unitDimension != rhs.unitDimension {
+            return false
+        }
+        if lhs.semanticRole != rhs.semanticRole {
+            return false
+        }
+        if lhs.documentation != rhs.documentation {
+            return false
+        }
+        if lhs.persistenceClass != rhs.persistenceClass {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(semanticRevision)
+        hasher.combine(casaName)
+        hasher.combine(valueDomain)
+        hasher.combine(unitDimension)
+        hasher.combine(semanticRole)
+        hasher.combine(documentation)
+        hasher.combine(persistenceClass)
+    }
+}
+
+extension SurfaceParameterConcept: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterConcept: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterConcept {
+        return
+            try SurfaceParameterConcept(
+                id: FfiConverterString.read(from: &buf),
+                semanticRevision: FfiConverterUInt64.read(from: &buf),
+                casaName: FfiConverterString.read(from: &buf),
+                valueDomain: FfiConverterTypeSurfaceParameterType.read(from: &buf),
+                unitDimension: FfiConverterOptionString.read(from: &buf),
+                semanticRole: FfiConverterString.read(from: &buf),
+                documentation: FfiConverterTypeSurfaceParameterDocumentation.read(from: &buf),
+                persistenceClass: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterConcept, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterUInt64.write(value.semanticRevision, into: &buf)
+        FfiConverterString.write(value.casaName, into: &buf)
+        FfiConverterTypeSurfaceParameterType.write(value.valueDomain, into: &buf)
+        FfiConverterOptionString.write(value.unitDimension, into: &buf)
+        FfiConverterString.write(value.semanticRole, into: &buf)
+        FfiConverterTypeSurfaceParameterDocumentation.write(value.documentation, into: &buf)
+        FfiConverterString.write(value.persistenceClass, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterConcept_lift(_ buf: RustBuffer) throws -> SurfaceParameterConcept {
+    return try FfiConverterTypeSurfaceParameterConcept.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterConcept_lower(_ value: SurfaceParameterConcept) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterConcept.lower(value)
+}
+
+
+public struct SurfaceParameterConceptReference {
+    public var id: String
+    public var semanticRevision: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, semanticRevision: UInt64) {
+        self.id = id
+        self.semanticRevision = semanticRevision
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterConceptReference: Sendable {}
+#endif
+
+
+extension SurfaceParameterConceptReference: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterConceptReference, rhs: SurfaceParameterConceptReference) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.semanticRevision != rhs.semanticRevision {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(semanticRevision)
+    }
+}
+
+extension SurfaceParameterConceptReference: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterConceptReference: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterConceptReference {
+        return
+            try SurfaceParameterConceptReference(
+                id: FfiConverterString.read(from: &buf),
+                semanticRevision: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterConceptReference, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterUInt64.write(value.semanticRevision, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterConceptReference_lift(_ buf: RustBuffer) throws -> SurfaceParameterConceptReference {
+    return try FfiConverterTypeSurfaceParameterConceptReference.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterConceptReference_lower(_ value: SurfaceParameterConceptReference) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterConceptReference.lower(value)
+}
+
+
+public struct SurfaceParameterDefinition {
+    public var kind: String
+    public var id: String
+    public var contractVersion: UInt64
+    public var displayName: String
+    public var category: String
+    public var summary: String
+    public var execution: SurfaceExecutionProjection
+    public var bindings: [SurfaceParameterBinding]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: String, id: String, contractVersion: UInt64, displayName: String, category: String, summary: String, execution: SurfaceExecutionProjection, bindings: [SurfaceParameterBinding]) {
+        self.kind = kind
+        self.id = id
+        self.contractVersion = contractVersion
+        self.displayName = displayName
+        self.category = category
+        self.summary = summary
+        self.execution = execution
+        self.bindings = bindings
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterDefinition: Sendable {}
+#endif
+
+
+extension SurfaceParameterDefinition: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterDefinition, rhs: SurfaceParameterDefinition) -> Bool {
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.contractVersion != rhs.contractVersion {
+            return false
+        }
+        if lhs.displayName != rhs.displayName {
+            return false
+        }
+        if lhs.category != rhs.category {
+            return false
+        }
+        if lhs.summary != rhs.summary {
+            return false
+        }
+        if lhs.execution != rhs.execution {
+            return false
+        }
+        if lhs.bindings != rhs.bindings {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(id)
+        hasher.combine(contractVersion)
+        hasher.combine(displayName)
+        hasher.combine(category)
+        hasher.combine(summary)
+        hasher.combine(execution)
+        hasher.combine(bindings)
+    }
+}
+
+extension SurfaceParameterDefinition: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterDefinition: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterDefinition {
+        return
+            try SurfaceParameterDefinition(
+                kind: FfiConverterString.read(from: &buf),
+                id: FfiConverterString.read(from: &buf),
+                contractVersion: FfiConverterUInt64.read(from: &buf),
+                displayName: FfiConverterString.read(from: &buf),
+                category: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                execution: FfiConverterTypeSurfaceExecutionProjection.read(from: &buf),
+                bindings: FfiConverterSequenceTypeSurfaceParameterBinding.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterDefinition, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterUInt64.write(value.contractVersion, into: &buf)
+        FfiConverterString.write(value.displayName, into: &buf)
+        FfiConverterString.write(value.category, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterTypeSurfaceExecutionProjection.write(value.execution, into: &buf)
+        FfiConverterSequenceTypeSurfaceParameterBinding.write(value.bindings, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterDefinition_lift(_ buf: RustBuffer) throws -> SurfaceParameterDefinition {
+    return try FfiConverterTypeSurfaceParameterDefinition.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterDefinition_lower(_ value: SurfaceParameterDefinition) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterDefinition.lower(value)
+}
+
+
+public struct SurfaceParameterDiagnostic {
+    public var level: String
+    public var code: String
+    public var message: String
+    public var parameter: String?
+    public var location: SurfaceParameterLocation?
+    public var suggestions: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(level: String, code: String, message: String, parameter: String?, location: SurfaceParameterLocation?, suggestions: [String]) {
+        self.level = level
+        self.code = code
+        self.message = message
+        self.parameter = parameter
+        self.location = location
+        self.suggestions = suggestions
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterDiagnostic: Sendable {}
+#endif
+
+
+extension SurfaceParameterDiagnostic: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterDiagnostic, rhs: SurfaceParameterDiagnostic) -> Bool {
+        if lhs.level != rhs.level {
+            return false
+        }
+        if lhs.code != rhs.code {
+            return false
+        }
+        if lhs.message != rhs.message {
+            return false
+        }
+        if lhs.parameter != rhs.parameter {
+            return false
+        }
+        if lhs.location != rhs.location {
+            return false
+        }
+        if lhs.suggestions != rhs.suggestions {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(level)
+        hasher.combine(code)
+        hasher.combine(message)
+        hasher.combine(parameter)
+        hasher.combine(location)
+        hasher.combine(suggestions)
+    }
+}
+
+extension SurfaceParameterDiagnostic: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterDiagnostic: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterDiagnostic {
+        return
+            try SurfaceParameterDiagnostic(
+                level: FfiConverterString.read(from: &buf),
+                code: FfiConverterString.read(from: &buf),
+                message: FfiConverterString.read(from: &buf),
+                parameter: FfiConverterOptionString.read(from: &buf),
+                location: FfiConverterOptionTypeSurfaceParameterLocation.read(from: &buf),
+                suggestions: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterDiagnostic, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.level, into: &buf)
+        FfiConverterString.write(value.code, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+        FfiConverterOptionString.write(value.parameter, into: &buf)
+        FfiConverterOptionTypeSurfaceParameterLocation.write(value.location, into: &buf)
+        FfiConverterSequenceString.write(value.suggestions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterDiagnostic_lift(_ buf: RustBuffer) throws -> SurfaceParameterDiagnostic {
+    return try FfiConverterTypeSurfaceParameterDiagnostic.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterDiagnostic_lower(_ value: SurfaceParameterDiagnostic) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterDiagnostic.lower(value)
+}
+
+
+public struct SurfaceParameterDocumentation {
+    public var summary: String
+    public var details: String?
+    public var examples: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(summary: String, details: String?, examples: [String]) {
+        self.summary = summary
+        self.details = details
+        self.examples = examples
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterDocumentation: Sendable {}
+#endif
+
+
+extension SurfaceParameterDocumentation: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterDocumentation, rhs: SurfaceParameterDocumentation) -> Bool {
+        if lhs.summary != rhs.summary {
+            return false
+        }
+        if lhs.details != rhs.details {
+            return false
+        }
+        if lhs.examples != rhs.examples {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(summary)
+        hasher.combine(details)
+        hasher.combine(examples)
+    }
+}
+
+extension SurfaceParameterDocumentation: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterDocumentation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterDocumentation {
+        return
+            try SurfaceParameterDocumentation(
+                summary: FfiConverterString.read(from: &buf),
+                details: FfiConverterOptionString.read(from: &buf),
+                examples: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterDocumentation, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterOptionString.write(value.details, into: &buf)
+        FfiConverterSequenceString.write(value.examples, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterDocumentation_lift(_ buf: RustBuffer) throws -> SurfaceParameterDocumentation {
+    return try FfiConverterTypeSurfaceParameterDocumentation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterDocumentation_lower(_ value: SurfaceParameterDocumentation) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterDocumentation.lower(value)
+}
+
+
+public struct SurfaceParameterEntry {
+    public var name: String
+    public var value: SurfaceParameterValue
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, value: SurfaceParameterValue) {
+        self.name = name
+        self.value = value
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterEntry: Sendable {}
+#endif
+
+
+extension SurfaceParameterEntry: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterEntry, rhs: SurfaceParameterEntry) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(value)
+    }
+}
+
+extension SurfaceParameterEntry: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterEntry {
+        return
+            try SurfaceParameterEntry(
+                name: FfiConverterString.read(from: &buf),
+                value: FfiConverterTypeSurfaceParameterValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeSurfaceParameterValue.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterEntry_lift(_ buf: RustBuffer) throws -> SurfaceParameterEntry {
+    return try FfiConverterTypeSurfaceParameterEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterEntry_lower(_ value: SurfaceParameterEntry) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterEntry.lower(value)
+}
+
+
+public struct SurfaceParameterLocation {
+    public var line: UInt64
+    public var column: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(line: UInt64, column: UInt64) {
+        self.line = line
+        self.column = column
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterLocation: Sendable {}
+#endif
+
+
+extension SurfaceParameterLocation: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterLocation, rhs: SurfaceParameterLocation) -> Bool {
+        if lhs.line != rhs.line {
+            return false
+        }
+        if lhs.column != rhs.column {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(line)
+        hasher.combine(column)
+    }
+}
+
+extension SurfaceParameterLocation: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterLocation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterLocation {
+        return
+            try SurfaceParameterLocation(
+                line: FfiConverterUInt64.read(from: &buf),
+                column: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterLocation, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.line, into: &buf)
+        FfiConverterUInt64.write(value.column, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterLocation_lift(_ buf: RustBuffer) throws -> SurfaceParameterLocation {
+    return try FfiConverterTypeSurfaceParameterLocation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterLocation_lower(_ value: SurfaceParameterLocation) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterLocation.lower(value)
+}
+
+
+public struct SurfaceParameterPatch {
+    public var values: [String: SurfaceParameterValue]
+    public var unset: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(values: [String: SurfaceParameterValue], unset: [String]) {
+        self.values = values
+        self.unset = unset
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterPatch: Sendable {}
+#endif
+
+
+extension SurfaceParameterPatch: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterPatch, rhs: SurfaceParameterPatch) -> Bool {
+        if lhs.values != rhs.values {
+            return false
+        }
+        if lhs.unset != rhs.unset {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(values)
+        hasher.combine(unset)
+    }
+}
+
+extension SurfaceParameterPatch: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterPatch: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterPatch {
+        return
+            try SurfaceParameterPatch(
+                values: FfiConverterDictionaryStringTypeSurfaceParameterValue.read(from: &buf),
+                unset: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterPatch, into buf: inout [UInt8]) {
+        FfiConverterDictionaryStringTypeSurfaceParameterValue.write(value.values, into: &buf)
+        FfiConverterSequenceString.write(value.unset, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterPatch_lift(_ buf: RustBuffer) throws -> SurfaceParameterPatch {
+    return try FfiConverterTypeSurfaceParameterPatch.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterPatch_lower(_ value: SurfaceParameterPatch) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterPatch.lower(value)
+}
+
+
+public struct SurfaceParameterPresentation {
+    public var label: String
+    public var group: String
+    public var advanced: Bool
+    public var hidden: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(label: String, group: String, advanced: Bool, hidden: Bool) {
+        self.label = label
+        self.group = group
+        self.advanced = advanced
+        self.hidden = hidden
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterPresentation: Sendable {}
+#endif
+
+
+extension SurfaceParameterPresentation: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterPresentation, rhs: SurfaceParameterPresentation) -> Bool {
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.group != rhs.group {
+            return false
+        }
+        if lhs.advanced != rhs.advanced {
+            return false
+        }
+        if lhs.hidden != rhs.hidden {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(label)
+        hasher.combine(group)
+        hasher.combine(advanced)
+        hasher.combine(hidden)
+    }
+}
+
+extension SurfaceParameterPresentation: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterPresentation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterPresentation {
+        return
+            try SurfaceParameterPresentation(
+                label: FfiConverterString.read(from: &buf),
+                group: FfiConverterString.read(from: &buf),
+                advanced: FfiConverterBool.read(from: &buf),
+                hidden: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterPresentation, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.group, into: &buf)
+        FfiConverterBool.write(value.advanced, into: &buf)
+        FfiConverterBool.write(value.hidden, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterPresentation_lift(_ buf: RustBuffer) throws -> SurfaceParameterPresentation {
+    return try FfiConverterTypeSurfaceParameterPresentation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterPresentation_lower(_ value: SurfaceParameterPresentation) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterPresentation.lower(value)
+}
+
+
+public struct SurfaceParameterProjections {
+    public var cli: SurfaceParameterCliProjection?
+    public var provider: SurfaceParameterProviderProjection?
+    public var presentation: SurfaceParameterPresentation
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(cli: SurfaceParameterCliProjection?, provider: SurfaceParameterProviderProjection?, presentation: SurfaceParameterPresentation) {
+        self.cli = cli
+        self.provider = provider
+        self.presentation = presentation
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterProjections: Sendable {}
+#endif
+
+
+extension SurfaceParameterProjections: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterProjections, rhs: SurfaceParameterProjections) -> Bool {
+        if lhs.cli != rhs.cli {
+            return false
+        }
+        if lhs.provider != rhs.provider {
+            return false
+        }
+        if lhs.presentation != rhs.presentation {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(cli)
+        hasher.combine(provider)
+        hasher.combine(presentation)
+    }
+}
+
+extension SurfaceParameterProjections: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterProjections: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterProjections {
+        return
+            try SurfaceParameterProjections(
+                cli: FfiConverterOptionTypeSurfaceParameterCliProjection.read(from: &buf),
+                provider: FfiConverterOptionTypeSurfaceParameterProviderProjection.read(from: &buf),
+                presentation: FfiConverterTypeSurfaceParameterPresentation.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterProjections, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeSurfaceParameterCliProjection.write(value.cli, into: &buf)
+        FfiConverterOptionTypeSurfaceParameterProviderProjection.write(value.provider, into: &buf)
+        FfiConverterTypeSurfaceParameterPresentation.write(value.presentation, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterProjections_lift(_ buf: RustBuffer) throws -> SurfaceParameterProjections {
+    return try FfiConverterTypeSurfaceParameterProjections.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterProjections_lower(_ value: SurfaceParameterProjections) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterProjections.lower(value)
+}
+
+
+public struct SurfaceParameterProviderProjection {
+    public var field: String
+    public var adapter: String
+    public var emitWhen: SurfaceParameterPredicate?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(field: String, adapter: String, emitWhen: SurfaceParameterPredicate?) {
+        self.field = field
+        self.adapter = adapter
+        self.emitWhen = emitWhen
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterProviderProjection: Sendable {}
+#endif
+
+
+extension SurfaceParameterProviderProjection: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterProviderProjection, rhs: SurfaceParameterProviderProjection) -> Bool {
+        if lhs.field != rhs.field {
+            return false
+        }
+        if lhs.adapter != rhs.adapter {
+            return false
+        }
+        if lhs.emitWhen != rhs.emitWhen {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(field)
+        hasher.combine(adapter)
+        hasher.combine(emitWhen)
+    }
+}
+
+extension SurfaceParameterProviderProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterProviderProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterProviderProjection {
+        return
+            try SurfaceParameterProviderProjection(
+                field: FfiConverterString.read(from: &buf),
+                adapter: FfiConverterString.read(from: &buf),
+                emitWhen: FfiConverterOptionTypeSurfaceParameterPredicate.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterProviderProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.field, into: &buf)
+        FfiConverterString.write(value.adapter, into: &buf)
+        FfiConverterOptionTypeSurfaceParameterPredicate.write(value.emitWhen, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterProviderProjection_lift(_ buf: RustBuffer) throws -> SurfaceParameterProviderProjection {
+    return try FfiConverterTypeSurfaceParameterProviderProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterProviderProjection_lower(_ value: SurfaceParameterProviderProjection) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterProviderProjection.lower(value)
+}
+
+
+public struct SurfaceParameterSnapshot {
+    public var schemaVersion: UInt64
+    public var surfaceId: String
+    public var surfaceKind: String
+    public var contractVersion: UInt64
+    public var baseSource: SurfaceParameterSourceRecord
+    public var dirty: Bool
+    public var states: [String: SurfaceParameterState]
+    public var diagnostics: [SurfaceParameterDiagnostic]
+    public var profileToml: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt64, surfaceId: String, surfaceKind: String, contractVersion: UInt64, baseSource: SurfaceParameterSourceRecord, dirty: Bool, states: [String: SurfaceParameterState], diagnostics: [SurfaceParameterDiagnostic], profileToml: String?) {
+        self.schemaVersion = schemaVersion
+        self.surfaceId = surfaceId
+        self.surfaceKind = surfaceKind
+        self.contractVersion = contractVersion
+        self.baseSource = baseSource
+        self.dirty = dirty
+        self.states = states
+        self.diagnostics = diagnostics
+        self.profileToml = profileToml
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterSnapshot: Sendable {}
+#endif
+
+
+extension SurfaceParameterSnapshot: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterSnapshot, rhs: SurfaceParameterSnapshot) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.surfaceId != rhs.surfaceId {
+            return false
+        }
+        if lhs.surfaceKind != rhs.surfaceKind {
+            return false
+        }
+        if lhs.contractVersion != rhs.contractVersion {
+            return false
+        }
+        if lhs.baseSource != rhs.baseSource {
+            return false
+        }
+        if lhs.dirty != rhs.dirty {
+            return false
+        }
+        if lhs.states != rhs.states {
+            return false
+        }
+        if lhs.diagnostics != rhs.diagnostics {
+            return false
+        }
+        if lhs.profileToml != rhs.profileToml {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(surfaceId)
+        hasher.combine(surfaceKind)
+        hasher.combine(contractVersion)
+        hasher.combine(baseSource)
+        hasher.combine(dirty)
+        hasher.combine(states)
+        hasher.combine(diagnostics)
+        hasher.combine(profileToml)
+    }
+}
+
+extension SurfaceParameterSnapshot: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterSnapshot {
+        return
+            try SurfaceParameterSnapshot(
+                schemaVersion: FfiConverterUInt64.read(from: &buf),
+                surfaceId: FfiConverterString.read(from: &buf),
+                surfaceKind: FfiConverterString.read(from: &buf),
+                contractVersion: FfiConverterUInt64.read(from: &buf),
+                baseSource: FfiConverterTypeSurfaceParameterSourceRecord.read(from: &buf),
+                dirty: FfiConverterBool.read(from: &buf),
+                states: FfiConverterDictionaryStringTypeSurfaceParameterState.read(from: &buf),
+                diagnostics: FfiConverterSequenceTypeSurfaceParameterDiagnostic.read(from: &buf),
+                profileToml: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterSnapshot, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.schemaVersion, into: &buf)
+        FfiConverterString.write(value.surfaceId, into: &buf)
+        FfiConverterString.write(value.surfaceKind, into: &buf)
+        FfiConverterUInt64.write(value.contractVersion, into: &buf)
+        FfiConverterTypeSurfaceParameterSourceRecord.write(value.baseSource, into: &buf)
+        FfiConverterBool.write(value.dirty, into: &buf)
+        FfiConverterDictionaryStringTypeSurfaceParameterState.write(value.states, into: &buf)
+        FfiConverterSequenceTypeSurfaceParameterDiagnostic.write(value.diagnostics, into: &buf)
+        FfiConverterOptionString.write(value.profileToml, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterSnapshot_lift(_ buf: RustBuffer) throws -> SurfaceParameterSnapshot {
+    return try FfiConverterTypeSurfaceParameterSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterSnapshot_lower(_ value: SurfaceParameterSnapshot) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterSnapshot.lower(value)
+}
+
+
+public struct SurfaceParameterState {
+    public var value: SurfaceParameterValue?
+    public var origin: String
+    public var active: Bool
+    public var required: Bool
+    public var explicit: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(value: SurfaceParameterValue?, origin: String, active: Bool, required: Bool, explicit: Bool) {
+        self.value = value
+        self.origin = origin
+        self.active = active
+        self.required = required
+        self.explicit = explicit
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterState: Sendable {}
+#endif
+
+
+extension SurfaceParameterState: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterState, rhs: SurfaceParameterState) -> Bool {
+        if lhs.value != rhs.value {
+            return false
+        }
+        if lhs.origin != rhs.origin {
+            return false
+        }
+        if lhs.active != rhs.active {
+            return false
+        }
+        if lhs.required != rhs.required {
+            return false
+        }
+        if lhs.explicit != rhs.explicit {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(value)
+        hasher.combine(origin)
+        hasher.combine(active)
+        hasher.combine(required)
+        hasher.combine(explicit)
+    }
+}
+
+extension SurfaceParameterState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterState {
+        return
+            try SurfaceParameterState(
+                value: FfiConverterOptionTypeSurfaceParameterValue.read(from: &buf),
+                origin: FfiConverterString.read(from: &buf),
+                active: FfiConverterBool.read(from: &buf),
+                required: FfiConverterBool.read(from: &buf),
+                explicit: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterState, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeSurfaceParameterValue.write(value.value, into: &buf)
+        FfiConverterString.write(value.origin, into: &buf)
+        FfiConverterBool.write(value.active, into: &buf)
+        FfiConverterBool.write(value.required, into: &buf)
+        FfiConverterBool.write(value.explicit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterState_lift(_ buf: RustBuffer) throws -> SurfaceParameterState {
+    return try FfiConverterTypeSurfaceParameterState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterState_lower(_ value: SurfaceParameterState) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterState.lower(value)
+}
+
+
+public struct SurfaceParameterTypeField {
+    public var name: String
+    public var value: SurfaceParameterType
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, value: SurfaceParameterType) {
+        self.name = name
+        self.value = value
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterTypeField: Sendable {}
+#endif
+
+
+extension SurfaceParameterTypeField: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterTypeField, rhs: SurfaceParameterTypeField) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(value)
+    }
+}
+
+extension SurfaceParameterTypeField: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterTypeField: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterTypeField {
+        return
+            try SurfaceParameterTypeField(
+                name: FfiConverterString.read(from: &buf),
+                value: FfiConverterTypeSurfaceParameterType.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterTypeField, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeSurfaceParameterType.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterTypeField_lift(_ buf: RustBuffer) throws -> SurfaceParameterTypeField {
+    return try FfiConverterTypeSurfaceParameterTypeField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterTypeField_lower(_ value: SurfaceParameterTypeField) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterTypeField.lower(value)
+}
+
+
+public struct SurfaceParameterWriteResult {
+    public var path: String
+    public var bytesWritten: UInt64
+    public var managedKind: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(path: String, bytesWritten: UInt64, managedKind: String?) {
+        self.path = path
+        self.bytesWritten = bytesWritten
+        self.managedKind = managedKind
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterWriteResult: Sendable {}
+#endif
+
+
+extension SurfaceParameterWriteResult: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterWriteResult, rhs: SurfaceParameterWriteResult) -> Bool {
+        if lhs.path != rhs.path {
+            return false
+        }
+        if lhs.bytesWritten != rhs.bytesWritten {
+            return false
+        }
+        if lhs.managedKind != rhs.managedKind {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(path)
+        hasher.combine(bytesWritten)
+        hasher.combine(managedKind)
+    }
+}
+
+extension SurfaceParameterWriteResult: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterWriteResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterWriteResult {
+        return
+            try SurfaceParameterWriteResult(
+                path: FfiConverterString.read(from: &buf),
+                bytesWritten: FfiConverterUInt64.read(from: &buf),
+                managedKind: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterWriteResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterUInt64.write(value.bytesWritten, into: &buf)
+        FfiConverterOptionString.write(value.managedKind, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterWriteResult_lift(_ buf: RustBuffer) throws -> SurfaceParameterWriteResult {
+    return try FfiConverterTypeSurfaceParameterWriteResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterWriteResult_lower(_ value: SurfaceParameterWriteResult) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterWriteResult.lower(value)
+}
+
+
+public struct SurfaceProviderInvocation {
+    public var args: [String]
+    public var stdin: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(args: [String], stdin: String?) {
+        self.args = args
+        self.stdin = stdin
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceProviderInvocation: Sendable {}
+#endif
+
+
+extension SurfaceProviderInvocation: Equatable, Hashable {
+    public static func ==(lhs: SurfaceProviderInvocation, rhs: SurfaceProviderInvocation) -> Bool {
+        if lhs.args != rhs.args {
+            return false
+        }
+        if lhs.stdin != rhs.stdin {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(args)
+        hasher.combine(stdin)
+    }
+}
+
+extension SurfaceProviderInvocation: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceProviderInvocation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceProviderInvocation {
+        return
+            try SurfaceProviderInvocation(
+                args: FfiConverterSequenceString.read(from: &buf),
+                stdin: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceProviderInvocation, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.args, into: &buf)
+        FfiConverterOptionString.write(value.stdin, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceProviderInvocation_lift(_ buf: RustBuffer) throws -> SurfaceProviderInvocation {
+    return try FfiConverterTypeSurfaceProviderInvocation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceProviderInvocation_lower(_ value: SurfaceProviderInvocation) -> RustBuffer {
+    return FfiConverterTypeSurfaceProviderInvocation.lower(value)
+}
+
+
+public struct SurfaceRunSafety {
+    public var classes: [SurfaceRunSafetyClass]
+    public var requiresInteractiveConfirmation: Bool
+    public var requiresOverwriteConfirmation: Bool
+    public var requiresInputMutationConfirmation: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(classes: [SurfaceRunSafetyClass], requiresInteractiveConfirmation: Bool, requiresOverwriteConfirmation: Bool, requiresInputMutationConfirmation: Bool) {
+        self.classes = classes
+        self.requiresInteractiveConfirmation = requiresInteractiveConfirmation
+        self.requiresOverwriteConfirmation = requiresOverwriteConfirmation
+        self.requiresInputMutationConfirmation = requiresInputMutationConfirmation
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceRunSafety: Sendable {}
+#endif
+
+
+extension SurfaceRunSafety: Equatable, Hashable {
+    public static func ==(lhs: SurfaceRunSafety, rhs: SurfaceRunSafety) -> Bool {
+        if lhs.classes != rhs.classes {
+            return false
+        }
+        if lhs.requiresInteractiveConfirmation != rhs.requiresInteractiveConfirmation {
+            return false
+        }
+        if lhs.requiresOverwriteConfirmation != rhs.requiresOverwriteConfirmation {
+            return false
+        }
+        if lhs.requiresInputMutationConfirmation != rhs.requiresInputMutationConfirmation {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(classes)
+        hasher.combine(requiresInteractiveConfirmation)
+        hasher.combine(requiresOverwriteConfirmation)
+        hasher.combine(requiresInputMutationConfirmation)
+    }
+}
+
+extension SurfaceRunSafety: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceRunSafety: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceRunSafety {
+        return
+            try SurfaceRunSafety(
+                classes: FfiConverterSequenceTypeSurfaceRunSafetyClass.read(from: &buf),
+                requiresInteractiveConfirmation: FfiConverterBool.read(from: &buf),
+                requiresOverwriteConfirmation: FfiConverterBool.read(from: &buf),
+                requiresInputMutationConfirmation: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceRunSafety, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeSurfaceRunSafetyClass.write(value.classes, into: &buf)
+        FfiConverterBool.write(value.requiresInteractiveConfirmation, into: &buf)
+        FfiConverterBool.write(value.requiresOverwriteConfirmation, into: &buf)
+        FfiConverterBool.write(value.requiresInputMutationConfirmation, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceRunSafety_lift(_ buf: RustBuffer) throws -> SurfaceRunSafety {
+    return try FfiConverterTypeSurfaceRunSafety.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceRunSafety_lower(_ value: SurfaceRunSafety) -> RustBuffer {
+    return FfiConverterTypeSurfaceRunSafety.lower(value)
+}
+
+
+public struct TaskCompletionProduct {
+    public var id: String
+    public var role: TaskProductRole
+    public var resourceKind: TaskProductKind
+    public var label: String
+    public var path: String
+    public var exists: Bool
+    public var previewPath: String?
+    public var previewExists: Bool
+    public var dataset: DatasetProbe?
+    public var diagnostic: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, role: TaskProductRole, resourceKind: TaskProductKind, label: String, path: String, exists: Bool, previewPath: String?, previewExists: Bool, dataset: DatasetProbe?, diagnostic: String?) {
+        self.id = id
+        self.role = role
+        self.resourceKind = resourceKind
+        self.label = label
+        self.path = path
+        self.exists = exists
+        self.previewPath = previewPath
+        self.previewExists = previewExists
+        self.dataset = dataset
+        self.diagnostic = diagnostic
+    }
+}
+
+#if compiler(>=6)
+extension TaskCompletionProduct: Sendable {}
+#endif
+
+
+extension TaskCompletionProduct: Equatable, Hashable {
+    public static func ==(lhs: TaskCompletionProduct, rhs: TaskCompletionProduct) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.role != rhs.role {
+            return false
+        }
+        if lhs.resourceKind != rhs.resourceKind {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.path != rhs.path {
+            return false
+        }
+        if lhs.exists != rhs.exists {
+            return false
+        }
+        if lhs.previewPath != rhs.previewPath {
+            return false
+        }
+        if lhs.previewExists != rhs.previewExists {
+            return false
+        }
+        if lhs.dataset != rhs.dataset {
+            return false
+        }
+        if lhs.diagnostic != rhs.diagnostic {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(role)
+        hasher.combine(resourceKind)
+        hasher.combine(label)
+        hasher.combine(path)
+        hasher.combine(exists)
+        hasher.combine(previewPath)
+        hasher.combine(previewExists)
+        hasher.combine(dataset)
+        hasher.combine(diagnostic)
+    }
+}
+
+extension TaskCompletionProduct: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTaskCompletionProduct: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskCompletionProduct {
+        return
+            try TaskCompletionProduct(
+                id: FfiConverterString.read(from: &buf),
+                role: FfiConverterTypeTaskProductRole.read(from: &buf),
+                resourceKind: FfiConverterTypeTaskProductKind.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                path: FfiConverterString.read(from: &buf),
+                exists: FfiConverterBool.read(from: &buf),
+                previewPath: FfiConverterOptionString.read(from: &buf),
+                previewExists: FfiConverterBool.read(from: &buf),
+                dataset: FfiConverterOptionTypeDatasetProbe.read(from: &buf),
+                diagnostic: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TaskCompletionProduct, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterTypeTaskProductRole.write(value.role, into: &buf)
+        FfiConverterTypeTaskProductKind.write(value.resourceKind, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterBool.write(value.exists, into: &buf)
+        FfiConverterOptionString.write(value.previewPath, into: &buf)
+        FfiConverterBool.write(value.previewExists, into: &buf)
+        FfiConverterOptionTypeDatasetProbe.write(value.dataset, into: &buf)
+        FfiConverterOptionString.write(value.diagnostic, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskCompletionProduct_lift(_ buf: RustBuffer) throws -> TaskCompletionProduct {
+    return try FfiConverterTypeTaskCompletionProduct.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskCompletionProduct_lower(_ value: TaskCompletionProduct) -> RustBuffer {
+    return FfiConverterTypeTaskCompletionProduct.lower(value)
+}
+
+
+public struct TaskCompletionProjection {
+    public var surfaceId: String
+    public var summary: String
+    public var products: [TaskCompletionProduct]
+    public var diagnostics: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(surfaceId: String, summary: String, products: [TaskCompletionProduct], diagnostics: [String]) {
+        self.surfaceId = surfaceId
+        self.summary = summary
+        self.products = products
+        self.diagnostics = diagnostics
+    }
+}
+
+#if compiler(>=6)
+extension TaskCompletionProjection: Sendable {}
+#endif
+
+
+extension TaskCompletionProjection: Equatable, Hashable {
+    public static func ==(lhs: TaskCompletionProjection, rhs: TaskCompletionProjection) -> Bool {
+        if lhs.surfaceId != rhs.surfaceId {
+            return false
+        }
+        if lhs.summary != rhs.summary {
+            return false
+        }
+        if lhs.products != rhs.products {
+            return false
+        }
+        if lhs.diagnostics != rhs.diagnostics {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(surfaceId)
+        hasher.combine(summary)
+        hasher.combine(products)
+        hasher.combine(diagnostics)
+    }
+}
+
+extension TaskCompletionProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTaskCompletionProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskCompletionProjection {
+        return
+            try TaskCompletionProjection(
+                surfaceId: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                products: FfiConverterSequenceTypeTaskCompletionProduct.read(from: &buf),
+                diagnostics: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TaskCompletionProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.surfaceId, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterSequenceTypeTaskCompletionProduct.write(value.products, into: &buf)
+        FfiConverterSequenceString.write(value.diagnostics, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskCompletionProjection_lift(_ buf: RustBuffer) throws -> TaskCompletionProjection {
+    return try FfiConverterTypeTaskCompletionProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskCompletionProjection_lower(_ value: TaskCompletionProjection) -> RustBuffer {
+    return FfiConverterTypeTaskCompletionProjection.lower(value)
+}
+
+
+public struct TaskContextOptionsEnvelope {
+    public var schemaVersion: UInt64
+    public var datasetPath: String
+    public var datasetKind: String
+    public var fields: [String]
+    public var spectralWindows: [String]
+    public var scans: [String]
+    public var arrays: [String]
+    public var observations: [String]
+    public var antennas: [String]
+    public var intents: [String]
+    public var feeds: [String]
+    public var correlations: [String]
+    public var columns: [String]
+    public var dataColumns: [String]
+    public var subtables: [String]
+    public var shape: [UInt64]
+    public var defaults: [String: String]
+    public var diagnostics: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt64, datasetPath: String, datasetKind: String, fields: [String], spectralWindows: [String], scans: [String], arrays: [String], observations: [String], antennas: [String], intents: [String], feeds: [String], correlations: [String], columns: [String], dataColumns: [String], subtables: [String], shape: [UInt64], defaults: [String: String], diagnostics: [String]) {
+        self.schemaVersion = schemaVersion
+        self.datasetPath = datasetPath
+        self.datasetKind = datasetKind
+        self.fields = fields
+        self.spectralWindows = spectralWindows
+        self.scans = scans
+        self.arrays = arrays
+        self.observations = observations
+        self.antennas = antennas
+        self.intents = intents
+        self.feeds = feeds
+        self.correlations = correlations
+        self.columns = columns
+        self.dataColumns = dataColumns
+        self.subtables = subtables
+        self.shape = shape
+        self.defaults = defaults
+        self.diagnostics = diagnostics
+    }
+}
+
+#if compiler(>=6)
+extension TaskContextOptionsEnvelope: Sendable {}
+#endif
+
+
+extension TaskContextOptionsEnvelope: Equatable, Hashable {
+    public static func ==(lhs: TaskContextOptionsEnvelope, rhs: TaskContextOptionsEnvelope) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.datasetPath != rhs.datasetPath {
+            return false
+        }
+        if lhs.datasetKind != rhs.datasetKind {
+            return false
+        }
+        if lhs.fields != rhs.fields {
+            return false
+        }
+        if lhs.spectralWindows != rhs.spectralWindows {
+            return false
+        }
+        if lhs.scans != rhs.scans {
+            return false
+        }
+        if lhs.arrays != rhs.arrays {
+            return false
+        }
+        if lhs.observations != rhs.observations {
+            return false
+        }
+        if lhs.antennas != rhs.antennas {
+            return false
+        }
+        if lhs.intents != rhs.intents {
+            return false
+        }
+        if lhs.feeds != rhs.feeds {
+            return false
+        }
+        if lhs.correlations != rhs.correlations {
+            return false
+        }
+        if lhs.columns != rhs.columns {
+            return false
+        }
+        if lhs.dataColumns != rhs.dataColumns {
+            return false
+        }
+        if lhs.subtables != rhs.subtables {
+            return false
+        }
+        if lhs.shape != rhs.shape {
+            return false
+        }
+        if lhs.defaults != rhs.defaults {
+            return false
+        }
+        if lhs.diagnostics != rhs.diagnostics {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(datasetPath)
+        hasher.combine(datasetKind)
+        hasher.combine(fields)
+        hasher.combine(spectralWindows)
+        hasher.combine(scans)
+        hasher.combine(arrays)
+        hasher.combine(observations)
+        hasher.combine(antennas)
+        hasher.combine(intents)
+        hasher.combine(feeds)
+        hasher.combine(correlations)
+        hasher.combine(columns)
+        hasher.combine(dataColumns)
+        hasher.combine(subtables)
+        hasher.combine(shape)
+        hasher.combine(defaults)
+        hasher.combine(diagnostics)
+    }
+}
+
+extension TaskContextOptionsEnvelope: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTaskContextOptionsEnvelope: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskContextOptionsEnvelope {
+        return
+            try TaskContextOptionsEnvelope(
+                schemaVersion: FfiConverterUInt64.read(from: &buf),
+                datasetPath: FfiConverterString.read(from: &buf),
+                datasetKind: FfiConverterString.read(from: &buf),
+                fields: FfiConverterSequenceString.read(from: &buf),
+                spectralWindows: FfiConverterSequenceString.read(from: &buf),
+                scans: FfiConverterSequenceString.read(from: &buf),
+                arrays: FfiConverterSequenceString.read(from: &buf),
+                observations: FfiConverterSequenceString.read(from: &buf),
+                antennas: FfiConverterSequenceString.read(from: &buf),
+                intents: FfiConverterSequenceString.read(from: &buf),
+                feeds: FfiConverterSequenceString.read(from: &buf),
+                correlations: FfiConverterSequenceString.read(from: &buf),
+                columns: FfiConverterSequenceString.read(from: &buf),
+                dataColumns: FfiConverterSequenceString.read(from: &buf),
+                subtables: FfiConverterSequenceString.read(from: &buf),
+                shape: FfiConverterSequenceUInt64.read(from: &buf),
+                defaults: FfiConverterDictionaryStringString.read(from: &buf),
+                diagnostics: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TaskContextOptionsEnvelope, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.schemaVersion, into: &buf)
+        FfiConverterString.write(value.datasetPath, into: &buf)
+        FfiConverterString.write(value.datasetKind, into: &buf)
+        FfiConverterSequenceString.write(value.fields, into: &buf)
+        FfiConverterSequenceString.write(value.spectralWindows, into: &buf)
+        FfiConverterSequenceString.write(value.scans, into: &buf)
+        FfiConverterSequenceString.write(value.arrays, into: &buf)
+        FfiConverterSequenceString.write(value.observations, into: &buf)
+        FfiConverterSequenceString.write(value.antennas, into: &buf)
+        FfiConverterSequenceString.write(value.intents, into: &buf)
+        FfiConverterSequenceString.write(value.feeds, into: &buf)
+        FfiConverterSequenceString.write(value.correlations, into: &buf)
+        FfiConverterSequenceString.write(value.columns, into: &buf)
+        FfiConverterSequenceString.write(value.dataColumns, into: &buf)
+        FfiConverterSequenceString.write(value.subtables, into: &buf)
+        FfiConverterSequenceUInt64.write(value.shape, into: &buf)
+        FfiConverterDictionaryStringString.write(value.defaults, into: &buf)
+        FfiConverterSequenceString.write(value.diagnostics, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskContextOptionsEnvelope_lift(_ buf: RustBuffer) throws -> TaskContextOptionsEnvelope {
+    return try FfiConverterTypeTaskContextOptionsEnvelope.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskContextOptionsEnvelope_lower(_ value: TaskContextOptionsEnvelope) -> RustBuffer {
+    return FfiConverterTypeTaskContextOptionsEnvelope.lower(value)
+}
+
+
+public struct TaskParameterValue {
+    public var name: String
+    public var value: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, value: String) {
+        self.name = name
+        self.value = value
+    }
+}
+
+#if compiler(>=6)
+extension TaskParameterValue: Sendable {}
+#endif
+
+
+extension TaskParameterValue: Equatable, Hashable {
+    public static func ==(lhs: TaskParameterValue, rhs: TaskParameterValue) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(value)
+    }
+}
+
+extension TaskParameterValue: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTaskParameterValue: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskParameterValue {
+        return
+            try TaskParameterValue(
+                name: FfiConverterString.read(from: &buf),
+                value: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TaskParameterValue, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskParameterValue_lift(_ buf: RustBuffer) throws -> TaskParameterValue {
+    return try FfiConverterTypeTaskParameterValue.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskParameterValue_lower(_ value: TaskParameterValue) -> RustBuffer {
+    return FfiConverterTypeTaskParameterValue.lower(value)
+}
+
+
+public struct TaskUiArgument {
+    public var id: String
+    public var label: String
+    public var order: Int64
+    public var parser: TaskUiArgumentParser
+    public var valueKind: String
+    public var required: Bool
+    public var `default`: String?
+    public var help: String
+    public var group: String
+    public var parameterType: String?
+    public var conceptId: String?
+    public var conceptRevision: UInt64?
+    public var unitDimension: String?
+    public var contextRole: String?
+    public var advanced: Bool
+    public var hiddenInTui: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, label: String, order: Int64, parser: TaskUiArgumentParser, valueKind: String, required: Bool, `default`: String?, help: String, group: String, parameterType: String?, conceptId: String?, conceptRevision: UInt64?, unitDimension: String?, contextRole: String?, advanced: Bool, hiddenInTui: Bool) {
+        self.id = id
+        self.label = label
+        self.order = order
+        self.parser = parser
+        self.valueKind = valueKind
+        self.required = required
+        self.`default` = `default`
+        self.help = help
+        self.group = group
+        self.parameterType = parameterType
+        self.conceptId = conceptId
+        self.conceptRevision = conceptRevision
+        self.unitDimension = unitDimension
+        self.contextRole = contextRole
+        self.advanced = advanced
+        self.hiddenInTui = hiddenInTui
+    }
+}
+
+#if compiler(>=6)
+extension TaskUiArgument: Sendable {}
+#endif
+
+
+extension TaskUiArgument: Equatable, Hashable {
+    public static func ==(lhs: TaskUiArgument, rhs: TaskUiArgument) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.order != rhs.order {
+            return false
+        }
+        if lhs.parser != rhs.parser {
+            return false
+        }
+        if lhs.valueKind != rhs.valueKind {
+            return false
+        }
+        if lhs.required != rhs.required {
+            return false
+        }
+        if lhs.`default` != rhs.`default` {
+            return false
+        }
+        if lhs.help != rhs.help {
+            return false
+        }
+        if lhs.group != rhs.group {
+            return false
+        }
+        if lhs.parameterType != rhs.parameterType {
+            return false
+        }
+        if lhs.conceptId != rhs.conceptId {
+            return false
+        }
+        if lhs.conceptRevision != rhs.conceptRevision {
+            return false
+        }
+        if lhs.unitDimension != rhs.unitDimension {
+            return false
+        }
+        if lhs.contextRole != rhs.contextRole {
+            return false
+        }
+        if lhs.advanced != rhs.advanced {
+            return false
+        }
+        if lhs.hiddenInTui != rhs.hiddenInTui {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(label)
+        hasher.combine(order)
+        hasher.combine(parser)
+        hasher.combine(valueKind)
+        hasher.combine(required)
+        hasher.combine(`default`)
+        hasher.combine(help)
+        hasher.combine(group)
+        hasher.combine(parameterType)
+        hasher.combine(conceptId)
+        hasher.combine(conceptRevision)
+        hasher.combine(unitDimension)
+        hasher.combine(contextRole)
+        hasher.combine(advanced)
+        hasher.combine(hiddenInTui)
+    }
+}
+
+extension TaskUiArgument: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTaskUIArgument: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskUiArgument {
+        return
+            try TaskUiArgument(
+                id: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                order: FfiConverterInt64.read(from: &buf),
+                parser: FfiConverterTypeTaskUIArgumentParser.read(from: &buf),
+                valueKind: FfiConverterString.read(from: &buf),
+                required: FfiConverterBool.read(from: &buf),
+                default: FfiConverterOptionString.read(from: &buf),
+                help: FfiConverterString.read(from: &buf),
+                group: FfiConverterString.read(from: &buf),
+                parameterType: FfiConverterOptionString.read(from: &buf),
+                conceptId: FfiConverterOptionString.read(from: &buf),
+                conceptRevision: FfiConverterOptionUInt64.read(from: &buf),
+                unitDimension: FfiConverterOptionString.read(from: &buf),
+                contextRole: FfiConverterOptionString.read(from: &buf),
+                advanced: FfiConverterBool.read(from: &buf),
+                hiddenInTui: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TaskUiArgument, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterInt64.write(value.order, into: &buf)
+        FfiConverterTypeTaskUIArgumentParser.write(value.parser, into: &buf)
+        FfiConverterString.write(value.valueKind, into: &buf)
+        FfiConverterBool.write(value.required, into: &buf)
+        FfiConverterOptionString.write(value.`default`, into: &buf)
+        FfiConverterString.write(value.help, into: &buf)
+        FfiConverterString.write(value.group, into: &buf)
+        FfiConverterOptionString.write(value.parameterType, into: &buf)
+        FfiConverterOptionString.write(value.conceptId, into: &buf)
+        FfiConverterOptionUInt64.write(value.conceptRevision, into: &buf)
+        FfiConverterOptionString.write(value.unitDimension, into: &buf)
+        FfiConverterOptionString.write(value.contextRole, into: &buf)
+        FfiConverterBool.write(value.advanced, into: &buf)
+        FfiConverterBool.write(value.hiddenInTui, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskUIArgument_lift(_ buf: RustBuffer) throws -> TaskUiArgument {
+    return try FfiConverterTypeTaskUIArgument.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskUIArgument_lower(_ value: TaskUiArgument) -> RustBuffer {
+    return FfiConverterTypeTaskUIArgument.lower(value)
+}
+
+
+public struct TaskUiArgumentParser {
+    public var kind: String
+    public var flags: [String]?
+    public var metavar: String?
+    public var choices: [String]?
+    public var trueFlags: [String]?
+    public var falseFlags: [String]?
+    public var action: String?
+    public var positionalMetavar: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: String, flags: [String]?, metavar: String?, choices: [String]?, trueFlags: [String]?, falseFlags: [String]?, action: String?, positionalMetavar: String?) {
+        self.kind = kind
+        self.flags = flags
+        self.metavar = metavar
+        self.choices = choices
+        self.trueFlags = trueFlags
+        self.falseFlags = falseFlags
+        self.action = action
+        self.positionalMetavar = positionalMetavar
+    }
+}
+
+#if compiler(>=6)
+extension TaskUiArgumentParser: Sendable {}
+#endif
+
+
+extension TaskUiArgumentParser: Equatable, Hashable {
+    public static func ==(lhs: TaskUiArgumentParser, rhs: TaskUiArgumentParser) -> Bool {
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.flags != rhs.flags {
+            return false
+        }
+        if lhs.metavar != rhs.metavar {
+            return false
+        }
+        if lhs.choices != rhs.choices {
+            return false
+        }
+        if lhs.trueFlags != rhs.trueFlags {
+            return false
+        }
+        if lhs.falseFlags != rhs.falseFlags {
+            return false
+        }
+        if lhs.action != rhs.action {
+            return false
+        }
+        if lhs.positionalMetavar != rhs.positionalMetavar {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(flags)
+        hasher.combine(metavar)
+        hasher.combine(choices)
+        hasher.combine(trueFlags)
+        hasher.combine(falseFlags)
+        hasher.combine(action)
+        hasher.combine(positionalMetavar)
+    }
+}
+
+extension TaskUiArgumentParser: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTaskUIArgumentParser: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskUiArgumentParser {
+        return
+            try TaskUiArgumentParser(
+                kind: FfiConverterString.read(from: &buf),
+                flags: FfiConverterOptionSequenceString.read(from: &buf),
+                metavar: FfiConverterOptionString.read(from: &buf),
+                choices: FfiConverterOptionSequenceString.read(from: &buf),
+                trueFlags: FfiConverterOptionSequenceString.read(from: &buf),
+                falseFlags: FfiConverterOptionSequenceString.read(from: &buf),
+                action: FfiConverterOptionString.read(from: &buf),
+                positionalMetavar: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TaskUiArgumentParser, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterOptionSequenceString.write(value.flags, into: &buf)
+        FfiConverterOptionString.write(value.metavar, into: &buf)
+        FfiConverterOptionSequenceString.write(value.choices, into: &buf)
+        FfiConverterOptionSequenceString.write(value.trueFlags, into: &buf)
+        FfiConverterOptionSequenceString.write(value.falseFlags, into: &buf)
+        FfiConverterOptionString.write(value.action, into: &buf)
+        FfiConverterOptionString.write(value.positionalMetavar, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskUIArgumentParser_lift(_ buf: RustBuffer) throws -> TaskUiArgumentParser {
+    return try FfiConverterTypeTaskUIArgumentParser.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskUIArgumentParser_lower(_ value: TaskUiArgumentParser) -> RustBuffer {
+    return FfiConverterTypeTaskUIArgumentParser.lower(value)
+}
+
+
+public struct TaskUiInjectedArgument {
+    public var flag: String
+    public var value: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(flag: String, value: String?) {
+        self.flag = flag
+        self.value = value
+    }
+}
+
+#if compiler(>=6)
+extension TaskUiInjectedArgument: Sendable {}
+#endif
+
+
+extension TaskUiInjectedArgument: Equatable, Hashable {
+    public static func ==(lhs: TaskUiInjectedArgument, rhs: TaskUiInjectedArgument) -> Bool {
+        if lhs.flag != rhs.flag {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(flag)
+        hasher.combine(value)
+    }
+}
+
+extension TaskUiInjectedArgument: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTaskUIInjectedArgument: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskUiInjectedArgument {
+        return
+            try TaskUiInjectedArgument(
+                flag: FfiConverterString.read(from: &buf),
+                value: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TaskUiInjectedArgument, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.flag, into: &buf)
+        FfiConverterOptionString.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskUIInjectedArgument_lift(_ buf: RustBuffer) throws -> TaskUiInjectedArgument {
+    return try FfiConverterTypeTaskUIInjectedArgument.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskUIInjectedArgument_lower(_ value: TaskUiInjectedArgument) -> RustBuffer {
+    return FfiConverterTypeTaskUIInjectedArgument.lower(value)
+}
+
+
+public struct TaskUiManagedOutput {
+    public var decoder: String
+    public var stdoutFormat: String
+    public var injectArguments: [TaskUiInjectedArgument]
+    public var rawStdoutAvailable: Bool
+    public var rawStderrAvailable: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(decoder: String, stdoutFormat: String, injectArguments: [TaskUiInjectedArgument], rawStdoutAvailable: Bool, rawStderrAvailable: Bool) {
+        self.decoder = decoder
+        self.stdoutFormat = stdoutFormat
+        self.injectArguments = injectArguments
+        self.rawStdoutAvailable = rawStdoutAvailable
+        self.rawStderrAvailable = rawStderrAvailable
+    }
+}
+
+#if compiler(>=6)
+extension TaskUiManagedOutput: Sendable {}
+#endif
+
+
+extension TaskUiManagedOutput: Equatable, Hashable {
+    public static func ==(lhs: TaskUiManagedOutput, rhs: TaskUiManagedOutput) -> Bool {
+        if lhs.decoder != rhs.decoder {
+            return false
+        }
+        if lhs.stdoutFormat != rhs.stdoutFormat {
+            return false
+        }
+        if lhs.injectArguments != rhs.injectArguments {
+            return false
+        }
+        if lhs.rawStdoutAvailable != rhs.rawStdoutAvailable {
+            return false
+        }
+        if lhs.rawStderrAvailable != rhs.rawStderrAvailable {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(decoder)
+        hasher.combine(stdoutFormat)
+        hasher.combine(injectArguments)
+        hasher.combine(rawStdoutAvailable)
+        hasher.combine(rawStderrAvailable)
+    }
+}
+
+extension TaskUiManagedOutput: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTaskUIManagedOutput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskUiManagedOutput {
+        return
+            try TaskUiManagedOutput(
+                decoder: FfiConverterString.read(from: &buf),
+                stdoutFormat: FfiConverterString.read(from: &buf),
+                injectArguments: FfiConverterSequenceTypeTaskUIInjectedArgument.read(from: &buf),
+                rawStdoutAvailable: FfiConverterBool.read(from: &buf),
+                rawStderrAvailable: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TaskUiManagedOutput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.decoder, into: &buf)
+        FfiConverterString.write(value.stdoutFormat, into: &buf)
+        FfiConverterSequenceTypeTaskUIInjectedArgument.write(value.injectArguments, into: &buf)
+        FfiConverterBool.write(value.rawStdoutAvailable, into: &buf)
+        FfiConverterBool.write(value.rawStderrAvailable, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskUIManagedOutput_lift(_ buf: RustBuffer) throws -> TaskUiManagedOutput {
+    return try FfiConverterTypeTaskUIManagedOutput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskUIManagedOutput_lower(_ value: TaskUiManagedOutput) -> RustBuffer {
+    return FfiConverterTypeTaskUIManagedOutput.lower(value)
+}
+
+
+public struct TaskUiSchema {
+    public var schemaVersion: UInt64
+    public var commandId: String
+    public var invocationName: String
+    public var displayName: String
+    public var category: String
+    public var summary: String
+    public var usage: String
+    public var arguments: [TaskUiArgument]
+    public var managedOutput: TaskUiManagedOutput?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt64, commandId: String, invocationName: String, displayName: String, category: String, summary: String, usage: String, arguments: [TaskUiArgument], managedOutput: TaskUiManagedOutput?) {
+        self.schemaVersion = schemaVersion
+        self.commandId = commandId
+        self.invocationName = invocationName
+        self.displayName = displayName
+        self.category = category
+        self.summary = summary
+        self.usage = usage
+        self.arguments = arguments
+        self.managedOutput = managedOutput
+    }
+}
+
+#if compiler(>=6)
+extension TaskUiSchema: Sendable {}
+#endif
+
+
+extension TaskUiSchema: Equatable, Hashable {
+    public static func ==(lhs: TaskUiSchema, rhs: TaskUiSchema) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.commandId != rhs.commandId {
+            return false
+        }
+        if lhs.invocationName != rhs.invocationName {
+            return false
+        }
+        if lhs.displayName != rhs.displayName {
+            return false
+        }
+        if lhs.category != rhs.category {
+            return false
+        }
+        if lhs.summary != rhs.summary {
+            return false
+        }
+        if lhs.usage != rhs.usage {
+            return false
+        }
+        if lhs.arguments != rhs.arguments {
+            return false
+        }
+        if lhs.managedOutput != rhs.managedOutput {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(commandId)
+        hasher.combine(invocationName)
+        hasher.combine(displayName)
+        hasher.combine(category)
+        hasher.combine(summary)
+        hasher.combine(usage)
+        hasher.combine(arguments)
+        hasher.combine(managedOutput)
+    }
+}
+
+extension TaskUiSchema: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTaskUISchema: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskUiSchema {
+        return
+            try TaskUiSchema(
+                schemaVersion: FfiConverterUInt64.read(from: &buf),
+                commandId: FfiConverterString.read(from: &buf),
+                invocationName: FfiConverterString.read(from: &buf),
+                displayName: FfiConverterString.read(from: &buf),
+                category: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                usage: FfiConverterString.read(from: &buf),
+                arguments: FfiConverterSequenceTypeTaskUIArgument.read(from: &buf),
+                managedOutput: FfiConverterOptionTypeTaskUIManagedOutput.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TaskUiSchema, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.schemaVersion, into: &buf)
+        FfiConverterString.write(value.commandId, into: &buf)
+        FfiConverterString.write(value.invocationName, into: &buf)
+        FfiConverterString.write(value.displayName, into: &buf)
+        FfiConverterString.write(value.category, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterString.write(value.usage, into: &buf)
+        FfiConverterSequenceTypeTaskUIArgument.write(value.arguments, into: &buf)
+        FfiConverterOptionTypeTaskUIManagedOutput.write(value.managedOutput, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskUISchema_lift(_ buf: RustBuffer) throws -> TaskUiSchema {
+    return try FfiConverterTypeTaskUISchema.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskUISchema_lower(_ value: TaskUiSchema) -> RustBuffer {
+    return FfiConverterTypeTaskUISchema.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
@@ -3378,6 +6794,8 @@ public enum FrontendServiceError: Swift.Error {
     )
     case Corpus(reason: String
     )
+    case TaskCompletion(reason: String
+    )
 }
 
 
@@ -3425,6 +6843,9 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
             reason: try FfiConverterString.read(from: &buf)
             )
         case 11: return .Corpus(
+            reason: try FfiConverterString.read(from: &buf)
+            )
+        case 12: return .TaskCompletion(
             reason: try FfiConverterString.read(from: &buf)
             )
 
@@ -3491,6 +6912,11 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
 
         case let .Corpus(reason):
             writeInt(&buf, Int32(11))
+            FfiConverterString.write(reason, into: &buf)
+
+
+        case let .TaskCompletion(reason):
+            writeInt(&buf, Int32(12))
             FfiConverterString.write(reason, into: &buf)
 
         }
@@ -3926,6 +7352,907 @@ extension PlotLayerKind: CaseIterable {}
 
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum PlotPayloadStrategy {
+
+    case pointCloud
+    case intervals
+}
+
+
+#if compiler(>=6)
+extension PlotPayloadStrategy: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotPayloadStrategy: FfiConverterRustBuffer {
+    typealias SwiftType = PlotPayloadStrategy
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotPayloadStrategy {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .pointCloud
+
+        case 2: return .intervals
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PlotPayloadStrategy, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .pointCloud:
+            writeInt(&buf, Int32(1))
+
+
+        case .intervals:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotPayloadStrategy_lift(_ buf: RustBuffer) throws -> PlotPayloadStrategy {
+    return try FfiConverterTypePlotPayloadStrategy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotPayloadStrategy_lower(_ value: PlotPayloadStrategy) -> RustBuffer {
+    return FfiConverterTypePlotPayloadStrategy.lower(value)
+}
+
+
+extension PlotPayloadStrategy: Equatable, Hashable {}
+
+extension PlotPayloadStrategy: Codable {}
+
+
+
+
+extension PlotPayloadStrategy: CaseIterable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum SurfaceParameterBaseSource {
+
+    case defaults
+    case last
+    case lastSuccessful
+    case file
+}
+
+
+#if compiler(>=6)
+extension SurfaceParameterBaseSource: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterBaseSource: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceParameterBaseSource
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterBaseSource {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .defaults
+
+        case 2: return .last
+
+        case 3: return .lastSuccessful
+
+        case 4: return .file
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SurfaceParameterBaseSource, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .defaults:
+            writeInt(&buf, Int32(1))
+
+
+        case .last:
+            writeInt(&buf, Int32(2))
+
+
+        case .lastSuccessful:
+            writeInt(&buf, Int32(3))
+
+
+        case .file:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterBaseSource_lift(_ buf: RustBuffer) throws -> SurfaceParameterBaseSource {
+    return try FfiConverterTypeSurfaceParameterBaseSource.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterBaseSource_lower(_ value: SurfaceParameterBaseSource) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterBaseSource.lower(value)
+}
+
+
+extension SurfaceParameterBaseSource: Equatable, Hashable {}
+
+extension SurfaceParameterBaseSource: Codable {}
+
+
+
+
+extension SurfaceParameterBaseSource: CaseIterable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum SurfaceParameterPredicate {
+
+    case always
+    case never
+    case isSet(parameter: String
+    )
+    case equals(parameter: String, value: SurfaceParameterValue
+    )
+    case not(predicates: [SurfaceParameterPredicate]
+    )
+    case all(predicates: [SurfaceParameterPredicate]
+    )
+    case any(predicates: [SurfaceParameterPredicate]
+    )
+}
+
+
+#if compiler(>=6)
+extension SurfaceParameterPredicate: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterPredicate: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceParameterPredicate
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterPredicate {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .always
+
+        case 2: return .never
+
+        case 3: return .isSet(parameter: try FfiConverterString.read(from: &buf)
+        )
+
+        case 4: return .equals(parameter: try FfiConverterString.read(from: &buf), value: try FfiConverterTypeSurfaceParameterValue.read(from: &buf)
+        )
+
+        case 5: return .not(predicates: try FfiConverterSequenceTypeSurfaceParameterPredicate.read(from: &buf)
+        )
+
+        case 6: return .all(predicates: try FfiConverterSequenceTypeSurfaceParameterPredicate.read(from: &buf)
+        )
+
+        case 7: return .any(predicates: try FfiConverterSequenceTypeSurfaceParameterPredicate.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SurfaceParameterPredicate, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .always:
+            writeInt(&buf, Int32(1))
+
+
+        case .never:
+            writeInt(&buf, Int32(2))
+
+
+        case let .isSet(parameter):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(parameter, into: &buf)
+
+
+        case let .equals(parameter,value):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(parameter, into: &buf)
+            FfiConverterTypeSurfaceParameterValue.write(value, into: &buf)
+
+
+        case let .not(predicates):
+            writeInt(&buf, Int32(5))
+            FfiConverterSequenceTypeSurfaceParameterPredicate.write(predicates, into: &buf)
+
+
+        case let .all(predicates):
+            writeInt(&buf, Int32(6))
+            FfiConverterSequenceTypeSurfaceParameterPredicate.write(predicates, into: &buf)
+
+
+        case let .any(predicates):
+            writeInt(&buf, Int32(7))
+            FfiConverterSequenceTypeSurfaceParameterPredicate.write(predicates, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterPredicate_lift(_ buf: RustBuffer) throws -> SurfaceParameterPredicate {
+    return try FfiConverterTypeSurfaceParameterPredicate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterPredicate_lower(_ value: SurfaceParameterPredicate) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterPredicate.lower(value)
+}
+
+
+extension SurfaceParameterPredicate: Equatable, Hashable {}
+
+extension SurfaceParameterPredicate: Codable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum SurfaceParameterSourceRecord {
+
+    case defaults
+    case last
+    case lastSuccessful
+    case file(path: String
+    )
+}
+
+
+#if compiler(>=6)
+extension SurfaceParameterSourceRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterSourceRecord: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceParameterSourceRecord
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterSourceRecord {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .defaults
+
+        case 2: return .last
+
+        case 3: return .lastSuccessful
+
+        case 4: return .file(path: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SurfaceParameterSourceRecord, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .defaults:
+            writeInt(&buf, Int32(1))
+
+
+        case .last:
+            writeInt(&buf, Int32(2))
+
+
+        case .lastSuccessful:
+            writeInt(&buf, Int32(3))
+
+
+        case let .file(path):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(path, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterSourceRecord_lift(_ buf: RustBuffer) throws -> SurfaceParameterSourceRecord {
+    return try FfiConverterTypeSurfaceParameterSourceRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterSourceRecord_lower(_ value: SurfaceParameterSourceRecord) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterSourceRecord.lower(value)
+}
+
+
+extension SurfaceParameterSourceRecord: Equatable, Hashable {}
+
+extension SurfaceParameterSourceRecord: Codable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum SurfaceParameterType {
+
+    case bool
+    case integer
+    case float
+    case string
+    case path(resourceKind: String?
+    )
+    case choice(values: [String]
+    )
+    case quantity(dimension: String, canonicalUnit: String, specialValues: [String]
+    )
+    case array(elements: [SurfaceParameterType], minItems: UInt64, maxItems: UInt64?, allowScalar: Bool
+    )
+    case table(fields: [SurfaceParameterTypeField]
+    )
+    case optional(values: [SurfaceParameterType], states: [String]
+    )
+}
+
+
+#if compiler(>=6)
+extension SurfaceParameterType: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterType: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceParameterType
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterType {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .bool
+
+        case 2: return .integer
+
+        case 3: return .float
+
+        case 4: return .string
+
+        case 5: return .path(resourceKind: try FfiConverterOptionString.read(from: &buf)
+        )
+
+        case 6: return .choice(values: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 7: return .quantity(dimension: try FfiConverterString.read(from: &buf), canonicalUnit: try FfiConverterString.read(from: &buf), specialValues: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 8: return .array(elements: try FfiConverterSequenceTypeSurfaceParameterType.read(from: &buf), minItems: try FfiConverterUInt64.read(from: &buf), maxItems: try FfiConverterOptionUInt64.read(from: &buf), allowScalar: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 9: return .table(fields: try FfiConverterSequenceTypeSurfaceParameterTypeField.read(from: &buf)
+        )
+
+        case 10: return .optional(values: try FfiConverterSequenceTypeSurfaceParameterType.read(from: &buf), states: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SurfaceParameterType, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .bool:
+            writeInt(&buf, Int32(1))
+
+
+        case .integer:
+            writeInt(&buf, Int32(2))
+
+
+        case .float:
+            writeInt(&buf, Int32(3))
+
+
+        case .string:
+            writeInt(&buf, Int32(4))
+
+
+        case let .path(resourceKind):
+            writeInt(&buf, Int32(5))
+            FfiConverterOptionString.write(resourceKind, into: &buf)
+
+
+        case let .choice(values):
+            writeInt(&buf, Int32(6))
+            FfiConverterSequenceString.write(values, into: &buf)
+
+
+        case let .quantity(dimension,canonicalUnit,specialValues):
+            writeInt(&buf, Int32(7))
+            FfiConverterString.write(dimension, into: &buf)
+            FfiConverterString.write(canonicalUnit, into: &buf)
+            FfiConverterSequenceString.write(specialValues, into: &buf)
+
+
+        case let .array(elements,minItems,maxItems,allowScalar):
+            writeInt(&buf, Int32(8))
+            FfiConverterSequenceTypeSurfaceParameterType.write(elements, into: &buf)
+            FfiConverterUInt64.write(minItems, into: &buf)
+            FfiConverterOptionUInt64.write(maxItems, into: &buf)
+            FfiConverterBool.write(allowScalar, into: &buf)
+
+
+        case let .table(fields):
+            writeInt(&buf, Int32(9))
+            FfiConverterSequenceTypeSurfaceParameterTypeField.write(fields, into: &buf)
+
+
+        case let .optional(values,states):
+            writeInt(&buf, Int32(10))
+            FfiConverterSequenceTypeSurfaceParameterType.write(values, into: &buf)
+            FfiConverterSequenceString.write(states, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterType_lift(_ buf: RustBuffer) throws -> SurfaceParameterType {
+    return try FfiConverterTypeSurfaceParameterType.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterType_lower(_ value: SurfaceParameterType) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterType.lower(value)
+}
+
+
+extension SurfaceParameterType: Equatable, Hashable {}
+
+extension SurfaceParameterType: Codable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum SurfaceParameterValue {
+
+    case bool(value: Bool
+    )
+    case integer(value: Int64
+    )
+    case float(value: Double
+    )
+    case string(value: String
+    )
+    case array(values: [SurfaceParameterValue]
+    )
+    case table(entries: [SurfaceParameterEntry]
+    )
+}
+
+
+#if compiler(>=6)
+extension SurfaceParameterValue: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterValue: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceParameterValue
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterValue {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .bool(value: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 2: return .integer(value: try FfiConverterInt64.read(from: &buf)
+        )
+
+        case 3: return .float(value: try FfiConverterDouble.read(from: &buf)
+        )
+
+        case 4: return .string(value: try FfiConverterString.read(from: &buf)
+        )
+
+        case 5: return .array(values: try FfiConverterSequenceTypeSurfaceParameterValue.read(from: &buf)
+        )
+
+        case 6: return .table(entries: try FfiConverterSequenceTypeSurfaceParameterEntry.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SurfaceParameterValue, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .bool(value):
+            writeInt(&buf, Int32(1))
+            FfiConverterBool.write(value, into: &buf)
+
+
+        case let .integer(value):
+            writeInt(&buf, Int32(2))
+            FfiConverterInt64.write(value, into: &buf)
+
+
+        case let .float(value):
+            writeInt(&buf, Int32(3))
+            FfiConverterDouble.write(value, into: &buf)
+
+
+        case let .string(value):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(value, into: &buf)
+
+
+        case let .array(values):
+            writeInt(&buf, Int32(5))
+            FfiConverterSequenceTypeSurfaceParameterValue.write(values, into: &buf)
+
+
+        case let .table(entries):
+            writeInt(&buf, Int32(6))
+            FfiConverterSequenceTypeSurfaceParameterEntry.write(entries, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterValue_lift(_ buf: RustBuffer) throws -> SurfaceParameterValue {
+    return try FfiConverterTypeSurfaceParameterValue.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterValue_lower(_ value: SurfaceParameterValue) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterValue.lower(value)
+}
+
+
+extension SurfaceParameterValue: Equatable, Hashable {}
+
+extension SurfaceParameterValue: Codable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum SurfaceRunSafetyClass {
+
+    case productWrite
+    case overwrite
+    case inputMutation
+}
+
+
+#if compiler(>=6)
+extension SurfaceRunSafetyClass: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceRunSafetyClass: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceRunSafetyClass
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceRunSafetyClass {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .productWrite
+
+        case 2: return .overwrite
+
+        case 3: return .inputMutation
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SurfaceRunSafetyClass, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .productWrite:
+            writeInt(&buf, Int32(1))
+
+
+        case .overwrite:
+            writeInt(&buf, Int32(2))
+
+
+        case .inputMutation:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceRunSafetyClass_lift(_ buf: RustBuffer) throws -> SurfaceRunSafetyClass {
+    return try FfiConverterTypeSurfaceRunSafetyClass.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceRunSafetyClass_lower(_ value: SurfaceRunSafetyClass) -> RustBuffer {
+    return FfiConverterTypeSurfaceRunSafetyClass.lower(value)
+}
+
+
+extension SurfaceRunSafetyClass: Equatable, Hashable {}
+
+extension SurfaceRunSafetyClass: Codable {}
+
+
+
+
+extension SurfaceRunSafetyClass: CaseIterable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum TaskProductKind {
+
+    case measurementSet
+    case casaImage
+    case casaTable
+    case fitsImage
+    case file
+}
+
+
+#if compiler(>=6)
+extension TaskProductKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTaskProductKind: FfiConverterRustBuffer {
+    typealias SwiftType = TaskProductKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskProductKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .measurementSet
+
+        case 2: return .casaImage
+
+        case 3: return .casaTable
+
+        case 4: return .fitsImage
+
+        case 5: return .file
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TaskProductKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .measurementSet:
+            writeInt(&buf, Int32(1))
+
+
+        case .casaImage:
+            writeInt(&buf, Int32(2))
+
+
+        case .casaTable:
+            writeInt(&buf, Int32(3))
+
+
+        case .fitsImage:
+            writeInt(&buf, Int32(4))
+
+
+        case .file:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskProductKind_lift(_ buf: RustBuffer) throws -> TaskProductKind {
+    return try FfiConverterTypeTaskProductKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskProductKind_lower(_ value: TaskProductKind) -> RustBuffer {
+    return FfiConverterTypeTaskProductKind.lower(value)
+}
+
+
+extension TaskProductKind: Equatable, Hashable {}
+
+extension TaskProductKind: Codable {}
+
+
+
+
+extension TaskProductKind: CaseIterable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum TaskProductRole {
+
+    case primary
+    case auxiliary
+    case preview
+}
+
+
+#if compiler(>=6)
+extension TaskProductRole: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTaskProductRole: FfiConverterRustBuffer {
+    typealias SwiftType = TaskProductRole
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskProductRole {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .primary
+
+        case 2: return .auxiliary
+
+        case 3: return .preview
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TaskProductRole, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .primary:
+            writeInt(&buf, Int32(1))
+
+
+        case .auxiliary:
+            writeInt(&buf, Int32(2))
+
+
+        case .preview:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskProductRole_lift(_ buf: RustBuffer) throws -> TaskProductRole {
+    return try FfiConverterTypeTaskProductRole.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaskProductRole_lower(_ value: TaskProductRole) -> RustBuffer {
+    return FfiConverterTypeTaskProductRole.lower(value)
+}
+
+
+extension TaskProductRole: Equatable, Hashable {}
+
+extension TaskProductRole: Codable {}
+
+
+
+
+extension TaskProductRole: CaseIterable {}
+
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -4025,6 +8352,198 @@ fileprivate struct FfiConverterOptionTypeDatasetProbe: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeSurfaceParameterCliProjection: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceParameterCliProjection?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSurfaceParameterCliProjection.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSurfaceParameterCliProjection.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSurfaceParameterLocation: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceParameterLocation?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSurfaceParameterLocation.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSurfaceParameterLocation.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSurfaceParameterProviderProjection: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceParameterProviderProjection?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSurfaceParameterProviderProjection.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSurfaceParameterProviderProjection.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSurfaceParameterSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceParameterSnapshot?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSurfaceParameterSnapshot.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSurfaceParameterSnapshot.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeTaskUIManagedOutput: FfiConverterRustBuffer {
+    typealias SwiftType = TaskUiManagedOutput?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTaskUIManagedOutput.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTaskUIManagedOutput.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSurfaceParameterPredicate: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceParameterPredicate?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSurfaceParameterPredicate.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSurfaceParameterPredicate.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSurfaceParameterValue: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceParameterValue?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSurfaceParameterValue.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSurfaceParameterValue.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceUInt64: FfiConverterRustBuffer {
     typealias SwiftType = [UInt64]
 
@@ -4092,6 +8611,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeApplicationCatalogEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [ApplicationCatalogEntry]
+
+    public static func write(_ value: [ApplicationCatalogEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeApplicationCatalogEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ApplicationCatalogEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ApplicationCatalogEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeApplicationCatalogEntry.read(from: &buf))
         }
         return seq
     }
@@ -4271,9 +8815,437 @@ fileprivate struct FfiConverterSequenceTypePlotSeriesMetadata: FfiConverterRustB
         return seq
     }
 }
-public func applicationCatalogJson()throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_application_catalog_json($0
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSurfaceNarrowingConstraint: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceNarrowingConstraint]
+
+    public static func write(_ value: [SurfaceNarrowingConstraint], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceNarrowingConstraint.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceNarrowingConstraint] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceNarrowingConstraint]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceNarrowingConstraint.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSurfaceParameterBinding: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceParameterBinding]
+
+    public static func write(_ value: [SurfaceParameterBinding], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceParameterBinding.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceParameterBinding] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceParameterBinding]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceParameterBinding.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSurfaceParameterConcept: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceParameterConcept]
+
+    public static func write(_ value: [SurfaceParameterConcept], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceParameterConcept.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceParameterConcept] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceParameterConcept]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceParameterConcept.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSurfaceParameterDiagnostic: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceParameterDiagnostic]
+
+    public static func write(_ value: [SurfaceParameterDiagnostic], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceParameterDiagnostic.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceParameterDiagnostic] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceParameterDiagnostic]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceParameterDiagnostic.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSurfaceParameterEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceParameterEntry]
+
+    public static func write(_ value: [SurfaceParameterEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceParameterEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceParameterEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceParameterEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceParameterEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSurfaceParameterTypeField: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceParameterTypeField]
+
+    public static func write(_ value: [SurfaceParameterTypeField], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceParameterTypeField.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceParameterTypeField] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceParameterTypeField]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceParameterTypeField.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTaskCompletionProduct: FfiConverterRustBuffer {
+    typealias SwiftType = [TaskCompletionProduct]
+
+    public static func write(_ value: [TaskCompletionProduct], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTaskCompletionProduct.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TaskCompletionProduct] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TaskCompletionProduct]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTaskCompletionProduct.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTaskParameterValue: FfiConverterRustBuffer {
+    typealias SwiftType = [TaskParameterValue]
+
+    public static func write(_ value: [TaskParameterValue], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTaskParameterValue.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TaskParameterValue] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TaskParameterValue]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTaskParameterValue.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTaskUIArgument: FfiConverterRustBuffer {
+    typealias SwiftType = [TaskUiArgument]
+
+    public static func write(_ value: [TaskUiArgument], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTaskUIArgument.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TaskUiArgument] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TaskUiArgument]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTaskUIArgument.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTaskUIInjectedArgument: FfiConverterRustBuffer {
+    typealias SwiftType = [TaskUiInjectedArgument]
+
+    public static func write(_ value: [TaskUiInjectedArgument], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTaskUIInjectedArgument.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TaskUiInjectedArgument] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TaskUiInjectedArgument]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTaskUIInjectedArgument.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSurfaceParameterPredicate: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceParameterPredicate]
+
+    public static func write(_ value: [SurfaceParameterPredicate], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceParameterPredicate.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceParameterPredicate] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceParameterPredicate]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceParameterPredicate.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSurfaceParameterType: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceParameterType]
+
+    public static func write(_ value: [SurfaceParameterType], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceParameterType.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceParameterType] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceParameterType]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceParameterType.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSurfaceParameterValue: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceParameterValue]
+
+    public static func write(_ value: [SurfaceParameterValue], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceParameterValue.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceParameterValue] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceParameterValue]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceParameterValue.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSurfaceRunSafetyClass: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceRunSafetyClass]
+
+    public static func write(_ value: [SurfaceRunSafetyClass], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceRunSafetyClass.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceRunSafetyClass] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceRunSafetyClass]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceRunSafetyClass.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringString: FfiConverterRustBuffer {
+    public static func write(_ value: [String: String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterString.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: String] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: String]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterString.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringTypeSurfaceParameterState: FfiConverterRustBuffer {
+    public static func write(_ value: [String: SurfaceParameterState], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterTypeSurfaceParameterState.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: SurfaceParameterState] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: SurfaceParameterState]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterTypeSurfaceParameterState.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringTypeSurfaceParameterValue: FfiConverterRustBuffer {
+    public static func write(_ value: [String: SurfaceParameterValue], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterTypeSurfaceParameterValue.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: SurfaceParameterValue] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: SurfaceParameterValue]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterTypeSurfaceParameterValue.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
+public func applicationCatalog()throws  -> ApplicationCatalogEnvelope  {
+    return try  FfiConverterTypeApplicationCatalogEnvelope_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_application_catalog($0
     )
 })
 }
@@ -4364,6 +9336,16 @@ public func assistantSaveConversationJson(requestJson: String)throws   {try rust
         FfiConverterString.lower(requestJson),$0
     )
 }
+}
+/**
+ * Parse one trusted `task.suggest` MCP result into the generated application contract.
+ */
+public func assistantTaskSuggestion(toolOutput: String)throws  -> AssistantTaskSuggestionProjection  {
+    return try  FfiConverterTypeAssistantTaskSuggestionProjection_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_assistant_task_suggestion(
+        FfiConverterString.lower(toolOutput),$0
+    )
+})
 }
 public func buildImageExplorerSnapshotFromRequestJson(requestJson: String)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
@@ -4511,30 +9493,11 @@ public func notebookSaveVisualizationJson(requestJson: String)throws  -> String 
 })
 }
 /**
- * Return the validated aggregate catalog of canonical parameter concepts and surfaces.
- */
-public func parameterCatalogJson()throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_catalog_json($0
-    )
-})
-}
-/**
  * Resolve the current defaults and UI state for one surface.
  */
-public func parameterDefaultsJson(surfaceId: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_defaults_json(
-        FfiConverterString.lower(surfaceId),$0
-    )
-})
-}
-/**
- * Project a canonical task or session definition into the launcher form shape.
- */
-public func parameterFormJson(surfaceId: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_form_json(
+public func parameterDefaults(surfaceId: String)throws  -> SurfaceParameterSnapshot  {
+    return try  FfiConverterTypeSurfaceParameterSnapshot_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_defaults(
         FfiConverterString.lower(surfaceId),$0
     )
 })
@@ -4542,9 +9505,9 @@ public func parameterFormJson(surfaceId: String)throws  -> String  {
 /**
  * Load Last or Last Successful from the managed store, if present.
  */
-public func parameterLastJson(surfaceId: String, workspace: String, successful: Bool)throws  -> String?  {
-    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_last_json(
+public func parameterLast(surfaceId: String, workspace: String, successful: Bool)throws  -> SurfaceParameterSnapshot?  {
+    return try  FfiConverterOptionTypeSurfaceParameterSnapshot.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_last(
         FfiConverterString.lower(surfaceId),
         FfiConverterString.lower(workspace),
         FfiConverterBool.lower(successful),$0
@@ -4554,9 +9517,9 @@ public func parameterLastJson(surfaceId: String, workspace: String, successful: 
 /**
  * Load and resolve an explicit sparse TOML profile supplied by the frontend.
  */
-public func parameterLoadJson(surfaceId: String, profileToml: String, sourcePath: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_load_json(
+public func parameterLoad(surfaceId: String, profileToml: String, sourcePath: String)throws  -> SurfaceParameterSnapshot  {
+    return try  FfiConverterTypeSurfaceParameterSnapshot_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_load(
         FfiConverterString.lower(surfaceId),
         FfiConverterString.lower(profileToml),
         FfiConverterString.lower(sourcePath),$0
@@ -4566,59 +9529,59 @@ public func parameterLoadJson(surfaceId: String, profileToml: String, sourcePath
 /**
  * Project one complete task invocation for CLI/TUI/GUI consumers.
  */
-public func parameterProviderInvocationJson(surfaceId: String, valuesJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_provider_invocation_json(
+public func parameterProviderInvocation(surfaceId: String, values: [String: SurfaceParameterValue])throws  -> SurfaceProviderInvocation  {
+    return try  FfiConverterTypeSurfaceProviderInvocation_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_provider_invocation(
         FfiConverterString.lower(surfaceId),
-        FfiConverterString.lower(valuesJson),$0
+        FfiConverterDictionaryStringTypeSurfaceParameterValue.lower(values),$0
     )
 })
 }
 /**
  * Render typed resolved values as a sparse current-contract TOML profile.
  */
-public func parameterRenderToml(surfaceId: String, valuesJson: String)throws  -> String  {
+public func parameterRenderToml(surfaceId: String, values: [String: SurfaceParameterValue])throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_parameter_render_toml(
         FfiConverterString.lower(surfaceId),
-        FfiConverterString.lower(valuesJson),$0
+        FfiConverterDictionaryStringTypeSurfaceParameterValue.lower(values),$0
     )
 })
 }
 /**
  * Resolve typed context and explicit override patches over one selected base source.
  */
-public func parameterResolveJson(surfaceId: String, baseSource: String, profileToml: String?, profilePath: String?, contextPatchJson: String, overridePatchJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_resolve_json(
+public func parameterResolve(surfaceId: String, baseSource: SurfaceParameterBaseSource, profileToml: String?, profilePath: String?, contextPatch: SurfaceParameterPatch, overridePatch: SurfaceParameterPatch)throws  -> SurfaceParameterSnapshot  {
+    return try  FfiConverterTypeSurfaceParameterSnapshot_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_resolve(
         FfiConverterString.lower(surfaceId),
-        FfiConverterString.lower(baseSource),
+        FfiConverterTypeSurfaceParameterBaseSource_lower(baseSource),
         FfiConverterOptionString.lower(profileToml),
         FfiConverterOptionString.lower(profilePath),
-        FfiConverterString.lower(contextPatchJson),
-        FfiConverterString.lower(overridePatchJson),$0
+        FfiConverterTypeSurfaceParameterPatch_lower(contextPatch),
+        FfiConverterTypeSurfaceParameterPatch_lower(overridePatch),$0
     )
 })
 }
 /**
  * Evaluate catalog-owned run risks for one resolved task value set.
  */
-public func parameterRunSafetyJson(surfaceId: String, valuesJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_run_safety_json(
+public func parameterRunSafety(surfaceId: String, values: [String: SurfaceParameterValue])throws  -> SurfaceRunSafety  {
+    return try  FfiConverterTypeSurfaceRunSafety_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_run_safety(
         FfiConverterString.lower(surfaceId),
-        FfiConverterString.lower(valuesJson),$0
+        FfiConverterDictionaryStringTypeSurfaceParameterValue.lower(values),$0
     )
 })
 }
 /**
  * Atomically save typed resolved values to an explicit sparse TOML profile.
  */
-public func parameterSaveJson(surfaceId: String, valuesJson: String, destinationPath: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_save_json(
+public func parameterSave(surfaceId: String, values: [String: SurfaceParameterValue], destinationPath: String)throws  -> SurfaceParameterWriteResult  {
+    return try  FfiConverterTypeSurfaceParameterWriteResult_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_save(
         FfiConverterString.lower(surfaceId),
-        FfiConverterString.lower(valuesJson),
+        FfiConverterDictionaryStringTypeSurfaceParameterValue.lower(values),
         FfiConverterString.lower(destinationPath),$0
     )
 })
@@ -4626,28 +9589,9 @@ public func parameterSaveJson(surfaceId: String, valuesJson: String, destination
 /**
  * Return one self-contained surface definition and its referenced concepts.
  */
-public func parameterSurfaceBundleJson(surfaceId: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_surface_bundle_json(
-        FfiConverterString.lower(surfaceId),$0
-    )
-})
-}
-/**
- * Return the aggregate parameter catalog under a surface-oriented API name.
- */
-public func parameterSurfaceCatalogJson()throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_surface_catalog_json($0
-    )
-})
-}
-/**
- * Return one canonical task or session definition without duplicating its concepts.
- */
-public func parameterSurfaceDefinitionJson(surfaceId: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_surface_definition_json(
+public func parameterSurfaceBundle(surfaceId: String)throws  -> SurfaceParameterBundle  {
+    return try  FfiConverterTypeSurfaceParameterBundle_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_surface_bundle(
         FfiConverterString.lower(surfaceId),$0
     )
 })
@@ -4680,10 +9624,30 @@ public func probeProject(path: String)throws  -> ProjectProbe  {
     )
 })
 }
-public func taskContextOptionsJson(datasetPath: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_task_context_options_json(
+/**
+ * Decode one successful provider result and probe only contract-declared products.
+ */
+public func taskCompletion(surfaceId: String, stdout: String, workspace: String, values: [TaskParameterValue])throws  -> TaskCompletionProjection  {
+    return try  FfiConverterTypeTaskCompletionProjection_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_task_completion(
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(stdout),
+        FfiConverterString.lower(workspace),
+        FfiConverterSequenceTypeTaskParameterValue.lower(values),$0
+    )
+})
+}
+public func taskContextOptions(datasetPath: String)throws  -> TaskContextOptionsEnvelope  {
+    return try  FfiConverterTypeTaskContextOptionsEnvelope_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_task_context_options(
         FfiConverterString.lower(datasetPath),$0
+    )
+})
+}
+public func taskUiSchema(surfaceId: String)throws  -> TaskUiSchema  {
+    return try  FfiConverterTypeTaskUISchema_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_task_ui_schema(
+        FfiConverterString.lower(surfaceId),$0
     )
 })
 }
@@ -4817,7 +9781,7 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_application_catalog_json() != 28610) {
+    if (uniffi_casars_frontend_services_checksum_func_application_catalog() != 3558) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_assistant_conversations_json() != 59160) {
@@ -4845,6 +9809,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_assistant_save_conversation_json() != 38934) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_assistant_task_suggestion() != 64746) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_build_image_explorer_snapshot_from_request_json() != 58871) {
@@ -4895,43 +9862,31 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_notebook_save_visualization_json() != 16081) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_catalog_json() != 8) {
+    if (uniffi_casars_frontend_services_checksum_func_parameter_defaults() != 26772) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_defaults_json() != 55005) {
+    if (uniffi_casars_frontend_services_checksum_func_parameter_last() != 21501) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_form_json() != 42757) {
+    if (uniffi_casars_frontend_services_checksum_func_parameter_load() != 19398) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_last_json() != 64934) {
+    if (uniffi_casars_frontend_services_checksum_func_parameter_provider_invocation() != 18733) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_load_json() != 36461) {
+    if (uniffi_casars_frontend_services_checksum_func_parameter_render_toml() != 57843) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_provider_invocation_json() != 48377) {
+    if (uniffi_casars_frontend_services_checksum_func_parameter_resolve() != 2205) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_render_toml() != 1953) {
+    if (uniffi_casars_frontend_services_checksum_func_parameter_run_safety() != 29331) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_resolve_json() != 12064) {
+    if (uniffi_casars_frontend_services_checksum_func_parameter_save() != 42127) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_run_safety_json() != 45586) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_save_json() != 23246) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_surface_bundle_json() != 20566) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_surface_catalog_json() != 40215) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_surface_definition_json() != 4630) {
+    if (uniffi_casars_frontend_services_checksum_func_parameter_surface_bundle() != 8856) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_probe_measurement_set_time_range() != 14615) {
@@ -4946,7 +9901,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_probe_project() != 9335) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_task_context_options_json() != 343) {
+    if (uniffi_casars_frontend_services_checksum_func_task_completion() != 60945) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_task_context_options() != 61766) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_task_ui_schema() != 31518) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_tutorial_advance_acquisition_json() != 4234) {
@@ -4988,7 +9949,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_tutorial_template_json() != 59443) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_accepted_durable_change() != 38748) {
+    if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_accepted_durable_change() != 59881) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_flush() != 14560) {
@@ -4997,7 +9958,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_flush_all() != 3951) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_opened() != 48722) {
+    if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_opened() != 45776) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_take_warnings() != 14397) {
@@ -5006,7 +9967,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_method_parametertasklifecycle_after_completion() != 64932) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_method_parametertasklifecycle_before_execution() != 26659) {
+    if (uniffi_casars_frontend_services_checksum_method_parametertasklifecycle_before_execution() != 39069) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_constructor_parametersessionlifecycle_new() != 9529) {

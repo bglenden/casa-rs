@@ -21,8 +21,49 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "measurementset-summary-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "measurementset-summary-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            },
+            {
+              "id": "plot_output",
+              "role": "auxiliary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "plot_output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            },
+            {
+              "id": "flag_output",
+              "role": "auxiliary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "flag_output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -3593,8 +3634,37 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outputvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outputvis"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            },
+            {
+              "id": "output",
+              "role": "auxiliary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -7475,7 +7545,24 @@
       "execution": {
         "invocation_name": "importvla",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "vis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "vis"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -8133,8 +8220,24 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "imager-run-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "imager-run-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "imager-artifacts",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "decoded_artifacts"
+              },
+              "cardinality": "many",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -11565,7 +11668,24 @@
       "execution": {
         "invocation_name": "simobserve",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output_ms",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output_ms"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -13910,7 +14030,10 @@
       "execution": {
         "invocation_name": "tablebrowser",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "bindings": [
         {
@@ -14291,7 +14414,10 @@
       "execution": {
         "invocation_name": "imexplore",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "bindings": [
         {
@@ -15181,7 +15307,10 @@
         "fixed_args": [
           "imhead"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -15417,7 +15546,10 @@
         "fixed_args": [
           "imstat"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "bindings": [
         {
@@ -15635,7 +15767,24 @@
       "execution": {
         "invocation_name": "immoments",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -16018,7 +16167,24 @@
       "execution": {
         "invocation_name": "exportfits",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "fitsimage",
+              "role": "primary",
+              "resource_kind": "fits_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "fitsimage"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": false
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -16252,7 +16418,24 @@
       "execution": {
         "invocation_name": "mstransform",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outputvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outputvis"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -16839,7 +17022,24 @@
       "execution": {
         "invocation_name": "mstransform",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outputvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outputvis"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -17439,8 +17639,37 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outputvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outputvis"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            },
+            {
+              "id": "output",
+              "role": "auxiliary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -18382,8 +18611,25 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -19535,8 +19781,25 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -21030,8 +21293,25 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -22375,8 +22655,25 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -22927,8 +23224,25 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -23476,8 +23790,49 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "measurementset-summary-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "measurementset-summary-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            },
+            {
+              "id": "plot_output",
+              "role": "auxiliary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "plot_output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            },
+            {
+              "id": "flag_output",
+              "role": "auxiliary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "flag_output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -27035,7 +27390,10 @@
           "--task",
           "plotcal"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "bindings": [
         {
@@ -27829,7 +28187,10 @@
       "execution": {
         "invocation_name": "flagdata",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -28780,7 +29141,10 @@
       "execution": {
         "invocation_name": "flagmanager",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -29129,7 +29493,24 @@
           "--task",
           "imcollapse"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -29721,7 +30102,10 @@
           "--task",
           "imfit"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -30923,7 +31307,24 @@
       "execution": {
         "invocation_name": "impbcor",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -31560,7 +31961,10 @@
           "--task",
           "widebandpbcor"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -32150,7 +32554,36 @@
           "--task",
           "imcontsub"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "linefile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "linefile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            },
+            {
+              "id": "contfile",
+              "role": "auxiliary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "contfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -32570,7 +33003,24 @@
       "execution": {
         "invocation_name": "impv",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -32948,7 +33398,24 @@
       "execution": {
         "invocation_name": "imsubimage",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -33229,7 +33696,24 @@
       "execution": {
         "invocation_name": "immath",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -33461,7 +33945,24 @@
       "execution": {
         "invocation_name": "imregrid",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -33755,7 +34256,10 @@
       "execution": {
         "invocation_name": "feather",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -34037,7 +34541,24 @@
       "execution": {
         "invocation_name": "importfits",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "imagename",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "imagename"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -34221,7 +34742,24 @@
           "--task",
           "concat"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "concatvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "concatvis"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -34704,7 +35242,10 @@
           "--task",
           "statwt"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -36028,7 +36569,24 @@
           "--task",
           "hanningsmooth"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outputvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outputvis"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -36863,7 +37421,10 @@
           "--task",
           "clearcal"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -37152,7 +37713,10 @@
           "--task",
           "delmod"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -37393,7 +37957,10 @@
           "--task",
           "ft"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -37884,7 +38451,24 @@
           "--task",
           "simanalyze"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "imagename",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "imagename"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -39569,7 +40153,10 @@
           "--task",
           "simalma"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {

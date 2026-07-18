@@ -15,7 +15,11 @@ quick:
 
 verify:
     just quick
+    scripts/generate-frontend-bindings.sh --check
     ./scripts/test-python-package.sh
+
+frontend-bindings-check:
+    scripts/generate-frontend-bindings.sh --check
 
 smoke:
     bash scripts/test-smoke.sh

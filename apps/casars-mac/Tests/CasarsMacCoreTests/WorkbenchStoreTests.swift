@@ -1,4 +1,5 @@
 import Foundation
+import CasarsFrontendServices
 import XCTest
 @testable import CasarsMacCore
 
@@ -447,6 +448,7 @@ final class WorkbenchStoreTests: XCTestCase {
         state.applicationCatalog = [
             ApplicationCatalogEntry(
                 id: "imstat",
+                kind: "task",
                 category: "Images",
                 displayName: "Image Statistics",
                 executable: "imexplore",
@@ -456,7 +458,7 @@ final class WorkbenchStoreTests: XCTestCase {
                 interaction: "one_shot",
                 browserKind: nil,
                 datasetKinds: ["image_cube"],
-                showInTUI: true,
+                showInTui: true,
                 showInSwift: true,
                 includeInSuite: true
             )
@@ -657,36 +659,30 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(tasks.contains { $0.id == "imager" && $0.executable == "casars-imager" })
     }
 
-    func testTaskContextOptionsDecodeRealDataChoices() throws {
-        let optionsJSON = """
-        {
-          "schema_version": 1,
-          "dataset_path": "/data/probed.ms",
-          "dataset_kind": "measurement_set",
-          "fields": ["0: Target"],
-          "spectral_windows": ["spw 0: 4 chan, 1.420000 GHz center"],
-          "scans": ["scan 1"],
-          "arrays": [],
-          "observations": [],
-          "antennas": ["ea01"],
-          "intents": [],
-          "feeds": [],
-          "correlations": ["I"],
-          "columns": ["DATA", "FLAG"],
-          "data_columns": ["DATA"],
-          "subtables": ["ANTENNA (required)"],
-          "shape": [4],
-          "defaults": {
-            "field": "0: Target",
-            "spectral_window": "spw 0: 4 chan, 1.420000 GHz center",
-            "data_column": "DATA"
-          },
-          "diagnostics": []
-        }
-        """
-        let options = try JSONDecoder().decode(
-            TaskContextOptionsEnvelope.self,
-            from: Data(optionsJSON.utf8)
+    func testTypedTaskContextOptionsPreserveRealDataChoices() {
+        let options = TaskContextOptionsEnvelope(
+            schemaVersion: 1,
+            datasetPath: "/data/probed.ms",
+            datasetKind: "measurement_set",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            scans: ["scan 1"],
+            arrays: [],
+            observations: [],
+            antennas: ["ea01"],
+            intents: [],
+            feeds: [],
+            correlations: ["I"],
+            columns: ["DATA", "FLAG"],
+            dataColumns: ["DATA"],
+            subtables: ["ANTENNA (required)"],
+            shape: [4],
+            defaults: [
+                "field": "0: Target",
+                "spectral_window": "spw 0: 4 chan, 1.420000 GHz center",
+                "data_column": "DATA",
+            ],
+            diagnostics: []
         )
 
         XCTAssertEqual(options.datasetKind, "measurement_set")
@@ -698,13 +694,13 @@ final class WorkbenchStoreTests: XCTestCase {
     func testTaskUISchemaLoadsFromFrontendServices() throws {
         let schema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "flagdata")
 
-        XCTAssertEqual(schema.commandID, "flagdata")
+        XCTAssertEqual(schema.commandId, "flagdata")
         XCTAssertTrue(schema.arguments.contains { argument in
             argument.id == "mode" && argument.parser.choices?.contains("summary") == true
         })
 
         let applycalSchema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "applycal")
-        XCTAssertEqual(applycalSchema.commandID, "applycal")
+        XCTAssertEqual(applycalSchema.commandId, "applycal")
         XCTAssertFalse(applycalSchema.arguments.contains { $0.id == "mode" })
         let applycalBundle = try UniFFISurfaceParameterClient().loadBundle(surfaceID: "applycal")
         XCTAssertEqual(applycalBundle.surface.execution.fixedArgs, ["--mode", "apply"])
@@ -712,14 +708,14 @@ final class WorkbenchStoreTests: XCTestCase {
         let gencalSchema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "gencal")
         XCTAssertTrue(gencalSchema.arguments.contains { argument in
             argument.id == "caltype"
-                && argument.conceptID == "parameter.caltype"
+                && argument.conceptId == "parameter.caltype"
                 && argument.parser.choices?.contains("opac") == true
         })
     }
 
     func testImagerTaskSchemaExposesTutorialControlsAndManagedOutput() throws {
         let schema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "imager")
-        let argumentIDs = Set(schema.arguments.filter { !$0.hiddenInTUI }.map(\.id))
+        let argumentIDs = Set(schema.arguments.filter { !$0.hiddenInTui }.map(\.id))
         let tutorialArguments = [
             "vis", "imagename", "imsize", "cell", "field", "phasecenter_field",
             "spw", "datacolumn", "specmode", "channel_count", "start", "width",
@@ -735,7 +731,7 @@ final class WorkbenchStoreTests: XCTestCase {
         for argumentID in tutorialArguments {
             XCTAssertTrue(argumentIDs.contains(argumentID), "missing \(argumentID)")
         }
-        XCTAssertEqual(schema.managedOutput?.renderer, "imager-run-v1")
+        XCTAssertEqual(schema.managedOutput?.decoder, "imager-run-v1")
         XCTAssertEqual(schema.managedOutput?.injectArguments.first?.flag, "--managed-output")
         XCTAssertEqual(schema.managedOutput?.injectArguments.first?.value, "true")
     }
@@ -817,6 +813,7 @@ final class WorkbenchStoreTests: XCTestCase {
             runID: "run-1",
             task: ApplicationCatalogEntry(
                 id: "exportfits",
+                kind: "task",
                 category: "Images",
                 displayName: "Export FITS",
                 executable: "exportfits",
@@ -826,7 +823,7 @@ final class WorkbenchStoreTests: XCTestCase {
                 interaction: "one_shot",
                 browserKind: nil,
                 datasetKinds: ["image"],
-                showInTUI: true,
+                showInTui: true,
                 showInSwift: true,
                 includeInSuite: true
             ),
@@ -1254,7 +1251,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertFalse(summary.requiresInteractiveConfirmation)
         XCTAssertTrue(manual.requiresInteractiveConfirmation)
         XCTAssertTrue(manual.requiresInputMutationConfirmation)
-        XCTAssertEqual(manual.classes, ["input_mutation"])
+        XCTAssertEqual(manual.classes, [.inputMutation])
     }
 
     func testTaskLastWritesAttemptThenSuccessAndHonorsNoSaveLast() throws {
@@ -2416,21 +2413,7 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     func testGenericTaskRequestSummaryDisplaysProjectRelativePaths() throws {
-        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-        {
-          "schema_version": 1,
-          "command_id": "flagdata",
-          "invocation_name": "flagdata",
-          "display_name": "Flag Data",
-          "category": "Flagging",
-          "summary": "Run native CASA-style MeasurementSet flagging.",
-          "usage": "flagdata",
-          "arguments": [
-            {"id":"vis","label":"MeasurementSet","order":0,"parser":{"kind":"option","flags":["--vis"],"metavar":"MS","choices":[]},"value_kind":"path","parameter_type":"measurement_set_path","required":true,"default":"/data/project/input.ms","help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-            {"id":"mode","label":"Mode","order":1,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["summary","manual"]},"value_kind":"choice","required":true,"default":"summary","help":"","group":"Flagging","advanced":false,"hidden_in_tui":false}
-          ]
-        }
-        """.utf8))
+        let schema = try CasarsFrontendServices.taskUiSchema(surfaceId: "flagdata")
         var state = EmptyWorkbench.makeState()
         state.project = ProjectFixture(
             name: "project",
@@ -2454,21 +2437,7 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     func testGenericTaskRegistersRelativeOutputProductUnderProjectRoot() throws {
-        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-        {
-          "schema_version": 1,
-          "command_id": "immoments",
-          "invocation_name": "immoments",
-          "display_name": "Image Moments",
-          "category": "Images",
-          "summary": "Create CASA-style image moment maps.",
-          "usage": "immoments <imagename> --outfile <path>",
-          "arguments": [
-            {"id":"imagename","label":"Image","order":0,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-            {"id":"outfile","label":"Output","order":1,"parser":{"kind":"option","flags":["--outfile"],"metavar":"path","choices":[]},"value_kind":"path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false}
-          ]
-        }
-        """.utf8))
+        let schema = try CasarsFrontendServices.taskUiSchema(surfaceId: "immoments")
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-generic-product-\(UUID().uuidString)", isDirectory: true)
         let outputURL = rootURL.appendingPathComponent(".casa-rs/workspace/native/mom0.image", isDirectory: true)
@@ -2508,6 +2477,7 @@ final class WorkbenchStoreTests: XCTestCase {
         state.applicationCatalog = [
             ApplicationCatalogEntry(
                 id: "immoments",
+                kind: "task",
                 category: "Images",
                 displayName: "Image Moments",
                 executable: "immoments",
@@ -2517,7 +2487,7 @@ final class WorkbenchStoreTests: XCTestCase {
                 interaction: "one_shot",
                 browserKind: nil,
                 datasetKinds: ["image"],
-                showInTUI: true,
+                showInTui: true,
                 showInSwift: true,
                 includeInSuite: true
             )
@@ -2541,27 +2511,20 @@ final class WorkbenchStoreTests: XCTestCase {
 
         XCTAssertEqual(store.state.taskRun.state, TaskRunState.succeeded)
         XCTAssertEqual(store.state.taskRun.outputPaths, [outputPath])
-        XCTAssertTrue(store.state.project.datasets.contains { $0.path == outputPath })
+        XCTAssertFalse(store.state.project.datasets.contains { $0.path == outputPath })
         XCTAssertEqual(store.state.runProductGroups.first?.products.first?.path, outputPath)
+        XCTAssertNil(store.state.runProductGroups.first?.products.first?.datasetID)
+        XCTAssertNotNil(store.state.runProductGroups.first?.products.first?.diagnostic)
+        let runID = try XCTUnwrap(store.state.taskRun.runID)
+        let productID = try XCTUnwrap(store.state.runProductGroups.first?.products.first?.id)
+        store.openRunProduct(runID: runID, productID: productID)
+        XCTAssertTrue(store.state.project.datasets.contains { $0.path == outputPath })
+        XCTAssertEqual(store.state.runProductGroups.first?.products.first?.datasetID, outputDataset.id)
         XCTAssertEqual(taskClient.requests.first?.workingDirectoryPath, rootURL.path)
     }
 
     func testGenericImportFitsRegistersImagenameOutputProduct() throws {
-        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-        {
-          "schema_version": 1,
-          "command_id": "importfits",
-          "invocation_name": "importfits",
-          "display_name": "Import FITS",
-          "category": "Images",
-          "summary": "Import FITS files as CASA images.",
-          "usage": "importfits <fitsimage> <imagename>",
-          "arguments": [
-            {"id":"fitsimage","label":"FITS","order":0,"parser":{"kind":"positional","metavar":"fitsimage"},"value_kind":"path","parameter_type":"fits_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-            {"id":"imagename","label":"Image","order":1,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","parameter_type":"output_image_path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false}
-          ]
-        }
-        """.utf8))
+        let schema = try CasarsFrontendServices.taskUiSchema(surfaceId: "importfits")
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-importfits-product-\(UUID().uuidString)", isDirectory: true)
         let outputURL = rootURL.appendingPathComponent("twhya_cont-importfits.image", isDirectory: true)
@@ -2617,7 +2580,9 @@ final class WorkbenchStoreTests: XCTestCase {
 
         XCTAssertEqual(store.state.taskRun.state, TaskRunState.succeeded)
         XCTAssertEqual(store.state.taskRun.outputPaths, [outputPath])
-        XCTAssertTrue(store.state.project.datasets.contains { $0.path == outputPath })
+        XCTAssertFalse(store.state.project.datasets.contains { $0.path == outputPath })
+        XCTAssertNil(store.state.runProductGroups.first?.products.first?.datasetID)
+        XCTAssertNotNil(store.state.runProductGroups.first?.products.first?.diagnostic)
     }
 
     func testProjectDiskRefreshSurfacesLooseFitsFileFromProjectTree() throws {
@@ -2841,21 +2806,7 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     func testGenericImageTaskSeedsImagenameFromSelectedImage() throws {
-        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-        {
-          "schema_version": 1,
-          "command_id": "immoments",
-          "invocation_name": "immoments",
-          "display_name": "Image Moments",
-          "category": "Images",
-          "summary": "Create CASA-style image moment maps.",
-          "usage": "immoments <imagename> --outfile <path>",
-          "arguments": [
-            {"id":"imagename","label":"Image","order":0,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-            {"id":"outfile","label":"Output","order":1,"parser":{"kind":"option","flags":["--outfile"],"metavar":"path","choices":[]},"value_kind":"path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false}
-          ]
-        }
-        """.utf8))
+        let schema = try CasarsFrontendServices.taskUiSchema(surfaceId: "immoments")
         let image = DatasetSummary(
             id: "/data/project/twhya_n2hp.image",
             name: "twhya_n2hp.image",
@@ -2886,21 +2837,7 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     func testGenericExportFitsSeedsSelectedImageAndManagedFitsOutput() throws {
-        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-        {
-          "schema_version": 1,
-          "command_id": "exportfits",
-          "invocation_name": "exportfits",
-          "display_name": "Export FITS",
-          "category": "Images",
-          "summary": "Export CASA images to FITS.",
-          "usage": "exportfits <imagename> <fitsimage>",
-          "arguments": [
-            {"id":"imagename","label":"Image","order":0,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","parameter_type":"image_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-            {"id":"fitsimage","label":"FITS","order":1,"parser":{"kind":"positional","metavar":"fitsimage"},"value_kind":"path","parameter_type":"output_fits_path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false}
-          ]
-        }
-        """.utf8))
+        let schema = try CasarsFrontendServices.taskUiSchema(surfaceId: "exportfits")
         let image = DatasetSummary(
             id: "/data/project/twhya_cont.image",
             name: "twhya_cont.image",
@@ -2935,21 +2872,7 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     func testGenericImportFitsKeepsFitsInputSeparateFromManagedImageOutput() throws {
-        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-        {
-          "schema_version": 1,
-          "command_id": "importfits",
-          "invocation_name": "importfits",
-          "display_name": "Import FITS",
-          "category": "Images",
-          "summary": "Import FITS files as CASA images.",
-          "usage": "importfits <fitsimage> <imagename>",
-          "arguments": [
-            {"id":"fitsimage","label":"FITS","order":0,"parser":{"kind":"positional","metavar":"fitsimage"},"value_kind":"path","parameter_type":"fits_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-            {"id":"imagename","label":"Image","order":1,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","parameter_type":"output_image_path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false}
-          ]
-        }
-        """.utf8))
+        let schema = try CasarsFrontendServices.taskUiSchema(surfaceId: "importfits")
         let fits = DatasetSummary(
             id: "/data/project/twhya_cont.fits",
             name: "twhya_cont.fits",
@@ -2983,21 +2906,7 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     func testGenericImportFitsSeedsSubdirectoryFitsPathRelativeToProject() throws {
-        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-        {
-          "schema_version": 1,
-          "command_id": "importfits",
-          "invocation_name": "importfits",
-          "display_name": "Import FITS",
-          "category": "Images",
-          "summary": "Import FITS files as CASA images.",
-          "usage": "importfits <fitsimage> <imagename>",
-          "arguments": [
-            {"id":"fitsimage","label":"FITS","order":0,"parser":{"kind":"positional","metavar":"fitsimage"},"value_kind":"path","parameter_type":"fits_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-            {"id":"imagename","label":"Image","order":1,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","parameter_type":"output_image_path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false}
-          ]
-        }
-        """.utf8))
+        let schema = try CasarsFrontendServices.taskUiSchema(surfaceId: "importfits")
         let fits = DatasetSummary(
             id: "/data/project/casa-rs-runs/twhya_cont.fits",
             name: "twhya_cont.fits",
@@ -3065,23 +2974,10 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     func testGenericMutatingTaskRequiresConfirmationBeforeStart() throws {
-        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-        {
-          "schema_version": 1,
-          "command_id": "flagdata",
-          "invocation_name": "flagdata",
-          "display_name": "Flag Data",
-          "category": "Flagging",
-          "summary": "Run native CASA-style MeasurementSet flagging.",
-          "usage": "flagdata",
-          "arguments": [
-            {"id":"vis","label":"MeasurementSet","order":0,"parser":{"kind":"option","flags":["--vis"],"metavar":"MS","choices":[]},"value_kind":"path","required":true,"default":"/data/input.ms","help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-            {"id":"mode","label":"Mode","order":1,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["summary","manual"]},"value_kind":"choice","required":true,"default":"summary","help":"","group":"Flagging","advanced":false,"hidden_in_tui":false}
-          ]
-        }
-        """.utf8))
+        let schema = try CasarsFrontendServices.taskUiSchema(surfaceId: "flagdata")
         let task = ApplicationCatalogEntry(
             id: "flagdata",
+            kind: "task",
             category: "Flagging",
             displayName: "Flag Data",
             executable: "flagdata",
@@ -3091,7 +2987,7 @@ final class WorkbenchStoreTests: XCTestCase {
             interaction: "one_shot",
             browserKind: nil,
             datasetKinds: ["measurement_set"],
-            showInTUI: true,
+            showInTui: true,
             showInSwift: true,
             includeInSuite: true
         )
@@ -4844,6 +4740,17 @@ final class WorkbenchStoreTests: XCTestCase {
             dataColumns: ["DATA"],
             notes: "Recognized by Rust probe."
         )
+        let outputDataset = DatasetSummary(
+            id: "/data/casa-rs-runs/output.image",
+            name: "output.image",
+            path: "/data/casa-rs-runs/output.image",
+            kind: .imageCube,
+            size: "256 x 256",
+            units: "float32",
+            sizeBytes: 4096,
+            shape: [256, 256],
+            notes: "Recognized by opening the path as a casa-rs image."
+        )
         let probeClient = StubProjectProbeClient(
             result: ProjectFixtureProbe(
                 project: ProjectFixture(
@@ -4855,23 +4762,32 @@ final class WorkbenchStoreTests: XCTestCase {
                 diagnostics: []
             ),
             probedPaths: [
-                "/data/casa-rs-runs/output.image": DatasetSummary(
-                    id: "/data/casa-rs-runs/output.image",
-                    name: "output.image",
-                    path: "/data/casa-rs-runs/output.image",
-                    kind: .imageCube,
-                    size: "256 x 256",
-                    units: "float32",
-                    sizeBytes: 4096,
-                    shape: [256, 256],
-                    notes: "Recognized by opening the path as a casa-rs image."
-                )
+                outputDataset.path: outputDataset
             ]
         )
         let taskClient = StubGenericTaskClient()
         taskClient.stdout = try makeManagedImagerStdout(
             measurementSet: "probed.ms",
             imagename: "casa-rs-runs/output"
+        )
+        taskClient.completion = TaskCompletionProjection(
+            surfaceId: "imager",
+            summary: "128 gridded samples, 1 major cycles, 0 minor iterations",
+            products: [
+                TaskCompletionProduct(
+                    id: "imager-artifacts:image",
+                    role: .primary,
+                    resourceKind: .casaImage,
+                    label: "Image",
+                    path: outputDataset.path,
+                    exists: true,
+                    previewPath: "\(outputDataset.path).png",
+                    previewExists: true,
+                    dataset: taskCompletionProbe(outputDataset),
+                    diagnostic: nil
+                )
+            ],
+            diagnostics: ["science warning"]
         )
         let store = WorkbenchStore(
             probeClient: probeClient,
@@ -5696,10 +5612,8 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertNil(failure?.message)
         XCTAssertEqual(progress?.phase, "starting")
         XCTAssertEqual(result?.stderr, "")
-        let stdout = try XCTUnwrap(result?.stdout)
-        let output = try JSONDecoder().decode(ManagedImagingOutput.self, from: Data(stdout.utf8))
-        XCTAssertEqual(output.run.warnings.first?.count, largeWarning.count)
-        XCTAssertEqual(output.artifacts.first?.path, "\(outputPrefix).image")
+        XCTAssertEqual(result?.completion.diagnostics.first?.count, largeWarning.count)
+        XCTAssertEqual(result?.completion.products.first?.path, "\(outputPrefix).image")
     }
 
     func testGenericImagerProcessClientReadsProgressFromJSONLSideChannel() throws {
@@ -6538,26 +6452,30 @@ private final class StubGenericTaskClient: GenericTaskClient {
     var requests: [GenericTaskRequest] = []
     var stdout = ""
     var stderr = ""
+    var completion: TaskCompletionProjection?
 
     func startTask(
         request: GenericTaskRequest,
         eventHandler: @escaping (GenericTaskEvent) -> Void
     ) throws -> TaskExecution {
         requests.append(request)
+        let completionStdout = stubCompletionStdout(for: request, configured: stdout)
         eventHandler(.succeeded(GenericTaskResult(
             taskID: request.task.id,
             arguments: try ProcessGenericTaskClient.arguments(for: request),
             stdout: stdout,
-            stderr: stderr
+            stderr: stderr,
+            completion: try completion
+                ?? ProcessGenericTaskClient.decodeCompletion(for: request, stdout: completionStdout)
         )))
         return StubTaskExecution()
     }
 }
 
 private struct StubTaskUISchemaClient: TaskUISchemaClient {
-    var schema: TaskUISchema
+    var schema: TaskUiSchema
 
-    func loadTaskUISchema(taskID: String) throws -> TaskUISchema {
+    func loadTaskUISchema(taskID: String) throws -> TaskUiSchema {
         schema
     }
 }
@@ -6585,7 +6503,10 @@ private func canonicalJSONObject(_ value: SurfaceParameterValue) -> Any {
     case .float(let value): value
     case .string(let value): value
     case .array(let values): values.map(canonicalJSONObject)
-    case .table(let values): values.mapValues(canonicalJSONObject)
+    case .table(let entries):
+        Dictionary(uniqueKeysWithValues: entries.map {
+            ($0.name, canonicalJSONObject($0.value))
+        })
     }
 }
 
@@ -6596,6 +6517,7 @@ private func makeImheadApplicationCatalogEntry() -> ApplicationCatalogEntry {
 private func makeSimobserveApplicationCatalogEntry() -> ApplicationCatalogEntry {
     ApplicationCatalogEntry(
         id: "simobserve",
+        kind: "task",
         category: "Simulation",
         displayName: "SimObserve",
         executable: "simobserve",
@@ -6605,7 +6527,7 @@ private func makeSimobserveApplicationCatalogEntry() -> ApplicationCatalogEntry 
         interaction: "one_shot",
         browserKind: nil,
         datasetKinds: ["measurement_set"],
-        showInTUI: true,
+        showInTui: true,
         showInSwift: true,
         includeInSuite: true
     )
@@ -6614,6 +6536,7 @@ private func makeSimobserveApplicationCatalogEntry() -> ApplicationCatalogEntry 
 private func makeImagerApplicationCatalogEntry() -> ApplicationCatalogEntry {
     ApplicationCatalogEntry(
         id: "imager",
+        kind: "task",
         category: "Imaging",
         displayName: "Imager",
         executable: "casars-imager",
@@ -6623,7 +6546,7 @@ private func makeImagerApplicationCatalogEntry() -> ApplicationCatalogEntry {
         interaction: "one_shot",
         browserKind: nil,
         datasetKinds: ["measurement_set"],
-        showInTUI: true,
+        showInTui: true,
         showInSwift: true,
         includeInSuite: true
     )
@@ -6632,6 +6555,7 @@ private func makeImagerApplicationCatalogEntry() -> ApplicationCatalogEntry {
 private func makeApplicationCatalogEntry(id: String, displayName: String) -> ApplicationCatalogEntry {
     ApplicationCatalogEntry(
         id: id,
+        kind: "task",
         category: "Images",
         displayName: displayName,
         executable: "imexplore",
@@ -6641,94 +6565,22 @@ private func makeApplicationCatalogEntry(id: String, displayName: String) -> App
         interaction: "one_shot",
         browserKind: nil,
         datasetKinds: ["image_cube"],
-        showInTUI: true,
+        showInTui: true,
         showInSwift: true,
         includeInSuite: true
     )
 }
 
-private func makeImagerTaskUISchema() throws -> TaskUISchema {
-    try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-    {
-      "schema_version": 1,
-      "command_id": "imager",
-      "invocation_name": "casars-imager",
-      "display_name": "Imager",
-      "category": "Imaging",
-      "summary": "Run CASA-compatible imaging from a MeasurementSet.",
-      "usage": "casars-imager --ms PATH --imagename PREFIX --imsize N --cell-arcsec ARCSEC [options]",
-      "managed_output": {
-        "renderer": "imager-run-v1",
-        "stdout_format": "json",
-        "inject_arguments": [{"flag":"--managed-output","value":"true"}],
-        "raw_stdout_available": true,
-        "raw_stderr_available": true
-      },
-      "arguments": [
-        {"id":"vis","label":"MeasurementSet","order":0,"parser":{"kind":"option","flags":["--ms"],"metavar":"PATH","choices":[]},"value_kind":"path","parameter_type":"path","required":true,"default":null,"help":"","group":"Context","advanced":false,"hidden_in_tui":false},
-        {"id":"imagename","label":"Image Prefix","order":1,"parser":{"kind":"option","flags":["--imagename"],"metavar":"PREFIX","choices":[]},"value_kind":"path","parameter_type":"output_image_path","required":true,"default":null,"help":"","group":"Products","advanced":false,"hidden_in_tui":false},
-        {"id":"imsize","label":"Image Size","order":2,"parser":{"kind":"option","flags":["--imsize"],"metavar":"PIXELS","choices":[]},"value_kind":"string","required":true,"default":"512","help":"","group":"Stage Parameters","advanced":false,"hidden_in_tui":false},
-        {"id":"cell","label":"Cell Size","order":3,"parser":{"kind":"option","flags":["--cell-arcsec"],"metavar":"ARCSEC","choices":[]},"value_kind":"string","required":true,"default":"1.0arcsec","help":"","group":"Stage Parameters","advanced":false,"hidden_in_tui":false},
-        {"id":"datacolumn","label":"Data Column","order":4,"parser":{"kind":"option","flags":["--datacolumn"],"metavar":"NAME","choices":["DATA","CORRECTED_DATA","MODEL_DATA"]},"value_kind":"choice","required":false,"default":null,"help":"","group":"Context","advanced":false,"hidden_in_tui":false},
-        {"id":"field","label":"Fields","order":7,"parser":{"kind":"option","flags":["--field"],"metavar":"IDS","choices":[]},"value_kind":"string","required":false,"default":null,"help":"","group":"Context","advanced":false,"hidden_in_tui":false},
-        {"id":"phasecenter_field","label":"Phasecenter Field","order":8,"parser":{"kind":"option","flags":["--phasecenter-field"],"metavar":"ID","choices":[]},"value_kind":"string","required":false,"default":null,"help":"","group":"Context","advanced":false,"hidden_in_tui":false},
-        {"id":"spw","label":"SPW","order":10,"parser":{"kind":"option","flags":["--spw"],"metavar":"SEL","choices":[]},"value_kind":"string","required":false,"default":null,"help":"","group":"Context","advanced":false,"hidden_in_tui":false},
-        {"id":"channel_start","label":"Channel Start","order":11,"parser":{"kind":"option","flags":["--channel-start"],"metavar":"N","choices":[]},"value_kind":"string","required":false,"default":null,"help":"","group":"Context","advanced":true,"hidden_in_tui":false},
-        {"id":"channel_count","label":"Channel Count","order":12,"parser":{"kind":"option","flags":["--channel-count"],"metavar":"N","choices":[]},"value_kind":"string","required":false,"default":null,"help":"","group":"Context","advanced":true,"hidden_in_tui":false},
-        {"id":"polarization","label":"Corr / Stokes","order":13,"parser":{"kind":"option","flags":["--corr"],"metavar":"PLANE","choices":["I","Q","U","V","XX","YY","RR","LL"]},"value_kind":"choice","required":false,"default":"I","help":"","group":"Context","advanced":true,"hidden_in_tui":false},
-        {"id":"specmode","label":"Spectral Mode","order":20,"parser":{"kind":"option","flags":["--specmode"],"metavar":"MODE","choices":["mfs","cube","cubedata"]},"value_kind":"choice","required":true,"default":"mfs","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
-        {"id":"interpolation","label":"Cube Interp","order":21,"parser":{"kind":"option","flags":["--interpolation"],"metavar":"MODE","choices":["nearest","linear","cubic"]},"value_kind":"choice","required":false,"default":null,"help":"","group":"Stages","advanced":true,"hidden_in_tui":false},
-        {"id":"perchanweightdensity","label":"Per-Channel Density","order":23,"parser":{"kind":"toggle","true_flags":["--perchanweightdensity"],"false_flags":["--no-perchanweightdensity"]},"value_kind":"bool","required":false,"default":"cube:true,cubedata:false","help":"","group":"Stages","advanced":true,"hidden_in_tui":false},
-        {"id":"dirty_only","label":"Dirty Only","order":30,"parser":{"kind":"toggle","true_flags":["--dirty-only"],"false_flags":[]},"value_kind":"bool","required":false,"default":"false","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
-        {"id":"niter","label":"Iterations","order":31,"parser":{"kind":"option","flags":["--niter"],"metavar":"N","choices":[]},"value_kind":"string","required":false,"default":"0","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
-        {"id":"threshold","label":"Threshold","order":32,"parser":{"kind":"option","flags":["--threshold-jy"],"metavar":"JY","choices":[]},"value_kind":"string","required":false,"default":"0.0Jy","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
-        {"id":"deconvolver","label":"Deconvolver","order":40,"parser":{"kind":"option","flags":["--deconvolver"],"metavar":"MODE","choices":["hogbom","mtmfs","clark","multiscale"]},"value_kind":"choice","required":true,"default":"hogbom","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
-        {"id":"weighting","label":"Weighting","order":50,"parser":{"kind":"option","flags":["--weighting"],"metavar":"MODE","choices":["natural","uniform","briggs","briggsbwtaper"]},"value_kind":"choice","required":true,"default":"natural","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
-        {"id":"write_pb","label":"Primary Beam","order":53,"parser":{"kind":"toggle","true_flags":["--write-pb"],"false_flags":[]},"value_kind":"bool","required":false,"default":"false","help":"","group":"Stages","advanced":true,"hidden_in_tui":false},
-        {"id":"pbcor","label":"PB Correct","order":54,"parser":{"kind":"toggle","true_flags":["--pbcor"],"false_flags":[]},"value_kind":"bool","required":false,"default":"false","help":"","group":"Stages","advanced":true,"hidden_in_tui":false},
-        {"id":"robust","label":"Robust","order":51,"parser":{"kind":"option","flags":["--robust"],"metavar":"VALUE","choices":[]},"value_kind":"float","required":false,"default":"0.5","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
-        {"id":"gridder","label":"Gridder","order":60,"parser":{"kind":"option","flags":["--gridder"],"metavar":"MODE","choices":["standard","wproject","mosaic"]},"value_kind":"choice","required":true,"default":"standard","help":"","group":"Stages","advanced":false,"hidden_in_tui":false}
-      ]
-    }
-    """.utf8))
+private func makeImagerTaskUISchema() throws -> TaskUiSchema {
+    try CasarsFrontendServices.taskUiSchema(surfaceId: "imager")
 }
 
-private func makeImheadTaskUISchema() throws -> TaskUISchema {
-    try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-    {
-      "schema_version": 1,
-      "command_id": "imhead",
-      "invocation_name": "imexplore",
-      "display_name": "Image Header",
-      "category": "Images",
-      "summary": "Inspect CASA image metadata.",
-      "usage": "imexplore imhead <image>",
-      "arguments": [
-        {"id":"imagename","label":"Image","order":0,"parser":{"kind":"option","flags":["--image"],"metavar":"IMAGE","choices":[]},"value_kind":"path","parameter_type":"path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-        {"id":"mode","label":"Mode","order":1,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["summary","list"]},"value_kind":"choice","required":false,"default":"summary","help":"","group":"Output","advanced":false,"hidden_in_tui":false},
-        {"id":"hdkey","label":"Header Key","order":2,"parser":{"kind":"option","flags":["--hdkey"],"metavar":"KEY","choices":[]},"value_kind":"string","required":false,"default":"none","help":"","group":"Header","advanced":false,"hidden_in_tui":false},
-        {"id":"hdvalue","label":"Header Value","order":3,"parser":{"kind":"option","flags":["--hdvalue"],"metavar":"VALUE","choices":[]},"value_kind":"string","required":false,"default":"none","help":"","group":"Header","advanced":false,"hidden_in_tui":false}
-      ]
-    }
-    """.utf8))
+private func makeImheadTaskUISchema() throws -> TaskUiSchema {
+    try CasarsFrontendServices.taskUiSchema(surfaceId: "imhead")
 }
 
-private func makeImstatTaskUISchema() throws -> TaskUISchema {
-    try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-    {
-      "schema_version": 1,
-      "command_id": "imstat",
-      "invocation_name": "imexplore",
-      "display_name": "Image Statistics",
-      "category": "Images",
-      "summary": "Measure CASA image statistics.",
-      "usage": "imexplore imstat <image>",
-      "arguments": [
-        {"id":"image_path","label":"Image","order":0,"parser":{"kind":"option","flags":["--image"],"metavar":"IMAGE","choices":[]},"value_kind":"path","parameter_type":"image_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-        {"id":"region","label":"Region","order":1,"parser":{"kind":"option","flags":["--region"],"metavar":"REGION","choices":[]},"value_kind":"path","parameter_type":"region_path_or_box","required":false,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false}
-      ]
-    }
-    """.utf8))
+private func makeImstatTaskUISchema() throws -> TaskUiSchema {
+    try CasarsFrontendServices.taskUiSchema(surfaceId: "imstat")
 }
 
 private final class RecordingSurfaceParameterClient: SurfaceParameterClient {
@@ -7033,13 +6885,75 @@ private final class HoldingGenericTaskClient: GenericTaskClient {
 
     func emitSucceeded() throws {
         guard let request = requests.last else { return }
+        let completionStdout = stubCompletionStdout(for: request, configured: stdout)
         handler?(.succeeded(GenericTaskResult(
             taskID: request.task.id,
             arguments: try ProcessGenericTaskClient.arguments(for: request),
             stdout: stdout,
-            stderr: stderr
+            stderr: stderr,
+            completion: try ProcessGenericTaskClient.decodeCompletion(for: request, stdout: completionStdout)
         )))
     }
+}
+
+private func stubCompletionStdout(
+    for request: GenericTaskRequest,
+    configured stdout: String
+) -> String {
+    guard stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          request.task.id == "imager"
+    else { return stdout }
+    return """
+    {
+      "request": {},
+      "run": {
+        "warnings": [],
+        "gridded_samples": 0,
+        "major_cycles": 0,
+        "minor_iterations": 0
+      },
+      "artifacts": []
+    }
+    """
+}
+
+private func taskCompletionProbe(_ dataset: DatasetSummary) -> CasarsFrontendServices.DatasetProbe {
+    let kind: CasarsFrontendServices.DatasetKind = switch dataset.kind {
+    case .measurementSet:
+        .measurementSet
+    case .imageCube:
+        .image
+    case .calibrationTable, .table:
+        .table
+    case .region, .runProduct:
+        .table
+    }
+    return CasarsFrontendServices.DatasetProbe(
+        id: dataset.id,
+        name: dataset.name,
+        path: dataset.path,
+        kind: kind,
+        sizeBytes: dataset.sizeBytes,
+        modifiedUnixSeconds: dataset.modifiedUnixSeconds,
+        probedUnixSeconds: dataset.probedUnixSeconds ?? 0,
+        logicalSize: dataset.size,
+        units: dataset.units,
+        fields: dataset.fields,
+        spectralWindows: dataset.spectralWindows,
+        scans: dataset.scans,
+        arrays: dataset.arrays,
+        observations: dataset.observations,
+        antennas: dataset.antennas,
+        intents: dataset.intents,
+        feeds: dataset.feeds,
+        correlations: dataset.correlations,
+        columns: dataset.columns,
+        dataColumns: dataset.dataColumns,
+        subtables: dataset.subtables,
+        shape: dataset.shape,
+        notes: dataset.notes,
+        diagnostics: dataset.diagnostics
+    )
 }
 
 private func makeSimobserveGenericTaskRequest(rootURL: URL) throws -> GenericTaskRequest {

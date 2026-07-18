@@ -76,8 +76,8 @@ mod tests {
 
     use crate::{
         CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, MigrationStep, OVERWRITE_CONCEPT_ID, ParameterRole,
-        ParameterType, ParameterValue, Predicate, ResourceKind, RunSafetyClass, SemanticRevision,
-        SurfaceKind, ValueAdapter,
+        ParameterType, ParameterValue, Predicate, ResourceKind, RunProductSource, RunSafetyClass,
+        SemanticRevision, SurfaceKind, SurfaceProductContract, ValueAdapter,
     };
 
     use super::*;
@@ -546,6 +546,67 @@ mod tests {
         assert_eq!(role("image.output.imagename"), ParameterRole::OutputData);
         for id in concept_ids("width").into_iter().chain(concept_ids("mode")) {
             assert_eq!(role(&id), ParameterRole::Algorithm);
+        }
+    }
+
+    #[test]
+    fn every_surface_explicitly_classifies_its_products() {
+        let catalog = builtin_surface_catalog().unwrap();
+        for surface in &catalog.surfaces {
+            let output_parameters = surface
+                .bindings()
+                .iter()
+                .filter(|binding| {
+                    catalog
+                        .catalog
+                        .concept(&binding.concept)
+                        .is_some_and(|concept| concept.semantic_role == ParameterRole::OutputData)
+                })
+                .map(|binding| binding.name.as_str())
+                .collect::<BTreeSet<_>>();
+            match &surface.execution().products {
+                SurfaceProductContract::NoProducts => assert!(
+                    output_parameters.is_empty(),
+                    "{} has output bindings but declares no products: {output_parameters:?}",
+                    surface.id()
+                ),
+                SurfaceProductContract::Declared { products } => {
+                    assert!(
+                        !products.is_empty(),
+                        "{} has an empty product declaration",
+                        surface.id()
+                    );
+                    let ids = products
+                        .iter()
+                        .map(|product| product.id.as_str())
+                        .collect::<BTreeSet<_>>();
+                    assert_eq!(
+                        ids.len(),
+                        products.len(),
+                        "{} has duplicate product IDs",
+                        surface.id()
+                    );
+                    let parameter_sources = products
+                        .iter()
+                        .filter_map(|product| match &product.source {
+                            RunProductSource::Parameter { parameter } => Some(parameter.as_str()),
+                            RunProductSource::DecodedArtifacts => None,
+                        })
+                        .collect::<BTreeSet<_>>();
+                    if surface.id() == "imager" {
+                        assert!(products.iter().any(|product| {
+                            matches!(product.source, RunProductSource::DecodedArtifacts)
+                        }));
+                    } else {
+                        assert_eq!(
+                            parameter_sources,
+                            output_parameters,
+                            "{} product descriptors drifted from output bindings",
+                            surface.id()
+                        );
+                    }
+                }
+            }
         }
     }
 }
