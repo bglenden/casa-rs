@@ -3,9 +3,68 @@
 use std::{collections::BTreeSet, path::PathBuf};
 
 use casa_notebook::{
-    CorpusCitation, CorpusDocumentInput, CorpusIndex, CorpusLayer, ProjectCorpusSource,
+    CorpusCitation, CorpusDocumentInput, CorpusIndex, CorpusIndexReport, CorpusLayer,
+    CorpusReconciliationScope, PreparedCorpusReconciliation, ProjectCorpusPlan,
+    ProjectCorpusSource, ProjectSourceExtractionOutcome, ProjectSourceExtractionStatus,
 };
 use tempfile::tempdir;
+
+trait PreparedReconciliationTestExt {
+    fn prepared_plan_for_test(
+        &self,
+        sources: &[ProjectCorpusSource],
+    ) -> Result<ProjectCorpusPlan, casa_notebook::CorpusError>;
+    fn apply_prepared_for_test(
+        &self,
+        documents: &[CorpusDocumentInput],
+        remove_missing_layers: &BTreeSet<CorpusLayer>,
+        sources: &[ProjectCorpusSource],
+        failed: &BTreeSet<PathBuf>,
+    ) -> Result<CorpusIndexReport, casa_notebook::CorpusError>;
+}
+
+impl PreparedReconciliationTestExt for CorpusIndex {
+    fn prepared_plan_for_test(
+        &self,
+        sources: &[ProjectCorpusSource],
+    ) -> Result<ProjectCorpusPlan, casa_notebook::CorpusError> {
+        let prepared =
+            self.prepare_reconciliation(sources, 1, CorpusReconciliationScope::ProjectDocuments)?;
+        Ok(ProjectCorpusPlan {
+            schema_version: prepared.schema_version,
+            extract_paths: prepared.extract_paths,
+            unchanged_paths: prepared.unchanged_paths,
+            removed_paths: prepared.removed_paths,
+        })
+    }
+
+    fn apply_prepared_for_test(
+        &self,
+        documents: &[CorpusDocumentInput],
+        remove_missing_layers: &BTreeSet<CorpusLayer>,
+        sources: &[ProjectCorpusSource],
+        failed: &BTreeSet<PathBuf>,
+    ) -> Result<CorpusIndexReport, casa_notebook::CorpusError> {
+        let prepared: PreparedCorpusReconciliation =
+            self.prepare_reconciliation(sources, 1, CorpusReconciliationScope::ProjectDocuments)?;
+        let outcomes = prepared
+            .extract_paths
+            .iter()
+            .map(|path| ProjectSourceExtractionOutcome {
+                relative_path: path.clone(),
+                status: if failed.contains(path) {
+                    ProjectSourceExtractionStatus::Failed
+                } else {
+                    ProjectSourceExtractionStatus::Succeeded
+                },
+                diagnostic: failed
+                    .contains(path)
+                    .then(|| "test extraction failure".to_owned()),
+            })
+            .collect::<Vec<_>>();
+        self.apply_prepared_reconciliation(&prepared, documents, remove_missing_layers, &outcomes)
+    }
+}
 
 fn document(id: &str, layer: CorpusLayer, title: &str, content: &str) -> CorpusDocumentInput {
     CorpusDocumentInput {
@@ -97,7 +156,7 @@ fn schema_two_project_pages_are_backfilled_before_incremental_replacement() {
     );
     replacement.citation.source_path = Some(PathBuf::from("documents/paper.pdf"));
     let report = migrated
-        .index_documents_with_project_sources(
+        .apply_prepared_for_test(
             &[replacement],
             &BTreeSet::new(),
             &[source],
@@ -114,7 +173,7 @@ fn project_source_plan_skips_unchanged_content_without_reextraction() {
     let index = CorpusIndex::open(project.path()).expect("open corpus");
     let source = project_source("documents/paper.md", "1:10");
     let first_plan = index
-        .plan_project_sources(std::slice::from_ref(&source))
+        .prepared_plan_for_test(std::slice::from_ref(&source))
         .expect("initial plan");
     assert_eq!(
         first_plan.extract_paths,
@@ -123,7 +182,7 @@ fn project_source_plan_skips_unchanged_content_without_reextraction() {
     assert!(first_plan.unchanged_paths.is_empty());
 
     let report = index
-        .index_documents_with_project_sources(
+        .apply_prepared_for_test(
             &[document(
                 "paper",
                 CorpusLayer::ProjectDocument,
@@ -138,7 +197,7 @@ fn project_source_plan_skips_unchanged_content_without_reextraction() {
     assert_eq!(report.indexed_documents, 1);
 
     let second_plan = index
-        .plan_project_sources(std::slice::from_ref(&source))
+        .prepared_plan_for_test(std::slice::from_ref(&source))
         .expect("unchanged plan");
     assert!(second_plan.extract_paths.is_empty());
     assert_eq!(
@@ -146,7 +205,7 @@ fn project_source_plan_skips_unchanged_content_without_reextraction() {
         [PathBuf::from("documents/paper.md")]
     );
     let unchanged = index
-        .index_documents_with_project_sources(&[], &BTreeSet::new(), &[source], &BTreeSet::new())
+        .apply_prepared_for_test(&[], &BTreeSet::new(), &[source], &BTreeSet::new())
         .expect("commit unchanged inventory");
     assert_eq!(unchanged.indexed_documents, 0);
     assert_eq!(unchanged.unchanged_documents, 1);
@@ -158,7 +217,7 @@ fn project_source_plan_detects_preserved_mtime_and_atomic_identity_changes() {
     let index = CorpusIndex::open(project.path()).expect("open corpus");
     let source = project_source("documents/paper.md", "1:10");
     index
-        .index_documents_with_project_sources(
+        .apply_prepared_for_test(
             &[document(
                 "paper",
                 CorpusLayer::ProjectDocument,
@@ -176,7 +235,7 @@ fn project_source_plan_detects_preserved_mtime_and_atomic_identity_changes() {
     assert_eq!(preserved_mtime.modified_unix_ns, source.modified_unix_ns);
     assert_eq!(
         index
-            .plan_project_sources(std::slice::from_ref(&preserved_mtime))
+            .prepared_plan_for_test(std::slice::from_ref(&preserved_mtime))
             .expect("ctime plan")
             .extract_paths,
         [PathBuf::from("documents/paper.md")]
@@ -186,7 +245,7 @@ fn project_source_plan_detects_preserved_mtime_and_atomic_identity_changes() {
     atomic_replacement.file_identity = "1:11".to_owned();
     assert_eq!(
         index
-            .plan_project_sources(&[atomic_replacement])
+            .prepared_plan_for_test(&[atomic_replacement])
             .expect("replacement plan")
             .extract_paths,
         [PathBuf::from("documents/paper.md")]
@@ -199,7 +258,7 @@ fn failed_project_source_keeps_last_usable_index_and_retries() {
     let index = CorpusIndex::open(project.path()).expect("open corpus");
     let source = project_source("documents/paper.md", "1:10");
     index
-        .index_documents_with_project_sources(
+        .apply_prepared_for_test(
             &[document(
                 "paper",
                 CorpusLayer::ProjectDocument,
@@ -216,7 +275,7 @@ fn failed_project_source_keeps_last_usable_index_and_retries() {
     unreadable.status_changed_unix_ns += 10;
     let failed = BTreeSet::from([PathBuf::from("documents/paper.md")]);
     index
-        .index_documents_with_project_sources(
+        .apply_prepared_for_test(
             &[],
             &BTreeSet::new(),
             std::slice::from_ref(&unreadable),
@@ -229,7 +288,7 @@ fn failed_project_source_keeps_last_usable_index_and_retries() {
     );
     assert_eq!(
         index
-            .plan_project_sources(&[unreadable])
+            .prepared_plan_for_test(&[unreadable])
             .expect("retry plan")
             .extract_paths,
         [PathBuf::from("documents/paper.md")]
@@ -243,7 +302,7 @@ fn project_source_snapshot_reconciles_rename_and_removal_without_touching_other_
     let paper = project_source("documents/paper.md", "1:10");
     let notes = project_source("documents/notes.md", "1:20");
     index
-        .index_documents_with_project_sources(
+        .apply_prepared_for_test(
             &[
                 document(
                     "paper",
@@ -273,7 +332,7 @@ fn project_source_snapshot_reconciles_rename_and_removal_without_touching_other_
     );
     renamed_document.citation.source_path = Some(PathBuf::from("documents/renamed.md"));
     let report = index
-        .index_documents_with_project_sources(
+        .apply_prepared_for_test(
             &[renamed_document],
             &BTreeSet::new(),
             &[renamed.clone(), notes.clone()],
@@ -298,7 +357,7 @@ fn project_source_snapshot_reconciles_rename_and_removal_without_touching_other_
     );
 
     let removed = index
-        .index_documents_with_project_sources(&[], &BTreeSet::new(), &[notes], &BTreeSet::new())
+        .apply_prepared_for_test(&[], &BTreeSet::new(), &[notes], &BTreeSet::new())
         .expect("remove renamed source");
     assert_eq!(removed.removed_documents, 1);
     assert!(
@@ -310,7 +369,7 @@ fn project_source_snapshot_reconciles_rename_and_removal_without_touching_other_
     );
     assert!(
         index
-            .plan_project_sources(&[renamed])
+            .prepared_plan_for_test(&[renamed])
             .expect("renamed now new")
             .extract_paths
             .contains(&PathBuf::from("documents/renamed.md"))
@@ -524,4 +583,36 @@ fn layer_filtered_search_ranks_only_the_requested_corpus_plane() {
         .expect("source-only search");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].document_id, "source");
+}
+
+#[test]
+fn prepared_reconciliation_rejects_tampered_snapshots_and_incomplete_outcomes() {
+    let project = tempdir().expect("project");
+    let index = CorpusIndex::open(project.path()).expect("open corpus");
+    let source = project_source("documents/paper.md", "1:10");
+    let prepared = index
+        .prepare_reconciliation(
+            std::slice::from_ref(&source),
+            7,
+            CorpusReconciliationScope::ProjectDocuments,
+        )
+        .expect("prepare reconciliation");
+
+    let mut tampered = prepared.clone();
+    tampered.snapshot_digest = "0".repeat(64);
+    assert!(
+        index
+            .apply_prepared_reconciliation(&tampered, &[], &BTreeSet::new(), &[])
+            .expect_err("tampered digest must fail")
+            .to_string()
+            .contains("snapshot digest")
+    );
+
+    assert!(
+        index
+            .apply_prepared_reconciliation(&prepared, &[], &BTreeSet::new(), &[])
+            .expect_err("every extraction path requires an outcome")
+            .to_string()
+            .contains("outcomes")
+    );
 }

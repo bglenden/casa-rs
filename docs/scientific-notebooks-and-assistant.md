@@ -1,7 +1,7 @@
 # Scientific Notebooks, Tutorials, Python, and AI Assistant
 
 Truth class: accepted design
-Last reality check: 2026-07-15
+Last reality check: 2026-07-18
 Verification: just docs-check
 Architecture decision: [ADR-0007](adr/0007-scientific-notebooks-and-assistant-boundary.md)
 
@@ -578,6 +578,41 @@ without changing these CASA-owned contracts. The Xcode app stages a compact
 release/commit-labelled source snapshot, while local checkout runs add a live
 commit overlay. See
 [`assistant-security.md`](assistant-security.md) for the executable boundary.
+
+### Assistant resource plan and retained limits
+
+The active backend model must report both input capacity and output reserve.
+CASA-RS treats one UTF-8 byte as one conservative capacity unit; it does not
+guess token ratios. The planner first subtracts the backend output reserve and
+the encoded durable conversation. It then assigns one share to each selected
+tab, one additional priority share to the active selected tab, and one share
+to corpus retrieval. Integer remainder units go to the active tab first, then
+stable tab order, then corpus retrieval. Unselected tabs receive zero units.
+Missing capacity, checked-arithmetic
+overflow, or reserves larger than capacity produces an explicit unavailable
+plan with zero context and corpus allocation; there is no fixed fallback.
+
+The remaining numeric bounds have separate owners and meanings:
+
+- The 2,000-byte corpus chunk target is a citation-locality correctness bound:
+  FTS hits remain independently reviewable near one prose page. It is not a
+  result budget; the resource plan limits both hit count and returned text.
+- The MCP input-schema maximum of 32 search hits is a protocol abuse bound.
+  A request is accepted only when the current resource plan allows a lower or
+  equal count, and returned text is checked against the same allocation.
+- The 10-second App Server startup timeout and 120-second response-activity
+  timeout are named UI liveness policies. They do not allocate prompt or
+  retrieval capacity.
+- The 600-millisecond project-document watcher interval is an event-coalescing
+  policy. Prepared reconciliation generations, rather than the delay, provide
+  correctness against stale work.
+- PDF OCR renders at no more than two source points per output pixel and caps
+  the largest dimension at 4,000 pixels. This is the local Vision extraction
+  envelope that bounds transient bitmap work; it does not truncate extracted
+  text or alter corpus result planning.
+- The model-list request limit of 100 is the adapter's discovery page size;
+  model selection remains backend-owned and this value is not a context
+  capacity input.
 
 ## Program acceptance
 

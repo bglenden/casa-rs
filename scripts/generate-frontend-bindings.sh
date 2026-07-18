@@ -48,6 +48,7 @@ cp "$lib_path" "$python_out/$lib_name"
 python3 scripts/package-python-frontend-binding.py \
   "$python_out/casars_frontend_services.py" \
   "$python_out/_frontend.py"
+perl -pi -e 's/[ \t]+$//' "$python_out/_frontend.py"
 
 echo "==> Generating Swift UniFFI bindings"
 mkdir -p "$swift_out"

@@ -446,6 +446,8 @@ def _uniffi_check_contract_api_version(lib):
 def _uniffi_check_api_checksums(lib):
     if lib.uniffi_casars_frontend_services_checksum_func_application_catalog() != 3558:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_casars_frontend_services_checksum_func_assistant_apply_corpus_reconciliation() != 5793:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_casars_frontend_services_checksum_func_assistant_conversations() != 51866:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_casars_frontend_services_checksum_func_assistant_corpus_index() != 45940:
@@ -458,7 +460,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_casars_frontend_services_checksum_func_assistant_load_conversation() != 27011:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_casars_frontend_services_checksum_func_assistant_project_corpus_plan() != 61567:
+    if lib.uniffi_casars_frontend_services_checksum_func_assistant_prepare_corpus_reconciliation() != 46627:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_casars_frontend_services_checksum_func_assistant_protocol_info() != 57008:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -754,6 +756,11 @@ _UniffiLib.uniffi_casars_frontend_services_fn_func_application_catalog.argtypes 
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_casars_frontend_services_fn_func_application_catalog.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_apply_corpus_reconciliation.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_apply_corpus_reconciliation.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_conversations.argtypes = (
     _UniffiRustBuffer,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -784,11 +791,11 @@ _UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_load_conversation.a
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_load_conversation.restype = _UniffiRustBuffer
-_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_project_corpus_plan.argtypes = (
+_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_prepare_corpus_reconciliation.argtypes = (
     _UniffiRustBuffer,
     ctypes.POINTER(_UniffiRustCallStatus),
 )
-_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_project_corpus_plan.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_prepare_corpus_reconciliation.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_protocol_info.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -1293,6 +1300,9 @@ _UniffiLib.ffi_casars_frontend_services_rust_future_complete_void.restype = None
 _UniffiLib.uniffi_casars_frontend_services_checksum_func_application_catalog.argtypes = (
 )
 _UniffiLib.uniffi_casars_frontend_services_checksum_func_application_catalog.restype = ctypes.c_uint16
+_UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_apply_corpus_reconciliation.argtypes = (
+)
+_UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_apply_corpus_reconciliation.restype = ctypes.c_uint16
 _UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_conversations.argtypes = (
 )
 _UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_conversations.restype = ctypes.c_uint16
@@ -1311,9 +1321,9 @@ _UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_create_pin.re
 _UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_load_conversation.argtypes = (
 )
 _UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_load_conversation.restype = ctypes.c_uint16
-_UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_project_corpus_plan.argtypes = (
+_UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_prepare_corpus_reconciliation.argtypes = (
 )
-_UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_project_corpus_plan.restype = ctypes.c_uint16
+_UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_prepare_corpus_reconciliation.restype = ctypes.c_uint16
 _UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_protocol_info.argtypes = (
 )
 _UniffiLib.uniffi_casars_frontend_services_checksum_func_assistant_protocol_info.restype = ctypes.c_uint16
@@ -1784,6 +1794,56 @@ class _UniffiConverterTypeApplicationCatalogEnvelope(_UniffiConverterRustBuffer)
         _UniffiConverterSequenceTypeApplicationCatalogEntry.write(value.applications, buf)
 
 
+class AssistantActionProjection:
+    id: "str"
+    owner: "str"
+    effect: "str"
+    requires_user_interaction: "bool"
+    def __init__(self, *, id: "str", owner: "str", effect: "str", requires_user_interaction: "bool"):
+        self.id = id
+        self.owner = owner
+        self.effect = effect
+        self.requires_user_interaction = requires_user_interaction
+
+    def __str__(self):
+        return "AssistantActionProjection(id={}, owner={}, effect={}, requires_user_interaction={})".format(self.id, self.owner, self.effect, self.requires_user_interaction)
+
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.owner != other.owner:
+            return False
+        if self.effect != other.effect:
+            return False
+        if self.requires_user_interaction != other.requires_user_interaction:
+            return False
+        return True
+
+class _UniffiConverterTypeAssistantActionProjection(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return AssistantActionProjection(
+            id=_UniffiConverterString.read(buf),
+            owner=_UniffiConverterString.read(buf),
+            effect=_UniffiConverterString.read(buf),
+            requires_user_interaction=_UniffiConverterBool.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterString.check_lower(value.id)
+        _UniffiConverterString.check_lower(value.owner)
+        _UniffiConverterString.check_lower(value.effect)
+        _UniffiConverterBool.check_lower(value.requires_user_interaction)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterString.write(value.id, buf)
+        _UniffiConverterString.write(value.owner, buf)
+        _UniffiConverterString.write(value.effect, buf)
+        _UniffiConverterBool.write(value.requires_user_interaction, buf)
+
+
 class AssistantActivityState:
     id: "str"
     label: "str"
@@ -1832,6 +1892,63 @@ class _UniffiConverterTypeAssistantActivityState(_UniffiConverterRustBuffer):
         _UniffiConverterString.write(value.label, buf)
         _UniffiConverterString.write(value.state, buf)
         _UniffiConverterOptionalString.write(value.summary, buf)
+
+
+class AssistantApplyCorpusReconciliationRequest:
+    project_root: "str"
+    prepared: "AssistantPreparedCorpusReconciliationState"
+    documents: "typing.List[AssistantCorpusDocumentRequest]"
+    remove_missing_layers: "typing.List[str]"
+    outcomes: "typing.List[AssistantProjectSourceExtractionOutcome]"
+    def __init__(self, *, project_root: "str", prepared: "AssistantPreparedCorpusReconciliationState", documents: "typing.List[AssistantCorpusDocumentRequest]", remove_missing_layers: "typing.List[str]", outcomes: "typing.List[AssistantProjectSourceExtractionOutcome]"):
+        self.project_root = project_root
+        self.prepared = prepared
+        self.documents = documents
+        self.remove_missing_layers = remove_missing_layers
+        self.outcomes = outcomes
+
+    def __str__(self):
+        return "AssistantApplyCorpusReconciliationRequest(project_root={}, prepared={}, documents={}, remove_missing_layers={}, outcomes={})".format(self.project_root, self.prepared, self.documents, self.remove_missing_layers, self.outcomes)
+
+    def __eq__(self, other):
+        if self.project_root != other.project_root:
+            return False
+        if self.prepared != other.prepared:
+            return False
+        if self.documents != other.documents:
+            return False
+        if self.remove_missing_layers != other.remove_missing_layers:
+            return False
+        if self.outcomes != other.outcomes:
+            return False
+        return True
+
+class _UniffiConverterTypeAssistantApplyCorpusReconciliationRequest(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return AssistantApplyCorpusReconciliationRequest(
+            project_root=_UniffiConverterString.read(buf),
+            prepared=_UniffiConverterTypeAssistantPreparedCorpusReconciliationState.read(buf),
+            documents=_UniffiConverterSequenceTypeAssistantCorpusDocumentRequest.read(buf),
+            remove_missing_layers=_UniffiConverterSequenceString.read(buf),
+            outcomes=_UniffiConverterSequenceTypeAssistantProjectSourceExtractionOutcome.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterString.check_lower(value.project_root)
+        _UniffiConverterTypeAssistantPreparedCorpusReconciliationState.check_lower(value.prepared)
+        _UniffiConverterSequenceTypeAssistantCorpusDocumentRequest.check_lower(value.documents)
+        _UniffiConverterSequenceString.check_lower(value.remove_missing_layers)
+        _UniffiConverterSequenceTypeAssistantProjectSourceExtractionOutcome.check_lower(value.outcomes)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterString.write(value.project_root, buf)
+        _UniffiConverterTypeAssistantPreparedCorpusReconciliationState.write(value.prepared, buf)
+        _UniffiConverterSequenceTypeAssistantCorpusDocumentRequest.write(value.documents, buf)
+        _UniffiConverterSequenceString.write(value.remove_missing_layers, buf)
+        _UniffiConverterSequenceTypeAssistantProjectSourceExtractionOutcome.write(value.outcomes, buf)
 
 
 class AssistantAttachmentState:
@@ -2102,6 +2219,177 @@ class _UniffiConverterTypeAssistantContextItemState(_UniffiConverterRustBuffer):
         _UniffiConverterUInt64.write(value.byte_count, buf)
         _UniffiConverterString.write(value.content_sha256, buf)
         _UniffiConverterBool.write(value.untrusted_evidence, buf)
+
+
+class AssistantContextProjectionState:
+    schema_version: "int"
+    session_nonce: "str"
+    open_tabs: "typing.List[AssistantContextTabProjection]"
+    data_semantics: "typing.List[AssistantDataSemanticProjection]"
+    receipts: "typing.List[AssistantNotebookReceiptsProjection]"
+    resource_plan: "AssistantContextResourcePlanProjection"
+    action_catalog: "typing.List[AssistantActionProjection]"
+    def __init__(self, *, schema_version: "int", session_nonce: "str", open_tabs: "typing.List[AssistantContextTabProjection]", data_semantics: "typing.List[AssistantDataSemanticProjection]", receipts: "typing.List[AssistantNotebookReceiptsProjection]", resource_plan: "AssistantContextResourcePlanProjection", action_catalog: "typing.List[AssistantActionProjection]"):
+        self.schema_version = schema_version
+        self.session_nonce = session_nonce
+        self.open_tabs = open_tabs
+        self.data_semantics = data_semantics
+        self.receipts = receipts
+        self.resource_plan = resource_plan
+        self.action_catalog = action_catalog
+
+    def __str__(self):
+        return "AssistantContextProjectionState(schema_version={}, session_nonce={}, open_tabs={}, data_semantics={}, receipts={}, resource_plan={}, action_catalog={})".format(self.schema_version, self.session_nonce, self.open_tabs, self.data_semantics, self.receipts, self.resource_plan, self.action_catalog)
+
+    def __eq__(self, other):
+        if self.schema_version != other.schema_version:
+            return False
+        if self.session_nonce != other.session_nonce:
+            return False
+        if self.open_tabs != other.open_tabs:
+            return False
+        if self.data_semantics != other.data_semantics:
+            return False
+        if self.receipts != other.receipts:
+            return False
+        if self.resource_plan != other.resource_plan:
+            return False
+        if self.action_catalog != other.action_catalog:
+            return False
+        return True
+
+class _UniffiConverterTypeAssistantContextProjectionState(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return AssistantContextProjectionState(
+            schema_version=_UniffiConverterUInt32.read(buf),
+            session_nonce=_UniffiConverterString.read(buf),
+            open_tabs=_UniffiConverterSequenceTypeAssistantContextTabProjection.read(buf),
+            data_semantics=_UniffiConverterSequenceTypeAssistantDataSemanticProjection.read(buf),
+            receipts=_UniffiConverterSequenceTypeAssistantNotebookReceiptsProjection.read(buf),
+            resource_plan=_UniffiConverterTypeAssistantContextResourcePlanProjection.read(buf),
+            action_catalog=_UniffiConverterSequenceTypeAssistantActionProjection.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterUInt32.check_lower(value.schema_version)
+        _UniffiConverterString.check_lower(value.session_nonce)
+        _UniffiConverterSequenceTypeAssistantContextTabProjection.check_lower(value.open_tabs)
+        _UniffiConverterSequenceTypeAssistantDataSemanticProjection.check_lower(value.data_semantics)
+        _UniffiConverterSequenceTypeAssistantNotebookReceiptsProjection.check_lower(value.receipts)
+        _UniffiConverterTypeAssistantContextResourcePlanProjection.check_lower(value.resource_plan)
+        _UniffiConverterSequenceTypeAssistantActionProjection.check_lower(value.action_catalog)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterUInt32.write(value.schema_version, buf)
+        _UniffiConverterString.write(value.session_nonce, buf)
+        _UniffiConverterSequenceTypeAssistantContextTabProjection.write(value.open_tabs, buf)
+        _UniffiConverterSequenceTypeAssistantDataSemanticProjection.write(value.data_semantics, buf)
+        _UniffiConverterSequenceTypeAssistantNotebookReceiptsProjection.write(value.receipts, buf)
+        _UniffiConverterTypeAssistantContextResourcePlanProjection.write(value.resource_plan, buf)
+        _UniffiConverterSequenceTypeAssistantActionProjection.write(value.action_catalog, buf)
+
+
+class AssistantContextResourcePlanProjection:
+    schema_version: "int"
+    corpus_text_units: "int"
+    diagnostics: "typing.List[str]"
+    def __init__(self, *, schema_version: "int", corpus_text_units: "int", diagnostics: "typing.List[str]"):
+        self.schema_version = schema_version
+        self.corpus_text_units = corpus_text_units
+        self.diagnostics = diagnostics
+
+    def __str__(self):
+        return "AssistantContextResourcePlanProjection(schema_version={}, corpus_text_units={}, diagnostics={})".format(self.schema_version, self.corpus_text_units, self.diagnostics)
+
+    def __eq__(self, other):
+        if self.schema_version != other.schema_version:
+            return False
+        if self.corpus_text_units != other.corpus_text_units:
+            return False
+        if self.diagnostics != other.diagnostics:
+            return False
+        return True
+
+class _UniffiConverterTypeAssistantContextResourcePlanProjection(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return AssistantContextResourcePlanProjection(
+            schema_version=_UniffiConverterUInt32.read(buf),
+            corpus_text_units=_UniffiConverterUInt64.read(buf),
+            diagnostics=_UniffiConverterSequenceString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterUInt32.check_lower(value.schema_version)
+        _UniffiConverterUInt64.check_lower(value.corpus_text_units)
+        _UniffiConverterSequenceString.check_lower(value.diagnostics)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterUInt32.write(value.schema_version, buf)
+        _UniffiConverterUInt64.write(value.corpus_text_units, buf)
+        _UniffiConverterSequenceString.write(value.diagnostics, buf)
+
+
+class AssistantContextTabProjection:
+    id: "str"
+    kind: "str"
+    label: "str"
+    summary: "str"
+    excerpt: "str"
+    def __init__(self, *, id: "str", kind: "str", label: "str", summary: "str", excerpt: "str"):
+        self.id = id
+        self.kind = kind
+        self.label = label
+        self.summary = summary
+        self.excerpt = excerpt
+
+    def __str__(self):
+        return "AssistantContextTabProjection(id={}, kind={}, label={}, summary={}, excerpt={})".format(self.id, self.kind, self.label, self.summary, self.excerpt)
+
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.kind != other.kind:
+            return False
+        if self.label != other.label:
+            return False
+        if self.summary != other.summary:
+            return False
+        if self.excerpt != other.excerpt:
+            return False
+        return True
+
+class _UniffiConverterTypeAssistantContextTabProjection(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return AssistantContextTabProjection(
+            id=_UniffiConverterString.read(buf),
+            kind=_UniffiConverterString.read(buf),
+            label=_UniffiConverterString.read(buf),
+            summary=_UniffiConverterString.read(buf),
+            excerpt=_UniffiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterString.check_lower(value.id)
+        _UniffiConverterString.check_lower(value.kind)
+        _UniffiConverterString.check_lower(value.label)
+        _UniffiConverterString.check_lower(value.summary)
+        _UniffiConverterString.check_lower(value.excerpt)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterString.write(value.id, buf)
+        _UniffiConverterString.write(value.kind, buf)
+        _UniffiConverterString.write(value.label, buf)
+        _UniffiConverterString.write(value.summary, buf)
+        _UniffiConverterString.write(value.excerpt, buf)
 
 
 class AssistantConversationRequest:
@@ -2470,17 +2758,13 @@ class AssistantCorpusIndexRequest:
     project_root: "str"
     documents: "typing.List[AssistantCorpusDocumentRequest]"
     remove_missing_layers: "typing.List[str]"
-    project_sources: "typing.Optional[typing.List[AssistantProjectCorpusSourceRequest]]"
-    failed_project_sources: "typing.List[str]"
-    def __init__(self, *, project_root: "str", documents: "typing.List[AssistantCorpusDocumentRequest]", remove_missing_layers: "typing.List[str]", project_sources: "typing.Optional[typing.List[AssistantProjectCorpusSourceRequest]]", failed_project_sources: "typing.List[str]"):
+    def __init__(self, *, project_root: "str", documents: "typing.List[AssistantCorpusDocumentRequest]", remove_missing_layers: "typing.List[str]"):
         self.project_root = project_root
         self.documents = documents
         self.remove_missing_layers = remove_missing_layers
-        self.project_sources = project_sources
-        self.failed_project_sources = failed_project_sources
 
     def __str__(self):
-        return "AssistantCorpusIndexRequest(project_root={}, documents={}, remove_missing_layers={}, project_sources={}, failed_project_sources={})".format(self.project_root, self.documents, self.remove_missing_layers, self.project_sources, self.failed_project_sources)
+        return "AssistantCorpusIndexRequest(project_root={}, documents={}, remove_missing_layers={})".format(self.project_root, self.documents, self.remove_missing_layers)
 
     def __eq__(self, other):
         if self.project_root != other.project_root:
@@ -2488,10 +2772,6 @@ class AssistantCorpusIndexRequest:
         if self.documents != other.documents:
             return False
         if self.remove_missing_layers != other.remove_missing_layers:
-            return False
-        if self.project_sources != other.project_sources:
-            return False
-        if self.failed_project_sources != other.failed_project_sources:
             return False
         return True
 
@@ -2502,8 +2782,6 @@ class _UniffiConverterTypeAssistantCorpusIndexRequest(_UniffiConverterRustBuffer
             project_root=_UniffiConverterString.read(buf),
             documents=_UniffiConverterSequenceTypeAssistantCorpusDocumentRequest.read(buf),
             remove_missing_layers=_UniffiConverterSequenceString.read(buf),
-            project_sources=_UniffiConverterOptionalSequenceTypeAssistantProjectCorpusSourceRequest.read(buf),
-            failed_project_sources=_UniffiConverterSequenceString.read(buf),
         )
 
     @staticmethod
@@ -2511,16 +2789,12 @@ class _UniffiConverterTypeAssistantCorpusIndexRequest(_UniffiConverterRustBuffer
         _UniffiConverterString.check_lower(value.project_root)
         _UniffiConverterSequenceTypeAssistantCorpusDocumentRequest.check_lower(value.documents)
         _UniffiConverterSequenceString.check_lower(value.remove_missing_layers)
-        _UniffiConverterOptionalSequenceTypeAssistantProjectCorpusSourceRequest.check_lower(value.project_sources)
-        _UniffiConverterSequenceString.check_lower(value.failed_project_sources)
 
     @staticmethod
     def write(value, buf):
         _UniffiConverterString.write(value.project_root, buf)
         _UniffiConverterSequenceTypeAssistantCorpusDocumentRequest.write(value.documents, buf)
         _UniffiConverterSequenceString.write(value.remove_missing_layers, buf)
-        _UniffiConverterOptionalSequenceTypeAssistantProjectCorpusSourceRequest.write(value.project_sources, buf)
-        _UniffiConverterSequenceString.write(value.failed_project_sources, buf)
 
 
 class AssistantCorpusSearchHitState:
@@ -2758,6 +3032,56 @@ class _UniffiConverterTypeAssistantCreatePinRequest(_UniffiConverterRustBuffer):
         _UniffiConverterString.write(value.snapshot_content, buf)
 
 
+class AssistantDataSemanticProjection:
+    id: "str"
+    label: "str"
+    summary: "str"
+    semantics: "str"
+    def __init__(self, *, id: "str", label: "str", summary: "str", semantics: "str"):
+        self.id = id
+        self.label = label
+        self.summary = summary
+        self.semantics = semantics
+
+    def __str__(self):
+        return "AssistantDataSemanticProjection(id={}, label={}, summary={}, semantics={})".format(self.id, self.label, self.summary, self.semantics)
+
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.label != other.label:
+            return False
+        if self.summary != other.summary:
+            return False
+        if self.semantics != other.semantics:
+            return False
+        return True
+
+class _UniffiConverterTypeAssistantDataSemanticProjection(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return AssistantDataSemanticProjection(
+            id=_UniffiConverterString.read(buf),
+            label=_UniffiConverterString.read(buf),
+            summary=_UniffiConverterString.read(buf),
+            semantics=_UniffiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterString.check_lower(value.id)
+        _UniffiConverterString.check_lower(value.label)
+        _UniffiConverterString.check_lower(value.summary)
+        _UniffiConverterString.check_lower(value.semantics)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterString.write(value.id, buf)
+        _UniffiConverterString.write(value.label, buf)
+        _UniffiConverterString.write(value.summary, buf)
+        _UniffiConverterString.write(value.semantics, buf)
+
+
 class AssistantMessageState:
     id: "str"
     role: "str"
@@ -2857,6 +3181,49 @@ class _UniffiConverterTypeAssistantMessageState(_UniffiConverterRustBuffer):
         _UniffiConverterSequenceTypeAssistantPinState.write(value.pins, buf)
 
 
+class AssistantNotebookReceiptsProjection:
+    notebook_id: "str"
+    notebook: "str"
+    receipts: "typing.List[NotebookExecutionReceipt]"
+    def __init__(self, *, notebook_id: "str", notebook: "str", receipts: "typing.List[NotebookExecutionReceipt]"):
+        self.notebook_id = notebook_id
+        self.notebook = notebook
+        self.receipts = receipts
+
+    def __str__(self):
+        return "AssistantNotebookReceiptsProjection(notebook_id={}, notebook={}, receipts={})".format(self.notebook_id, self.notebook, self.receipts)
+
+    def __eq__(self, other):
+        if self.notebook_id != other.notebook_id:
+            return False
+        if self.notebook != other.notebook:
+            return False
+        if self.receipts != other.receipts:
+            return False
+        return True
+
+class _UniffiConverterTypeAssistantNotebookReceiptsProjection(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return AssistantNotebookReceiptsProjection(
+            notebook_id=_UniffiConverterString.read(buf),
+            notebook=_UniffiConverterString.read(buf),
+            receipts=_UniffiConverterSequenceTypeNotebookExecutionReceipt.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterString.check_lower(value.notebook_id)
+        _UniffiConverterString.check_lower(value.notebook)
+        _UniffiConverterSequenceTypeNotebookExecutionReceipt.check_lower(value.receipts)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterString.write(value.notebook_id, buf)
+        _UniffiConverterString.write(value.notebook, buf)
+        _UniffiConverterSequenceTypeNotebookExecutionReceipt.write(value.receipts, buf)
+
+
 class AssistantPinState:
     id: "str"
     conversation_id: "str"
@@ -2942,58 +3309,88 @@ class _UniffiConverterTypeAssistantPinState(_UniffiConverterRustBuffer):
         _UniffiConverterString.write(value.content_sha256, buf)
 
 
-class AssistantProjectCorpusPlanRequest:
+class AssistantPrepareCorpusReconciliationRequest:
     project_root: "str"
     sources: "typing.List[AssistantProjectCorpusSourceRequest]"
-    def __init__(self, *, project_root: "str", sources: "typing.List[AssistantProjectCorpusSourceRequest]"):
+    generation: "int"
+    scope: "AssistantCorpusReconciliationScope"
+    def __init__(self, *, project_root: "str", sources: "typing.List[AssistantProjectCorpusSourceRequest]", generation: "int", scope: "AssistantCorpusReconciliationScope"):
         self.project_root = project_root
         self.sources = sources
+        self.generation = generation
+        self.scope = scope
 
     def __str__(self):
-        return "AssistantProjectCorpusPlanRequest(project_root={}, sources={})".format(self.project_root, self.sources)
+        return "AssistantPrepareCorpusReconciliationRequest(project_root={}, sources={}, generation={}, scope={})".format(self.project_root, self.sources, self.generation, self.scope)
 
     def __eq__(self, other):
         if self.project_root != other.project_root:
             return False
         if self.sources != other.sources:
             return False
+        if self.generation != other.generation:
+            return False
+        if self.scope != other.scope:
+            return False
         return True
 
-class _UniffiConverterTypeAssistantProjectCorpusPlanRequest(_UniffiConverterRustBuffer):
+class _UniffiConverterTypeAssistantPrepareCorpusReconciliationRequest(_UniffiConverterRustBuffer):
     @staticmethod
     def read(buf):
-        return AssistantProjectCorpusPlanRequest(
+        return AssistantPrepareCorpusReconciliationRequest(
             project_root=_UniffiConverterString.read(buf),
             sources=_UniffiConverterSequenceTypeAssistantProjectCorpusSourceRequest.read(buf),
+            generation=_UniffiConverterUInt64.read(buf),
+            scope=_UniffiConverterTypeAssistantCorpusReconciliationScope.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiConverterString.check_lower(value.project_root)
         _UniffiConverterSequenceTypeAssistantProjectCorpusSourceRequest.check_lower(value.sources)
+        _UniffiConverterUInt64.check_lower(value.generation)
+        _UniffiConverterTypeAssistantCorpusReconciliationScope.check_lower(value.scope)
 
     @staticmethod
     def write(value, buf):
         _UniffiConverterString.write(value.project_root, buf)
         _UniffiConverterSequenceTypeAssistantProjectCorpusSourceRequest.write(value.sources, buf)
+        _UniffiConverterUInt64.write(value.generation, buf)
+        _UniffiConverterTypeAssistantCorpusReconciliationScope.write(value.scope, buf)
 
 
-class AssistantProjectCorpusPlanState:
+class AssistantPreparedCorpusReconciliationState:
     schema_version: "int"
+    generation: "int"
+    scope: "AssistantCorpusReconciliationScope"
+    snapshot_digest: "str"
+    sources: "typing.List[AssistantProjectCorpusSourceRequest]"
     extract_paths: "typing.List[str]"
     unchanged_paths: "typing.List[str]"
     removed_paths: "typing.List[str]"
-    def __init__(self, *, schema_version: "int", extract_paths: "typing.List[str]", unchanged_paths: "typing.List[str]", removed_paths: "typing.List[str]"):
+    def __init__(self, *, schema_version: "int", generation: "int", scope: "AssistantCorpusReconciliationScope", snapshot_digest: "str", sources: "typing.List[AssistantProjectCorpusSourceRequest]", extract_paths: "typing.List[str]", unchanged_paths: "typing.List[str]", removed_paths: "typing.List[str]"):
         self.schema_version = schema_version
+        self.generation = generation
+        self.scope = scope
+        self.snapshot_digest = snapshot_digest
+        self.sources = sources
         self.extract_paths = extract_paths
         self.unchanged_paths = unchanged_paths
         self.removed_paths = removed_paths
 
     def __str__(self):
-        return "AssistantProjectCorpusPlanState(schema_version={}, extract_paths={}, unchanged_paths={}, removed_paths={})".format(self.schema_version, self.extract_paths, self.unchanged_paths, self.removed_paths)
+        return "AssistantPreparedCorpusReconciliationState(schema_version={}, generation={}, scope={}, snapshot_digest={}, sources={}, extract_paths={}, unchanged_paths={}, removed_paths={})".format(self.schema_version, self.generation, self.scope, self.snapshot_digest, self.sources, self.extract_paths, self.unchanged_paths, self.removed_paths)
 
     def __eq__(self, other):
         if self.schema_version != other.schema_version:
+            return False
+        if self.generation != other.generation:
+            return False
+        if self.scope != other.scope:
+            return False
+        if self.snapshot_digest != other.snapshot_digest:
+            return False
+        if self.sources != other.sources:
             return False
         if self.extract_paths != other.extract_paths:
             return False
@@ -3003,11 +3400,15 @@ class AssistantProjectCorpusPlanState:
             return False
         return True
 
-class _UniffiConverterTypeAssistantProjectCorpusPlanState(_UniffiConverterRustBuffer):
+class _UniffiConverterTypeAssistantPreparedCorpusReconciliationState(_UniffiConverterRustBuffer):
     @staticmethod
     def read(buf):
-        return AssistantProjectCorpusPlanState(
+        return AssistantPreparedCorpusReconciliationState(
             schema_version=_UniffiConverterUInt32.read(buf),
+            generation=_UniffiConverterUInt64.read(buf),
+            scope=_UniffiConverterTypeAssistantCorpusReconciliationScope.read(buf),
+            snapshot_digest=_UniffiConverterString.read(buf),
+            sources=_UniffiConverterSequenceTypeAssistantProjectCorpusSourceRequest.read(buf),
             extract_paths=_UniffiConverterSequenceString.read(buf),
             unchanged_paths=_UniffiConverterSequenceString.read(buf),
             removed_paths=_UniffiConverterSequenceString.read(buf),
@@ -3016,6 +3417,10 @@ class _UniffiConverterTypeAssistantProjectCorpusPlanState(_UniffiConverterRustBu
     @staticmethod
     def check_lower(value):
         _UniffiConverterUInt32.check_lower(value.schema_version)
+        _UniffiConverterUInt64.check_lower(value.generation)
+        _UniffiConverterTypeAssistantCorpusReconciliationScope.check_lower(value.scope)
+        _UniffiConverterString.check_lower(value.snapshot_digest)
+        _UniffiConverterSequenceTypeAssistantProjectCorpusSourceRequest.check_lower(value.sources)
         _UniffiConverterSequenceString.check_lower(value.extract_paths)
         _UniffiConverterSequenceString.check_lower(value.unchanged_paths)
         _UniffiConverterSequenceString.check_lower(value.removed_paths)
@@ -3023,6 +3428,10 @@ class _UniffiConverterTypeAssistantProjectCorpusPlanState(_UniffiConverterRustBu
     @staticmethod
     def write(value, buf):
         _UniffiConverterUInt32.write(value.schema_version, buf)
+        _UniffiConverterUInt64.write(value.generation, buf)
+        _UniffiConverterTypeAssistantCorpusReconciliationScope.write(value.scope, buf)
+        _UniffiConverterString.write(value.snapshot_digest, buf)
+        _UniffiConverterSequenceTypeAssistantProjectCorpusSourceRequest.write(value.sources, buf)
         _UniffiConverterSequenceString.write(value.extract_paths, buf)
         _UniffiConverterSequenceString.write(value.unchanged_paths, buf)
         _UniffiConverterSequenceString.write(value.removed_paths, buf)
@@ -3090,6 +3499,49 @@ class _UniffiConverterTypeAssistantProjectCorpusSourceRequest(_UniffiConverterRu
         _UniffiConverterInt64.write(value.modified_unix_ns, buf)
         _UniffiConverterInt64.write(value.status_changed_unix_ns, buf)
         _UniffiConverterString.write(value.file_identity, buf)
+
+
+class AssistantProjectSourceExtractionOutcome:
+    relative_path: "str"
+    status: "AssistantProjectSourceExtractionStatus"
+    diagnostic: "typing.Optional[str]"
+    def __init__(self, *, relative_path: "str", status: "AssistantProjectSourceExtractionStatus", diagnostic: "typing.Optional[str]"):
+        self.relative_path = relative_path
+        self.status = status
+        self.diagnostic = diagnostic
+
+    def __str__(self):
+        return "AssistantProjectSourceExtractionOutcome(relative_path={}, status={}, diagnostic={})".format(self.relative_path, self.status, self.diagnostic)
+
+    def __eq__(self, other):
+        if self.relative_path != other.relative_path:
+            return False
+        if self.status != other.status:
+            return False
+        if self.diagnostic != other.diagnostic:
+            return False
+        return True
+
+class _UniffiConverterTypeAssistantProjectSourceExtractionOutcome(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return AssistantProjectSourceExtractionOutcome(
+            relative_path=_UniffiConverterString.read(buf),
+            status=_UniffiConverterTypeAssistantProjectSourceExtractionStatus.read(buf),
+            diagnostic=_UniffiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterString.check_lower(value.relative_path)
+        _UniffiConverterTypeAssistantProjectSourceExtractionStatus.check_lower(value.status)
+        _UniffiConverterOptionalString.check_lower(value.diagnostic)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterString.write(value.relative_path, buf)
+        _UniffiConverterTypeAssistantProjectSourceExtractionStatus.write(value.status, buf)
+        _UniffiConverterOptionalString.write(value.diagnostic, buf)
 
 
 class AssistantProtocolProjection:
@@ -12016,11 +12468,11 @@ class _UniffiConverterTypeTutorialUnpackState(_UniffiConverterRustBuffer):
 
 class AssistantAuthorityState(enum.Enum):
     EXPLORE = 0
-    
+
     WORK = 1
-    
+
     FULL_ACCESS = 2
-    
+
 
 
 class _UniffiConverterTypeAssistantAuthorityState(_UniffiConverterRustBuffer):
@@ -12060,13 +12512,89 @@ class _UniffiConverterTypeAssistantAuthorityState(_UniffiConverterRustBuffer):
 
 
 
+class AssistantCorpusReconciliationScope(enum.Enum):
+    ALL_LAYERS = 0
+
+    PROJECT_DOCUMENTS = 1
+
+
+
+class _UniffiConverterTypeAssistantCorpusReconciliationScope(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return AssistantCorpusReconciliationScope.ALL_LAYERS
+        if variant == 2:
+            return AssistantCorpusReconciliationScope.PROJECT_DOCUMENTS
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == AssistantCorpusReconciliationScope.ALL_LAYERS:
+            return
+        if value == AssistantCorpusReconciliationScope.PROJECT_DOCUMENTS:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == AssistantCorpusReconciliationScope.ALL_LAYERS:
+            buf.write_i32(1)
+        if value == AssistantCorpusReconciliationScope.PROJECT_DOCUMENTS:
+            buf.write_i32(2)
+
+
+
+
+
+
+
+class AssistantProjectSourceExtractionStatus(enum.Enum):
+    SUCCEEDED = 0
+
+    FAILED = 1
+
+
+
+class _UniffiConverterTypeAssistantProjectSourceExtractionStatus(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return AssistantProjectSourceExtractionStatus.SUCCEEDED
+        if variant == 2:
+            return AssistantProjectSourceExtractionStatus.FAILED
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == AssistantProjectSourceExtractionStatus.SUCCEEDED:
+            return
+        if value == AssistantProjectSourceExtractionStatus.FAILED:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == AssistantProjectSourceExtractionStatus.SUCCEEDED:
+            buf.write_i32(1)
+        if value == AssistantProjectSourceExtractionStatus.FAILED:
+            buf.write_i32(2)
+
+
+
+
+
+
+
 class DatasetKind(enum.Enum):
     MEASUREMENT_SET = 0
-    
+
     IMAGE = 1
-    
+
     TABLE = 2
-    
+
 
 
 class _UniffiConverterTypeDatasetKind(_UniffiConverterRustBuffer):
@@ -12393,7 +12921,7 @@ class ImageExplorerRegionReference:
             if not other.is_NONE():
                 return False
             return True
-    
+
     class DEFINITION:
         name: "str"
 
@@ -12409,7 +12937,7 @@ class ImageExplorerRegionReference:
             if self.name != other.name:
                 return False
             return True
-    
+
     class FILE:
         path: "str"
 
@@ -12425,7 +12953,7 @@ class ImageExplorerRegionReference:
             if self.path != other.path:
                 return False
             return True
-    
+
     class EXPRESSION:
         expression: "str"
 
@@ -12441,8 +12969,8 @@ class ImageExplorerRegionReference:
             if self.expression != other.expression:
                 return False
             return True
-    
-    
+
+
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
     # whether an instance is that variant.
@@ -12462,7 +12990,7 @@ class ImageExplorerRegionReference:
         return isinstance(self, ImageExplorerRegionReference.EXPRESSION)
     def is_expression(self) -> bool:
         return isinstance(self, ImageExplorerRegionReference.EXPRESSION)
-    
+
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
@@ -12533,57 +13061,57 @@ class _UniffiConverterTypeImageExplorerRegionReference(_UniffiConverterRustBuffe
 
 class MeasurementSetPlotPreset(enum.Enum):
     UV_COVERAGE = 0
-    
+
     ANTENNA_LAYOUT = 1
-    
+
     SCAN_TIMELINE = 2
-    
+
     SPECTRAL_WINDOW_COVERAGE = 3
-    
+
     PHASE_VS_TIME = 4
-    
+
     AMPLITUDE_PHASE_VS_TIME_STACKED = 5
-    
+
     WEIGHT_VS_TIME = 6
-    
+
     SIGMA_VS_TIME = 7
-    
+
     FLAG_VS_TIME = 8
-    
+
     WEIGHT_SPECTRUM_VS_TIME = 9
-    
+
     SIGMA_SPECTRUM_VS_TIME = 10
-    
+
     FLAG_ROW_VS_TIME = 11
-    
+
     ELEVATION_VS_TIME = 12
-    
+
     AZIMUTH_VS_TIME = 13
-    
+
     HOUR_ANGLE_VS_TIME = 14
-    
+
     PARALLACTIC_ANGLE_VS_TIME = 15
-    
+
     AZIMUTH_VS_ELEVATION = 16
-    
+
     AMPLITUDE_VS_FREQUENCY = 17
-    
+
     AMPLITUDE_VS_CHANNEL = 18
-    
+
     PHASE_VS_CHANNEL = 19
-    
+
     PHASE_VS_FREQUENCY = 20
-    
+
     AMPLITUDE_VS_VELOCITY = 21
-    
+
     PHASE_VS_VELOCITY = 22
-    
+
     AMPLITUDE_VS_UV_DISTANCE = 23
-    
+
     AMPLITUDE_VS_TIME = 24
-    
+
     REAL_VS_IMAGINARY = 25
-    
+
 
 
 class _UniffiConverterTypeMeasurementSetPlotPreset(_UniffiConverterRustBuffer):
@@ -12763,11 +13291,11 @@ class _UniffiConverterTypeMeasurementSetPlotPreset(_UniffiConverterRustBuffer):
 
 class NotebookConflictResolution(enum.Enum):
     REJECT = 0
-    
+
     KEEP_LOCAL = 1
-    
+
     RELOAD_EXTERNAL = 2
-    
+
 
 
 class _UniffiConverterTypeNotebookConflictResolution(_UniffiConverterRustBuffer):
@@ -12809,9 +13337,9 @@ class _UniffiConverterTypeNotebookConflictResolution(_UniffiConverterRustBuffer)
 
 class NotebookExportMode(enum.Enum):
     PORTABLE = 0
-    
+
     ADVANCED_WITH_RECEIPTS = 1
-    
+
 
 
 class _UniffiConverterTypeNotebookExportMode(_UniffiConverterRustBuffer):
@@ -12847,9 +13375,9 @@ class _UniffiConverterTypeNotebookExportMode(_UniffiConverterRustBuffer):
 
 class NotebookRecordingPolicy(enum.Enum):
     RECORD = 0
-    
+
     BYPASS_ONCE = 1
-    
+
 
 
 class _UniffiConverterTypeNotebookRecordingPolicy(_UniffiConverterRustBuffer):
@@ -12903,7 +13431,7 @@ class NotebookSaveProjection:
             if self.notebook != other.notebook:
                 return False
             return True
-    
+
     class RELOADED:
         notebook: "NotebookDocumentProjection"
 
@@ -12919,7 +13447,7 @@ class NotebookSaveProjection:
             if self.notebook != other.notebook:
                 return False
             return True
-    
+
     class CONFLICT:
         base_hash: "str"
         external: "NotebookDocumentProjection"
@@ -12943,8 +13471,8 @@ class NotebookSaveProjection:
             if self.proposed_source != other.proposed_source:
                 return False
             return True
-    
-    
+
+
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
     # whether an instance is that variant.
@@ -12960,7 +13488,7 @@ class NotebookSaveProjection:
         return isinstance(self, NotebookSaveProjection.CONFLICT)
     def is_conflict(self) -> bool:
         return isinstance(self, NotebookSaveProjection.CONFLICT)
-    
+
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
@@ -13047,7 +13575,7 @@ class NotebookValue:
             if self.value != other.value:
                 return False
             return True
-    
+
     class NUMBER:
         value: "float"
 
@@ -13063,7 +13591,7 @@ class NotebookValue:
             if self.value != other.value:
                 return False
             return True
-    
+
     class BOOL:
         value: "bool"
 
@@ -13079,7 +13607,7 @@ class NotebookValue:
             if self.value != other.value:
                 return False
             return True
-    
+
     class ARRAY:
         values: "typing.List[NotebookValue]"
 
@@ -13095,7 +13623,7 @@ class NotebookValue:
             if self.values != other.values:
                 return False
             return True
-    
+
     class OBJECT:
         entries: "typing.List[NotebookValueEntry]"
 
@@ -13111,7 +13639,7 @@ class NotebookValue:
             if self.entries != other.entries:
                 return False
             return True
-    
+
     class NULL:
 
         def __init__(self,):
@@ -13124,8 +13652,8 @@ class NotebookValue:
             if not other.is_NULL():
                 return False
             return True
-    
-    
+
+
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
     # whether an instance is that variant.
@@ -13153,7 +13681,7 @@ class NotebookValue:
         return isinstance(self, NotebookValue.NULL)
     def is_null(self) -> bool:
         return isinstance(self, NotebookValue.NULL)
-    
+
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
@@ -13246,9 +13774,9 @@ class _UniffiConverterTypeNotebookValue(_UniffiConverterRustBuffer):
 
 class PlotAxisScale(enum.Enum):
     LINEAR = 0
-    
+
     LOG = 1
-    
+
 
 
 class _UniffiConverterTypePlotAxisScale(_UniffiConverterRustBuffer):
@@ -13284,11 +13812,11 @@ class _UniffiConverterTypePlotAxisScale(_UniffiConverterRustBuffer):
 
 class PlotLayerKind(enum.Enum):
     SCATTER = 0
-    
+
     LINE = 1
-    
+
     INTERVAL = 2
-    
+
 
 
 class _UniffiConverterTypePlotLayerKind(_UniffiConverterRustBuffer):
@@ -13330,9 +13858,9 @@ class _UniffiConverterTypePlotLayerKind(_UniffiConverterRustBuffer):
 
 class PlotPayloadStrategy(enum.Enum):
     POINT_CLOUD = 0
-    
+
     INTERVALS = 1
-    
+
 
 
 class _UniffiConverterTypePlotPayloadStrategy(_UniffiConverterRustBuffer):
@@ -13368,13 +13896,13 @@ class _UniffiConverterTypePlotPayloadStrategy(_UniffiConverterRustBuffer):
 
 class SurfaceParameterBaseSource(enum.Enum):
     DEFAULTS = 0
-    
+
     LAST = 1
-    
+
     LAST_SUCCESSFUL = 2
-    
+
     FILE = 3
-    
+
 
 
 class _UniffiConverterTypeSurfaceParameterBaseSource(_UniffiConverterRustBuffer):
@@ -13437,7 +13965,7 @@ class SurfaceParameterPredicate:
             if not other.is_ALWAYS():
                 return False
             return True
-    
+
     class NEVER:
 
         def __init__(self,):
@@ -13450,7 +13978,7 @@ class SurfaceParameterPredicate:
             if not other.is_NEVER():
                 return False
             return True
-    
+
     class IS_SET:
         parameter: "str"
 
@@ -13466,7 +13994,7 @@ class SurfaceParameterPredicate:
             if self.parameter != other.parameter:
                 return False
             return True
-    
+
     class EQUALS:
         parameter: "str"
         value: "SurfaceParameterValue"
@@ -13486,7 +14014,7 @@ class SurfaceParameterPredicate:
             if self.value != other.value:
                 return False
             return True
-    
+
     class NOT:
         predicates: "typing.List[SurfaceParameterPredicate]"
 
@@ -13502,7 +14030,7 @@ class SurfaceParameterPredicate:
             if self.predicates != other.predicates:
                 return False
             return True
-    
+
     class ALL:
         predicates: "typing.List[SurfaceParameterPredicate]"
 
@@ -13518,7 +14046,7 @@ class SurfaceParameterPredicate:
             if self.predicates != other.predicates:
                 return False
             return True
-    
+
     class ANY:
         predicates: "typing.List[SurfaceParameterPredicate]"
 
@@ -13534,8 +14062,8 @@ class SurfaceParameterPredicate:
             if self.predicates != other.predicates:
                 return False
             return True
-    
-    
+
+
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
     # whether an instance is that variant.
@@ -13567,7 +14095,7 @@ class SurfaceParameterPredicate:
         return isinstance(self, SurfaceParameterPredicate.ANY)
     def is_any(self) -> bool:
         return isinstance(self, SurfaceParameterPredicate.ANY)
-    
+
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
@@ -13686,7 +14214,7 @@ class SurfaceParameterSourceRecord:
             if not other.is_DEFAULTS():
                 return False
             return True
-    
+
     class LAST:
 
         def __init__(self,):
@@ -13699,7 +14227,7 @@ class SurfaceParameterSourceRecord:
             if not other.is_LAST():
                 return False
             return True
-    
+
     class LAST_SUCCESSFUL:
 
         def __init__(self,):
@@ -13712,7 +14240,7 @@ class SurfaceParameterSourceRecord:
             if not other.is_LAST_SUCCESSFUL():
                 return False
             return True
-    
+
     class FILE:
         path: "str"
 
@@ -13728,8 +14256,8 @@ class SurfaceParameterSourceRecord:
             if self.path != other.path:
                 return False
             return True
-    
-    
+
+
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
     # whether an instance is that variant.
@@ -13749,7 +14277,7 @@ class SurfaceParameterSourceRecord:
         return isinstance(self, SurfaceParameterSourceRecord.FILE)
     def is_file(self) -> bool:
         return isinstance(self, SurfaceParameterSourceRecord.FILE)
-    
+
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
@@ -13829,7 +14357,7 @@ class SurfaceParameterType:
             if not other.is_BOOL():
                 return False
             return True
-    
+
     class INTEGER:
 
         def __init__(self,):
@@ -13842,7 +14370,7 @@ class SurfaceParameterType:
             if not other.is_INTEGER():
                 return False
             return True
-    
+
     class FLOAT:
 
         def __init__(self,):
@@ -13855,7 +14383,7 @@ class SurfaceParameterType:
             if not other.is_FLOAT():
                 return False
             return True
-    
+
     class STRING:
 
         def __init__(self,):
@@ -13868,7 +14396,7 @@ class SurfaceParameterType:
             if not other.is_STRING():
                 return False
             return True
-    
+
     class PATH:
         resource_kind: "typing.Optional[str]"
 
@@ -13884,7 +14412,7 @@ class SurfaceParameterType:
             if self.resource_kind != other.resource_kind:
                 return False
             return True
-    
+
     class CHOICE:
         values: "typing.List[str]"
 
@@ -13900,7 +14428,7 @@ class SurfaceParameterType:
             if self.values != other.values:
                 return False
             return True
-    
+
     class QUANTITY:
         dimension: "str"
         canonical_unit: "str"
@@ -13924,7 +14452,7 @@ class SurfaceParameterType:
             if self.special_values != other.special_values:
                 return False
             return True
-    
+
     class ARRAY:
         elements: "typing.List[SurfaceParameterType]"
         min_items: "int"
@@ -13952,7 +14480,7 @@ class SurfaceParameterType:
             if self.allow_scalar != other.allow_scalar:
                 return False
             return True
-    
+
     class TABLE:
         fields: "typing.List[SurfaceParameterTypeField]"
 
@@ -13968,7 +14496,7 @@ class SurfaceParameterType:
             if self.fields != other.fields:
                 return False
             return True
-    
+
     class OPTIONAL:
         values: "typing.List[SurfaceParameterType]"
         states: "typing.List[str]"
@@ -13988,8 +14516,8 @@ class SurfaceParameterType:
             if self.states != other.states:
                 return False
             return True
-    
-    
+
+
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
     # whether an instance is that variant.
@@ -14033,7 +14561,7 @@ class SurfaceParameterType:
         return isinstance(self, SurfaceParameterType.OPTIONAL)
     def is_optional(self) -> bool:
         return isinstance(self, SurfaceParameterType.OPTIONAL)
-    
+
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
@@ -14197,7 +14725,7 @@ class SurfaceParameterValue:
             if self.value != other.value:
                 return False
             return True
-    
+
     class INTEGER:
         value: "int"
 
@@ -14213,7 +14741,7 @@ class SurfaceParameterValue:
             if self.value != other.value:
                 return False
             return True
-    
+
     class FLOAT:
         value: "float"
 
@@ -14229,7 +14757,7 @@ class SurfaceParameterValue:
             if self.value != other.value:
                 return False
             return True
-    
+
     class STRING:
         value: "str"
 
@@ -14245,7 +14773,7 @@ class SurfaceParameterValue:
             if self.value != other.value:
                 return False
             return True
-    
+
     class ARRAY:
         values: "typing.List[SurfaceParameterValue]"
 
@@ -14261,7 +14789,7 @@ class SurfaceParameterValue:
             if self.values != other.values:
                 return False
             return True
-    
+
     class TABLE:
         entries: "typing.List[SurfaceParameterEntry]"
 
@@ -14277,8 +14805,8 @@ class SurfaceParameterValue:
             if self.entries != other.entries:
                 return False
             return True
-    
-    
+
+
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
     # whether an instance is that variant.
@@ -14306,7 +14834,7 @@ class SurfaceParameterValue:
         return isinstance(self, SurfaceParameterValue.TABLE)
     def is_table(self) -> bool:
         return isinstance(self, SurfaceParameterValue.TABLE)
-    
+
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
@@ -14402,11 +14930,11 @@ class _UniffiConverterTypeSurfaceParameterValue(_UniffiConverterRustBuffer):
 
 class SurfaceRunSafetyClass(enum.Enum):
     PRODUCT_WRITE = 0
-    
+
     OVERWRITE = 1
-    
+
     INPUT_MUTATION = 2
-    
+
 
 
 class _UniffiConverterTypeSurfaceRunSafetyClass(_UniffiConverterRustBuffer):
@@ -14470,7 +14998,7 @@ class TableBrowserBookmark:
             if self.column != other.column:
                 return False
             return True
-    
+
     class TABLE_KEYWORD:
         path: "typing.List[str]"
 
@@ -14486,7 +15014,7 @@ class TableBrowserBookmark:
             if self.path != other.path:
                 return False
             return True
-    
+
     class COLUMN_KEYWORD:
         column: "str"
         path: "typing.List[str]"
@@ -14506,7 +15034,7 @@ class TableBrowserBookmark:
             if self.path != other.path:
                 return False
             return True
-    
+
     class SUBTABLE:
         name: "str"
 
@@ -14522,8 +15050,8 @@ class TableBrowserBookmark:
             if self.name != other.name:
                 return False
             return True
-    
-    
+
+
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
     # whether an instance is that variant.
@@ -14543,7 +15071,7 @@ class TableBrowserBookmark:
         return isinstance(self, TableBrowserBookmark.SUBTABLE)
     def is_subtable(self) -> bool:
         return isinstance(self, TableBrowserBookmark.SUBTABLE)
-    
+
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
@@ -14641,7 +15169,7 @@ class TableBrowserCommand:
             if self.parameters != other.parameters:
                 return False
             return True
-    
+
     class SET_FOCUS:
         focus: "str"
 
@@ -14657,7 +15185,7 @@ class TableBrowserCommand:
             if self.focus != other.focus:
                 return False
             return True
-    
+
     class CYCLE_VIEW:
         forward: "bool"
 
@@ -14673,7 +15201,7 @@ class TableBrowserCommand:
             if self.forward != other.forward:
                 return False
             return True
-    
+
     class MOVE_UP:
         steps: "int"
 
@@ -14689,7 +15217,7 @@ class TableBrowserCommand:
             if self.steps != other.steps:
                 return False
             return True
-    
+
     class MOVE_DOWN:
         steps: "int"
 
@@ -14705,7 +15233,7 @@ class TableBrowserCommand:
             if self.steps != other.steps:
                 return False
             return True
-    
+
     class MOVE_LEFT:
         steps: "int"
 
@@ -14721,7 +15249,7 @@ class TableBrowserCommand:
             if self.steps != other.steps:
                 return False
             return True
-    
+
     class MOVE_RIGHT:
         steps: "int"
 
@@ -14737,7 +15265,7 @@ class TableBrowserCommand:
             if self.steps != other.steps:
                 return False
             return True
-    
+
     class PAGE_UP:
         pages: "int"
 
@@ -14753,7 +15281,7 @@ class TableBrowserCommand:
             if self.pages != other.pages:
                 return False
             return True
-    
+
     class PAGE_DOWN:
         pages: "int"
 
@@ -14769,7 +15297,7 @@ class TableBrowserCommand:
             if self.pages != other.pages:
                 return False
             return True
-    
+
     class ACTIVATE:
 
         def __init__(self,):
@@ -14782,7 +15310,7 @@ class TableBrowserCommand:
             if not other.is_ACTIVATE():
                 return False
             return True
-    
+
     class BACK:
 
         def __init__(self,):
@@ -14795,7 +15323,7 @@ class TableBrowserCommand:
             if not other.is_BACK():
                 return False
             return True
-    
+
     class ESCAPE:
 
         def __init__(self,):
@@ -14808,8 +15336,8 @@ class TableBrowserCommand:
             if not other.is_ESCAPE():
                 return False
             return True
-    
-    
+
+
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
     # whether an instance is that variant.
@@ -14861,7 +15389,7 @@ class TableBrowserCommand:
         return isinstance(self, TableBrowserCommand.ESCAPE)
     def is_escape(self) -> bool:
         return isinstance(self, TableBrowserCommand.ESCAPE)
-    
+
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
@@ -15032,7 +15560,7 @@ class TableBrowserScalarValue:
             if self.value != other.value:
                 return False
             return True
-    
+
     class INT:
         value: "int"
 
@@ -15048,7 +15576,7 @@ class TableBrowserScalarValue:
             if self.value != other.value:
                 return False
             return True
-    
+
     class UINT:
         value: "int"
 
@@ -15064,7 +15592,7 @@ class TableBrowserScalarValue:
             if self.value != other.value:
                 return False
             return True
-    
+
     class FLOAT:
         value: "float"
 
@@ -15080,7 +15608,7 @@ class TableBrowserScalarValue:
             if self.value != other.value:
                 return False
             return True
-    
+
     class COMPLEX:
         re: "float"
         im: "float"
@@ -15100,7 +15628,7 @@ class TableBrowserScalarValue:
             if self.im != other.im:
                 return False
             return True
-    
+
     class STRING:
         value: "str"
 
@@ -15116,8 +15644,8 @@ class TableBrowserScalarValue:
             if self.value != other.value:
                 return False
             return True
-    
-    
+
+
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
     # whether an instance is that variant.
@@ -15145,7 +15673,7 @@ class TableBrowserScalarValue:
         return isinstance(self, TableBrowserScalarValue.STRING)
     def is_string(self) -> bool:
         return isinstance(self, TableBrowserScalarValue.STRING)
-    
+
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
@@ -15259,7 +15787,7 @@ class TableBrowserValueNode:
             if not other.is_UNDEFINED():
                 return False
             return True
-    
+
     class SCALAR:
         value: "TableBrowserScalarValue"
 
@@ -15275,7 +15803,7 @@ class TableBrowserValueNode:
             if self.value != other.value:
                 return False
             return True
-    
+
     class ARRAY:
         primitive: "str"
         shape: "typing.List[int]"
@@ -15311,7 +15839,7 @@ class TableBrowserValueNode:
             if self.elements != other.elements:
                 return False
             return True
-    
+
     class RECORD:
         total_fields: "int"
         page_start: "int"
@@ -15339,7 +15867,7 @@ class TableBrowserValueNode:
             if self.fields != other.fields:
                 return False
             return True
-    
+
     class TABLE_REF:
         path: "str"
         resolved_path: "str"
@@ -15363,8 +15891,8 @@ class TableBrowserValueNode:
             if self.openable != other.openable:
                 return False
             return True
-    
-    
+
+
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
     # whether an instance is that variant.
@@ -15388,7 +15916,7 @@ class TableBrowserValueNode:
         return isinstance(self, TableBrowserValueNode.TABLE_REF)
     def is_table_ref(self) -> bool:
         return isinstance(self, TableBrowserValueNode.TABLE_REF)
-    
+
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
@@ -15500,15 +16028,15 @@ class _UniffiConverterTypeTableBrowserValueNode(_UniffiConverterRustBuffer):
 
 class TaskProductKind(enum.Enum):
     MEASUREMENT_SET = 0
-    
+
     CASA_IMAGE = 1
-    
+
     CASA_TABLE = 2
-    
+
     FITS_IMAGE = 3
-    
+
     FILE = 4
-    
+
 
 
 class _UniffiConverterTypeTaskProductKind(_UniffiConverterRustBuffer):
@@ -15562,11 +16090,11 @@ class _UniffiConverterTypeTaskProductKind(_UniffiConverterRustBuffer):
 
 class TaskProductRole(enum.Enum):
     PRIMARY = 0
-    
+
     AUXILIARY = 1
-    
+
     PREVIEW = 2
-    
+
 
 
 class _UniffiConverterTypeTaskProductRole(_UniffiConverterRustBuffer):
@@ -15608,29 +16136,29 @@ class _UniffiConverterTypeTaskProductRole(_UniffiConverterRustBuffer):
 
 class TutorialAcquisitionPhase(enum.Enum):
     MISSING = 0
-    
+
     DOWNLOADING = 1
-    
+
     VERIFYING = 2
-    
+
     UNPACKING = 3
-    
+
     CHECKING = 4
-    
+
     MATERIALIZING = 5
-    
+
     READY = 6
-    
+
     CANCELLED = 7
-    
+
     NETWORK_FAILED = 8
-    
+
     CHECKSUM_FAILED = 9
-    
+
     UNSAFE_ARCHIVE = 10
-    
+
     DESTINATION_COLLISION = 11
-    
+
 
 
 class _UniffiConverterTypeTutorialAcquisitionPhase(_UniffiConverterRustBuffer):
@@ -15726,15 +16254,15 @@ class _UniffiConverterTypeTutorialAcquisitionPhase(_UniffiConverterRustBuffer):
 
 class TutorialPersistenceAction(enum.Enum):
     RESUME = 0
-    
+
     RESTART = 1
-    
+
     RETRY = 2
-    
+
     CANCEL = 3
-    
+
     ADVANCE = 4
-    
+
 
 
 class _UniffiConverterTypeTutorialPersistenceAction(_UniffiConverterRustBuffer):
@@ -16729,33 +17257,6 @@ class _UniffiConverterOptionalSequenceString(_UniffiConverterRustBuffer):
 
 
 
-class _UniffiConverterOptionalSequenceTypeAssistantProjectCorpusSourceRequest(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiConverterSequenceTypeAssistantProjectCorpusSourceRequest.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiConverterSequenceTypeAssistantProjectCorpusSourceRequest.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiConverterSequenceTypeAssistantProjectCorpusSourceRequest.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
-
-
 class _UniffiConverterOptionalSequenceTypeNotebookPythonOutputEvent(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -16908,6 +17409,31 @@ class _UniffiConverterSequenceTypeApplicationCatalogEntry(_UniffiConverterRustBu
 
 
 
+class _UniffiConverterSequenceTypeAssistantActionProjection(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiConverterTypeAssistantActionProjection.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiConverterTypeAssistantActionProjection.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiConverterTypeAssistantActionProjection.read(buf) for i in range(count)
+        ]
+
+
+
 class _UniffiConverterSequenceTypeAssistantActivityState(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -17008,6 +17534,31 @@ class _UniffiConverterSequenceTypeAssistantContextItemState(_UniffiConverterRust
 
 
 
+class _UniffiConverterSequenceTypeAssistantContextTabProjection(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiConverterTypeAssistantContextTabProjection.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiConverterTypeAssistantContextTabProjection.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiConverterTypeAssistantContextTabProjection.read(buf) for i in range(count)
+        ]
+
+
+
 class _UniffiConverterSequenceTypeAssistantConversationState(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -17083,6 +17634,31 @@ class _UniffiConverterSequenceTypeAssistantCorpusSearchHitState(_UniffiConverter
 
 
 
+class _UniffiConverterSequenceTypeAssistantDataSemanticProjection(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiConverterTypeAssistantDataSemanticProjection.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiConverterTypeAssistantDataSemanticProjection.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiConverterTypeAssistantDataSemanticProjection.read(buf) for i in range(count)
+        ]
+
+
+
 class _UniffiConverterSequenceTypeAssistantMessageState(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -17104,6 +17680,31 @@ class _UniffiConverterSequenceTypeAssistantMessageState(_UniffiConverterRustBuff
 
         return [
             _UniffiConverterTypeAssistantMessageState.read(buf) for i in range(count)
+        ]
+
+
+
+class _UniffiConverterSequenceTypeAssistantNotebookReceiptsProjection(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiConverterTypeAssistantNotebookReceiptsProjection.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiConverterTypeAssistantNotebookReceiptsProjection.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiConverterTypeAssistantNotebookReceiptsProjection.read(buf) for i in range(count)
         ]
 
 
@@ -17154,6 +17755,31 @@ class _UniffiConverterSequenceTypeAssistantProjectCorpusSourceRequest(_UniffiCon
 
         return [
             _UniffiConverterTypeAssistantProjectCorpusSourceRequest.read(buf) for i in range(count)
+        ]
+
+
+
+class _UniffiConverterSequenceTypeAssistantProjectSourceExtractionOutcome(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiConverterTypeAssistantProjectSourceExtractionOutcome.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiConverterTypeAssistantProjectSourceExtractionOutcome.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiConverterTypeAssistantProjectSourceExtractionOutcome.read(buf) for i in range(count)
         ]
 
 
@@ -18759,13 +19385,13 @@ class ParameterSessionLifecycle():
         """
 
         _UniffiConverterString.check_lower(surface_id)
-        
+
         _UniffiConverterString.check_lower(workspace)
-        
+
         _UniffiConverterMapStringTypeSurfaceParameterValue.check_lower(values)
-        
+
         _UniffiConverterBool.check_lower(enabled)
-        
+
         return _UniffiConverterSequenceString.lift(
             _uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_method_parametersessionlifecycle_accepted_durable_change,self._uniffi_clone_pointer(),
         _UniffiConverterString.lower(surface_id),
@@ -18784,9 +19410,9 @@ class ParameterSessionLifecycle():
         """
 
         _UniffiConverterString.check_lower(surface_id)
-        
+
         _UniffiConverterString.check_lower(workspace)
-        
+
         return _UniffiConverterSequenceString.lift(
             _uniffi_rust_call(_UniffiLib.uniffi_casars_frontend_services_fn_method_parametersessionlifecycle_flush,self._uniffi_clone_pointer(),
         _UniffiConverterString.lower(surface_id),
@@ -18816,13 +19442,13 @@ class ParameterSessionLifecycle():
         """
 
         _UniffiConverterString.check_lower(surface_id)
-        
+
         _UniffiConverterString.check_lower(workspace)
-        
+
         _UniffiConverterMapStringTypeSurfaceParameterValue.check_lower(values)
-        
+
         _UniffiConverterBool.check_lower(enabled)
-        
+
         return _UniffiConverterSequenceString.lift(
             _uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_method_parametersessionlifecycle_opened,self._uniffi_clone_pointer(),
         _UniffiConverterString.lower(surface_id),
@@ -18928,9 +19554,9 @@ class ParameterTaskLifecycle():
         """
 
         _UniffiConverterString.check_lower(attempt_id)
-        
+
         _UniffiConverterBool.check_lower(successful)
-        
+
         return _UniffiConverterSequenceString.lift(
             _uniffi_rust_call(_UniffiLib.uniffi_casars_frontend_services_fn_method_parametertasklifecycle_after_completion,self._uniffi_clone_pointer(),
         _UniffiConverterString.lower(attempt_id),
@@ -18947,15 +19573,15 @@ class ParameterTaskLifecycle():
         """
 
         _UniffiConverterString.check_lower(attempt_id)
-        
+
         _UniffiConverterString.check_lower(surface_id)
-        
+
         _UniffiConverterString.check_lower(workspace)
-        
+
         _UniffiConverterMapStringTypeSurfaceParameterValue.check_lower(values)
-        
+
         _UniffiConverterBool.check_lower(enabled)
-        
+
         return _UniffiConverterSequenceString.lift(
             _uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_method_parametertasklifecycle_before_execution,self._uniffi_clone_pointer(),
         _UniffiConverterString.lower(attempt_id),
@@ -19004,13 +19630,25 @@ def application_catalog() -> "ApplicationCatalogEnvelope":
     return _UniffiConverterTypeApplicationCatalogEnvelope.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_application_catalog,))
 
 
+def assistant_apply_corpus_reconciliation(request: "AssistantApplyCorpusReconciliationRequest") -> "AssistantCorpusIndexReportState":
+    """
+    Apply one prepared reconciliation atomically. Outcomes must exactly cover
+    the prepared extract paths; failed sources retain their last valid index.
+    """
+
+    _UniffiConverterTypeAssistantApplyCorpusReconciliationRequest.check_lower(request)
+
+    return _UniffiConverterTypeAssistantCorpusIndexReportState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_apply_corpus_reconciliation,
+        _UniffiConverterTypeAssistantApplyCorpusReconciliationRequest.lower(request)))
+
+
 def assistant_conversations(project_root: "str") -> "typing.List[AssistantConversationState]":
     """
     List the provider-neutral visible conversations persisted for one project.
     """
 
     _UniffiConverterString.check_lower(project_root)
-    
+
     return _UniffiConverterSequenceTypeAssistantConversationState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_conversations,
         _UniffiConverterString.lower(project_root)))
 
@@ -19021,7 +19659,7 @@ def assistant_corpus_index(request: "AssistantCorpusIndexRequest") -> "Assistant
     """
 
     _UniffiConverterTypeAssistantCorpusIndexRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeAssistantCorpusIndexReportState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_corpus_index,
         _UniffiConverterTypeAssistantCorpusIndexRequest.lower(request)))
 
@@ -19032,7 +19670,7 @@ def assistant_corpus_search(request: "AssistantCorpusSearchRequest") -> "typing.
     """
 
     _UniffiConverterTypeAssistantCorpusSearchRequest.check_lower(request)
-    
+
     return _UniffiConverterSequenceTypeAssistantCorpusSearchHitState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_corpus_search,
         _UniffiConverterTypeAssistantCorpusSearchRequest.lower(request)))
 
@@ -19043,7 +19681,7 @@ def assistant_create_conversation(request: "AssistantCreateConversationRequest")
     """
 
     _UniffiConverterTypeAssistantCreateConversationRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeAssistantConversationState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_create_conversation,
         _UniffiConverterTypeAssistantCreateConversationRequest.lower(request)))
 
@@ -19054,7 +19692,7 @@ def assistant_create_pin(request: "AssistantCreatePinRequest") -> "AssistantPinS
     """
 
     _UniffiConverterTypeAssistantCreatePinRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeAssistantPinState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_create_pin,
         _UniffiConverterTypeAssistantCreatePinRequest.lower(request)))
 
@@ -19065,20 +19703,20 @@ def assistant_load_conversation(request: "AssistantConversationRequest") -> "Ass
     """
 
     _UniffiConverterTypeAssistantConversationRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeAssistantConversationState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_load_conversation,
         _UniffiConverterTypeAssistantConversationRequest.lower(request)))
 
 
-def assistant_project_corpus_plan(request: "AssistantProjectCorpusPlanRequest") -> "AssistantProjectCorpusPlanState":
+def assistant_prepare_corpus_reconciliation(request: "AssistantPrepareCorpusReconciliationRequest") -> "AssistantPreparedCorpusReconciliationState":
     """
-    Plan project-document extraction using metadata only.
+    Prepare one project-document reconciliation against an exact snapshot.
     """
 
-    _UniffiConverterTypeAssistantProjectCorpusPlanRequest.check_lower(request)
-    
-    return _UniffiConverterTypeAssistantProjectCorpusPlanState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_project_corpus_plan,
-        _UniffiConverterTypeAssistantProjectCorpusPlanRequest.lower(request)))
+    _UniffiConverterTypeAssistantPrepareCorpusReconciliationRequest.check_lower(request)
+
+    return _UniffiConverterTypeAssistantPreparedCorpusReconciliationState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_prepare_corpus_reconciliation,
+        _UniffiConverterTypeAssistantPrepareCorpusReconciliationRequest.lower(request)))
 
 
 def assistant_protocol_info() -> "AssistantProtocolProjection":
@@ -19095,7 +19733,7 @@ def assistant_save_conversation(request: "AssistantSaveConversationRequest") -> 
     """
 
     _UniffiConverterTypeAssistantSaveConversationRequest.check_lower(request)
-    
+
     _uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_save_conversation,
         _UniffiConverterTypeAssistantSaveConversationRequest.lower(request))
 
@@ -19106,49 +19744,49 @@ def assistant_task_suggestion(tool_output: "str") -> "AssistantTaskSuggestionPro
     """
 
     _UniffiConverterString.check_lower(tool_output)
-    
+
     return _UniffiConverterTypeAssistantTaskSuggestionProjection.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_assistant_task_suggestion,
         _UniffiConverterString.lower(tool_output)))
 
 
 def build_image_explorer_snapshot(request: "ImageExplorerSnapshotRequest") -> "ImageExplorerSnapshot":
     _UniffiConverterTypeImageExplorerSnapshotRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeImageExplorerSnapshot.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_build_image_explorer_snapshot,
         _UniffiConverterTypeImageExplorerSnapshotRequest.lower(request)))
 
 
 def build_measurement_set_plot(request: "MeasurementSetPlotRequest") -> "MeasurementSetPlotResult":
     _UniffiConverterTypeMeasurementSetPlotRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeMeasurementSetPlotResult.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_build_measurement_set_plot,
         _UniffiConverterTypeMeasurementSetPlotRequest.lower(request)))
 
 
 def build_measurement_set_summary(request: "MeasurementSetSummaryRequest") -> "MeasurementSetSummaryResult":
     _UniffiConverterTypeMeasurementSetSummaryRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeMeasurementSetSummaryResult.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_build_measurement_set_summary,
         _UniffiConverterTypeMeasurementSetSummaryRequest.lower(request)))
 
 
 def build_table_browser_cell_value(request: "TableBrowserCellValueRequest") -> "str":
     _UniffiConverterTypeTableBrowserCellValueRequest.check_lower(request)
-    
+
     return _UniffiConverterString.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_build_table_browser_cell_value,
         _UniffiConverterTypeTableBrowserCellValueRequest.lower(request)))
 
 
 def build_table_browser_cell_window(request: "TableBrowserCellWindowRequest") -> "TableBrowserCellWindowSnapshot":
     _UniffiConverterTypeTableBrowserCellWindowRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeTableBrowserCellWindowSnapshot.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_build_table_browser_cell_window,
         _UniffiConverterTypeTableBrowserCellWindowRequest.lower(request)))
 
 
 def build_table_browser_snapshot(request: "TableBrowserSnapshotRequest") -> "TableBrowserSnapshot":
     _UniffiConverterTypeTableBrowserSnapshotRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeTableBrowserSnapshot.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_build_table_browser_snapshot,
         _UniffiConverterTypeTableBrowserSnapshotRequest.lower(request)))
 
@@ -19159,7 +19797,7 @@ def notebook_begin_recording(request: "NotebookBeginRecordingRequest") -> "Noteb
     """
 
     _UniffiConverterTypeNotebookBeginRecordingRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeNotebookBeginRecordingResult.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_notebook_begin_recording,
         _UniffiConverterTypeNotebookBeginRecordingRequest.lower(request)))
 
@@ -19170,7 +19808,7 @@ def notebook_cells(source: "str") -> "typing.List[NotebookCellState]":
     """
 
     _UniffiConverterString.check_lower(source)
-    
+
     return _UniffiConverterSequenceTypeNotebookCellState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_notebook_cells,
         _UniffiConverterString.lower(source)))
 
@@ -19181,7 +19819,7 @@ def notebook_create(request: "NotebookCreateRequest") -> "NotebookDocumentProjec
     """
 
     _UniffiConverterTypeNotebookCreateRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeNotebookDocumentProjection.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_notebook_create,
         _UniffiConverterTypeNotebookCreateRequest.lower(request)))
 
@@ -19192,7 +19830,7 @@ def notebook_export(request: "NotebookExportRequest") -> None:
     """
 
     _UniffiConverterTypeNotebookExportRequest.check_lower(request)
-    
+
     _uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_notebook_export,
         _UniffiConverterTypeNotebookExportRequest.lower(request))
 
@@ -19203,7 +19841,7 @@ def notebook_finalize_recording(request: "NotebookFinalizeRecordingRequest") -> 
     """
 
     _UniffiConverterTypeNotebookFinalizeRecordingRequest.check_lower(request)
-    
+
     _uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_notebook_finalize_recording,
         _UniffiConverterTypeNotebookFinalizeRecordingRequest.lower(request))
 
@@ -19214,7 +19852,7 @@ def notebook_project(project_root: "str") -> "ScientificNotebookProjectProjectio
     """
 
     _UniffiConverterString.check_lower(project_root)
-    
+
     return _UniffiConverterTypeScientificNotebookProjectProjection.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_notebook_project,
         _UniffiConverterString.lower(project_root)))
 
@@ -19225,7 +19863,7 @@ def notebook_save(request: "NotebookSaveRequest") -> "NotebookSaveProjection":
     """
 
     _UniffiConverterTypeNotebookSaveRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeNotebookSaveProjection.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_notebook_save,
         _UniffiConverterTypeNotebookSaveRequest.lower(request)))
 
@@ -19236,7 +19874,7 @@ def notebook_save_visualization(request: "NotebookSaveVisualizationEnvelope") ->
     """
 
     _UniffiConverterTypeNotebookSaveVisualizationEnvelope.check_lower(request)
-    
+
     return _UniffiConverterTypeNotebookVisualizationSnapshot.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_notebook_save_visualization,
         _UniffiConverterTypeNotebookSaveVisualizationEnvelope.lower(request)))
 
@@ -19255,7 +19893,7 @@ def parameter_defaults(surface_id: "str") -> "SurfaceParameterSnapshot":
     """
 
     _UniffiConverterString.check_lower(surface_id)
-    
+
     return _UniffiConverterTypeSurfaceParameterSnapshot.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_defaults,
         _UniffiConverterString.lower(surface_id)))
 
@@ -19266,11 +19904,11 @@ def parameter_last(surface_id: "str",workspace: "str",successful: "bool") -> "ty
     """
 
     _UniffiConverterString.check_lower(surface_id)
-    
+
     _UniffiConverterString.check_lower(workspace)
-    
+
     _UniffiConverterBool.check_lower(successful)
-    
+
     return _UniffiConverterOptionalTypeSurfaceParameterSnapshot.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_last,
         _UniffiConverterString.lower(surface_id),
         _UniffiConverterString.lower(workspace),
@@ -19283,11 +19921,11 @@ def parameter_load(surface_id: "str",profile_toml: "str",source_path: "str") -> 
     """
 
     _UniffiConverterString.check_lower(surface_id)
-    
+
     _UniffiConverterString.check_lower(profile_toml)
-    
+
     _UniffiConverterString.check_lower(source_path)
-    
+
     return _UniffiConverterTypeSurfaceParameterSnapshot.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_load,
         _UniffiConverterString.lower(surface_id),
         _UniffiConverterString.lower(profile_toml),
@@ -19300,7 +19938,7 @@ def parameter_profile_surface(profile_toml: "str") -> "str":
     """
 
     _UniffiConverterString.check_lower(profile_toml)
-    
+
     return _UniffiConverterString.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_profile_surface,
         _UniffiConverterString.lower(profile_toml)))
 
@@ -19311,9 +19949,9 @@ def parameter_provider_invocation(surface_id: "str",values: "dict[str, SurfacePa
     """
 
     _UniffiConverterString.check_lower(surface_id)
-    
+
     _UniffiConverterMapStringTypeSurfaceParameterValue.check_lower(values)
-    
+
     return _UniffiConverterTypeSurfaceProviderInvocation.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_provider_invocation,
         _UniffiConverterString.lower(surface_id),
         _UniffiConverterMapStringTypeSurfaceParameterValue.lower(values)))
@@ -19325,9 +19963,9 @@ def parameter_render_toml(surface_id: "str",values: "dict[str, SurfaceParameterV
     """
 
     _UniffiConverterString.check_lower(surface_id)
-    
+
     _UniffiConverterMapStringTypeSurfaceParameterValue.check_lower(values)
-    
+
     return _UniffiConverterString.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_render_toml,
         _UniffiConverterString.lower(surface_id),
         _UniffiConverterMapStringTypeSurfaceParameterValue.lower(values)))
@@ -19339,17 +19977,17 @@ def parameter_resolve(surface_id: "str",base_source: "SurfaceParameterBaseSource
     """
 
     _UniffiConverterString.check_lower(surface_id)
-    
+
     _UniffiConverterTypeSurfaceParameterBaseSource.check_lower(base_source)
-    
+
     _UniffiConverterOptionalString.check_lower(profile_toml)
-    
+
     _UniffiConverterOptionalString.check_lower(profile_path)
-    
+
     _UniffiConverterTypeSurfaceParameterPatch.check_lower(context_patch)
-    
+
     _UniffiConverterTypeSurfaceParameterPatch.check_lower(override_patch)
-    
+
     return _UniffiConverterTypeSurfaceParameterSnapshot.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_resolve,
         _UniffiConverterString.lower(surface_id),
         _UniffiConverterTypeSurfaceParameterBaseSource.lower(base_source),
@@ -19365,9 +20003,9 @@ def parameter_run_safety(surface_id: "str",values: "dict[str, SurfaceParameterVa
     """
 
     _UniffiConverterString.check_lower(surface_id)
-    
+
     _UniffiConverterMapStringTypeSurfaceParameterValue.check_lower(values)
-    
+
     return _UniffiConverterTypeSurfaceRunSafety.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_run_safety,
         _UniffiConverterString.lower(surface_id),
         _UniffiConverterMapStringTypeSurfaceParameterValue.lower(values)))
@@ -19379,11 +20017,11 @@ def parameter_save(surface_id: "str",values: "dict[str, SurfaceParameterValue]",
     """
 
     _UniffiConverterString.check_lower(surface_id)
-    
+
     _UniffiConverterMapStringTypeSurfaceParameterValue.check_lower(values)
-    
+
     _UniffiConverterString.check_lower(destination_path)
-    
+
     return _UniffiConverterTypeSurfaceParameterWriteResult.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_save,
         _UniffiConverterString.lower(surface_id),
         _UniffiConverterMapStringTypeSurfaceParameterValue.lower(values),
@@ -19396,7 +20034,7 @@ def parameter_surface_bundle(surface_id: "str") -> "SurfaceParameterBundle":
     """
 
     _UniffiConverterString.check_lower(surface_id)
-    
+
     return _UniffiConverterTypeSurfaceParameterBundle.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_surface_bundle,
         _UniffiConverterString.lower(surface_id)))
 
@@ -19407,7 +20045,7 @@ def parameter_template_toml(surface_id: "str") -> "str":
     """
 
     _UniffiConverterString.check_lower(surface_id)
-    
+
     return _UniffiConverterString.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_template_toml,
         _UniffiConverterString.lower(surface_id)))
 
@@ -19418,13 +20056,13 @@ def parameter_write_managed(surface_id: "str",workspace: "str",values: "dict[str
     """
 
     _UniffiConverterString.check_lower(surface_id)
-    
+
     _UniffiConverterString.check_lower(workspace)
-    
+
     _UniffiConverterMapStringTypeSurfaceParameterValue.check_lower(values)
-    
+
     _UniffiConverterBool.check_lower(successful)
-    
+
     return _UniffiConverterTypeSurfaceParameterWriteResult.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_write_managed,
         _UniffiConverterString.lower(surface_id),
         _UniffiConverterString.lower(workspace),
@@ -19434,28 +20072,28 @@ def parameter_write_managed(surface_id: "str",workspace: "str",values: "dict[str
 
 def probe_measurement_set_time_range(dataset_path: "str") -> "MeasurementSetTimeRangeProbe":
     _UniffiConverterString.check_lower(dataset_path)
-    
+
     return _UniffiConverterTypeMeasurementSetTimeRangeProbe.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_probe_measurement_set_time_range,
         _UniffiConverterString.lower(dataset_path)))
 
 
 def probe_measurement_set_uv_range(dataset_path: "str") -> "MeasurementSetUvRangeProbe":
     _UniffiConverterString.check_lower(dataset_path)
-    
+
     return _UniffiConverterTypeMeasurementSetUvRangeProbe.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_probe_measurement_set_uv_range,
         _UniffiConverterString.lower(dataset_path)))
 
 
 def probe_path(path: "str") -> "typing.Optional[DatasetProbe]":
     _UniffiConverterString.check_lower(path)
-    
+
     return _UniffiConverterOptionalTypeDatasetProbe.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_probe_path,
         _UniffiConverterString.lower(path)))
 
 
 def probe_project(path: "str") -> "ProjectProbe":
     _UniffiConverterString.check_lower(path)
-    
+
     return _UniffiConverterTypeProjectProbe.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_probe_project,
         _UniffiConverterString.lower(path)))
 
@@ -19466,13 +20104,13 @@ def task_completion(surface_id: "str",stdout: "str",workspace: "str",values: "ty
     """
 
     _UniffiConverterString.check_lower(surface_id)
-    
+
     _UniffiConverterString.check_lower(stdout)
-    
+
     _UniffiConverterString.check_lower(workspace)
-    
+
     _UniffiConverterSequenceTypeTaskParameterValue.check_lower(values)
-    
+
     return _UniffiConverterTypeTaskCompletionProjection.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_task_completion,
         _UniffiConverterString.lower(surface_id),
         _UniffiConverterString.lower(stdout),
@@ -19482,14 +20120,14 @@ def task_completion(surface_id: "str",stdout: "str",workspace: "str",values: "ty
 
 def task_context_options(dataset_path: "str") -> "TaskContextOptionsEnvelope":
     _UniffiConverterString.check_lower(dataset_path)
-    
+
     return _UniffiConverterTypeTaskContextOptionsEnvelope.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_task_context_options,
         _UniffiConverterString.lower(dataset_path)))
 
 
 def task_ui_schema(surface_id: "str") -> "TaskUiSchema":
     _UniffiConverterString.check_lower(surface_id)
-    
+
     return _UniffiConverterTypeTaskUiSchema.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_task_ui_schema,
         _UniffiConverterString.lower(surface_id)))
 
@@ -19501,7 +20139,7 @@ def tutorial_acquisition_action(request: "TutorialActionRequest") -> "TutorialDa
     """
 
     _UniffiConverterTypeTutorialActionRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeTutorialDatasetState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_tutorial_acquisition_action,
         _UniffiConverterTypeTutorialActionRequest.lower(request)))
 
@@ -19512,7 +20150,7 @@ def tutorial_begin_acquisition(request: "TutorialBeginRequest") -> "TutorialData
     """
 
     _UniffiConverterTypeTutorialBeginRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeTutorialDatasetState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_tutorial_begin_acquisition,
         _UniffiConverterTypeTutorialBeginRequest.lower(request)))
 
@@ -19523,7 +20161,7 @@ def tutorial_fork(request: "TutorialForkRequest") -> "TutorialProjectProjection"
     """
 
     _UniffiConverterTypeTutorialForkRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeTutorialProjectProjection.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_tutorial_fork,
         _UniffiConverterTypeTutorialForkRequest.lower(request)))
 
@@ -19534,7 +20172,7 @@ def tutorial_migrate_v0(request: "TutorialMigrateRequest") -> "TutorialTemplateS
     """
 
     _UniffiConverterTypeTutorialMigrateRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeTutorialTemplateState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_tutorial_migrate_v0,
         _UniffiConverterTypeTutorialMigrateRequest.lower(request)))
 
@@ -19545,7 +20183,7 @@ def tutorial_plan_acquisition(request: "TutorialPlanRequest") -> "TutorialAcquis
     """
 
     _UniffiConverterTypeTutorialPlanRequest.check_lower(request)
-    
+
     return _UniffiConverterTypeTutorialAcquisitionPlanState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_tutorial_plan_acquisition,
         _UniffiConverterTypeTutorialPlanRequest.lower(request)))
 
@@ -19556,7 +20194,7 @@ def tutorial_project_list(project_root: "str") -> "typing.List[TutorialProjectPr
     """
 
     _UniffiConverterString.check_lower(project_root)
-    
+
     return _UniffiConverterSequenceTypeTutorialProjectProjection.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_tutorial_project_list,
         _UniffiConverterString.lower(project_root)))
 
@@ -19564,6 +20202,8 @@ def tutorial_project_list(project_root: "str") -> "typing.List[TutorialProjectPr
 __all__ = [
     "InternalError",
     "AssistantAuthorityState",
+    "AssistantCorpusReconciliationScope",
+    "AssistantProjectSourceExtractionStatus",
     "DatasetKind",
     "FrontendServiceError",
     "ImageExplorerRegionReference",
@@ -19592,11 +20232,16 @@ __all__ = [
     "TutorialPersistenceAction",
     "ApplicationCatalogEntry",
     "ApplicationCatalogEnvelope",
+    "AssistantActionProjection",
     "AssistantActivityState",
+    "AssistantApplyCorpusReconciliationRequest",
     "AssistantAttachmentState",
     "AssistantBackendSessionState",
     "AssistantCitationState",
     "AssistantContextItemState",
+    "AssistantContextProjectionState",
+    "AssistantContextResourcePlanProjection",
+    "AssistantContextTabProjection",
     "AssistantConversationRequest",
     "AssistantConversationState",
     "AssistantCorpusCitationRequest",
@@ -19607,11 +20252,14 @@ __all__ = [
     "AssistantCorpusSearchRequest",
     "AssistantCreateConversationRequest",
     "AssistantCreatePinRequest",
+    "AssistantDataSemanticProjection",
     "AssistantMessageState",
+    "AssistantNotebookReceiptsProjection",
     "AssistantPinState",
-    "AssistantProjectCorpusPlanRequest",
-    "AssistantProjectCorpusPlanState",
+    "AssistantPrepareCorpusReconciliationRequest",
+    "AssistantPreparedCorpusReconciliationState",
     "AssistantProjectCorpusSourceRequest",
+    "AssistantProjectSourceExtractionOutcome",
     "AssistantProtocolProjection",
     "AssistantPythonProvenanceState",
     "AssistantSaveConversationRequest",
@@ -19754,13 +20402,14 @@ __all__ = [
     "TutorialTemplateState",
     "TutorialUnpackState",
     "application_catalog",
+    "assistant_apply_corpus_reconciliation",
     "assistant_conversations",
     "assistant_corpus_index",
     "assistant_corpus_search",
     "assistant_create_conversation",
     "assistant_create_pin",
     "assistant_load_conversation",
-    "assistant_project_corpus_plan",
+    "assistant_prepare_corpus_reconciliation",
     "assistant_protocol_info",
     "assistant_save_conversation",
     "assistant_task_suggestion",

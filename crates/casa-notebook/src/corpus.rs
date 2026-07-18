@@ -17,7 +17,9 @@ pub const CORPUS_SCHEMA_VERSION: u32 = 3;
 // Retrieval-unit bound, not a science-data or download limit. Keeping one FTS
 // hit near a page of prose makes citations claim-local and tool results
 // independently reviewable.
-const MAX_CHUNK_BYTES: usize = 2_000;
+/// Target upper bound used when splitting indexed prose into independently
+/// citable retrieval chunks. A single indivisible source line may exceed it.
+pub const CORPUS_INDEX_CHUNK_TARGET_BYTES: usize = 2_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -104,6 +106,39 @@ pub struct ProjectCorpusPlan {
     pub removed_paths: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorpusReconciliationScope {
+    AllLayers,
+    ProjectDocuments,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreparedCorpusReconciliation {
+    pub schema_version: u32,
+    pub generation: u64,
+    pub scope: CorpusReconciliationScope,
+    pub snapshot_digest: String,
+    pub project_sources: Vec<ProjectCorpusSource>,
+    pub extract_paths: Vec<PathBuf>,
+    pub unchanged_paths: Vec<PathBuf>,
+    pub removed_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectSourceExtractionStatus {
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectSourceExtractionOutcome {
+    pub relative_path: PathBuf,
+    pub status: ProjectSourceExtractionStatus,
+    pub diagnostic: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CorpusSearchHit {
     pub chunk_id: String,
@@ -169,7 +204,7 @@ impl CorpusIndex {
 
     /// Compare a complete metadata-only project-document inventory with the
     /// last successfully indexed source state.
-    pub fn plan_project_sources(
+    fn build_reconciliation_plan(
         &self,
         sources: &[ProjectCorpusSource],
     ) -> Result<ProjectCorpusPlan, CorpusError> {
@@ -199,22 +234,82 @@ impl CorpusIndex {
         })
     }
 
+    /// Bind one extraction plan to an exact metadata snapshot and generation.
+    /// The returned value is immutable input to the single atomic apply step.
+    pub fn prepare_reconciliation(
+        &self,
+        sources: &[ProjectCorpusSource],
+        generation: u64,
+        scope: CorpusReconciliationScope,
+    ) -> Result<PreparedCorpusReconciliation, CorpusError> {
+        let validated = validated_project_sources(sources)?;
+        let project_sources = validated.values().cloned().collect::<Vec<_>>();
+        let snapshot_digest = project_source_snapshot_digest(&project_sources)?;
+        let plan = self.build_reconciliation_plan(&project_sources)?;
+        Ok(PreparedCorpusReconciliation {
+            schema_version: CORPUS_SCHEMA_VERSION,
+            generation,
+            scope,
+            snapshot_digest,
+            project_sources,
+            extract_paths: plan.extract_paths,
+            unchanged_paths: plan.unchanged_paths,
+            removed_paths: plan.removed_paths,
+        })
+    }
+
     /// Atomically reconcile a complete project-source inventory while only
     /// replacing documents extracted from changed sources. Failed sources keep
     /// their last usable indexed content and fingerprint so a later refresh
     /// retries them.
-    pub fn index_documents_with_project_sources(
+    pub fn apply_prepared_reconciliation(
         &self,
+        prepared: &PreparedCorpusReconciliation,
         documents: &[CorpusDocumentInput],
         remove_missing_layers: &BTreeSet<CorpusLayer>,
-        project_sources: &[ProjectCorpusSource],
-        failed_project_sources: &BTreeSet<PathBuf>,
+        outcomes: &[ProjectSourceExtractionOutcome],
     ) -> Result<CorpusIndexReport, CorpusError> {
+        if prepared.schema_version != CORPUS_SCHEMA_VERSION {
+            return Err(CorpusError::InvalidDocument(format!(
+                "prepared corpus schema {} does not match {}",
+                prepared.schema_version, CORPUS_SCHEMA_VERSION
+            )));
+        }
+        let digest = project_source_snapshot_digest(&prepared.project_sources)?;
+        if digest != prepared.snapshot_digest {
+            return Err(CorpusError::InvalidDocument(
+                "prepared corpus snapshot digest does not match its sources".to_owned(),
+            ));
+        }
+        let expected = prepared
+            .extract_paths
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let mut observed = BTreeSet::new();
+        let mut failed_project_sources = BTreeSet::new();
+        for outcome in outcomes {
+            validate_project_source_path(&outcome.relative_path)?;
+            if !observed.insert(outcome.relative_path.clone()) {
+                return Err(CorpusError::InvalidDocument(format!(
+                    "duplicate extraction outcome for {}",
+                    outcome.relative_path.display()
+                )));
+            }
+            if outcome.status == ProjectSourceExtractionStatus::Failed {
+                failed_project_sources.insert(outcome.relative_path.clone());
+            }
+        }
+        if observed != expected {
+            return Err(CorpusError::InvalidDocument(
+                "extraction outcomes do not exactly cover the prepared extract paths".to_owned(),
+            ));
+        }
         self.index_documents_internal(
             documents,
             remove_missing_layers,
-            Some(project_sources),
-            failed_project_sources,
+            Some(&prepared.project_sources),
+            &failed_project_sources,
         )
     }
 
@@ -668,7 +763,9 @@ fn chunk_content(content: &str) -> Vec<TextChunk> {
     for (index, line) in content.lines().enumerate() {
         let line_number = index as u32 + 1;
         let addition = line.len() + usize::from(!current.is_empty());
-        if !current.is_empty() && current.len().saturating_add(addition) > MAX_CHUNK_BYTES {
+        if !current.is_empty()
+            && current.len().saturating_add(addition) > CORPUS_INDEX_CHUNK_TARGET_BYTES
+        {
             chunks.push(TextChunk {
                 text: std::mem::take(&mut current),
                 line_start,
@@ -801,6 +898,14 @@ fn validate_project_source_path(path: &Path) -> Result<(), CorpusError> {
 
 fn project_source_fingerprint(source: &ProjectCorpusSource) -> Result<String, CorpusError> {
     serde_json::to_string(source).map_err(CorpusError::Json)
+}
+
+fn project_source_snapshot_digest(sources: &[ProjectCorpusSource]) -> Result<String, CorpusError> {
+    let validated = validated_project_sources(sources)?;
+    let canonical = validated.values().collect::<Vec<_>>();
+    serde_json::to_vec(&canonical)
+        .map(|bytes| sha256(&bytes))
+        .map_err(CorpusError::Json)
 }
 
 fn load_project_source_fingerprints(

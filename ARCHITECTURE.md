@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-07-17
+Last reality check: 2026-07-18
 Verification: just docs-check
 
 ## System purpose
@@ -168,6 +168,10 @@ JSON-RPC protocol over stdio; a future ACP adapter is the extension point for
 OpenCode and other agents. The metered OpenAI Responses API and Agents SDK are
 not initial backends. The Codex adapter invokes ChatGPT subscription login and
 account state without copying credentials into CASA projects or processes.
+Raw JSON-RPC, method names, IDs, and trusted tool-result decoding stop inside
+that private adapter. One typed request tracker resolves outbound lifecycles,
+and one assistant controller owns transient state, event reduction, timers,
+and host-effect requests outside the general Workbench store.
 The native interaction keeps model, reasoning effort, and subscription usage
 remaining immediately visible. Agent/account, authority, and Python selection
 are consolidated behind one secondary settings surface; AI invocation and
@@ -195,6 +199,10 @@ task Run, typed data mutation, and tutorial acquisition, avoiding duplicate
 prompts. An explicit **Add to notebook** click is itself sufficient authority
 for one idempotent append at the chronological tail; it does not trigger a
 second confirmation.
+One typed tool registry binds schema, argument decoding, context requirement,
+and dispatch. Nonce authentication occurs once before typed handlers delegate
+catalog and parameter behavior to canonical owners and corpus retrieval to
+`casa-notebook`.
 
 `casa-notebook` continues to own durable agent-neutral visible conversations,
 citations, immutable pins, context-use records, and scientific receipts.
@@ -214,6 +222,10 @@ that raw arrays or entire corpora are copied into every prompt. CASA records
 used domain tools/resources and citations but does not claim an exact model-
 egress manifest for a coding agent with shell and filesystem authority. See
 `docs/assistant-security.md` for the executable runtime and authority contract.
+Context projection and corpus-result capacity come from one deterministic
+resource plan using backend-reported model capacity, output and conversation
+reserves, selected-tab priority, and checked UTF-8-unit arithmetic. Missing
+capacity disables both allocations explicitly; there is no fixed fallback.
 
 Project-document maintenance is host-notified but database-correct: recursive
 macOS filesystem events are debounced hints, while a complete metadata-only
@@ -225,12 +237,18 @@ removes deleted or renamed documents; failed or concurrently changing sources
 retain their last valid indexed content and remain scheduled for retry. Project
 watch events never refresh the independent baseline or source-code layers, and
 there is no periodic full-content scan.
+Each refresh first prepares an immutable reconciliation carrying the complete
+validated source inventory, its digest, scope, and generation. Host extraction
+returns one typed outcome for every requested path, and Rust validates that
+exact prepared value before the single atomic apply. A Swift coordinator owns
+coalescing and rejects stale generations.
 
 The baseline radio-astronomy layer is a versioned `casars-mac` app resource,
-installed once rather than copied into projects. Its schema-v2 manifest binds
+installed once rather than copied into projects. Its schema-v3 manifest binds
 each compact page/slide source to an authoritative origin, source and content
 digests, license metadata, redistribution basis, and exact citation kind. The
-runtime verifies content digests before indexing. Baseline replacement removes
+runtime accepts only the current normalized-page representation and verifies
+content digests before indexing. Baseline replacement removes
 only the baseline layer, preserving project documents and conversations. See
 `docs/assistant-standard-corpus.md` for the selected sources, maintenance
 workflow, and measured cost.

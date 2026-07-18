@@ -26,24 +26,27 @@ use casa_notebook::{
     AssistantAttachment, AssistantCitation, AssistantContextItem, AssistantPinReference,
     AssistantPythonProvenance, AssistantSessionProfile, AssistantStore, AssistantTaskSuggestion,
     AttemptHandle, CORPUS_SCHEMA_VERSION, CellId, ConflictResolution, ConversationTranscript,
-    CorpusDocumentInput, CorpusIndex, CorpusLayer, ExecutionInput, ExecutionReceipt,
-    ExecutionStatus, ExportMode, NotebookDocument, NotebookId, NotebookStore, ProjectCorpusSource,
-    PythonEnvironmentIdentity, PythonExecutionAuthority, PythonExecutionInput, ReceiptFinalization,
-    RecordingPolicy, RecordingRequest, RunId, SaveResult, SaveVisualizationRequest, TaskCellIntent,
-    Timestamp, TutorialAcquisitionApproval, TutorialProject, TutorialTemplate,
-    VisualizationRenderMetadata, VisualizationReopenIntent, VisualizationSnapshot,
+    CorpusDocumentInput, CorpusIndex, CorpusLayer, CorpusReconciliationScope, ExecutionInput,
+    ExecutionReceipt, ExecutionStatus, ExportMode, NotebookDocument, NotebookId, NotebookStore,
+    PreparedCorpusReconciliation, ProjectCorpusSource, ProjectSourceExtractionOutcome,
+    ProjectSourceExtractionStatus, PythonEnvironmentIdentity, PythonExecutionAuthority,
+    PythonExecutionInput, ReceiptFinalization, RecordingPolicy, RecordingRequest, RunId,
+    SaveResult, SaveVisualizationRequest, TaskCellIntent, Timestamp, TutorialAcquisitionApproval,
+    TutorialProject, TutorialTemplate, VisualizationRenderMetadata, VisualizationReopenIntent,
+    VisualizationSnapshot,
 };
 use casa_provider_contracts::{
     ParameterValue, ProviderInvocationAdaptation, RunProductKind, RunProductRole, RunSafetyClass,
     SurfaceContractBundle, SurfaceKind, builtin_application_catalog, builtin_surface_bundle,
-    builtin_surface_catalog,
+    builtin_surface_catalog, project_ui_form,
 };
 use casa_tables::{ArrayShapeContract, ColumnType, Table, TableBrowser, TableOptions};
 use casa_task_runtime::{
     BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, OpenSessionRequest,
     ParameterRuntime, ParameterSession, ResolutionPatch, SessionLastCoordinator,
-    TaskLastCoordinator, TaskOutputValue, decode_task_completion, parse_profile,
-    project_provider_invocation, render_documented_template, write_parameter_profile_atomic,
+    TaskLastCoordinator, TaskOutputValue, decode_task_completion, parse_parameter_text,
+    parse_profile, project_provider_invocation, render_documented_template,
+    write_parameter_profile_atomic,
 };
 use casa_types::measures::direction::{
     angular_increment_arcseconds, declination_increment_arcseconds, format_declination_labeled,
@@ -1377,7 +1380,7 @@ pub enum FrontendServiceError {
 
 type FrontendResult<T> = Result<T, FrontendServiceError>;
 
-#[derive(Debug, Clone, PartialEq, Serialize, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Enum)]
 pub enum NotebookValue {
     String { value: String },
     Number { value: f64 },
@@ -1387,13 +1390,13 @@ pub enum NotebookValue {
     Null,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct NotebookValueEntry {
     pub name: String,
     pub value: NotebookValue,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct NotebookTaskIntent {
     pub format: u32,
     pub surface: String,
@@ -1402,14 +1405,14 @@ pub struct NotebookTaskIntent {
     pub parameters: HashMap<String, NotebookValue>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct NotebookReceiptArtifact {
     pub role: String,
     pub path: String,
     pub media_type: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct NotebookPythonEnvironmentIdentity {
     pub environment_id: String,
     pub interpreter: String,
@@ -1420,7 +1423,7 @@ pub struct NotebookPythonEnvironmentIdentity {
     pub fingerprint_sha256: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct NotebookPythonExecutionInput {
     pub source: String,
     pub source_sha256: String,
@@ -1429,20 +1432,20 @@ pub struct NotebookPythonExecutionInput {
     pub environment: NotebookPythonEnvironmentIdentity,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct NotebookExecutionInput {
     pub kind: String,
     pub details: NotebookPythonExecutionInput,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct NotebookPythonOutputEvent {
     pub order: i64,
     pub channel: String,
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct NotebookExecutionReceipt {
     pub schema_version: u32,
     pub run_id: String,
@@ -1773,6 +1776,56 @@ pub struct AssistantContextItemState {
     pub untrusted_evidence: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct AssistantContextTabProjection {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub summary: String,
+    pub excerpt: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct AssistantDataSemanticProjection {
+    pub id: String,
+    pub label: String,
+    pub summary: String,
+    pub semantics: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+pub struct AssistantNotebookReceiptsProjection {
+    pub notebook_id: String,
+    pub notebook: String,
+    pub receipts: Vec<NotebookExecutionReceipt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct AssistantContextResourcePlanProjection {
+    pub schema_version: u32,
+    pub corpus_text_units: u64,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct AssistantActionProjection {
+    pub id: String,
+    pub owner: String,
+    pub effect: String,
+    pub requires_user_interaction: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+pub struct AssistantContextProjectionState {
+    pub schema_version: u32,
+    pub session_nonce: String,
+    pub open_tabs: Vec<AssistantContextTabProjection>,
+    pub data_semantics: Vec<AssistantDataSemanticProjection>,
+    pub receipts: Vec<AssistantNotebookReceiptsProjection>,
+    pub resource_plan: AssistantContextResourcePlanProjection,
+    pub action_catalog: Vec<AssistantActionProjection>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AssistantActivityState {
     pub id: String,
@@ -1901,8 +1954,6 @@ pub struct AssistantCorpusIndexRequest {
     pub project_root: String,
     pub documents: Vec<AssistantCorpusDocumentRequest>,
     pub remove_missing_layers: Vec<String>,
-    pub project_sources: Option<Vec<AssistantProjectCorpusSourceRequest>>,
-    pub failed_project_sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -1916,17 +1967,51 @@ pub struct AssistantCorpusIndexReportState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct AssistantProjectCorpusPlanRequest {
+pub struct AssistantPrepareCorpusReconciliationRequest {
     pub project_root: String,
     pub sources: Vec<AssistantProjectCorpusSourceRequest>,
+    pub generation: u64,
+    pub scope: AssistantCorpusReconciliationScope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AssistantCorpusReconciliationScope {
+    AllLayers,
+    ProjectDocuments,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct AssistantProjectCorpusPlanState {
+pub struct AssistantPreparedCorpusReconciliationState {
     pub schema_version: u32,
+    pub generation: u64,
+    pub scope: AssistantCorpusReconciliationScope,
+    pub snapshot_digest: String,
+    pub sources: Vec<AssistantProjectCorpusSourceRequest>,
     pub extract_paths: Vec<String>,
     pub unchanged_paths: Vec<String>,
     pub removed_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AssistantProjectSourceExtractionStatus {
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantProjectSourceExtractionOutcome {
+    pub relative_path: String,
+    pub status: AssistantProjectSourceExtractionStatus,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantApplyCorpusReconciliationRequest {
+    pub project_root: String,
+    pub prepared: AssistantPreparedCorpusReconciliationState,
+    pub documents: Vec<AssistantCorpusDocumentRequest>,
+    pub remove_missing_layers: Vec<String>,
+    pub outcomes: Vec<AssistantProjectSourceExtractionOutcome>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -3676,8 +3761,15 @@ fn assistant_transcript_projection(value: ConversationTranscript) -> AssistantCo
 }
 
 fn assistant_corpus_layer(value: &str) -> FrontendResult<CorpusLayer> {
-    serde_json::from_value(serde_json::Value::String(value.to_string()))
-        .map_err(|error| corpus_error("parse corpus layer", error))
+    match value {
+        "baseline" => Ok(CorpusLayer::Baseline),
+        "project_document" => Ok(CorpusLayer::ProjectDocument),
+        "release_source" => Ok(CorpusLayer::ReleaseSource),
+        "live_source" => Ok(CorpusLayer::LiveSource),
+        other => Err(FrontendServiceError::Corpus {
+            reason: format!("unsupported corpus layer {other}"),
+        }),
+    }
 }
 
 fn assistant_corpus_citation_owner(
@@ -3722,6 +3814,51 @@ fn assistant_project_source_owner(
         modified_unix_ns: value.modified_unix_ns,
         status_changed_unix_ns: value.status_changed_unix_ns,
         file_identity: value.file_identity,
+    }
+}
+
+fn assistant_project_source_projection(
+    value: ProjectCorpusSource,
+) -> AssistantProjectCorpusSourceRequest {
+    AssistantProjectCorpusSourceRequest {
+        relative_path: value.relative_path.display().to_string(),
+        file_type: value.file_type,
+        size_bytes: value.size_bytes,
+        modified_unix_ns: value.modified_unix_ns,
+        status_changed_unix_ns: value.status_changed_unix_ns,
+        file_identity: value.file_identity,
+    }
+}
+
+fn assistant_corpus_documents_owner(
+    documents: Vec<AssistantCorpusDocumentRequest>,
+) -> FrontendResult<Vec<CorpusDocumentInput>> {
+    documents
+        .into_iter()
+        .map(|document| {
+            Ok(CorpusDocumentInput {
+                id: document.id,
+                layer: assistant_corpus_layer(&document.layer)?,
+                title: document.title,
+                source_identity: document.source_identity,
+                content: document.content,
+                citation: assistant_corpus_citation_owner(document.citation),
+                redistribution_cleared: document.redistribution_cleared,
+            })
+        })
+        .collect()
+}
+
+fn assistant_corpus_report_projection(
+    report: casa_notebook::CorpusIndexReport,
+) -> AssistantCorpusIndexReportState {
+    AssistantCorpusIndexReportState {
+        schema_version: report.schema_version,
+        retrieval_engine: report.retrieval_engine,
+        indexed_documents: report.indexed_documents as u64,
+        unchanged_documents: report.unchanged_documents as u64,
+        removed_documents: report.removed_documents as u64,
+        chunk_count: report.chunk_count as u64,
     }
 }
 
@@ -3817,21 +3954,7 @@ pub fn assistant_save_conversation(
 pub fn assistant_corpus_index(
     request: AssistantCorpusIndexRequest,
 ) -> FrontendResult<AssistantCorpusIndexReportState> {
-    let documents = request
-        .documents
-        .into_iter()
-        .map(|document| {
-            Ok(CorpusDocumentInput {
-                id: document.id,
-                layer: assistant_corpus_layer(&document.layer)?,
-                title: document.title,
-                source_identity: document.source_identity,
-                content: document.content,
-                citation: assistant_corpus_citation_owner(document.citation),
-                redistribution_cleared: document.redistribution_cleared,
-            })
-        })
-        .collect::<FrontendResult<Vec<_>>>()?;
+    let documents = assistant_corpus_documents_owner(request.documents)?;
     let remove_missing_layers = request
         .remove_missing_layers
         .iter()
@@ -3839,70 +3962,134 @@ pub fn assistant_corpus_index(
         .collect::<FrontendResult<BTreeSet<_>>>()?;
     let index = CorpusIndex::open(&request.project_root)
         .map_err(|error| corpus_error("open corpus index", error))?;
-    let report = if let Some(project_sources) = request.project_sources {
-        let project_sources = project_sources
-            .into_iter()
-            .map(assistant_project_source_owner)
-            .collect::<Vec<_>>();
-        let failed_project_sources = request
-            .failed_project_sources
-            .into_iter()
-            .map(PathBuf::from)
-            .collect::<BTreeSet<_>>();
-        index.index_documents_with_project_sources(
-            &documents,
-            &remove_missing_layers,
-            &project_sources,
-            &failed_project_sources,
-        )
-    } else {
-        index.index_documents(&documents, &remove_missing_layers)
-    }
-    .map_err(|error| corpus_error("index corpus documents", error))?;
-    Ok(AssistantCorpusIndexReportState {
-        schema_version: report.schema_version,
-        retrieval_engine: report.retrieval_engine,
-        indexed_documents: report.indexed_documents as u64,
-        unchanged_documents: report.unchanged_documents as u64,
-        removed_documents: report.removed_documents as u64,
-        chunk_count: report.chunk_count as u64,
-    })
+    let report = index
+        .index_documents(&documents, &remove_missing_layers)
+        .map_err(|error| corpus_error("index corpus documents", error))?;
+    Ok(assistant_corpus_report_projection(report))
 }
 
-/// Plan project-document extraction using metadata only.
+/// Prepare one project-document reconciliation against an exact snapshot.
 #[uniffi::export]
-pub fn assistant_project_corpus_plan(
-    request: AssistantProjectCorpusPlanRequest,
-) -> FrontendResult<AssistantProjectCorpusPlanState> {
+pub fn assistant_prepare_corpus_reconciliation(
+    request: AssistantPrepareCorpusReconciliationRequest,
+) -> FrontendResult<AssistantPreparedCorpusReconciliationState> {
     let index = CorpusIndex::open(&request.project_root)
         .map_err(|error| corpus_error("open corpus index", error))?;
-    let plan = index
-        .plan_project_sources(
+    let prepared = index
+        .prepare_reconciliation(
             &request
                 .sources
                 .into_iter()
                 .map(assistant_project_source_owner)
                 .collect::<Vec<_>>(),
+            request.generation,
+            match request.scope {
+                AssistantCorpusReconciliationScope::AllLayers => {
+                    CorpusReconciliationScope::AllLayers
+                }
+                AssistantCorpusReconciliationScope::ProjectDocuments => {
+                    CorpusReconciliationScope::ProjectDocuments
+                }
+            },
         )
-        .map_err(|error| corpus_error("plan project corpus extraction", error))?;
-    Ok(AssistantProjectCorpusPlanState {
-        schema_version: plan.schema_version,
-        extract_paths: plan
+        .map_err(|error| corpus_error("prepare project corpus reconciliation", error))?;
+    Ok(AssistantPreparedCorpusReconciliationState {
+        schema_version: prepared.schema_version,
+        generation: prepared.generation,
+        scope: request.scope,
+        snapshot_digest: prepared.snapshot_digest,
+        sources: prepared
+            .project_sources
+            .into_iter()
+            .map(assistant_project_source_projection)
+            .collect(),
+        extract_paths: prepared
             .extract_paths
             .into_iter()
             .map(|path| path.display().to_string())
             .collect(),
-        unchanged_paths: plan
+        unchanged_paths: prepared
             .unchanged_paths
             .into_iter()
             .map(|path| path.display().to_string())
             .collect(),
-        removed_paths: plan
+        removed_paths: prepared
             .removed_paths
             .into_iter()
             .map(|path| path.display().to_string())
             .collect(),
     })
+}
+
+/// Apply one prepared reconciliation atomically. Outcomes must exactly cover
+/// the prepared extract paths; failed sources retain their last valid index.
+#[uniffi::export]
+pub fn assistant_apply_corpus_reconciliation(
+    request: AssistantApplyCorpusReconciliationRequest,
+) -> FrontendResult<AssistantCorpusIndexReportState> {
+    let prepared = PreparedCorpusReconciliation {
+        schema_version: request.prepared.schema_version,
+        generation: request.prepared.generation,
+        scope: match request.prepared.scope {
+            AssistantCorpusReconciliationScope::AllLayers => CorpusReconciliationScope::AllLayers,
+            AssistantCorpusReconciliationScope::ProjectDocuments => {
+                CorpusReconciliationScope::ProjectDocuments
+            }
+        },
+        snapshot_digest: request.prepared.snapshot_digest,
+        project_sources: request
+            .prepared
+            .sources
+            .into_iter()
+            .map(assistant_project_source_owner)
+            .collect(),
+        extract_paths: request
+            .prepared
+            .extract_paths
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
+        unchanged_paths: request
+            .prepared
+            .unchanged_paths
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
+        removed_paths: request
+            .prepared
+            .removed_paths
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
+    };
+    let outcomes = request
+        .outcomes
+        .into_iter()
+        .map(|outcome| ProjectSourceExtractionOutcome {
+            relative_path: PathBuf::from(outcome.relative_path),
+            status: match outcome.status {
+                AssistantProjectSourceExtractionStatus::Succeeded => {
+                    ProjectSourceExtractionStatus::Succeeded
+                }
+                AssistantProjectSourceExtractionStatus::Failed => {
+                    ProjectSourceExtractionStatus::Failed
+                }
+            },
+            diagnostic: outcome.diagnostic,
+        })
+        .collect::<Vec<_>>();
+    let documents = assistant_corpus_documents_owner(request.documents)?;
+    let remove_missing_layers = request
+        .remove_missing_layers
+        .iter()
+        .map(|layer| assistant_corpus_layer(layer))
+        .collect::<FrontendResult<BTreeSet<_>>>()?;
+    let index = CorpusIndex::open(&request.project_root)
+        .map_err(|error| corpus_error("open corpus index", error))?;
+    let report = index
+        .apply_prepared_reconciliation(&prepared, &documents, &remove_missing_layers, &outcomes)
+        .map_err(|error| corpus_error("apply project corpus reconciliation", error))?;
+    Ok(assistant_corpus_report_projection(report))
 }
 
 /// Execute the bounded `corpus.search` operation exposed through project MCP.
@@ -4189,6 +4376,177 @@ pub fn application_catalog() -> FrontendResult<ApplicationCatalogEnvelope> {
     Ok(ApplicationCatalogEnvelope {
         schema_version: u64::from(catalog.schema_version),
         applications,
+    })
+}
+
+/// Canonical agent-facing task schema assembled by the frontend contract owner.
+/// MCP hosts serialize this projection but do not merge provider schemas.
+pub fn assistant_task_schema(task_id: &str) -> FrontendResult<serde_json::Value> {
+    let bundle = builtin_surface_bundle(task_id)
+        .map_err(|error| parameter_error("load assistant task schema", error))?;
+    let mut schema = project_ui_form(&bundle);
+    let concepts = bundle
+        .catalog
+        .concepts
+        .iter()
+        .map(|concept| {
+            serde_json::to_value(&concept.value_domain)
+                .map(|value_domain| {
+                    (
+                        (
+                            concept.id.as_str().to_owned(),
+                            u64::from(concept.semantic_revision.0),
+                        ),
+                        value_domain,
+                    )
+                })
+                .map_err(|error| parameter_error("project task value domain", error))
+        })
+        .collect::<FrontendResult<BTreeMap<_, _>>>()?;
+    let predicates = bundle
+        .surface
+        .bindings()
+        .iter()
+        .map(|binding| {
+            let active_when = serde_json::to_value(&binding.active_when)
+                .map_err(|error| parameter_error("project active predicate", error))?;
+            let required_when = serde_json::to_value(&binding.required_when)
+                .map_err(|error| parameter_error("project required predicate", error))?;
+            let value_domain = concepts
+                .get(&(
+                    binding.concept.id.as_str().to_owned(),
+                    u64::from(binding.concept.semantic_revision.0),
+                ))
+                .cloned()
+                .ok_or_else(|| {
+                    parameter_error(
+                        "assistant task schema",
+                        format!("task contract omits value domain for {}", binding.name),
+                    )
+                })?;
+            Ok((
+                binding.name.clone(),
+                (active_when, required_when, value_domain),
+            ))
+        })
+        .collect::<FrontendResult<BTreeMap<_, _>>>()?;
+    for argument in schema
+        .get_mut("arguments")
+        .and_then(serde_json::Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        let Some(id) = argument.get("id").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if let Some((active_when, required_when, value_domain)) = predicates.get(id) {
+            argument["active_when"] = active_when.clone();
+            argument["required_when"] = required_when.clone();
+            argument["value_domain"] = value_domain.clone();
+        }
+    }
+    Ok(schema)
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AssistantTaskSuggestionAction {
+    pub kind: &'static str,
+    pub task_id: String,
+    pub parameters: BTreeMap<String, String>,
+    pub validated_patch: ResolutionPatch,
+}
+
+/// Validate a non-mutating assistant task action through the canonical
+/// parameter runtime. No MCP-local parser or session lifecycle is involved.
+pub fn assistant_task_suggestion_action(
+    task_id: &str,
+    parameters: BTreeMap<String, String>,
+    project_root: &Path,
+) -> FrontendResult<AssistantTaskSuggestionAction> {
+    let bundle = builtin_surface_bundle(task_id)
+        .map_err(|error| parameter_error("load assistant task suggestion", error))?;
+    let allowed = bundle
+        .surface
+        .bindings()
+        .iter()
+        .map(|binding| binding.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let unknown = parameters
+        .keys()
+        .filter(|name| !allowed.contains(name.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        return Err(parameter_error(
+            "validate assistant task suggestion",
+            format!(
+                "task.suggest contains unknown {task_id} parameters: {}",
+                unknown.join(", ")
+            ),
+        ));
+    }
+    let mut values = BTreeMap::new();
+    for (name, text) in &parameters {
+        let binding = bundle
+            .surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == *name)
+            .expect("allowed binding exists");
+        let concept = bundle.catalog.concept(&binding.concept).ok_or_else(|| {
+            parameter_error(
+                "validate assistant task suggestion",
+                format!("task contract omits the value domain for {name}"),
+            )
+        })?;
+        let typed = parse_parameter_text(text, &concept.value_domain).map_err(|error| {
+            parameter_error(
+                "validate assistant task suggestion",
+                format!("invalid {task_id}.{name} value: {error}"),
+            )
+        })?;
+        values.insert(name.clone(), typed);
+    }
+    let patch = ResolutionPatch {
+        values,
+        unset: BTreeSet::new(),
+    };
+    let session = ParameterRuntime::default()
+        .open_session(OpenSessionRequest {
+            bundle,
+            workspace: project_root.to_path_buf(),
+            source: BaseSource::Defaults,
+            profile_text: None,
+            context_patch: ResolutionPatch::default(),
+            override_patch: patch.clone(),
+            managed_save: false,
+        })
+        .map_err(|error| {
+            parameter_error(
+                "validate assistant task suggestion",
+                format!("parameters do not form a runnable {task_id} request: {error}"),
+            )
+        })?;
+    let errors = session
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.level == casa_task_runtime::DiagnosticLevel::Error)
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>();
+    if !errors.is_empty() {
+        return Err(parameter_error(
+            "validate assistant task suggestion",
+            format!(
+                "parameters do not form a runnable {task_id} request: {}",
+                errors.join("; ")
+            ),
+        ));
+    }
+    Ok(AssistantTaskSuggestionAction {
+        kind: "task_suggestion",
+        task_id: task_id.to_owned(),
+        parameters,
+        validated_patch: patch,
     })
 }
 
@@ -10609,8 +10967,6 @@ mod tests {
                 redistribution_cleared: true,
             }],
             remove_missing_layers: vec!["baseline".to_owned()],
-            project_sources: None,
-            failed_project_sources: Vec::new(),
         })
         .expect("index assistant corpus");
         assert_eq!(report.indexed_documents, 1);

@@ -64,19 +64,21 @@ final class StandardAssistantCorpusTests: XCTestCase {
             try? FileManager.default.removeItem(at: project)
             try? FileManager.default.removeItem(at: baseline)
         }
-        try "tampered content".write(
-            to: baseline.appendingPathComponent("document.md"),
+        let contentRoot = baseline.appendingPathComponent("standard-v1", isDirectory: true)
+        try FileManager.default.createDirectory(at: contentRoot, withIntermediateDirectories: true)
+        try #"[{"page":1,"content":"tampered content"}]"#.write(
+            to: contentRoot.appendingPathComponent("document.pages.json"),
             atomically: true,
             encoding: .utf8
         )
         let manifest = #"""
         {
-          "schema_version": 2,
+          "schema_version": 3,
           "id": "test-pack",
           "version": "1.0.0",
           "documents": [{
-            "path": "document.md",
-            "format": "utf8_text",
+            "path": "standard-v1/document.pages.json",
+            "format": "normalized_pages_json",
             "title": "Test",
             "citation_label": "Test",
             "citation_kind": "document",
@@ -84,8 +86,10 @@ final class StandardAssistantCorpusTests: XCTestCase {
             "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "origin_url": "https://example.invalid/document",
-            "license": {"id": "CC0-1.0", "url": "https://creativecommons.org/publicdomain/zero/1.0/"},
-            "redistribution_basis": "test fixture"
+            "license": {"id": "CC0-1.0", "name": "CC0", "url": "https://creativecommons.org/publicdomain/zero/1.0/"},
+            "redistribution_basis": "test fixture",
+            "contributors": ["Test"],
+            "modifications": "Test fixture"
           }]
         }
         """#
@@ -101,7 +105,7 @@ final class StandardAssistantCorpusTests: XCTestCase {
         )
         XCTAssertFalse(result.documents.contains { $0.layer == "baseline" })
         XCTAssertTrue(result.diagnostics.contains {
-            $0.contains("mismatched digest document.md")
+            $0.contains("mismatched digest standard-v1/document.pages.json")
         })
     }
 
@@ -167,7 +171,7 @@ final class StandardAssistantCorpusTests: XCTestCase {
             environment: ["CASA_RS_SOURCE_ROOT": FileManager.default.currentDirectoryPath]
         )
         let persistence = UniFFIAssistantPersistenceClient()
-        _ = try persistence.indexCorpus(
+        _ = try persistence.applyTestReconciliation(
             projectRoot: project.path,
             documents: ingestion.documents,
             removeMissingLayers: ingestion.refreshedLayers,
@@ -203,17 +207,14 @@ final class StandardAssistantCorpusTests: XCTestCase {
         var agentError: String?
         var eventTrace: [String] = []
         session.onEvent { event in
-            if let result = event["result"] as? [String: Any] {
-                if !observedAccount,
-                   result.keys.contains("requiresOpenaiAuth"), result["account"] != nil
-                {
+            eventTrace.append(String(describing: event))
+            switch event {
+            case let .account(accountState):
+                if !observedAccount, !accountState.requiresLogin {
                     observedAccount = true
                     account.fulfill()
                 }
-                if !sent,
-                   let thread = result["thread"] as? [String: Any],
-                   let id = thread["id"] as? String
-                {
+            case let .conversationStarted(id) where !sent:
                     sent = true
                     threadStarted.fulfill()
                     session.sendTurn(AgentTurnRequest(
@@ -224,32 +225,21 @@ final class StandardAssistantCorpusTests: XCTestCase {
                         model: "",
                         effort: "low"
                     ))
-                }
-            }
-            guard let method = event["method"] as? String,
-                  let params = event["params"] as? [String: Any]
-            else { return }
-            if method == "casa/error" || method == "error" {
-                let message = String(describing: params["message"] ?? params)
-                eventTrace.append("\(method): \(message)")
+            case let .failed(message):
                 if agentError == nil {
                     agentError = message
                     if sent { turnFinished.fulfill() }
                 }
-            } else if method == "item/completed",
-                      let item = params["item"] as? [String: Any],
-                      item["type"] as? String == "mcpToolCall",
-                      item["server"] as? String == profile.mcpServerName,
-                      item["tool"] as? String == "corpus.search"
-            {
+            case let .item(item)
+                where item.completed && item.kind == "mcpToolCall"
+                    && item.server == profile.mcpServerName && item.tool == "corpus.search":
                 corpusSearchCalls += 1
-            } else if method == "item/agentMessage/delta",
-                      let delta = params["delta"] as? String
-            {
+            case let .messageDelta(delta):
                 answer += delta
-            } else if method == "turn/completed" {
-                eventTrace.append(method)
+            case .turnCompleted:
                 if agentError == nil { turnFinished.fulfill() }
+            default:
+                break
             }
         }
         session.prepare { result in

@@ -1,17 +1,17 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "casa-rs-standard-radio-astronomy",
   "version": "2026.07.1",
   "selection": "2026 workshop plus open Springer book; 2024 retained as superseded inventory",
   "documents": [
     {
-      "path": "radio-interferometry-primer.md",
-      "format": "utf8_text",
+      "path": "standard-v1/radio-interferometry-primer.pages.json",
+      "format": "normalized_pages_json",
       "title": "CASA-RS Radio Interferometry Primer",
       "citation_label": "CASA-RS Radio Interferometry Primer v1.0",
       "citation_kind": "document",
       "source_path": "radio-interferometry-primer.md",
-      "content_sha256": "8df1c08263e9aebbafe0e22c039f43e23ca8e2b79593ae8d627c98e37085e294",
+      "content_sha256": "57d71940d8c64ebdf8351750712cd86ea75ccbbbf5b84d275f56a30ad3880409",
       "source_sha256": "8df1c08263e9aebbafe0e22c039f43e23ca8e2b79593ae8d627c98e37085e294",
       "origin_url": "https://github.com/bglenden/casa-rs",
       "license": {

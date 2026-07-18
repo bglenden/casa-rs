@@ -1,8 +1,8 @@
 # Standard Radio-Astronomy Assistant Corpus
 
 Truth class: normative runtime and maintenance contract
-Last reality check: 2026-07-15
-Verification: `python3 scripts/check-assistant-corpus-inventory.py`
+Last reality check: 2026-07-18
+Verification: `python3 scripts/assistant-corpus-pack.py check`
 
 ## Installed baseline
 
@@ -34,7 +34,7 @@ are recorded in issue #420.
 ## Representation and provenance
 
 The app bundles compact, normalized page/slide text rather than duplicating the
-source PDFs. `corpus-pack.json` schema v2 binds every included source to:
+source PDFs. `corpus-pack.json` schema v3 binds every included source to:
 
 - pack identity and version,
 - original title and page/slide citation kind,
@@ -95,13 +95,13 @@ Maintainers regenerate the inventory and compact pack from an audited Oracle
 checkout:
 
 ```sh
-python3 scripts/export-assistant-corpus-inventory.py \
+python3 scripts/assistant-corpus-pack.py generate \
   --oracle-root /path/to/RadioAstronomyOracle
-python3 scripts/check-assistant-corpus-inventory.py
+python3 scripts/assistant-corpus-pack.py check
 ```
 
-`--check` proves that the checkout-derived inventory and all compact page files
-match the committed pack. `scripts/audit-assistant-corpus-origins.py` is an
+The `generate --check` form proves that the checkout-derived inventory and all
+compact page files match the committed pack. `scripts/assistant-corpus-pack.py audit` is an
 explicit networked maintainer audit; it is not an end-user startup action or a
 default offline gate. A new selection or changed source content requires a new
 pack version, regenerated digests, a fresh origin audit, representative visual

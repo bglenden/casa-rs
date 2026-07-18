@@ -1191,6 +1191,94 @@ public func FfiConverterTypeApplicationCatalogEnvelope_lower(_ value: Applicatio
 }
 
 
+public struct AssistantActionProjection {
+    public var id: String
+    public var owner: String
+    public var effect: String
+    public var requiresUserInteraction: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, owner: String, effect: String, requiresUserInteraction: Bool) {
+        self.id = id
+        self.owner = owner
+        self.effect = effect
+        self.requiresUserInteraction = requiresUserInteraction
+    }
+}
+
+#if compiler(>=6)
+extension AssistantActionProjection: Sendable {}
+#endif
+
+
+extension AssistantActionProjection: Equatable, Hashable {
+    public static func ==(lhs: AssistantActionProjection, rhs: AssistantActionProjection) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.owner != rhs.owner {
+            return false
+        }
+        if lhs.effect != rhs.effect {
+            return false
+        }
+        if lhs.requiresUserInteraction != rhs.requiresUserInteraction {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(owner)
+        hasher.combine(effect)
+        hasher.combine(requiresUserInteraction)
+    }
+}
+
+extension AssistantActionProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssistantActionProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantActionProjection {
+        return
+            try AssistantActionProjection(
+                id: FfiConverterString.read(from: &buf),
+                owner: FfiConverterString.read(from: &buf),
+                effect: FfiConverterString.read(from: &buf),
+                requiresUserInteraction: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AssistantActionProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.owner, into: &buf)
+        FfiConverterString.write(value.effect, into: &buf)
+        FfiConverterBool.write(value.requiresUserInteraction, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantActionProjection_lift(_ buf: RustBuffer) throws -> AssistantActionProjection {
+    return try FfiConverterTypeAssistantActionProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantActionProjection_lower(_ value: AssistantActionProjection) -> RustBuffer {
+    return FfiConverterTypeAssistantActionProjection.lower(value)
+}
+
+
 public struct AssistantActivityState {
     public var id: String
     public var label: String
@@ -1276,6 +1364,102 @@ public func FfiConverterTypeAssistantActivityState_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeAssistantActivityState_lower(_ value: AssistantActivityState) -> RustBuffer {
     return FfiConverterTypeAssistantActivityState.lower(value)
+}
+
+
+public struct AssistantApplyCorpusReconciliationRequest {
+    public var projectRoot: String
+    public var prepared: AssistantPreparedCorpusReconciliationState
+    public var documents: [AssistantCorpusDocumentRequest]
+    public var removeMissingLayers: [String]
+    public var outcomes: [AssistantProjectSourceExtractionOutcome]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(projectRoot: String, prepared: AssistantPreparedCorpusReconciliationState, documents: [AssistantCorpusDocumentRequest], removeMissingLayers: [String], outcomes: [AssistantProjectSourceExtractionOutcome]) {
+        self.projectRoot = projectRoot
+        self.prepared = prepared
+        self.documents = documents
+        self.removeMissingLayers = removeMissingLayers
+        self.outcomes = outcomes
+    }
+}
+
+#if compiler(>=6)
+extension AssistantApplyCorpusReconciliationRequest: Sendable {}
+#endif
+
+
+extension AssistantApplyCorpusReconciliationRequest: Equatable, Hashable {
+    public static func ==(lhs: AssistantApplyCorpusReconciliationRequest, rhs: AssistantApplyCorpusReconciliationRequest) -> Bool {
+        if lhs.projectRoot != rhs.projectRoot {
+            return false
+        }
+        if lhs.prepared != rhs.prepared {
+            return false
+        }
+        if lhs.documents != rhs.documents {
+            return false
+        }
+        if lhs.removeMissingLayers != rhs.removeMissingLayers {
+            return false
+        }
+        if lhs.outcomes != rhs.outcomes {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(projectRoot)
+        hasher.combine(prepared)
+        hasher.combine(documents)
+        hasher.combine(removeMissingLayers)
+        hasher.combine(outcomes)
+    }
+}
+
+extension AssistantApplyCorpusReconciliationRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssistantApplyCorpusReconciliationRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantApplyCorpusReconciliationRequest {
+        return
+            try AssistantApplyCorpusReconciliationRequest(
+                projectRoot: FfiConverterString.read(from: &buf),
+                prepared: FfiConverterTypeAssistantPreparedCorpusReconciliationState.read(from: &buf),
+                documents: FfiConverterSequenceTypeAssistantCorpusDocumentRequest.read(from: &buf),
+                removeMissingLayers: FfiConverterSequenceString.read(from: &buf),
+                outcomes: FfiConverterSequenceTypeAssistantProjectSourceExtractionOutcome.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AssistantApplyCorpusReconciliationRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.projectRoot, into: &buf)
+        FfiConverterTypeAssistantPreparedCorpusReconciliationState.write(value.prepared, into: &buf)
+        FfiConverterSequenceTypeAssistantCorpusDocumentRequest.write(value.documents, into: &buf)
+        FfiConverterSequenceString.write(value.removeMissingLayers, into: &buf)
+        FfiConverterSequenceTypeAssistantProjectSourceExtractionOutcome.write(value.outcomes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantApplyCorpusReconciliationRequest_lift(_ buf: RustBuffer) throws -> AssistantApplyCorpusReconciliationRequest {
+    return try FfiConverterTypeAssistantApplyCorpusReconciliationRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantApplyCorpusReconciliationRequest_lower(_ value: AssistantApplyCorpusReconciliationRequest) -> RustBuffer {
+    return FfiConverterTypeAssistantApplyCorpusReconciliationRequest.lower(value)
 }
 
 
@@ -1708,6 +1892,294 @@ public func FfiConverterTypeAssistantContextItemState_lift(_ buf: RustBuffer) th
 #endif
 public func FfiConverterTypeAssistantContextItemState_lower(_ value: AssistantContextItemState) -> RustBuffer {
     return FfiConverterTypeAssistantContextItemState.lower(value)
+}
+
+
+public struct AssistantContextProjectionState {
+    public var schemaVersion: UInt32
+    public var sessionNonce: String
+    public var openTabs: [AssistantContextTabProjection]
+    public var dataSemantics: [AssistantDataSemanticProjection]
+    public var receipts: [AssistantNotebookReceiptsProjection]
+    public var resourcePlan: AssistantContextResourcePlanProjection
+    public var actionCatalog: [AssistantActionProjection]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt32, sessionNonce: String, openTabs: [AssistantContextTabProjection], dataSemantics: [AssistantDataSemanticProjection], receipts: [AssistantNotebookReceiptsProjection], resourcePlan: AssistantContextResourcePlanProjection, actionCatalog: [AssistantActionProjection]) {
+        self.schemaVersion = schemaVersion
+        self.sessionNonce = sessionNonce
+        self.openTabs = openTabs
+        self.dataSemantics = dataSemantics
+        self.receipts = receipts
+        self.resourcePlan = resourcePlan
+        self.actionCatalog = actionCatalog
+    }
+}
+
+#if compiler(>=6)
+extension AssistantContextProjectionState: Sendable {}
+#endif
+
+
+extension AssistantContextProjectionState: Equatable, Hashable {
+    public static func ==(lhs: AssistantContextProjectionState, rhs: AssistantContextProjectionState) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.sessionNonce != rhs.sessionNonce {
+            return false
+        }
+        if lhs.openTabs != rhs.openTabs {
+            return false
+        }
+        if lhs.dataSemantics != rhs.dataSemantics {
+            return false
+        }
+        if lhs.receipts != rhs.receipts {
+            return false
+        }
+        if lhs.resourcePlan != rhs.resourcePlan {
+            return false
+        }
+        if lhs.actionCatalog != rhs.actionCatalog {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(sessionNonce)
+        hasher.combine(openTabs)
+        hasher.combine(dataSemantics)
+        hasher.combine(receipts)
+        hasher.combine(resourcePlan)
+        hasher.combine(actionCatalog)
+    }
+}
+
+extension AssistantContextProjectionState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssistantContextProjectionState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantContextProjectionState {
+        return
+            try AssistantContextProjectionState(
+                schemaVersion: FfiConverterUInt32.read(from: &buf),
+                sessionNonce: FfiConverterString.read(from: &buf),
+                openTabs: FfiConverterSequenceTypeAssistantContextTabProjection.read(from: &buf),
+                dataSemantics: FfiConverterSequenceTypeAssistantDataSemanticProjection.read(from: &buf),
+                receipts: FfiConverterSequenceTypeAssistantNotebookReceiptsProjection.read(from: &buf),
+                resourcePlan: FfiConverterTypeAssistantContextResourcePlanProjection.read(from: &buf),
+                actionCatalog: FfiConverterSequenceTypeAssistantActionProjection.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AssistantContextProjectionState, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.schemaVersion, into: &buf)
+        FfiConverterString.write(value.sessionNonce, into: &buf)
+        FfiConverterSequenceTypeAssistantContextTabProjection.write(value.openTabs, into: &buf)
+        FfiConverterSequenceTypeAssistantDataSemanticProjection.write(value.dataSemantics, into: &buf)
+        FfiConverterSequenceTypeAssistantNotebookReceiptsProjection.write(value.receipts, into: &buf)
+        FfiConverterTypeAssistantContextResourcePlanProjection.write(value.resourcePlan, into: &buf)
+        FfiConverterSequenceTypeAssistantActionProjection.write(value.actionCatalog, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantContextProjectionState_lift(_ buf: RustBuffer) throws -> AssistantContextProjectionState {
+    return try FfiConverterTypeAssistantContextProjectionState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantContextProjectionState_lower(_ value: AssistantContextProjectionState) -> RustBuffer {
+    return FfiConverterTypeAssistantContextProjectionState.lower(value)
+}
+
+
+public struct AssistantContextResourcePlanProjection {
+    public var schemaVersion: UInt32
+    public var corpusTextUnits: UInt64
+    public var diagnostics: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt32, corpusTextUnits: UInt64, diagnostics: [String]) {
+        self.schemaVersion = schemaVersion
+        self.corpusTextUnits = corpusTextUnits
+        self.diagnostics = diagnostics
+    }
+}
+
+#if compiler(>=6)
+extension AssistantContextResourcePlanProjection: Sendable {}
+#endif
+
+
+extension AssistantContextResourcePlanProjection: Equatable, Hashable {
+    public static func ==(lhs: AssistantContextResourcePlanProjection, rhs: AssistantContextResourcePlanProjection) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.corpusTextUnits != rhs.corpusTextUnits {
+            return false
+        }
+        if lhs.diagnostics != rhs.diagnostics {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(corpusTextUnits)
+        hasher.combine(diagnostics)
+    }
+}
+
+extension AssistantContextResourcePlanProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssistantContextResourcePlanProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantContextResourcePlanProjection {
+        return
+            try AssistantContextResourcePlanProjection(
+                schemaVersion: FfiConverterUInt32.read(from: &buf),
+                corpusTextUnits: FfiConverterUInt64.read(from: &buf),
+                diagnostics: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AssistantContextResourcePlanProjection, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.schemaVersion, into: &buf)
+        FfiConverterUInt64.write(value.corpusTextUnits, into: &buf)
+        FfiConverterSequenceString.write(value.diagnostics, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantContextResourcePlanProjection_lift(_ buf: RustBuffer) throws -> AssistantContextResourcePlanProjection {
+    return try FfiConverterTypeAssistantContextResourcePlanProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantContextResourcePlanProjection_lower(_ value: AssistantContextResourcePlanProjection) -> RustBuffer {
+    return FfiConverterTypeAssistantContextResourcePlanProjection.lower(value)
+}
+
+
+public struct AssistantContextTabProjection {
+    public var id: String
+    public var kind: String
+    public var label: String
+    public var summary: String
+    public var excerpt: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, kind: String, label: String, summary: String, excerpt: String) {
+        self.id = id
+        self.kind = kind
+        self.label = label
+        self.summary = summary
+        self.excerpt = excerpt
+    }
+}
+
+#if compiler(>=6)
+extension AssistantContextTabProjection: Sendable {}
+#endif
+
+
+extension AssistantContextTabProjection: Equatable, Hashable {
+    public static func ==(lhs: AssistantContextTabProjection, rhs: AssistantContextTabProjection) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.summary != rhs.summary {
+            return false
+        }
+        if lhs.excerpt != rhs.excerpt {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(kind)
+        hasher.combine(label)
+        hasher.combine(summary)
+        hasher.combine(excerpt)
+    }
+}
+
+extension AssistantContextTabProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssistantContextTabProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantContextTabProjection {
+        return
+            try AssistantContextTabProjection(
+                id: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                excerpt: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AssistantContextTabProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterString.write(value.excerpt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantContextTabProjection_lift(_ buf: RustBuffer) throws -> AssistantContextTabProjection {
+    return try FfiConverterTypeAssistantContextTabProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantContextTabProjection_lower(_ value: AssistantContextTabProjection) -> RustBuffer {
+    return FfiConverterTypeAssistantContextTabProjection.lower(value)
 }
 
 
@@ -2283,17 +2755,13 @@ public struct AssistantCorpusIndexRequest {
     public var projectRoot: String
     public var documents: [AssistantCorpusDocumentRequest]
     public var removeMissingLayers: [String]
-    public var projectSources: [AssistantProjectCorpusSourceRequest]?
-    public var failedProjectSources: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(projectRoot: String, documents: [AssistantCorpusDocumentRequest], removeMissingLayers: [String], projectSources: [AssistantProjectCorpusSourceRequest]?, failedProjectSources: [String]) {
+    public init(projectRoot: String, documents: [AssistantCorpusDocumentRequest], removeMissingLayers: [String]) {
         self.projectRoot = projectRoot
         self.documents = documents
         self.removeMissingLayers = removeMissingLayers
-        self.projectSources = projectSources
-        self.failedProjectSources = failedProjectSources
     }
 }
 
@@ -2313,12 +2781,6 @@ extension AssistantCorpusIndexRequest: Equatable, Hashable {
         if lhs.removeMissingLayers != rhs.removeMissingLayers {
             return false
         }
-        if lhs.projectSources != rhs.projectSources {
-            return false
-        }
-        if lhs.failedProjectSources != rhs.failedProjectSources {
-            return false
-        }
         return true
     }
 
@@ -2326,8 +2788,6 @@ extension AssistantCorpusIndexRequest: Equatable, Hashable {
         hasher.combine(projectRoot)
         hasher.combine(documents)
         hasher.combine(removeMissingLayers)
-        hasher.combine(projectSources)
-        hasher.combine(failedProjectSources)
     }
 }
 
@@ -2344,9 +2804,7 @@ public struct FfiConverterTypeAssistantCorpusIndexRequest: FfiConverterRustBuffe
             try AssistantCorpusIndexRequest(
                 projectRoot: FfiConverterString.read(from: &buf),
                 documents: FfiConverterSequenceTypeAssistantCorpusDocumentRequest.read(from: &buf),
-                removeMissingLayers: FfiConverterSequenceString.read(from: &buf),
-                projectSources: FfiConverterOptionSequenceTypeAssistantProjectCorpusSourceRequest.read(from: &buf),
-                failedProjectSources: FfiConverterSequenceString.read(from: &buf)
+                removeMissingLayers: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -2354,8 +2812,6 @@ public struct FfiConverterTypeAssistantCorpusIndexRequest: FfiConverterRustBuffe
         FfiConverterString.write(value.projectRoot, into: &buf)
         FfiConverterSequenceTypeAssistantCorpusDocumentRequest.write(value.documents, into: &buf)
         FfiConverterSequenceString.write(value.removeMissingLayers, into: &buf)
-        FfiConverterOptionSequenceTypeAssistantProjectCorpusSourceRequest.write(value.projectSources, into: &buf)
-        FfiConverterSequenceString.write(value.failedProjectSources, into: &buf)
     }
 }
 
@@ -2767,6 +3223,94 @@ public func FfiConverterTypeAssistantCreatePinRequest_lower(_ value: AssistantCr
 }
 
 
+public struct AssistantDataSemanticProjection {
+    public var id: String
+    public var label: String
+    public var summary: String
+    public var semantics: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, label: String, summary: String, semantics: String) {
+        self.id = id
+        self.label = label
+        self.summary = summary
+        self.semantics = semantics
+    }
+}
+
+#if compiler(>=6)
+extension AssistantDataSemanticProjection: Sendable {}
+#endif
+
+
+extension AssistantDataSemanticProjection: Equatable, Hashable {
+    public static func ==(lhs: AssistantDataSemanticProjection, rhs: AssistantDataSemanticProjection) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.summary != rhs.summary {
+            return false
+        }
+        if lhs.semantics != rhs.semantics {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(label)
+        hasher.combine(summary)
+        hasher.combine(semantics)
+    }
+}
+
+extension AssistantDataSemanticProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssistantDataSemanticProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantDataSemanticProjection {
+        return
+            try AssistantDataSemanticProjection(
+                id: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                semantics: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AssistantDataSemanticProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterString.write(value.semantics, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantDataSemanticProjection_lift(_ buf: RustBuffer) throws -> AssistantDataSemanticProjection {
+    return try FfiConverterTypeAssistantDataSemanticProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantDataSemanticProjection_lower(_ value: AssistantDataSemanticProjection) -> RustBuffer {
+    return FfiConverterTypeAssistantDataSemanticProjection.lower(value)
+}
+
+
 public struct AssistantMessageState {
     public var id: String
     public var role: String
@@ -2911,6 +3455,86 @@ public func FfiConverterTypeAssistantMessageState_lower(_ value: AssistantMessag
 }
 
 
+public struct AssistantNotebookReceiptsProjection {
+    public var notebookId: String
+    public var notebook: String
+    public var receipts: [NotebookExecutionReceipt]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(notebookId: String, notebook: String, receipts: [NotebookExecutionReceipt]) {
+        self.notebookId = notebookId
+        self.notebook = notebook
+        self.receipts = receipts
+    }
+}
+
+#if compiler(>=6)
+extension AssistantNotebookReceiptsProjection: Sendable {}
+#endif
+
+
+extension AssistantNotebookReceiptsProjection: Equatable, Hashable {
+    public static func ==(lhs: AssistantNotebookReceiptsProjection, rhs: AssistantNotebookReceiptsProjection) -> Bool {
+        if lhs.notebookId != rhs.notebookId {
+            return false
+        }
+        if lhs.notebook != rhs.notebook {
+            return false
+        }
+        if lhs.receipts != rhs.receipts {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(notebookId)
+        hasher.combine(notebook)
+        hasher.combine(receipts)
+    }
+}
+
+extension AssistantNotebookReceiptsProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssistantNotebookReceiptsProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantNotebookReceiptsProjection {
+        return
+            try AssistantNotebookReceiptsProjection(
+                notebookId: FfiConverterString.read(from: &buf),
+                notebook: FfiConverterString.read(from: &buf),
+                receipts: FfiConverterSequenceTypeNotebookExecutionReceipt.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AssistantNotebookReceiptsProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.notebookId, into: &buf)
+        FfiConverterString.write(value.notebook, into: &buf)
+        FfiConverterSequenceTypeNotebookExecutionReceipt.write(value.receipts, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantNotebookReceiptsProjection_lift(_ buf: RustBuffer) throws -> AssistantNotebookReceiptsProjection {
+    return try FfiConverterTypeAssistantNotebookReceiptsProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantNotebookReceiptsProjection_lower(_ value: AssistantNotebookReceiptsProjection) -> RustBuffer {
+    return FfiConverterTypeAssistantNotebookReceiptsProjection.lower(value)
+}
+
+
 public struct AssistantPinState {
     public var id: String
     public var conversationId: String
@@ -3039,29 +3663,39 @@ public func FfiConverterTypeAssistantPinState_lower(_ value: AssistantPinState) 
 }
 
 
-public struct AssistantProjectCorpusPlanRequest {
+public struct AssistantPrepareCorpusReconciliationRequest {
     public var projectRoot: String
     public var sources: [AssistantProjectCorpusSourceRequest]
+    public var generation: UInt64
+    public var scope: AssistantCorpusReconciliationScope
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(projectRoot: String, sources: [AssistantProjectCorpusSourceRequest]) {
+    public init(projectRoot: String, sources: [AssistantProjectCorpusSourceRequest], generation: UInt64, scope: AssistantCorpusReconciliationScope) {
         self.projectRoot = projectRoot
         self.sources = sources
+        self.generation = generation
+        self.scope = scope
     }
 }
 
 #if compiler(>=6)
-extension AssistantProjectCorpusPlanRequest: Sendable {}
+extension AssistantPrepareCorpusReconciliationRequest: Sendable {}
 #endif
 
 
-extension AssistantProjectCorpusPlanRequest: Equatable, Hashable {
-    public static func ==(lhs: AssistantProjectCorpusPlanRequest, rhs: AssistantProjectCorpusPlanRequest) -> Bool {
+extension AssistantPrepareCorpusReconciliationRequest: Equatable, Hashable {
+    public static func ==(lhs: AssistantPrepareCorpusReconciliationRequest, rhs: AssistantPrepareCorpusReconciliationRequest) -> Bool {
         if lhs.projectRoot != rhs.projectRoot {
             return false
         }
         if lhs.sources != rhs.sources {
+            return false
+        }
+        if lhs.generation != rhs.generation {
+            return false
+        }
+        if lhs.scope != rhs.scope {
             return false
         }
         return true
@@ -3070,28 +3704,34 @@ extension AssistantProjectCorpusPlanRequest: Equatable, Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(projectRoot)
         hasher.combine(sources)
+        hasher.combine(generation)
+        hasher.combine(scope)
     }
 }
 
-extension AssistantProjectCorpusPlanRequest: Codable {}
+extension AssistantPrepareCorpusReconciliationRequest: Codable {}
 
 
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeAssistantProjectCorpusPlanRequest: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantProjectCorpusPlanRequest {
+public struct FfiConverterTypeAssistantPrepareCorpusReconciliationRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantPrepareCorpusReconciliationRequest {
         return
-            try AssistantProjectCorpusPlanRequest(
+            try AssistantPrepareCorpusReconciliationRequest(
                 projectRoot: FfiConverterString.read(from: &buf),
-                sources: FfiConverterSequenceTypeAssistantProjectCorpusSourceRequest.read(from: &buf)
+                sources: FfiConverterSequenceTypeAssistantProjectCorpusSourceRequest.read(from: &buf),
+                generation: FfiConverterUInt64.read(from: &buf),
+                scope: FfiConverterTypeAssistantCorpusReconciliationScope.read(from: &buf)
         )
     }
 
-    public static func write(_ value: AssistantProjectCorpusPlanRequest, into buf: inout [UInt8]) {
+    public static func write(_ value: AssistantPrepareCorpusReconciliationRequest, into buf: inout [UInt8]) {
         FfiConverterString.write(value.projectRoot, into: &buf)
         FfiConverterSequenceTypeAssistantProjectCorpusSourceRequest.write(value.sources, into: &buf)
+        FfiConverterUInt64.write(value.generation, into: &buf)
+        FfiConverterTypeAssistantCorpusReconciliationScope.write(value.scope, into: &buf)
     }
 }
 
@@ -3099,28 +3739,36 @@ public struct FfiConverterTypeAssistantProjectCorpusPlanRequest: FfiConverterRus
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeAssistantProjectCorpusPlanRequest_lift(_ buf: RustBuffer) throws -> AssistantProjectCorpusPlanRequest {
-    return try FfiConverterTypeAssistantProjectCorpusPlanRequest.lift(buf)
+public func FfiConverterTypeAssistantPrepareCorpusReconciliationRequest_lift(_ buf: RustBuffer) throws -> AssistantPrepareCorpusReconciliationRequest {
+    return try FfiConverterTypeAssistantPrepareCorpusReconciliationRequest.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeAssistantProjectCorpusPlanRequest_lower(_ value: AssistantProjectCorpusPlanRequest) -> RustBuffer {
-    return FfiConverterTypeAssistantProjectCorpusPlanRequest.lower(value)
+public func FfiConverterTypeAssistantPrepareCorpusReconciliationRequest_lower(_ value: AssistantPrepareCorpusReconciliationRequest) -> RustBuffer {
+    return FfiConverterTypeAssistantPrepareCorpusReconciliationRequest.lower(value)
 }
 
 
-public struct AssistantProjectCorpusPlanState {
+public struct AssistantPreparedCorpusReconciliationState {
     public var schemaVersion: UInt32
+    public var generation: UInt64
+    public var scope: AssistantCorpusReconciliationScope
+    public var snapshotDigest: String
+    public var sources: [AssistantProjectCorpusSourceRequest]
     public var extractPaths: [String]
     public var unchangedPaths: [String]
     public var removedPaths: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(schemaVersion: UInt32, extractPaths: [String], unchangedPaths: [String], removedPaths: [String]) {
+    public init(schemaVersion: UInt32, generation: UInt64, scope: AssistantCorpusReconciliationScope, snapshotDigest: String, sources: [AssistantProjectCorpusSourceRequest], extractPaths: [String], unchangedPaths: [String], removedPaths: [String]) {
         self.schemaVersion = schemaVersion
+        self.generation = generation
+        self.scope = scope
+        self.snapshotDigest = snapshotDigest
+        self.sources = sources
         self.extractPaths = extractPaths
         self.unchangedPaths = unchangedPaths
         self.removedPaths = removedPaths
@@ -3128,13 +3776,25 @@ public struct AssistantProjectCorpusPlanState {
 }
 
 #if compiler(>=6)
-extension AssistantProjectCorpusPlanState: Sendable {}
+extension AssistantPreparedCorpusReconciliationState: Sendable {}
 #endif
 
 
-extension AssistantProjectCorpusPlanState: Equatable, Hashable {
-    public static func ==(lhs: AssistantProjectCorpusPlanState, rhs: AssistantProjectCorpusPlanState) -> Bool {
+extension AssistantPreparedCorpusReconciliationState: Equatable, Hashable {
+    public static func ==(lhs: AssistantPreparedCorpusReconciliationState, rhs: AssistantPreparedCorpusReconciliationState) -> Bool {
         if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.generation != rhs.generation {
+            return false
+        }
+        if lhs.scope != rhs.scope {
+            return false
+        }
+        if lhs.snapshotDigest != rhs.snapshotDigest {
+            return false
+        }
+        if lhs.sources != rhs.sources {
             return false
         }
         if lhs.extractPaths != rhs.extractPaths {
@@ -3151,32 +3811,44 @@ extension AssistantProjectCorpusPlanState: Equatable, Hashable {
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(schemaVersion)
+        hasher.combine(generation)
+        hasher.combine(scope)
+        hasher.combine(snapshotDigest)
+        hasher.combine(sources)
         hasher.combine(extractPaths)
         hasher.combine(unchangedPaths)
         hasher.combine(removedPaths)
     }
 }
 
-extension AssistantProjectCorpusPlanState: Codable {}
+extension AssistantPreparedCorpusReconciliationState: Codable {}
 
 
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeAssistantProjectCorpusPlanState: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantProjectCorpusPlanState {
+public struct FfiConverterTypeAssistantPreparedCorpusReconciliationState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantPreparedCorpusReconciliationState {
         return
-            try AssistantProjectCorpusPlanState(
+            try AssistantPreparedCorpusReconciliationState(
                 schemaVersion: FfiConverterUInt32.read(from: &buf),
+                generation: FfiConverterUInt64.read(from: &buf),
+                scope: FfiConverterTypeAssistantCorpusReconciliationScope.read(from: &buf),
+                snapshotDigest: FfiConverterString.read(from: &buf),
+                sources: FfiConverterSequenceTypeAssistantProjectCorpusSourceRequest.read(from: &buf),
                 extractPaths: FfiConverterSequenceString.read(from: &buf),
                 unchangedPaths: FfiConverterSequenceString.read(from: &buf),
                 removedPaths: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
-    public static func write(_ value: AssistantProjectCorpusPlanState, into buf: inout [UInt8]) {
+    public static func write(_ value: AssistantPreparedCorpusReconciliationState, into buf: inout [UInt8]) {
         FfiConverterUInt32.write(value.schemaVersion, into: &buf)
+        FfiConverterUInt64.write(value.generation, into: &buf)
+        FfiConverterTypeAssistantCorpusReconciliationScope.write(value.scope, into: &buf)
+        FfiConverterString.write(value.snapshotDigest, into: &buf)
+        FfiConverterSequenceTypeAssistantProjectCorpusSourceRequest.write(value.sources, into: &buf)
         FfiConverterSequenceString.write(value.extractPaths, into: &buf)
         FfiConverterSequenceString.write(value.unchangedPaths, into: &buf)
         FfiConverterSequenceString.write(value.removedPaths, into: &buf)
@@ -3187,15 +3859,15 @@ public struct FfiConverterTypeAssistantProjectCorpusPlanState: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeAssistantProjectCorpusPlanState_lift(_ buf: RustBuffer) throws -> AssistantProjectCorpusPlanState {
-    return try FfiConverterTypeAssistantProjectCorpusPlanState.lift(buf)
+public func FfiConverterTypeAssistantPreparedCorpusReconciliationState_lift(_ buf: RustBuffer) throws -> AssistantPreparedCorpusReconciliationState {
+    return try FfiConverterTypeAssistantPreparedCorpusReconciliationState.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeAssistantProjectCorpusPlanState_lower(_ value: AssistantProjectCorpusPlanState) -> RustBuffer {
-    return FfiConverterTypeAssistantProjectCorpusPlanState.lower(value)
+public func FfiConverterTypeAssistantPreparedCorpusReconciliationState_lower(_ value: AssistantPreparedCorpusReconciliationState) -> RustBuffer {
+    return FfiConverterTypeAssistantPreparedCorpusReconciliationState.lower(value)
 }
 
 
@@ -3300,6 +3972,86 @@ public func FfiConverterTypeAssistantProjectCorpusSourceRequest_lift(_ buf: Rust
 #endif
 public func FfiConverterTypeAssistantProjectCorpusSourceRequest_lower(_ value: AssistantProjectCorpusSourceRequest) -> RustBuffer {
     return FfiConverterTypeAssistantProjectCorpusSourceRequest.lower(value)
+}
+
+
+public struct AssistantProjectSourceExtractionOutcome {
+    public var relativePath: String
+    public var status: AssistantProjectSourceExtractionStatus
+    public var diagnostic: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(relativePath: String, status: AssistantProjectSourceExtractionStatus, diagnostic: String?) {
+        self.relativePath = relativePath
+        self.status = status
+        self.diagnostic = diagnostic
+    }
+}
+
+#if compiler(>=6)
+extension AssistantProjectSourceExtractionOutcome: Sendable {}
+#endif
+
+
+extension AssistantProjectSourceExtractionOutcome: Equatable, Hashable {
+    public static func ==(lhs: AssistantProjectSourceExtractionOutcome, rhs: AssistantProjectSourceExtractionOutcome) -> Bool {
+        if lhs.relativePath != rhs.relativePath {
+            return false
+        }
+        if lhs.status != rhs.status {
+            return false
+        }
+        if lhs.diagnostic != rhs.diagnostic {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(relativePath)
+        hasher.combine(status)
+        hasher.combine(diagnostic)
+    }
+}
+
+extension AssistantProjectSourceExtractionOutcome: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssistantProjectSourceExtractionOutcome: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantProjectSourceExtractionOutcome {
+        return
+            try AssistantProjectSourceExtractionOutcome(
+                relativePath: FfiConverterString.read(from: &buf),
+                status: FfiConverterTypeAssistantProjectSourceExtractionStatus.read(from: &buf),
+                diagnostic: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AssistantProjectSourceExtractionOutcome, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.relativePath, into: &buf)
+        FfiConverterTypeAssistantProjectSourceExtractionStatus.write(value.status, into: &buf)
+        FfiConverterOptionString.write(value.diagnostic, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantProjectSourceExtractionOutcome_lift(_ buf: RustBuffer) throws -> AssistantProjectSourceExtractionOutcome {
+    return try FfiConverterTypeAssistantProjectSourceExtractionOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantProjectSourceExtractionOutcome_lower(_ value: AssistantProjectSourceExtractionOutcome) -> RustBuffer {
+    return FfiConverterTypeAssistantProjectSourceExtractionOutcome.lower(value)
 }
 
 
@@ -17930,6 +18682,154 @@ extension AssistantAuthorityState: CaseIterable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum AssistantCorpusReconciliationScope {
+
+    case allLayers
+    case projectDocuments
+}
+
+
+#if compiler(>=6)
+extension AssistantCorpusReconciliationScope: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssistantCorpusReconciliationScope: FfiConverterRustBuffer {
+    typealias SwiftType = AssistantCorpusReconciliationScope
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantCorpusReconciliationScope {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .allLayers
+
+        case 2: return .projectDocuments
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AssistantCorpusReconciliationScope, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .allLayers:
+            writeInt(&buf, Int32(1))
+
+
+        case .projectDocuments:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantCorpusReconciliationScope_lift(_ buf: RustBuffer) throws -> AssistantCorpusReconciliationScope {
+    return try FfiConverterTypeAssistantCorpusReconciliationScope.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantCorpusReconciliationScope_lower(_ value: AssistantCorpusReconciliationScope) -> RustBuffer {
+    return FfiConverterTypeAssistantCorpusReconciliationScope.lower(value)
+}
+
+
+extension AssistantCorpusReconciliationScope: Equatable, Hashable {}
+
+extension AssistantCorpusReconciliationScope: Codable {}
+
+
+
+
+extension AssistantCorpusReconciliationScope: CaseIterable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AssistantProjectSourceExtractionStatus {
+
+    case succeeded
+    case failed
+}
+
+
+#if compiler(>=6)
+extension AssistantProjectSourceExtractionStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssistantProjectSourceExtractionStatus: FfiConverterRustBuffer {
+    typealias SwiftType = AssistantProjectSourceExtractionStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssistantProjectSourceExtractionStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .succeeded
+
+        case 2: return .failed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AssistantProjectSourceExtractionStatus, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .succeeded:
+            writeInt(&buf, Int32(1))
+
+
+        case .failed:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantProjectSourceExtractionStatus_lift(_ buf: RustBuffer) throws -> AssistantProjectSourceExtractionStatus {
+    return try FfiConverterTypeAssistantProjectSourceExtractionStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssistantProjectSourceExtractionStatus_lower(_ value: AssistantProjectSourceExtractionStatus) -> RustBuffer {
+    return FfiConverterTypeAssistantProjectSourceExtractionStatus.lower(value)
+}
+
+
+extension AssistantProjectSourceExtractionStatus: Equatable, Hashable {}
+
+extension AssistantProjectSourceExtractionStatus: Codable {}
+
+
+
+
+extension AssistantProjectSourceExtractionStatus: CaseIterable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum DatasetKind {
 
     case measurementSet
@@ -21608,30 +22508,6 @@ fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionSequenceTypeAssistantProjectCorpusSourceRequest: FfiConverterRustBuffer {
-    typealias SwiftType = [AssistantProjectCorpusSourceRequest]?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterSequenceTypeAssistantProjectCorpusSourceRequest.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterSequenceTypeAssistantProjectCorpusSourceRequest.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionSequenceTypeNotebookPythonOutputEvent: FfiConverterRustBuffer {
     typealias SwiftType = [NotebookPythonOutputEvent]?
 
@@ -21781,6 +22657,31 @@ fileprivate struct FfiConverterSequenceTypeApplicationCatalogEntry: FfiConverter
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAssistantActionProjection: FfiConverterRustBuffer {
+    typealias SwiftType = [AssistantActionProjection]
+
+    public static func write(_ value: [AssistantActionProjection], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAssistantActionProjection.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AssistantActionProjection] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AssistantActionProjection]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAssistantActionProjection.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAssistantActivityState: FfiConverterRustBuffer {
     typealias SwiftType = [AssistantActivityState]
 
@@ -21881,6 +22782,31 @@ fileprivate struct FfiConverterSequenceTypeAssistantContextItemState: FfiConvert
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAssistantContextTabProjection: FfiConverterRustBuffer {
+    typealias SwiftType = [AssistantContextTabProjection]
+
+    public static func write(_ value: [AssistantContextTabProjection], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAssistantContextTabProjection.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AssistantContextTabProjection] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AssistantContextTabProjection]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAssistantContextTabProjection.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAssistantConversationState: FfiConverterRustBuffer {
     typealias SwiftType = [AssistantConversationState]
 
@@ -21956,6 +22882,31 @@ fileprivate struct FfiConverterSequenceTypeAssistantCorpusSearchHitState: FfiCon
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAssistantDataSemanticProjection: FfiConverterRustBuffer {
+    typealias SwiftType = [AssistantDataSemanticProjection]
+
+    public static func write(_ value: [AssistantDataSemanticProjection], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAssistantDataSemanticProjection.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AssistantDataSemanticProjection] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AssistantDataSemanticProjection]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAssistantDataSemanticProjection.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAssistantMessageState: FfiConverterRustBuffer {
     typealias SwiftType = [AssistantMessageState]
 
@@ -21973,6 +22924,31 @@ fileprivate struct FfiConverterSequenceTypeAssistantMessageState: FfiConverterRu
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAssistantMessageState.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAssistantNotebookReceiptsProjection: FfiConverterRustBuffer {
+    typealias SwiftType = [AssistantNotebookReceiptsProjection]
+
+    public static func write(_ value: [AssistantNotebookReceiptsProjection], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAssistantNotebookReceiptsProjection.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AssistantNotebookReceiptsProjection] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AssistantNotebookReceiptsProjection]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAssistantNotebookReceiptsProjection.read(from: &buf))
         }
         return seq
     }
@@ -22023,6 +22999,31 @@ fileprivate struct FfiConverterSequenceTypeAssistantProjectCorpusSourceRequest: 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAssistantProjectCorpusSourceRequest.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAssistantProjectSourceExtractionOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = [AssistantProjectSourceExtractionOutcome]
+
+    public static func write(_ value: [AssistantProjectSourceExtractionOutcome], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAssistantProjectSourceExtractionOutcome.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AssistantProjectSourceExtractionOutcome] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AssistantProjectSourceExtractionOutcome]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAssistantProjectSourceExtractionOutcome.read(from: &buf))
         }
         return seq
     }
@@ -23538,6 +24539,17 @@ public func applicationCatalog()throws  -> ApplicationCatalogEnvelope  {
 })
 }
 /**
+ * Apply one prepared reconciliation atomically. Outcomes must exactly cover
+ * the prepared extract paths; failed sources retain their last valid index.
+ */
+public func assistantApplyCorpusReconciliation(request: AssistantApplyCorpusReconciliationRequest)throws  -> AssistantCorpusIndexReportState  {
+    return try  FfiConverterTypeAssistantCorpusIndexReportState_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_assistant_apply_corpus_reconciliation(
+        FfiConverterTypeAssistantApplyCorpusReconciliationRequest_lower(request),$0
+    )
+})
+}
+/**
  * List the provider-neutral visible conversations persisted for one project.
  */
 public func assistantConversations(projectRoot: String)throws  -> [AssistantConversationState]  {
@@ -23598,12 +24610,12 @@ public func assistantLoadConversation(request: AssistantConversationRequest)thro
 })
 }
 /**
- * Plan project-document extraction using metadata only.
+ * Prepare one project-document reconciliation against an exact snapshot.
  */
-public func assistantProjectCorpusPlan(request: AssistantProjectCorpusPlanRequest)throws  -> AssistantProjectCorpusPlanState  {
-    return try  FfiConverterTypeAssistantProjectCorpusPlanState_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_assistant_project_corpus_plan(
-        FfiConverterTypeAssistantProjectCorpusPlanRequest_lower(request),$0
+public func assistantPrepareCorpusReconciliation(request: AssistantPrepareCorpusReconciliationRequest)throws  -> AssistantPreparedCorpusReconciliationState  {
+    return try  FfiConverterTypeAssistantPreparedCorpusReconciliationState_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_assistant_prepare_corpus_reconciliation(
+        FfiConverterTypeAssistantPrepareCorpusReconciliationRequest_lower(request),$0
     )
 })
 }
@@ -24036,6 +25048,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_application_catalog() != 3558) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_casars_frontend_services_checksum_func_assistant_apply_corpus_reconciliation() != 5793) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_casars_frontend_services_checksum_func_assistant_conversations() != 51866) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -24054,7 +25069,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_assistant_load_conversation() != 27011) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_assistant_project_corpus_plan() != 61567) {
+    if (uniffi_casars_frontend_services_checksum_func_assistant_prepare_corpus_reconciliation() != 46627) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_assistant_protocol_info() != 57008) {
