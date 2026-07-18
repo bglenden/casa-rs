@@ -3,8 +3,9 @@
 import Foundation
 
 /// Capacity reported by the active backend model. Units are deliberately
-/// conservative: one UTF-8 byte consumes one capacity unit, so planning does
-/// not depend on a provider tokenizer or a machine-tuned conversion factor.
+/// conservative: one UTF-8 byte in encoded JSON content consumes one capacity
+/// unit, so planning does not depend on a provider tokenizer or a machine-tuned
+/// conversion factor.
 package struct AssistantModelCapacity: Equatable {
     package var inputUnits: UInt64
     package var outputReserveUnits: UInt64
@@ -34,6 +35,7 @@ package struct AssistantResourcePlan: Equatable {
 
 package enum AssistantResourcePlannerError: Error, Equatable {
     case arithmeticOverflow(String)
+    case duplicateContextID(String)
     case reservesExceedCapacity(required: UInt64, available: UInt64)
 }
 
@@ -43,6 +45,18 @@ package enum AssistantResourcePlannerError: Error, Equatable {
 /// retrieval receives one share. Input order deterministically owns remainder
 /// units after active contexts are moved to the front.
 package enum AssistantResourcePlanner {
+    private enum ConsumerKind {
+        case context(String)
+        case corpus
+    }
+
+    private struct Consumer {
+        var kind: ConsumerKind
+        var demand: UInt64
+        var weight: UInt64
+        var allocation: UInt64 = 0
+    }
+
     package static func plan(
         capacity: AssistantModelCapacity,
         reservations: [AssistantResourceReservation],
@@ -70,44 +84,86 @@ package enum AssistantResourcePlanner {
                 return lhs.offset < rhs.offset
             }
             .map(\.element)
-        let contextWeight = try eligible.reduce(0 as UInt64) { total, request in
-            let (sum, overflow) = total.addingReportingOverflow(request.active ? 2 : 1)
-            guard !overflow else {
-                throw AssistantResourcePlannerError.arithmeticOverflow("context weights")
+        var contextIDs = Set<String>()
+        var consumers: [Consumer] = try eligible.map { request in
+            guard contextIDs.insert(request.id).inserted else {
+                throw AssistantResourcePlannerError.duplicateContextID(request.id)
             }
-            return sum
+            return Consumer(
+                kind: .context(request.id),
+                demand: request.desiredUnits,
+                weight: request.active ? 2 : 1
+            )
         }
-        let (totalWeight, weightOverflow) = contextWeight.addingReportingOverflow(
-            corpusDesiredUnits > 0 ? 1 : 0
-        )
-        guard !weightOverflow else {
-            throw AssistantResourcePlannerError.arithmeticOverflow("consumer weights")
+        if corpusDesiredUnits > 0 {
+            consumers.append(Consumer(kind: .corpus, demand: corpusDesiredUnits, weight: 1))
         }
-        guard totalWeight > 0 else {
+        guard !consumers.isEmpty else {
             return AssistantResourcePlan(contextUnits: [:], corpusUnits: 0, diagnostics: [])
         }
-        let available = capacity.inputUnits - reserve
-        let share = available / totalWeight
-        var remainder = available % totalWeight
-        var contextUnits: [String: UInt64] = [:]
-        for request in eligible {
-            let weight: UInt64 = request.active ? 2 : 1
-            let bonus = min(remainder, weight)
-            let (weightedShare, multiplyOverflow) = share.multipliedReportingOverflow(by: weight)
-            let (offered, additionOverflow) = weightedShare.addingReportingOverflow(bonus)
-            guard !multiplyOverflow, !additionOverflow else {
-                throw AssistantResourcePlannerError.arithmeticOverflow("context \(request.id)")
+
+        var available = capacity.inputUnits - reserve
+        var active = Array(consumers.indices)
+        while available > 0, !active.isEmpty {
+            let totalWeight = try active.reduce(0 as UInt64) { total, index in
+                let (sum, overflow) = total.addingReportingOverflow(consumers[index].weight)
+                guard !overflow else {
+                    throw AssistantResourcePlannerError.arithmeticOverflow("consumer weights")
+                }
+                return sum
             }
-            remainder -= bonus
-            contextUnits[request.id] = min(request.desiredUnits, offered)
+            let share = available / totalWeight
+            let saturated = try active.filter { index in
+                let (offered, overflow) = share.multipliedReportingOverflow(
+                    by: consumers[index].weight
+                )
+                guard !overflow else {
+                    throw AssistantResourcePlannerError.arithmeticOverflow("consumer share")
+                }
+                return consumers[index].demand - consumers[index].allocation <= offered
+            }
+            if !saturated.isEmpty {
+                for index in saturated {
+                    let remainingDemand = consumers[index].demand - consumers[index].allocation
+                    consumers[index].allocation += remainingDemand
+                    available -= remainingDemand
+                }
+                let saturatedSet = Set(saturated)
+                active.removeAll { saturatedSet.contains($0) }
+                continue
+            }
+
+            for index in active {
+                let (increment, overflow) = share.multipliedReportingOverflow(
+                    by: consumers[index].weight
+                )
+                guard !overflow else {
+                    throw AssistantResourcePlannerError.arithmeticOverflow("consumer allocation")
+                }
+                consumers[index].allocation += increment
+                available -= increment
+            }
+            guard available > 0 else { break }
+
+            // The remainder is smaller than the active weight sum. Spend it in
+            // stable priority order, with active contexts already sorted first.
+            for index in active where available > 0 {
+                let remainingDemand = consumers[index].demand - consumers[index].allocation
+                let bonus = min(available, min(consumers[index].weight, remainingDemand))
+                consumers[index].allocation += bonus
+                available -= bonus
+            }
+            break
         }
-        let (corpusOffered, corpusOverflow) = share.addingReportingOverflow(
-            remainder > 0 ? 1 : 0
-        )
-        guard !corpusOverflow else {
-            throw AssistantResourcePlannerError.arithmeticOverflow("corpus allocation")
+
+        var contextUnits: [String: UInt64] = [:]
+        var corpusUnits: UInt64 = 0
+        for consumer in consumers {
+            switch consumer.kind {
+            case let .context(id): contextUnits[id] = consumer.allocation
+            case .corpus: corpusUnits = consumer.allocation
+            }
         }
-        let corpusUnits = corpusDesiredUnits > 0 ? min(corpusDesiredUnits, corpusOffered) : 0
         return AssistantResourcePlan(
             contextUnits: contextUnits,
             corpusUnits: corpusUnits,
@@ -117,20 +173,34 @@ package enum AssistantResourcePlanner {
 
     package static func truncate(_ value: String, unitLimit: UInt64) -> String {
         guard unitLimit > 0 else { return "" }
-        guard UInt64(value.utf8.count) > unitLimit else { return value }
+        guard encodedStringUnits(value) > unitLimit else { return value }
         let marker = "\n[… bounded by CASA-RS resource plan …]"
-        let markerUnits = UInt64(marker.utf8.count)
-        guard unitLimit > markerUnits else { return utf8Prefix(value, unitLimit: unitLimit) }
-        return utf8Prefix(value, unitLimit: unitLimit - markerUnits) + marker
+        let markerUnits = encodedStringUnits(marker)
+        guard unitLimit > markerUnits else { return encodedPrefix(value, unitLimit: unitLimit) }
+        return encodedPrefix(value, unitLimit: unitLimit - markerUnits) + marker
     }
 
-    private static func utf8Prefix(_ value: String, unitLimit: UInt64) -> String {
-        let count = Int(min(unitLimit, UInt64(Int.max)))
-        var bytes = Array(value.utf8.prefix(count))
-        while !bytes.isEmpty {
-            if let prefix = String(bytes: bytes, encoding: .utf8) { return prefix }
-            bytes.removeLast()
+    package static func encodedStringUnits(_ value: String) -> UInt64 {
+        guard let encoded = try? JSONEncoder().encode(value), encoded.count >= 2 else {
+            return UInt64.max
         }
-        return ""
+        return UInt64(encoded.count - 2)
+    }
+
+    private static func encodedPrefix(_ value: String, unitLimit: UInt64) -> String {
+        let boundaries = Array(value.indices) + [value.endIndex]
+        var low = 0
+        var high = boundaries.count
+        while low < high {
+            let middle = low + (high - low) / 2
+            let prefix = String(value[..<boundaries[middle]])
+            if encodedStringUnits(prefix) <= unitLimit {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        guard low > 0 else { return "" }
+        return String(value[..<boundaries[low - 1]])
     }
 }

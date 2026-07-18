@@ -52,8 +52,100 @@ final class AssistantDiscussionTests: XCTestCase {
 
         let unicode = String(repeating: "α", count: 100)
         let bounded = AssistantResourcePlanner.truncate(unicode, unitLimit: 61)
-        XCTAssertLessThanOrEqual(bounded.utf8.count, 61)
+        XCTAssertLessThanOrEqual(AssistantResourcePlanner.encodedStringUnits(bounded), 61)
         XCTAssertTrue(bounded.isEmpty || bounded.last != "�")
+
+        let escaped = String(repeating: "\\\"\n", count: 100)
+        let escapedBounded = AssistantResourcePlanner.truncate(escaped, unitLimit: 80)
+        XCTAssertLessThanOrEqual(AssistantResourcePlanner.encodedStringUnits(escapedBounded), 80)
+    }
+
+    func testResourcePlannerRedistributesUnusedDemandAndRejectsDuplicateContexts() throws {
+        let plan = try AssistantResourcePlanner.plan(
+            capacity: AssistantModelCapacity(inputUnits: 100, outputReserveUnits: 0),
+            reservations: [],
+            contexts: [
+                AssistantContextResourceRequest(
+                    id: "small-active", desiredUnits: 1, selected: true, active: true
+                ),
+                AssistantContextResourceRequest(
+                    id: "large-selected", desiredUnits: 100, selected: true, active: false
+                ),
+            ],
+            corpusDesiredUnits: 100
+        )
+
+        XCTAssertEqual(plan.contextUnits["small-active"], 1)
+        XCTAssertEqual(plan.contextUnits["large-selected"], 50)
+        XCTAssertEqual(plan.corpusUnits, 49)
+        XCTAssertEqual(plan.contextUnits.values.reduce(0, +) + plan.corpusUnits, 100)
+
+        XCTAssertThrowsError(try AssistantResourcePlanner.plan(
+            capacity: AssistantModelCapacity(inputUnits: 100, outputReserveUnits: 0),
+            reservations: [],
+            contexts: [
+                AssistantContextResourceRequest(
+                    id: "duplicate", desiredUnits: 10, selected: true, active: true
+                ),
+                AssistantContextResourceRequest(
+                    id: "duplicate", desiredUnits: 10, selected: true, active: false
+                ),
+            ],
+            corpusDesiredUnits: 0
+        )) { error in
+            XCTAssertEqual(error as? AssistantResourcePlannerError, .duplicateContextID("duplicate"))
+        }
+    }
+
+    func testResourcePlannerRepresentativeMeasurementFixture() throws {
+        let capacity = AssistantModelCapacity(inputUnits: 32_768, outputReserveUnits: 4_096)
+        let reservations = [
+            AssistantResourceReservation(id: "runtime_instructions", units: 1_900),
+            AssistantResourceReservation(id: "conversation_history", units: 4_096),
+            AssistantResourceReservation(id: "context_metadata", units: 768),
+        ]
+        let contexts = [
+            AssistantContextResourceRequest(
+                id: "notebook", desiredUnits: 12_000, selected: true, active: true
+            ),
+            AssistantContextResourceRequest(
+                id: "task", desiredUnits: 512, selected: true, active: false
+            ),
+            AssistantContextResourceRequest(
+                id: "python", desiredUnits: 4_096, selected: true, active: false
+            ),
+            AssistantContextResourceRequest(
+                id: "unselected-history", desiredUnits: 8_000, selected: false, active: false
+            ),
+        ]
+
+        let started = CFAbsoluteTimeGetCurrent()
+        var plan = try AssistantResourcePlanner.plan(
+            capacity: capacity,
+            reservations: reservations,
+            contexts: contexts,
+            corpusDesiredUnits: 8_000
+        )
+        for _ in 1..<10_000 {
+            plan = try AssistantResourcePlanner.plan(
+                capacity: capacity,
+                reservations: reservations,
+                contexts: contexts,
+                corpusDesiredUnits: 8_000
+            )
+        }
+        let elapsedMilliseconds = (CFAbsoluteTimeGetCurrent() - started) * 1_000
+        print(
+            "ASSISTANT_RESOURCE_MEASUREMENT iterations=10000 elapsed_ms=\(elapsedMilliseconds) "
+                + "allocations=\(plan.contextUnits) corpus=\(plan.corpusUnits)"
+        )
+
+        XCTAssertEqual(plan.contextUnits["notebook"], 11_534)
+        XCTAssertEqual(plan.contextUnits["task"], 512)
+        XCTAssertEqual(plan.contextUnits["python"], 4_096)
+        XCTAssertNil(plan.contextUnits["unselected-history"])
+        XCTAssertEqual(plan.corpusUnits, 5_766)
+        XCTAssertEqual(plan.contextUnits.values.reduce(0, +) + plan.corpusUnits, 21_908)
     }
 
     func testAssistantControllerUsesInjectedClockAndSchedulerWithoutSleeping() {

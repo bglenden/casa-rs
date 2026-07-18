@@ -409,8 +409,9 @@ source and selection, task identity/schema/current values/default differences,
 explorer configuration and selected data products, Python cells and retained
 outputs, plots, and processing history. It also includes task and parameter
 documentation plus persistent table, MeasurementSet, image, coordinate, and
-measures semantics. Open-tab excerpts share a deterministic 64 KiB budget,
-with at most 16 KiB from any one tab. The assistant may retrieve from these sources as needed
+measures semantics. Selected open-tab excerpts and corpus retrieval share the
+active backend model's deterministic resource plan; unselected tabs consume no
+payload and there is no fixed fallback. The assistant may retrieve from these sources as needed
 without per-read approval. CASA shows what domain context is available and
 which CASA resources and citations were used, not a fictional exact record of
 all bytes sent by the coding agent to its model.
@@ -582,12 +583,16 @@ commit overlay. See
 ### Assistant resource plan and retained limits
 
 The active backend model must report both input capacity and output reserve.
-CASA-RS treats one UTF-8 byte as one conservative capacity unit; it does not
-guess token ratios. The planner first subtracts the backend output reserve and
-the encoded durable conversation. It then assigns one share to each selected
-tab, one additional priority share to the active selected tab, and one share
-to corpus retrieval. Integer remainder units go to the active tab first, then
-stable tab order, then corpus retrieval. Unselected tabs receive zero units.
+CASA-RS treats one UTF-8 byte in the encoded JSON content as one conservative
+capacity unit, including escaping; it does not guess token ratios. The planner
+first subtracts the backend output reserve,
+the exact CASA runtime instructions, the encoded durable conversation, and
+the encoded metadata for selected context projections. It then assigns one
+share to each selected tab, one additional priority share to the active
+selected tab, and one share to corpus retrieval. Consumers that need less than
+their share are satisfied first and the unused capacity is redistributed.
+Integer remainder units go to the active tab first, then stable tab order, then
+corpus retrieval. Unselected tabs receive zero units.
 Missing capacity, checked-arithmetic
 overflow, or reserves larger than capacity produces an explicit unavailable
 plan with zero context and corpus allocation; there is no fixed fallback.
@@ -599,7 +604,9 @@ The remaining numeric bounds have separate owners and meanings:
   result budget; the resource plan limits both hit count and returned text.
 - The MCP input-schema maximum of 32 search hits is a protocol abuse bound.
   A request is accepted only when the current resource plan allows a lower or
-  equal count, and returned text is checked against the same allocation.
+  equal count. The final serialized hit array, including citation locators and
+  all other metadata, is measured against that allocation; the last hit text is
+  shortened on a UTF-8 boundary when necessary.
 - The 10-second App Server startup timeout and 120-second response-activity
   timeout are named UI liveness policies. They do not allocate prompt or
   retrieval capacity.
@@ -613,6 +620,28 @@ The remaining numeric bounds have separate owners and meanings:
 - The model-list request limit of 100 is the adapter's discovery page size;
   model selection remains backend-owned and this value is not a context
   capacity input.
+
+Representative measurements recorded on the reference Apple Silicon
+development system on 2026-07-18:
+
+- The removed policy always exposed a 65,536-byte total / 16,384-byte-per-tab
+  envelope without using model capacity, instructions, history, metadata, or
+  actual item demand.
+- With a 32,768-unit model, 4,096 output reserve, 1,900 runtime-instruction
+  units, 4,096 conversation units, 768 projection-metadata units, a 12,000-unit
+  active notebook, 512-unit task, 4,096-unit Python tab, one unselected
+  8,000-unit history tab, and an 8,000-unit corpus demand, the current planner
+  allocated 11,534 / 512 / 4,096 context units and 5,766 corpus units. The
+  21,908-unit payload allocation plus 10,860 reserved units exactly equals the
+  backend capacity; the unselected history used zero.
+- Ten thousand executions of that representative plan took 79.94 ms in a
+  debug Swift test (about 0.008 ms per plan). This is observational evidence,
+  not a performance threshold.
+- A metadata-heavy retrieval fixture with a long locator and multibyte text was
+  reduced to one valid cited result whose complete serialized array was at
+  most its 900-unit plan. A 32-unit plan explicitly rejected the citation
+  because its metadata alone could not fit. Exact-nonce retrieval tests still
+  returned both scientific and source citations.
 
 ## Program acceptance
 

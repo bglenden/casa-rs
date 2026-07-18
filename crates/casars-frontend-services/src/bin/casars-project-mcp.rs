@@ -413,21 +413,67 @@ fn planned_search(
         layers,
     })
     .map_err(frontend_error)?;
-    let returned_units = hits.iter().try_fold(0_u64, |total, hit| {
-        total
-            .checked_add(u64::try_from(hit.text.len()).unwrap_or(u64::MAX))
-            .ok_or_else(|| ProjectToolError::new(-32003, "corpus result size overflow"))
-    })?;
-    if returned_units > plan.corpus_text_units {
+    fit_search_hits_to_budget(hits, plan.corpus_text_units)
+}
+
+fn fit_search_hits_to_budget(
+    hits: Vec<casars_frontend_services::AssistantCorpusSearchHitState>,
+    budget: u64,
+) -> ProjectToolResult<Vec<casars_frontend_services::AssistantCorpusSearchHitState>> {
+    let budget = usize::try_from(budget)
+        .map_err(|_| ProjectToolError::new(-32003, "corpus result budget is not representable"))?;
+    let mut fitted = Vec::new();
+    for hit in hits {
+        let mut candidate = fitted.clone();
+        candidate.push(hit.clone());
+        if measured_search_result_units(&candidate)? <= budget {
+            fitted.push(hit);
+            continue;
+        }
+
+        let boundaries = std::iter::once(0)
+            .chain(hit.text.char_indices().skip(1).map(|(index, _)| index))
+            .chain(std::iter::once(hit.text.len()))
+            .collect::<Vec<_>>();
+        let mut low = 0_usize;
+        let mut high = boundaries.len();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let mut truncated = hit.clone();
+            truncated.text = hit.text[..boundaries[middle]].to_owned();
+            let mut measured = fitted.clone();
+            measured.push(truncated);
+            if measured_search_result_units(&measured)? <= budget {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        if low > 0 {
+            let mut truncated = hit;
+            truncated.text = truncated.text[..boundaries[low - 1]].to_owned();
+            fitted.push(truncated);
+        }
+        // A truncated final hit consumes the remaining result envelope.
+        if !fitted.is_empty() {
+            break;
+        }
+    }
+    if fitted.is_empty() {
         return Err(ProjectToolError::new(
             -32003,
-            format!(
-                "corpus result requires {returned_units} units but the resource plan allocated {}",
-                plan.corpus_text_units
-            ),
+            "the resource plan cannot fit one corpus citation and its metadata",
         ));
     }
-    Ok(hits)
+    Ok(fitted)
+}
+
+fn measured_search_result_units(
+    hits: &[casars_frontend_services::AssistantCorpusSearchHitState],
+) -> ProjectToolResult<usize> {
+    serde_json::to_vec(hits)
+        .map(|encoded| encoded.len())
+        .map_err(|error| ProjectToolError::new(-32003, format!("measure corpus result: {error}")))
 }
 
 fn corpus_search_tool(
@@ -798,6 +844,39 @@ mod tests {
                 .unwrap()
                 .contains("resource-plan limit 1")
         );
+    }
+
+    #[test]
+    fn corpus_result_budget_includes_citation_metadata_and_utf8_text() {
+        let hit = casars_frontend_services::AssistantCorpusSearchHitState {
+            chunk_id: "chunk-1".to_owned(),
+            document_id: "document-1".to_owned(),
+            layer: "baseline".to_owned(),
+            title: "A representative radio-astronomy result".to_owned(),
+            text: "αβγδ ".repeat(300),
+            score: 1.0,
+            citation: AssistantCorpusCitationRequest {
+                label: "Long citation".to_owned(),
+                locator: format!("{} section", "nested/path/".repeat(24)),
+                source_path: Some("source.md".to_owned()),
+                page: Some(42),
+                section: Some("Imaging".to_owned()),
+                line_start: Some(10),
+                line_end: Some(20),
+                release: Some("0.25.0".to_owned()),
+                commit: Some("0123456789abcdef".to_owned()),
+            },
+            untrusted_evidence: true,
+        };
+
+        let fitted = fit_search_hits_to_budget(vec![hit.clone()], 900).expect("fit result");
+        assert_eq!(fitted.len(), 1);
+        assert!(fitted[0].text.len() < hit.text.len());
+        assert!(measured_search_result_units(&fitted).unwrap() <= 900);
+        assert!(std::str::from_utf8(fitted[0].text.as_bytes()).is_ok());
+
+        let error = fit_search_hits_to_budget(vec![hit], 32).expect_err("metadata cannot fit");
+        assert!(error.message.contains("citation and its metadata"));
     }
 
     #[test]

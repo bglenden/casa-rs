@@ -4241,88 +4241,110 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
-    private func assistantOpenTabContexts() -> [AssistantContextItemState] {
-        var items: [AssistantContextItemState] = []
-        let resourcePlan = assistantResourcePlanForOpenTabs()
+    private struct AssistantContextDraft {
+        var id: String
+        var kind: String
+        var label: String
+        var summary: String
+        var excerpt: String
+        var active: Bool
+    }
+
+    private func assistantOpenTabContextDrafts() -> [AssistantContextDraft] {
+        var items: [AssistantContextDraft] = []
         for tab in state.tabs {
             let contextID = assistantContextID(tab)
-            let excerptLimit = resourcePlan.contextUnits[contextID] ?? 0
-            let item: AssistantContextItemState
+            let item: AssistantContextDraft
             switch tab.kind {
             case .task:
                 let taskID = tab.taskID ?? tab.title
-                item = assistantContext(
+                item = AssistantContextDraft(
                     id: contextID,
                     kind: "task",
                     label: tab.title,
                     summary: "Open task and its current parameters",
                     excerpt: assistantParameterSummary(surfaceID: taskID, instanceID: tab.id),
-                    excerptLimit: excerptLimit
+                    active: tab.id == state.activeTabID
                 )
             case .notebook, .tutorial:
                 let notebook = state.scientificNotebooks?.activeNotebook
-                item = assistantContext(
+                item = AssistantContextDraft(
                     id: contextID,
                     kind: tab.kind.rawValue,
                     label: notebook?.title ?? tab.title,
                     summary: tab.kind == .tutorial ? "Open tutorial notebook" : "Open scientific notebook",
                     excerpt: notebook?.draftSource ?? "",
-                    excerptLimit: excerptLimit
+                    active: tab.id == state.activeTabID
                 )
             case .datasetExplorer, .tableBrowser:
                 let dataset = tab.datasetID.flatMap { id in state.project.datasets.first { $0.id == id } }
-                item = assistantContext(
+                item = AssistantContextDraft(
                     id: contextID,
                     kind: "explorer",
                     label: tab.title,
                     summary: dataset.map { "Open \($0.kind.rawValue) dataset at \($0.path)" }
                         ?? "Open dataset explorer",
                     excerpt: assistantDatasetContext(datasetID: tab.datasetID, tabKind: tab.kind),
-                    excerptLimit: excerptLimit
+                    active: tab.id == state.activeTabID
                 )
             case .plotSamples:
                 let summaries = state.plotDocuments.map {
                     "\($0.title): \($0.subtitle) [\($0.allLayers.count) layers, \($0.panels.count) panels]"
                 }
-                item = assistantContext(
+                item = AssistantContextDraft(
                     id: contextID,
                     kind: "plot",
                     label: tab.title,
                     summary: "Open scientific plot tab",
                     excerpt: summaries.joined(separator: "\n"),
-                    excerptLimit: excerptLimit
+                    active: tab.id == state.activeTabID
                 )
             case .python:
-                item = assistantContext(
+                item = AssistantContextDraft(
                     id: contextID,
                     kind: "python",
                     label: tab.title,
                     summary: "Open user scientific Python tab",
                     excerpt: state.python.buffer,
-                    excerptLimit: excerptLimit
+                    active: tab.id == state.activeTabID
                 )
             case .history:
-                item = assistantContext(
+                item = AssistantContextDraft(
                     id: contextID,
                     kind: "history",
                     label: tab.title,
                     summary: "Open task and plot execution history",
                     excerpt: assistantJSON(Array(state.jobs.values)),
-                    excerptLimit: excerptLimit
+                    active: tab.id == state.activeTabID
                 )
             case .aiChat:
-                item = assistantContext(
+                item = AssistantContextDraft(
                     id: contextID,
                     kind: "assistant",
                     label: tab.title,
                     summary: "Current AI discussion tab",
                     excerpt: "The active conversation is already supplied by the agent session.",
-                    excerptLimit: excerptLimit
+                    active: tab.id == state.activeTabID
                 )
             }
             items.append(item)
         }
         return items
+    }
+
+    private func assistantOpenTabContexts() -> [AssistantContextItemState] {
+        let drafts = assistantOpenTabContextDrafts()
+        let resourcePlan = assistantResourcePlanForOpenTabs(drafts)
+        return drafts.map { draft in
+            assistantContext(
+                id: draft.id,
+                kind: draft.kind,
+                label: draft.label,
+                summary: draft.summary,
+                excerpt: draft.excerpt,
+                excerptLimit: resourcePlan.contextUnits[draft.id] ?? 0
+            )
+        }
     }
 
     private func assistantContextID(_ tab: WorkbenchTab) -> String {
@@ -4337,7 +4359,9 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
-    private func assistantResourcePlanForOpenTabs() -> AssistantResourcePlan {
+    private func assistantResourcePlanForOpenTabs(
+        _ drafts: [AssistantContextDraft]? = nil
+    ) -> AssistantResourcePlan {
         guard let discussion = state.assistantDiscussion else {
             return .unavailable("Assistant state is unavailable; no context resources were allocated.")
         }
@@ -4354,14 +4378,30 @@ public final class WorkbenchStore: ObservableObject {
         let encodedConversationUnits = UInt64(
             (try? JSONEncoder().encode(discussion.activeConversation))?.count ?? 0
         )
+        let runtimeProfile = CasaAgentRuntimeProfile(
+            authority: discussion.activeConversation?.profile.authority ?? .work,
+            sessionNonce: assistantController.projectNonce,
+            pythonCommand: discussion.activeConversation?.profile.pythonCommand ?? "python3"
+        )
+        guard let instructionUnits = CodexAppServerSession.instructionResourceUnits(runtimeProfile)
+        else {
+            return .unavailable("Assistant instruction resource accounting overflowed.")
+        }
+        let drafts = drafts ?? assistantOpenTabContextDrafts()
         let initialSelection = discussion.contexts.isEmpty
-        let requests = state.tabs.map { tab in
+        let requests = drafts.map { draft in
             AssistantContextResourceRequest(
-                id: assistantContextID(tab),
-                desiredUnits: inputUnits,
-                selected: initialSelection || discussion.selectedContextIDs.contains(assistantContextID(tab)),
-                active: tab.id == state.activeTabID
+                id: draft.id,
+                desiredUnits: AssistantResourcePlanner.encodedStringUnits(draft.excerpt),
+                selected: initialSelection || discussion.selectedContextIDs.contains(draft.id),
+                active: draft.active
             )
+        }
+        let selectedDrafts = zip(drafts, requests).compactMap { pair in
+            pair.1.selected ? pair.0 : nil
+        }
+        guard let metadataUnits = assistantContextMetadataUnits(selectedDrafts) else {
+            return .unavailable("Assistant context metadata resource accounting failed.")
         }
         do {
             return try AssistantResourcePlanner.plan(
@@ -4369,16 +4409,44 @@ public final class WorkbenchStore: ObservableObject {
                     inputUnits: inputUnits,
                     outputReserveUnits: outputUnits
                 ),
-                reservations: [AssistantResourceReservation(
-                    id: "conversation_history",
-                    units: encodedConversationUnits
-                )],
+                reservations: [
+                    AssistantResourceReservation(
+                        id: "runtime_instructions",
+                        units: instructionUnits
+                    ),
+                    AssistantResourceReservation(
+                        id: "conversation_history",
+                        units: encodedConversationUnits
+                    ),
+                    AssistantResourceReservation(
+                        id: "context_metadata",
+                        units: metadataUnits
+                    ),
+                ],
                 contexts: requests,
                 corpusDesiredUnits: inputUnits
             )
         } catch {
             return .unavailable("Assistant resource planning failed: \(error)")
         }
+    }
+
+    private func assistantContextMetadataUnits(
+        _ drafts: [AssistantContextDraft]
+    ) -> UInt64? {
+        let projections = drafts.map {
+            AssistantContextTabProjection(
+                id: $0.id,
+                kind: $0.kind,
+                label: $0.label,
+                summary: $0.summary,
+                excerpt: ""
+            )
+        }
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        guard let data = try? encoder.encode(projections) else { return nil }
+        return UInt64(data.count)
     }
 
     private func refreshAssistantContextItems() {
