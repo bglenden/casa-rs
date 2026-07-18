@@ -7,7 +7,7 @@
 
 use casa_tables::table_quantum::{ArrayQuantColumn, ScalarQuantColumn, TableQuantumDesc};
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
-use casa_test_support::table_quantum_interop::{cpp_bench_array_read, cpp_bench_scalar_read};
+use casa_test_support::table_quantum_interop::TableQuantumOracle;
 use casa_types::*;
 use std::time::Instant;
 
@@ -64,8 +64,8 @@ fn scalar_read_throughput_vs_cpp() {
     create_bench_table(path_str);
 
     // ── C++ timing ──
-    let cpp_ns =
-        cpp_bench_scalar_read(path_str, "ScaFixed", ITERATIONS).expect("C++ bench should succeed");
+    let cpp_ns = TableQuantumOracle::bench_scalar_read(path_str, "ScaFixed", ITERATIONS)
+        .expect("C++ bench should succeed");
 
     // ── Rust timing ──
     let table = Table::open(TableOptions::new(path_str)).unwrap();
@@ -114,8 +114,8 @@ fn array_read_throughput_vs_cpp() {
     create_bench_table(path_str);
 
     // ── C++ timing ──
-    let cpp_ns =
-        cpp_bench_array_read(path_str, "ArrFixed", ITERATIONS).expect("C++ bench should succeed");
+    let cpp_ns = TableQuantumOracle::bench_array_read(path_str, "ArrFixed", ITERATIONS)
+        .expect("C++ bench should succeed");
 
     // ── Rust timing ──
     let table = Table::open(TableOptions::new(path_str)).unwrap();

@@ -23,11 +23,8 @@ use casa_ms::SubTable;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_tables::{ColumnType, Table};
-use casa_test_support::cpp_backend_available;
-use casa_test_support::ms_interop::{
-    cpp_ms_bench_main_rows, cpp_ms_bench_open_main_rows, cpp_ms_digest_manifest,
-    cpp_ms_table_row_digest, cpp_ms_table_row_field_manifest,
-};
+use casa_test_support::casacore_oracle_available;
+use casa_test_support::ms_interop::MeasurementSetOracle;
 use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 
 use common::{populate_main_rows, populate_subtables};
@@ -704,15 +701,20 @@ fn print_table_row_diagnostics(ms: &MeasurementSet, ms_path: &Path, label: &str)
         let limit = table.row_count().min(8);
         for row_index in 0..limit {
             let rust_digest = row_digest_for_table(table, row_index, &root_path).hex();
-            let cpp_digest = cpp_ms_table_row_digest(ms_path, label, row_index as u64)
-                .unwrap_or_else(|err| format!("ERROR:{err}"));
+            let cpp_digest =
+                MeasurementSetOracle::table_row_digest(ms_path, label, row_index as u64)
+                    .unwrap_or_else(|err| format!("ERROR:{err}"));
             if rust_digest != cpp_digest {
                 eprintln!(
                     "{label} row {row_index} digest mismatch: rust={rust_digest} cpp={cpp_digest}"
                 );
                 let rust_fields = row_field_manifest_for_table(table, row_index, &root_path);
-                let cpp_fields = cpp_ms_table_row_field_manifest(ms_path, label, row_index as u64)
-                    .unwrap_or_else(|err| format!("ERROR:{err}\n"));
+                let cpp_fields = MeasurementSetOracle::table_row_field_manifest(
+                    ms_path,
+                    label,
+                    row_index as u64,
+                )
+                .unwrap_or_else(|err| format!("ERROR:{err}\n"));
                 let rust_lines: Vec<_> = rust_fields.lines().collect();
                 let cpp_lines: Vec<_> = cpp_fields.lines().collect();
                 let max_len = rust_lines.len().max(cpp_lines.len());
@@ -973,7 +975,7 @@ fn digest_measurement_set_manifest(ms: &MeasurementSet) -> String {
 
 #[test]
 fn ms_full_manifest_matches_cpp_for_basic_fixture() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!(
             "skipping ms_full_manifest_matches_cpp_for_basic_fixture: C++ casacore not available"
         );
@@ -991,7 +993,7 @@ fn ms_full_manifest_matches_cpp_for_basic_fixture() {
 
     let ms = MeasurementSet::open(&ms_path).unwrap();
     let rust_manifest = digest_measurement_set_manifest(&ms);
-    let cpp_manifest = cpp_ms_digest_manifest(&ms_path).unwrap();
+    let cpp_manifest = MeasurementSetOracle::digest_manifest(&ms_path).unwrap();
     assert_eq!(rust_manifest, cpp_manifest);
 }
 
@@ -1003,7 +1005,7 @@ fn ms_full_manifest_matches_cpp_for_basic_fixture() {
 /// `CASA_RS_VERIFY_MS_PATH=/path/to/ref_vlass_wtsp_creation.ms cargo test -p casa-ms --test ms_full_verify_vs_cpp verify_external_ms_matches_cpp -- --nocapture`
 #[test]
 fn verify_external_ms_matches_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping verify_external_ms_matches_cpp: C++ casacore not available");
         return;
     }
@@ -1023,7 +1025,8 @@ fn verify_external_ms_matches_cpp() {
 
     let ms = MeasurementSet::open(&ms_path).expect("open MeasurementSet in Rust");
     let rust_manifest = digest_measurement_set_manifest(&ms);
-    let cpp_manifest = cpp_ms_digest_manifest(&ms_path).expect("open MeasurementSet in C++");
+    let cpp_manifest =
+        MeasurementSetOracle::digest_manifest(&ms_path).expect("open MeasurementSet in C++");
     if rust_manifest != cpp_manifest {
         eprintln!("row counts:");
         eprintln!("MAIN {}", ms.row_count());
@@ -1068,7 +1071,7 @@ fn verify_external_ms_matches_cpp() {
 #[test]
 #[ignore = "debug helper for inspecting one external MeasurementSet row"]
 fn debug_external_ms_row_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping debug_external_ms_row_vs_cpp: C++ casacore not available");
         return;
     }
@@ -1093,7 +1096,8 @@ fn debug_external_ms_row_vs_cpp() {
         );
         eprintln!(
             "cpp  digest: {}",
-            cpp_ms_table_row_digest(&ms_path, &label, row_index as u64).expect("cpp row digest"),
+            MeasurementSetOracle::table_row_digest(&ms_path, &label, row_index as u64)
+                .expect("cpp row digest"),
         );
         eprintln!(
             "rust fields:\n{}",
@@ -1101,7 +1105,7 @@ fn debug_external_ms_row_vs_cpp() {
         );
         eprintln!(
             "cpp fields:\n{}",
-            cpp_ms_table_row_field_manifest(&ms_path, &label, row_index as u64)
+            MeasurementSetOracle::table_row_field_manifest(&ms_path, &label, row_index as u64)
                 .expect("cpp row field manifest"),
         );
     };
@@ -1154,7 +1158,7 @@ fn purge_disk_cache() -> Result<(), String> {
 #[test]
 #[ignore = "performance helper for external MeasurementSet MAIN-table scans"]
 fn bench_external_main_rows_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping bench_external_main_rows_vs_cpp: C++ casacore not available");
         return;
     }
@@ -1172,7 +1176,7 @@ fn bench_external_main_rows_vs_cpp() {
         return;
     }
 
-    let cpp = cpp_ms_bench_main_rows(&ms_path).expect("benchmark MAIN rows in C++");
+    let cpp = MeasurementSetOracle::bench_main_rows(&ms_path).expect("benchmark MAIN rows in C++");
 
     let ms = MeasurementSet::open(&ms_path).expect("open MeasurementSet in Rust");
     let root_path = normalize_existing_path(ms.path().expect("MeasurementSet path"));
@@ -1204,7 +1208,7 @@ fn bench_external_main_rows_vs_cpp() {
 #[test]
 #[ignore = "performance helper for external MeasurementSet open + MAIN scans"]
 fn bench_external_open_and_main_rows_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping bench_external_open_and_main_rows_vs_cpp: C++ casacore not available");
         return;
     }
@@ -1224,7 +1228,8 @@ fn bench_external_open_and_main_rows_vs_cpp() {
         return;
     }
 
-    let cpp = cpp_ms_bench_open_main_rows(&ms_path).expect("benchmark MAIN open+scan in C++");
+    let cpp = MeasurementSetOracle::bench_open_main_rows(&ms_path)
+        .expect("benchmark MAIN open+scan in C++");
 
     let t0 = Instant::now();
     let ms = MeasurementSet::open(&ms_path).expect("open MeasurementSet in Rust");
@@ -1262,7 +1267,7 @@ fn bench_external_open_and_main_rows_vs_cpp() {
 #[ignore = "performance helper for macOS cold-ish external MeasurementSet open + MAIN scans"]
 #[cfg(target_os = "macos")]
 fn bench_external_open_and_main_rows_vs_cpp_coldish() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!(
             "skipping bench_external_open_and_main_rows_vs_cpp_coldish: C++ casacore not available"
         );
@@ -1285,7 +1290,8 @@ fn bench_external_open_and_main_rows_vs_cpp_coldish() {
     }
 
     let Err(err) = purge_disk_cache() else {
-        let cpp = cpp_ms_bench_open_main_rows(&ms_path).expect("benchmark MAIN open+scan in C++");
+        let cpp = MeasurementSetOracle::bench_open_main_rows(&ms_path)
+            .expect("benchmark MAIN open+scan in C++");
 
         let Err(err) = purge_disk_cache() else {
             let t0 = Instant::now();

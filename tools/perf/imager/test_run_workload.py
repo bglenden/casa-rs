@@ -14,6 +14,10 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_workload
+from perf_harness.image_compare import CASA_IMAGE_COMPARATOR
+
+
+IMAGE_COMPARATOR_SOURCE = CASA_IMAGE_COMPARATOR.read_text(encoding="utf-8")
 
 
 class StageBreakdownTests(unittest.TestCase):
@@ -896,7 +900,9 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
             },
             "comparison": {"products": [".image", ".residual", ".psf", ".model"]},
             "command": {"env": {"IMAGER_BENCH_MINOR_CYCLE_LENGTH": "50"}},
-            "environment": {"physical_cores": 10, "logical_cores": 10},
+            "environment": {
+                "runtime": {"physical_cores": 10, "logical_cores": 10}
+            },
         }
 
         features = run_workload.build_benchmark_feature_summary(plan, parsed)
@@ -970,6 +976,25 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
         self.assertEqual(0.6, summary["dirty_product_gpu_resident_postprocess_ms"])
         self.assertEqual(12.0, summary["dirty_product_gpu_resident_total_ms"])
 
+    def test_backend_diagnostic_samples_are_bounded_without_losing_counts(self) -> None:
+        line_count = run_workload.MAX_BACKEND_LOG_ENTRIES_PER_BUCKET + 73
+        parsed = run_workload.parse_backend_plan_logs(
+            "\n".join(
+                f"standard_mfs_metal_residual_refresh run={index} dispatch_ms=1.0"
+                for index in range(line_count)
+            )
+        )
+
+        retained = parsed["metal_diagnostics"]
+        stats = parsed["collection_stats"]["metal_diagnostics"]
+        self.assertEqual(run_workload.MAX_BACKEND_LOG_ENTRIES_PER_BUCKET, len(retained))
+        self.assertEqual(line_count, stats["observed_count"])
+        self.assertEqual(run_workload.MAX_BACKEND_LOG_ENTRIES_PER_BUCKET, stats["retained_count"])
+        self.assertIs(True, stats["truncated"])
+        self.assertEqual(line_count, parsed["summary"]["metal_diagnostic_count"])
+        self.assertEqual(0, retained[0]["fields"]["run"])
+        self.assertEqual(line_count - 1, retained[-1]["fields"]["run"])
+
     def test_source_read_ahead_summary_aggregates_multi_slab_logs(self) -> None:
         parsed = run_workload.parse_backend_plan_logs(
             """imaging_source_read_ahead_summary mode=cube_slab enabled=true max_live_row_blocks=2 queue_capacity=0 live_row_block_high_water=2 row_blocks=8 row_block_rows=4096 consumer_recv_blocked_ms=10.000 producer_send_blocked_ms=1.000 producer_consumer_overlap_ms=1.500 source_read_ms=20.000 source_route_ms=0.000 consumer_ms=2.000 source_prepare_ms=2.000 source_bytes=5242880 effective_read_bandwidth_mib_s=250.000 streamed_samples=100
@@ -999,7 +1024,6 @@ imaging_source_read_ahead_summary mode=cube_slab enabled=true max_live_row_block
 
     def test_completed_run_promotes_enriched_benchmark_features(self) -> None:
         plan = {
-            "schema_version": 1,
             "run_id": "test-run",
             "run": {"stream_log": False},
             "review": {},
@@ -1020,7 +1044,9 @@ imaging_source_read_ahead_summary mode=cube_slab enabled=true max_live_row_block
                 "argv": ["bench"],
                 "env": {"IMAGER_BENCH_MINOR_CYCLE_LENGTH": "50"},
             },
-            "environment": {"physical_cores": 10, "logical_cores": 10},
+            "environment": {
+                "runtime": {"physical_cores": 10, "logical_cores": 10}
+            },
             "products": {},
             "benchmark_features": {
                 "backend": {"resolved_backend": None},
@@ -1096,7 +1122,6 @@ standard_mfs_profile_run run=1 gridded_samples=500000 major_cycles=10 minor_iter
 
     def test_stream_log_enables_imager_progress_for_subprocess(self) -> None:
         plan = {
-            "schema_version": 1,
             "run_id": "test-run",
             "run": {"stream_log": True},
             "review": {},
@@ -1674,7 +1699,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
         self.assertIn("bad", gate["structured_difference_legend"])
 
     def test_product_review_panels_are_square_and_labeled(self) -> None:
-        script = run_workload.PRODUCT_COMPARISON_SCRIPT
+        script = IMAGE_COMPARATOR_SOURCE
 
         self.assertIn('aspect="equal"', script)
         self.assertIn('axis.set_box_aspect(1)', script)
@@ -1688,7 +1713,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
     def test_product_comparison_stride_preserves_spatial_aspect(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
-            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+            exec(IMAGE_COMPARATOR_SOURCE, namespace)
 
         self.assertEqual(
             [2, 2, 1, 1],
@@ -1698,7 +1723,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
     def test_product_comparison_panels_use_spatial_display_stride(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
-            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+            exec(IMAGE_COMPARATOR_SOURCE, namespace)
 
         class FakeImageTool:
             def __init__(self):
@@ -1767,7 +1792,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
     def test_product_comparison_reports_beam_normalized_structure_metrics(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
-            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+            exec(IMAGE_COMPARATOR_SOURCE, namespace)
 
         y, x = np.indices((64, 64))
         casa = np.ones((64, 64), dtype=np.float64)
@@ -1819,7 +1844,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
     def test_product_comparison_does_not_escalate_numerical_floor_structure(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
-            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+            exec(IMAGE_COMPARATOR_SOURCE, namespace)
 
         y, x = np.indices((64, 64))
         casa = np.ones((64, 64), dtype=np.float64)
@@ -1845,7 +1870,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
     def test_product_comparison_handles_line_like_display_planes(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
-            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+            exec(IMAGE_COMPARATOR_SOURCE, namespace)
 
         casa = np.linspace(1.0, 2.0, 64, dtype=np.float64)[:, np.newaxis]
         rust = casa + 0.01
@@ -1869,7 +1894,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
     def test_product_comparison_treats_sumwt_as_non_spatial(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
-            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+            exec(IMAGE_COMPARATOR_SOURCE, namespace)
 
         casa = np.linspace(6.0e6, 6.2e6, 64, dtype=np.float64).reshape(1, 1, 1, 64)
         rust = casa + 0.05
@@ -1894,7 +1919,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
     def test_product_comparison_display_plane_uses_middle_extra_axis(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
-            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+            exec(IMAGE_COMPARATOR_SOURCE, namespace)
 
         cube = np.zeros((4, 4, 1, 7), dtype=np.float64)
         cube[:, :, 0, 0] = 1.0
@@ -1908,7 +1933,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
     def test_product_comparison_display_plane_bounds_select_center_cube_plane(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
-            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+            exec(IMAGE_COMPARATOR_SOURCE, namespace)
 
         blc, trc = namespace["display_plane_bounds"]([2048, 2048, 1, 64])
 
@@ -1918,7 +1943,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
     def test_model_review_panel_uses_restored_beam_visualization(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
-            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+            exec(IMAGE_COMPARATOR_SOURCE, namespace)
 
         class FakeAxis:
             def __init__(self):
@@ -2007,7 +2032,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
     def test_product_comparison_rolls_up_structured_review_labels(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
-            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+            exec(IMAGE_COMPARATOR_SOURCE, namespace)
 
         rollup = namespace["summarize_product_reviews"](
             {
@@ -2052,7 +2077,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
     def test_review_panel_records_structured_difference_label(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
-            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+            exec(IMAGE_COMPARATOR_SOURCE, namespace)
 
         class FakeAxis:
             def imshow(self, *args, **kwargs):
@@ -2117,7 +2142,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
     def test_review_panel_skips_zoom_when_bounds_cover_full_plane(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
-            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+            exec(IMAGE_COMPARATOR_SOURCE, namespace)
 
         class FakeAxis:
             def imshow(self, *args, **kwargs):
@@ -2237,6 +2262,32 @@ CASA tclean timings (seconds):
         self.assertNotIn("niter", stages)
         self.assertNotIn("imsize", stages)
         self.assertNotIn("psf_grid_ms", stages)
+
+    def test_comparison_evidence_status_distinguishes_failure_and_tolerance(self) -> None:
+        failed_status, failed = run_workload.comparison_evidence_status(
+            {"status": "failed_execution", "reason": "CASA exited 2", "products": {}}
+        )
+        self.assertEqual("failed_comparison", failed_status)
+        self.assertEqual("comparison", failed["kind"])
+
+        tolerance_status, tolerance = run_workload.comparison_evidence_status(
+            {
+                "status": "completed",
+                "products": {".image": {"status": "compared"}},
+                "structured_difference_review": {
+                    "label": "bad",
+                    "summary": "structured residual",
+                },
+            }
+        )
+        self.assertEqual("out_of_tolerance", tolerance_status)
+        self.assertEqual("comparison_tolerance", tolerance["kind"])
+
+        completed_status, failure = run_workload.comparison_evidence_status(
+            {"status": "unavailable", "reason": "CASA not configured", "products": {}}
+        )
+        self.assertEqual("completed", completed_status)
+        self.assertIsNone(failure)
 
 
 if __name__ == "__main__":

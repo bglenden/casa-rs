@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "evidence_schema_version": 1,
+  "timeout_classes": {
+    "deterministic": 900,
+    "live_assistant": 1200,
+    "live_science": 3600
+  },
+  "journeys": [
+    {
+      "id": "gui-test",
+      "classification": "deterministic",
+      "selector": null,
+      "timeout_class": "deterministic",
+      "result_bundle": "CasarsMacUITests.xcresult",
+      "rust_binaries": [
+        {"package": "casars-frontend-services", "bins": []}
+      ],
+      "python_packages": [],
+      "requires_codex_account": false,
+      "requires_network": false,
+      "project": {"policy": "none", "retain_on_failure": false},
+      "gate": null,
+      "artifacts": [
+        {"name": "CasarsMacUITests.xcresult", "kind": "xcresult", "transport": false},
+        {"name": "gui-test.evidence.json", "kind": "summary", "transport": true}
+      ],
+      "remote_supported": true
+    },
+    {
+      "id": "assistant-live-gui",
+      "classification": "opt_in_live",
+      "selector": "CasarsMacUITests/CasarsMacUITests/testOptInProductionAssistantSubscriptionGUIResume",
+      "timeout_class": "live_assistant",
+      "result_bundle": "AssistantLiveGUI.xcresult",
+      "rust_binaries": [
+        {"package": "casars-frontend-services", "bins": []}
+      ],
+      "python_packages": [],
+      "requires_codex_account": true,
+      "requires_network": true,
+      "project": {
+        "policy": "fixed",
+        "name": "casars-wave5a-live-retained",
+        "retain_on_failure": true
+      },
+      "gate": {
+        "file": "assistant-live-gui.enabled",
+        "receipt": ".assistant-live-gui.passed",
+        "report": null,
+        "required_fields": ["agentCommand", "home", "codexHome", "path", "pythonCommand", "projectRoot", "passReceipt"]
+      },
+      "artifacts": [
+        {"name": "AssistantLiveGUI.xcresult", "kind": "xcresult", "transport": false},
+        {"name": "assistant-live-gui.evidence.json", "kind": "summary", "transport": true}
+      ],
+      "remote_supported": false
+    },
+    {
+      "id": "notebook-roundtrip-gui",
+      "classification": "opt_in_live",
+      "selector": "CasarsMacUITests/CasarsMacUITests/testOptInProductionNotebookTaskPythonPlotRoundTrip",
+      "timeout_class": "live_science",
+      "result_bundle": "NotebookRoundTripGUI.xcresult",
+      "rust_binaries": [
+        {"package": "casars-frontend-services", "bins": []},
+        {"package": "casa-ms", "bins": ["simobserve", "msexplore"]}
+      ],
+      "python_packages": ["matplotlib", "numpy"],
+      "requires_codex_account": true,
+      "requires_network": true,
+      "project": {
+        "policy": "fixed",
+        "name": "casars-wave5c-roundtrip-retained",
+        "retain_on_failure": true,
+        "resume_environment": "CASA_RS_NOTEBOOK_ROUNDTRIP_RESUME_AFTER_TASK"
+      },
+      "gate": {
+        "file": "notebook-roundtrip-gui.enabled",
+        "receipt": ".notebook-roundtrip-gui.passed",
+        "report": ".notebook-roundtrip-gui.report.json",
+        "published_report": "NotebookRoundTripGUI.report.json",
+        "required_fields": ["agentCommand", "home", "codexHome", "path", "pythonCommand", "projectRoot", "passReceipt", "evidenceReport", "repoRoot", "repoRevision", "simobserveCommand", "msexploreCommand", "resumeAfterTask"]
+      },
+      "artifacts": [
+        {"name": "NotebookRoundTripGUI.xcresult", "kind": "xcresult", "transport": false},
+        {"name": "NotebookRoundTripGUI.report.json", "kind": "report", "transport": true},
+        {"name": "notebook-roundtrip-gui.evidence.json", "kind": "summary", "transport": true}
+      ],
+      "remote_supported": true
+    },
+    {
+      "id": "tutorial-journey-gui",
+      "classification": "opt_in_live",
+      "selector": "CasarsMacUITests/CasarsMacUITests/testOptInProductionTWHyaTutorialJourney",
+      "timeout_class": "live_science",
+      "result_bundle": "TutorialJourneyGUI.xcresult",
+      "rust_binaries": [
+        {"package": "casars-frontend-services", "bins": []},
+        {"package": "casars-imager", "bins": ["casars-imager"]},
+        {"package": "casa-ms", "bins": ["msexplore"]}
+      ],
+      "python_packages": ["matplotlib", "numpy"],
+      "requires_codex_account": true,
+      "requires_network": true,
+      "network_preflight": {
+        "url": "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.1/twhya_calibrated.ms.tar",
+        "expected_size": 435742720,
+        "expected_sha256": "f0cfeee5b9dec09ac9ed4d3e4e048d5eb28023c11cbc8295c09ddefe6b8a97b2",
+        "template": "resources/tutorials/tw-hya-first-look"
+      },
+      "project": {
+        "policy": "timestamped",
+        "name": "casars-wave5d-tutorial",
+        "retain_on_failure": true
+      },
+      "gate": {
+        "file": "tutorial-journey-gui.enabled",
+        "receipt": ".tutorial-journey-gui.passed",
+        "report": ".tutorial-journey-gui.report.json",
+        "published_report": "TutorialJourneyGUI.report.json",
+        "required_fields": ["agentCommand", "home", "codexHome", "path", "pythonCommand", "projectRoot", "passReceipt", "evidenceReport", "repoRoot", "repoRevision", "templateRoot", "templateManifestSha256", "templateMarkdownSha256", "sourceUri", "expectedSize", "expectedSha256", "imagerCommand", "msexploreCommand"]
+      },
+      "artifacts": [
+        {"name": "TutorialJourneyGUI.xcresult", "kind": "xcresult", "transport": false},
+        {"name": "TutorialJourneyGUI.report.json", "kind": "report", "transport": true},
+        {"name": "tutorial-journey-gui.evidence.json", "kind": "summary", "transport": true}
+      ],
+      "remote_supported": true
+    }
+  ]
+}

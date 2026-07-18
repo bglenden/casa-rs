@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave3-mosaic-mtmfs-alma-large-bounded",
   "mode_id": "mosaic-mtmfs-large",
   "description": "Wave #343/#262 large bounded seven-field ALMA mosaic MT-MFS row for read-ahead and product-invariance evidence.",

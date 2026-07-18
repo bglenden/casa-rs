@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "03-immoments-n2hp-moment-map",
+  "pack": {"id": "alma-first-look-image-analysis", "relative_path": "tutorial-parity/alma/first-look/twhya/image-analysis/alma-first-look-image-analysis.pack"},
+  "title": "Create N2H+ moment map",
+  "source": {"url": "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis", "anchor": "Moment_map_creation"},
+  "prerequisites": [{"kind": "casa_image", "path": "twhya_n2hp.image"}],
+  "surfaces": {
+    "casa": {"operations": [{"task": "immoments", "parameters": {"imagename": "twhya_n2hp.image", "outfile": ".casa-rs/workspace/oracle/03-immoments-n2hp-moment-map/twhya_n2hp.mom0", "moments": [0], "chans": "4~12", "includepix": [0.03, 100.0], "overwrite": true}, "outputs": [".casa-rs/workspace/oracle/03-immoments-n2hp-moment-map/twhya_n2hp.mom0"]}]},
+    "cli": {"operations": [{"task": "immoments", "parameters": {"imagename": "twhya_n2hp.image", "outfile": ".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.mom0", "moments": 0, "chans": "4~12", "includepix": [0.03, 100.0], "overwrite": true}, "outputs": [".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.mom0"]}]},
+    "python": {"operations": [{"task": "immoments", "parameters": {"imagename": "twhya_n2hp.image", "outfile": ".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.python.mom0", "moments": "0", "chans": "4~12", "includepix": "0.03,100", "overwrite": true}, "outputs": [".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.python.mom0"]}]},
+    "tui": {"operations": [{"task": "immoments", "parameters": {"imagename": "twhya_n2hp.image", "outfile": ".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.tui.mom0", "moments": 0, "chans": "4~12", "includepix": [0.03, 100.0], "overwrite": true}, "outputs": [".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.tui.mom0"]}], "screenshot": ".casa-rs/screenshots/headless/03-immoments-n2hp-moment-map-tui.png", "input_events": []},
+    "gui": {"journey": "tutorial-journey-gui", "required_artifacts": ["TutorialJourneyGUI.xcresult", "TutorialJourneyGUI.report.json", "tutorial-journey-gui.evidence.json"]}
+  },
+  "comparison": {"plugin": "image_products", "config": {"products": ["moment0"], "absolute_tolerance": 1e-6, "relative_tolerance": 1e-5, "metadata_fields": ["shape", "unit", "coordinates"]}, "inputs": {"native": ".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.mom0", "oracle": ".casa-rs/workspace/oracle/03-immoments-n2hp-moment-map/twhya_n2hp.mom0"}},
+  "evidence": {"result": ".casa-rs/evidence/tutorial-parity/03-immoments-n2hp-moment-map.result.json", "review": ".casa-rs/evidence/review/03-immoments-n2hp-moment-map.json", "documentation": ["docs/sections/03-immoments-n2hp-moment-map.md", "docs/sections/03-immoments-n2hp-moment-map.html"], "screenshot_spec": ".casa-rs/screenshots/specs/03-immoments-n2hp-moment-map.json"}
+}

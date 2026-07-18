@@ -7,19 +7,20 @@ import argparse
 import copy
 import json
 import statistics
-import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+
+from perf_harness import atomic_write_json, load_json_object
+from perf_harness.subprocesses import run_command
 
 
 PROGRESS_PREFIX = "CASARS_IMAGER_PROGRESS "
 
 
 def load_request(path: Path) -> dict:
-    with path.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
+    payload = load_json_object(path, description="imager request")
     if payload.get("kind") != "run" or not isinstance(payload.get("request"), dict):
         raise SystemExit(f"{path} is not a run ImagerTaskRequest envelope")
     return payload
@@ -45,15 +46,11 @@ def run_once(binary: Path, request_payload: dict, temp_dir: Path, index: int) ->
     product_dir.mkdir(parents=True, exist_ok=True)
     request_payload["request"]["image_name"] = str(product_dir / "image")
     request_path = temp_dir / f"request-{index}.json"
-    with request_path.open("w", encoding="utf-8") as handle:
-        json.dump(request_payload, handle, sort_keys=True)
+    atomic_write_json(request_path, request_payload)
     started = time.perf_counter()
-    completed = subprocess.run(
+    completed = run_command(
         [str(binary), "--json-run", str(request_path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
+        merge_stderr=False,
     )
     elapsed_s = time.perf_counter() - started
     progress_lines = [
@@ -146,8 +143,7 @@ def main(argv: list[str]) -> int:
 
     text = json.dumps(report, indent=2, sort_keys=True)
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(text + "\n", encoding="utf-8")
+        atomic_write_json(args.output, report)
     print(text)
     return 1 if failed else 0
 

@@ -6,7 +6,7 @@
 
 #![cfg(all(feature = "performance-tests", has_casacore_cpp))]
 
-use casa_test_support::quanta_interop::{cpp_bench_convert, cpp_bench_parse};
+use casa_test_support::quanta_interop::QuantaOracle;
 use casa_types::quanta::{Quantity, Unit};
 use std::time::Instant;
 
@@ -21,7 +21,8 @@ const BENCH_UNITS: &[&str] = &[
 #[test]
 fn parse_throughput_vs_cpp() {
     // ── C++ timing ──
-    let cpp_ns = cpp_bench_parse(BENCH_UNITS, ITERATIONS).expect("C++ bench_parse should succeed");
+    let cpp_ns =
+        QuantaOracle::bench_parse(BENCH_UNITS, ITERATIONS).expect("C++ bench_parse should succeed");
 
     // ── Rust timing ──
     // Warm up: parse all units once so the registry is populated
@@ -72,8 +73,8 @@ fn conversion_throughput_vs_cpp() {
     // ── C++ timing ──
     let mut cpp_total_ns = 0u64;
     for &(value, from, to) in convert_pairs {
-        let ns = cpp_bench_convert(value, from, to, ITERATIONS)
-            .unwrap_or_else(|| panic!("C++ bench_convert failed for {from}->{to}"));
+        let ns = QuantaOracle::bench_convert(value, from, to, ITERATIONS)
+            .unwrap_or_else(|error| panic!("C++ bench_convert failed for {from}->{to}: {error}"));
         cpp_total_ns += ns;
     }
 

@@ -12,6 +12,8 @@ import statistics
 import sys
 from typing import Any
 
+from perf_harness import ContractError, load_run_result
+
 
 RELIABLE_MIN_PAIRS = 5
 CONFIRMATION_PAIRS = 7
@@ -38,7 +40,7 @@ def main() -> None:
         loaded = []
         skipped_inputs = []
         for path in args.results:
-            result = load_result(path)
+            result = load_run_result(path, source_key="_policy_path")
             if is_result_bundle(result):
                 loaded.append(result)
             else:
@@ -48,7 +50,7 @@ def main() -> None:
             accepted_correctness_note=args.accepted_correctness_note,
         )
         report["skipped_inputs"] = skipped_inputs
-    except PolicyError as error:
+    except (PolicyError, ContractError) as error:
         print(f"error: {error}", file=sys.stderr)
         raise SystemExit(2) from None
 
@@ -66,17 +68,6 @@ def main() -> None:
                 f"classification={row['classification']} "
                 f"recommendation={row['planner_recommendation']}"
             )
-
-
-def load_result(path: pathlib.Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise PolicyError(f"parse {path}: {error}") from error
-    if not isinstance(value, dict):
-        raise PolicyError(f"{path} must contain a JSON object")
-    value["_policy_path"] = str(path)
-    return value
 
 
 def is_result_bundle(value: dict[str, Any]) -> bool:
@@ -325,7 +316,7 @@ def backend_failures(results_by_backend: dict[str, list[dict[str, Any]]]) -> dic
     for backend, results in results_by_backend.items():
         reasons = []
         for result in results:
-            if result.get("status") != "failed":
+            if result.get("status") != "failed_execution":
                 continue
             reason = (
                 result.get("results", {})

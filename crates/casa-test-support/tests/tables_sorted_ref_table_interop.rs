@@ -11,9 +11,7 @@
 
 #![cfg(feature = "cpp-interop-tests")]
 
-use casa_test_support::{
-    CppTableFixture, cpp_backend_available, cpp_table_verify, cpp_table_write,
-};
+use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
 
 use casa_tables::{ColumnSchema, SortOrder, Table, TableOptions, TableSchema};
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
@@ -56,30 +54,30 @@ fn build_sorted_parent_table() -> Table {
 /// CC: C++ writes parent + sorted RefTable → C++ reads sorted RefTable (baseline).
 #[test]
 fn cc_sorted_ref_table() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping CC sorted_ref_table test: C++ casacore not available");
         return;
     }
     let dir = tempfile::tempdir().expect("create temp dir");
 
-    cpp_table_write(CppTableFixture::SortedRefTable, dir.path())
+    TableOracle::table_write(CppTableFixture::SortedRefTable, dir.path())
         .expect("C++ write sorted ref table should succeed");
 
-    cpp_table_verify(CppTableFixture::SortedRefTable, dir.path())
+    TableOracle::table_verify(CppTableFixture::SortedRefTable, dir.path())
         .expect("C++ verify sorted ref table should succeed");
 }
 
 /// CR: C++ writes parent + sorted RefTable → Rust opens and verifies order.
 #[test]
 fn cr_sorted_ref_table() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping CR sorted_ref_table test: C++ casacore not available");
         return;
     }
     let dir = tempfile::tempdir().expect("create temp dir");
 
     // C++ writes parent.tbl and sorted.tbl
-    cpp_table_write(CppTableFixture::SortedRefTable, dir.path())
+    TableOracle::table_write(CppTableFixture::SortedRefTable, dir.path())
         .expect("C++ write sorted ref table should succeed");
 
     // Rust opens the sorted RefTable (materializes it as a plain Table)
@@ -107,7 +105,7 @@ fn cr_sorted_ref_table() {
 /// RC: Rust writes parent + sorted RefTable → C++ opens and verifies order.
 #[test]
 fn rc_sorted_ref_table() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping RC sorted_ref_table test: C++ casacore not available");
         return;
     }
@@ -131,7 +129,7 @@ fn rc_sorted_ref_table() {
         .expect("save sorted ref table");
 
     // C++ opens and verifies.
-    cpp_table_verify(CppTableFixture::SortedRefTable, dir.path())
+    TableOracle::table_verify(CppTableFixture::SortedRefTable, dir.path())
         .expect("C++ should read Rust-produced sorted RefTable");
 }
 

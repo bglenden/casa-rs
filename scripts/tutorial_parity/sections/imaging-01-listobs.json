@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "01-listobs-calibrated-ms",
+  "pack": {"id": "alma-first-look-imaging", "relative_path": "tutorial-parity/alma/first-look/twhya/imaging/alma-first-look-imaging.pack"},
+  "title": "Inspect calibrated MeasurementSet summary",
+  "source": {"url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging", "anchor": "A_First_Look_at_the_Data"},
+  "prerequisites": [{"kind": "measurement_set", "path": "twhya_calibrated.ms"}],
+  "surfaces": {
+    "casa": {"operations": [{"task": "listobs", "parameters": {"vis": "twhya_calibrated.ms", "listfile": ".casa-rs/workspace/oracle/01-listobs-calibrated-ms/casa-listobs.txt", "overwrite": true}, "outputs": [".casa-rs/workspace/oracle/01-listobs-calibrated-ms/casa-listobs.txt"]}]},
+    "cli": {"operations": [{"task": "msexplore", "parameters": {"vis": "twhya_calibrated.ms", "format": "json", "output": ".casa-rs/workspace/native/01-listobs-calibrated-ms/cli-msexplore-listobs.json", "overwrite": true}, "outputs": [".casa-rs/workspace/native/01-listobs-calibrated-ms/cli-msexplore-listobs.json"]}]},
+    "python": {"operations": [{"task": "msexplore", "parameters": {"vis": "twhya_calibrated.ms", "format": "json", "output": ".casa-rs/workspace/native/01-listobs-calibrated-ms/python-msexplore-listobs.json", "overwrite": true}, "outputs": [".casa-rs/workspace/native/01-listobs-calibrated-ms/python-msexplore-listobs.json"]}]},
+    "tui": {"operations": [{"task": "msexplore", "parameters": {"vis": "twhya_calibrated.ms", "format": "json", "output": ".casa-rs/workspace/native/01-listobs-calibrated-ms/tui-msexplore-listobs.json", "overwrite": true}, "outputs": [".casa-rs/workspace/native/01-listobs-calibrated-ms/tui-msexplore-listobs.json"]}], "screenshot": ".casa-rs/screenshots/headless/01-listobs-calibrated-ms-tui.png", "input_events": []},
+    "gui": {"journey": "tutorial-journey-gui", "required_artifacts": ["TutorialJourneyGUI.xcresult", "TutorialJourneyGUI.report.json", "tutorial-journey-gui.evidence.json"]}
+  },
+  "comparison": {"plugin": "json_fields", "config": {"fields": ["schema_version", "fields", "spectral_windows", "polarization_setups", "antennas", "scans"], "absolute_tolerance": 0.0, "relative_tolerance": 0.0}, "inputs": {"native": ".casa-rs/workspace/native/01-listobs-calibrated-ms/cli-msexplore-listobs.json", "oracle": ".casa-rs/workspace/native/01-listobs-calibrated-ms/python-msexplore-listobs.json"}},
+  "evidence": {"result": ".casa-rs/evidence/tutorial-parity/01-listobs-calibrated-ms.result.json", "review": ".casa-rs/evidence/review/01-listobs-calibrated-ms.json", "documentation": ["docs/sections/01-listobs-calibrated-ms.md", "docs/sections/01-listobs-calibrated-ms.html"], "screenshot_spec": ".casa-rs/screenshots/specs/01-listobs-calibrated-ms.json"}
+}

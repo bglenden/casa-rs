@@ -3,12 +3,12 @@
 #![cfg(feature = "cpp-interop-tests")]
 
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-use casa_test_support::CppTableFixture;
+use casa_test_support::{CppTableFixture, TableOracle};
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 #[test]
 fn dump_scalar_primitives_comparison() {
-    if !casa_test_support::cpp_backend_available() {
+    if !casa_test_support::casacore_oracle_available() {
         eprintln!("skipping: C++ backend unavailable");
         return;
     }
@@ -17,8 +17,7 @@ fn dump_scalar_primitives_comparison() {
     let cpp_path = cpp_dir.path().join("cpp_table");
 
     // Write C++ table
-    casa_test_support::cpp_table_write(CppTableFixture::ScalarPrimitives, &cpp_path)
-        .expect("C++ write");
+    TableOracle::table_write(CppTableFixture::ScalarPrimitives, &cpp_path).expect("C++ write");
 
     // Write Rust table
     let rust_dir = tempfile::tempdir().unwrap();
@@ -110,14 +109,14 @@ fn dump_scalar_primitives_comparison() {
 
 #[test]
 fn dump_fixed_array_comparison() {
-    if !casa_test_support::cpp_backend_available() {
+    if !casa_test_support::casacore_oracle_available() {
         eprintln!("skipping: C++ backend unavailable");
         return;
     }
 
     let cpp_dir = tempfile::tempdir().unwrap();
     let cpp_path = cpp_dir.path().join("cpp_table");
-    casa_test_support::cpp_table_write(CppTableFixture::FixedArray, &cpp_path).expect("C++ write");
+    TableOracle::table_write(CppTableFixture::FixedArray, &cpp_path).expect("C++ write");
 
     // Dump table.f0
     let cpp_f0 = std::fs::read(cpp_path.join("table.f0")).expect("read cpp table.f0");

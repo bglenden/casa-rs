@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! C++ casacore `hclean` interop helpers.
 
+#[cfg(has_casacore_cpp)]
+use crate::oracle_runtime::CasacoreOracleRuntime;
+use crate::oracle_runtime::{OracleError, oracle_operation};
+
 /// Result of running one casacore `hclean` minor-cycle call on a single plane.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HogbomMinorCycle2d {
@@ -36,72 +40,71 @@ unsafe extern "C" {
     fn cpp_table_free_error(ptr: *mut std::ffi::c_char);
 }
 
-/// Run one casacore `hclean` minor-cycle call on a single residual/PSF plane.
-pub fn cpp_hogbom_clean_minor_cycle_2d(
-    psf: &[f32],
-    residual: &[f32],
-    shape: [usize; 2],
-    gain: f32,
-    threshold: f32,
-    cycle_niter: usize,
-) -> Result<HogbomMinorCycle2d, String> {
-    #[cfg(has_casacore_cpp)]
-    {
-        let [nx, ny] = shape;
-        if psf.len() != nx * ny || residual.len() != nx * ny {
-            return Err(format!(
-                "hogbom interop expects {} pixels for shape {:?}, got psf={} residual={}",
-                nx * ny,
-                shape,
-                psf.len(),
-                residual.len()
-            ));
-        }
+/// Typed Rust-facing access to casacore's Hogbom oracle.
+pub struct HogbomOracle;
 
-        let mut model_out = vec![0.0f32; nx * ny];
-        let mut residual_out = vec![0.0f32; nx * ny];
-        let mut iterdone = 0i32;
-        let mut peak = 0.0f32;
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe {
-            ffi_cpp_hogbom_clean_minor_cycle_2d(
-                nx as i32,
-                ny as i32,
-                gain,
-                threshold,
-                cycle_niter as i32,
-                psf.as_ptr(),
-                residual.as_ptr(),
-                model_out.as_mut_ptr(),
-                residual_out.as_mut_ptr(),
-                (nx * ny) as i32,
-                &mut iterdone,
-                &mut peak,
-                &mut error,
-            )
-        };
-        if rc != 0 {
-            let message = if error.is_null() {
-                "casacore hogbom shim failed".to_string()
-            } else {
-                let message = unsafe { std::ffi::CStr::from_ptr(error) }
-                    .to_string_lossy()
-                    .to_string();
-                unsafe { cpp_table_free_error(error) };
-                message
+#[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
+impl HogbomOracle {
+    /// Run one casacore `hclean` minor-cycle call on a single residual/PSF plane.
+    pub fn clean_minor_cycle_2d(
+        psf: &[f32],
+        residual: &[f32],
+        shape: [usize; 2],
+        gain: f32,
+        threshold: f32,
+        cycle_niter: usize,
+    ) -> Result<HogbomMinorCycle2d, OracleError> {
+        oracle_operation!("hogbom.clean_minor_cycle_2d", {
+            let [nx, ny] = shape;
+            if psf.len() != nx * ny || residual.len() != nx * ny {
+                return Err(OracleError::InvalidInput {
+                    context: "hogbom planes",
+                    message: format!(
+                        "expected {} pixels for shape {:?}, got psf={} residual={}",
+                        nx * ny,
+                        shape,
+                        psf.len(),
+                        residual.len()
+                    ),
+                });
+            }
+
+            let mut model_out = vec![0.0f32; nx * ny];
+            let mut residual_out = vec![0.0f32; nx * ny];
+            let mut iterdone = 0i32;
+            let mut peak = 0.0f32;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_hogbom_clean_minor_cycle_2d(
+                    nx as i32,
+                    ny as i32,
+                    gain,
+                    threshold,
+                    cycle_niter as i32,
+                    psf.as_ptr(),
+                    residual.as_ptr(),
+                    model_out.as_mut_ptr(),
+                    residual_out.as_mut_ptr(),
+                    (nx * ny) as i32,
+                    &mut iterdone,
+                    &mut peak,
+                    &mut error,
+                )
             };
-            return Err(message);
-        }
-        Ok(HogbomMinorCycle2d {
-            iterdone: iterdone as usize,
-            peak_residual_jy_per_beam: peak,
-            model: model_out,
-            residual: residual_out,
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "hogbom.clean_minor_cycle_2d",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(HogbomMinorCycle2d {
+                iterdone: iterdone as usize,
+                peak_residual_jy_per_beam: peak,
+                model: model_out,
+                residual: residual_out,
+            })
         })
-    }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = (psf, residual, shape, gain, threshold, cycle_niter);
-        Err("casacore C++ backend unavailable".to_string())
     }
 }

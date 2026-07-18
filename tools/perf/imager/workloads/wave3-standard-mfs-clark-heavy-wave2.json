@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave3-standard-mfs-clark-heavy-wave2",
   "mode_id": "standard-mfs-single-term",
   "description": "Wave 3 #276 Clark-clean regression row matching the retained Wave 2 standard-MFS paired audit: 32 GiB VLA medium MS, 64 channels, 1024 image, Briggs, niter=500.",

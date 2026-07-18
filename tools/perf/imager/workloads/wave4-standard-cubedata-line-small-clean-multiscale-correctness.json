@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave4-standard-cubedata-line-small-clean-multiscale-correctness",
   "mode_id": "standard-cubedata-line-clean-multiscale-niter2-small",
   "description": "Wave 4 W4-20 small full-channel standard-gridder cubedata multiscale clean workload for CASA shape/correctness coverage.",

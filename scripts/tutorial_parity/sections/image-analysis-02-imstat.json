@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "02-imstat-continuum-statistics",
+  "pack": {"id": "alma-first-look-image-analysis", "relative_path": "tutorial-parity/alma/first-look/twhya/image-analysis/alma-first-look-image-analysis.pack"},
+  "title": "Measure continuum image statistics",
+  "source": {"url": "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis", "anchor": "Continuum_image_statistics"},
+  "prerequisites": [{"kind": "casa_image", "path": "twhya_cont.image"}],
+  "surfaces": {
+    "casa": {"operations": [{"task": "imstat", "parameters": {"imagename": "twhya_cont.image"}, "outputs": [".casa-rs/workspace/oracle/02-imstat-continuum-statistics/casa-imstat.json"], "capture_stdout": ".casa-rs/workspace/oracle/02-imstat-continuum-statistics/casa-imstat.json"}]},
+    "cli": {"operations": [{"task": "imstat", "parameters": {"imagename": "twhya_cont.image", "json": true}, "outputs": [".casa-rs/workspace/native/02-imstat-continuum-statistics/cli-imstat.json"], "capture_stdout": ".casa-rs/workspace/native/02-imstat-continuum-statistics/cli-imstat.json"}]},
+    "python": {"operations": [{"task": "imstat", "parameters": {"imagename": "twhya_cont.image"}, "outputs": [".casa-rs/workspace/native/02-imstat-continuum-statistics/python-imstat.json"], "capture_stdout": ".casa-rs/workspace/native/02-imstat-continuum-statistics/python-imstat.json"}]},
+    "tui": {"operations": [{"task": "imstat", "parameters": {"imagename": "twhya_cont.image"}, "outputs": []}], "screenshot": ".casa-rs/screenshots/headless/02-imstat-continuum-statistics-tui.png", "input_events": []},
+    "gui": {"journey": "tutorial-journey-gui", "required_artifacts": ["TutorialJourneyGUI.xcresult", "TutorialJourneyGUI.report.json", "tutorial-journey-gui.evidence.json"]}
+  },
+  "comparison": {"plugin": "imstat", "config": {"fields": ["max", "min", "mean", "median", "rms", "sigma", "sum", "sumsq", "flux", "npts"], "position_fields": ["maxpos", "minpos"], "absolute_tolerance": 1e-8, "flux_tolerance": 1e-7}, "inputs": {"native": ".casa-rs/workspace/native/02-imstat-continuum-statistics/cli-imstat.json", "oracle": ".casa-rs/workspace/oracle/02-imstat-continuum-statistics/casa-imstat.json"}},
+  "evidence": {"result": ".casa-rs/evidence/tutorial-parity/02-imstat-continuum-statistics.result.json", "review": ".casa-rs/evidence/review/02-imstat-continuum-statistics.json", "documentation": ["docs/sections/02-imstat-continuum-statistics.md", "docs/sections/02-imstat-continuum-statistics.html"], "screenshot_spec": ".casa-rs/screenshots/specs/02-imstat-continuum-statistics.json"}
+}

@@ -2,11 +2,11 @@
 #![cfg(feature = "cpp-interop-tests")]
 
 use casa_tables::{ColumnOptions, ColumnSchema, Table, TableOptions, TableSchema};
-use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{
     ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
     run_table_cross_matrix,
 };
+use casa_test_support::{CppTableFixture, TableOracle};
 use casa_types::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
@@ -837,8 +837,8 @@ fn save_and_verify_mutation(
     );
 
     // RC: C++ verify (skipped when C++ unavailable)
-    if casa_test_support::cpp_backend_available() {
-        casa_test_support::cpp_table_verify(cpp_fixture, &path)
+    if casa_test_support::casacore_oracle_available() {
+        TableOracle::table_verify(cpp_fixture, &path)
             .unwrap_or_else(|e| panic!("{label}: C++ verify failed: {e}"));
     }
 }

@@ -11,9 +11,7 @@
 
 #![cfg(feature = "cpp-interop-tests")]
 
-use casa_test_support::{
-    CppTableFixture, cpp_backend_available, cpp_table_verify, cpp_table_write,
-};
+use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
 
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
@@ -45,29 +43,29 @@ fn build_deep_copy_table() -> Table {
 /// CC: C++ writes original + deep copy → C++ reads (baseline).
 #[test]
 fn cc_deep_copy() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping CC deep_copy test: C++ casacore not available");
         return;
     }
     let dir = tempfile::tempdir().expect("create temp dir");
 
-    cpp_table_write(CppTableFixture::DeepCopy, dir.path())
+    TableOracle::table_write(CppTableFixture::DeepCopy, dir.path())
         .expect("C++ write deep copy should succeed");
 
-    cpp_table_verify(CppTableFixture::DeepCopy, dir.path())
+    TableOracle::table_verify(CppTableFixture::DeepCopy, dir.path())
         .expect("C++ verify deep copy should succeed");
 }
 
 /// CR: C++ writes original + deep copy → Rust opens copy.
 #[test]
 fn cr_deep_copy() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping CR deep_copy test: C++ casacore not available");
         return;
     }
     let dir = tempfile::tempdir().expect("create temp dir");
 
-    cpp_table_write(CppTableFixture::DeepCopy, dir.path())
+    TableOracle::table_write(CppTableFixture::DeepCopy, dir.path())
         .expect("C++ write deep copy should succeed");
 
     let copy_path = dir.path().join("copy.tbl");
@@ -92,7 +90,7 @@ fn cr_deep_copy() {
 /// RC: Rust writes original + deep copy → C++ opens copy.
 #[test]
 fn rc_deep_copy() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping RC deep_copy test: C++ casacore not available");
         return;
     }
@@ -113,7 +111,7 @@ fn rc_deep_copy() {
         .expect("deep copy");
 
     // C++ opens and verifies.
-    cpp_table_verify(CppTableFixture::DeepCopy, dir.path())
+    TableOracle::table_verify(CppTableFixture::DeepCopy, dir.path())
         .expect("C++ should read Rust-produced deep copy");
 }
 

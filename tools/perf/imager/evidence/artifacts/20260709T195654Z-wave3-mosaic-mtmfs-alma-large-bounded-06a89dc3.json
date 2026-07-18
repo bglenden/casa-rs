@@ -183,16 +183,43 @@
     "root_env": "CASA_RS_IMPERF_DATA_ROOT"
   },
   "environment": {
-    "bench_script": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
-    "bench_script_sha256": "a468d94d57a0dbb15e4a1dde066009001c5727f90a3ff24c602d7ec1e42c73a1",
-    "casa_python": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python",
-    "git_branch": "codex/improve-imaging-performance",
-    "git_commit": "a11960fe1b313d611ea57e7d4d7101e1939e66fa",
-    "logical_cores": 10,
-    "physical_cores": 10,
-    "physical_memory_bytes": 34359738368,
-    "python": "3.13.5",
-    "repo_root": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs"
+    "datasets": {
+      "measurement_set": {
+        "exists_at_migration": true,
+        "path": "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms"
+      }
+    },
+    "executables": {
+      "bench_script": {
+        "exists_at_migration": false,
+        "path": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
+        "sha256": "a468d94d57a0dbb15e4a1dde066009001c5727f90a3ff24c602d7ec1e42c73a1"
+      },
+      "casa_python": {
+        "exists_at_migration": true,
+        "path": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python"
+      }
+    },
+    "migration": {
+      "method": "checked-in one-time v1-to-v2 migration",
+      "source_schema_version": 1
+    },
+    "repository": {
+      "branch": "codex/improve-imaging-performance",
+      "dirty": null,
+      "revision": "a11960fe1b313d611ea57e7d4d7101e1939e66fa",
+      "root": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs"
+    },
+    "runtime": {
+      "logical_cores": 10,
+      "machine": null,
+      "physical_cores": 10,
+      "physical_memory_bytes": 34359738368,
+      "platform": null,
+      "python": "3.13.5"
+    },
+    "schema_version": 1,
+    "storage_label": "external-ssd-wave1-large"
   },
   "exit_code": 0,
   "human_review": {
@@ -217,6 +244,7 @@
     },
     "structured_difference_summary": "overall missing; "
   },
+  "kind": "workload_run",
   "logs": {
     "benchmark_log": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-baseline/20260709T195654Z-wave3-mosaic-mtmfs-alma-large-bounded-06a89dc3.log"
   },
@@ -1679,7 +1707,7 @@
     "reason": null,
     "status": "runnable"
   },
-  "schema_version": 1,
+  "schema_version": 2,
   "started_at": "2026-07-09T19:56:54.330115Z",
   "status": "completed",
   "workload": {

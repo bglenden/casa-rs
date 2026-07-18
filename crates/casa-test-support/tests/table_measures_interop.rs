@@ -26,7 +26,7 @@ fn cleanup(path: &str) {
 fn cr_epoch_fixed() {
     let path = tmp_path("cr_epoch_fixed");
     cleanup(&path);
-    cpp_create_epoch_fixed(&path).unwrap();
+    TableMeasuresOracle::create_epoch_fixed(&path).unwrap();
 
     let table = Table::open(TableOptions::new(&path)).unwrap();
     let col = ScalarMeasColumn::new(&table, "TIME").unwrap();
@@ -48,7 +48,7 @@ fn cr_epoch_fixed() {
 fn cr_epoch_var_int() {
     let path = tmp_path("cr_epoch_var_int");
     cleanup(&path);
-    cpp_create_epoch_var_int(&path).unwrap();
+    TableMeasuresOracle::create_epoch_variable_integer(&path).unwrap();
 
     let table = Table::open(TableOptions::new(&path)).unwrap();
     let col = ScalarMeasColumn::new(&table, "TIME").unwrap();
@@ -70,7 +70,7 @@ fn cr_epoch_var_int() {
 fn cr_epoch_var_str() {
     let path = tmp_path("cr_epoch_var_str");
     cleanup(&path);
-    cpp_create_epoch_var_str(&path).unwrap();
+    TableMeasuresOracle::create_epoch_variable_string(&path).unwrap();
 
     let table = Table::open(TableOptions::new(&path)).unwrap();
     let col = ScalarMeasColumn::new(&table, "TIME").unwrap();
@@ -92,7 +92,7 @@ fn cr_epoch_var_str() {
 fn cr_direction_fixed() {
     let path = tmp_path("cr_direction_fixed");
     cleanup(&path);
-    cpp_create_direction_fixed(&path).unwrap();
+    TableMeasuresOracle::create_direction_fixed(&path).unwrap();
 
     let table = Table::open(TableOptions::new(&path)).unwrap();
     let col = ScalarMeasColumn::new(&table, "DIR").unwrap();
@@ -142,7 +142,7 @@ fn rc_epoch_fixed() {
         .save(TableOptions::new(&path).with_data_manager(DataManagerKind::StManAipsIO))
         .unwrap();
 
-    cpp_verify_epochs(&path, "TIME", &mjds, &["UTC", "UTC", "UTC"]).unwrap();
+    TableMeasuresOracle::verify_epochs(&path, "TIME", &mjds, &["UTC", "UTC", "UTC"]).unwrap();
     cleanup(&path);
 }
 
@@ -186,7 +186,7 @@ fn rc_epoch_var_int() {
 
     // C++ reads back — note TT shows as "TDT" in older casacore
     // Use the shim's read function instead of verify for flexibility
-    let (mjds, refs) = cpp_read_epochs(&path, "TIME", 3).unwrap();
+    let (mjds, refs) = TableMeasuresOracle::read_epochs(&path, "TIME", 3).unwrap();
     assert!((mjds[0] - 51544.5).abs() < 1e-9);
     assert!((mjds[1] - 51545.0).abs() < 1e-9);
     assert!((mjds[2] - 51546.5).abs() < 1e-9);
@@ -228,7 +228,13 @@ fn rc_direction_fixed() {
         .unwrap();
 
     let expected_vals: Vec<f64> = dirs.iter().flat_map(|&(l, b)| vec![l, b]).collect();
-    cpp_verify_directions(&path, "DIR", &expected_vals, &["J2000", "J2000", "J2000"]).unwrap();
+    TableMeasuresOracle::verify_directions(
+        &path,
+        "DIR",
+        &expected_vals,
+        &["J2000", "J2000", "J2000"],
+    )
+    .unwrap();
 
     cleanup(&path);
 }
@@ -240,8 +246,8 @@ fn cc_epoch_roundtrip() {
     let path = tmp_path("cc_epoch_roundtrip");
     cleanup(&path);
 
-    cpp_create_epoch_fixed(&path).unwrap();
-    let (mjds, refs) = cpp_read_epochs(&path, "TIME", 3).unwrap();
+    TableMeasuresOracle::create_epoch_fixed(&path).unwrap();
+    let (mjds, refs) = TableMeasuresOracle::read_epochs(&path, "TIME", 3).unwrap();
 
     assert!((mjds[0] - 51544.5).abs() < 1e-9);
     assert!((mjds[1] - 51545.0).abs() < 1e-9);

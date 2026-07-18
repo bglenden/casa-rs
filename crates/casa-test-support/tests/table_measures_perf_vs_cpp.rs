@@ -79,8 +79,8 @@ fn epoch_read_throughput_vs_cpp() {
     create_epoch_bench_table(path_str);
 
     // ── C++ timing ──
-    let cpp_ns =
-        cpp_bench_epoch_read(path_str, "TIME", ITERATIONS).expect("C++ bench should succeed");
+    let cpp_ns = TableMeasuresOracle::bench_epoch_read(path_str, "TIME", ITERATIONS)
+        .expect("C++ bench should succeed");
 
     // ── Rust timing ──
     let table = Table::open(TableOptions::new(path_str)).unwrap();
@@ -129,8 +129,8 @@ fn direction_read_throughput_vs_cpp() {
     create_direction_bench_table(path_str);
 
     // ── C++ timing ──
-    let cpp_ns =
-        cpp_bench_direction_read(path_str, "DIR", ITERATIONS).expect("C++ bench should succeed");
+    let cpp_ns = TableMeasuresOracle::bench_direction_read(path_str, "DIR", ITERATIONS)
+        .expect("C++ bench should succeed");
 
     // ── Rust timing ──
     let table = Table::open(TableOptions::new(path_str)).unwrap();

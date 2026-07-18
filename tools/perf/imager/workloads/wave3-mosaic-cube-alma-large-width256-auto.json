@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave3-mosaic-cube-alma-large-width256-auto",
   "mode_id": "mosaic-cube-one-channel",
   "description": "Wave 3 #284 channel-scaling row using the large ALMA mosaic MS, all seven fields, specmode=cube nchan=1 width=256, uniform weighting, Clark clean, full 1280 image geometry, and auto acceleration defaults.",

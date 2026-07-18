@@ -12,9 +12,11 @@ import argparse
 import pathlib
 import re
 import shutil
-import subprocess
 import sys
 from dataclasses import dataclass
+from subprocess import CalledProcessError
+
+from perf_harness.subprocesses import run_command
 
 
 DEFAULT_ROOT = pathlib.Path("/Volumes/GLENDENNING")
@@ -163,10 +165,14 @@ def print_plan(candidates: list[Candidate], *, apply: bool) -> None:
 
 def du_size(path: pathlib.Path) -> int:
     try:
-        output = subprocess.check_output(["du", "-sk", str(path)], text=True)
-    except subprocess.CalledProcessError as error:
+        completed = run_command(
+            ["du", "-sk", str(path)],
+            merge_stderr=False,
+            check=True,
+        )
+    except CalledProcessError as error:
         raise CleanupError(f"du failed for {path}: {error}") from error
-    return int(output.split()[0]) * 1024
+    return int(completed.stdout.split()[0]) * 1024
 
 
 def human_size(size: int) -> str:

@@ -15,7 +15,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use casa_lattices::{LatticeMut, LatticeStatistics, PagedArray, Statistic, TiledShape};
-use casa_test_support::{cpp_backend_available, cpp_lattice_statistics_forced_io_repeated_basic};
+use casa_test_support::{LatticeOracle, casacore_oracle_available};
 use ndarray::{ArrayD, IxDyn};
 
 const SHAPE: [usize; 3] = [512, 512, 64];
@@ -58,7 +58,7 @@ fn cpp_repeated_basic(iterations: u32) -> (u64, f64) {
     let path = dir.path().join("cpp_profile_lattice_stats.table");
     let shape_i32: Vec<i32> = SHAPE.iter().map(|&dim| dim as i32).collect();
     let tile_i32: Vec<i32> = TILE_SHAPE.iter().map(|&dim| dim as i32).collect();
-    cpp_lattice_statistics_forced_io_repeated_basic(
+    LatticeOracle::lattice_statistics_forced_io_repeated_basic(
         &path,
         &shape_i32,
         &tile_i32,
@@ -79,7 +79,7 @@ fn main() {
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(5);
 
-    if mode == "cpp" && !cpp_backend_available() {
+    if mode == "cpp" && !casacore_oracle_available() {
         eprintln!("C++ casacore backend unavailable");
         process::exit(2);
     }

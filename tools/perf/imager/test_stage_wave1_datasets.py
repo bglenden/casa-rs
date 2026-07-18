@@ -15,11 +15,14 @@ sys.path.insert(0, str(TOOL_DIR))
 
 import stage_wave1_datasets as stage  # noqa: E402
 import generate_wave1_casa_datasets as generate  # noqa: E402
+from perf_harness import load_json_object  # noqa: E402
 
 
 class StageWave1DatasetsTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.registry = stage.read_json(stage.REGISTRY_PATH)
+        self.registry = load_json_object(
+            stage.REGISTRY_PATH, description="Wave 1 dataset registry"
+        )
         self.data_root = pathlib.Path("/Volumes/GLENDENNING/casa-rs-imperformance")
 
     def test_full_plan_uses_one_mosaic_large_dataset(self) -> None:

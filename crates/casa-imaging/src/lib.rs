@@ -34434,11 +34434,8 @@ mod tests {
     use casa_coordinates::{
         Coordinate, CoordinateSystem, DirectionCoordinate, Projection, ProjectionType,
     };
-    use casa_test_support::gridder_interop::{
-        cpp_convolve_gridder_make_model_residual_image_2d,
-        cpp_convolve_gridder_predict_visibility_2d,
-    };
-    use casa_test_support::hogbom_interop::cpp_hogbom_clean_minor_cycle_2d;
+    use casa_test_support::gridder_interop::GridderOracle;
+    use casa_test_support::hogbom_interop::HogbomOracle;
     use casa_types::measures::direction::DirectionRef;
     use casa_types::measures::frequency::FrequencyRef;
     #[cfg(all(target_os = "macos", not(coverage)))]
@@ -37517,7 +37514,7 @@ mod tests {
         let mut max_trace_casacore_delta = 0.0f32;
         let mut max_trace_direct_delta = 0.0f32;
         for trace_sample in &trace.samples {
-            let cpp = match cpp_convolve_gridder_predict_visibility_2d(
+            let cpp = match GridderOracle::predict_visibility_2d(
                 gridder.grid_shape(),
                 request.geometry.image_shape,
                 [
@@ -37532,7 +37529,7 @@ mod tests {
                 model.as_slice().unwrap(),
             ) {
                 Ok(result) => result,
-                Err(error) if error == "casacore C++ backend unavailable" => return (0.0, 0.0),
+                Err(casa_test_support::OracleError::Unavailable { .. }) => return (0.0, 0.0),
                 Err(error) => panic!("run predict-visibility interop: {error}"),
             };
             let cpp_value = Complex32::new(cpp.re, cpp.im);
@@ -40134,7 +40131,7 @@ mod tests {
                 &model,
                 samples.len(),
             );
-        let cpp = match cpp_convolve_gridder_make_model_residual_image_2d(
+        let cpp = match GridderOracle::make_model_residual_image_2d(
             gridder.grid_shape(),
             geometry.image_shape,
             [
@@ -40162,7 +40159,7 @@ mod tests {
             model.as_slice().unwrap(),
         ) {
             Ok(result) => result,
-            Err(error) if error == "casacore C++ backend unavailable" => return,
+            Err(casa_test_support::OracleError::Unavailable { .. }) => return,
             Err(error) => panic!("run model residual interop: {error}"),
         };
         let mut sum_sq = 0.0f64;
@@ -40288,7 +40285,7 @@ mod tests {
                 &model,
                 samples.len(),
             );
-        let cpp = match cpp_convolve_gridder_make_model_residual_image_2d(
+        let cpp = match GridderOracle::make_model_residual_image_2d(
             gridder.grid_shape(),
             geometry.image_shape,
             [
@@ -40316,7 +40313,7 @@ mod tests {
             model.as_slice().unwrap(),
         ) {
             Ok(result) => result,
-            Err(error) if error == "casacore C++ backend unavailable" => return,
+            Err(casa_test_support::OracleError::Unavailable { .. }) => return,
             Err(error) => panic!("run model residual interop: {error}"),
         };
         let mut sum_sq = 0.0f64;
@@ -40373,7 +40370,7 @@ mod tests {
         for &(u, v) in &samples {
             let rust = predictor.predict(u, v);
             let direct = direct_predict_visibility(&components, u, v, 0.0);
-            let cpp = match cpp_convolve_gridder_predict_visibility_2d(
+            let cpp = match GridderOracle::predict_visibility_2d(
                 gridder.grid_shape(),
                 geometry.image_shape,
                 [
@@ -40388,7 +40385,7 @@ mod tests {
                 model.as_slice().unwrap(),
             ) {
                 Ok(result) => result,
-                Err(error) if error == "casacore C++ backend unavailable" => return,
+                Err(casa_test_support::OracleError::Unavailable { .. }) => return,
                 Err(error) => panic!("run predict-visibility interop: {error}"),
             };
             let cpp_value = Complex32::new(cpp.re, cpp.im);
@@ -42523,7 +42520,7 @@ mod tests {
         )
         .expect("run Hogbom minor cycle");
 
-        let cpp = match cpp_hogbom_clean_minor_cycle_2d(
+        let cpp = match HogbomOracle::clean_minor_cycle_2d(
             psf.as_slice().unwrap(),
             &[
                 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, //
@@ -42539,7 +42536,7 @@ mod tests {
             4,
         ) {
             Ok(cpp) => cpp,
-            Err(error) if error == "casacore C++ backend unavailable" => return,
+            Err(casa_test_support::OracleError::Unavailable { .. }) => return,
             Err(error) => panic!("run casacore hclean shim: {error}"),
         };
 
@@ -42645,7 +42642,7 @@ mod tests {
             )
             .expect("run Hogbom minor cycle");
 
-            let cpp = match cpp_hogbom_clean_minor_cycle_2d(
+            let cpp = match HogbomOracle::clean_minor_cycle_2d(
                 psf.as_slice().unwrap(),
                 original_residual.as_slice().unwrap(),
                 [8, 8],
@@ -42654,7 +42651,7 @@ mod tests {
                 1,
             ) {
                 Ok(cpp) => cpp,
-                Err(error) if error == "casacore C++ backend unavailable" => return,
+                Err(casa_test_support::OracleError::Unavailable { .. }) => return,
                 Err(error) => panic!("run casacore hclean shim: {error}"),
             };
 

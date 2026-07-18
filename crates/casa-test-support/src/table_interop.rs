@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+use crate::TableOracle;
 use std::path::Path;
 
 use casa_tables::{EndianFormat, Table, TableError, TableOptions, TableSchema};
 use casa_types::{RecordValue, Value};
 
 use crate::CppTableFixture;
-#[cfg(has_casacore_cpp)]
-use crate::{CasacoreGlobalStateDomain, lock_casacore_global_state};
 
 /// Which storage manager to use for the fixture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +113,7 @@ pub fn run_table_cross_matrix(
 
 /// Run CC (C++ write, C++ verify) test only. Skipped if C++ unavailable.
 pub fn run_cc_only(fixture: &TableFixture) -> Option<MatrixCellResult> {
-    if !crate::cpp_backend_available() {
+    if !crate::casacore_oracle_available() {
         return None;
     }
     fixture.cpp_fixture.map(run_cc)
@@ -136,7 +135,7 @@ pub fn run_full_cross_matrix(
         results.last().unwrap().passed
     );
 
-    if crate::cpp_backend_available() {
+    if crate::casacore_oracle_available() {
         if let Some(cpp_fix) = fixture.cpp_fixture {
             eprintln!("[cross-matrix] starting CC");
             results.push(run_cc(cpp_fix));
@@ -187,7 +186,7 @@ pub fn run_endian_cross_matrix(
         EndianFormat::LittleEndian,
     ));
 
-    if crate::cpp_backend_available() {
+    if crate::casacore_oracle_available() {
         if let Some(cpp_fix) = fixture.cpp_fixture {
             results.push(run_rc_with_endian(
                 fixture,
@@ -277,9 +276,6 @@ fn run_rc_with_endian(
     };
     let dir = tempfile::tempdir().expect("create temp dir");
     let table_path = dir.path().join("rc_endian_table");
-    #[cfg(has_casacore_cpp)]
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
-
     let table = match build_table_from_fixture(fixture) {
         Ok(t) => t,
         Err(e) => {
@@ -299,16 +295,7 @@ fn run_rc_with_endian(
         };
     }
 
-    let verify_result = {
-        #[cfg(has_casacore_cpp)]
-        {
-            crate::cpp_table_verify_unlocked(cpp_fix, &table_path)
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            crate::cpp_table_verify(cpp_fix, &table_path)
-        }
-    };
+    let verify_result = TableOracle::table_verify(cpp_fix, &table_path);
     match verify_result {
         Ok(()) => MatrixCellResult {
             label: leak_label(label),
@@ -350,19 +337,7 @@ fn run_rr(fixture: &TableFixture, manager: ManagerKind) -> MatrixCellResult {
 fn run_cc(cpp_fix: CppTableFixture) -> MatrixCellResult {
     let dir = tempfile::tempdir().expect("create temp dir for CC");
     let table_path = dir.path().join("cc_table");
-    #[cfg(has_casacore_cpp)]
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
-
-    let write_result = {
-        #[cfg(has_casacore_cpp)]
-        {
-            crate::cpp_table_write_unlocked(cpp_fix, &table_path)
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            crate::cpp_table_write(cpp_fix, &table_path)
-        }
-    };
+    let write_result = TableOracle::table_write(cpp_fix, &table_path);
     if let Err(msg) = write_result {
         return MatrixCellResult {
             label: "CC",
@@ -371,16 +346,7 @@ fn run_cc(cpp_fix: CppTableFixture) -> MatrixCellResult {
         };
     }
 
-    let verify_result = {
-        #[cfg(has_casacore_cpp)]
-        {
-            crate::cpp_table_verify_unlocked(cpp_fix, &table_path)
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            crate::cpp_table_verify(cpp_fix, &table_path)
-        }
-    };
+    let verify_result = TableOracle::table_verify(cpp_fix, &table_path);
     match verify_result {
         Ok(()) => MatrixCellResult {
             label: "CC",
@@ -402,19 +368,7 @@ fn run_cr(
 ) -> MatrixCellResult {
     let dir = tempfile::tempdir().expect("create temp dir for CR");
     let table_path = dir.path().join("cr_table");
-    #[cfg(has_casacore_cpp)]
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
-
-    let write_result = {
-        #[cfg(has_casacore_cpp)]
-        {
-            crate::cpp_table_write_unlocked(cpp_fix, &table_path)
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            crate::cpp_table_write(cpp_fix, &table_path)
-        }
-    };
+    let write_result = TableOracle::table_write(cpp_fix, &table_path);
     if let Err(msg) = write_result {
         return MatrixCellResult {
             label: "CR",
@@ -444,9 +398,6 @@ fn run_rc(
 ) -> MatrixCellResult {
     let dir = tempfile::tempdir().expect("create temp dir for RC");
     let table_path = dir.path().join("rc_table");
-    #[cfg(has_casacore_cpp)]
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
-
     let table = match build_table_from_fixture(fixture) {
         Ok(t) => t,
         Err(e) => {
@@ -466,16 +417,7 @@ fn run_rc(
         };
     }
 
-    let verify_result = {
-        #[cfg(has_casacore_cpp)]
-        {
-            crate::cpp_table_verify_unlocked(cpp_fix, &table_path)
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            crate::cpp_table_verify(cpp_fix, &table_path)
-        }
-    };
+    let verify_result = TableOracle::table_verify(cpp_fix, &table_path);
     match verify_result {
         Ok(()) => MatrixCellResult {
             label: "RC",

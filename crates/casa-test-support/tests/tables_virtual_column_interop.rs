@@ -7,9 +7,7 @@
 
 #![cfg(feature = "cpp-interop-tests")]
 
-use casa_test_support::{
-    CppTableFixture, cpp_backend_available, cpp_table_verify, cpp_table_write,
-};
+use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
 
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_types::{
@@ -30,31 +28,31 @@ fn table_cell<'a>(
 /// CC: C++ writes forward-column fixture → C++ verifies.
 #[test]
 fn cc_forward_column() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping CC forward_column test: C++ casacore not available");
         return;
     }
     let dir = tempfile::tempdir().expect("create temp dir");
     let fwd_path = dir.path().join("fwd.tbl");
 
-    cpp_table_write(CppTableFixture::ForwardColumn, &fwd_path)
+    TableOracle::table_write(CppTableFixture::ForwardColumn, &fwd_path)
         .expect("C++ write forward column should succeed");
 
-    cpp_table_verify(CppTableFixture::ForwardColumn, &fwd_path)
+    TableOracle::table_verify(CppTableFixture::ForwardColumn, &fwd_path)
         .expect("C++ verify forward column should succeed");
 }
 
 /// CR: C++ writes forward-column fixture → Rust opens and verifies data.
 #[test]
 fn cr_forward_column() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping CR forward_column test: C++ casacore not available");
         return;
     }
     let dir = tempfile::tempdir().expect("create temp dir");
     let fwd_path = dir.path().join("fwd.tbl");
 
-    cpp_table_write(CppTableFixture::ForwardColumn, &fwd_path)
+    TableOracle::table_write(CppTableFixture::ForwardColumn, &fwd_path)
         .expect("C++ write forward column should succeed");
 
     // Rust opens the forwarding table.
@@ -84,7 +82,7 @@ fn cr_forward_column() {
 /// RC: Rust writes forward-column → C++ verifies.
 #[test]
 fn rc_forward_column() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping RC forward_column test: C++ casacore not available");
         return;
     }
@@ -126,7 +124,7 @@ fn rc_forward_column() {
     fwd.save(TableOptions::new(&fwd_path)).unwrap();
 
     // C++ verifies.
-    cpp_table_verify(CppTableFixture::ForwardColumn, &fwd_path)
+    TableOracle::table_verify(CppTableFixture::ForwardColumn, &fwd_path)
         .expect("C++ should read Rust-produced ForwardColumn table");
 }
 
@@ -195,17 +193,17 @@ fn rr_forward_column() {
 /// CC: C++ writes scaled-array fixture → C++ verifies.
 #[test]
 fn cc_scaled_array() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping CC scaled_array test: C++ casacore not available");
         return;
     }
     let dir = tempfile::tempdir().expect("create temp dir");
     let tbl_path = dir.path().join("scaled.tbl");
 
-    cpp_table_write(CppTableFixture::ScaledArray, &tbl_path)
+    TableOracle::table_write(CppTableFixture::ScaledArray, &tbl_path)
         .expect("C++ write scaled array should succeed");
 
-    cpp_table_verify(CppTableFixture::ScaledArray, &tbl_path)
+    TableOracle::table_verify(CppTableFixture::ScaledArray, &tbl_path)
         .expect("C++ verify scaled array should succeed");
 }
 
@@ -216,14 +214,14 @@ fn cc_scaled_array() {
 /// Stored: [[1,2],[3,4],[5,6]]  Virtual: [[12.5,15],[17.5,20],[22.5,25]]
 #[test]
 fn cr_scaled_array() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping CR scaled_array test: C++ casacore not available");
         return;
     }
     let dir = tempfile::tempdir().expect("create temp dir");
     let tbl_path = dir.path().join("scaled.tbl");
 
-    cpp_table_write(CppTableFixture::ScaledArray, &tbl_path)
+    TableOracle::table_write(CppTableFixture::ScaledArray, &tbl_path)
         .expect("C++ write scaled array should succeed");
 
     // Rust opens the table.
@@ -282,7 +280,7 @@ fn cr_scaled_array() {
 /// stored_col: Int32 arrays (shape [2]), virtual_col: Float64 arrays.
 #[test]
 fn rc_scaled_array() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping RC scaled_array test: C++ casacore not available");
         return;
     }
@@ -321,7 +319,7 @@ fn rc_scaled_array() {
     table.save(TableOptions::new(&tbl_path)).unwrap();
 
     // C++ verifies.
-    cpp_table_verify(CppTableFixture::ScaledArray, &tbl_path)
+    TableOracle::table_verify(CppTableFixture::ScaledArray, &tbl_path)
         .expect("C++ should read Rust-produced ScaledArray table");
 }
 

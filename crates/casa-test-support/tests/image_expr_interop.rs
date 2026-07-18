@@ -12,10 +12,7 @@ use casa_images::{ImageExpr, ImageExprBinaryOp, ImageExprUnaryOp, PagedImage};
 use casa_lattices::Lattice;
 use casa_test_support::{
     CppImageExprBinaryOp, CppImageExprCompareOp, CppImageExprUnaryOp, CppMaskLogicalOp,
-    cpp_backend_available, cpp_create_image, cpp_eval_image_expr_binary,
-    cpp_eval_image_expr_scalar, cpp_eval_image_expr_unary, cpp_eval_image_mask_range,
-    cpp_eval_lel_expr, cpp_eval_lel_expr_mask, cpp_open_lel_expr_file, cpp_read_image_data,
-    cpp_save_lel_expr_file,
+    ImageOracle, casacore_oracle_available,
 };
 use casa_types::ArrayD;
 use ndarray::{IxDyn, ShapeBuilder};
@@ -63,7 +60,7 @@ fn make_image(
 
 #[test]
 fn rust_lazy_binary_add_matches_cpp_expr() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping rust_lazy_binary_add_matches_cpp_expr: C++ casacore not available");
         return;
     }
@@ -75,14 +72,14 @@ fn rust_lazy_binary_add_matches_cpp_expr() {
     let n: usize = shape.iter().product();
     let shape_i32: Vec<i32> = shape.iter().map(|&v| v as i32).collect();
 
-    cpp_create_image(
+    ImageOracle::create_image(
         &lhs_path,
         &shape_i32,
         &(0..n).map(|i| i as f32).collect::<Vec<_>>(),
         "",
     )
     .unwrap();
-    cpp_create_image(
+    ImageOracle::create_image(
         &rhs_path,
         &shape_i32,
         &(0..n).map(|i| (i as f32) * 0.5).collect::<Vec<_>>(),
@@ -99,14 +96,15 @@ fn rust_lazy_binary_add_matches_cpp_expr() {
         .get()
         .unwrap();
     let cpp =
-        cpp_eval_image_expr_binary(&lhs_path, &rhs_path, CppImageExprBinaryOp::Add, n).unwrap();
+        ImageOracle::eval_image_expr_binary(&lhs_path, &rhs_path, CppImageExprBinaryOp::Add, n)
+            .unwrap();
 
     assert_eq!(flatten_fortran(&rust), cpp);
 }
 
 #[test]
 fn rust_lazy_scalar_multiply_matches_cpp_expr() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!(
             "skipping rust_lazy_scalar_multiply_matches_cpp_expr: C++ casacore not available"
         );
@@ -124,14 +122,15 @@ fn rust_lazy_scalar_multiply_matches_cpp_expr() {
         .multiply_scalar(3.0)
         .get()
         .unwrap();
-    let cpp = cpp_eval_image_expr_scalar(&path, 3.0, CppImageExprBinaryOp::Multiply, n).unwrap();
+    let cpp =
+        ImageOracle::eval_image_expr_scalar(&path, 3.0, CppImageExprBinaryOp::Multiply, n).unwrap();
 
     assert_eq!(flatten_fortran(&rust), cpp);
 }
 
 #[test]
 fn rust_lazy_unary_and_transcendental_match_cpp_expr() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!(
             "skipping rust_lazy_unary_and_transcendental_match_cpp_expr: C++ casacore not available"
         );
@@ -150,7 +149,8 @@ fn rust_lazy_unary_and_transcendental_match_cpp_expr() {
         .negate()
         .get()
         .unwrap();
-    let cpp_neg = cpp_eval_image_expr_unary(&path, CppImageExprUnaryOp::Negate, n).unwrap();
+    let cpp_neg =
+        ImageOracle::eval_image_expr_unary(&path, CppImageExprUnaryOp::Negate, n).unwrap();
     assert_eq!(flatten_fortran(&rust_neg), cpp_neg);
 
     let rust_exp = ImageExpr::from_image(&image)
@@ -158,7 +158,7 @@ fn rust_lazy_unary_and_transcendental_match_cpp_expr() {
         .unary(ImageExprUnaryOp::Exp)
         .get()
         .unwrap();
-    let cpp_exp = cpp_eval_image_expr_unary(&path, CppImageExprUnaryOp::Exp, n).unwrap();
+    let cpp_exp = ImageOracle::eval_image_expr_unary(&path, CppImageExprUnaryOp::Exp, n).unwrap();
 
     for (rust_value, cpp_value) in flatten_fortran(&rust_exp).iter().zip(cpp_exp.iter()) {
         assert!((rust_value - cpp_value).abs() < 1.0e-5);
@@ -167,7 +167,7 @@ fn rust_lazy_unary_and_transcendental_match_cpp_expr() {
 
 #[test]
 fn rust_lazy_mask_range_matches_cpp_expr() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping rust_lazy_mask_range_matches_cpp_expr: C++ casacore not available");
         return;
     }
@@ -178,7 +178,7 @@ fn rust_lazy_mask_range_matches_cpp_expr() {
     let n: usize = shape.iter().product();
     let shape_i32: Vec<i32> = shape.iter().map(|&v| v as i32).collect();
 
-    cpp_create_image(
+    ImageOracle::create_image(
         &path,
         &shape_i32,
         &(0..n).map(|i| i as f32).collect::<Vec<_>>(),
@@ -193,7 +193,7 @@ fn rust_lazy_mask_range_matches_cpp_expr() {
         .unwrap()
         .get()
         .unwrap();
-    let cpp = cpp_eval_image_mask_range(
+    let cpp = ImageOracle::eval_image_mask_range(
         &path,
         CppImageExprCompareOp::GreaterThan,
         1.5,
@@ -209,7 +209,7 @@ fn rust_lazy_mask_range_matches_cpp_expr() {
 
 #[test]
 fn saved_lazy_expr_is_cpp_readable() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping saved_lazy_expr_is_cpp_readable: C++ casacore not available");
         return;
     }
@@ -228,7 +228,7 @@ fn saved_lazy_expr_is_cpp_readable() {
     let rust = expr.get().unwrap();
     expr.save_as(&out_path).unwrap();
 
-    let cpp = cpp_read_image_data(&out_path, n).unwrap();
+    let cpp = ImageOracle::read_image_data(&out_path, n).unwrap();
     assert_eq!(flatten_fortran(&rust), cpp);
 }
 
@@ -236,7 +236,7 @@ fn saved_lazy_expr_is_cpp_readable() {
 
 #[test]
 fn rust_lazy_transcendental_unary_ops_match_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -281,7 +281,7 @@ fn rust_lazy_transcendental_unary_ops_match_cpp() {
             .unary(*rust_op)
             .get()
             .unwrap();
-        let cpp = cpp_eval_image_expr_unary(&path, *cpp_op, n).unwrap();
+        let cpp = ImageOracle::eval_image_expr_unary(&path, *cpp_op, n).unwrap();
 
         for (i, (r, c)) in flatten_fortran(&rust).iter().zip(cpp.iter()).enumerate() {
             assert!(
@@ -294,7 +294,7 @@ fn rust_lazy_transcendental_unary_ops_match_cpp() {
 
 #[test]
 fn rust_lazy_binary_subtract_divide_match_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -306,14 +306,14 @@ fn rust_lazy_binary_subtract_divide_match_cpp() {
     let n: usize = shape.iter().product();
     let shape_i32: Vec<i32> = shape.iter().map(|&v| v as i32).collect();
 
-    cpp_create_image(
+    ImageOracle::create_image(
         &lhs_path,
         &shape_i32,
         &(0..n).map(|i| i as f32 + 1.0).collect::<Vec<_>>(),
         "",
     )
     .unwrap();
-    cpp_create_image(
+    ImageOracle::create_image(
         &rhs_path,
         &shape_i32,
         &(0..n).map(|i| (i as f32) * 0.3 + 0.5).collect::<Vec<_>>(),
@@ -340,7 +340,7 @@ fn rust_lazy_binary_subtract_divide_match_cpp() {
             .unwrap()
             .get()
             .unwrap();
-        let cpp = cpp_eval_image_expr_binary(&lhs_path, &rhs_path, *cpp_op, n).unwrap();
+        let cpp = ImageOracle::eval_image_expr_binary(&lhs_path, &rhs_path, *cpp_op, n).unwrap();
 
         for (i, (r, c)) in flatten_fortran(&rust).iter().zip(cpp.iter()).enumerate() {
             assert!(
@@ -353,7 +353,7 @@ fn rust_lazy_binary_subtract_divide_match_cpp() {
 
 #[test]
 fn rust_lazy_scalar_subtract_divide_match_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -385,7 +385,7 @@ fn rust_lazy_scalar_subtract_divide_match_cpp() {
             .binary_scalar(*scalar, *rust_op)
             .get()
             .unwrap();
-        let cpp = cpp_eval_image_expr_scalar(&path, *scalar, *cpp_op, n).unwrap();
+        let cpp = ImageOracle::eval_image_expr_scalar(&path, *scalar, *cpp_op, n).unwrap();
 
         for (i, (r, c)) in flatten_fortran(&rust).iter().zip(cpp.iter()).enumerate() {
             assert!(
@@ -398,7 +398,7 @@ fn rust_lazy_scalar_subtract_divide_match_cpp() {
 
 #[test]
 fn rust_lazy_extended_comparisons_match_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -409,7 +409,7 @@ fn rust_lazy_extended_comparisons_match_cpp() {
     let n: usize = shape.iter().product();
     let shape_i32: Vec<i32> = shape.iter().map(|&v| v as i32).collect();
 
-    cpp_create_image(
+    ImageOracle::create_image(
         &path,
         &shape_i32,
         &(0..n).map(|i| i as f32).collect::<Vec<_>>(),
@@ -426,7 +426,7 @@ fn rust_lazy_extended_comparisons_match_cpp() {
         .unwrap()
         .get()
         .unwrap();
-    let cpp = cpp_eval_image_mask_range(
+    let cpp = ImageOracle::eval_image_mask_range(
         &path,
         CppImageExprCompareOp::GreaterEqual,
         3.0,
@@ -446,7 +446,7 @@ fn rust_lazy_extended_comparisons_match_cpp() {
         .unwrap()
         .get()
         .unwrap();
-    let cpp = cpp_eval_image_mask_range(
+    let cpp = ImageOracle::eval_image_mask_range(
         &path,
         CppImageExprCompareOp::Equal,
         4.0,
@@ -471,7 +471,7 @@ fn make_resolver_for_paths<'a>(images: &[(&str, &'a PagedImage<f32>)]) -> HashMa
 
 #[test]
 fn parsed_arithmetic_expr_matches_cpp_lel() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -483,14 +483,14 @@ fn parsed_arithmetic_expr_matches_cpp_lel() {
     let n: usize = shape.iter().product();
     let shape_i32: Vec<i32> = shape.iter().map(|&v| v as i32).collect();
 
-    cpp_create_image(
+    ImageOracle::create_image(
         &a_path,
         &shape_i32,
         &(0..n).map(|i| i as f32 + 1.0).collect::<Vec<_>>(),
         "",
     )
     .unwrap();
-    cpp_create_image(
+    ImageOracle::create_image(
         &b_path,
         &shape_i32,
         &(0..n).map(|i| (i as f32) * 0.5 + 0.5).collect::<Vec<_>>(),
@@ -510,13 +510,13 @@ fn parsed_arithmetic_expr_matches_cpp_lel() {
     let rust_expr = parse_image_expr(&expr_str, &resolver).unwrap();
     let rust = rust_expr.get().unwrap();
 
-    let (cpp, _) = cpp_eval_lel_expr(&expr_str, n).unwrap();
+    let (cpp, _) = ImageOracle::eval_lel_expr(&expr_str, n).unwrap();
     assert_eq!(flatten_fortran(&rust), cpp);
 }
 
 #[test]
 fn parsed_transcendental_expr_matches_cpp_lel() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -527,7 +527,7 @@ fn parsed_transcendental_expr_matches_cpp_lel() {
     let n: usize = shape.iter().product();
     let shape_i32: Vec<i32> = shape.iter().map(|&v| v as i32).collect();
 
-    cpp_create_image(
+    ImageOracle::create_image(
         &path,
         &shape_i32,
         &(0..n).map(|i| 0.1 + (i as f32) * 0.05).collect::<Vec<_>>(),
@@ -543,7 +543,7 @@ fn parsed_transcendental_expr_matches_cpp_lel() {
     let expr_str = format!("sin('{path_str}')");
     let rust_expr = parse_image_expr(&expr_str, &resolver).unwrap();
     let rust = rust_expr.get().unwrap();
-    let (cpp, _) = cpp_eval_lel_expr(&expr_str, n).unwrap();
+    let (cpp, _) = ImageOracle::eval_lel_expr(&expr_str, n).unwrap();
 
     for (i, (r, c)) in flatten_fortran(&rust).iter().zip(cpp.iter()).enumerate() {
         assert!((r - c).abs() < 1e-5, "sin: pixel {i}: rust={r}, cpp={c}");
@@ -553,7 +553,7 @@ fn parsed_transcendental_expr_matches_cpp_lel() {
     let expr_str2 = format!("sqrt(abs('{path_str}'))");
     let rust_expr2 = parse_image_expr(&expr_str2, &resolver).unwrap();
     let rust2 = rust_expr2.get().unwrap();
-    let (cpp2, _) = cpp_eval_lel_expr(&expr_str2, n).unwrap();
+    let (cpp2, _) = ImageOracle::eval_lel_expr(&expr_str2, n).unwrap();
 
     for (i, (r, c)) in flatten_fortran(&rust2).iter().zip(cpp2.iter()).enumerate() {
         assert!(
@@ -565,7 +565,7 @@ fn parsed_transcendental_expr_matches_cpp_lel() {
 
 #[test]
 fn parsed_mask_expr_matches_cpp_lel() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -576,7 +576,7 @@ fn parsed_mask_expr_matches_cpp_lel() {
     let n: usize = shape.iter().product();
     let shape_i32: Vec<i32> = shape.iter().map(|&v| v as i32).collect();
 
-    cpp_create_image(
+    ImageOracle::create_image(
         &path,
         &shape_i32,
         &(0..n).map(|i| i as f32).collect::<Vec<_>>(),
@@ -593,7 +593,7 @@ fn parsed_mask_expr_matches_cpp_lel() {
     let rust_mask = parse_mask_expr(&expr_str, &resolver).unwrap();
     let rust = rust_mask.get().unwrap();
 
-    let (cpp, _) = cpp_eval_lel_expr_mask(&expr_str, n).unwrap();
+    let (cpp, _) = ImageOracle::eval_lel_expr_mask(&expr_str, n).unwrap();
 
     let rust_flat: Vec<bool> = flatten_fortran(&rust);
     assert_eq!(rust_flat, cpp);
@@ -601,7 +601,7 @@ fn parsed_mask_expr_matches_cpp_lel() {
 
 #[test]
 fn parsed_composite_expr_matches_cpp_lel() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -613,7 +613,7 @@ fn parsed_composite_expr_matches_cpp_lel() {
     let shape_i32: Vec<i32> = shape.iter().map(|&v| v as i32).collect();
 
     // Use C++ to create the image so coordinates are C++-compatible
-    cpp_create_image(
+    ImageOracle::create_image(
         &path,
         &shape_i32,
         &(0..n).map(|i| i as f32 + 1.0).collect::<Vec<_>>(),
@@ -632,7 +632,7 @@ fn parsed_composite_expr_matches_cpp_lel() {
     );
     let rust_expr = parse_image_expr(&expr_str, &resolver).unwrap();
     let rust = rust_expr.get().unwrap();
-    let (cpp, _) = cpp_eval_lel_expr(&expr_str, n).unwrap();
+    let (cpp, _) = ImageOracle::eval_lel_expr(&expr_str, n).unwrap();
 
     for (i, (r, c)) in flatten_fortran(&rust).iter().zip(cpp.iter()).enumerate() {
         assert!(
@@ -644,7 +644,7 @@ fn parsed_composite_expr_matches_cpp_lel() {
 
 #[test]
 fn parsed_quoted_path_with_special_chars_matches_cpp_lel() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -656,7 +656,7 @@ fn parsed_quoted_path_with_special_chars_matches_cpp_lel() {
     let n: usize = shape.iter().product();
     let shape_i32: Vec<i32> = shape.iter().map(|&v| v as i32).collect();
 
-    cpp_create_image(
+    ImageOracle::create_image(
         &path,
         &shape_i32,
         &(0..n).map(|i| i as f32 * 2.0).collect::<Vec<_>>(),
@@ -672,7 +672,7 @@ fn parsed_quoted_path_with_special_chars_matches_cpp_lel() {
     let expr_str = format!("'{path_str}' + 1.0");
     let rust_expr = parse_image_expr(&expr_str, &resolver).unwrap();
     let rust = rust_expr.get().unwrap();
-    let (cpp, _) = cpp_eval_lel_expr(&expr_str, n).unwrap();
+    let (cpp, _) = ImageOracle::eval_lel_expr(&expr_str, n).unwrap();
 
     assert_eq!(flatten_fortran(&rust), cpp);
 }
@@ -684,7 +684,7 @@ fn parsed_quoted_path_with_special_chars_matches_cpp_lel() {
 /// Rust saves `.imgexpr` → C++ opens it and reads matching pixel values.
 #[test]
 fn rust_save_imgexpr_cpp_opens() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping rust_save_imgexpr_cpp_opens: C++ casacore not available");
         return;
     }
@@ -696,7 +696,7 @@ fn rust_save_imgexpr_cpp_opens() {
     // Create a source image via C++ for coordinate compatibility.
     let img_path = dir.path().join("src.image");
     let data: Vec<f32> = (0..n).map(|i| 1.0 + i as f32 * 0.5).collect();
-    cpp_create_image(&img_path, &shape_i32, &data, "").unwrap();
+    ImageOracle::create_image(&img_path, &shape_i32, &data, "").unwrap();
 
     // Build LEL expression string with the image path.
     let img_path_str = img_path.to_str().unwrap();
@@ -719,7 +719,7 @@ fn rust_save_imgexpr_cpp_opens() {
     // Open with C++ and read pixel data.
     // Note: C++ LEL promotes floating-point literals to Double, so the opened
     // image may be ImageExpr<Double>; the C++ wrapper handles this conversion.
-    let (cpp_data, cpp_shape) = cpp_open_lel_expr_file(&expr_path, n).unwrap();
+    let (cpp_data, cpp_shape) = ImageOracle::open_lel_expr_file(&expr_path, n).unwrap();
     assert_eq!(cpp_shape, vec![8, 8]);
 
     // Evaluate in Rust for comparison.
@@ -732,7 +732,7 @@ fn rust_save_imgexpr_cpp_opens() {
 /// C++ saves `.imgexpr` → Rust opens it and reads matching pixel values.
 #[test]
 fn cpp_save_imgexpr_rust_opens() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping cpp_save_imgexpr_rust_opens: C++ casacore not available");
         return;
     }
@@ -744,7 +744,7 @@ fn cpp_save_imgexpr_rust_opens() {
     // Create source image via C++.
     let img_path = dir.path().join("src.image");
     let data: Vec<f32> = (0..n).map(|i| 2.0 + i as f32 * 0.1).collect();
-    cpp_create_image(&img_path, &shape_i32, &data, "").unwrap();
+    ImageOracle::create_image(&img_path, &shape_i32, &data, "").unwrap();
 
     // Build LEL expression.
     let img_path_str = img_path.to_str().unwrap();
@@ -752,14 +752,14 @@ fn cpp_save_imgexpr_rust_opens() {
 
     // Save as .imgexpr using C++.
     let expr_path = dir.path().join("cpp_expr.imgexpr");
-    cpp_save_lel_expr_file(&expr_str, &expr_path).unwrap();
+    ImageOracle::save_lel_expr_file(&expr_str, &expr_path).unwrap();
 
     // Open with Rust.
     let owned = casa_images::expr_file::open::<f32>(&expr_path).unwrap();
     let rust_data = owned.get().unwrap();
 
     // Evaluate the same expression directly with C++ for reference.
-    let (cpp_data, _) = cpp_eval_lel_expr(&expr_str, n).unwrap();
+    let (cpp_data, _) = ImageOracle::eval_lel_expr(&expr_str, n).unwrap();
 
     let rust_flat = flatten_fortran(&rust_data);
     for (i, (&r, &c)) in rust_flat.iter().zip(cpp_data.iter()).enumerate() {
@@ -769,7 +769,7 @@ fn cpp_save_imgexpr_rust_opens() {
 
 #[test]
 fn two_image_imgexpr_cross_matrix_matches_expected_pixels() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!(
             "skipping two_image_imgexpr_cross_matrix_matches_expected_pixels: C++ casacore not available"
         );
@@ -786,8 +786,8 @@ fn two_image_imgexpr_cross_matrix_matches_expected_pixels() {
 
     let lhs_values: Vec<f32> = (0..n).map(|i| 1.0 + (i as f32) * 0.25).collect();
     let rhs_values: Vec<f32> = (0..n).map(|i| 0.5 + ((i % 7) as f32) * 0.4).collect();
-    cpp_create_image(&lhs_path, &shape_i32, &lhs_values, "").unwrap();
-    cpp_create_image(&rhs_path, &shape_i32, &rhs_values, "").unwrap();
+    ImageOracle::create_image(&lhs_path, &shape_i32, &lhs_values, "").unwrap();
+    ImageOracle::create_image(&rhs_path, &shape_i32, &rhs_values, "").unwrap();
     let lhs = PagedImage::<f32>::open(&lhs_path).unwrap();
     let rhs = PagedImage::<f32>::open(&rhs_path).unwrap();
 
@@ -816,12 +816,12 @@ fn two_image_imgexpr_cross_matrix_matches_expected_pixels() {
         .unwrap();
     assert_float_close("RR", &flatten_fortran(&rr), &expected, 1.0e-5);
 
-    let (rc, rc_shape) = cpp_open_lel_expr_file(&rust_expr_path, n).unwrap();
+    let (rc, rc_shape) = ImageOracle::open_lel_expr_file(&rust_expr_path, n).unwrap();
     assert_eq!(rc_shape, shape_i32.to_vec());
     assert_float_close("RC", &rc, &expected, 1.0e-4);
 
     let cpp_expr_path = dir.path().join("cpp_matrix.imgexpr");
-    cpp_save_lel_expr_file(&expr_str, &cpp_expr_path).unwrap();
+    ImageOracle::save_lel_expr_file(&expr_str, &cpp_expr_path).unwrap();
 
     let cr = casa_images::expr_file::open::<f32>(&cpp_expr_path)
         .unwrap()
@@ -829,7 +829,7 @@ fn two_image_imgexpr_cross_matrix_matches_expected_pixels() {
         .unwrap();
     assert_float_close("CR", &flatten_fortran(&cr), &expected, 1.0e-4);
 
-    let (cc, cc_shape) = cpp_open_lel_expr_file(&cpp_expr_path, n).unwrap();
+    let (cc, cc_shape) = ImageOracle::open_lel_expr_file(&cpp_expr_path, n).unwrap();
     assert_eq!(cc_shape, shape_i32.to_vec());
     assert_float_close("CC", &cc, &expected, 1.0e-4);
 }
@@ -837,7 +837,7 @@ fn two_image_imgexpr_cross_matrix_matches_expected_pixels() {
 /// Nested expression: save an expression referencing another .imgexpr.
 #[test]
 fn nested_imgexpr_round_trip() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping nested_imgexpr_round_trip: C++ casacore not available");
         return;
     }
@@ -849,22 +849,22 @@ fn nested_imgexpr_round_trip() {
     // Create source image via C++.
     let img_path = dir.path().join("base.image");
     let data: Vec<f32> = (0..n).map(|i| 1.0 + i as f32).collect();
-    cpp_create_image(&img_path, &shape_i32, &data, "").unwrap();
+    ImageOracle::create_image(&img_path, &shape_i32, &data, "").unwrap();
 
     // Create first expression: base + 10
     let img_path_str = img_path.to_str().unwrap();
     let expr1_str = format!("'{img_path_str}' + 10.0");
     let expr1_path = dir.path().join("expr1.imgexpr");
-    cpp_save_lel_expr_file(&expr1_str, &expr1_path).unwrap();
+    ImageOracle::save_lel_expr_file(&expr1_str, &expr1_path).unwrap();
 
     // Create second expression referencing the first: expr1 * 2
     let expr1_path_str = expr1_path.to_str().unwrap();
     let expr2_str = format!("'{expr1_path_str}' * 2.0");
     let expr2_path = dir.path().join("expr2.imgexpr");
-    cpp_save_lel_expr_file(&expr2_str, &expr2_path).unwrap();
+    ImageOracle::save_lel_expr_file(&expr2_str, &expr2_path).unwrap();
 
     // Open the nested expression with C++.
-    let (cpp_data, _) = cpp_open_lel_expr_file(&expr2_path, n).unwrap();
+    let (cpp_data, _) = ImageOracle::open_lel_expr_file(&expr2_path, n).unwrap();
 
     // Verify: (base + 10) * 2
     let expected: Vec<f32> = data.iter().map(|&v| (v + 10.0) * 2.0).collect();
@@ -914,7 +914,7 @@ fn save_expr_without_string_errors() {
 
 #[test]
 fn wave14_isnan_matches_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -932,7 +932,7 @@ fn wave14_isnan_matches_cpp() {
     let rust_mask = parse_mask_expr(&expr_str, &resolver).unwrap();
     let rust = casa_lattices::Lattice::get(&rust_mask).unwrap();
 
-    let (cpp, _) = cpp_eval_lel_expr_mask(&expr_str, n).unwrap();
+    let (cpp, _) = ImageOracle::eval_lel_expr_mask(&expr_str, n).unwrap();
     let rust_flat: Vec<bool> = flatten_fortran(&rust);
     assert_eq!(
         rust_flat, cpp,
@@ -942,7 +942,7 @@ fn wave14_isnan_matches_cpp() {
 
 #[test]
 fn wave14_mask_and_replace_on_masked_derived_expr_match_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -953,7 +953,7 @@ fn wave14_mask_and_replace_on_masked_derived_expr_match_cpp() {
     let n = 4usize;
     let path = dir.path().join("masked.image");
     let data = vec![1.0f32, f32::INFINITY, 3.0, 4.0];
-    cpp_create_image(&path, &shape_i32, &data, "").unwrap();
+    ImageOracle::create_image(&path, &shape_i32, &data, "").unwrap();
 
     let mut image = PagedImage::<f32>::open(&path).unwrap();
     image.make_mask("quality", true, true).unwrap();
@@ -968,7 +968,7 @@ fn wave14_mask_and_replace_on_masked_derived_expr_match_cpp() {
     let mask_expr_str = format!("mask('{path_str}' + 1.0)");
     let rust_mask = parse_mask_expr(&mask_expr_str, &resolver).unwrap();
     let rust_mask = flatten_fortran(&rust_mask.get().unwrap());
-    let (cpp_mask, cpp_mask_shape) = cpp_eval_lel_expr_mask(&mask_expr_str, n).unwrap();
+    let (cpp_mask, cpp_mask_shape) = ImageOracle::eval_lel_expr_mask(&mask_expr_str, n).unwrap();
     assert_eq!(cpp_mask_shape, shape_i32.to_vec());
     assert_eq!(rust_mask, vec![true, false, true, true]);
     assert_eq!(rust_mask, cpp_mask);
@@ -979,7 +979,7 @@ fn wave14_mask_and_replace_on_masked_derived_expr_match_cpp() {
     let expected = vec![2.0f32, 42.0, 4.0, 5.0];
     assert_float_close("replace-masked-derived-rust", &rust, &expected, 1e-5);
 
-    let (cpp, cpp_shape) = cpp_eval_lel_expr(&replace_expr_str, n).unwrap();
+    let (cpp, cpp_shape) = ImageOracle::eval_lel_expr(&replace_expr_str, n).unwrap();
     assert_eq!(cpp_shape, shape_i32.to_vec());
     assert_float_close("replace-masked-derived-cpp", &cpp, &expected, 1e-5);
     assert_float_close("replace-masked-derived-cross", &rust, &cpp, 1e-5);
@@ -993,14 +993,14 @@ fn make_cpp_image(
     data: &[f32],
 ) -> (PagedImage<f32>, std::path::PathBuf) {
     let path = dir.join(name);
-    cpp_create_image(&path, shape_i32, data, "").unwrap();
+    ImageOracle::create_image(&path, shape_i32, data, "").unwrap();
     let img = PagedImage::<f32>::open(&path).unwrap();
     (img, path)
 }
 
 #[test]
 fn wave14_sum_scalar_matches_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -1018,7 +1018,7 @@ fn wave14_sum_scalar_matches_cpp() {
     assert!(rust_expr.shape().is_empty());
     let rust = rust_expr.get().unwrap()[IxDyn(&[])];
 
-    let (cpp, cpp_shape) = cpp_eval_lel_expr(&expr_str, 1).unwrap();
+    let (cpp, cpp_shape) = ImageOracle::eval_lel_expr(&expr_str, 1).unwrap();
     assert!(cpp_shape.is_empty());
     assert_eq!(cpp.len(), 1);
     assert!(
@@ -1030,7 +1030,7 @@ fn wave14_sum_scalar_matches_cpp() {
 
 #[test]
 fn wave14_mean_scalar_matches_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -1048,7 +1048,7 @@ fn wave14_mean_scalar_matches_cpp() {
     assert!(rust_expr.shape().is_empty());
     let rust = rust_expr.get().unwrap()[IxDyn(&[])];
 
-    let (cpp, cpp_shape) = cpp_eval_lel_expr(&expr_str, 1).unwrap();
+    let (cpp, cpp_shape) = ImageOracle::eval_lel_expr(&expr_str, 1).unwrap();
     assert!(cpp_shape.is_empty());
     assert_eq!(cpp.len(), 1);
     assert!(
@@ -1060,7 +1060,7 @@ fn wave14_mean_scalar_matches_cpp() {
 
 #[test]
 fn wave14_iif_matches_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -1076,13 +1076,13 @@ fn wave14_iif_matches_cpp() {
     let resolver = make_resolver_for_paths(&[(a_str, &a)]);
     let rust_expr = parse_image_expr(&expr_str, &resolver).unwrap();
     let rust = flatten_fortran(&rust_expr.get().unwrap());
-    let (cpp, _) = cpp_eval_lel_expr(&expr_str, n).unwrap();
+    let (cpp, _) = ImageOracle::eval_lel_expr(&expr_str, n).unwrap();
     assert_float_close("iif", &rust, &cpp, 1e-5);
 }
 
 #[test]
 fn wave14_ntrue_scalar_matches_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -1098,7 +1098,7 @@ fn wave14_ntrue_scalar_matches_cpp() {
     let rust_expr = parse_image_expr(&expr_str, &resolver).unwrap();
     assert!(rust_expr.shape().is_empty());
     let rust = rust_expr.get().unwrap()[IxDyn(&[])];
-    let (cpp, cpp_shape) = cpp_eval_lel_expr(&expr_str, 1).unwrap();
+    let (cpp, cpp_shape) = ImageOracle::eval_lel_expr(&expr_str, 1).unwrap();
     assert!(cpp_shape.is_empty());
     assert_eq!(cpp.len(), 1);
     assert!(
@@ -1110,7 +1110,7 @@ fn wave14_ntrue_scalar_matches_cpp() {
 
 #[test]
 fn wave14_all_scalar_matches_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -1126,7 +1126,7 @@ fn wave14_all_scalar_matches_cpp() {
     let rust_mask = parse_mask_expr(&expr_str, &resolver).unwrap();
     assert!(rust_mask.shape().is_empty());
     let rust = rust_mask.get().unwrap()[IxDyn(&[])];
-    let (cpp, cpp_shape) = cpp_eval_lel_expr_mask(&expr_str, 1).unwrap();
+    let (cpp, cpp_shape) = ImageOracle::eval_lel_expr_mask(&expr_str, 1).unwrap();
     assert!(cpp_shape.is_empty());
     assert_eq!(cpp, vec![rust]);
 }

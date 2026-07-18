@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave3-mosaic-mfs-alma-large-stress-metal",
   "mode_id": "mosaic-mfs-one-channel",
   "description": "Wave 3 #280 ALMA mosaic-large explicit Metal row using all seven mosaic fields, 16 selected channels, multiscale clean, and a 1280 image covering the full pointing footprint.",

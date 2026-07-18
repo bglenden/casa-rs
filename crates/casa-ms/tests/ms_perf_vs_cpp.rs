@@ -10,14 +10,14 @@ use std::time::Instant;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::{OptionalMainColumn, VisibilityDataColumn};
-use casa_test_support::cpp_backend_available;
-use casa_test_support::ms_interop::cpp_ms_bench_create_open;
+use casa_test_support::casacore_oracle_available;
+use casa_test_support::ms_interop::MeasurementSetOracle;
 use casa_types::ArrayValue;
 use common::{populate_main_rows, populate_subtables};
 
 #[test]
 fn ms_create_open_read_perf_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping ms_perf_vs_cpp: C++ casacore not available");
         return;
     }
@@ -28,7 +28,7 @@ fn ms_create_open_read_perf_vs_cpp() {
     let cpp_path = dir.path().join("cpp_perf.ms");
     let rust_path = dir.path().join("rust_perf.ms");
 
-    let cpp = cpp_ms_bench_create_open(&cpp_path, NROWS as u64)
+    let cpp = MeasurementSetOracle::bench_create_open(&cpp_path, NROWS as u64)
         .expect("C++ MeasurementSet benchmark should succeed");
 
     let t0 = Instant::now();

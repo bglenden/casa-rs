@@ -9,7 +9,6 @@ import math
 import os
 import pathlib
 import shutil
-import subprocess
 import sys
 import time
 from typing import Any
@@ -19,6 +18,8 @@ from casatasks import tclean
 from casatools import image
 
 import perf_paths
+from perf_harness import atomic_write_json
+from perf_harness.subprocesses import run_command
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -65,28 +66,6 @@ def parse_args() -> argparse.Namespace:
         help="reuse products whose directories already exist",
     )
     return parser.parse_args()
-
-
-def run_command(
-    argv: list[str],
-    *,
-    cwd: pathlib.Path,
-    env: dict[str, str] | None = None,
-    input_text: str | None = None,
-) -> subprocess.CompletedProcess[str]:
-    merged_env = os.environ.copy()
-    if env:
-        merged_env.update(env)
-    return subprocess.run(
-        argv,
-        cwd=cwd,
-        env=merged_env,
-        input=input_text,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
 
 
 def read_image(path: pathlib.Path) -> np.ndarray:
@@ -218,15 +197,13 @@ def run_rust(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[
         env["CASA_RS_CLARK_TRACE"] = str(prefix.parent / f"{prefix.name}.clark-trace.jsonl")
     started = time.perf_counter()
     envelope = {"kind": "run", "request": request}
-    (prefix.parent / f"{prefix.name}.request.json").write_text(
-        json.dumps(envelope, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    atomic_write_json(prefix.parent / f"{prefix.name}.request.json", envelope)
     completed = run_command(
         [str(REPO_ROOT / "target" / "release" / "casars-imager"), "--json-run", "-"],
         cwd=REPO_ROOT,
-        env=env,
+        environment={**os.environ, **env},
         input_text=json.dumps(envelope),
+        merge_stderr=False,
     )
     elapsed = time.perf_counter() - started
     (prefix.parent / f"{prefix.name}.stdout").write_text(completed.stdout, encoding="utf-8")
@@ -353,6 +330,7 @@ def main() -> None:
     build = run_command(
         ["cargo", "build", "--release", "-p", "casars-imager", "--bin", "casars-imager"],
         cwd=REPO_ROOT,
+        merge_stderr=False,
     )
     if build.returncode != 0:
         sys.stderr.write(build.stdout)
@@ -381,10 +359,7 @@ def main() -> None:
             "casa": casa_result,
             "comparison": comparison,
         }
-        (args.output_dir / "residual-divergence-summary.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        atomic_write_json(args.output_dir / "residual-divergence-summary.json", manifest)
     print(args.output_dir / "residual-divergence-summary.json")
 
 

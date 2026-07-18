@@ -192,16 +192,43 @@
     "root_env": "CASA_RS_IMPERF_DATA_ROOT"
   },
   "environment": {
-    "bench_script": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
-    "bench_script_sha256": "2c162c23ff8c075ab1ca5d411229360bdaea91ac653d2d291c1f3ef0d7082c51",
-    "casa_python": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python",
-    "git_branch": "codex/improve-imaging-performance",
-    "git_commit": "04a7eda96ffc463bb8109b145df268e5a640fb10",
-    "logical_cores": 10,
-    "physical_cores": 10,
-    "physical_memory_bytes": 34359738368,
-    "python": "3.13.5",
-    "repo_root": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs"
+    "datasets": {
+      "measurement_set": {
+        "exists_at_migration": true,
+        "path": "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms"
+      }
+    },
+    "executables": {
+      "bench_script": {
+        "exists_at_migration": false,
+        "path": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
+        "sha256": "2c162c23ff8c075ab1ca5d411229360bdaea91ac653d2d291c1f3ef0d7082c51"
+      },
+      "casa_python": {
+        "exists_at_migration": true,
+        "path": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python"
+      }
+    },
+    "migration": {
+      "method": "checked-in one-time v1-to-v2 migration",
+      "source_schema_version": 1
+    },
+    "repository": {
+      "branch": "codex/improve-imaging-performance",
+      "dirty": null,
+      "revision": "04a7eda96ffc463bb8109b145df268e5a640fb10",
+      "root": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs"
+    },
+    "runtime": {
+      "logical_cores": 10,
+      "machine": null,
+      "physical_cores": 10,
+      "physical_memory_bytes": 34359738368,
+      "platform": null,
+      "python": "3.13.5"
+    },
+    "schema_version": 1,
+    "storage_label": "external-ssd-wave1"
   },
   "exit_code": 0,
   "human_review": {
@@ -227,6 +254,7 @@
     },
     "structured_difference_summary": "overall bad; bad: .image, .psf, .residual"
   },
+  "kind": "workload_run",
   "logs": {
     "benchmark_log": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/runs/001-measured-01-01-baseline/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381.log"
   },
@@ -2420,7 +2448,7 @@
     "reason": null,
     "status": "runnable"
   },
-  "schema_version": 1,
+  "schema_version": 2,
   "started_at": "2026-07-10T22:34:05.731773Z",
   "status": "completed",
   "workload": {

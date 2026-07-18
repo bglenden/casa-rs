@@ -4,6 +4,14 @@ import Darwin
 import XCTest
 
 final class CasarsMacUITests: XCTestCase {
+    private enum GUIWaitPolicy {
+        static let applicationLaunch: TimeInterval = 15
+        static let elementPropagation: TimeInterval = 5
+        static let receiptCreation: TimeInterval = 10
+        static let pollInterval: TimeInterval = 0.05
+        static let processPollInterval: TimeInterval = 0.1
+    }
+
     private var app: XCUIApplication!
     private var productionProjectURL: URL?
 
@@ -2733,39 +2741,24 @@ final class CasarsMacUITests: XCTestCase {
         template: URL,
         environment: [String: String]
     ) {
-        app = makeTestApplication()
-        ensureStoppedBeforeLaunch()
-        app.launchEnvironment["PATH"] = environment["path"] ?? "/usr/bin:/bin"
-        app.launchEnvironment["HOME"] = environment["home"] ?? FileManager.default.homeDirectoryForCurrentUser.path
-        app.launchEnvironment["CODEX_HOME"] = environment["codexHome"] ?? ""
-        app.launchEnvironment["CASA_RS_AGENT_COMMAND"] = environment["agentCommand"] ?? "codex"
-        app.launchEnvironment["CASA_RS_GUI_TEST_PYTHON"] = environment["pythonCommand"] ?? "python3"
-        if let repoRoot = environment["repoRoot"] {
-            app.launchEnvironment["CASA_RS_REPO_ROOT"] = repoRoot
-            app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = repoRoot
-        }
-        if let imager = environment["imagerCommand"] {
-            app.launchEnvironment["CASARS_IMAGER_BIN"] = imager
-        }
-        if let msexplore = environment["msexploreCommand"] {
-            app.launchEnvironment["CASARS_MSEXPLORE_BIN"] = msexplore
-        }
-        app.launchEnvironment["OPENAI_API_KEY"] = ""
-        app.launchEnvironment["AZURE_OPENAI_API_KEY"] = ""
-        app.launchEnvironment["OPENAI_BASE_URL"] = ""
-        app.launchArguments = [
-            "-ApplePersistenceIgnoreState", "YES",
-            "-NSAutomaticTextCompletionEnabled", "NO",
-            "--open-project", project.path,
-            "--open-tutorial-pack", template.path,
-        ]
-        launchTestApplication()
-        app.activate()
-        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 15), app.debugDescription)
-        XCTAssertTrue(element("notebook.document.scroll").waitForExistence(timeout: 15), app.debugDescription)
+        launchLiveProductionProject(
+            project,
+            environment: environment,
+            additionalArguments: ["--open-tutorial-pack", template.path],
+            requiredElements: ["notebook.document.scroll"]
+        )
     }
 
     private func launchLiveAssistantProject(_ project: URL, environment: [String: String]) {
+        launchLiveProductionProject(project, environment: environment)
+    }
+
+    private func launchLiveProductionProject(
+        _ project: URL,
+        environment: [String: String],
+        additionalArguments: [String] = [],
+        requiredElements: [String] = []
+    ) {
         app = makeTestApplication()
         ensureStoppedBeforeLaunch()
         app.launchEnvironment["PATH"] = environment["path"] ?? "/usr/bin:/bin"
@@ -2777,11 +2770,14 @@ final class CasarsMacUITests: XCTestCase {
             app.launchEnvironment["CASA_RS_REPO_ROOT"] = repoRoot
             app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = repoRoot
         }
-        if let simobserve = environment["simobserveCommand"] {
-            app.launchEnvironment["CASARS_SIMOBSERVE_BIN"] = simobserve
-        }
-        if let msexplore = environment["msexploreCommand"] {
-            app.launchEnvironment["CASARS_MSEXPLORE_BIN"] = msexplore
+        for (environmentKey, launchKey) in [
+            ("simobserveCommand", "CASARS_SIMOBSERVE_BIN"),
+            ("msexploreCommand", "CASARS_MSEXPLORE_BIN"),
+            ("imagerCommand", "CASARS_IMAGER_BIN"),
+        ] {
+            if let command = environment[environmentKey] {
+                app.launchEnvironment[launchKey] = command
+            }
         }
         app.launchEnvironment["OPENAI_API_KEY"] = ""
         app.launchEnvironment["AZURE_OPENAI_API_KEY"] = ""
@@ -2790,10 +2786,21 @@ final class CasarsMacUITests: XCTestCase {
             "-ApplePersistenceIgnoreState", "YES",
             "-NSAutomaticTextCompletionEnabled", "NO",
             "--open-project", project.path,
-        ]
+        ] + additionalArguments
         launchTestApplication()
         app.activate()
-        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(
+            app.windows["casa-rs Workbench"].waitForExistence(
+                timeout: GUIWaitPolicy.applicationLaunch
+            ),
+            app.debugDescription
+        )
+        for identifier in requiredElements {
+            XCTAssertTrue(
+                element(identifier).waitForExistence(timeout: GUIWaitPolicy.applicationLaunch),
+                app.debugDescription
+            )
+        }
     }
 
     private func sha256Hex(_ data: Data) -> String {
@@ -2898,25 +2905,30 @@ final class CasarsMacUITests: XCTestCase {
         matching predicate: (LiveAssistantTranscript) -> Bool
     ) throws -> LiveAssistantTranscript {
         let directory = project.appendingPathComponent(".casa-rs/conversations", isDirectory: true)
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            let urls = (try? FileManager.default.contentsOfDirectory(
-                at: directory,
-                includingPropertiesForKeys: nil
-            )) ?? []
-            for url in urls where url.pathExtension == "json" {
-                if let data = try? Data(contentsOf: url),
-                   let transcript = try? JSONDecoder.liveAssistant.decode(
-                       LiveAssistantTranscript.self,
-                       from: data
-                   ),
-                   predicate(transcript)
-                {
-                    return transcript
+        if let transcript = pollForValue(
+            timeout: timeout,
+            interval: GUIWaitPolicy.processPollInterval,
+            operation: {
+                let urls = (try? FileManager.default.contentsOfDirectory(
+                    at: directory,
+                    includingPropertiesForKeys: nil
+                )) ?? []
+                for url in urls where url.pathExtension == "json" {
+                    if let data = try? Data(contentsOf: url),
+                       let transcript = try? JSONDecoder.liveAssistant.decode(
+                           LiveAssistantTranscript.self,
+                           from: data
+                       ),
+                       predicate(transcript)
+                    {
+                        return transcript
+                    }
                 }
+                return nil
             }
-            Thread.sleep(forTimeInterval: 0.1)
-        } while Date() < deadline
+        ) {
+            return transcript
+        }
         let message = "Timed out waiting for the real assistant transcript condition at \(directory.path)"
         XCTFail(message)
         throw LiveAssistantAcceptanceError.transcriptTimeout(message)
@@ -3100,35 +3112,47 @@ final class CasarsMacUITests: XCTestCase {
         ) == .completed
     }
 
-    private func waitForTextValue(_ element: XCUIElement, equalTo expected: String) -> Bool {
-        let deadline = Date().addingTimeInterval(5)
+    private func pollUntil(
+        timeout: TimeInterval,
+        interval: TimeInterval = GUIWaitPolicy.pollInterval,
+        operation: () -> Bool
+    ) -> Bool {
+        pollForValue(timeout: timeout, interval: interval) {
+            operation() ? true : nil
+        } ?? false
+    }
+
+    private func pollForValue<Value>(
+        timeout: TimeInterval,
+        interval: TimeInterval = GUIWaitPolicy.pollInterval,
+        operation: () -> Value?
+    ) -> Value? {
+        let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            if element.value as? String == expected {
-                return true
+            if let value = operation() {
+                return value
             }
-            Thread.sleep(forTimeInterval: 0.05)
+            Thread.sleep(forTimeInterval: interval)
         } while Date() < deadline
-        return false
+        return nil
+    }
+
+    private func waitForTextValue(_ element: XCUIElement, equalTo expected: String) -> Bool {
+        pollUntil(timeout: GUIWaitPolicy.elementPropagation) {
+            element.value as? String == expected
+        }
     }
 
     private func waitForFile(_ url: URL, containing text: String) -> Bool {
-        let deadline = Date().addingTimeInterval(5)
-        repeat {
-            if (try? String(contentsOf: url, encoding: .utf8))?.contains(text) == true {
-                return true
-            }
-            Thread.sleep(forTimeInterval: 0.05)
-        } while Date() < deadline
-        return false
+        pollUntil(timeout: GUIWaitPolicy.elementPropagation) {
+            (try? String(contentsOf: url, encoding: .utf8))?.contains(text) == true
+        }
     }
 
     private func waitForPath(_ url: URL, timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if FileManager.default.fileExists(atPath: url.path) { return true }
-            Thread.sleep(forTimeInterval: 0.05)
-        } while Date() < deadline
-        return false
+        pollUntil(timeout: timeout) {
+            FileManager.default.fileExists(atPath: url.path)
+        }
     }
 
     private func waitForReceiptObject(
@@ -3136,13 +3160,11 @@ final class CasarsMacUITests: XCTestCase {
         timeout: TimeInterval,
         matching predicate: ([String: Any]) -> Bool
     ) throws -> [String: Any] {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            for receipt in receiptObjects(in: runs) {
-                if predicate(receipt) { return receipt }
-            }
-            Thread.sleep(forTimeInterval: 0.05)
-        } while Date() < deadline
+        if let receipt = pollForValue(timeout: timeout, operation: {
+            receiptObjects(in: runs).first(where: predicate)
+        }) {
+            return receipt
+        }
         let message = "Timed out waiting for a matching notebook receipt in \(runs.path)"
         XCTFail(message)
         throw LiveAssistantAcceptanceError.transcriptTimeout(message)
@@ -3164,8 +3186,7 @@ final class CasarsMacUITests: XCTestCase {
 
     private func waitForVisualizationID(in notebook: URL, timeout: TimeInterval) throws -> String {
         let prefix = "<!-- casa-rs-visualization:v1 id="
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
+        if let visualizationID = pollForValue(timeout: timeout, operation: {
             if let source = try? String(contentsOf: notebook, encoding: .utf8),
                let start = source.range(of: prefix)?.upperBound,
                let end = source[start...].firstIndex(where: { $0 == " " || $0 == ">" })
@@ -3173,41 +3194,32 @@ final class CasarsMacUITests: XCTestCase {
                 let id = String(source[start..<end])
                 if !id.isEmpty { return id }
             }
-            Thread.sleep(forTimeInterval: 0.05)
-        } while Date() < deadline
+            return nil
+        }) {
+            return visualizationID
+        }
         let message = "Timed out waiting for a notebook visualization in \(notebook.path)"
         XCTFail(message)
         throw LiveAssistantAcceptanceError.transcriptTimeout(message)
     }
 
     private func waitForReceipt(in runs: URL, containing text: String) -> Bool {
-        let deadline = Date().addingTimeInterval(10)
-        repeat {
+        pollUntil(timeout: GUIWaitPolicy.receiptCreation) {
             let receipts = (try? FileManager.default.contentsOfDirectory(
                 at: runs,
                 includingPropertiesForKeys: nil
             ))?.map { $0.appendingPathComponent("receipt.json") } ?? []
-            if receipts.contains(where: {
+            return receipts.contains(where: {
                 (try? String(contentsOf: $0, encoding: .utf8))?.contains(text) == true
-            }) {
-                return true
-            }
-            Thread.sleep(forTimeInterval: 0.05)
-        } while Date() < deadline
-        return false
+            })
+        }
     }
 
     private func waitForTextValue(_ element: XCUIElement, containing expected: String) -> Bool {
-        let deadline = Date().addingTimeInterval(5)
-        repeat {
-            if (element.value as? String)?.contains(expected) == true
+        pollUntil(timeout: GUIWaitPolicy.elementPropagation) {
+            (element.value as? String)?.contains(expected) == true
                 || element.label.contains(expected)
-            {
-                return true
-            }
-            Thread.sleep(forTimeInterval: 0.05)
-        } while Date() < deadline
-        return false
+        }
     }
 
     private func waitForAccessibilityValue(
@@ -3220,16 +3232,15 @@ final class CasarsMacUITests: XCTestCase {
 
     private func waitForPositivePercentage(_ identifier: String) -> Bool {
         let result = element(identifier)
-        let deadline = Date().addingTimeInterval(5)
-        repeat {
+        return pollUntil(timeout: GUIWaitPolicy.elementPropagation) {
             if let value = result.value as? String,
                let percentage = Int(value.replacingOccurrences(of: "%", with: "")),
-               percentage > 0 {
+               percentage > 0
+            {
                 return true
             }
-            Thread.sleep(forTimeInterval: 0.05)
-        } while Date() < deadline
-        return false
+            return false
+        }
     }
 
     private func assertZeroProductionBoundaryCalls() {

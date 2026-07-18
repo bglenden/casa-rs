@@ -17,7 +17,7 @@ use std::time::Instant;
 use casa_lattices::{
     ExecutionPolicy, LatticeMut, LatticeStatistics, PagedArray, Statistic, TiledShape,
 };
-use casa_test_support::{cpp_backend_available, cpp_lattice_statistics_forced_io_bench};
+use casa_test_support::{LatticeOracle, casacore_oracle_available};
 use ndarray::{ArrayD, IxDyn};
 
 const MEDIUM_SHAPE: [usize; 3] = [512, 512, 64];
@@ -163,7 +163,7 @@ fn best_rust_policy(shape: &[usize; 3]) -> ExecutionPolicy {
 }
 
 fn run_lattice_statistics_forced_io_case(case_name: &str, shape: &[usize; 3]) {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping {case_name}: C++ casacore not available");
         return;
     }
@@ -173,8 +173,13 @@ fn run_lattice_statistics_forced_io_case(case_name: &str, shape: &[usize; 3]) {
 
     let cpp_dir = tempfile::tempdir().unwrap();
     let cpp_path = cpp_dir.path().join("cpp_lattice_stats.table");
-    let cpp = cpp_lattice_statistics_forced_io_bench(&cpp_path, &shape_i32, &tile_i32, CACHE_TILES)
-        .expect("C++ lattice statistics benchmark should succeed");
+    let cpp = LatticeOracle::lattice_statistics_forced_io_bench(
+        &cpp_path,
+        &shape_i32,
+        &tile_i32,
+        CACHE_TILES,
+    )
+    .expect("C++ lattice statistics benchmark should succeed");
 
     let rust = rust_lattice_statistics_forced_io_bench(shape);
 

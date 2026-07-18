@@ -11,7 +11,7 @@ use std::time::Instant;
 use casa_tables::taql::ast::IndexStyle;
 use casa_tables::taql::eval::{EvalContext, ExprValue};
 use casa_tables::taql::functions::call_function;
-use casa_test_support::measures_interop::{cpp_bench_direction_convert, cpp_bench_epoch_convert};
+use casa_test_support::measures_interop::MeasuresOracle;
 use casa_types::RecordValue;
 
 fn skip_unless_release() -> bool {
@@ -58,7 +58,7 @@ fn perf_epoch_conversion() {
     let rust_ns = rust_times[rust_times.len() / 2];
 
     // C++: batch epoch conversion
-    let cpp_ns = cpp_bench_epoch_convert(51544.5, count, "UTC", "TAI", iterations)
+    let cpp_ns = MeasuresOracle::bench_epoch_convert(51544.5, count, "UTC", "TAI", iterations)
         .expect("C++ bench failed");
 
     let ratio = rust_ns as f64 / cpp_ns as f64;
@@ -103,7 +103,7 @@ fn perf_direction_conversion() {
     let rust_ns = rust_times[rust_times.len() / 2];
 
     // C++: batch direction conversion
-    let cpp_ns = cpp_bench_direction_convert(
+    let cpp_ns = MeasuresOracle::bench_direction_convert(
         0.0, 0.5, count, "J2000", "GALACTIC", 0.0, 0.0, 0.0, 0.0, iterations,
     )
     .expect("C++ bench failed");

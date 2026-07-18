@@ -196,16 +196,43 @@
     "root_env": "CASA_RS_IMPERF_DATA_ROOT"
   },
   "environment": {
-    "bench_script": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
-    "bench_script_sha256": "ae11ebebc5b7741314d5aade375da2eb3491557f886d8155447d849caad56de5",
-    "casa_python": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python",
-    "git_branch": "codex/improve-imaging-performance",
-    "git_commit": "04a7eda96ffc463bb8109b145df268e5a640fb10",
-    "logical_cores": 10,
-    "physical_cores": 10,
-    "physical_memory_bytes": 34359738368,
-    "python": "3.13.5",
-    "repo_root": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs"
+    "datasets": {
+      "measurement_set": {
+        "exists_at_migration": true,
+        "path": "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms"
+      }
+    },
+    "executables": {
+      "bench_script": {
+        "exists_at_migration": false,
+        "path": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
+        "sha256": "ae11ebebc5b7741314d5aade375da2eb3491557f886d8155447d849caad56de5"
+      },
+      "casa_python": {
+        "exists_at_migration": true,
+        "path": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python"
+      }
+    },
+    "migration": {
+      "method": "checked-in one-time v1-to-v2 migration",
+      "source_schema_version": 1
+    },
+    "repository": {
+      "branch": "codex/improve-imaging-performance",
+      "dirty": null,
+      "revision": "04a7eda96ffc463bb8109b145df268e5a640fb10",
+      "root": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs"
+    },
+    "runtime": {
+      "logical_cores": 10,
+      "machine": null,
+      "physical_cores": 10,
+      "physical_memory_bytes": 34359738368,
+      "platform": null,
+      "python": "3.13.5"
+    },
+    "schema_version": 1,
+    "storage_label": "external-ssd-wave1-large"
   },
   "exit_code": 0,
   "human_review": {
@@ -229,6 +256,7 @@
     },
     "structured_difference_summary": "overall missing; "
   },
+  "kind": "workload_run",
   "logs": {
     "benchmark_log": "/private/tmp/wave352-counterbalanced-mtmfs/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/runs/002-measured-01-02-candidate/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51.log"
   },
@@ -2679,7 +2707,7 @@
     "reason": null,
     "status": "runnable"
   },
-  "schema_version": 1,
+  "schema_version": 2,
   "started_at": "2026-07-10T15:43:56.740071Z",
   "status": "completed",
   "workload": {

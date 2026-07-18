@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave4-standard-cube-line-medium-clean-clark-control-probe",
   "mode_id": "standard-cube-line-clean-clark-control-probe",
   "description": "Wave 4 Clark cube clean-control diagnostic using the medium dataset with 8 channels and deep clean controls.",

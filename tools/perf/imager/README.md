@@ -48,6 +48,40 @@ imager.
     `tclean` on the same MeasurementSet selection, and can preserve final-run
     products for harness-level comparison
 
+## Harness architecture
+
+All checked-in imaging evidence tools consume the importable
+`tools/perf/imager/perf_harness` package. The command-line scripts own only
+workflow orchestration and presentation; they do not define private result
+schemas, subprocess runners, artifact readers/writers, provenance collectors,
+or scientific comparators.
+
+The package has these canonical owners:
+
+- `schema.py`: strict workload schema version 1 and run/result schema version 2
+- `artifacts.py`: JSON-object loading and atomic JSON replacement
+- `subprocesses.py`: command execution, stdin, timeout, return-code, and
+  stdout/stderr policy
+- `provenance.py`: repository, machine, executable, dataset, and storage
+  provenance
+- `stages.py`: Rust/CASA stage, backend, and timing normalization
+- `casa_protocol.py`: the checked-script JSON input/output boundary
+- `ms_compare.py` plus `casa_ms_compare.py`: the single MeasurementSet
+  comparator, with explicit `full`, `sampled`, and `aca_pairs` modes
+- `image_compare.py` plus `casa_image_compare.py`: the single imaging-product
+  comparator and its beam-aware and structured-difference metrics
+
+CASA-side programs are checked-in Python files. They are syntax-checked
+independently and invoked with request/result JSON files; no command generates
+or writes a Python program at runtime.
+
+Backend diagnostic summaries are computed from the full benchmark stream.
+Result JSON retains at most 128 representative raw records per diagnostic
+category, split between the beginning and end of the stream, and records full
+observed/retained counts plus a truncation flag. The benchmark log remains the
+complete raw record; repeated progress diagnostics cannot inflate the
+machine-readable result without bound.
+
 ## Artifact policy
 
 Generated benchmark data does not default to the repository `target/`
@@ -432,9 +466,11 @@ fail before timing claims if requested as real runs.
 
 ## Result JSON
 
-`run_workload.py` writes one JSON file per run with:
+Every evidence entry point writes the same strict version-2 envelope. Its
+top-level fields are `schema_version`, `kind`, `status`, `run_id`,
+`created_at`, `environment`, `artifacts`, and `results`. Tool-specific content
+lives below `results`; `run_workload.py` records its workload result there with:
 
-- `schema_version: 1`
 - `run_id`, manifest path, git branch/commit, CASA Python path, benchmark script
   hash, and the exact delegated command/env
 - dataset key/path, selected mode, image shape, channel count, weighting,
@@ -452,11 +488,18 @@ fail before timing claims if requested as real runs.
 - review panels for compared products when CASA Python has matplotlib
 - `human_review`, which remains `pending` until Brian accepts the numeric
   table and panels for the mode ticket
-- a clear `dry_run`, `completed`, or `failed` status
+- a typed `dry_run`, `completed`, `failed_execution`, `failed_comparison`,
+  `out_of_tolerance`, or `unavailable` status
 
-The workload result's `schema_version: 1` is the benchmark artifact schema. It
-is independent of `casars-imager` task protocol v3 and the progress/
-observability schema versions emitted by the application.
+The workload manifest's `schema_version: 1` and result envelope's
+`schema_version: 2` are independent of `casars-imager` task protocol v3 and the
+progress/observability schema versions emitted by the application. Unknown
+fields, wrong types, and runtime result schema version 1 are rejected.
+
+Thirty checked-in evidence artifacts were converted once with
+`migrate_evidence_v1_to_v2.py`; the evidence manifest SHA-256 values were
+updated in the same migration. The converter is deliberately not a runtime
+fallback. New tools do not best-effort parse historical shapes.
 
 ### Failure semantics
 
@@ -466,9 +509,14 @@ benchmark script is invoked. Those failures exit without writing partial timing
 claims.
 
 If the delegated benchmark command exits non-zero, the result JSON is written
-with top-level `status: failed`, the benchmark log path, the command exit code,
+with top-level `status: failed_execution`, the benchmark log path, the command exit code,
 Rust timing status `not_run`, CASA timing status `blocked`, and the shared block
 reason. Product comparison is skipped.
+
+An invocation failure, comparator execution failure, scientific tolerance
+failure, and intentionally unavailable oracle are distinct machine-readable
+states. Failed states include a typed `results.failure` record; retained logs,
+artifact paths, and provenance remain available for diagnosis.
 
 If a completed benchmark log omits one timing section, the corresponding side is
 reported as `status: missing` with an explanatory reason instead of `ran`; only a

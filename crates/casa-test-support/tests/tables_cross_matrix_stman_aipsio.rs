@@ -2,10 +2,10 @@
 #![cfg(feature = "cpp-interop-tests")]
 
 use casa_tables::{ColumnOptions, ColumnSchema, Table, TableOptions, TableSchema};
-use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{
     ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
 };
+use casa_test_support::{CppTableFixture, TableOracle};
 use casa_types::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
@@ -861,8 +861,8 @@ fn save_and_verify_mutation(
     );
 
     // RC: C++ verify (skipped when C++ unavailable)
-    if casa_test_support::cpp_backend_available() {
-        casa_test_support::cpp_table_verify(cpp_fixture, &path)
+    if casa_test_support::casacore_oracle_available() {
+        TableOracle::table_verify(cpp_fixture, &path)
             .unwrap_or_else(|e| panic!("{label}: C++ verify failed: {e}"));
     }
 }
@@ -989,7 +989,7 @@ fn stride_read_on_rust_written_table() {
 
 #[test]
 fn stride_read_on_cpp_written_table() {
-    if !casa_test_support::cpp_backend_available() {
+    if !casa_test_support::casacore_oracle_available() {
         eprintln!("skipping: C++ casacore unavailable");
         return;
     }
@@ -998,8 +998,7 @@ fn stride_read_on_cpp_written_table() {
     // Use C++ to write a scalar_primitives table (3 rows)
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cpp_stride_test");
-    casa_test_support::cpp_table_write(CppTableFixture::ScalarPrimitives, &path)
-        .expect("C++ write");
+    TableOracle::table_write(CppTableFixture::ScalarPrimitives, &path).expect("C++ write");
 
     let table = Table::open(TableOptions::new(&path)).unwrap();
 
@@ -1130,7 +1129,7 @@ fn record_column_round_trip_values() {
 /// CR test: verify `get_cell_slice()` works on C++-written fixed array data.
 #[test]
 fn cr_slice_on_cpp_written_fixed_array() {
-    if !casa_test_support::cpp_backend_available() {
+    if !casa_test_support::casacore_oracle_available() {
         eprintln!("skipping: C++ casacore unavailable");
         return;
     }
@@ -1138,8 +1137,7 @@ fn cr_slice_on_cpp_written_fixed_array() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cr_slice_test");
-    casa_test_support::cpp_table_write(CppTableFixture::FixedArray, &path)
-        .expect("C++ write FixedArray");
+    TableOracle::table_write(CppTableFixture::FixedArray, &path).expect("C++ write FixedArray");
 
     let table = Table::open(TableOptions::new(&path)).unwrap();
     assert_eq!(table.row_count(), 3);
@@ -1178,14 +1176,14 @@ fn cr_slice_on_cpp_written_fixed_array() {
 /// CR test: verify `data_manager_info()` on a C++-written table.
 #[test]
 fn cr_data_manager_info_on_cpp_table() {
-    if !casa_test_support::cpp_backend_available() {
+    if !casa_test_support::casacore_oracle_available() {
         eprintln!("skipping: C++ casacore unavailable");
         return;
     }
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cr_dm_info");
-    casa_test_support::cpp_table_write(CppTableFixture::ScalarPrimitives, &path)
+    TableOracle::table_write(CppTableFixture::ScalarPrimitives, &path)
         .expect("C++ write ScalarPrimitives");
 
     let table = Table::open(TableOptions::new(&path)).unwrap();

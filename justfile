@@ -12,6 +12,7 @@ quick:
     CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings
     CARGO_INCREMENTAL=0 RUST_TEST_THREADS=1 cargo test --workspace
     python3 scripts/test-task-cli-hosts.py
+    python3 apps/casars-mac/script/test_gui_acceptance.py
 
 verify:
     just quick
@@ -54,7 +55,7 @@ docs-check:
     bash scripts/docs-check.sh
 
 gui-test:
-    bash apps/casars-mac/script/test_gui.sh
+    python3 apps/casars-mac/script/gui_acceptance.py run gui-test
 
 # Run the deterministic GUI gate on a dedicated logged-in remote Mac.
 gui-test-remote:
@@ -71,12 +72,12 @@ assistant-live-smoke:
 
 # Opt-in launched-app acceptance using the installed Codex CLI's ChatGPT subscription.
 assistant-live-gui:
-    bash apps/casars-mac/script/test_assistant_live_gui.sh
+    python3 apps/casars-mac/script/gui_acceptance.py run assistant-live-gui
 
 # Opt-in real-world notebook/task/Python/plot round-trip using the installed
 # Codex CLI's ChatGPT subscription and a disposable project.
 notebook-roundtrip-gui:
-    bash apps/casars-mac/script/test_notebook_roundtrip_gui.sh
+    python3 apps/casars-mac/script/gui_acceptance.py run notebook-roundtrip-gui
 
 # Run the live notebook production round-trip on a dedicated remote Mac.
 notebook-roundtrip-gui-remote:
@@ -84,7 +85,7 @@ notebook-roundtrip-gui-remote:
 
 # Opt-in end-to-end TW Hya tutorial journey through production adapters.
 tutorial-journey-gui:
-    bash apps/casars-mac/script/test_tutorial_journey_gui.sh
+    python3 apps/casars-mac/script/gui_acceptance.py run tutorial-journey-gui
 
 # Run the production TW Hya tutorial journey on the dedicated remote Mac.
 tutorial-journey-gui-remote:

@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave4-standard-cubedata-line-medium-clean-hogbom",
   "mode_id": "standard-cubedata-line-clean-hogbom-casa-deep10000",
   "description": "Wave 4 W4-20 medium standard-gridder cubedata Hogbom deep clean workload for shared slab clean correctness and acceleration coverage.",

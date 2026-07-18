@@ -7,9 +7,7 @@
 
 use casa_tables::table_quantum::{ArrayQuantColumn, ScalarQuantColumn, TableQuantumDesc};
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
-use casa_test_support::table_quantum_interop::{
-    cpp_create_quantum_table, cpp_read_quantum_table, cpp_verify_quantum_table,
-};
+use casa_test_support::table_quantum_interop::TableQuantumOracle;
 use casa_types::*;
 
 /// Build a Rust table with the same layout as the C++ shim creates.
@@ -180,7 +178,7 @@ fn cr_scalar_fixed_and_variable() {
     let path = dir.path().join("cr_quantum");
     let path_str = path.to_str().unwrap();
 
-    cpp_create_quantum_table(path_str).expect("C++ create should succeed");
+    TableQuantumOracle::create(path_str).expect("C++ create should succeed");
 
     let table = Table::open(TableOptions::new(path_str)).unwrap();
 
@@ -211,7 +209,7 @@ fn cr_array_fixed() {
     let path = dir.path().join("cr_quantum_arr");
     let path_str = path.to_str().unwrap();
 
-    cpp_create_quantum_table(path_str).expect("C++ create should succeed");
+    TableQuantumOracle::create(path_str).expect("C++ create should succeed");
 
     let table = Table::open(TableOptions::new(path_str)).unwrap();
 
@@ -228,7 +226,7 @@ fn cr_array_variable_per_row() {
     let path = dir.path().join("cr_quantum_arr_var");
     let path_str = path.to_str().unwrap();
 
-    cpp_create_quantum_table(path_str).expect("C++ create should succeed");
+    TableQuantumOracle::create(path_str).expect("C++ create should succeed");
 
     let table = Table::open(TableOptions::new(path_str)).unwrap();
 
@@ -258,7 +256,7 @@ fn rc_scalar_verify_from_cpp() {
     create_rust_quantum_table(path_str);
 
     // C++ reads the values.
-    let (fixed, var, units) = cpp_read_quantum_table(path_str).expect("C++ read should succeed");
+    let (fixed, var, units) = TableQuantumOracle::read(path_str).expect("C++ read should succeed");
 
     assert!((fixed[0] - 45.0).abs() < 1e-12);
     assert!((fixed[1] - 90.0).abs() < 1e-12);
@@ -281,7 +279,7 @@ fn rc_verify_quantum_keywords_from_cpp() {
 
     create_rust_quantum_table(path_str);
 
-    let ok = cpp_verify_quantum_table(path_str).expect("C++ verify should succeed");
+    let ok = TableQuantumOracle::verify(path_str).expect("C++ verify should succeed");
     assert!(ok, "C++ verification of Rust-written quantum table failed");
 }
 
@@ -293,9 +291,9 @@ fn cc_cpp_roundtrip() {
     let path = dir.path().join("cc_quantum");
     let path_str = path.to_str().unwrap();
 
-    cpp_create_quantum_table(path_str).expect("C++ create should succeed");
+    TableQuantumOracle::create(path_str).expect("C++ create should succeed");
 
-    let (fixed, var, units) = cpp_read_quantum_table(path_str).expect("C++ read should succeed");
+    let (fixed, var, units) = TableQuantumOracle::read(path_str).expect("C++ read should succeed");
 
     assert!((fixed[0] - 45.0).abs() < 1e-12);
     assert!((fixed[1] - 90.0).abs() < 1e-12);

@@ -206,12 +206,13 @@ class AcaSimalmaHarnessTests(unittest.TestCase):
             )
 
             result = bench_aca_simalma.run_assessment(args)
+            details = result["results"]["aca_simalma"]
 
-            self.assertEqual(result["inputs"]["preflight"]["simalma"]["status"], "available")
-            self.assertEqual(result["casa"]["status"], "not_run")
-            self.assertEqual(result["native"]["status"], "not_run")
-            self.assertEqual(result["closeout_gate"]["status"], "blocked")
-            script = Path(result["casa"]["scripts"]["simalma"]["script"])
+            self.assertEqual(details["inputs"]["preflight"]["simalma"]["status"], "available")
+            self.assertEqual(details["casa"]["status"], "not_run")
+            self.assertEqual(details["native"]["status"], "not_run")
+            self.assertEqual(details["closeout_gate"]["status"], "blocked")
+            script = Path(details["casa"]["programs"]["simalma"]["script"])
             self.assertTrue(script.exists())
 
 

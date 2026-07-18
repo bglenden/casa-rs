@@ -9,17 +9,29 @@ import os
 import pathlib
 import statistics
 import shutil
-import subprocess
 import sys
 import time
 from typing import Any
 
 import perf_paths
+from perf_harness import (
+    RUN_RESULT_SCHEMA_VERSION,
+    atomic_write_json,
+    load_json_object,
+    validate_run_result,
+)
+from perf_harness.artifacts import ArtifactError
+from perf_harness.casa_protocol import run_json_file_protocol
+from perf_harness.image_compare import compare_products as compare_image_products
+from perf_harness.ms_compare import compare_measurement_sets
+from perf_harness.provenance import capture_provenance
+from perf_harness.subprocesses import run_command
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "simobserve"
 DEFAULT_OUTPUT_DIR = perf_paths.artifact_path("wave1", "simobserve-bench")
+CASA_MS_TOOLS = pathlib.Path(__file__).resolve().parent / "perf_harness" / "casa_ms_tools.py"
 
 
 class BenchError(Exception):
@@ -132,13 +144,14 @@ def main() -> None:
 
     try:
         result = run_benchmark(args)
-        result_path = pathlib.Path(result["result_json"])
-        write_json(result_path, result)
-        write_html_report(pathlib.Path(result["report_html"]), result)
+        result_path = pathlib.Path(result["artifacts"]["result_json"])
+        atomic_write_json(result_path, result)
+        details = result["results"]["simobserve"]
+        write_html_report(pathlib.Path(result["artifacts"]["report_html"]), details)
         print(result_path)
-        if result["correctness"]["status"] == "failed":
+        if result["status"] == "out_of_tolerance":
             raise SystemExit(2)
-    except BenchError as error:
+    except (BenchError, ArtifactError) as error:
         print(f"error: {error}", file=sys.stderr)
         raise SystemExit(2) from None
 
@@ -148,7 +161,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         raise BenchError("--repeats must be >= 1")
     if args.fixed_channel_workers is not None and args.fixed_channel_workers < 1:
         raise BenchError("--fixed-channel-workers must be >= 1")
-    plan = read_json(args.plan)
+    plan = load_json_object(args.plan, description="simobserve plan")
     dataset = select_dataset(plan, args.dataset)
     output_dir = args.output_dir.resolve()
     perf_paths.mark_safe_to_delete(perf_paths.default_artifact_root())
@@ -157,7 +170,10 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     run_root = output_dir / run_id
     run_root.mkdir(parents=True, exist_ok=True)
 
-    request = read_json(pathlib.Path(dataset["paths"]["casars_simobserve_request"]))
+    request = load_json_object(
+        pathlib.Path(dataset["paths"]["casars_simobserve_request"]),
+        description="simobserve request",
+    )
     if args.disable_noise:
         request["request"]["corruption"] = None
         request["request"]["model_peak_jy_per_pixel"] = None
@@ -280,11 +296,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 
     result_path = run_root / "simobserve-benchmark.json"
     report_path = run_root / "simobserve-benchmark.html"
-    return {
-        "schema_version": 1,
-        "result_json": str(result_path),
-        "report_html": str(report_path),
-        "run_root": str(run_root),
+    details = {
         "dataset": dataset["id"],
         "shape": dataset["shape"],
         "native_parallel": native_parallel,
@@ -305,6 +317,44 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "required_data_io_throughput_mb_s": args.require_data_io_throughput_mb_s,
         },
     }
+    status = "completed"
+    if correctness["status"] == "failed":
+        status = "out_of_tolerance"
+    results: dict[str, Any] = {"simobserve": details}
+    if status != "completed":
+        results["failure"] = {
+            "kind": "comparison_tolerance",
+            "reason": "; ".join(correctness.get("reasons", []))
+            or "simobserve correctness comparison failed",
+        }
+    result = {
+        "schema_version": RUN_RESULT_SCHEMA_VERSION,
+        "kind": "simobserve_benchmark",
+        "status": status,
+        "run_id": run_id,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "environment": capture_provenance(
+            repo_root=REPO_ROOT,
+            executables={
+                "native_simobserve": args.casars_binary,
+                "casa_python": args.casa_python,
+            },
+            datasets={
+                "plan": args.plan,
+                "native_output": native_parallel["last_ms"],
+                "casa_output": None if casa is None else casa["last_ms"],
+            },
+            storage_label="simobserve-benchmark",
+        ),
+        "artifacts": {
+            "result_json": str(result_path),
+            "report_html": str(report_path),
+            "run_root": str(run_root),
+        },
+        "results": results,
+    }
+    validate_run_result(result, source=str(result_path))
+    return result
 
 
 def run_native_repeats(
@@ -330,18 +380,16 @@ def run_native_repeats(
         run_request["request"]["output_ms"] = str(ms_path)
         run_request["request"]["overwrite"] = True
         request_path = run_dir / "request.json"
-        write_json(request_path, run_request)
+        atomic_write_json(request_path, run_request)
         env = os.environ.copy()
         if channel_workers is not None:
             env["CASA_RS_SIMOBSERVE_CHANNEL_WORKERS"] = str(channel_workers)
         started = time.perf_counter()
-        completed = subprocess.run(
+        completed = run_command(
             [str(binary), "--json-run", str(request_path)],
             cwd=REPO_ROOT,
-            env=env,
-            text=True,
-            capture_output=True,
-            check=False,
+            environment=env,
+            merge_stderr=False,
         )
         elapsed = time.perf_counter() - started
         (run_dir / "stdout.json").write_text(completed.stdout, encoding="utf-8")
@@ -390,26 +438,20 @@ def run_casa_repeats(
         run_dataset["paths"]["continuum_model_fits"] = str(
             run_dir / "dataset" / "models" / "structured-continuum.fits"
         )
-        script = run_dir / "run-casa-simobserve.py"
-        script.write_text(
-            CASA_RUNNER.format(dataset_json=json.dumps(run_dataset)),
-            encoding="utf-8",
-        )
         started = time.perf_counter()
-        completed = subprocess.run(
-            [str(python), str(script)],
+        protocol = run_json_file_protocol(
+            casa_python=str(python),
+            script=CASA_MS_TOOLS,
+            request={"operation": "generate_simobserve_dataset", "dataset": run_dataset},
+            request_path=run_dir / "casa-request.json",
+            output_path=run_dir / "casa-result.json",
+            log_path=run_dir / "stdout.log",
             cwd=REPO_ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
         )
         elapsed = time.perf_counter() - started
-        (run_dir / "stdout.jsonl").write_text(completed.stdout, encoding="utf-8")
-        (run_dir / "stderr.log").write_text(completed.stderr, encoding="utf-8")
-        if completed.returncode != 0:
+        if protocol.status != "completed":
             raise BenchError(
-                f"CASA simobserve failed with exit {completed.returncode}: "
-                f"{completed.stderr.strip()}"
+                f"CASA simobserve {protocol.status}: {protocol.reason}"
             )
         timings.append(elapsed)
         last_ms = run_dir / "casa.ms"
@@ -762,115 +804,24 @@ def collect_image_product_comparison(
     casa_prefix: str,
     suffixes: list[str],
 ) -> dict[str, Any]:
-    script = r'''
-import json
-import math
-import sys
-
-import numpy as np
-from casatools import image
-
-native_prefix, casa_prefix, suffixes = json.loads(sys.argv[1])
-
-def open_image(path):
-    ia = image()
-    try:
-        ia.open(path)
-        data = np.asarray(ia.getchunk(), dtype=np.float64)
-        unit = ia.brightnessunit()
-    finally:
-        try:
-            ia.close()
-        except Exception:
-            pass
-    return data, unit
-
-def summarize(data):
-    finite = data[np.isfinite(data)]
-    if finite.size == 0:
-        return {"finite_count": 0}
-    return {
-        "shape": list(data.shape),
-        "finite_count": int(finite.size),
-        "min": float(np.min(finite)),
-        "max": float(np.max(finite)),
-        "peak_abs": float(np.max(np.abs(finite))),
-        "mean": float(np.mean(finite)),
-        "rms": float(math.sqrt(float(np.mean(finite * finite)))),
-    }
-
-result = {
-    "status": "passed",
-    "native_prefix": native_prefix,
-    "casa_prefix": casa_prefix,
-    "products": {},
-    "missing_products": [],
-}
-for suffix in suffixes:
-    native_path = native_prefix + suffix
-    casa_path = casa_prefix + suffix
-    entry = {
-        "native_path": native_path,
-        "casa_path": casa_path,
-    }
-    try:
-        native, native_unit = open_image(native_path)
-    except Exception as error:
-        native = None
-        entry["native_error"] = str(error)
-    try:
-        casa, casa_unit = open_image(casa_path)
-    except Exception as error:
-        casa = None
-        entry["casa_error"] = str(error)
-    if native is None or casa is None:
-        entry["status"] = "missing"
-        result["missing_products"].append(suffix)
-        result["status"] = "failed"
-        result["products"][suffix] = entry
-        continue
-    entry["native"] = {"unit": native_unit, **summarize(native)}
-    entry["casa"] = {"unit": casa_unit, **summarize(casa)}
-    if native.shape != casa.shape:
-        entry["status"] = "shape_mismatch"
-        result["status"] = "failed"
-        result["products"][suffix] = entry
-        continue
-    diff = native - casa
-    finite = diff[np.isfinite(diff)]
-    casa_peak = max(float(np.nanmax(np.abs(casa))), 1.0e-30)
-    max_abs = float(np.nanmax(np.abs(diff))) if diff.size else 0.0
-    rms_abs = float(math.sqrt(float(np.nanmean(diff * diff)))) if finite.size else 0.0
-    entry.update({
-        "status": "passed",
-        "max_abs_diff": max_abs,
-        "rms_abs_diff": rms_abs,
-        "max_rel_to_casa_peak": max_abs / casa_peak,
-        "rms_rel_to_casa_peak": rms_abs / casa_peak,
-    })
-    result["products"][suffix] = entry
-print(json.dumps(result, sort_keys=True))
-'''
-    completed = subprocess.run(
-        [
-            casa_python,
-            "-c",
-            script,
-            json.dumps([native_prefix, casa_prefix, suffixes]),
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        return {
-            "status": "failed",
-            "reason": completed.stderr.strip(),
-            "native_prefix": native_prefix,
+    artifact_prefix = pathlib.Path(native_prefix).parent / "simobserve-image-products"
+    panel_dir = artifact_prefix.with_suffix(".panels")
+    comparison = compare_image_products(
+        casa_python=casa_python,
+        request={
+            "rust_prefix": native_prefix,
             "casa_prefix": casa_prefix,
-        }
-    return parse_json_from_stdout(completed.stdout, "image product comparison")
-
+            "products": suffixes,
+            "max_elements_per_product": 8_000_000,
+            "panel_dir": str(panel_dir),
+        },
+        artifact_prefix=artifact_prefix,
+        cwd=REPO_ROOT,
+    )
+    comparison["native_prefix"] = native_prefix
+    comparison["casa_prefix"] = casa_prefix
+    comparison["panel_dir"] = str(panel_dir)
+    return comparison
 
 def oracle_comparison_summary(
     correctness: dict[str, Any],
@@ -930,31 +881,21 @@ def align_request_start_time_to_ms(
 
 
 def read_first_ms_time(casa_python: str, ms_path: str) -> float:
-    script = r'''
-import json
-import sys
-from casatools import table
-
-path = json.loads(sys.argv[1])
-tb = table()
-tb.open(path)
-try:
-    value = float(tb.getcell("TIME", 0))
-finally:
-    tb.close()
-print(json.dumps({"first_time": value}))
-'''
-    completed = subprocess.run(
-        [casa_python, "-c", script, json.dumps(ms_path)],
-        text=True,
-        capture_output=True,
-        check=False,
+    artifact_root = pathlib.Path(ms_path).parent
+    protocol = run_json_file_protocol(
+        casa_python=casa_python,
+        script=CASA_MS_TOOLS,
+        request={"operation": "first_ms_time", "path": ms_path},
+        request_path=artifact_root / "first-ms-time.request.json",
+        output_path=artifact_root / "first-ms-time.result.json",
+        log_path=artifact_root / "first-ms-time.log",
+        cwd=REPO_ROOT,
     )
-    if completed.returncode != 0:
+    if protocol.status != "completed" or protocol.output is None:
         raise BenchError(
-            "failed to inspect first CASA MS time: " + completed.stderr.strip()
+            f"failed to inspect first CASA MS time: {protocol.status}: {protocol.reason}"
         )
-    return float(parse_json_from_stdout(completed.stdout, "first MS time")["first_time"])
+    return float(protocol.output["first_time"])
 
 
 def parse_json_from_stdout(stdout: str, context: str) -> dict[str, Any]:
@@ -979,26 +920,6 @@ def parse_json_from_stdout(stdout: str, context: str) -> dict[str, Any]:
     raise BenchError(f"{context} stdout did not contain a JSON object")
 
 
-CASA_RUNNER = r'''
-import json
-import pathlib
-import sys
-
-sys.path.insert(0, "{tool_dir}")
-import generate_wave1_casa_datasets as gen
-
-dataset = json.loads({dataset_json!r})
-result = gen.generate_dataset(
-    dataset,
-    skip_existing=False,
-    overwrite=True,
-    preview=False,
-    preview_max_pixels=128,
-)
-print(json.dumps(result, sort_keys=True))
-'''.replace("{tool_dir}", str(pathlib.Path(__file__).resolve().parent))
-
-
 def collect_correctness(
     casa_python: str,
     native_parallel_ms: str,
@@ -1015,91 +936,22 @@ def collect_correctness(
         paths["native_serial"] = native_serial_ms
     if casa_ms is not None:
         paths["casa"] = casa_ms
-    script = (
-        "import json,sys\n"
-        "import numpy as np\n"
-        "from casatools import table\n"
-        "paths=json.loads(sys.argv[1])\n"
+    artifact_root = pathlib.Path(native_parallel_ms).parent.parent / "ms-comparison"
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    protocol = run_json_file_protocol(
+        casa_python=casa_python,
+        script=CASA_MS_TOOLS,
+        request={"operation": "inspect_measurement_sets", "paths": paths},
+        request_path=artifact_root / "inspection.request.json",
+        output_path=artifact_root / "inspection.result.json",
+        log_path=artifact_root / "inspection.log",
+        cwd=REPO_ROOT,
     )
-    script += r'''
-def subtable_rows(path, name):
-    tb = table()
-    try:
-        tb.open(path + "/" + name)
-        return int(tb.nrows())
-    finally:
-        try:
-            tb.close()
-        except Exception:
-            pass
-
-def stats(values):
-    arr = np.asarray(values)
-    return {
-        "min": float(arr.min()),
-        "max": float(arr.max()),
-        "mean": float(arr.mean()),
-    }
-
-def data_stats(cell):
-    arr = np.asarray(cell)
-    amp = np.abs(arr)
-    return {
-        "shape": list(arr.shape),
-        "abs_sum": float(amp.sum()),
-        "abs_max": float(amp.max()),
-        "real_mean": float(arr.real.mean()),
-        "imag_mean": float(arr.imag.mean()),
-    }
-
-def inspect(path):
-    tb = table()
-    tb.open(path)
-    try:
-        rows = tb.nrows()
-        colnames = tb.colnames()
-        data = tb.getcell("DATA", 0)
-        uvw = tb.getcell("UVW", 0)
-        selected = sorted(set([0, max(0, rows // 2), max(0, rows - 1)]))
-        selected_data = {str(row): data_stats(tb.getcell("DATA", row)) for row in selected}
-        uvw_col = tb.getcol("UVW")
-    finally:
-        tb.close()
-    return {
-        "rows": int(rows),
-        "columns": colnames,
-        "complex_visibility_columns": [
-            column for column in ["DATA", "MODEL_DATA", "CORRECTED_DATA", "FLOAT_DATA"]
-            if column in colnames
-        ],
-        "data_shape": list(data.shape),
-        "first_data_abs_sum": float(abs(data).sum()),
-        "first_uvw": [float(value) for value in uvw],
-        "uvw_stats": {
-            "u_m": stats(uvw_col[0, :]),
-            "v_m": stats(uvw_col[1, :]),
-            "w_m": stats(uvw_col[2, :]),
-        },
-        "selected_data_stats": selected_data,
-        "subtable_rows": {
-            "FIELD": subtable_rows(path, "FIELD"),
-            "SPECTRAL_WINDOW": subtable_rows(path, "SPECTRAL_WINDOW"),
-            "DATA_DESCRIPTION": subtable_rows(path, "DATA_DESCRIPTION"),
-            "OBSERVATION": subtable_rows(path, "OBSERVATION"),
-            "POINTING": subtable_rows(path, "POINTING"),
-        },
-    }
-print(json.dumps({name: inspect(path) for name, path in paths.items()}, sort_keys=True))
-'''
-    completed = subprocess.run(
-        [casa_python, "-c", script, json.dumps(paths)],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise BenchError(f"failed to inspect benchmark MS outputs: {completed.stderr.strip()}")
-    inspections = parse_json_from_stdout(completed.stdout, "MS inspection")
+    if protocol.status != "completed" or protocol.output is None:
+        raise BenchError(
+            f"failed to inspect benchmark MS outputs: {protocol.status}: {protocol.reason}"
+        )
+    inspections = protocol.output
     status = "passed"
     reasons = []
     native = inspections["native_parallel"]
@@ -1165,674 +1017,24 @@ def collect_sampled_strict_value_comparison(
     data_atol: float,
     data_rtol: float,
 ) -> dict[str, Any]:
-    script = r'''
-import json
-import sys
-import numpy as np
-from casatools import table
-
-native_path, casa_path, uvw_atol, data_atol, data_rtol = json.loads(sys.argv[1])
-
-KEY_COLUMNS = ["TIME", "FIELD_ID", "DATA_DESC_ID", "ANTENNA1", "ANTENNA2"]
-SAMPLE_ROWS = 513
-
-def open_table(path):
-    tb = table()
-    tb.open(path)
-    return tb
-
-def key_tuple(keys, row):
-    return tuple(key[row].item() if hasattr(key[row], "item") else key[row] for key in keys)
-
-def phase_residual_diagnostics(samples):
-    if not samples:
-        return {"samples": 0, "fields": {}}
-    values = np.asarray(samples, dtype=np.float64)
-    fields = {}
-    for field_id in sorted(set(values[:, 0].astype(int))):
-        field_values = values[values[:, 0] == field_id]
-        if field_values.shape[0] < 4:
-            continue
-        high_amplitude_cut = np.percentile(field_values[:, 7], 50)
-        fit_values = field_values[field_values[:, 7] >= high_amplitude_cut]
-        if fit_values.shape[0] < 4:
-            fit_values = field_values
-        design = np.column_stack([
-            fit_values[:, 2],
-            fit_values[:, 3],
-            fit_values[:, 4],
-            np.ones(fit_values.shape[0]),
-        ])
-        phase = fit_values[:, 5]
-        beta, *_ = np.linalg.lstsq(design, phase, rcond=None)
-        residual = phase - design @ beta
-        amp_ratio = fit_values[:, 6]
-        abs_delta = fit_values[:, 8]
-        fields[str(field_id)] = {
-            "samples": int(field_values.shape[0]),
-            "fit_samples": int(fit_values.shape[0]),
-            "phase_fit_rad_per_lambda": {
-                "u": float(beta[0]),
-                "v": float(beta[1]),
-                "w": float(beta[2]),
-                "constant": float(beta[3]),
-            },
-            "phase_residual_rms_rad": float(np.sqrt(np.mean(residual * residual))),
-            "phase_min_rad": float(phase.min()),
-            "phase_max_rad": float(phase.max()),
-            "amplitude_ratio": {
-                "mean": float(amp_ratio.mean()),
-                "std": float(amp_ratio.std()),
-                "min": float(amp_ratio.min()),
-                "max": float(amp_ratio.max()),
-            },
-            "abs_delta": {
-                "mean": float(abs_delta.mean()),
-                "max": float(abs_delta.max()),
-            },
-        }
-    return {"samples": int(values.shape[0]), "fields": fields}
-
-def read_keys(path):
-    tb = open_table(path)
-    try:
-        rows = int(tb.nrows())
-        keys = [np.asarray(tb.getcol(column)) for column in KEY_COLUMNS]
-    finally:
-        tb.close()
-    return rows, keys
-
-def flag_counts(path, chunk_rows=8192):
-    tb = open_table(path)
-    try:
-        rows = int(tb.nrows())
-        flag_true = 0
-        flag_row_true = 0
-        effective_true = 0
-        for start in range(0, rows, chunk_rows):
-            count = min(chunk_rows, rows - start)
-            flag = np.asarray(tb.getcol("FLAG", startrow=start, nrow=count), dtype=bool)
-            flag_row = np.asarray(tb.getcol("FLAG_ROW", startrow=start, nrow=count), dtype=bool)
-            flag_true += int(np.count_nonzero(flag))
-            flag_row_true += int(np.count_nonzero(flag_row))
-            effective_true += int(np.count_nonzero(flag | flag_row.reshape(1, 1, -1)))
-    finally:
-        tb.close()
-    return {
-        "flag_true_cells": flag_true,
-        "flag_row_true_rows": flag_row_true,
-        "effective_flag_true_cells": effective_true,
-    }
-
-native_rows, native_keys = read_keys(native_path)
-casa_rows, casa_keys = read_keys(casa_path)
-result = {
-    "status": "passed",
-    "reasons": [],
-    "sampled": True,
-    "row_count": {"native": native_rows, "casa": casa_rows},
-    "flag_counts": {
-        "native": flag_counts(native_path),
-        "casa": flag_counts(casa_path),
-    },
-    "thresholds": {
-        "uvw_atol": uvw_atol,
-        "data_atol": data_atol,
-        "data_rtol": data_rtol,
-    },
-}
-if result["flag_counts"]["native"] != result["flag_counts"]["casa"]:
-    result["status"] = "failed"
-    result["reasons"].append("strict total FLAG/FLAG_ROW counts differ")
-if native_rows != casa_rows:
-    result["status"] = "failed"
-    result["reasons"].append("strict row count mismatch")
-    print(json.dumps(result, sort_keys=True))
-    raise SystemExit(0)
-
-casa_by_key = {key_tuple(casa_keys, row): row for row in range(casa_rows)}
-if native_rows <= SAMPLE_ROWS:
-    native_sample_rows = list(range(native_rows))
-else:
-    native_sample_rows = sorted(set(np.linspace(0, native_rows - 1, SAMPLE_ROWS, dtype=np.int64).tolist()))
-
-native_tb = open_table(native_path)
-casa_tb = open_table(casa_path)
-spw_tb = open_table(casa_path + "/SPECTRAL_WINDOW")
-try:
-    channel_frequencies_hz = np.asarray(spw_tb.getcell("CHAN_FREQ", 0), dtype=np.float64)
-    uvw_max_abs = 0.0
-    uvw_mean_sum = 0.0
-    uvw_count = 0
-    data_max_abs = 0.0
-    data_sum_abs = 0.0
-    data_max_relative = 0.0
-    data_violation_count = 0
-    data_violation_max_abs = 0.0
-    data_violation_max_relative = 0.0
-    data_count = 0
-    raw_flag_mismatches = 0
-    effective_flag_mismatches = 0
-    weight_max_abs = 0.0
-    sigma_max_abs = 0.0
-    missing_keys = []
-    worst_cells = []
-    phase_samples = []
-
-    for native_row in native_sample_rows:
-        key = key_tuple(native_keys, native_row)
-        casa_row = casa_by_key.get(key)
-        if casa_row is None:
-            missing_keys.append({"native_row": int(native_row), "key": list(key)})
-            continue
-
-        native_uvw = np.asarray(native_tb.getcell("UVW", int(native_row)), dtype=np.float64)
-        casa_uvw = np.asarray(casa_tb.getcell("UVW", int(casa_row)), dtype=np.float64)
-        uvw_delta = np.abs(native_uvw - casa_uvw)
-        uvw_max_abs = max(uvw_max_abs, float(uvw_delta.max()) if uvw_delta.size else 0.0)
-        uvw_mean_sum += float(uvw_delta.sum())
-        uvw_count += int(uvw_delta.size)
-
-        native_data = np.asarray(native_tb.getcell("DATA", int(native_row)))
-        casa_data = np.asarray(casa_tb.getcell("DATA", int(casa_row)))
-        native_flag = np.asarray(native_tb.getcell("FLAG", int(native_row)), dtype=bool)
-        casa_flag = np.asarray(casa_tb.getcell("FLAG", int(casa_row)), dtype=bool)
-        native_flag_row = bool(native_tb.getcell("FLAG_ROW", int(native_row)))
-        casa_flag_row = bool(casa_tb.getcell("FLAG_ROW", int(casa_row)))
-        native_effective_flag = native_flag | native_flag_row
-        casa_effective_flag = casa_flag | casa_flag_row
-
-        raw_flag_mismatches += int(np.count_nonzero(native_flag != casa_flag))
-        effective_flag_mismatches += int(np.count_nonzero(native_effective_flag != casa_effective_flag))
-        mask = ~(native_effective_flag | casa_effective_flag)
-        if np.any(mask):
-            delta = np.abs(native_data - casa_data)
-            amp = np.abs(casa_data)
-            selected_delta = delta[mask]
-            selected_amp = amp[mask]
-            relative = selected_delta / np.maximum(selected_amp, data_atol)
-            row_max_abs = float(selected_delta.max())
-            row_max_relative = float(relative.max())
-            data_max_abs = max(data_max_abs, row_max_abs)
-            data_max_relative = max(data_max_relative, row_max_relative)
-            data_sum_abs += float(selected_delta.sum())
-            data_count += int(selected_delta.size)
-            violation_mask = (selected_delta > data_atol) & (relative > data_rtol)
-            if np.any(violation_mask):
-                data_violation_count += int(np.count_nonzero(violation_mask))
-                violation_delta = selected_delta[violation_mask]
-                violation_relative = relative[violation_mask]
-                data_violation_max_abs = max(
-                    data_violation_max_abs,
-                    float(violation_delta.max()),
-                )
-                data_violation_max_relative = max(
-                    data_violation_max_relative,
-                    float(violation_relative.max()),
-                )
-            if row_max_abs == data_max_abs or row_max_relative == data_max_relative:
-                corr, chan = np.argwhere(mask)[int(np.argmax(selected_delta))]
-                worst_cells.append({
-                    "native_row": int(native_row),
-                    "casa_row": int(casa_row),
-                    "correlation": int(corr),
-                    "channel": int(chan),
-                    "abs": row_max_abs,
-                    "relative": row_max_relative,
-                    "native": {
-                        "real": float(native_data[corr, chan].real),
-                        "imag": float(native_data[corr, chan].imag),
-                    },
-                    "casa": {
-                        "real": float(casa_data[corr, chan].real),
-                        "imag": float(casa_data[corr, chan].imag),
-                    },
-                })
-            unflagged_cells = np.argwhere(mask)
-            for corr, chan in unflagged_cells:
-                # Correlations are identical for these scalar simulation
-                # products; keep one polarization so fits describe rows and
-                # channels rather than double-counting the same residual.
-                if int(corr) != 0:
-                    continue
-                casa_value = casa_data[corr, chan]
-                native_value = native_data[corr, chan]
-                casa_amplitude = abs(casa_value)
-                if casa_amplitude <= data_atol:
-                    continue
-                ratio = native_value / casa_value
-                frequency_hz = float(channel_frequencies_hz[int(chan)])
-                phase_samples.append((
-                    int(key[1]),
-                    int(chan),
-                    float(native_uvw[0] * frequency_hz / 299792458.0),
-                    float(native_uvw[1] * frequency_hz / 299792458.0),
-                    float(native_uvw[2] * frequency_hz / 299792458.0),
-                    float(np.angle(ratio)),
-                    float(abs(ratio)),
-                    float(casa_amplitude),
-                    float(delta[corr, chan]),
-                ))
-
-        native_weight = np.asarray(native_tb.getcell("WEIGHT", int(native_row)), dtype=np.float64)
-        casa_weight = np.asarray(casa_tb.getcell("WEIGHT", int(casa_row)), dtype=np.float64)
-        native_sigma = np.asarray(native_tb.getcell("SIGMA", int(native_row)), dtype=np.float64)
-        casa_sigma = np.asarray(casa_tb.getcell("SIGMA", int(casa_row)), dtype=np.float64)
-        weight_max_abs = max(weight_max_abs, float(np.abs(native_weight - casa_weight).max()))
-        sigma_max_abs = max(sigma_max_abs, float(np.abs(native_sigma - casa_sigma).max()))
-finally:
-    spw_tb.close()
-    native_tb.close()
-    casa_tb.close()
-
-result["rows_sampled"] = len(native_sample_rows)
-result["missing_key_count"] = len(missing_keys)
-if missing_keys:
-    result["missing_keys"] = missing_keys[:10]
-    result["status"] = "failed"
-    result["reasons"].append("strict sampled row key missing in CASA")
-result["uvw"] = {
-    "max_abs": uvw_max_abs,
-    "mean_abs": uvw_mean_sum / uvw_count if uvw_count else 0.0,
-}
-result["data"] = {
-    "compared_unflagged_cells": data_count,
-    "max_abs": data_max_abs,
-    "mean_abs": data_sum_abs / data_count if data_count else 0.0,
-    "max_relative": data_max_relative,
-    "violating_cells": data_violation_count,
-    "violation_max_abs": data_violation_max_abs,
-    "violation_max_relative": data_violation_max_relative,
-    "worst_cells": worst_cells[-10:],
-}
-result["phase_residual_diagnostics"] = phase_residual_diagnostics(phase_samples)
-result["raw_flag_mismatches"] = raw_flag_mismatches
-result["effective_flag_mismatches"] = effective_flag_mismatches
-result["weight"] = {"max_abs": weight_max_abs}
-result["sigma"] = {"max_abs": sigma_max_abs}
-
-if uvw_max_abs > uvw_atol:
-    result["status"] = "failed"
-    result["reasons"].append(f"strict sampled UVW max abs {uvw_max_abs:.6g} exceeds {uvw_atol:.6g}")
-if data_violation_count:
-    result["status"] = "failed"
-    result["reasons"].append(
-        f"strict sampled DATA has {data_violation_count} cells exceeding both tolerances "
-        f"(max abs {data_violation_max_abs:.6g}, max rel {data_violation_max_relative:.6g})"
+    artifact_prefix = pathlib.Path(native_ms).parent.parent / "ms-comparison" / "sampled"
+    artifact_prefix.parent.mkdir(parents=True, exist_ok=True)
+    result = compare_measurement_sets(
+        casa_python=casa_python,
+        native_path=native_ms,
+        casa_path=casa_ms,
+        mode="sampled",
+        uvw_atol=uvw_atol,
+        data_atol=data_atol,
+        data_rtol=data_rtol,
+        artifact_prefix=artifact_prefix,
+        cwd=REPO_ROOT,
     )
-if effective_flag_mismatches:
-    result["status"] = "failed"
-    result["reasons"].append(f"strict sampled effective FLAG differs in {effective_flag_mismatches} cells")
-if weight_max_abs > 1.0e-6:
-    result["status"] = "failed"
-    result["reasons"].append(f"strict sampled WEIGHT max abs {weight_max_abs:.6g} exceeds 1e-6")
-if sigma_max_abs > 1.0e-6:
-    result["status"] = "failed"
-    result["reasons"].append(f"strict sampled SIGMA max abs {sigma_max_abs:.6g} exceeds 1e-6")
-
-print(json.dumps(result, sort_keys=True))
-'''
-    completed = subprocess.run(
-        [
-            casa_python,
-            "-c",
-            script,
-            json.dumps([native_ms, casa_ms, uvw_atol, data_atol, data_rtol]),
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if completed.returncode != 0:
+    if result["status"] in {"failed_execution", "unavailable"}:
         raise BenchError(
-            "failed to run sampled strict MS value comparison: " + completed.stderr.strip()
+            f"failed to run sampled strict MS value comparison: {result.get('reason')}"
         )
-    return parse_json_from_stdout(completed.stdout, "sampled strict MS value comparison")
-
-
-def collect_legacy_full_strict_value_comparison(
-    casa_python: str,
-    native_ms: str,
-    casa_ms: str,
-    *,
-    uvw_atol: float,
-    data_atol: float,
-    data_rtol: float,
-) -> dict[str, Any]:
-    script = r'''
-import json
-import sys
-from collections import Counter
-import numpy as np
-from casatools import table
-
-native_path, casa_path, uvw_atol, data_atol, data_rtol = json.loads(sys.argv[1])
-
-KEY_COLUMNS = ["TIME", "FIELD_ID", "DATA_DESC_ID", "ANTENNA1", "ANTENNA2"]
-
-def read_ms(path):
-    tb = table()
-    tb.open(path)
-    try:
-        rows = int(tb.nrows())
-        payload = {
-            "rows": rows,
-            "keys": [np.asarray(tb.getcol(column)) for column in KEY_COLUMNS],
-            "uvw": np.asarray(tb.getcol("UVW")),
-            "data": np.asarray(tb.getcol("DATA")),
-            "flag": np.asarray(tb.getcol("FLAG")),
-            "flag_row": np.asarray(tb.getcol("FLAG_ROW"), dtype=bool),
-            "weight": np.asarray(tb.getcol("WEIGHT")),
-            "sigma": np.asarray(tb.getcol("SIGMA")),
-        }
-    finally:
-        tb.close()
-    spw = table()
-    spw.open(path + "/SPECTRAL_WINDOW")
-    try:
-        payload["chan_freq_hz"] = np.asarray(spw.getcell("CHAN_FREQ", 0), dtype=np.float64)
-    finally:
-        spw.close()
-    return payload
-
-def order_for(keys):
-    sortable = []
-    for row in range(len(keys[0])):
-        sortable.append(tuple(key[row].item() if hasattr(key[row], "item") else key[row] for key in keys))
-    return np.asarray(sorted(range(len(sortable)), key=lambda row: sortable[row]), dtype=np.int64), sortable
-
-def scalar_column_delta(native_keys, casa_keys, native_order, casa_order, index):
-    native = native_keys[index][native_order]
-    casa = casa_keys[index][casa_order]
-    if np.issubdtype(native.dtype, np.floating):
-        return float(np.max(np.abs(native - casa))) if native.size else 0.0
-    return int(np.count_nonzero(native != casa))
-
-native = read_ms(native_path)
-casa = read_ms(casa_path)
-result = {
-    "status": "passed",
-    "reasons": [],
-    "row_count": {"native": native["rows"], "casa": casa["rows"]},
-    "thresholds": {
-        "uvw_atol": uvw_atol,
-        "data_atol": data_atol,
-        "data_rtol": data_rtol,
-    },
-}
-if native["rows"] != casa["rows"]:
-    result["status"] = "failed"
-    result["reasons"].append("strict row count mismatch")
-    print(json.dumps(result, sort_keys=True))
-    raise SystemExit(0)
-
-native_order, native_sortable = order_for(native["keys"])
-casa_order, casa_sortable = order_for(casa["keys"])
-
-key_deltas = {}
-for index, column in enumerate(KEY_COLUMNS):
-    key_deltas[column] = scalar_column_delta(
-        native["keys"], casa["keys"], native_order, casa_order, index
-    )
-result["key_deltas"] = key_deltas
-for column, delta in key_deltas.items():
-    if delta != 0:
-        result["status"] = "failed"
-        result["reasons"].append(f"strict {column} differs after row normalization")
-
-native_uvw = native["uvw"][:, native_order]
-casa_uvw = casa["uvw"][:, casa_order]
-uvw_abs = np.abs(native_uvw - casa_uvw)
-result["uvw"] = {
-    "max_abs": float(uvw_abs.max()) if uvw_abs.size else 0.0,
-    "mean_abs": float(uvw_abs.mean()) if uvw_abs.size else 0.0,
-}
-if result["uvw"]["max_abs"] > uvw_atol:
-    result["status"] = "failed"
-    result["reasons"].append(
-        f"strict UVW max abs {result['uvw']['max_abs']:.6g} exceeds {uvw_atol:.6g}"
-    )
-
-native_data = native["data"][:, :, native_order]
-casa_data = casa["data"][:, :, casa_order]
-native_flag = native["flag"][:, :, native_order]
-casa_flag = casa["flag"][:, :, casa_order]
-native_effective_flag = native_flag | native["flag_row"][native_order].reshape(1, 1, -1)
-casa_effective_flag = casa_flag | casa["flag_row"][casa_order].reshape(1, 1, -1)
-result["flag_counts"] = {
-    "native": {
-        "flag_true_cells": int(np.count_nonzero(native_flag)),
-        "flag_row_true_rows": int(np.count_nonzero(native["flag_row"][native_order])),
-        "effective_flag_true_cells": int(np.count_nonzero(native_effective_flag)),
-    },
-    "casa": {
-        "flag_true_cells": int(np.count_nonzero(casa_flag)),
-        "flag_row_true_rows": int(np.count_nonzero(casa["flag_row"][casa_order])),
-        "effective_flag_true_cells": int(np.count_nonzero(casa_effective_flag)),
-    },
-}
-if result["flag_counts"]["native"] != result["flag_counts"]["casa"]:
-    result["status"] = "failed"
-    result["reasons"].append("strict total FLAG/FLAG_ROW counts differ")
-data_abs_all = np.abs(native_data - casa_data)
-casa_amp_all = np.abs(casa_data)
-comparison_mask = ~(native_effective_flag | casa_effective_flag)
-data_abs = data_abs_all[comparison_mask]
-casa_amp = casa_amp_all[comparison_mask]
-relative = data_abs / np.maximum(casa_amp, data_atol)
-data_violation_mask = (
-    comparison_mask
-    & (data_abs_all > data_atol)
-    & ((data_abs_all / np.maximum(casa_amp_all, data_atol)) > data_rtol)
-)
-data_violation_abs = data_abs_all[data_violation_mask]
-data_violation_relative = (
-    data_abs_all[data_violation_mask] / np.maximum(casa_amp_all[data_violation_mask], data_atol)
-)
-result["data"] = {
-    "compared_unflagged_cells": int(np.count_nonzero(comparison_mask)),
-    "all_cells_max_abs": float(data_abs_all.max()) if data_abs_all.size else 0.0,
-    "max_abs": float(data_abs.max()) if data_abs.size else 0.0,
-    "mean_abs": float(data_abs.mean()) if data_abs.size else 0.0,
-    "max_relative": float(relative.max()) if relative.size else 0.0,
-    "violating_cells": int(np.count_nonzero(data_violation_mask)),
-    "violation_max_abs": float(data_violation_abs.max()) if data_violation_abs.size else 0.0,
-    "violation_max_relative": (
-        float(data_violation_relative.max()) if data_violation_relative.size else 0.0
-    ),
-    "native_abs_max": float(np.abs(native_data).max()) if native_data.size else 0.0,
-    "casa_abs_max": float(casa_amp_all.max()) if casa_amp_all.size else 0.0,
-}
-phase_mask = comparison_mask & (casa_amp_all > max(data_atol, 1.0))
-if np.count_nonzero(phase_mask) >= 3:
-    phase_indices = np.argwhere(phase_mask)
-    rows = phase_indices[:, 2]
-    channels = phase_indices[:, 1]
-    wavelengths_m = 299_792_458.0 / casa["chan_freq_hz"][channels]
-    u_lambda = native_uvw[0, rows] / wavelengths_m
-    v_lambda = native_uvw[1, rows] / wavelengths_m
-    phase_delta = np.angle(
-        native_data[phase_mask] * np.conj(casa_data[phase_mask])
-    )
-    design = np.column_stack([
-        2.0 * np.pi * u_lambda,
-        2.0 * np.pi * v_lambda,
-        np.ones_like(u_lambda),
-    ])
-    fit, *_ = np.linalg.lstsq(design, phase_delta, rcond=None)
-    residual = phase_delta - design @ fit
-    phase_correction = np.exp(-1j * (design @ fit))
-    corrected_native = native_data[phase_mask] * phase_correction
-    corrected_abs = np.abs(corrected_native - casa_data[phase_mask])
-    native_amp = np.abs(native_data[phase_mask])
-    casa_amp_phase = np.abs(casa_data[phase_mask])
-    amp_ratio = native_amp / np.maximum(casa_amp_phase, data_atol)
-    result["data"]["phase_fit"] = {
-        "cells": int(phase_delta.size),
-        "min_casa_amp": float(casa_amp_phase.min()),
-        "image_offset_l_rad": float(fit[0]),
-        "image_offset_m_rad": float(fit[1]),
-        "constant_phase_rad": float(fit[2]),
-        "phase_delta_abs_max_rad": float(np.max(np.abs(phase_delta))),
-        "phase_delta_abs_median_rad": float(np.median(np.abs(phase_delta))),
-        "fit_residual_abs_max_rad": float(np.max(np.abs(residual))),
-        "fit_residual_abs_median_rad": float(np.median(np.abs(residual))),
-        "max_abs_after_phase_fit": float(np.max(corrected_abs)),
-        "median_abs_after_phase_fit": float(np.median(corrected_abs)),
-        "amplitude_ratio_min": float(np.min(amp_ratio)),
-        "amplitude_ratio_median": float(np.median(amp_ratio)),
-        "amplitude_ratio_max": float(np.max(amp_ratio)),
-    }
-if data_abs.size:
-    result["data"]["abs_percentiles"] = {
-        str(percentile): float(np.percentile(data_abs, percentile))
-        for percentile in [50, 90, 95, 99, 99.9, 100]
-    }
-    result["data"]["relative_percentiles"] = {
-        str(percentile): float(np.percentile(relative, percentile))
-        for percentile in [50, 90, 95, 99, 99.9, 100]
-    }
-    comparison_indices = np.argwhere(comparison_mask)
-    worst_indices = np.argsort(data_abs)[-10:][::-1]
-    worst_cells = []
-    for ordinal in worst_indices:
-        corr, chan, sorted_row = comparison_indices[ordinal]
-        native_row = int(native_order[sorted_row])
-        casa_row = int(casa_order[sorted_row])
-        worst_cells.append({
-            "native_row": native_row,
-            "casa_row": casa_row,
-            "correlation": int(corr),
-            "channel": int(chan),
-            "key": {
-                column: (
-                    native["keys"][index][native_row].item()
-                    if hasattr(native["keys"][index][native_row], "item")
-                    else native["keys"][index][native_row]
-                )
-                for index, column in enumerate(KEY_COLUMNS)
-            },
-            "uvw_m": [float(value) for value in native_uvw[:, sorted_row]],
-            "native": {
-                "real": float(native_data[corr, chan, sorted_row].real),
-                "imag": float(native_data[corr, chan, sorted_row].imag),
-            },
-            "casa": {
-                "real": float(casa_data[corr, chan, sorted_row].real),
-                "imag": float(casa_data[corr, chan, sorted_row].imag),
-            },
-            "abs": float(data_abs_all[corr, chan, sorted_row]),
-            "relative": float(
-                data_abs_all[corr, chan, sorted_row]
-                / max(casa_amp_all[corr, chan, sorted_row], data_atol)
-            ),
-        })
-    result["data"]["worst_cells"] = worst_cells
-    worst_relative_indices = np.argsort(relative)[-10:][::-1]
-    worst_relative_cells = []
-    for ordinal in worst_relative_indices:
-        corr, chan, sorted_row = comparison_indices[ordinal]
-        native_row = int(native_order[sorted_row])
-        casa_row = int(casa_order[sorted_row])
-        worst_relative_cells.append({
-            "native_row": native_row,
-            "casa_row": casa_row,
-            "correlation": int(corr),
-            "channel": int(chan),
-            "key": {
-                column: (
-                    native["keys"][index][native_row].item()
-                    if hasattr(native["keys"][index][native_row], "item")
-                    else native["keys"][index][native_row]
-                )
-                for index, column in enumerate(KEY_COLUMNS)
-            },
-            "uvw_m": [float(value) for value in native_uvw[:, sorted_row]],
-            "native": {
-                "real": float(native_data[corr, chan, sorted_row].real),
-                "imag": float(native_data[corr, chan, sorted_row].imag),
-                "abs": float(np.abs(native_data[corr, chan, sorted_row])),
-            },
-            "casa": {
-                "real": float(casa_data[corr, chan, sorted_row].real),
-                "imag": float(casa_data[corr, chan, sorted_row].imag),
-                "abs": float(casa_amp_all[corr, chan, sorted_row]),
-            },
-            "abs": float(data_abs_all[corr, chan, sorted_row]),
-            "relative": float(
-                data_abs_all[corr, chan, sorted_row]
-                / max(casa_amp_all[corr, chan, sorted_row], data_atol)
-            ),
-        })
-    result["data"]["worst_relative_cells"] = worst_relative_cells
-if result["data"]["violating_cells"]:
-    result["status"] = "failed"
-    result["reasons"].append(
-        f"strict DATA has {result['data']['violating_cells']} cells exceeding both tolerances "
-        f"(max abs {result['data']['violation_max_abs']:.6g}, "
-        f"max rel {result['data']['violation_max_relative']:.6g})"
-    )
-
-raw_flag_mismatches = int(np.count_nonzero(native_flag != casa_flag))
-effective_flag_mismatches = int(np.count_nonzero(native_effective_flag != casa_effective_flag))
-result["raw_flag_mismatches"] = raw_flag_mismatches
-result["effective_flag_mismatches"] = effective_flag_mismatches
-if raw_flag_mismatches:
-    raw_mismatch_baselines = Counter()
-    for _corr, _chan, sorted_row in np.argwhere(native_flag != casa_flag):
-        native_row = int(native_order[sorted_row])
-        raw_mismatch_baselines[
-            (int(native["keys"][3][native_row]), int(native["keys"][4][native_row]))
-        ] += 1
-    result["raw_flag_mismatch_baselines"] = [
-        {"antenna1": antenna1, "antenna2": antenna2, "cells": cells}
-        for (antenna1, antenna2), cells in raw_mismatch_baselines.most_common(20)
-    ]
-if effective_flag_mismatches:
-    mismatch_baselines = Counter()
-    for _corr, _chan, sorted_row in np.argwhere(native_effective_flag != casa_effective_flag):
-        native_row = int(native_order[sorted_row])
-        mismatch_baselines[
-            (int(native["keys"][3][native_row]), int(native["keys"][4][native_row]))
-        ] += 1
-    result["flag_mismatch_baselines"] = [
-        {"antenna1": antenna1, "antenna2": antenna2, "cells": cells}
-        for (antenna1, antenna2), cells in mismatch_baselines.most_common(20)
-    ]
-if effective_flag_mismatches:
-    result["status"] = "failed"
-    result["reasons"].append(
-        f"strict effective FLAG differs in {effective_flag_mismatches} cells"
-    )
-
-for column in ["weight", "sigma"]:
-    native_values = native[column][:, native_order]
-    casa_values = casa[column][:, casa_order]
-    delta = np.abs(native_values - casa_values)
-    max_abs = float(delta.max()) if delta.size else 0.0
-    result[column] = {"max_abs": max_abs}
-    if max_abs > 1.0e-6:
-        result["status"] = "failed"
-        result["reasons"].append(f"strict {column.upper()} max abs {max_abs:.6g} exceeds 1e-6")
-
-print(json.dumps(result, sort_keys=True))
-'''
-    completed = subprocess.run(
-        [
-            casa_python,
-            "-c",
-            script,
-            json.dumps([native_ms, casa_ms, uvw_atol, data_atol, data_rtol]),
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise BenchError(
-            "failed to run strict MS value comparison: " + completed.stderr.strip()
-        )
-    return parse_json_from_stdout(completed.stdout, "strict MS value comparison")
+    return result
 
 
 def write_html_report(path: pathlib.Path, result: dict[str, Any]) -> None:
@@ -1924,20 +1126,6 @@ def select_dataset(plan: dict[str, Any], dataset_id: str) -> dict[str, Any]:
         if dataset.get("id") == dataset_id:
             return dataset
     raise BenchError(f"dataset not found in plan: {dataset_id}")
-
-
-def read_json(path: pathlib.Path) -> dict[str, Any]:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except OSError as error:
-        raise BenchError(f"read {path}: {error}") from error
-    except json.JSONDecodeError as error:
-        raise BenchError(f"parse {path}: {error}") from error
-
-
-def write_json(path: pathlib.Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def directory_size(path: pathlib.Path) -> int:

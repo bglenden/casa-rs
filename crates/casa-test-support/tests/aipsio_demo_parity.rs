@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use casa_aipsio::demo::run_taipsio_like_demo;
-use casa_test_support::cpp_backend_available;
+use casa_test_support::casacore_oracle_available;
 
 #[test]
 fn taipsio_demo_output_matches_cpp_skip_mode() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping demo parity test: C++ casacore backend unavailable");
         return;
     }

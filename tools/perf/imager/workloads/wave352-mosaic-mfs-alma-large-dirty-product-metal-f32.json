@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave352-mosaic-mfs-alma-large-dirty-product-metal-f32",
   "mode_id": "mosaic-mfs-one-channel",
   "description": "Issue #352 large-tier ALMA mosaic Metal dirty-product row using all seven fields, 16 selected channels, and a 1280 image.",

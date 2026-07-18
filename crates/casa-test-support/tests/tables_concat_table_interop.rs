@@ -11,9 +11,7 @@
 
 #![cfg(feature = "cpp-interop-tests")]
 
-use casa_test_support::{
-    CppTableFixture, cpp_backend_available, cpp_table_verify, cpp_table_write,
-};
+use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
 
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
@@ -41,29 +39,29 @@ fn build_part_table(ids: &[(i32, &str)]) -> Table {
 /// CC: C++ writes concat → C++ reads (baseline).
 #[test]
 fn cc_concat_table() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping CC concat_table test: C++ casacore not available");
         return;
     }
     let dir = tempfile::tempdir().expect("create temp dir");
 
-    cpp_table_write(CppTableFixture::ConcatTable, dir.path())
+    TableOracle::table_write(CppTableFixture::ConcatTable, dir.path())
         .expect("C++ write concat table should succeed");
 
-    cpp_table_verify(CppTableFixture::ConcatTable, dir.path())
+    TableOracle::table_verify(CppTableFixture::ConcatTable, dir.path())
         .expect("C++ verify concat table should succeed");
 }
 
 /// CR: C++ writes concat → Rust opens and verifies data.
 #[test]
 fn cr_concat_table() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping CR concat_table test: C++ casacore not available");
         return;
     }
     let dir = tempfile::tempdir().expect("create temp dir");
 
-    cpp_table_write(CppTableFixture::ConcatTable, dir.path())
+    TableOracle::table_write(CppTableFixture::ConcatTable, dir.path())
         .expect("C++ write concat table should succeed");
 
     // Rust opens the ConcatTable (materializes as plain Table).
@@ -94,7 +92,7 @@ fn cr_concat_table() {
 /// RC: Rust writes concat → C++ opens and verifies data.
 #[test]
 fn rc_concat_table() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping RC concat_table test: C++ casacore not available");
         return;
     }
@@ -121,7 +119,7 @@ fn rc_concat_table() {
         .expect("save concat");
 
     // C++ opens and verifies.
-    cpp_table_verify(CppTableFixture::ConcatTable, dir.path())
+    TableOracle::table_verify(CppTableFixture::ConcatTable, dir.path())
         .expect("C++ should read Rust-produced ConcatTable");
 }
 

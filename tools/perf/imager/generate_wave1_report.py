@@ -10,6 +10,8 @@ import json
 import pathlib
 from typing import Any
 
+from perf_harness import load_json_object, load_run_result
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -22,11 +24,12 @@ def main() -> None:
     parser.add_argument("--output", type=pathlib.Path, required=True)
     args = parser.parse_args()
 
-    plan = read_json(args.plan)
-    generation = read_json(args.generation_summary)
-    smoke = read_json(args.casa_smoke)
-    previews = read_json(args.preview_summary)
-    internal_io = read_json(args.internal_io)
+    plan = load_json_object(args.plan, description="dataset plan")
+    generation = load_json_object(args.generation_summary, description="generation summary")
+    smoke = load_json_object(args.casa_smoke, description="CASA smoke result")
+    previews = load_json_object(args.preview_summary, description="preview summary")
+    internal_io_artifact = load_run_result(args.internal_io)
+    internal_io = internal_io_artifact["results"]["simobserve"]
     parity = load_parity(args.parity_dir)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -36,15 +39,11 @@ def main() -> None:
     )
     print(args.output)
 
-
-def read_json(path: pathlib.Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def load_parity(root: pathlib.Path) -> list[dict[str, Any]]:
     results = []
     for path in sorted(root.glob("*/simobserve-benchmark.json")):
-        value = read_json(path)
+        artifact = load_run_result(path)
+        value = artifact["results"]["simobserve"]
         value["_path"] = str(path)
         results.append(value)
     return results

@@ -131,7 +131,7 @@ class Wave3WorkerPolicyTests(unittest.TestCase):
 
     def test_failed_backend_reasons_are_reported(self) -> None:
         failed = result("cpu", [])
-        failed["status"] = "failed"
+        failed["status"] = "failed_execution"
         failed["results"]["rust"]["reason"] = "bounded source stream rejected request"
 
         report = wave3_worker_policy.build_policy_report([failed])

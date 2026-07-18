@@ -8,16 +8,14 @@ use casa_logging::{
     validate_log_table,
 };
 use casa_tables::{Table, TableOptions};
-use casa_test_support::{
-    CppTableFixture, cpp_backend_available, cpp_table_verify, cpp_table_write,
-};
+use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
 use casa_types::{ScalarValue, Value};
 
 const LOG_TABLE_README: &str = "Repository for software-generated logging messages";
 
 #[test]
 fn log_table_rust_write_cpp_verify() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore unavailable");
         return;
     }
@@ -30,19 +28,20 @@ fn log_table_rust_write_cpp_verify() {
     sink.write(&record).expect("Rust log-table write");
     sink.flush().expect("Rust log-table flush");
 
-    cpp_table_verify(CppTableFixture::LogTable, &path).expect("C++ should verify Rust LOG table");
+    TableOracle::table_verify(CppTableFixture::LogTable, &path)
+        .expect("C++ should verify Rust LOG table");
 }
 
 #[test]
 fn log_table_cpp_write_rust_read() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore unavailable");
         return;
     }
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cpp_log.tbl");
-    cpp_table_write(CppTableFixture::LogTable, &path).expect("C++ LOG table write");
+    TableOracle::table_write(CppTableFixture::LogTable, &path).expect("C++ LOG table write");
 
     let table = Table::open(TableOptions::new(&path)).expect("open C++ LOG table");
     validate_log_table(&table).expect("validate C++ LOG table schema");
@@ -106,13 +105,13 @@ fn log_table_cpp_write_rust_read() {
 
 #[test]
 fn log_table_cpp_write_cpp_verify() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore unavailable");
         return;
     }
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cpp_log.tbl");
-    cpp_table_write(CppTableFixture::LogTable, &path).expect("C++ LOG table write");
-    cpp_table_verify(CppTableFixture::LogTable, &path).expect("C++ LOG table verify");
+    TableOracle::table_write(CppTableFixture::LogTable, &path).expect("C++ LOG table write");
+    TableOracle::table_verify(CppTableFixture::LogTable, &path).expect("C++ LOG table verify");
 }

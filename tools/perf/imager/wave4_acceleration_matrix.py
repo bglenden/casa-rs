@@ -9,6 +9,15 @@ import pathlib
 import sys
 from typing import Any
 
+from perf_harness import (
+    ContractError,
+    finite_number,
+    load_json_object,
+    load_run_result,
+    nested_value,
+)
+from perf_harness.artifacts import ArtifactError
+
 
 MATRIX_PATH = pathlib.Path(__file__).resolve().parent / "wave4_acceleration_matrix.json"
 REQUIRED_ROW_IDS = {
@@ -74,7 +83,7 @@ def main() -> None:
     try:
         matrix = load_matrix(args.matrix)
         rows = enumerate_rows(matrix)
-        results = [load_result(path) for path in args.result]
+        results = [load_run_result(path, source_key="_source_path") for path in args.result]
         for evidence_list in args.evidence_list:
             results.extend(load_evidence_list(evidence_list))
         if results:
@@ -90,40 +99,25 @@ def main() -> None:
         else:
             for row in output["rows"]:
                 print(render_text_row(row))
-    except MatrixError as error:
+    except (MatrixError, ContractError) as error:
         print(f"error: {error}", file=sys.stderr)
         raise SystemExit(2) from None
 
 
 def load_matrix(path: pathlib.Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise MatrixError(f"parse {path}: {error}") from error
-    if not isinstance(value, dict):
-        raise MatrixError(f"{path} must contain a JSON object")
+        value = load_json_object(path, description="Wave 4 acceleration matrix")
+    except ArtifactError as error:
+        raise MatrixError(str(error)) from error
     validate_matrix(value)
-    return value
-
-
-def load_result(path: pathlib.Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise MatrixError(f"parse result {path}: {error}") from error
-    if not isinstance(value, dict):
-        raise MatrixError(f"{path} must contain a JSON object")
-    value.setdefault("_source_path", str(path))
     return value
 
 
 def load_evidence_list(path: pathlib.Path) -> list[dict[str, Any]]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise MatrixError(f"parse evidence list {path}: {error}") from error
-    if not isinstance(value, dict):
-        raise MatrixError(f"{path} must contain a JSON object")
+        value = load_json_object(path, description="Wave 4 evidence list")
+    except ArtifactError as error:
+        raise MatrixError(str(error)) from error
     if int_field(value, "schema_version") != 1:
         raise MatrixError(f"{path}: schema_version must be 1")
     entries = list_field(value, "results")
@@ -132,7 +126,7 @@ def load_evidence_list(path: pathlib.Path) -> list[dict[str, Any]]:
         if not isinstance(entry, dict):
             raise MatrixError(f"{path}: results[{index}] must be an object")
         result_path = pathlib.Path(string_field(entry, "path"))
-        result = load_result(result_path)
+        result = load_run_result(result_path, source_key="_source_path")
         row_id = entry.get("row_id")
         if row_id is not None:
             if not isinstance(row_id, str) or not row_id:
@@ -698,18 +692,18 @@ def correctness_status(result: dict[str, Any] | None) -> str | None:
     if not result:
         return None
     review = nested_value(
-        result, ["results", "product_comparison", "structured_difference_review", "label"]
+        result, "results", "product_comparison", "structured_difference_review", "label"
     )
     if isinstance(review, str):
         if review == "investigate" and stale_non_spatial_only_review(result):
             return "good"
         return review
-    status = nested_value(result, ["results", "product_comparison", "status"])
+    status = nested_value(result, "results", "product_comparison", "status")
     return status if isinstance(status, str) else None
 
 
 def stale_non_spatial_only_review(result: dict[str, Any]) -> bool:
-    comparison = nested_value(result, ["results", "product_comparison"])
+    comparison = nested_value(result, "results", "product_comparison")
     if not isinstance(comparison, dict):
         return False
     review = comparison.get("structured_difference_review")
@@ -813,24 +807,16 @@ def evidence_link(result: dict[str, Any] | None) -> str | None:
 def backend_features(result: dict[str, Any] | None) -> dict[str, Any]:
     if not result:
         return {}
-    backend = nested_value(result, ["benchmark_features", "backend"])
+    backend = nested_value(result, "benchmark_features", "backend")
     return backend if isinstance(backend, dict) else {}
 
 
 def nested_float(result: dict[str, Any], path: list[str]) -> float | None:
-    value = nested_value(result, path)
-    if isinstance(value, int | float):
-        return float(value)
-    return None
-
-
-def nested_value(result: dict[str, Any], path: list[str]) -> Any:
-    value: Any = result
-    for key in path:
-        if not isinstance(value, dict):
-            return None
-        value = value.get(key)
-    return value
+    value = nested_value(result, *path)
+    try:
+        return finite_number(value, field=f"/{'/'.join(path)}")
+    except ContractError as error:
+        raise MatrixError(str(error)) from error
 
 
 def int_or_none(value: Any) -> int | None:

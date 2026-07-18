@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "01-imhead-continuum-header",
+  "pack": {"id": "alma-first-look-image-analysis", "relative_path": "tutorial-parity/alma/first-look/twhya/image-analysis/alma-first-look-image-analysis.pack"},
+  "title": "Inspect continuum image header",
+  "source": {"url": "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis", "anchor": "Continuum_image_header_inspection"},
+  "prerequisites": [{"kind": "casa_image", "path": "twhya_cont.image"}],
+  "surfaces": {
+    "casa": {"operations": [{"task": "imhead", "parameters": {"imagename": "twhya_cont.image", "mode": "summary"}, "outputs": [".casa-rs/workspace/oracle/01-imhead-continuum-header/casa-imhead.json"], "capture_stdout": ".casa-rs/workspace/oracle/01-imhead-continuum-header/casa-imhead.json"}]},
+    "cli": {"operations": [{"task": "imhead", "parameters": {"imagename": "twhya_cont.image", "mode": "summary", "json": true}, "outputs": [".casa-rs/workspace/native/01-imhead-continuum-header/cli-imhead.json"], "capture_stdout": ".casa-rs/workspace/native/01-imhead-continuum-header/cli-imhead.json"}]},
+    "python": {"operations": [{"task": "imhead", "parameters": {"imagename": "twhya_cont.image", "mode": "summary"}, "outputs": [".casa-rs/workspace/native/01-imhead-continuum-header/python-imhead.json"], "capture_stdout": ".casa-rs/workspace/native/01-imhead-continuum-header/python-imhead.json"}]},
+    "tui": {"operations": [{"task": "imhead", "parameters": {"imagename": "twhya_cont.image", "mode": "summary"}, "outputs": []}], "screenshot": ".casa-rs/screenshots/headless/01-imhead-continuum-header-tui.png", "input_events": []},
+    "gui": {"journey": "tutorial-journey-gui", "required_artifacts": ["TutorialJourneyGUI.xcresult", "TutorialJourneyGUI.report.json", "tutorial-journey-gui.evidence.json"]}
+  },
+  "comparison": {"plugin": "imhead", "config": {"beam_tolerance": 1e-9, "axis_tolerance": 1e-6, "spectral_tolerance_hz": 10.0}, "inputs": {"native": ".casa-rs/workspace/native/01-imhead-continuum-header/cli-imhead.json", "oracle": ".casa-rs/workspace/oracle/01-imhead-continuum-header/casa-imhead.json"}},
+  "evidence": {"result": ".casa-rs/evidence/tutorial-parity/01-imhead-continuum-header.result.json", "review": ".casa-rs/evidence/review/01-imhead-continuum-header.json", "documentation": ["docs/sections/01-imhead-continuum-header.md", "docs/sections/01-imhead-continuum-header.html"], "screenshot_spec": ".casa-rs/screenshots/specs/01-imhead-continuum-header.json"}
+}

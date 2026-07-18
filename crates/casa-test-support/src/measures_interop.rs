@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! FFI wrappers for the C++ measures shim.
 
+pub use crate::measures_oracle::MeasuresOracle;
+
 #[cfg(has_casacore_cpp)]
-use crate::{CasacoreGlobalStateDomain, lock_casacore_global_state};
-#[cfg(has_casacore_cpp)]
-use std::ffi::CString;
+use crate::oracle_runtime::CasacoreOracleRuntime;
 
 #[cfg(has_casacore_cpp)]
 unsafe extern "C" {
@@ -441,9 +441,11 @@ unsafe extern "C" {
 
 /// Convert an epoch from one reference frame to another using C++ casacore.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_epoch_convert(mjd_in: f64, ref_in: &str, ref_out: &str) -> Result<f64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+pub(crate) fn cpp_epoch_convert(mjd_in: f64, ref_in: &str, ref_out: &str) -> Result<f64, String> {
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut mjd_out: f64 = 0.0;
 
     let rc =
@@ -458,8 +460,12 @@ pub fn cpp_epoch_convert(mjd_in: f64, ref_in: &str, ref_out: &str) -> Result<f64
 
 /// Serialize an epoch to record fields using C++ casacore.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_epoch_to_record(mjd_in: f64, ref_in: &str) -> Result<(f64, String, String), String> {
-    let c_in = CString::new(ref_in).unwrap();
+pub(crate) fn cpp_epoch_to_record(
+    mjd_in: f64,
+    ref_in: &str,
+) -> Result<(f64, String, String), String> {
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
     let mut value_out: f64 = 0.0;
     let mut unit_buf = [0i8; 64];
     let mut refer_buf = [0i8; 64];
@@ -480,27 +486,31 @@ pub fn cpp_epoch_to_record(mjd_in: f64, ref_in: &str) -> Result<(f64, String, St
         return Err(format!("C++ epoch_to_record failed: rc={rc}"));
     }
 
-    let unit = unsafe { std::ffi::CStr::from_ptr(unit_buf.as_ptr()) }
-        .to_string_lossy()
-        .into_owned();
-    let refer = unsafe { std::ffi::CStr::from_ptr(refer_buf.as_ptr()) }
-        .to_string_lossy()
-        .into_owned();
+    let unit =
+        CasacoreOracleRuntime::output_c_char_string("measures.epoch_to_record unit", &unit_buf)
+            .map_err(|error| error.to_string())?;
+    let refer = CasacoreOracleRuntime::output_c_char_string(
+        "measures.epoch_to_record reference",
+        &refer_buf,
+    )
+    .map_err(|error| error.to_string())?;
 
     Ok((value_out, unit, refer))
 }
 
 /// Convert a position between reference frames using C++ casacore.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_position_convert(
+pub(crate) fn cpp_position_convert(
     v0: f64,
     v1: f64,
     v2: f64,
     ref_in: &str,
     ref_out: &str,
 ) -> Result<(f64, f64, f64), String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut out0: f64 = 0.0;
     let mut out1: f64 = 0.0;
     let mut out2: f64 = 0.0;
@@ -527,7 +537,7 @@ pub fn cpp_position_convert(
 
 /// Serialize an ITRF position to spherical record fields using C++ MVPosition.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_position_to_record(x: f64, y: f64, z: f64) -> Result<(f64, f64, f64), String> {
+pub(crate) fn cpp_position_to_record(x: f64, y: f64, z: f64) -> Result<(f64, f64, f64), String> {
     let mut lon: f64 = 0.0;
     let mut lat: f64 = 0.0;
     let mut radius: f64 = 0.0;
@@ -543,13 +553,14 @@ pub fn cpp_position_to_record(x: f64, y: f64, z: f64) -> Result<(f64, f64, f64),
 
 /// Convert a position to casacore's raw WGS84 XYZ TaQL representation.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_position_to_wgs_xyz(
+pub(crate) fn cpp_position_to_wgs_xyz(
     v0: f64,
     v1: f64,
     v2: f64,
     ref_in: &str,
 ) -> Result<(f64, f64, f64), String> {
-    let c_in = CString::new(ref_in).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
     let mut out0: f64 = 0.0;
     let mut out1: f64 = 0.0;
     let mut out2: f64 = 0.0;
@@ -575,7 +586,7 @@ pub fn cpp_position_to_wgs_xyz(
 
 /// Benchmark position conversion using C++ casacore. Returns elapsed nanoseconds.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_bench_position_convert(
+pub(crate) fn cpp_bench_position_convert(
     x_start: f64,
     y: f64,
     z: f64,
@@ -584,8 +595,10 @@ pub fn cpp_bench_position_convert(
     ref_out: &str,
     iterations: i32,
 ) -> Result<u64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut elapsed_ns: u64 = 0;
 
     let rc = unsafe {
@@ -610,15 +623,17 @@ pub fn cpp_bench_position_convert(
 
 /// Benchmark epoch conversion using C++ casacore. Returns elapsed nanoseconds.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_bench_epoch_convert(
+pub(crate) fn cpp_bench_epoch_convert(
     mjd_start: f64,
     count: i32,
     ref_in: &str,
     ref_out: &str,
     iterations: i32,
 ) -> Result<u64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut elapsed_ns: u64 = 0;
 
     let rc = unsafe {
@@ -641,9 +656,15 @@ pub fn cpp_bench_epoch_convert(
 
 /// Convert a Doppler value between conventions using C++ casacore.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_doppler_convert(value_in: f64, ref_in: &str, ref_out: &str) -> Result<f64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+pub(crate) fn cpp_doppler_convert(
+    value_in: f64,
+    ref_in: &str,
+    ref_out: &str,
+) -> Result<f64, String> {
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut value_out: f64 = 0.0;
 
     let rc = unsafe {
@@ -659,15 +680,17 @@ pub fn cpp_doppler_convert(value_in: f64, ref_in: &str, ref_out: &str) -> Result
 
 /// Benchmark Doppler conversion using C++ casacore.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_bench_doppler_convert(
+pub(crate) fn cpp_bench_doppler_convert(
     value_start: f64,
     count: i32,
     ref_in: &str,
     ref_out: &str,
     iterations: i32,
 ) -> Result<u64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut elapsed_ns: u64 = 0;
 
     let rc = unsafe {
@@ -691,7 +714,7 @@ pub fn cpp_bench_doppler_convert(
 /// Convert a direction between reference frames using C++ casacore.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_direction_convert(
+pub(crate) fn cpp_direction_convert(
     lon_in: f64,
     lat_in: f64,
     ref_in: &str,
@@ -701,8 +724,10 @@ pub fn cpp_direction_convert(
     obs_lat: f64,
     obs_h: f64,
 ) -> Result<(f64, f64), String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut lon_out: f64 = 0.0;
     let mut lat_out: f64 = 0.0;
 
@@ -730,7 +755,7 @@ pub fn cpp_direction_convert(
 
 /// Convert a named source direction to a target frame using C++ casacore.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_named_direction_convert(
+pub(crate) fn cpp_named_direction_convert(
     source_name: &str,
     ref_out: &str,
     epoch_mjd: f64,
@@ -738,8 +763,10 @@ pub fn cpp_named_direction_convert(
     obs_lat: f64,
     obs_h: f64,
 ) -> Result<(f64, f64), String> {
-    let c_name = CString::new(source_name).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+    let c_name = CasacoreOracleRuntime::c_string("measures input", source_name)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut lon_out: f64 = 0.0;
     let mut lat_out: f64 = 0.0;
 
@@ -765,14 +792,15 @@ pub fn cpp_named_direction_convert(
 
 /// Compute rise and set UTC MJDs for a named source using C++ casacore.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_riseset(
+pub(crate) fn cpp_riseset(
     source_name: &str,
     epoch_mjd: f64,
     obs_lon: f64,
     obs_lat: f64,
     obs_h: f64,
 ) -> Result<(f64, f64), String> {
-    let c_name = CString::new(source_name).unwrap();
+    let c_name = CasacoreOracleRuntime::c_string("measures input", source_name)
+        .map_err(|error| error.to_string())?;
     let mut rise_out: f64 = 0.0;
     let mut set_out: f64 = 0.0;
 
@@ -797,8 +825,9 @@ pub fn cpp_riseset(
 
 /// Resolve a named spectral line to its rest frequency using C++ casacore.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_line_frequency(line_name: &str) -> Result<f64, String> {
-    let c_name = CString::new(line_name).unwrap();
+pub(crate) fn cpp_line_frequency(line_name: &str) -> Result<f64, String> {
+    let c_name = CasacoreOracleRuntime::c_string("measures input", line_name)
+        .map_err(|error| error.to_string())?;
     let mut freq_out_hz = 0.0;
 
     let rc = unsafe { measures_shim_line_frequency(c_name.as_ptr(), &mut freq_out_hz) };
@@ -813,7 +842,7 @@ pub fn cpp_line_frequency(line_name: &str) -> Result<f64, String> {
 /// Convert an explicit Earth-magnetic vector between frames using C++ casacore.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_earthmag_convert_xyz(
+pub(crate) fn cpp_earthmag_convert_xyz(
     xyz_in: [f64; 3],
     ref_in: &str,
     ref_out: &str,
@@ -822,8 +851,10 @@ pub fn cpp_earthmag_convert_xyz(
     obs_lat: f64,
     obs_h: f64,
 ) -> Result<[f64; 3], String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut xyz_out = [0.0f64; 3];
 
     let rc = unsafe {
@@ -853,7 +884,7 @@ pub fn cpp_earthmag_convert_xyz(
 /// Convert an explicit Earth-magnetic angle/length value between frames using C++ casacore.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_earthmag_convert_angles(
+pub(crate) fn cpp_earthmag_convert_angles(
     lon_in: f64,
     lat_in: f64,
     length_nt: f64,
@@ -864,8 +895,10 @@ pub fn cpp_earthmag_convert_angles(
     obs_lat: f64,
     obs_h: f64,
 ) -> Result<(f64, f64), String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut lon_out = 0.0f64;
     let mut lat_out = 0.0f64;
 
@@ -895,7 +928,7 @@ pub fn cpp_earthmag_convert_angles(
 /// Evaluate an IGRF helper using C++ casacore.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_igrf_value(
+pub(crate) fn cpp_igrf_value(
     mode: &str,
     ref_out: Option<&str>,
     height_m: f64,
@@ -907,11 +940,14 @@ pub fn cpp_igrf_value(
     obs_lat: f64,
     obs_h: f64,
 ) -> Result<Vec<f64>, String> {
-    let c_dir_ref = CString::new(dir_ref).unwrap();
+    let c_dir_ref = CasacoreOracleRuntime::c_string("measures input", dir_ref)
+        .map_err(|error| error.to_string())?;
 
     match mode {
         "xyz" => {
-            let c_out = CString::new(ref_out.unwrap_or("ITRF")).unwrap();
+            let c_out =
+                CasacoreOracleRuntime::c_string("measures input", ref_out.unwrap_or("ITRF"))
+                    .map_err(|error| error.to_string())?;
             let mut xyz_out = [0.0f64; 3];
             let rc = unsafe {
                 measures_shim_igrf_xyz(
@@ -983,8 +1019,7 @@ pub fn cpp_igrf_value(
 
 /// Get C++ casacore's IAU 2000 bias-precession matrix at a given TT MJD epoch.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_iau2000_precession_matrix(epoch_mjd_tt: f64) -> Result<[[f64; 3]; 3], String> {
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::MeasuresIau2000A);
+pub(crate) fn cpp_iau2000_precession_matrix(epoch_mjd_tt: f64) -> Result<[[f64; 3]; 3], String> {
     let mut mat = [0.0f64; 9];
     let rc = unsafe { measures_shim_iau2000_precession_matrix(epoch_mjd_tt, mat.as_mut_ptr()) };
     if rc == 0 {
@@ -1001,7 +1036,7 @@ pub fn cpp_iau2000_precession_matrix(epoch_mjd_tt: f64) -> Result<[[f64; 3]; 3],
 /// Convert a direction using C++ casacore with IAU 2006/2000A nutation/precession.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_direction_convert_iau2000a(
+pub(crate) fn cpp_direction_convert_iau2000a(
     lon_in: f64,
     lat_in: f64,
     ref_in: &str,
@@ -1011,9 +1046,10 @@ pub fn cpp_direction_convert_iau2000a(
     obs_lat: f64,
     obs_h: f64,
 ) -> Result<(f64, f64), String> {
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::MeasuresIau2000A);
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut lon_out: f64 = 0.0;
     let mut lat_out: f64 = 0.0;
 
@@ -1043,7 +1079,7 @@ pub fn cpp_direction_convert_iau2000a(
 /// Returns ((vx, vy, vz), (sun_x, sun_y, sun_z)).
 /// Velocity is in units of c. Sun position is in AU.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_earth_velocity(epoch_mjd_tdb: f64) -> Result<([f64; 3], [f64; 3]), String> {
+pub(crate) fn cpp_earth_velocity(epoch_mjd_tdb: f64) -> Result<([f64; 3], [f64; 3]), String> {
     let (mut vx, mut vy, mut vz) = (0.0, 0.0, 0.0);
     let (mut sx, mut sy, mut sz) = (0.0, 0.0, 0.0);
     let rc = unsafe {
@@ -1067,7 +1103,7 @@ pub fn cpp_earth_velocity(epoch_mjd_tdb: f64) -> Result<([f64; 3], [f64; 3]), St
 /// Benchmark direction conversion using C++ casacore.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_bench_direction_convert(
+pub(crate) fn cpp_bench_direction_convert(
     lon_start: f64,
     lat: f64,
     count: i32,
@@ -1079,8 +1115,10 @@ pub fn cpp_bench_direction_convert(
     obs_h: f64,
     iterations: i32,
 ) -> Result<u64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut elapsed_ns: u64 = 0;
 
     let rc = unsafe {
@@ -1109,7 +1147,7 @@ pub fn cpp_bench_direction_convert(
 /// Convert a frequency between reference frames using C++ casacore.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_frequency_convert(
+pub(crate) fn cpp_frequency_convert(
     freq_hz: f64,
     ref_in: &str,
     ref_out: &str,
@@ -1121,9 +1159,12 @@ pub fn cpp_frequency_convert(
     obs_lat: f64,
     obs_h: f64,
 ) -> Result<f64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
-    let c_dir = CString::new(dir_ref).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
+    let c_dir = CasacoreOracleRuntime::c_string("measures input", dir_ref)
+        .map_err(|error| error.to_string())?;
     let mut freq_out: f64 = 0.0;
 
     let rc = unsafe {
@@ -1153,7 +1194,7 @@ pub fn cpp_frequency_convert(
 /// CASA `VLAFiller` when converting channel grids.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_frequency_convert_via_model(
+pub(crate) fn cpp_frequency_convert_via_model(
     freq_hz: f64,
     ref_in: &str,
     ref_out: &str,
@@ -1165,9 +1206,12 @@ pub fn cpp_frequency_convert_via_model(
     obs_lat: f64,
     obs_h: f64,
 ) -> Result<f64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
-    let c_dir = CString::new(dir_ref).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
+    let c_dir = CasacoreOracleRuntime::c_string("measures input", dir_ref)
+        .map_err(|error| error.to_string())?;
     let mut freq_out: f64 = 0.0;
 
     let rc = unsafe {
@@ -1197,7 +1241,7 @@ pub fn cpp_frequency_convert_via_model(
 /// is updated, mirroring the lifecycle of CASA `VLAFiller::itsFreqCtr`.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_frequency_convert_via_mutated_model(
+pub(crate) fn cpp_frequency_convert_via_mutated_model(
     freq_hz: f64,
     ref_in: &str,
     ref_out: &str,
@@ -1209,9 +1253,12 @@ pub fn cpp_frequency_convert_via_mutated_model(
     obs_lat: f64,
     obs_h: f64,
 ) -> Result<f64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
-    let c_dir = CString::new(dir_ref).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
+    let c_dir = CasacoreOracleRuntime::c_string("measures input", dir_ref)
+        .map_err(|error| error.to_string())?;
     let mut freq_out: f64 = 0.0;
 
     let rc = unsafe {
@@ -1243,7 +1290,7 @@ pub fn cpp_frequency_convert_via_mutated_model(
 /// target measures frames in C++ casacore.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_frequency_convert_between_frames(
+pub(crate) fn cpp_frequency_convert_between_frames(
     freq_hz: f64,
     ref_in: &str,
     ref_out: &str,
@@ -1262,10 +1309,14 @@ pub fn cpp_frequency_convert_between_frames(
     dst_obs_lat: f64,
     dst_obs_h: f64,
 ) -> Result<f64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
-    let c_src_dir = CString::new(src_dir_ref).unwrap();
-    let c_dst_dir = CString::new(dst_dir_ref).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
+    let c_src_dir = CasacoreOracleRuntime::c_string("measures input", src_dir_ref)
+        .map_err(|error| error.to_string())?;
+    let c_dst_dir = CasacoreOracleRuntime::c_string("measures input", dst_dir_ref)
+        .map_err(|error| error.to_string())?;
     let mut freq_out: f64 = 0.0;
 
     let rc = unsafe {
@@ -1303,7 +1354,7 @@ pub fn cpp_frequency_convert_between_frames(
 /// Benchmark frequency conversion using C++ casacore.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_bench_frequency_convert(
+pub(crate) fn cpp_bench_frequency_convert(
     freq_start: f64,
     count: i32,
     ref_in: &str,
@@ -1317,9 +1368,12 @@ pub fn cpp_bench_frequency_convert(
     obs_h: f64,
     iterations: i32,
 ) -> Result<u64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
-    let c_dir = CString::new(dir_ref).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
+    let c_dir = CasacoreOracleRuntime::c_string("measures input", dir_ref)
+        .map_err(|error| error.to_string())?;
     let mut elapsed_ns: u64 = 0;
 
     let rc = unsafe {
@@ -1350,7 +1404,7 @@ pub fn cpp_bench_frequency_convert(
 /// Convert a radial velocity between reference frames using C++ casacore.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_radvel_convert(
+pub(crate) fn cpp_radvel_convert(
     ms_in: f64,
     ref_in: &str,
     ref_out: &str,
@@ -1362,9 +1416,12 @@ pub fn cpp_radvel_convert(
     obs_lat: f64,
     obs_h: f64,
 ) -> Result<f64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
-    let c_dir = CString::new(dir_ref).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
+    let c_dir = CasacoreOracleRuntime::c_string("measures input", dir_ref)
+        .map_err(|error| error.to_string())?;
     let mut ms_out: f64 = 0.0;
 
     let rc = unsafe {
@@ -1393,7 +1450,7 @@ pub fn cpp_radvel_convert(
 /// Benchmark radial velocity conversion using C++ casacore.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_bench_radvel_convert(
+pub(crate) fn cpp_bench_radvel_convert(
     ms_start: f64,
     count: i32,
     ref_in: &str,
@@ -1407,9 +1464,12 @@ pub fn cpp_bench_radvel_convert(
     obs_h: f64,
     iterations: i32,
 ) -> Result<u64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
-    let c_dir = CString::new(dir_ref).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
+    let c_dir = CasacoreOracleRuntime::c_string("measures input", dir_ref)
+        .map_err(|error| error.to_string())?;
     let mut elapsed_ns: u64 = 0;
 
     let rc = unsafe {
@@ -1440,7 +1500,7 @@ pub fn cpp_bench_radvel_convert(
 /// Convert a frequency with radial velocity in the frame using C++ casacore.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_frequency_convert_with_rv(
+pub(crate) fn cpp_frequency_convert_with_rv(
     freq_hz: f64,
     ref_in: &str,
     ref_out: &str,
@@ -1454,10 +1514,14 @@ pub fn cpp_frequency_convert_with_rv(
     rv_ms: f64,
     rv_ref: &str,
 ) -> Result<f64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
-    let c_dir = CString::new(dir_ref).unwrap();
-    let c_rv = CString::new(rv_ref).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
+    let c_dir = CasacoreOracleRuntime::c_string("measures input", dir_ref)
+        .map_err(|error| error.to_string())?;
+    let c_rv = CasacoreOracleRuntime::c_string("measures input", rv_ref)
+        .map_err(|error| error.to_string())?;
     let mut freq_out: f64 = 0.0;
 
     let rc = unsafe {
@@ -1487,14 +1551,16 @@ pub fn cpp_frequency_convert_with_rv(
 
 /// Convert an observed frequency to a rest frequency using a Doppler value.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_frequency_rest_with_doppler(
+pub(crate) fn cpp_frequency_rest_with_doppler(
     freq_hz: f64,
     ref_in: &str,
     doppler_value: f64,
     doppler_ref: &str,
 ) -> Result<f64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_doppler = CString::new(doppler_ref).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_doppler = CasacoreOracleRuntime::c_string("measures input", doppler_ref)
+        .map_err(|error| error.to_string())?;
     let mut freq_out: f64 = 0.0;
 
     let rc = unsafe {
@@ -1516,14 +1582,16 @@ pub fn cpp_frequency_rest_with_doppler(
 
 /// Shift a rest frequency using a Doppler value.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_frequency_shift_with_doppler(
+pub(crate) fn cpp_frequency_shift_with_doppler(
     freq_hz: f64,
     ref_in: &str,
     doppler_value: f64,
     doppler_ref: &str,
 ) -> Result<f64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_doppler = CString::new(doppler_ref).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_doppler = CasacoreOracleRuntime::c_string("measures input", doppler_ref)
+        .map_err(|error| error.to_string())?;
     let mut freq_out: f64 = 0.0;
 
     let rc = unsafe {
@@ -1546,7 +1614,7 @@ pub fn cpp_frequency_shift_with_doppler(
 /// Convert an epoch with position and dUT1 in the frame using C++ casacore.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_epoch_convert_with_frame(
+pub(crate) fn cpp_epoch_convert_with_frame(
     mjd_in: f64,
     ref_in: &str,
     ref_out: &str,
@@ -1555,8 +1623,10 @@ pub fn cpp_epoch_convert_with_frame(
     obs_h: f64,
     dut1: f64,
 ) -> Result<f64, String> {
-    let c_in = CString::new(ref_in).unwrap();
-    let c_out = CString::new(ref_out).unwrap();
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut mjd_out: f64 = 0.0;
 
     let rc = unsafe {
@@ -1583,7 +1653,7 @@ pub fn cpp_epoch_convert_with_frame(
 ///
 /// Returns `(dut1_seconds, xp_arcsec, yp_arcsec)`.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_eop_query(mjd: f64) -> Result<(f64, f64, f64), String> {
+pub(crate) fn cpp_eop_query(mjd: f64) -> Result<(f64, f64, f64), String> {
     let mut dut1: f64 = 0.0;
     let mut xp: f64 = 0.0;
     let mut yp: f64 = 0.0;
@@ -1600,7 +1670,7 @@ pub fn cpp_eop_query(mjd: f64) -> Result<(f64, f64, f64), String> {
 /// Compute the same baseline-to-UVW path used by casacore `NewMSSimulator`.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_simulator_baseline_uvw(
+pub(crate) fn cpp_simulator_baseline_uvw(
     obs_itrf_m: [f64; 3],
     ant_itrf_m: [f64; 3],
     phase_center_rad: [f64; 2],
@@ -1639,14 +1709,15 @@ pub fn cpp_simulator_baseline_uvw(
 /// Convert one simulator antenna baseline through C++ casacore `MBaseline`.
 #[cfg(has_casacore_cpp)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpp_baseline_convert(
+pub(crate) fn cpp_baseline_convert(
     obs_itrf_m: [f64; 3],
     ant_itrf_m: [f64; 3],
     phase_center_rad: [f64; 2],
     epoch_mjd_ut1: f64,
     ref_out: &str,
 ) -> Result<[f64; 3], String> {
-    let c_ref = CString::new(ref_out).unwrap();
+    let c_ref = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
     let mut out = [0.0_f64; 3];
     let rc = unsafe {
         measures_shim_baseline_convert(
@@ -1675,7 +1746,10 @@ pub fn cpp_baseline_convert(
 
 /// Return C++ casacore `MeasFrame::getLASTr()` for an ITRF observatory.
 #[cfg(has_casacore_cpp)]
-pub fn cpp_last_rad_for_itrf(obs_itrf_m: [f64; 3], epoch_mjd_ut1: f64) -> Result<f64, String> {
+pub(crate) fn cpp_last_rad_for_itrf(
+    obs_itrf_m: [f64; 3],
+    epoch_mjd_ut1: f64,
+) -> Result<f64, String> {
     let mut last = 0.0_f64;
     let rc = unsafe {
         measures_shim_last_rad_for_itrf(

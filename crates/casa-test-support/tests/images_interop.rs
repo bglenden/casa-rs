@@ -8,7 +8,9 @@
 
 use casa_coordinates::{CoordinateSystem, DirectionCoordinate, Projection, ProjectionType};
 use casa_images::{Image, OpenedImageView, PagedImage};
-use casa_test_support::{CppUnsupportedRegionKind, cpp_backend_available, discover_casa_python};
+use casa_test_support::{
+    CppUnsupportedRegionKind, ImageOracle, casacore_oracle_available, discover_casa_python,
+};
 use casa_types::measures::direction::DirectionRef;
 use casa_types::{Complex32, Complex64};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -98,7 +100,7 @@ fn rr_roundtrip_3d() {
 
 #[test]
 fn rc_rust_write_cpp_read_3d() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping rc_rust_write_cpp_read_3d: C++ casacore not available");
         return;
     }
@@ -118,17 +120,17 @@ fn rc_rust_write_cpp_read_3d() {
     }
 
     // Read with C++
-    let cpp_shape = casa_test_support::cpp_read_image_shape(&path).unwrap();
+    let cpp_shape = ImageOracle::read_image_shape(&path).unwrap();
     assert_eq!(
         cpp_shape,
         shape.iter().map(|&s| s as i32).collect::<Vec<_>>()
     );
 
-    let cpp_data = casa_test_support::cpp_read_image_data(&path, data.len()).unwrap();
+    let cpp_data = ImageOracle::read_image_data(&path, data.len()).unwrap();
     assert_eq!(cpp_data.len(), data.len());
     assert_eq!(cpp_data, data);
 
-    let cpp_units = casa_test_support::cpp_read_image_units(&path).unwrap();
+    let cpp_units = ImageOracle::read_image_units(&path).unwrap();
     assert_eq!(cpp_units, "K");
 }
 
@@ -138,7 +140,7 @@ fn rc_rust_write_cpp_read_3d() {
 
 #[test]
 fn cr_cpp_write_rust_read_3d() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping cr_cpp_write_rust_read_3d: C++ casacore not available");
         return;
     }
@@ -150,7 +152,7 @@ fn cr_cpp_write_rust_read_3d() {
     let data = ramp_data(&shape_usize);
 
     // Write with C++
-    casa_test_support::cpp_create_image(&path, &shape_i32, &data, "mJy/beam").unwrap();
+    ImageOracle::create_image(&path, &shape_i32, &data, "mJy/beam").unwrap();
 
     // Read with Rust
     let img = Image::open(&path).unwrap();
@@ -224,7 +226,7 @@ ia.done()
 
 #[test]
 fn cc_cpp_roundtrip_3d() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping cc_cpp_roundtrip_3d: C++ casacore not available");
         return;
     }
@@ -236,13 +238,13 @@ fn cc_cpp_roundtrip_3d() {
     let data = ramp_data(&shape_usize);
 
     // Write with C++
-    casa_test_support::cpp_create_image(&path, &shape_i32, &data, "Jy").unwrap();
+    ImageOracle::create_image(&path, &shape_i32, &data, "Jy").unwrap();
 
     // Read with C++
-    let cpp_data = casa_test_support::cpp_read_image_data(&path, data.len()).unwrap();
+    let cpp_data = ImageOracle::read_image_data(&path, data.len()).unwrap();
     assert_eq!(cpp_data, data);
 
-    let cpp_units = casa_test_support::cpp_read_image_units(&path).unwrap();
+    let cpp_units = ImageOracle::read_image_units(&path).unwrap();
     assert_eq!(cpp_units, "Jy");
 }
 
@@ -252,7 +254,7 @@ fn cc_cpp_roundtrip_3d() {
 
 #[test]
 fn metadata_units_rust_to_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping metadata_units_rust_to_cpp: C++ casacore not available");
         return;
     }
@@ -270,13 +272,13 @@ fn metadata_units_rust_to_cpp() {
         img.save().unwrap();
     }
 
-    let units = casa_test_support::cpp_read_image_units(&path).unwrap();
+    let units = ImageOracle::read_image_units(&path).unwrap();
     assert_eq!(units, "Jy/beam");
 }
 
 #[test]
 fn rc_rust_direction_image_cpp_read_2d() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping rc_rust_direction_image_cpp_read_2d: C++ casacore not available");
         return;
     }
@@ -294,19 +296,16 @@ fn rc_rust_direction_image_cpp_read_2d() {
         img.save().unwrap();
     }
 
-    let cpp_shape = casa_test_support::cpp_read_image_shape(&path).unwrap();
+    let cpp_shape = ImageOracle::read_image_shape(&path).unwrap();
     assert_eq!(cpp_shape, vec![16, 16]);
-    let cpp_data = casa_test_support::cpp_read_image_data(&path, data.len()).unwrap();
+    let cpp_data = ImageOracle::read_image_data(&path, data.len()).unwrap();
     assert_eq!(cpp_data, data);
-    assert_eq!(
-        casa_test_support::cpp_read_image_units(&path).unwrap(),
-        "Jy/beam"
-    );
+    assert_eq!(ImageOracle::read_image_units(&path).unwrap(), "Jy/beam");
 }
 
 #[test]
 fn cpp_image_opens_without_crash() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping cpp_image_opens_without_crash: C++ casacore not available");
         return;
     }
@@ -316,7 +315,7 @@ fn cpp_image_opens_without_crash() {
     let shape_i32 = vec![8i32, 8];
     let data = vec![1.0f32; 64];
 
-    casa_test_support::cpp_create_image(&path, &shape_i32, &data, "K").unwrap();
+    ImageOracle::create_image(&path, &shape_i32, &data, "K").unwrap();
 
     // Rust can open C++ image without crashing.
     let img = Image::open(&path).unwrap();
@@ -331,7 +330,7 @@ fn cpp_image_opens_without_crash() {
 
 #[test]
 fn rc_cube_interop() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping rc_cube_interop: C++ casacore not available");
         return;
     }
@@ -359,7 +358,7 @@ fn rc_cube_interop() {
     }
 
     // Read with C++
-    let cpp_data = casa_test_support::cpp_read_image_data(&path, n).unwrap();
+    let cpp_data = ImageOracle::read_image_data(&path, n).unwrap();
     assert_eq!(cpp_data.len(), n);
     for (i, (&got, &expected)) in cpp_data.iter().zip(data.iter()).enumerate() {
         assert!(
@@ -371,7 +370,7 @@ fn rc_cube_interop() {
 
 #[test]
 fn rc_rust_write_cpp_read_f64() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping rc_rust_write_cpp_read_f64: C++ casacore not available");
         return;
     }
@@ -386,13 +385,13 @@ fn rc_rust_write_cpp_read_f64() {
     img.put_slice(&arr, &[0, 0, 0]).unwrap();
     img.save().unwrap();
 
-    let cpp = casa_test_support::cpp_read_image_data_f64(&path, data.len()).unwrap();
+    let cpp = ImageOracle::read_image_data_f64(&path, data.len()).unwrap();
     assert_eq!(cpp, data);
 }
 
 #[test]
 fn cr_cpp_write_rust_read_f64() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping cr_cpp_write_rust_read_f64: C++ casacore not available");
         return;
     }
@@ -403,7 +402,7 @@ fn cr_cpp_write_rust_read_f64() {
     let shape: Vec<usize> = shape_i32.iter().map(|&v| v as usize).collect();
     let data = ramp_data_f64(&shape);
 
-    casa_test_support::cpp_create_image_f64(&path, &shape_i32, &data, "Jy").unwrap();
+    ImageOracle::create_image_f64(&path, &shape_i32, &data, "Jy").unwrap();
     let img = PagedImage::<f64>::open(&path).unwrap();
     let got: Vec<f64> = img.get().unwrap().as_slice_memory_order().unwrap().to_vec();
     assert_eq!(got, data);
@@ -411,7 +410,7 @@ fn cr_cpp_write_rust_read_f64() {
 
 #[test]
 fn rc_rust_write_cpp_read_complex32() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping rc_rust_write_cpp_read_complex32: C++ casacore not available");
         return;
     }
@@ -427,13 +426,13 @@ fn rc_rust_write_cpp_read_complex32() {
     img.put_slice(&arr, &[0, 0, 0]).unwrap();
     img.save().unwrap();
 
-    let cpp = casa_test_support::cpp_read_image_data_complex32(&path, data.len()).unwrap();
+    let cpp = ImageOracle::read_image_data_complex32(&path, data.len()).unwrap();
     assert_eq!(cpp, data);
 }
 
 #[test]
 fn cr_cpp_write_rust_read_complex32() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping cr_cpp_write_rust_read_complex32: C++ casacore not available");
         return;
     }
@@ -444,7 +443,7 @@ fn cr_cpp_write_rust_read_complex32() {
     let shape: Vec<usize> = shape_i32.iter().map(|&v| v as usize).collect();
     let data = ramp_data_complex32(&shape);
 
-    casa_test_support::cpp_create_image_complex32(&path, &shape_i32, &data, "Jy").unwrap();
+    ImageOracle::create_image_complex32(&path, &shape_i32, &data, "Jy").unwrap();
     let img = PagedImage::<Complex32>::open(&path).unwrap();
     let got: Vec<Complex32> = img.get().unwrap().as_slice_memory_order().unwrap().to_vec();
     assert_eq!(got, data);
@@ -452,7 +451,7 @@ fn cr_cpp_write_rust_read_complex32() {
 
 #[test]
 fn rc_rust_write_cpp_read_complex64() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping rc_rust_write_cpp_read_complex64: C++ casacore not available");
         return;
     }
@@ -468,13 +467,13 @@ fn rc_rust_write_cpp_read_complex64() {
     img.put_slice(&arr, &[0, 0, 0]).unwrap();
     img.save().unwrap();
 
-    let cpp = casa_test_support::cpp_read_image_data_complex64(&path, data.len()).unwrap();
+    let cpp = ImageOracle::read_image_data_complex64(&path, data.len()).unwrap();
     assert_eq!(cpp, data);
 }
 
 #[test]
 fn cr_cpp_write_rust_read_complex64() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping cr_cpp_write_rust_read_complex64: C++ casacore not available");
         return;
     }
@@ -485,7 +484,7 @@ fn cr_cpp_write_rust_read_complex64() {
     let shape: Vec<usize> = shape_i32.iter().map(|&v| v as usize).collect();
     let data = ramp_data_complex64(&shape);
 
-    casa_test_support::cpp_create_image_complex64(&path, &shape_i32, &data, "Jy").unwrap();
+    ImageOracle::create_image_complex64(&path, &shape_i32, &data, "Jy").unwrap();
     let img = PagedImage::<Complex64>::open(&path).unwrap();
     let got: Vec<Complex64> = img.get().unwrap().as_slice_memory_order().unwrap().to_vec();
     assert_eq!(got, data);
@@ -493,7 +492,7 @@ fn cr_cpp_write_rust_read_complex64() {
 
 #[test]
 fn cr_cpp_write_rust_load_saved_polygon_region() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!(
             "skipping cr_cpp_write_rust_load_saved_polygon_region: C++ casacore not available"
         );
@@ -502,7 +501,7 @@ fn cr_cpp_write_rust_load_saved_polygon_region() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cpp_polygon_region.image");
-    casa_test_support::cpp_create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
+    ImageOracle::create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
 
     let opened = OpenedImageView::open(&path).unwrap();
     let window = opened.default_window();
@@ -523,7 +522,7 @@ fn cr_cpp_write_rust_load_saved_polygon_region() {
         .iter()
         .map(|vertex| vertex.world[1])
         .collect::<Vec<_>>();
-    casa_test_support::cpp_write_polygon_region(&path, "cpp_poly", &x, &y).unwrap();
+    ImageOracle::write_polygon_region(&path, "cpp_poly", &x, &y).unwrap();
 
     let loaded = opened.load_saved_region("cpp_poly").unwrap();
     assert_eq!(loaded.label, "cpp_poly");
@@ -539,14 +538,14 @@ fn cr_cpp_write_rust_load_saved_polygon_region() {
 
 #[test]
 fn cr_cpp_write_rust_load_saved_union_region() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping cr_cpp_write_rust_load_saved_union_region: C++ casacore not available");
         return;
     }
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cpp_union_region.image");
-    casa_test_support::cpp_create_image(&path, &[6, 6], &[0.0; 36], "").unwrap();
+    ImageOracle::create_image(&path, &[6, 6], &[0.0; 36], "").unwrap();
 
     let opened = OpenedImageView::open(&path).unwrap();
     let window = opened.default_window();
@@ -582,7 +581,7 @@ fn cr_cpp_write_rust_load_saved_union_region() {
         .iter()
         .map(|vertex| vertex.world[1])
         .collect::<Vec<_>>();
-    casa_test_support::cpp_write_union_region(&path, "cpp_union", &x1, &y1, &x2, &y2).unwrap();
+    ImageOracle::write_union_region(&path, "cpp_union", &x1, &y1, &x2, &y2).unwrap();
 
     let loaded = opened.load_saved_region("cpp_union").unwrap();
     assert_eq!(loaded.shapes.len(), 2);
@@ -591,7 +590,7 @@ fn cr_cpp_write_rust_load_saved_union_region() {
 
 #[test]
 fn rc_rust_write_cpp_reads_saved_region_classes() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!(
             "skipping rc_rust_write_cpp_reads_saved_region_classes: C++ casacore not available"
         );
@@ -600,7 +599,7 @@ fn rc_rust_write_cpp_reads_saved_region_classes() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("rust_region_class.image");
-    casa_test_support::cpp_create_image(&path, &[6, 6], &[0.0; 36], "").unwrap();
+    ImageOracle::create_image(&path, &[6, 6], &[0.0; 36], "").unwrap();
 
     let opened = OpenedImageView::open(&path).unwrap();
     let window = opened.default_window();
@@ -615,7 +614,7 @@ fn rc_rust_write_cpp_reads_saved_region_classes() {
     region.close_active_shape().unwrap();
     let polygon_name = opened.save_region_definition(&region, None).unwrap();
     assert_eq!(
-        casa_test_support::cpp_read_region_class(&path, &polygon_name).unwrap(),
+        ImageOracle::read_region_class(&path, &polygon_name).unwrap(),
         "WCPolygon"
     );
 
@@ -629,18 +628,18 @@ fn rc_rust_write_cpp_reads_saved_region_classes() {
     region.close_active_shape().unwrap();
     let union_name = opened.save_region_definition(&region, None).unwrap();
     assert_eq!(
-        casa_test_support::cpp_read_region_class(&path, &union_name).unwrap(),
+        ImageOracle::read_region_class(&path, &union_name).unwrap(),
         "WCUnion"
     );
     assert_eq!(
-        casa_test_support::cpp_read_region_names(&path).unwrap(),
+        ImageOracle::read_region_names(&path).unwrap(),
         vec![polygon_name, union_name]
     );
 }
 
 #[test]
 fn cr_cpp_write_unsupported_region_reports_useful_error() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!(
             "skipping cr_cpp_write_unsupported_region_reports_useful_error: C++ casacore not available"
         );
@@ -649,9 +648,9 @@ fn cr_cpp_write_unsupported_region_reports_useful_error() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cpp_box_region.image");
-    casa_test_support::cpp_create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
+    ImageOracle::create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
 
-    casa_test_support::cpp_write_box_region(&path, "cpp_box", 0.0, 0.0, 1.0, 1.0).unwrap();
+    ImageOracle::write_box_region(&path, "cpp_box", 0.0, 0.0, 1.0, 1.0).unwrap();
     let opened = OpenedImageView::open(&path).unwrap();
     let error = opened.load_saved_region("cpp_box").unwrap_err();
     assert!(error.to_string().contains("saved region 'cpp_box'"));
@@ -660,7 +659,7 @@ fn cr_cpp_write_unsupported_region_reports_useful_error() {
 
 #[test]
 fn cr_cpp_write_unsupported_region_matrix_reports_class_names() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!(
             "skipping cr_cpp_write_unsupported_region_matrix_reports_class_names: C++ casacore not available"
         );
@@ -669,7 +668,7 @@ fn cr_cpp_write_unsupported_region_matrix_reports_class_names() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cpp_unsupported_regions.image");
-    casa_test_support::cpp_create_image(&path, &[6, 6, 4], &[0.0; 144], "").unwrap();
+    ImageOracle::create_image(&path, &[6, 6, 4], &[0.0; 144], "").unwrap();
     let opened = OpenedImageView::open(&path).unwrap();
 
     let cases = [
@@ -712,7 +711,7 @@ fn cr_cpp_write_unsupported_region_matrix_reports_class_names() {
     ];
 
     for (name, kind, class_name) in cases {
-        casa_test_support::cpp_write_unsupported_region(&path, name, kind).unwrap();
+        ImageOracle::write_unsupported_region(&path, name, kind).unwrap();
         let error = opened.load_saved_region(name).unwrap_err();
         let error_text = error.to_string();
         assert!(error_text.contains(name), "{name}: {error_text}");
@@ -759,7 +758,7 @@ fn assert_region_stats_close(
 
 #[test]
 fn rc_rust_region_statistics_match_cpp_for_polygon_and_union() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!(
             "skipping rc_rust_region_statistics_match_cpp_for_polygon_and_union: C++ casacore not available"
         );
@@ -769,7 +768,7 @@ fn rc_rust_region_statistics_match_cpp_for_polygon_and_union() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("rust_region_stats.image");
     let shape = vec![6usize, 6usize];
-    casa_test_support::cpp_create_image(
+    ImageOracle::create_image(
         &path,
         &[shape[0] as i32, shape[1] as i32],
         &vec![0.0; shape.iter().product()],
@@ -802,7 +801,7 @@ fn rc_rust_region_statistics_match_cpp_for_polygon_and_union() {
         .region_stats_with_window_and_axes(&polygon, &window, &[])
         .unwrap()
         .unwrap();
-    let cpp_polygon = casa_test_support::cpp_read_region_statistics(&path, &polygon_name).unwrap();
+    let cpp_polygon = ImageOracle::read_region_statistics(&path, &polygon_name).unwrap();
     assert_region_stats_close(&rust_polygon, &cpp_polygon);
 
     polygon.start_shape().unwrap();
@@ -815,20 +814,20 @@ fn rc_rust_region_statistics_match_cpp_for_polygon_and_union() {
         .region_stats_with_window_and_axes(&polygon, &window, &[])
         .unwrap()
         .unwrap();
-    let cpp_union = casa_test_support::cpp_read_region_statistics(&path, &union_name).unwrap();
+    let cpp_union = ImageOracle::read_region_statistics(&path, &union_name).unwrap();
     assert_region_stats_close(&rust_union, &cpp_union);
 }
 
 #[test]
 fn rc_rust_write_cpp_reads_default_mask() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping rc_rust_write_cpp_reads_default_mask: C++ casacore not available");
         return;
     }
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("rust_mask.image");
-    casa_test_support::cpp_create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
+    ImageOracle::create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
 
     let mut opened = OpenedImageView::open(&path).unwrap();
     let window = opened.default_window();
@@ -844,27 +843,27 @@ fn rc_rust_write_cpp_reads_default_mask() {
     opened.write_region_mask(&region, "roi", true).unwrap();
 
     assert_eq!(
-        casa_test_support::cpp_read_image_default_mask_name(&path).unwrap(),
+        ImageOracle::read_image_default_mask_name(&path).unwrap(),
         "roi"
     );
-    let mask = casa_test_support::cpp_read_image_default_mask(&path, 25).unwrap();
+    let mask = ImageOracle::read_image_default_mask(&path, 25).unwrap();
     assert_eq!(mask.len(), 25);
     assert!(mask.iter().any(|value| *value));
 }
 
 #[test]
 fn cr_cpp_write_default_mask_rust_reads_it() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping cr_cpp_write_default_mask_rust_reads_it: C++ casacore not available");
         return;
     }
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cpp_mask.image");
-    casa_test_support::cpp_create_image(&path, &[4, 4], &[0.0; 16], "").unwrap();
+    ImageOracle::create_image(&path, &[4, 4], &[0.0; 16], "").unwrap();
 
     let mask = (0..16).map(|index| index % 2 == 0).collect::<Vec<_>>();
-    casa_test_support::cpp_write_default_mask(&path, "cppmask", &mask).unwrap();
+    ImageOracle::write_default_mask(&path, "cppmask", &mask).unwrap();
 
     let reopened = Image::open(&path).unwrap();
     assert_eq!(reopened.default_mask_name().as_deref(), Some("cppmask"));

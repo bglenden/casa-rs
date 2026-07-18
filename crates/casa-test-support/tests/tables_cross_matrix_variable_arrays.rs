@@ -9,7 +9,7 @@ use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{
     ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
 };
-use casa_test_support::{cpp_backend_available, cpp_vararray_bench};
+use casa_test_support::{TableOracle, casacore_oracle_available};
 use casa_types::{ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, Value};
 use ndarray::ShapeBuilder;
 
@@ -295,7 +295,7 @@ fn bench_variable_array_rows(nrows: usize) -> Vec<RecordValue> {
 /// then compare timing. Fails if Rust is > 2× slower than C++.
 #[test]
 fn vararray_perf_10k_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping vararray_perf_10k_vs_cpp: C++ casacore not available");
         return;
     }
@@ -343,7 +343,8 @@ fn vararray_perf_10k_vs_cpp() {
     // ── C++ write + read ────────────────────────────────────────────────────
     let cpp_table_path = dir.path().join("cpp_bench.tbl");
     let (cpp_write_ns, cpp_read_ns, cpp_total_elems) =
-        cpp_vararray_bench(&cpp_table_path, NROWS as u64).expect("C++ benchmark should succeed");
+        TableOracle::vararray_bench(&cpp_table_path, NROWS as u64)
+            .expect("C++ benchmark should succeed");
     assert_eq!(
         cpp_total_elems, EXPECTED_ELEMS,
         "C++ element count mismatch"

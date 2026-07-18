@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave4-standard-cubedata-line-medium",
   "mode_id": "standard-cubedata-line",
   "description": "Wave 4 medium standard-gridder cubedata dirty cube workload for W4-11 slab integration evidence.",

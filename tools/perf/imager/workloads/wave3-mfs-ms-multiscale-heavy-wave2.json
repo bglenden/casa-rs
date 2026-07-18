@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave3-mfs-ms-multiscale-heavy-wave2",
   "mode_id": "wave3-mfs-ms-multiscale",
   "description": "Wave 3 #277 heavy regression row matching the retained Wave 2 multiscale MFS screen: 32 GiB VLA medium MS, 64 channels, 1024 image, Briggs, niter=500.",

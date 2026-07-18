@@ -13,6 +13,32 @@ import pytest
 import imaging_performance_ledger as ledger_tool
 
 
+def canonical_result(
+    *,
+    kind: str,
+    run_id: str,
+    workload_id: str,
+    results: dict[str, Any],
+    status: str = "completed",
+) -> dict[str, Any]:
+    if status not in {"completed", "dry_run"}:
+        results = {
+            **results,
+            "failure": {"kind": "comparison_tolerance", "reason": "test failure"},
+        }
+    return {
+        "schema_version": 2,
+        "kind": kind,
+        "status": status,
+        "run_id": run_id,
+        "created_at": "2026-07-18T00:00:00Z",
+        "workload": {"id": workload_id},
+        "environment": {},
+        "artifacts": {},
+        "results": results,
+    }
+
+
 def write_json(path: pathlib.Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -63,17 +89,17 @@ def run_artifact(
     stages_ms: dict[str, float],
     backend_summary: dict[str, Any],
 ) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "status": "completed",
-        "workload": {"id": workload_id},
-        "results": {
+    return canonical_result(
+        kind="workload_run",
+        run_id=f"{workload_id}-run",
+        workload_id=workload_id,
+        results={
             "rust": {"timings_seconds": {"median": wall_s, "runs": [wall_s]}},
             "casa": {"timings_seconds": {"median": None, "runs": []}},
             "stage_medians_ms": {"rust": stages_ms, "casa": {}},
             "backend_plan_logs": {"summary": backend_summary},
         },
-    }
+    )
 
 
 def comparison_artifact(
@@ -143,9 +169,7 @@ def counterbalanced_artifact(*, no_slowdown: bool = True) -> dict[str, Any]:
                 ),
             }
         )
-    return {
-        "payload": {
-            "status": "completed",
+    details = {
             "configuration": {
                 "baseline_workload": "workloads/wave352-cpu.json",
                 "candidate_workload": "workloads/wave352-metal.json",
@@ -168,8 +192,21 @@ def counterbalanced_artifact(*, no_slowdown: bool = True) -> dict[str, Any]:
                     "relative_delta": relative_delta,
                 },
             ],
-        }
     }
+    status = "completed" if no_slowdown else "out_of_tolerance"
+    return {
+        "payload": canonical_result(
+            kind="alternating_comparison",
+            run_id="counterbalanced-test",
+            workload_id="workloads/wave352-metal.json",
+            status=status,
+            results={"alternating_comparison": details},
+        )
+    }
+
+
+def counterbalanced_details(artifact: dict[str, Any]) -> dict[str, Any]:
+    return artifact["payload"]["results"]["alternating_comparison"]
 
 
 def valid_fixture(tmp_path: pathlib.Path) -> dict[str, Any]:
@@ -228,19 +265,31 @@ def valid_fixture(tmp_path: pathlib.Path) -> dict[str, Any]:
             {"frontend_total": 9000.0, "psf_fft": 40.0},
             candidate_summary,
         ),
-        "metal-comparison": comparison_artifact("good", 0.02, 0.001),
-        "oracle": {
-            "schema_version": 1,
-            "status": "completed",
-            "workload": {"id": oracle_workload},
-            "results": {
+        "metal-comparison": canonical_result(
+            kind="image_comparison",
+            run_id="metal-comparison",
+            workload_id=candidate_workload,
+            results={"product_comparison": comparison_artifact("good", 0.02, 0.001)},
+        ),
+        "oracle": canonical_result(
+            kind="workload_run",
+            run_id="oracle-run",
+            workload_id=oracle_workload,
+            results={
                 "casa": {"timings_seconds": {"median": 20.0, "runs": [20.0]}},
                 "rust": {"timings_seconds": {"median": 8.0, "runs": [8.0]}},
                 "stage_medians_ms": {"casa": {}, "rust": {}},
                 "backend_plan_logs": {"summary": {}},
             },
-        },
-        "oracle-comparison": comparison_artifact("investigate", 0.2, 0.02),
+        ),
+        "oracle-comparison": canonical_result(
+            kind="image_comparison",
+            run_id="oracle-comparison",
+            workload_id=oracle_workload,
+            results={
+                "product_comparison": comparison_artifact("investigate", 0.2, 0.02)
+            },
+        ),
     }
     artifact_specs = [
         ("cpu", baseline_workload, "baseline"),
@@ -414,7 +463,10 @@ def rewrite_artifact(
     fixture: dict[str, Any], artifact_id: str, mutate: Callable[[dict[str, Any]], None]
 ) -> None:
     artifact = fixture["artifacts"][artifact_id]
-    mutate(artifact)
+    target = artifact
+    if artifact.get("kind") == "image_comparison":
+        target = artifact["results"]["product_comparison"]
+    mutate(target)
     artifact_path = fixture["artifact_paths"][artifact_id]
     write_json(artifact_path, artifact)
     manifest_entry = next(
@@ -856,7 +908,7 @@ def test_counterbalanced_evidence_rejects_a_slowdown_verdict() -> None:
 
 def test_counterbalanced_evidence_rejects_tampered_raw_run() -> None:
     artifact = counterbalanced_artifact()
-    artifact["payload"]["runs"][1]["total_wall_seconds"] = 19.0
+    counterbalanced_details(artifact)["runs"][1]["total_wall_seconds"] = 19.0
 
     with pytest.raises(ledger_tool.LedgerError, match="raw scheduled runs"):
         ledger_tool.derive_counterbalanced_evidence(artifact, "counterbalanced")
@@ -875,7 +927,7 @@ def test_counterbalanced_evidence_rejects_tampered_paired_delta(
     field: str, value: float
 ) -> None:
     artifact = counterbalanced_artifact()
-    artifact["payload"]["paired_deltas"][0][field] = value
+    counterbalanced_details(artifact)["paired_deltas"][0][field] = value
 
     with pytest.raises(ledger_tool.LedgerError, match="raw scheduled runs"):
         ledger_tool.derive_counterbalanced_evidence(artifact, "counterbalanced")
@@ -893,7 +945,7 @@ def test_counterbalanced_evidence_rejects_tampered_verdict(
     field: str, value: Any
 ) -> None:
     artifact = counterbalanced_artifact()
-    artifact["payload"]["verdict"][field] = value
+    counterbalanced_details(artifact)["verdict"][field] = value
 
     with pytest.raises(ledger_tool.LedgerError, match="raw scheduled runs"):
         ledger_tool.derive_counterbalanced_evidence(artifact, "counterbalanced")
@@ -901,14 +953,15 @@ def test_counterbalanced_evidence_rejects_tampered_verdict(
 
 def test_counterbalanced_evidence_rejects_consistent_tampered_summaries() -> None:
     artifact = counterbalanced_artifact(no_slowdown=False)
-    artifact["payload"]["paired_deltas"][0].update(
+    details = counterbalanced_details(artifact)
+    details["paired_deltas"][0].update(
         {
             "candidate_seconds": 15.0,
             "delta_seconds": -5.0,
             "relative_delta": -0.25,
         }
     )
-    artifact["payload"]["verdict"].update(
+    details["verdict"].update(
         {
             "status": "pass",
             "no_slowdown": True,
@@ -922,10 +975,11 @@ def test_counterbalanced_evidence_rejects_consistent_tampered_summaries() -> Non
 
 def test_counterbalanced_evidence_rejects_role_workload_mismatch() -> None:
     artifact = counterbalanced_artifact()
-    artifact["payload"]["schedule"][0]["workload"] = (
+    details = counterbalanced_details(artifact)
+    details["schedule"][0]["workload"] = (
         "workloads/wave352-metal.json"
     )
-    artifact["payload"]["runs"][0]["workload"] = "workloads/wave352-metal.json"
+    details["runs"][0]["workload"] = "workloads/wave352-metal.json"
 
     with pytest.raises(
         ledger_tool.LedgerError, match="does not match configured baseline workload"

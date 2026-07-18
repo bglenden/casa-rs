@@ -18,6 +18,18 @@ from typing import Any, Callable, Sequence
 import uuid
 
 import perf_paths
+from perf_harness import (
+    ContractError,
+    RUN_RESULT_SCHEMA_VERSION,
+    atomic_write_json,
+    finite_number,
+    load_run_result,
+    nested_object as nested_dict,
+    nested_value,
+    validate_run_result,
+)
+from perf_harness.provenance import capture_provenance
+from perf_harness.subprocesses import run_command as run_shared_command
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -153,15 +165,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         validate_config(config)
         report_path, report = run_comparison(config)
-    except ComparisonError as error:
+    except (ComparisonError, ContractError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
 
     print(report_path)
     if report["status"] != "completed":
-        print(f"error: {report['error']}", file=sys.stderr)
+        failure = report["results"].get("failure", {})
+        print(f"error: {failure.get('reason', report['status'])}", file=sys.stderr)
         return 1
-    verdict = report.get("verdict")
+    details = report["results"]["alternating_comparison"]
+    verdict = details.get("verdict")
     verdict_status = verdict.get("status") if isinstance(verdict, dict) else None
     if verdict_status != "pass":
         print(
@@ -262,7 +276,11 @@ def run_comparison(
     comparison_id: str | None = None,
 ) -> tuple[pathlib.Path, dict[str, Any]]:
     validate_config(config)
-    runner = command_runner or run_command
+    runner = command_runner or (
+        lambda argv, environment: run_shared_command(
+            argv, cwd=REPO_ROOT, environment=environment
+        )
+    )
     comparison_id = comparison_id or new_comparison_id(config)
     output_root = config.output_root.expanduser().resolve()
     artifact_root = config.artifact_root.expanduser().resolve() / comparison_id
@@ -327,7 +345,8 @@ def run_comparison(
         runs=runs,
         execution_error=execution_error,
     )
-    write_json(report_path, report)
+    validate_run_result(report, source=str(report_path))
+    atomic_write_json(report_path, report)
     return report_path, report
 
 
@@ -358,20 +377,6 @@ def build_run_command(
     ]
 
 
-def run_command(
-    argv: list[str], environment: dict[str, str]
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        argv,
-        cwd=REPO_ROOT,
-        env=environment,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
-
-
 def execute_run(
     item: ScheduleItem,
     command: list[str],
@@ -388,7 +393,7 @@ def execute_run(
         )
 
     result_path = result_path_from_stdout(stdout)
-    result = load_result(result_path)
+    result = load_run_result(result_path)
     return {
         **asdict(item),
         "command": command,
@@ -418,16 +423,6 @@ def last_nonempty_line(text: str) -> str | None:
     return next(
         (line.strip() for line in reversed(text.splitlines()) if line.strip()), None
     )
-
-
-def load_result(path: pathlib.Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ComparisonError(f"read result {path}: {error}") from error
-    if not isinstance(value, dict):
-        raise ComparisonError(f"result {path} must contain a JSON object")
-    return value
 
 
 def extract_total_wall_seconds(result: dict[str, Any]) -> float | None:
@@ -532,13 +527,9 @@ def build_report(
         tolerance=config.slowdown_tolerance,
         evidence_complete=evidence_complete,
     )
-    return {
-        "schema_version": 1,
-        "status": "completed" if execution_error is None else "failed",
+    details = {
         "error": execution_error,
         "comparison_id": comparison_id,
-        "created_at": utc_now(),
-        "report_path": str(report_path),
         "configuration": {
             "baseline_workload": config.baseline_workload,
             "candidate_workload": config.candidate_workload,
@@ -565,6 +556,45 @@ def build_report(
         "adjacent_pair_deltas": adjacent_pair_deltas,
         "adjacent_pair_delta_summary": summarize_delta_records(adjacent_pair_deltas),
         "verdict": verdict,
+    }
+    if execution_error is not None:
+        status = "failed_execution"
+        failure = {"kind": "execution", "reason": execution_error}
+    elif verdict["status"] == "pass":
+        status = "completed"
+        failure = None
+    elif verdict["status"] == "fail":
+        status = "out_of_tolerance"
+        failure = {
+            "kind": "comparison_tolerance",
+            "reason": verdict.get("reason") or "candidate exceeded slowdown tolerance",
+        }
+    else:
+        status = "failed_comparison"
+        failure = {
+            "kind": "comparison",
+            "reason": verdict.get("reason") or "comparison evidence was inconclusive",
+        }
+    results: dict[str, Any] = {"alternating_comparison": details}
+    if failure is not None:
+        results["failure"] = failure
+    return {
+        "schema_version": RUN_RESULT_SCHEMA_VERSION,
+        "kind": "alternating_comparison",
+        "status": status,
+        "run_id": comparison_id,
+        "created_at": utc_now(),
+        "environment": capture_provenance(
+            repo_root=REPO_ROOT,
+            executables={"run_workload": RUN_WORKLOAD},
+            datasets={},
+            storage_label="alternating-comparison",
+        ),
+        "artifacts": {
+            "report_path": str(report_path),
+            "comparison_artifact_root": str(comparison_artifact_root),
+        },
+        "results": results,
     }
 
 
@@ -782,27 +812,6 @@ def wall_values(runs: list[dict[str, Any]], role: str) -> list[float]:
     ]
 
 
-def finite_number(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    number = float(value)
-    return number if math.isfinite(number) else None
-
-
-def nested_dict(value: dict[str, Any], *keys: str) -> dict[str, Any]:
-    nested = nested_value(value, *keys)
-    return nested if isinstance(nested, dict) else {}
-
-
-def nested_value(value: dict[str, Any], *keys: str) -> Any:
-    current: Any = value
-    for key in keys:
-        if not isinstance(current, dict):
-            return None
-        current = current.get(key)
-    return current
-
-
 def short_role(role: str) -> str:
     return "A" if role == "baseline" else "B"
 
@@ -828,12 +837,6 @@ def slug(value: str) -> str:
 
 def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def write_json(path: pathlib.Path, value: dict[str, Any]) -> None:
-    path.write_text(
-        json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
 
 
 if __name__ == "__main__":

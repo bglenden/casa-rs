@@ -7,7 +7,8 @@
 use std::path::Path;
 
 #[cfg(has_casacore_cpp)]
-use std::ffi::CStr;
+use crate::oracle_runtime::CasacoreOracleRuntime;
+use crate::oracle_runtime::{OracleError, oracle_operation};
 
 /// Timings for a C++ MeasurementSet create/open/read workload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,285 +93,265 @@ unsafe extern "C" {
     fn cpp_table_free_error(ptr: *mut std::ffi::c_char);
 }
 
-/// Write the standard MeasurementSet interop fixture using C++ casacore.
-pub fn cpp_ms_write_basic_fixture(path: &Path) -> Result<(), String> {
-    #[cfg(has_casacore_cpp)]
-    {
-        let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
-            .map_err(|err| format!("CString: {err}"))?;
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe { ffi_cpp_ms_write_basic_fixture(c_path.as_ptr(), &mut error) };
-        if rc != 0 {
-            return Err(take_cpp_error(error));
-        }
-        Ok(())
-    }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = path;
-        Err("casacore C++ backend unavailable".to_string())
-    }
-}
+/// Typed Rust-facing access to the casacore MeasurementSet oracle.
+pub struct MeasurementSetOracle;
 
-/// Verify the standard MeasurementSet interop fixture using C++ casacore.
-pub fn cpp_ms_verify_basic_fixture(path: &Path) -> Result<(), String> {
-    #[cfg(has_casacore_cpp)]
-    {
-        let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
-            .map_err(|err| format!("CString: {err}"))?;
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe { ffi_cpp_ms_verify_basic_fixture(c_path.as_ptr(), &mut error) };
-        if rc != 0 {
-            return Err(take_cpp_error(error));
-        }
-        Ok(())
-    }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = path;
-        Err("casacore C++ backend unavailable".to_string())
-    }
-}
-
-/// Benchmark C++ MeasurementSet create/open/read for the standard fixture.
-pub fn cpp_ms_bench_create_open(path: &Path, nrows: u64) -> Result<MsBenchResult, String> {
-    #[cfg(has_casacore_cpp)]
-    {
-        let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
-            .map_err(|err| format!("CString: {err}"))?;
-        let mut create_ns = 0_u64;
-        let mut open_ns = 0_u64;
-        let mut read_ns = 0_u64;
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe {
-            ffi_cpp_ms_bench_create_open(
-                c_path.as_ptr(),
-                nrows,
-                &mut create_ns,
-                &mut open_ns,
-                &mut read_ns,
-                &mut error,
-            )
-        };
-        if rc != 0 {
-            return Err(take_cpp_error(error));
-        }
-        Ok(MsBenchResult {
-            create_ns,
-            open_ns,
-            read_ns,
+#[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
+impl MeasurementSetOracle {
+    /// Write the standard MeasurementSet interop fixture using C++ casacore.
+    pub fn write_basic_fixture(path: &Path) -> Result<(), OracleError> {
+        oracle_operation!("measurement_set.write_basic_fixture", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe { ffi_cpp_ms_write_basic_fixture(c_path.as_ptr(), &mut error) };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.write_basic_fixture",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(())
         })
     }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = (path, nrows);
-        Err("casacore C++ backend unavailable".to_string())
-    }
-}
 
-/// Return a stable digest manifest for a MeasurementSet opened by C++ casacore.
-///
-/// The manifest is intended for Rust↔C++ parity tests on real-world
-/// MeasurementSets. It traverses the main table, standard MS subtables, and
-/// any additional tables reachable through `TpTable` keyword references,
-/// returning compact per-table digests rather than a huge textual dump.
-pub fn cpp_ms_digest_manifest(path: &Path) -> Result<String, String> {
-    #[cfg(has_casacore_cpp)]
-    {
-        let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
-            .map_err(|err| format!("CString: {err}"))?;
-        let mut manifest: *mut std::ffi::c_char = std::ptr::null_mut();
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe { ffi_cpp_ms_digest_manifest(c_path.as_ptr(), &mut manifest, &mut error) };
-        if rc != 0 {
-            return Err(take_cpp_error(error));
-        }
-        if manifest.is_null() {
-            return Err("C++ digest manifest missing".to_string());
-        }
-        let result = unsafe { CStr::from_ptr(manifest) }
-            .to_string_lossy()
-            .to_string();
-        unsafe { cpp_table_free_error(manifest) };
-        Ok(result)
-    }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = path;
-        Err("casacore C++ backend unavailable".to_string())
-    }
-}
-
-/// Return the stable digest for a single row of a named MeasurementSet table.
-///
-/// `table_label` uses the same naming as the MS verifier, for example
-/// `"MAIN"`, `"SOURCE"`, or `"SYSCAL"`.
-pub fn cpp_ms_table_row_digest(path: &Path, table_label: &str, row: u64) -> Result<String, String> {
-    #[cfg(has_casacore_cpp)]
-    {
-        let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
-            .map_err(|err| format!("CString: {err}"))?;
-        let c_label =
-            std::ffi::CString::new(table_label).map_err(|err| format!("CString: {err}"))?;
-        let mut digest: *mut std::ffi::c_char = std::ptr::null_mut();
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe {
-            ffi_cpp_ms_table_row_digest(
-                c_path.as_ptr(),
-                c_label.as_ptr(),
-                row,
-                &mut digest,
-                &mut error,
-            )
-        };
-        if rc != 0 {
-            return Err(take_cpp_error(error));
-        }
-        if digest.is_null() {
-            return Err("C++ row digest missing".to_string());
-        }
-        let result = unsafe { CStr::from_ptr(digest) }
-            .to_string_lossy()
-            .to_string();
-        unsafe { cpp_table_free_error(digest) };
-        Ok(result)
-    }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = (path, table_label, row);
-        Err("casacore C++ backend unavailable".to_string())
-    }
-}
-
-/// Return a per-field digest manifest for a single row of a named MS table.
-pub fn cpp_ms_table_row_field_manifest(
-    path: &Path,
-    table_label: &str,
-    row: u64,
-) -> Result<String, String> {
-    #[cfg(has_casacore_cpp)]
-    {
-        let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
-            .map_err(|err| format!("CString: {err}"))?;
-        let c_label =
-            std::ffi::CString::new(table_label).map_err(|err| format!("CString: {err}"))?;
-        let mut manifest: *mut std::ffi::c_char = std::ptr::null_mut();
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe {
-            ffi_cpp_ms_table_row_field_manifest(
-                c_path.as_ptr(),
-                c_label.as_ptr(),
-                row,
-                &mut manifest,
-                &mut error,
-            )
-        };
-        if rc != 0 {
-            return Err(take_cpp_error(error));
-        }
-        if manifest.is_null() {
-            return Err("C++ row field manifest missing".to_string());
-        }
-        let result = unsafe { CStr::from_ptr(manifest) }
-            .to_string_lossy()
-            .to_string();
-        unsafe { cpp_table_free_error(manifest) };
-        Ok(result)
-    }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = (path, table_label, row);
-        Err("casacore C++ backend unavailable".to_string())
-    }
-}
-
-/// Benchmark reading all rows of the MAIN table from an external MeasurementSet.
-///
-/// The C++ side opens the MeasurementSet, streams the full MAIN-table row digest,
-/// and returns both the elapsed time and the resulting digest.
-pub fn cpp_ms_bench_main_rows(path: &Path) -> Result<MsMainRowsBenchResult, String> {
-    #[cfg(has_casacore_cpp)]
-    {
-        let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
-            .map_err(|err| format!("CString: {err}"))?;
-        let mut read_ns = 0_u64;
-        let mut digest: *mut std::ffi::c_char = std::ptr::null_mut();
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe {
-            ffi_cpp_ms_bench_main_rows(c_path.as_ptr(), &mut read_ns, &mut digest, &mut error)
-        };
-        if rc != 0 {
-            return Err(take_cpp_error(error));
-        }
-        if digest.is_null() {
-            return Err("C++ MAIN rows digest missing".to_string());
-        }
-        let rows_digest = unsafe { CStr::from_ptr(digest) }
-            .to_string_lossy()
-            .to_string();
-        unsafe { cpp_table_free_error(digest) };
-        Ok(MsMainRowsBenchResult {
-            read_ns,
-            rows_digest,
+    /// Verify the standard MeasurementSet interop fixture using C++ casacore.
+    pub fn verify_basic_fixture(path: &Path) -> Result<(), OracleError> {
+        oracle_operation!("measurement_set.verify_basic_fixture", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe { ffi_cpp_ms_verify_basic_fixture(c_path.as_ptr(), &mut error) };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.verify_basic_fixture",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(())
         })
     }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = path;
-        Err("casacore C++ backend unavailable".to_string())
-    }
-}
 
-/// Benchmark opening an external MeasurementSet and then reading all rows of the
-/// MAIN table on the C++ side.
-pub fn cpp_ms_bench_open_main_rows(path: &Path) -> Result<MsMainOpenScanBenchResult, String> {
-    #[cfg(has_casacore_cpp)]
-    {
-        let c_path = std::ffi::CString::new(path.to_str().ok_or("non-utf8 path")?)
-            .map_err(|err| format!("CString: {err}"))?;
-        let mut open_and_read_ns = 0_u64;
-        let mut digest: *mut std::ffi::c_char = std::ptr::null_mut();
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe {
-            ffi_cpp_ms_bench_open_main_rows(
-                c_path.as_ptr(),
-                &mut open_and_read_ns,
-                &mut digest,
-                &mut error,
-            )
-        };
-        if rc != 0 {
-            return Err(take_cpp_error(error));
-        }
-        if digest.is_null() {
-            return Err("C++ MAIN open+scan digest missing".to_string());
-        }
-        let rows_digest = unsafe { CStr::from_ptr(digest) }
-            .to_string_lossy()
-            .to_string();
-        unsafe { cpp_table_free_error(digest) };
-        Ok(MsMainOpenScanBenchResult {
-            open_and_read_ns,
-            rows_digest,
+    /// Benchmark C++ MeasurementSet create/open/read for the standard fixture.
+    pub fn bench_create_open(path: &Path, nrows: u64) -> Result<MsBenchResult, OracleError> {
+        oracle_operation!("measurement_set.bench_create_open", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut create_ns = 0_u64;
+            let mut open_ns = 0_u64;
+            let mut read_ns = 0_u64;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_ms_bench_create_open(
+                    c_path.as_ptr(),
+                    nrows,
+                    &mut create_ns,
+                    &mut open_ns,
+                    &mut read_ns,
+                    &mut error,
+                )
+            };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.bench_create_open",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(MsBenchResult {
+                create_ns,
+                open_ns,
+                read_ns,
+            })
         })
     }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = path;
-        Err("casacore C++ backend unavailable".to_string())
-    }
-}
 
-#[cfg(has_casacore_cpp)]
-fn take_cpp_error(error: *mut std::ffi::c_char) -> String {
-    if error.is_null() {
-        return "unknown C++ error".to_string();
+    /// Return a stable digest manifest for a MeasurementSet opened by C++ casacore.
+    ///
+    /// The manifest is intended for Rust↔C++ parity tests on real-world
+    /// MeasurementSets. It traverses the main table, standard MS subtables, and
+    /// any additional tables reachable through `TpTable` keyword references,
+    /// returning compact per-table digests rather than a huge textual dump.
+    pub fn digest_manifest(path: &Path) -> Result<String, OracleError> {
+        oracle_operation!("measurement_set.digest_manifest", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut manifest: *mut std::ffi::c_char = std::ptr::null_mut();
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc =
+                unsafe { ffi_cpp_ms_digest_manifest(c_path.as_ptr(), &mut manifest, &mut error) };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.digest_manifest",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            unsafe {
+                CasacoreOracleRuntime::owned_string(
+                    "measurement_set.digest_manifest",
+                    manifest,
+                    cpp_table_free_error,
+                )
+            }
+        })
     }
-    let message = unsafe { CStr::from_ptr(error) }
-        .to_string_lossy()
-        .to_string();
-    unsafe { cpp_table_free_error(error) };
-    message
+
+    /// Return the stable digest for a single row of a named MeasurementSet table.
+    ///
+    /// `table_label` uses the same naming as the MS verifier, for example
+    /// `"MAIN"`, `"SOURCE"`, or `"SYSCAL"`.
+    pub fn table_row_digest(
+        path: &Path,
+        table_label: &str,
+        row: u64,
+    ) -> Result<String, OracleError> {
+        oracle_operation!("measurement_set.table_row_digest", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let c_label =
+                CasacoreOracleRuntime::c_string("MeasurementSet table label", table_label)?;
+            let mut digest: *mut std::ffi::c_char = std::ptr::null_mut();
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_ms_table_row_digest(
+                    c_path.as_ptr(),
+                    c_label.as_ptr(),
+                    row,
+                    &mut digest,
+                    &mut error,
+                )
+            };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.table_row_digest",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            unsafe {
+                CasacoreOracleRuntime::owned_string(
+                    "measurement_set.table_row_digest",
+                    digest,
+                    cpp_table_free_error,
+                )
+            }
+        })
+    }
+
+    /// Return a per-field digest manifest for a single row of a named MS table.
+    pub fn table_row_field_manifest(
+        path: &Path,
+        table_label: &str,
+        row: u64,
+    ) -> Result<String, OracleError> {
+        oracle_operation!("measurement_set.table_row_field_manifest", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let c_label =
+                CasacoreOracleRuntime::c_string("MeasurementSet table label", table_label)?;
+            let mut manifest: *mut std::ffi::c_char = std::ptr::null_mut();
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_ms_table_row_field_manifest(
+                    c_path.as_ptr(),
+                    c_label.as_ptr(),
+                    row,
+                    &mut manifest,
+                    &mut error,
+                )
+            };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.table_row_field_manifest",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            unsafe {
+                CasacoreOracleRuntime::owned_string(
+                    "measurement_set.table_row_field_manifest",
+                    manifest,
+                    cpp_table_free_error,
+                )
+            }
+        })
+    }
+
+    /// Benchmark reading all rows of the MAIN table from an external MeasurementSet.
+    ///
+    /// The C++ side opens the MeasurementSet, streams the full MAIN-table row digest,
+    /// and returns both the elapsed time and the resulting digest.
+    pub fn bench_main_rows(path: &Path) -> Result<MsMainRowsBenchResult, OracleError> {
+        oracle_operation!("measurement_set.bench_main_rows", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut read_ns = 0_u64;
+            let mut digest: *mut std::ffi::c_char = std::ptr::null_mut();
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_ms_bench_main_rows(c_path.as_ptr(), &mut read_ns, &mut digest, &mut error)
+            };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.bench_main_rows",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            let rows_digest = unsafe {
+                CasacoreOracleRuntime::owned_string(
+                    "measurement_set.bench_main_rows",
+                    digest,
+                    cpp_table_free_error,
+                )?
+            };
+            Ok(MsMainRowsBenchResult {
+                read_ns,
+                rows_digest,
+            })
+        })
+    }
+
+    /// Benchmark opening an external MeasurementSet and then reading all rows of the
+    /// MAIN table on the C++ side.
+    pub fn bench_open_main_rows(path: &Path) -> Result<MsMainOpenScanBenchResult, OracleError> {
+        oracle_operation!("measurement_set.bench_open_main_rows", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut open_and_read_ns = 0_u64;
+            let mut digest: *mut std::ffi::c_char = std::ptr::null_mut();
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_ms_bench_open_main_rows(
+                    c_path.as_ptr(),
+                    &mut open_and_read_ns,
+                    &mut digest,
+                    &mut error,
+                )
+            };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.bench_open_main_rows",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            let rows_digest = unsafe {
+                CasacoreOracleRuntime::owned_string(
+                    "measurement_set.bench_open_main_rows",
+                    digest,
+                    cpp_table_free_error,
+                )?
+            };
+            Ok(MsMainOpenScanBenchResult {
+                open_and_read_ns,
+                rows_digest,
+            })
+        })
+    }
 }
 
 #[cfg(test)]
@@ -383,47 +364,47 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path();
         if cfg!(has_casacore_cpp) {
-            cpp_ms_write_basic_fixture(path).unwrap();
-            assert!(cpp_ms_verify_basic_fixture(path).is_ok());
-            assert!(cpp_ms_bench_create_open(path, 4).is_ok());
-            assert!(cpp_ms_digest_manifest(path).is_ok());
-            assert!(cpp_ms_table_row_digest(path, "MAIN", 0).is_ok());
-            assert!(cpp_ms_table_row_field_manifest(path, "MAIN", 0).is_ok());
-            assert!(cpp_ms_bench_main_rows(path).is_ok());
-            assert!(cpp_ms_bench_open_main_rows(path).is_ok());
+            MeasurementSetOracle::write_basic_fixture(path).unwrap();
+            assert!(MeasurementSetOracle::verify_basic_fixture(path).is_ok());
+            assert!(MeasurementSetOracle::bench_create_open(path, 4).is_ok());
+            assert!(MeasurementSetOracle::digest_manifest(path).is_ok());
+            assert!(MeasurementSetOracle::table_row_digest(path, "MAIN", 0).is_ok());
+            assert!(MeasurementSetOracle::table_row_field_manifest(path, "MAIN", 0).is_ok());
+            assert!(MeasurementSetOracle::bench_main_rows(path).is_ok());
+            assert!(MeasurementSetOracle::bench_open_main_rows(path).is_ok());
         } else {
-            assert_eq!(
-                cpp_ms_write_basic_fixture(path),
-                Err("casacore C++ backend unavailable".to_string())
-            );
-            assert_eq!(
-                cpp_ms_verify_basic_fixture(path),
-                Err("casacore C++ backend unavailable".to_string())
-            );
-            assert_eq!(
-                cpp_ms_bench_create_open(path, 4),
-                Err("casacore C++ backend unavailable".to_string())
-            );
-            assert_eq!(
-                cpp_ms_digest_manifest(path),
-                Err("casacore C++ backend unavailable".to_string())
-            );
-            assert_eq!(
-                cpp_ms_table_row_digest(path, "MAIN", 0),
-                Err("casacore C++ backend unavailable".to_string())
-            );
-            assert_eq!(
-                cpp_ms_table_row_field_manifest(path, "MAIN", 0),
-                Err("casacore C++ backend unavailable".to_string())
-            );
-            assert_eq!(
-                cpp_ms_bench_main_rows(path),
-                Err("casacore C++ backend unavailable".to_string())
-            );
-            assert_eq!(
-                cpp_ms_bench_open_main_rows(path),
-                Err("casacore C++ backend unavailable".to_string())
-            );
+            assert!(matches!(
+                MeasurementSetOracle::write_basic_fixture(path),
+                Err(OracleError::Unavailable { .. })
+            ));
+            assert!(matches!(
+                MeasurementSetOracle::verify_basic_fixture(path),
+                Err(OracleError::Unavailable { .. })
+            ));
+            assert!(matches!(
+                MeasurementSetOracle::bench_create_open(path, 4),
+                Err(OracleError::Unavailable { .. })
+            ));
+            assert!(matches!(
+                MeasurementSetOracle::digest_manifest(path),
+                Err(OracleError::Unavailable { .. })
+            ));
+            assert!(matches!(
+                MeasurementSetOracle::table_row_digest(path, "MAIN", 0),
+                Err(OracleError::Unavailable { .. })
+            ));
+            assert!(matches!(
+                MeasurementSetOracle::table_row_field_manifest(path, "MAIN", 0),
+                Err(OracleError::Unavailable { .. })
+            ));
+            assert!(matches!(
+                MeasurementSetOracle::bench_main_rows(path),
+                Err(OracleError::Unavailable { .. })
+            ));
+            assert!(matches!(
+                MeasurementSetOracle::bench_open_main_rows(path),
+                Err(OracleError::Unavailable { .. })
+            ));
         }
     }
 }

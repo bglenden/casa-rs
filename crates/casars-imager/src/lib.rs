@@ -46919,11 +46919,7 @@ mod tests {
     use casa_ms::spectral_selection::CubeGridChannelContributions;
     use casa_ms::{MeasurementSetBuilder, OptionalMainColumn, SubtableId};
     use casa_tables::table_measures::{MeasureType, TableMeasDesc};
-    use casa_test_support::gridder_interop::{
-        cpp_convolve_gridder_make_dirty_image_2d,
-        cpp_convolve_gridder_make_model_residual_image_2d,
-        cpp_convolve_gridder_predict_visibility_2d,
-    };
+    use casa_test_support::gridder_interop::GridderOracle;
     use casa_types::measures::direction::{DirectionRef, MDirection};
     use casa_types::measures::epoch::{EpochRef, MEpoch};
     use casa_types::measures::frame::MeasFrame;
@@ -54191,7 +54187,7 @@ mod tests {
             weight.extend_from_slice(&batch.weight);
             gridable.extend_from_slice(&batch.gridable);
         }
-        let cpp = match cpp_convolve_gridder_make_dirty_image_2d(
+        let cpp = match GridderOracle::make_dirty_image_2d(
             grid_shape,
             geometry.image_shape,
             scale,
@@ -54204,7 +54200,7 @@ mod tests {
             &gridable,
         ) {
             Ok(result) => result,
-            Err(error) if error == "casacore C++ backend unavailable" => return,
+            Err(casa_test_support::OracleError::Unavailable { .. }) => return,
             Err(error) => panic!("run casacore dirty-image shim: {error}"),
         };
         let rust_residual = rust.residual.slice(s![.., .., 0, 0]);
@@ -54654,7 +54650,7 @@ mod tests {
             .iter()
             .map(|sample| sample.gridable)
             .collect::<Vec<_>>();
-        let cpp = match cpp_convolve_gridder_make_model_residual_image_2d(
+        let cpp = match GridderOracle::make_model_residual_image_2d(
             grid_shape,
             geometry.image_shape,
             scale,
@@ -54668,7 +54664,7 @@ mod tests {
             model.as_slice().unwrap(),
         ) {
             Ok(result) => result,
-            Err(error) if error == "casacore C++ backend unavailable" => return,
+            Err(casa_test_support::OracleError::Unavailable { .. }) => return,
             Err(error) => panic!("run casacore model-residual shim: {error}"),
         };
         let mut rust_cpp_sum_sq = 0.0f64;
@@ -64096,7 +64092,7 @@ deconvolver=mtmfs
                     effective_model[(x, y)] += *value * contribution.factor;
                 }
             }
-            let cpp = match cpp_convolve_gridder_predict_visibility_2d(
+            let cpp = match GridderOracle::predict_visibility_2d(
                 grid_shape,
                 request.geometry.image_shape,
                 scale,
@@ -64105,7 +64101,7 @@ deconvolver=mtmfs
                 effective_model.as_slice().unwrap(),
             ) {
                 Ok(value) => value,
-                Err(error) if error == "casacore C++ backend unavailable" => return,
+                Err(casa_test_support::OracleError::Unavailable { .. }) => return,
                 Err(error) => panic!("run casacore predict-visibility shim: {error}"),
             };
             let delta_re = sample.predicted_visibility.re - cpp.re;
@@ -64232,7 +64228,7 @@ deconvolver=mtmfs
             .iter()
             .map(|sample| sample.gridable)
             .collect::<Vec<_>>();
-        let cpp = match cpp_convolve_gridder_make_dirty_image_2d(
+        let cpp = match GridderOracle::make_dirty_image_2d(
             grid_shape,
             request.geometry.image_shape,
             scale,
@@ -64245,7 +64241,7 @@ deconvolver=mtmfs
             &gridable,
         ) {
             Ok(value) => value,
-            Err(error) if error == "casacore C++ backend unavailable" => return,
+            Err(casa_test_support::OracleError::Unavailable { .. }) => return,
             Err(error) => {
                 panic!("run casacore dirty-image shim from rust residual visibilities: {error}")
             }

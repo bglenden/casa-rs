@@ -2,7 +2,8 @@
 //! C++ casacore `ConvolveGridder` interop helpers.
 
 #[cfg(has_casacore_cpp)]
-use crate::{CasacoreGlobalStateDomain, lock_casacore_global_state};
+use crate::oracle_runtime::CasacoreOracleRuntime;
+use crate::oracle_runtime::{OracleError, oracle_operation};
 
 /// One nonzero cell written by C++ `ConvolveGridder::grid()` for a unit sample.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -156,392 +157,336 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-/// Grid a single unit sample with C++ casacore `ConvolveGridder`.
-pub fn cpp_convolve_gridder_grid_unit_sample_2d(
-    grid_shape: [usize; 2],
-    scale: [f64; 2],
-    offset: [f64; 2],
-    uv_lambda: [f64; 2],
-) -> Result<GridderSamplePatch, String> {
-    #[cfg(has_casacore_cpp)]
-    {
-        let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::ImagingInterop);
-        let mut location = [0_i32; 2];
-        let mut grid_position = [0.0_f64; 2];
-        let mut support = 0_i32;
-        let mut sampling = 0_i32;
-        let max_points = 64_i32;
-        let mut x = vec![0_i32; max_points as usize];
-        let mut y = vec![0_i32; max_points as usize];
-        let mut re = vec![0.0_f32; max_points as usize];
-        let mut im = vec![0.0_f32; max_points as usize];
-        let mut count = 0_i32;
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe {
-            ffi_cpp_convolve_gridder_grid_unit_sample_2d(
-                grid_shape[0] as i32,
-                grid_shape[1] as i32,
-                scale[0],
-                scale[1],
-                offset[0],
-                offset[1],
-                uv_lambda[0],
-                uv_lambda[1],
-                location.as_mut_ptr(),
-                grid_position.as_mut_ptr(),
-                &mut support,
-                &mut sampling,
-                x.as_mut_ptr(),
-                y.as_mut_ptr(),
-                re.as_mut_ptr(),
-                im.as_mut_ptr(),
-                max_points,
-                &mut count,
-                &mut error,
-            )
-        };
-        if rc != 0 {
-            let message = if error.is_null() {
-                "casacore gridder shim failed".to_string()
-            } else {
-                let message = unsafe { std::ffi::CStr::from_ptr(error) }
-                    .to_string_lossy()
-                    .to_string();
-                unsafe { cpp_table_free_error(error) };
-                message
-            };
-            return Err(message);
-        }
-        Ok(GridderSamplePatch {
-            location,
-            grid_position,
-            support,
-            sampling,
-            cells: (0..count as usize)
-                .map(|index| GridderSampleCell {
-                    x: x[index] as usize,
-                    y: y[index] as usize,
-                    re: re[index],
-                    im: im[index],
-                })
-                .collect(),
+/// Typed Rust-facing access to casacore's gridder oracle.
+pub struct GridderOracle;
+
+#[cfg(any(has_casacore_cpp, test))]
+fn gridder_sample_capacity(grid_shape: [usize; 2]) -> Result<i32, OracleError> {
+    grid_shape[0]
+        .checked_mul(grid_shape[1])
+        .and_then(|value| i32::try_from(value).ok())
+        .ok_or_else(|| OracleError::InvalidInput {
+            context: "gridder shape",
+            message: format!("grid has too many cells: {grid_shape:?}"),
         })
-    }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = (grid_shape, scale, offset, uv_lambda);
-        Err("casacore C++ backend unavailable".to_string())
-    }
 }
 
-/// Return a 1D correction row from C++ casacore `ConvolveGridder::correctX1D()`.
-pub fn cpp_convolve_gridder_correction_row_2d(
-    grid_shape: [usize; 2],
-    scale: [f64; 2],
-    offset: [f64; 2],
-    locy: usize,
-) -> Result<Vec<f32>, String> {
-    #[cfg(has_casacore_cpp)]
-    {
-        let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::ImagingInterop);
-        let mut factor = vec![0.0_f32; grid_shape[0]];
-        let mut nread = 0_i32;
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe {
-            ffi_cpp_convolve_gridder_correction_row_2d(
-                grid_shape[0] as i32,
-                grid_shape[1] as i32,
-                scale[0],
-                scale[1],
-                offset[0],
-                offset[1],
-                locy as i32,
-                factor.as_mut_ptr(),
-                factor.len() as i32,
-                &mut nread,
-                &mut error,
-            )
-        };
-        if rc != 0 {
-            let message = if error.is_null() {
-                "casacore correction-row shim failed".to_string()
-            } else {
-                let message = unsafe { std::ffi::CStr::from_ptr(error) }
-                    .to_string_lossy()
-                    .to_string();
-                unsafe { cpp_table_free_error(error) };
-                message
+#[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
+impl GridderOracle {
+    /// Grid a single unit sample with C++ casacore `ConvolveGridder`.
+    pub fn grid_unit_sample_2d(
+        grid_shape: [usize; 2],
+        scale: [f64; 2],
+        offset: [f64; 2],
+        uv_lambda: [f64; 2],
+    ) -> Result<GridderSamplePatch, OracleError> {
+        oracle_operation!("gridder.grid_unit_sample_2d", {
+            let mut location = [0_i32; 2];
+            let mut grid_position = [0.0_f64; 2];
+            let mut support = 0_i32;
+            let mut sampling = 0_i32;
+            let max_points = gridder_sample_capacity(grid_shape)?;
+            let mut x = vec![0_i32; max_points as usize];
+            let mut y = vec![0_i32; max_points as usize];
+            let mut re = vec![0.0_f32; max_points as usize];
+            let mut im = vec![0.0_f32; max_points as usize];
+            let mut count = 0_i32;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_convolve_gridder_grid_unit_sample_2d(
+                    grid_shape[0] as i32,
+                    grid_shape[1] as i32,
+                    scale[0],
+                    scale[1],
+                    offset[0],
+                    offset[1],
+                    uv_lambda[0],
+                    uv_lambda[1],
+                    location.as_mut_ptr(),
+                    grid_position.as_mut_ptr(),
+                    &mut support,
+                    &mut sampling,
+                    x.as_mut_ptr(),
+                    y.as_mut_ptr(),
+                    re.as_mut_ptr(),
+                    im.as_mut_ptr(),
+                    max_points,
+                    &mut count,
+                    &mut error,
+                )
             };
-            return Err(message);
-        }
-        factor.truncate(nread as usize);
-        Ok(factor)
-    }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = (grid_shape, scale, offset, locy);
-        Err("casacore C++ backend unavailable".to_string())
-    }
-}
-
-/// Make a corrected dirty image with C++ casacore `ConvolveGridder` + `LatticeFFT`.
-#[allow(clippy::too_many_arguments)]
-pub fn cpp_convolve_gridder_make_dirty_image_2d(
-    grid_shape: [usize; 2],
-    image_shape: [usize; 2],
-    scale: [f64; 2],
-    offset: [f64; 2],
-    u_lambda: &[f64],
-    v_lambda: &[f64],
-    visibility_re: &[f32],
-    visibility_im: &[f32],
-    weight: &[f32],
-    gridable: &[bool],
-) -> Result<GridderImage2d, String> {
-    let len = u_lambda.len();
-    if v_lambda.len() != len
-        || visibility_re.len() != len
-        || visibility_im.len() != len
-        || weight.len() != len
-        || gridable.len() != len
-    {
-        return Err("dirty-image inputs must have matching lengths".to_string());
-    }
-    #[cfg(has_casacore_cpp)]
-    {
-        let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::ImagingInterop);
-        let mut image = vec![0.0_f32; image_shape[0] * image_shape[1]];
-        let gridable_bytes = gridable
-            .iter()
-            .map(|value| u8::from(*value))
-            .collect::<Vec<_>>();
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe {
-            ffi_cpp_convolve_gridder_make_dirty_image_2d(
-                grid_shape[0] as i32,
-                grid_shape[1] as i32,
-                image_shape[0] as i32,
-                image_shape[1] as i32,
-                scale[0],
-                scale[1],
-                offset[0],
-                offset[1],
-                u_lambda.as_ptr(),
-                v_lambda.as_ptr(),
-                visibility_re.as_ptr(),
-                visibility_im.as_ptr(),
-                weight.as_ptr(),
-                gridable_bytes.as_ptr(),
-                len as i32,
-                image.as_mut_ptr(),
-                image.len() as i32,
-                &mut error,
-            )
-        };
-        if rc != 0 {
-            let message = if error.is_null() {
-                "casacore dirty-image shim failed".to_string()
-            } else {
-                let message = unsafe { std::ffi::CStr::from_ptr(error) }
-                    .to_string_lossy()
-                    .to_string();
-                unsafe { cpp_table_free_error(error) };
-                message
-            };
-            return Err(message);
-        }
-        Ok(GridderImage2d {
-            image_shape,
-            pixels: image,
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "gridder.grid_unit_sample_2d",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(GridderSamplePatch {
+                location,
+                grid_position,
+                support,
+                sampling,
+                cells: (0..count as usize)
+                    .map(|index| GridderSampleCell {
+                        x: x[index] as usize,
+                        y: y[index] as usize,
+                        re: re[index],
+                        im: im[index],
+                    })
+                    .collect(),
+            })
         })
     }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = (
-            grid_shape,
-            image_shape,
-            scale,
-            offset,
-            u_lambda,
-            v_lambda,
-            visibility_re,
-            visibility_im,
-            weight,
-            gridable,
-        );
-        Err("casacore C++ backend unavailable".to_string())
-    }
-}
 
-/// Make a corrected residual image from visibilities and a model image with
-/// C++ casacore `ConvolveGridder` + `LatticeFFT`.
-#[allow(clippy::too_many_arguments)]
-pub fn cpp_convolve_gridder_make_model_residual_image_2d(
-    grid_shape: [usize; 2],
-    image_shape: [usize; 2],
-    scale: [f64; 2],
-    offset: [f64; 2],
-    u_lambda: &[f64],
-    v_lambda: &[f64],
-    visibility_re: &[f32],
-    visibility_im: &[f32],
-    weight: &[f32],
-    gridable: &[bool],
-    model_image: &[f32],
-) -> Result<GridderImage2d, String> {
-    let len = u_lambda.len();
-    if v_lambda.len() != len
-        || visibility_re.len() != len
-        || visibility_im.len() != len
-        || weight.len() != len
-        || gridable.len() != len
-    {
-        return Err("model-residual inputs must have matching visibility lengths".to_string());
-    }
-    if model_image.len() != image_shape[0] * image_shape[1] {
-        return Err(format!(
-            "model-residual image expects {} pixels, got {}",
-            image_shape[0] * image_shape[1],
-            model_image.len()
-        ));
-    }
-    #[cfg(has_casacore_cpp)]
-    {
-        let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::ImagingInterop);
-        let mut image = vec![0.0_f32; image_shape[0] * image_shape[1]];
-        let gridable_bytes = gridable
-            .iter()
-            .map(|value| u8::from(*value))
-            .collect::<Vec<_>>();
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe {
-            ffi_cpp_convolve_gridder_make_model_residual_image_2d(
-                grid_shape[0] as i32,
-                grid_shape[1] as i32,
-                image_shape[0] as i32,
-                image_shape[1] as i32,
-                scale[0],
-                scale[1],
-                offset[0],
-                offset[1],
-                u_lambda.as_ptr(),
-                v_lambda.as_ptr(),
-                visibility_re.as_ptr(),
-                visibility_im.as_ptr(),
-                weight.as_ptr(),
-                gridable_bytes.as_ptr(),
-                model_image.as_ptr(),
-                len as i32,
-                image.as_mut_ptr(),
-                image.len() as i32,
-                &mut error,
-            )
-        };
-        if rc != 0 {
-            let message = if error.is_null() {
-                "casacore model-residual gridder shim failed".to_string()
-            } else {
-                let message = unsafe { std::ffi::CStr::from_ptr(error) }
-                    .to_string_lossy()
-                    .to_string();
-                unsafe { cpp_table_free_error(error) };
-                message
+    /// Return a 1D correction row from C++ casacore `ConvolveGridder::correctX1D()`.
+    pub fn correction_row_2d(
+        grid_shape: [usize; 2],
+        scale: [f64; 2],
+        offset: [f64; 2],
+        locy: usize,
+    ) -> Result<Vec<f32>, OracleError> {
+        oracle_operation!("gridder.correction_row_2d", {
+            let mut factor = vec![0.0_f32; grid_shape[0]];
+            let mut nread = 0_i32;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_convolve_gridder_correction_row_2d(
+                    grid_shape[0] as i32,
+                    grid_shape[1] as i32,
+                    scale[0],
+                    scale[1],
+                    offset[0],
+                    offset[1],
+                    locy as i32,
+                    factor.as_mut_ptr(),
+                    factor.len() as i32,
+                    &mut nread,
+                    &mut error,
+                )
             };
-            return Err(message);
-        }
-        Ok(GridderImage2d {
-            image_shape,
-            pixels: image,
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "gridder.correction_row_2d",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            factor.truncate(nread as usize);
+            Ok(factor)
         })
     }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = (
-            grid_shape,
-            image_shape,
-            scale,
-            offset,
-            u_lambda,
-            v_lambda,
-            visibility_re,
-            visibility_im,
-            weight,
-            gridable,
-            model_image,
-        );
-        Err("casacore C++ backend unavailable".to_string())
-    }
-}
 
-/// Predict one visibility from a model image with C++ casacore `ConvolveGridder`.
-#[allow(clippy::too_many_arguments)]
-pub fn cpp_convolve_gridder_predict_visibility_2d(
-    grid_shape: [usize; 2],
-    image_shape: [usize; 2],
-    scale: [f64; 2],
-    offset: [f64; 2],
-    uv_lambda: [f64; 2],
-    model_image: &[f32],
-) -> Result<GridderPredictedVisibility, String> {
-    if model_image.len() != image_shape[0] * image_shape[1] {
-        return Err(format!(
-            "predict-visibility image expects {} pixels, got {}",
-            image_shape[0] * image_shape[1],
-            model_image.len()
-        ));
-    }
-    #[cfg(has_casacore_cpp)]
-    {
-        let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::ImagingInterop);
-        let mut predicted_re = 0.0f32;
-        let mut predicted_im = 0.0f32;
-        let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-        let rc = unsafe {
-            ffi_cpp_convolve_gridder_predict_visibility_2d(
-                grid_shape[0] as i32,
-                grid_shape[1] as i32,
-                image_shape[0] as i32,
-                image_shape[1] as i32,
-                scale[0],
-                scale[1],
-                offset[0],
-                offset[1],
-                uv_lambda[0],
-                uv_lambda[1],
-                model_image.as_ptr(),
-                &mut predicted_re,
-                &mut predicted_im,
-                &mut error,
-            )
-        };
-        if rc != 0 {
-            let message = if error.is_null() {
-                "casacore predict-visibility gridder shim failed".to_string()
-            } else {
-                let message = unsafe { std::ffi::CStr::from_ptr(error) }
-                    .to_string_lossy()
-                    .to_string();
-                unsafe { cpp_table_free_error(error) };
-                message
-            };
-            return Err(message);
+    /// Make a corrected dirty image with C++ casacore `ConvolveGridder` + `LatticeFFT`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn make_dirty_image_2d(
+        grid_shape: [usize; 2],
+        image_shape: [usize; 2],
+        scale: [f64; 2],
+        offset: [f64; 2],
+        u_lambda: &[f64],
+        v_lambda: &[f64],
+        visibility_re: &[f32],
+        visibility_im: &[f32],
+        weight: &[f32],
+        gridable: &[bool],
+    ) -> Result<GridderImage2d, OracleError> {
+        let len = u_lambda.len();
+        if v_lambda.len() != len
+            || visibility_re.len() != len
+            || visibility_im.len() != len
+            || weight.len() != len
+            || gridable.len() != len
+        {
+            return Err(OracleError::InvalidInput {
+                context: "gridder dirty-image inputs",
+                message: "all visibility vectors must have matching lengths".to_owned(),
+            });
         }
-        Ok(GridderPredictedVisibility {
-            re: predicted_re,
-            im: predicted_im,
+        oracle_operation!("gridder.make_dirty_image_2d", {
+            let mut image = vec![0.0_f32; image_shape[0] * image_shape[1]];
+            let gridable_bytes = gridable
+                .iter()
+                .map(|value| u8::from(*value))
+                .collect::<Vec<_>>();
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_convolve_gridder_make_dirty_image_2d(
+                    grid_shape[0] as i32,
+                    grid_shape[1] as i32,
+                    image_shape[0] as i32,
+                    image_shape[1] as i32,
+                    scale[0],
+                    scale[1],
+                    offset[0],
+                    offset[1],
+                    u_lambda.as_ptr(),
+                    v_lambda.as_ptr(),
+                    visibility_re.as_ptr(),
+                    visibility_im.as_ptr(),
+                    weight.as_ptr(),
+                    gridable_bytes.as_ptr(),
+                    len as i32,
+                    image.as_mut_ptr(),
+                    image.len() as i32,
+                    &mut error,
+                )
+            };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "gridder.make_dirty_image_2d",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(GridderImage2d {
+                image_shape,
+                pixels: image,
+            })
         })
     }
-    #[cfg(not(has_casacore_cpp))]
-    {
-        let _ = (
-            grid_shape,
-            image_shape,
-            scale,
-            offset,
-            uv_lambda,
-            model_image,
-        );
-        Err("casacore C++ backend unavailable".to_string())
+
+    /// Make a corrected residual image from visibilities and a model image with
+    /// C++ casacore `ConvolveGridder` + `LatticeFFT`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn make_model_residual_image_2d(
+        grid_shape: [usize; 2],
+        image_shape: [usize; 2],
+        scale: [f64; 2],
+        offset: [f64; 2],
+        u_lambda: &[f64],
+        v_lambda: &[f64],
+        visibility_re: &[f32],
+        visibility_im: &[f32],
+        weight: &[f32],
+        gridable: &[bool],
+        model_image: &[f32],
+    ) -> Result<GridderImage2d, OracleError> {
+        let len = u_lambda.len();
+        if v_lambda.len() != len
+            || visibility_re.len() != len
+            || visibility_im.len() != len
+            || weight.len() != len
+            || gridable.len() != len
+        {
+            return Err(OracleError::InvalidInput {
+                context: "gridder model-residual inputs",
+                message: "all visibility vectors must have matching lengths".to_owned(),
+            });
+        }
+        if model_image.len() != image_shape[0] * image_shape[1] {
+            return Err(OracleError::InvalidInput {
+                context: "gridder model image",
+                message: format!(
+                    "expected {} pixels, got {}",
+                    image_shape[0] * image_shape[1],
+                    model_image.len()
+                ),
+            });
+        }
+        oracle_operation!("gridder.make_model_residual_image_2d", {
+            let mut image = vec![0.0_f32; image_shape[0] * image_shape[1]];
+            let gridable_bytes = gridable
+                .iter()
+                .map(|value| u8::from(*value))
+                .collect::<Vec<_>>();
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_convolve_gridder_make_model_residual_image_2d(
+                    grid_shape[0] as i32,
+                    grid_shape[1] as i32,
+                    image_shape[0] as i32,
+                    image_shape[1] as i32,
+                    scale[0],
+                    scale[1],
+                    offset[0],
+                    offset[1],
+                    u_lambda.as_ptr(),
+                    v_lambda.as_ptr(),
+                    visibility_re.as_ptr(),
+                    visibility_im.as_ptr(),
+                    weight.as_ptr(),
+                    gridable_bytes.as_ptr(),
+                    model_image.as_ptr(),
+                    len as i32,
+                    image.as_mut_ptr(),
+                    image.len() as i32,
+                    &mut error,
+                )
+            };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "gridder.make_model_residual_image_2d",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(GridderImage2d {
+                image_shape,
+                pixels: image,
+            })
+        })
+    }
+
+    /// Predict one visibility from a model image with C++ casacore `ConvolveGridder`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn predict_visibility_2d(
+        grid_shape: [usize; 2],
+        image_shape: [usize; 2],
+        scale: [f64; 2],
+        offset: [f64; 2],
+        uv_lambda: [f64; 2],
+        model_image: &[f32],
+    ) -> Result<GridderPredictedVisibility, OracleError> {
+        if model_image.len() != image_shape[0] * image_shape[1] {
+            return Err(OracleError::InvalidInput {
+                context: "gridder model image",
+                message: format!(
+                    "expected {} pixels, got {}",
+                    image_shape[0] * image_shape[1],
+                    model_image.len()
+                ),
+            });
+        }
+        oracle_operation!("gridder.predict_visibility_2d", {
+            let mut predicted_re = 0.0f32;
+            let mut predicted_im = 0.0f32;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_convolve_gridder_predict_visibility_2d(
+                    grid_shape[0] as i32,
+                    grid_shape[1] as i32,
+                    image_shape[0] as i32,
+                    image_shape[1] as i32,
+                    scale[0],
+                    scale[1],
+                    offset[0],
+                    offset[1],
+                    uv_lambda[0],
+                    uv_lambda[1],
+                    model_image.as_ptr(),
+                    &mut predicted_re,
+                    &mut predicted_im,
+                    &mut error,
+                )
+            };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "gridder.predict_visibility_2d",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(GridderPredictedVisibility {
+                re: predicted_re,
+                im: predicted_im,
+            })
+        })
     }
 }
 
@@ -553,19 +498,12 @@ mod tests {
     fn no_cpp_backend_reports_unavailable_and_validates_lengths() {
         if cfg!(has_casacore_cpp) {
             assert!(
-                cpp_convolve_gridder_grid_unit_sample_2d(
-                    [16, 16],
-                    [1.0, 1.0],
-                    [0.0, 0.0],
-                    [0.1, 0.2],
-                )
-                .is_err()
+                GridderOracle::grid_unit_sample_2d([16, 16], [1.0, 1.0], [0.0, 0.0], [0.1, 0.2],)
+                    .is_err()
             );
-            assert!(
-                cpp_convolve_gridder_correction_row_2d([16, 16], [1.0, 1.0], [0.0, 0.0], 3).is_ok()
-            );
+            assert!(GridderOracle::correction_row_2d([16, 16], [1.0, 1.0], [0.0, 0.0], 3).is_ok());
             assert_eq!(
-                cpp_convolve_gridder_make_dirty_image_2d(
+                GridderOracle::make_dirty_image_2d(
                     [16, 16],
                     [8, 8],
                     [1.0, 1.0],
@@ -577,10 +515,13 @@ mod tests {
                     &[1.0, 1.0],
                     &[true, true],
                 ),
-                Err("dirty-image inputs must have matching lengths".to_string())
+                Err(OracleError::InvalidInput {
+                    context: "gridder dirty-image inputs",
+                    message: "all visibility vectors must have matching lengths".to_owned(),
+                })
             );
             assert!(
-                cpp_convolve_gridder_make_dirty_image_2d(
+                GridderOracle::make_dirty_image_2d(
                     [16, 16],
                     [8, 8],
                     [1.0, 1.0],
@@ -596,20 +537,19 @@ mod tests {
             );
         } else {
             assert_eq!(
-                cpp_convolve_gridder_grid_unit_sample_2d(
-                    [16, 16],
-                    [1.0, 1.0],
-                    [0.0, 0.0],
-                    [0.1, 0.2],
-                ),
-                Err("casacore C++ backend unavailable".to_string())
+                GridderOracle::grid_unit_sample_2d([16, 16], [1.0, 1.0], [0.0, 0.0], [0.1, 0.2],),
+                Err(OracleError::Unavailable {
+                    capability: "gridder.grid_unit_sample_2d",
+                })
             );
             assert_eq!(
-                cpp_convolve_gridder_correction_row_2d([16, 16], [1.0, 1.0], [0.0, 0.0], 3),
-                Err("casacore C++ backend unavailable".to_string())
+                GridderOracle::correction_row_2d([16, 16], [1.0, 1.0], [0.0, 0.0], 3),
+                Err(OracleError::Unavailable {
+                    capability: "gridder.correction_row_2d",
+                })
             );
             assert_eq!(
-                cpp_convolve_gridder_make_dirty_image_2d(
+                GridderOracle::make_dirty_image_2d(
                     [16, 16],
                     [8, 8],
                     [1.0, 1.0],
@@ -621,10 +561,13 @@ mod tests {
                     &[1.0, 1.0],
                     &[true, true],
                 ),
-                Err("dirty-image inputs must have matching lengths".to_string())
+                Err(OracleError::InvalidInput {
+                    context: "gridder dirty-image inputs",
+                    message: "all visibility vectors must have matching lengths".to_owned(),
+                })
             );
             assert_eq!(
-                cpp_convolve_gridder_make_dirty_image_2d(
+                GridderOracle::make_dirty_image_2d(
                     [16, 16],
                     [8, 8],
                     [1.0, 1.0],
@@ -636,8 +579,22 @@ mod tests {
                     &[1.0, 1.0],
                     &[true, true],
                 ),
-                Err("casacore C++ backend unavailable".to_string())
+                Err(OracleError::Unavailable {
+                    capability: "gridder.make_dirty_image_2d",
+                })
             );
         }
+    }
+
+    #[test]
+    fn sample_capacity_tracks_grid_shape_without_a_fixed_limit() {
+        assert_eq!(gridder_sample_capacity([8, 9]).unwrap(), 72);
+        assert_eq!(gridder_sample_capacity([0, 9]).unwrap(), 0);
+    }
+
+    #[test]
+    fn sample_capacity_rejects_overflow() {
+        let error = gridder_sample_capacity([usize::MAX, 2]).unwrap_err();
+        assert!(matches!(error, OracleError::InvalidInput { .. }));
     }
 }
