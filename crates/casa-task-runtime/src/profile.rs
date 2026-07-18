@@ -1338,7 +1338,7 @@ pixels = 256
         );
 
         let saved = render_sparse_profile(&bundle, &resolved.values).unwrap();
-        assert!(saved.contains("contract = 2"));
+        assert!(saved.contains(&format!("contract = {}", bundle.surface.contract_version())));
         assert!(saved.contains("imsize = [256, 256]"));
         assert!(!saved.contains("pixels"));
         assert!(!saved.contains("cell ="));
@@ -1373,7 +1373,7 @@ archivefiles = "raw/one.exp"
         );
 
         let saved = render_sparse_profile(&bundle, &resolved.values).unwrap();
-        assert!(saved.contains("contract = 2"));
+        assert!(saved.contains(&format!("contract = {}", bundle.surface.contract_version())));
         assert!(saved.contains("archivefiles = [\"raw/one.exp\"]"));
     }
 
@@ -1400,7 +1400,7 @@ flag_panel = 17
             ParameterValue::String("17".into())
         );
         let saved = render_sparse_profile(&bundle, &resolved.values).unwrap();
-        assert!(saved.contains("contract = 3"));
+        assert!(saved.contains(&format!("contract = {}", bundle.surface.contract_version())));
         assert!(saved.contains("flag_panel = \"17\""));
     }
 
