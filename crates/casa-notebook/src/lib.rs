@@ -25,9 +25,10 @@ pub use assistant::{
     ConversationTranscript,
 };
 pub use corpus::{
-    CORPUS_SCHEMA_VERSION, CorpusCitation, CorpusDocument, CorpusDocumentInput, CorpusError,
-    CorpusIndex, CorpusIndexReport, CorpusLayer, CorpusSearchHit, ProjectCorpusPlan,
-    ProjectCorpusSource,
+    CORPUS_INDEX_CHUNK_TARGET_BYTES, CORPUS_SCHEMA_VERSION, CorpusCitation, CorpusDocument,
+    CorpusDocumentInput, CorpusError, CorpusIndex, CorpusIndexReport, CorpusLayer,
+    CorpusReconciliationScope, CorpusSearchHit, PreparedCorpusReconciliation, ProjectCorpusPlan,
+    ProjectCorpusSource, ProjectSourceExtractionOutcome, ProjectSourceExtractionStatus,
 };
 pub use ids::{AssistantMessageId, AssistantPinId, CellId, ConversationId, NotebookId, RunId};
 pub use markdown::{CellKind, NotebookCell, NotebookDocument, NotebookParseError, TaskCellIntent};

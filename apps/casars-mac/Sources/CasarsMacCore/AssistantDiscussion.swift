@@ -83,6 +83,8 @@ package struct AssistantModelState: Codable, Equatable, Identifiable {
     package var defaultEffort: String
     package var supportedEfforts: [String]
     package var isDefault: Bool
+    package var inputCapacityUnits: UInt64? = nil
+    package var outputReserveUnits: UInt64? = nil
 }
 
 package struct AssistantAccountState: Codable, Equatable {
@@ -96,41 +98,6 @@ package struct AssistantUsageState: Codable, Equatable {
     package var secondaryPercentUsed: Double? = nil
     package var primaryResetAt: UInt64? = nil
     package var secondaryResetAt: UInt64? = nil
-}
-
-/// Deterministically shares one bounded context window across every open tab.
-/// Four or fewer tabs may contribute up to 16 KiB each; larger tab sets divide
-/// the 64 KiB projection budget fairly instead of multiplying a per-tab cap.
-package enum AssistantContextBudgetPolicy {
-    package static let totalProjectionBytes = 64 * 1_024
-    package static let maximumExcerptBytes = 16 * 1_024
-
-    package static func excerptLimits(openTabCount: Int) -> [Int] {
-        guard openTabCount > 0 else { return [] }
-        let fairShare = totalProjectionBytes / openTabCount
-        let remainder = totalProjectionBytes % openTabCount
-        return (0..<openTabCount).map { index in
-            min(maximumExcerptBytes, fairShare + (index < remainder ? 1 : 0))
-        }
-    }
-
-    package static func truncate(_ value: String, byteLimit: Int) -> String {
-        guard byteLimit > 0 else { return "" }
-        guard value.utf8.count > byteLimit else { return value }
-        let marker = "\n[… bounded by CASA-RS host …]"
-        let markerBytes = marker.utf8.count
-        guard byteLimit > markerBytes else { return utf8Prefix(value, byteLimit: byteLimit) }
-        return utf8Prefix(value, byteLimit: byteLimit - markerBytes) + marker
-    }
-
-    private static func utf8Prefix(_ value: String, byteLimit: Int) -> String {
-        var bytes = Array(value.utf8.prefix(byteLimit))
-        while !bytes.isEmpty {
-            if let prefix = String(bytes: bytes, encoding: .utf8) { return prefix }
-            bytes.removeLast()
-        }
-        return ""
-    }
 }
 
 package struct AssistantApprovalRequestState: Codable, Equatable, Identifiable {
@@ -191,32 +158,23 @@ package protocol AssistantPersistenceClient {
     func indexCorpus(
         projectRoot: String,
         documents: [AssistantCorpusDocumentRequest],
-        removeMissingLayers: Set<String>,
-        projectSources: [AssistantProjectCorpusSourceRequest]?,
-        failedProjectSources: Set<String>
+        removeMissingLayers: Set<String>
     ) throws -> AssistantCorpusIndexReportState
-    func projectCorpusPlan(
+    func prepareCorpusReconciliation(
         projectRoot: String,
-        sources: [AssistantProjectCorpusSourceRequest]
-    ) throws -> AssistantProjectCorpusPlanState
+        sources: [AssistantProjectCorpusSourceRequest],
+        generation: UInt64,
+        scope: AssistantCorpusReconciliationScope
+    ) throws -> AssistantPreparedCorpusReconciliationState
+    func applyCorpusReconciliation(
+        projectRoot: String,
+        prepared: AssistantPreparedCorpusReconciliationState,
+        documents: [AssistantCorpusDocumentRequest],
+        removeMissingLayers: Set<String>,
+        outcomes: [AssistantProjectSourceExtractionOutcome]
+    ) throws -> AssistantCorpusIndexReportState
     func searchCorpus(projectRoot: String, query: String, limit: Int) throws -> [AssistantCorpusSearchHitState]
     func createPin(_ request: AssistantCreatePinRequest) throws -> AssistantPinState
-}
-
-extension AssistantPersistenceClient {
-    package func indexCorpus(
-        projectRoot: String,
-        documents: [AssistantCorpusDocumentRequest],
-        removeMissingLayers: Set<String>
-    ) throws -> AssistantCorpusIndexReportState {
-        try indexCorpus(
-            projectRoot: projectRoot,
-            documents: documents,
-            removeMissingLayers: removeMissingLayers,
-            projectSources: nil,
-            failedProjectSources: []
-        )
-    }
 }
 
 package struct UniFFIAssistantPersistenceClient: AssistantPersistenceClient {
@@ -251,29 +209,47 @@ package struct UniFFIAssistantPersistenceClient: AssistantPersistenceClient {
     package func indexCorpus(
         projectRoot: String,
         documents: [AssistantCorpusDocumentRequest],
-        removeMissingLayers: Set<String>,
-        projectSources: [AssistantProjectCorpusSourceRequest]?,
-        failedProjectSources: Set<String>
+        removeMissingLayers: Set<String>
     ) throws -> AssistantCorpusIndexReportState {
         let request = AssistantCorpusIndexRequest(
             projectRoot: projectRoot,
             documents: documents,
-            removeMissingLayers: removeMissingLayers.sorted(),
-            projectSources: projectSources,
-            failedProjectSources: failedProjectSources.sorted()
+            removeMissingLayers: removeMissingLayers.sorted()
         )
         return try CasarsFrontendServices.assistantCorpusIndex(request: request)
     }
 
-    package func projectCorpusPlan(
+    package func prepareCorpusReconciliation(
         projectRoot: String,
-        sources: [AssistantProjectCorpusSourceRequest]
-    ) throws -> AssistantProjectCorpusPlanState {
-        let request = AssistantProjectCorpusPlanRequest(
+        sources: [AssistantProjectCorpusSourceRequest],
+        generation: UInt64,
+        scope: AssistantCorpusReconciliationScope
+    ) throws -> AssistantPreparedCorpusReconciliationState {
+        let request = AssistantPrepareCorpusReconciliationRequest(
             projectRoot: projectRoot,
-            sources: sources
+            sources: sources,
+            generation: generation,
+            scope: scope
         )
-        return try CasarsFrontendServices.assistantProjectCorpusPlan(request: request)
+        return try CasarsFrontendServices.assistantPrepareCorpusReconciliation(request: request)
+    }
+
+    package func applyCorpusReconciliation(
+        projectRoot: String,
+        prepared: AssistantPreparedCorpusReconciliationState,
+        documents: [AssistantCorpusDocumentRequest],
+        removeMissingLayers: Set<String>,
+        outcomes: [AssistantProjectSourceExtractionOutcome]
+    ) throws -> AssistantCorpusIndexReportState {
+        try CasarsFrontendServices.assistantApplyCorpusReconciliation(
+            request: AssistantApplyCorpusReconciliationRequest(
+                projectRoot: projectRoot,
+                prepared: prepared,
+                documents: documents,
+                removeMissingLayers: removeMissingLayers.sorted(),
+                outcomes: outcomes
+            )
+        )
     }
 
     package func searchCorpus(

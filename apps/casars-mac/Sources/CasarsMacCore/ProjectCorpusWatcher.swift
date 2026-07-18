@@ -6,6 +6,8 @@ import Foundation
 /// reconciliation decide what actually changed after each coalesced event.
 package final class ProjectCorpusWatcher {
     package typealias ChangeHandler = () -> Void
+    /// Event-coalescing policy only; reconciliation generations provide correctness.
+    package static let eventCoalescingInterval: DispatchTimeInterval = .milliseconds(600)
 
     private let projectRoot: URL
     private let documentsRoot: URL
@@ -18,7 +20,7 @@ package final class ProjectCorpusWatcher {
 
     package init(
         projectRoot: String,
-        debounceInterval: DispatchTimeInterval = .milliseconds(600),
+        debounceInterval: DispatchTimeInterval = ProjectCorpusWatcher.eventCoalescingInterval,
         queue: DispatchQueue = DispatchQueue(label: "casars.mac.project-corpus-watcher"),
         changeHandler: @escaping ChangeHandler
     ) {

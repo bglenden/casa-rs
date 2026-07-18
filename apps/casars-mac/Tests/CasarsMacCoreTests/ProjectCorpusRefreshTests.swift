@@ -4,6 +4,21 @@ import XCTest
 @testable import CasarsMacCore
 
 final class ProjectCorpusRefreshTests: XCTestCase {
+    func testReconciliationCoordinatorRejectsStaleCompletionAndCoalescesPendingScope() {
+        let coordinator = AssistantCorpusReconciliationCoordinator()
+        let first = coordinator.enqueue(.projectDocuments)
+        XCTAssertEqual(first?.generation, 1)
+        XCTAssertNil(coordinator.enqueue(.allLayers))
+
+        XCTAssertNil(coordinator.finish(generation: 99))
+        XCTAssertTrue(coordinator.isCurrent(generation: 1))
+        let second = coordinator.finish(generation: 1)
+
+        XCTAssertEqual(second?.generation, 2)
+        XCTAssertEqual(second?.request, .allLayers)
+        XCTAssertTrue(coordinator.isCurrent(generation: 2))
+    }
+
     func testOpeningProjectIndexesDocumentsAndWatcherRefreshesAnEditAutomatically() throws {
         let project = try temporaryProject()
         defer { try? FileManager.default.removeItem(at: project) }
@@ -38,11 +53,11 @@ final class ProjectCorpusRefreshTests: XCTestCase {
             (try? client.searchCorpus(projectRoot: project.path, query: "magenta", limit: 4)
                 .first?.citation.sourcePath) == "documents/observation.md"
         }
-        XCTAssertTrue(
+        waitUntil("watcher metrics published") {
             store.state.assistantDiscussion?.corpusDiagnostics.contains(where: {
                 $0.contains("content reads")
             }) == true
-        )
+        }
 
         let added = documents.appendingPathComponent("added.md")
         try "automatic vermilion addition".write(to: added, atomically: true, encoding: .utf8)
@@ -91,7 +106,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
         let ingestor = AssistantCorpusIngestor()
         let client = UniFFIAssistantPersistenceClient()
         let firstInventory = ingestor.projectDocumentInventory(projectRoot: project.path)
-        let firstPlan = try client.projectCorpusPlan(
+        let firstPlan = try client.prepareTestReconciliation(
             projectRoot: project.path, sources: firstInventory.sources
         )
         XCTAssertEqual(firstPlan.extractPaths, ["documents/control.pdf", "documents/paper.md"])
@@ -103,7 +118,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
         )
         XCTAssertEqual(first.metrics.projectContentReads, 2)
         XCTAssertEqual(first.metrics.projectPDFExtractions, 1)
-        _ = try client.indexCorpus(
+        _ = try client.applyTestReconciliation(
             projectRoot: project.path,
             documents: first.documents,
             removeMissingLayers: first.refreshedLayers,
@@ -112,7 +127,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
         )
 
         let unchangedInventory = ingestor.projectDocumentInventory(projectRoot: project.path)
-        let unchangedPlan = try client.projectCorpusPlan(
+        let unchangedPlan = try client.prepareTestReconciliation(
             projectRoot: project.path, sources: unchangedInventory.sources
         )
         XCTAssertTrue(unchangedPlan.extractPaths.isEmpty)
@@ -132,7 +147,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
         try "replacement ultraviolet evidence".write(to: note, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: note.path)
         let replacementInventory = ingestor.projectDocumentInventory(projectRoot: project.path)
-        let replacementPlan = try client.projectCorpusPlan(
+        let replacementPlan = try client.prepareTestReconciliation(
             projectRoot: project.path, sources: replacementInventory.sources
         )
         XCTAssertEqual(replacementPlan.extractPaths, ["documents/paper.md"])
@@ -144,7 +159,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
         )
         XCTAssertEqual(replacement.metrics.projectContentReads, 1)
         XCTAssertEqual(replacement.metrics.projectPDFExtractions, 0)
-        _ = try client.indexCorpus(
+        _ = try client.applyTestReconciliation(
             projectRoot: project.path,
             documents: replacement.documents,
             removeMissingLayers: replacement.refreshedLayers,
@@ -231,7 +246,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
             extractProjectPaths: ["documents/paper.md"],
             scope: .projectDocuments
         )
-        _ = try client.indexCorpus(
+        _ = try client.applyTestReconciliation(
             projectRoot: project.path,
             documents: initial.documents,
             removeMissingLayers: initial.refreshedLayers,
@@ -241,7 +256,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
 
         try "replacement chartreuse evidence".write(to: note, atomically: true, encoding: .utf8)
         let changedInventory = ingestor.projectDocumentInventory(projectRoot: project.path)
-        let changedPlan = try client.projectCorpusPlan(
+        let changedPlan = try client.prepareTestReconciliation(
             projectRoot: project.path, sources: changedInventory.sources
         )
         XCTAssertEqual(changedPlan.extractPaths, ["documents/paper.md"])
@@ -256,7 +271,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
         XCTAssertTrue(failed.diagnostics.contains {
             $0.contains("Project corpus source became unreadable or symbolic-linked documents/paper.md")
         })
-        _ = try client.indexCorpus(
+        _ = try client.applyTestReconciliation(
             projectRoot: project.path,
             documents: failed.documents,
             removeMissingLayers: failed.refreshedLayers,
@@ -269,7 +284,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
 
         try "replacement chartreuse evidence".write(to: note, atomically: true, encoding: .utf8)
         let retryInventory = ingestor.projectDocumentInventory(projectRoot: project.path)
-        let retryPlan = try client.projectCorpusPlan(
+        let retryPlan = try client.prepareTestReconciliation(
             projectRoot: project.path, sources: retryInventory.sources
         )
         XCTAssertEqual(retryPlan.extractPaths, ["documents/paper.md"])
@@ -279,7 +294,7 @@ final class ProjectCorpusRefreshTests: XCTestCase {
             extractProjectPaths: Set(retryPlan.extractPaths),
             scope: .projectDocuments
         )
-        _ = try client.indexCorpus(
+        _ = try client.applyTestReconciliation(
             projectRoot: project.path,
             documents: retry.documents,
             removeMissingLayers: retry.refreshedLayers,

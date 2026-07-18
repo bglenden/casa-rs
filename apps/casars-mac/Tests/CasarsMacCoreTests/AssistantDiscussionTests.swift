@@ -29,19 +29,167 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertFalse(conversations.isEmpty)
     }
 
-    func testContextBudgetScalesAcrossOpenTabsAndCountsUTF8Bytes() {
-        XCTAssertEqual(AssistantContextBudgetPolicy.excerptLimits(openTabCount: 1), [16 * 1_024])
-        XCTAssertEqual(AssistantContextBudgetPolicy.excerptLimits(openTabCount: 4), Array(repeating: 16 * 1_024, count: 4))
-
-        let many = AssistantContextBudgetPolicy.excerptLimits(openTabCount: 9)
-        XCTAssertEqual(many.reduce(0, +), 64 * 1_024)
-        XCTAssertLessThanOrEqual(many.max() ?? 0, 16 * 1_024)
-        XCTAssertLessThanOrEqual((many.max() ?? 0) - (many.min() ?? 0), 1)
+    func testResourcePlannerReservesCapacityAndExcludesUnselectedContext() throws {
+        let plan = try AssistantResourcePlanner.plan(
+            capacity: AssistantModelCapacity(inputUnits: 100, outputReserveUnits: 20),
+            reservations: [AssistantResourceReservation(id: "history", units: 20)],
+            contexts: [
+                AssistantContextResourceRequest(
+                    id: "active", desiredUnits: 100, selected: true, active: true
+                ),
+                AssistantContextResourceRequest(
+                    id: "selected", desiredUnits: 100, selected: true, active: false
+                ),
+                AssistantContextResourceRequest(
+                    id: "unselected", desiredUnits: 100, selected: false, active: true
+                ),
+            ],
+            corpusDesiredUnits: 100
+        )
+        XCTAssertEqual(plan.contextUnits, ["active": 30, "selected": 15])
+        XCTAssertEqual(plan.contextUnits["unselected"], nil)
+        XCTAssertEqual(plan.corpusUnits, 15)
 
         let unicode = String(repeating: "α", count: 100)
-        let bounded = AssistantContextBudgetPolicy.truncate(unicode, byteLimit: 61)
-        XCTAssertLessThanOrEqual(bounded.utf8.count, 61)
+        let bounded = AssistantResourcePlanner.truncate(unicode, unitLimit: 61)
+        XCTAssertLessThanOrEqual(AssistantResourcePlanner.encodedStringUnits(bounded), 61)
         XCTAssertTrue(bounded.isEmpty || bounded.last != "�")
+
+        let escaped = String(repeating: "\\\"\n", count: 100)
+        let escapedBounded = AssistantResourcePlanner.truncate(escaped, unitLimit: 80)
+        XCTAssertLessThanOrEqual(AssistantResourcePlanner.encodedStringUnits(escapedBounded), 80)
+    }
+
+    func testResourcePlannerRedistributesUnusedDemandAndRejectsDuplicateContexts() throws {
+        let plan = try AssistantResourcePlanner.plan(
+            capacity: AssistantModelCapacity(inputUnits: 100, outputReserveUnits: 0),
+            reservations: [],
+            contexts: [
+                AssistantContextResourceRequest(
+                    id: "small-active", desiredUnits: 1, selected: true, active: true
+                ),
+                AssistantContextResourceRequest(
+                    id: "large-selected", desiredUnits: 100, selected: true, active: false
+                ),
+            ],
+            corpusDesiredUnits: 100
+        )
+
+        XCTAssertEqual(plan.contextUnits["small-active"], 1)
+        XCTAssertEqual(plan.contextUnits["large-selected"], 50)
+        XCTAssertEqual(plan.corpusUnits, 49)
+        XCTAssertEqual(plan.contextUnits.values.reduce(0, +) + plan.corpusUnits, 100)
+
+        XCTAssertThrowsError(try AssistantResourcePlanner.plan(
+            capacity: AssistantModelCapacity(inputUnits: 100, outputReserveUnits: 0),
+            reservations: [],
+            contexts: [
+                AssistantContextResourceRequest(
+                    id: "duplicate", desiredUnits: 10, selected: true, active: true
+                ),
+                AssistantContextResourceRequest(
+                    id: "duplicate", desiredUnits: 10, selected: true, active: false
+                ),
+            ],
+            corpusDesiredUnits: 0
+        )) { error in
+            XCTAssertEqual(error as? AssistantResourcePlannerError, .duplicateContextID("duplicate"))
+        }
+    }
+
+    func testResourcePlannerRepresentativeMeasurementFixture() throws {
+        let capacity = AssistantModelCapacity(inputUnits: 32_768, outputReserveUnits: 4_096)
+        let reservations = [
+            AssistantResourceReservation(id: "runtime_instructions", units: 1_900),
+            AssistantResourceReservation(id: "conversation_history", units: 4_096),
+            AssistantResourceReservation(id: "context_metadata", units: 768),
+        ]
+        let contexts = [
+            AssistantContextResourceRequest(
+                id: "notebook", desiredUnits: 12_000, selected: true, active: true
+            ),
+            AssistantContextResourceRequest(
+                id: "task", desiredUnits: 512, selected: true, active: false
+            ),
+            AssistantContextResourceRequest(
+                id: "python", desiredUnits: 4_096, selected: true, active: false
+            ),
+            AssistantContextResourceRequest(
+                id: "unselected-history", desiredUnits: 8_000, selected: false, active: false
+            ),
+        ]
+
+        let started = CFAbsoluteTimeGetCurrent()
+        var plan = try AssistantResourcePlanner.plan(
+            capacity: capacity,
+            reservations: reservations,
+            contexts: contexts,
+            corpusDesiredUnits: 8_000
+        )
+        for _ in 1..<10_000 {
+            plan = try AssistantResourcePlanner.plan(
+                capacity: capacity,
+                reservations: reservations,
+                contexts: contexts,
+                corpusDesiredUnits: 8_000
+            )
+        }
+        let elapsedMilliseconds = (CFAbsoluteTimeGetCurrent() - started) * 1_000
+        print(
+            "ASSISTANT_RESOURCE_MEASUREMENT iterations=10000 elapsed_ms=\(elapsedMilliseconds) "
+                + "allocations=\(plan.contextUnits) corpus=\(plan.corpusUnits)"
+        )
+
+        XCTAssertEqual(plan.contextUnits["notebook"], 11_534)
+        XCTAssertEqual(plan.contextUnits["task"], 512)
+        XCTAssertEqual(plan.contextUnits["python"], 4_096)
+        XCTAssertNil(plan.contextUnits["unselected-history"])
+        XCTAssertEqual(plan.corpusUnits, 5_766)
+        XCTAssertEqual(plan.contextUnits.values.reduce(0, +) + plan.corpusUnits, 21_908)
+    }
+
+    func testAssistantControllerUsesInjectedClockAndSchedulerWithoutSleeping() {
+        let scheduler = RecordingAssistantScheduler()
+        let controller = AssistantController(
+            scheduler: scheduler,
+            clock: FixedAssistantClock(value: 42)
+        )
+        var discussion = AssistantDiscussionState()
+        discussion.activity = .streaming
+
+        let effects = controller.handle(.messageDelta("hello"), discussion: &discussion)
+
+        XCTAssertEqual(discussion.lastActivityAt, 42)
+        XCTAssertTrue(effects.contains(.scheduleStreamFlush))
+        XCTAssertTrue(effects.contains(.scheduleResponseTimeout(conversationID: nil)))
+        var flushed = false
+        controller.scheduleStreamFlush { flushed = true }
+        XCTAssertEqual(scheduler.delays, [AssistantController.streamCoalescingDelay])
+        XCTAssertFalse(flushed)
+        scheduler.items.first?.perform()
+        XCTAssertTrue(flushed)
+        controller.flushPendingStream(into: &discussion)
+        XCTAssertEqual(discussion.streamingText, "hello")
+    }
+
+    func testResourcePlannerRejectsOverflowAndOversubscribedReserves() {
+        XCTAssertThrowsError(try AssistantResourcePlanner.plan(
+            capacity: AssistantModelCapacity(inputUnits: 10, outputReserveUnits: 8),
+            reservations: [AssistantResourceReservation(id: "history", units: 3)],
+            contexts: [],
+            corpusDesiredUnits: 0
+        )) { error in
+            XCTAssertEqual(
+                error as? AssistantResourcePlannerError,
+                .reservesExceedCapacity(required: 11, available: 10)
+            )
+        }
+        XCTAssertThrowsError(try AssistantResourcePlanner.plan(
+            capacity: AssistantModelCapacity(inputUnits: UInt64.max, outputReserveUnits: UInt64.max),
+            reservations: [AssistantResourceReservation(id: "overflow", units: 1)],
+            contexts: [],
+            corpusDesiredUnits: 0
+        ))
     }
 
     func testAuthorityPresetsMapToNativeCodexControls() {
@@ -202,10 +350,8 @@ final class AssistantDiscussionTests: XCTestCase {
         ))
         let visibleError = expectation(description: "turn error surfaced")
         session.onEvent { event in
-            if event["method"] as? String == "casa/error",
-               let params = event["params"] as? [String: Any],
-               (params["message"] as? String)?.contains("fixture rejected turn") == true
-            {
+            if case let .failed(message) = event,
+               message.contains("fixture rejected turn") {
                 visibleError.fulfill()
             }
         }
@@ -214,6 +360,70 @@ final class AssistantDiscussionTests: XCTestCase {
             message: "fixture rejected turn"
         )
         wait(for: [visibleError], timeout: 1)
+    }
+
+    func testAppServerRequestLifecycleRejectsDuplicateUnknownLateMalformedAndUnsupportedEvents() throws {
+        let session = CodexAppServerSession(configuration: AgentSessionConfiguration(
+            agentExecutable: "/usr/bin/false",
+            projectMCPExecutable: "/project/bin/casars-project-mcp"
+        ))
+        let surfaced = expectation(description: "protocol outcomes surfaced")
+        surfaced.expectedFulfillmentCount = 5
+        var events: [AgentSessionEvent] = []
+        session.onEvent { event in
+            events.append(event)
+            surfaced.fulfill()
+        }
+
+        try session.registerRequestForTesting(requestID: 7, method: "account/read")
+        try session.receiveJSONLineForTesting(["id": 7, "result": [:]])
+        try session.receiveJSONLineForTesting(["id": 7, "result": [:]])
+        try session.receiveJSONLineForTesting(["id": 8, "result": [:]])
+        try session.registerRequestForTesting(requestID: 9, method: "model/list")
+        session.terminate()
+        try session.receiveJSONLineForTesting(["id": 9, "result": [:]])
+        session.receiveRawLineForTesting("not-json")
+        try session.receiveJSONLineForTesting([
+            "method": "future/notification",
+            "params": [:],
+        ])
+
+        wait(for: [surfaced], timeout: 1)
+        XCTAssertTrue(events.contains { event in
+            guard case let .failed(message) = event else { return false }
+            return message.contains("duplicate terminal response")
+        })
+        XCTAssertTrue(events.contains { event in
+            guard case let .failed(message) = event else { return false }
+            return message.contains("unknown request 8")
+        })
+        XCTAssertTrue(events.contains { event in
+            guard case let .failed(message) = event else { return false }
+            return message.contains("unknown request 9")
+        })
+        XCTAssertTrue(events.contains { event in
+            guard case let .failed(message) = event else { return false }
+            return message.contains("not-json")
+        })
+        XCTAssertTrue(events.contains(.unsupported(method: "future/notification")))
+    }
+
+    func testAssistantControllerMakesBackendExitExplicit() {
+        let controller = AssistantController()
+        var discussion = AssistantDiscussionState()
+        discussion.activity = .streaming
+
+        let effects = controller.handle(
+            .backendExited(status: 17, pendingRequests: ["turn/start", "model/list"]),
+            discussion: &discussion
+        )
+
+        XCTAssertTrue(effects.isEmpty)
+        XCTAssertEqual(discussion.activity, .restartRequired)
+        XCTAssertEqual(
+            discussion.lastError,
+            "Agent backend exited with status 17 (pending: turn/start, model/list)."
+        )
     }
 
     func testPersistenceRoundTripStoresAgentNeutralProfileAndOpaqueResumeID() throws {
@@ -335,11 +545,11 @@ final class AssistantDiscussionTests: XCTestCase {
 
         let chunks = (0..<500).map { "chunk-\($0);" }
         for chunk in chunks {
-            agent.emit(["method": "item/agentMessage/delta", "params": ["delta": chunk]])
+            agent.emit(.messageDelta(chunk))
         }
         XCTAssertEqual(store.state.assistantDiscussion?.streamingText, "")
 
-        agent.emit(["method": "turn/completed", "params": ["turn": ["status": "completed"]]])
+        agent.emit(.turnCompleted(status: "completed", error: nil))
 
         XCTAssertEqual(
             store.state.assistantDiscussion?.activeConversation?.messages.last?.content,
@@ -425,22 +635,22 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertEqual(store.state.assistantDiscussion?.liveActivity?.label, "Request sent")
         XCTAssertNotNil(store.state.assistantDiscussion?.lastActivityAt)
 
-        agent.emit(["method": "turn/started", "params": ["turn": ["id": "turn-progress"]]])
+        agent.emit(.turnStarted(id: "turn-progress"))
         XCTAssertEqual(store.state.assistantDiscussion?.liveActivity?.label, "Agent accepted request")
 
-        agent.emit(["method": "item/started", "params": ["item": [
-            "id": "tool-progress", "type": "mcpToolCall", "server": "other",
-            "tool": "task.catalog",
-        ]]])
+        agent.emit(.item(AgentItemDescriptor(
+            id: "tool-progress", kind: "mcpToolCall", server: "other",
+            tool: "task.catalog", completed: false, error: nil
+        )))
         XCTAssertEqual(store.state.assistantDiscussion?.liveActivity?.label, "task.catalog")
         XCTAssertEqual(store.state.assistantDiscussion?.liveActivity?.state, "running")
         XCTAssertNil(store.state.assistantDiscussion?.liveActivity?.summary)
         XCTAssertEqual(store.debugSnapshot().assistantDiscussion?.liveActivityLabel, "task.catalog")
         XCTAssertNotNil(store.debugSnapshot().assistantDiscussion?.lastActivityAt)
 
-        agent.emit(["method": "item/agentMessage/delta", "params": ["delta": "Available tasks"]])
+        agent.emit(.messageDelta("Available tasks"))
         XCTAssertEqual(store.state.assistantDiscussion?.liveActivity?.label, "Writing response")
-        agent.emit(["method": "turn/completed", "params": ["turn": ["status": "completed"]]])
+        agent.emit(.turnCompleted(status: "completed", error: nil))
         XCTAssertNil(store.state.assistantDiscussion?.liveActivity)
         XCTAssertNil(store.state.assistantDiscussion?.lastActivityAt)
     }
@@ -465,7 +675,7 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertEqual(agent.accountLogoutCount, 1)
         XCTAssertFalse(store.state.assistantDiscussion?.account.requiresLogin ?? true)
 
-        agent.emit(["method": "casa/accountLogout/completed", "params": [:]])
+        agent.emit(.accountLoggedOut)
 
         XCTAssertTrue(store.state.assistantDiscussion?.account.requiresLogin ?? false)
         XCTAssertNil(store.state.assistantDiscussion?.account.email)
@@ -515,7 +725,7 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertEqual(agent.conversations.count, 1)
         XCTAssertTrue(agent.turns.isEmpty)
 
-        agent.emit(["result": ["thread": ["id": "thread-replacement"]]])
+        agent.emit(.conversationStarted(threadID: "thread-replacement"))
         XCTAssertEqual(agent.turns.last?.threadID, "thread-replacement")
         XCTAssertEqual(agent.turns.last?.text, "Wait for the replacement thread")
     }
@@ -660,7 +870,7 @@ final class AssistantDiscussionTests: XCTestCase {
             first.documents.filter { $0.citation.sourcePath == "documents/paper.pdf" }.map(\.citation.page),
             [1, 2]
         )
-        let firstReport = try client.indexCorpus(
+        let firstReport = try client.applyTestReconciliation(
             projectRoot: project.path,
             documents: first.documents,
             removeMissingLayers: first.refreshedLayers,
@@ -679,7 +889,7 @@ final class AssistantDiscussionTests: XCTestCase {
             projectRoot: project.path,
             environment: environment
         )
-        let changedReport = try client.indexCorpus(
+        let changedReport = try client.applyTestReconciliation(
             projectRoot: project.path,
             documents: changed.documents,
             removeMissingLayers: changed.refreshedLayers,
@@ -704,7 +914,7 @@ final class AssistantDiscussionTests: XCTestCase {
             projectRoot: project.path,
             environment: environment
         )
-        let removedReport = try client.indexCorpus(
+        let removedReport = try client.applyTestReconciliation(
             projectRoot: project.path,
             documents: removed.documents,
             removeMissingLayers: removed.refreshedLayers,
@@ -743,7 +953,7 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertEqual(pages.map(\.citation.page), Array(1 ... 9).map(UInt32.init))
 
         let client = UniFFIAssistantPersistenceClient()
-        let report = try client.indexCorpus(
+        let report = try client.applyTestReconciliation(
             projectRoot: project.path,
             documents: result.documents,
             removeMissingLayers: result.refreshedLayers,
@@ -1074,21 +1284,31 @@ final class AssistantDiscussionTests: XCTestCase {
             pythonCommand: "python3"
         ).mcpServerName
         store.installAgentSessionForTesting(agent, sessionNonce: sessionNonce)
-        let hits = """
-        [{"chunk_id":"paper:1","layer":"project_document","title":"Paper","text":"Evidence","citation":{"label":"Paper","locator":"documents/paper.pdf, page 2","source_path":"documents/paper.pdf","page":2}}]
-        """
+        agent.emit(.item(AgentItemDescriptor(
+            id: "forged-tool", kind: "mcpToolCall", server: "casa_rs_untrusted",
+            tool: "corpus.search", completed: true, error: nil
+        )))
 
-        agent.emit(["method": "item/completed", "params": ["item": [
-            "id": "forged-tool", "type": "mcpToolCall", "server": "casa_rs_untrusted",
-            "tool": "corpus.search", "result": ["content": [["type": "text", "text": hits]]],
-        ]]])
-
-        agent.emit(["method": "item/completed", "params": ["item": [
-            "id": "tool-1", "type": "mcpToolCall", "server": trustedServer,
-            "tool": "corpus.search", "result": ["content": [["type": "text", "text": hits]]],
-        ]]])
-        agent.emit(["method": "item/agentMessage/delta", "params": ["delta": "Cited answer"]])
-        agent.emit(["method": "turn/completed", "params": ["turn": ["status": "completed"]]])
+        agent.emit(.item(AgentItemDescriptor(
+            id: "tool-1", kind: "mcpToolCall", server: trustedServer,
+            tool: "corpus.search", completed: true, error: nil,
+            citations: [AssistantCitationState(
+                id: "paper:1",
+                kind: "document",
+                label: "Paper",
+                locator: "documents/paper.pdf, page 2",
+                excerpt: "Evidence",
+                sourcePath: "documents/paper.pdf",
+                page: 2,
+                section: nil,
+                lineStart: nil,
+                lineEnd: nil,
+                release: nil,
+                commit: nil
+            )]
+        )))
+        agent.emit(.messageDelta("Cited answer"))
+        agent.emit(.turnCompleted(status: "completed", error: nil))
 
         let answer = try XCTUnwrap(store.state.assistantDiscussion?.activeConversation?.messages.last)
         XCTAssertEqual(answer.citations.first?.locator, "documents/paper.pdf, page 2")
@@ -1136,37 +1356,38 @@ final class AssistantDiscussionTests: XCTestCase {
         ).mcpServerName
         store.installAgentSessionForTesting(agent, sessionNonce: sessionNonce)
 
-        agent.emit(["method": "item/completed", "params": ["item": [
-            "id": "tool-failure", "type": "mcpToolCall", "server": trustedServer,
-            "tool": "corpus.search", "error": ["message": "index unavailable"],
-        ]]])
-        agent.emit(["method": "turn/completed", "params": ["turn": ["status": "completed"]]])
+        agent.emit(.item(AgentItemDescriptor(
+            id: "tool-failure", kind: "mcpToolCall", server: trustedServer,
+            tool: "corpus.search", completed: true, error: "index unavailable"
+        )))
+        agent.emit(.turnCompleted(status: "completed", error: nil))
         XCTAssertEqual(
             store.state.assistantDiscussion?.activeConversation?.messages.last?.activities.first?.state,
             "failed"
         )
 
-        agent.emit(["method": "turn/completed", "params": ["turn": ["status": "cancelled"]]])
+        agent.emit(.turnCompleted(status: "cancelled", error: nil))
         XCTAssertEqual(
             store.state.assistantDiscussion?.activeConversation?.messages.last?.content,
             "Agent response cancelled."
         )
 
-        agent.emit(["method": "account/rateLimits/updated", "params": [
-            "primary": ["usedPercent": 100.0, "resetsAt": 42],
-        ]])
+        agent.emit(.usage(AgentUsageDescriptor(
+            plan: nil, primaryPercentUsed: 100, secondaryPercentUsed: nil,
+            primaryResetAt: 42, secondaryResetAt: nil
+        )))
         XCTAssertEqual(store.state.assistantDiscussion?.usage.primaryPercentUsed, 100.0)
 
-        agent.emit([
-            "id": "approval-1",
-            "method": "item/commandExecution/requestApproval",
-            "params": ["command": "touch outside-project"],
-        ])
+        agent.emit(.approval(AgentApprovalDescriptor(
+            id: "approval-1",
+            method: "item/commandExecution/requestApproval",
+            summary: "touch outside-project"
+        )))
         store.resolveAssistantApproval("decline")
         XCTAssertEqual(agent.approvals.last?.requestID, "approval-1")
         XCTAssertEqual(agent.approvals.last?.decision, "decline")
 
-        agent.emit(["method": "casa/error", "params": ["message": "agent process exited"]])
+        agent.emit(.failed("agent process exited"))
         XCTAssertEqual(store.state.assistantDiscussion?.activity, .restartRequired)
         XCTAssertEqual(store.state.assistantDiscussion?.lastError, "agent process exited")
         XCTAssertEqual(store.state.assistantDiscussion?.activeConversation?.profile.authority, .explore)
@@ -1214,10 +1435,7 @@ final class AssistantDiscussionTests: XCTestCase {
         let agent = FixtureAgentSession()
         store.installAgentSessionForTesting(agent)
 
-        agent.emit([
-            "method": "casa/resumeFailed",
-            "params": ["message": "thread not found"],
-        ])
+        agent.emit(.resumeFailed("thread not found"))
 
         let updated = try XCTUnwrap(store.state.assistantDiscussion?.activeConversation)
         XCTAssertNil(updated.backendSession)
@@ -1252,7 +1470,7 @@ final class AssistantDiscussionTests: XCTestCase {
 
     func testDeterministicAgentTaskSuggestionIncludesValidatedPatch() throws {
         let fixture = DeterministicAgentSession()
-        var events: [[String: Any]] = []
+        var events: [AgentSessionEvent] = []
         fixture.onEvent { events.append($0) }
         fixture.startConversation(AgentConversationRequest(
             projectRoot: "/tmp/project",
@@ -1272,22 +1490,11 @@ final class AssistantDiscussionTests: XCTestCase {
             effort: "medium"
         ))
 
-        let toolEvent = try XCTUnwrap(events.first { event in
-            guard event["method"] as? String == "item/completed",
-                  let params = event["params"] as? [String: Any],
-                  let item = params["item"] as? [String: Any]
-            else { return false }
-            return item["tool"] as? String == "task.suggest"
-        })
-        let params = try XCTUnwrap(toolEvent["params"] as? [String: Any])
-        let item = try XCTUnwrap(params["item"] as? [String: Any])
-        let result = try XCTUnwrap(item["result"] as? [String: Any])
-        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
-        let text = try XCTUnwrap(content.first?["text"] as? String)
-        let data = try XCTUnwrap(text.data(using: .utf8))
-        let suggestion = try CasarsFrontendServices.assistantTaskSuggestion(
-            toolOutput: String(decoding: data, as: UTF8.self)
-        )
+        let toolEvent = try XCTUnwrap(events.compactMap { event -> AgentItemDescriptor? in
+            guard case let .item(item) = event, item.tool == "task.suggest" else { return nil }
+            return item
+        }.first)
+        let suggestion = try XCTUnwrap(toolEvent.taskSuggestions.first)
         let patch = suggestion.validatedPatch
 
         XCTAssertEqual(patch.values["vis"], .string("input.ms"))
@@ -1332,22 +1539,16 @@ final class AssistantDiscussionTests: XCTestCase {
         var observedCasaMCPReady = false
         var observedCasaTool = false
         session.onEvent { event in
-            if ProcessInfo.processInfo.environment["CASA_RS_CODEX_LIVE_TRACE"] == "1",
-               JSONSerialization.isValidJSONObject(event),
-               let data = try? JSONSerialization.data(withJSONObject: event, options: [.sortedKeys])
-            {
-                print("CODEX_EVENT \(String(decoding: data, as: UTF8.self))")
+            if ProcessInfo.processInfo.environment["CASA_RS_CODEX_LIVE_TRACE"] == "1" {
+                print("CODEX_EVENT \(event)")
             }
-            if let result = event["result"] as? [String: Any] {
-                if !observedAccount,
-                   result.keys.contains("requiresOpenaiAuth"), result["account"] != nil
-                {
+            switch event {
+            case let .account(accountState):
+                if !observedAccount, !accountState.requiresLogin {
                     observedAccount = true
                     account.fulfill()
                 }
-                if let thread = result["thread"] as? [String: Any],
-                   let id = thread["id"] as? String
-                {
+            case let .conversationStarted(id):
                     if threadID == nil {
                         threadID = id
                         session.sendTurn(AgentTurnRequest(
@@ -1381,58 +1582,43 @@ final class AssistantDiscussionTests: XCTestCase {
                             effort: "low"
                         ))
                     }
-                }
-            }
-            guard let method = event["method"] as? String,
-                  let params = event["params"] as? [String: Any]
-            else { return }
-            if method == "mcpServer/startupStatus/updated",
-               let name = params["name"] as? String,
-               let status = params["status"] as? String,
-               ["starting", "ready"].contains(status)
-            {
+            case let .mcpStatus(name, status):
                 if name.hasPrefix("casa_rs_"), status == "ready", !observedCasaMCPReady {
                     observedCasaMCPReady = true
                     casaMCP.fulfill()
                 }
-            }
-            if method == "item/completed",
-               let item = params["item"] as? [String: Any],
-               let type = item["type"] as? String
-            {
-                if type == "mcpToolCall",
-                   (item["server"] as? String)?.hasPrefix("casa_rs_") == true,
+            case let .item(item) where item.completed:
+                if item.kind == "mcpToolCall",
+                   item.server?.hasPrefix("casa_rs_") == true,
                    !observedCasaTool
                 {
                     observedCasaTool = true
                     casaTool.fulfill()
                 } else if !workRequested
-                    && (["commandExecution", "webSearch", "computerUse"].contains(type)
-                    || (type == "mcpToolCall"
-                        && (item["server"] as? String)?.hasPrefix("casa_rs_") != true))
+                    && (["commandExecution", "webSearch", "computerUse"].contains(item.kind)
+                    || (item.kind == "mcpToolCall"
+                        && item.server?.hasPrefix("casa_rs_") != true))
                 {
                     observedGenericAuthority = true
                 }
-            }
-            if method == "turn/completed", !resumeRequested {
-                completed.fulfill()
-                resumeRequested = true
-                session.startConversation(AgentConversationRequest(
-                    projectRoot: project.path,
-                    model: "",
-                    effort: "low",
-                    resumeThreadID: threadID,
-                    runtimeProfile: profile
-                ))
-            } else if method == "turn/completed", workRequested, workThreadID != nil {
+            case .turnCompleted where !resumeRequested:
+                    completed.fulfill()
+                    resumeRequested = true
+                    session.startConversation(AgentConversationRequest(
+                        projectRoot: project.path,
+                        model: "",
+                        effort: "low",
+                        resumeThreadID: threadID,
+                        runtimeProfile: profile
+                    ))
+            case .turnCompleted where workRequested && workThreadID != nil:
                 workCompleted.fulfill()
-            }
-            if method == "item/commandExecution/requestApproval", workRequested,
-               let requestID = event["id"]
-            {
+            case let .approval(approval) where workRequested:
                 workApprovalCount += 1
                 if workApprovalCount == 1 { workApproval.fulfill() }
-                session.approve(requestID: String(describing: requestID), decision: "decline")
+                session.approve(requestID: approval.id, decision: "decline")
+            default:
+                break
             }
         }
         session.prepare { result in
@@ -1481,7 +1667,7 @@ final class AssistantDiscussionTests: XCTestCase {
             $0.citation.sourcePath == "crates/casa-notebook/src/corpus.rs"
         }?.citation.commit)
         let persistence = UniFFIAssistantPersistenceClient()
-        _ = try persistence.indexCorpus(
+        _ = try persistence.applyTestReconciliation(
             projectRoot: project.path,
             documents: ingestion.documents,
             removeMissingLayers: ingestion.refreshedLayers,
@@ -1509,18 +1695,14 @@ final class AssistantDiscussionTests: XCTestCase {
         var agentError: String?
         var eventTrace: [String] = []
         session.onEvent { event in
-            if let result = event["result"] as? [String: Any] {
-                eventTrace.append("result keys=\(result.keys.sorted())")
-                if !observedAccount,
-                   result.keys.contains("requiresOpenaiAuth"), result["account"] != nil
-                {
+            eventTrace.append(String(describing: event))
+            switch event {
+            case let .account(accountState):
+                if !observedAccount, !accountState.requiresLogin {
                     observedAccount = true
                     account.fulfill()
                 }
-                if !sent,
-                   let thread = result["thread"] as? [String: Any],
-                   let id = thread["id"] as? String
-                {
+            case let .conversationStarted(id) where !sent:
                     sent = true
                     threadStarted.fulfill()
                     session.sendTurn(AgentTurnRequest(
@@ -1531,38 +1713,26 @@ final class AssistantDiscussionTests: XCTestCase {
                         model: "",
                         effort: "low"
                     ))
-                }
-            }
-            guard let method = event["method"] as? String,
-                  let params = event["params"] as? [String: Any]
-            else { return }
-            if method == "casa/error" || method == "error" {
-                let message = String(describing: params["message"] ?? params)
-                eventTrace.append("\(method): \(message)")
+            case let .failed(message):
                 if agentError == nil {
                     agentError = message
                     if sent { turnFinished.fulfill() }
                 }
-            } else if ["thread/started", "turn/started", "turn/completed", "item/completed"].contains(method) {
-                eventTrace.append(method)
-            }
-            if method == "item/completed",
-               let item = params["item"] as? [String: Any],
-               item["type"] as? String == "mcpToolCall",
-               item["server"] as? String == profile.mcpServerName
-            {
-                if item["tool"] as? String == "corpus.search", !observedCorpusTool {
+            case let .item(item)
+                where item.completed && item.kind == "mcpToolCall"
+                    && item.server == profile.mcpServerName:
+                if item.tool == "corpus.search", !observedCorpusTool {
                     observedCorpusTool = true
                 }
-                if item["tool"] as? String == "source.search", !observedSourceTool {
+                if item.tool == "source.search", !observedSourceTool {
                     observedSourceTool = true
                 }
-            } else if method == "item/agentMessage/delta",
-                      let delta = params["delta"] as? String
-            {
+            case let .messageDelta(delta):
                 answer += delta
-            } else if method == "turn/completed" {
+            case .turnCompleted:
                 if agentError == nil { turnFinished.fulfill() }
+            default:
+                break
             }
         }
         session.prepare { result in
@@ -1643,16 +1813,34 @@ final class AssistantDiscussionTests: XCTestCase {
     }
 }
 
+private struct FixedAssistantClock: AssistantClock {
+    let value: UInt64
+
+    func timestamp() -> UInt64 { value }
+}
+
+private final class RecordingAssistantScheduler: AssistantScheduling {
+    var delays: [TimeInterval] = []
+    var items: [DispatchWorkItem] = []
+
+    func schedule(after delay: TimeInterval, _ action: @escaping () -> Void) -> DispatchWorkItem {
+        let item = DispatchWorkItem(block: action)
+        delays.append(delay)
+        items.append(item)
+        return item
+    }
+}
+
 private final class FixtureAgentSession: AgentSession {
     var conversations: [AgentConversationRequest] = []
     var turns: [AgentTurnRequest] = []
     var restartCount = 0
     var accountLogoutCount = 0
     var approvals: [(requestID: String, decision: String)] = []
-    private var eventHandler: (([String: Any]) -> Void)?
+    private var eventHandler: ((AgentSessionEvent) -> Void)?
     private var stateHandler: ((AssistantDiscussionActivity) -> Void)?
 
-    func onEvent(_ handler: @escaping ([String: Any]) -> Void) { eventHandler = handler }
+    func onEvent(_ handler: @escaping (AgentSessionEvent) -> Void) { eventHandler = handler }
     func onStateChange(_ handler: @escaping (AssistantDiscussionActivity) -> Void) { stateHandler = handler }
     func prepare(_ completion: @escaping (Result<Void, Error>) -> Void) {
         stateHandler?(.ready)
@@ -1669,5 +1857,5 @@ private final class FixtureAgentSession: AgentSession {
     func refreshAccount() {}
     func restart() { restartCount += 1 }
     func terminate() {}
-    func emit(_ event: [String: Any]) { eventHandler?(event) }
+    func emit(_ event: AgentSessionEvent) { eventHandler?(event) }
 }

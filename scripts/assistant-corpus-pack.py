@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Export the audited CASA-RS baseline inventory from RadioAstronomyOracle."""
+"""Generate, check, and audit the CASA-RS standard assistant corpus pack."""
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import datetime as dt
 import hashlib
 import json
 import os
 import re
 import sqlite3
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +25,14 @@ EXPECTED_COUNTS = {
     "nrao_synthesis_2024": 26,
     "nrao_synthesis_2026": 27,
 }
+
+INVENTORY_PATH = Path("resources/assistant-corpus/radio-astronomy-source-inventory-v1.json")
+PACK_ROOT = Path("apps/casars-mac/Sources/CasarsMacCore/Resources/assistant-corpus")
+ORIGIN_AUDIT_PATH = Path(
+    "resources/assistant-corpus/radio-astronomy-origin-audit-2026-07-15.json"
+)
+PACK_SCHEMA_VERSION = 3
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 # Corrections are intentionally source/page-specific and are backed by a visual
 # comparison with the rendered source page. Never use broad formula rewriting
@@ -121,24 +133,42 @@ def digest(path: Path) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    subcommands = parser.add_subparsers(dest="command", required=True)
+
+    generate = subcommands.add_parser("generate", help="reproducibly generate inventory and pack")
+    generate.add_argument(
         "--oracle-root",
         type=Path,
         default=Path(os.environ.get("RADIO_ASTRONOMY_ORACLE_ROOT", "")),
         help="RadioAstronomyOracle checkout (or set RADIO_ASTRONOMY_ORACLE_ROOT)",
     )
-    parser.add_argument(
+    generate.add_argument(
         "--output",
         type=Path,
-        default=Path("resources/assistant-corpus/radio-astronomy-source-inventory-v1.json"),
+        default=INVENTORY_PATH,
     )
-    parser.add_argument(
+    generate.add_argument(
         "--pack-root",
         type=Path,
-        default=Path("apps/casars-mac/Sources/CasarsMacCore/Resources/assistant-corpus"),
+        default=PACK_ROOT,
         help="Destination for the clean-install compact baseline resource pack",
     )
-    parser.add_argument("--check", action="store_true", help="Fail if output differs from the reproducible export")
+    generate.add_argument(
+        "--check",
+        action="store_true",
+        help="compare reproducible output without mutating the checkout",
+    )
+
+    check = subcommands.add_parser("check", help="validate the committed inventory and pack")
+    check.add_argument("--inventory", type=Path, default=INVENTORY_PATH)
+    check.add_argument("--pack-root", type=Path, default=PACK_ROOT)
+    check.add_argument("--origin-audit", type=Path, default=ORIGIN_AUDIT_PATH)
+
+    audit = subcommands.add_parser("audit", help="probe selected authoritative origins")
+    audit.add_argument("--inventory", type=Path, default=INVENTORY_PATH)
+    audit.add_argument("--output", type=Path, required=True)
+    audit.add_argument("--timeout", type=float, default=30)
+    audit.add_argument("--workers", type=int, default=8)
     return parser.parse_args()
 
 
@@ -289,14 +319,23 @@ def pack_manifest(payload: dict[str, Any], bundle_files: dict[str, bytes], pack_
     primer_path = pack_root / "radio-interferometry-primer.md"
     if not primer_path.is_file():
         raise SystemExit(f"missing CASA-RS primer: {primer_path}")
+    primer_pages = (
+        json.dumps(
+            [{"page": 1, "content": primer_path.read_text(encoding="utf-8")}],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()
+    bundle_files["standard-v1/radio-interferometry-primer.pages.json"] = primer_pages
     documents: list[dict[str, Any]] = [{
-        "path": "radio-interferometry-primer.md",
-        "format": "utf8_text",
+        "path": "standard-v1/radio-interferometry-primer.pages.json",
+        "format": "normalized_pages_json",
         "title": "CASA-RS Radio Interferometry Primer",
         "citation_label": "CASA-RS Radio Interferometry Primer v1.0",
         "citation_kind": "document",
         "source_path": "radio-interferometry-primer.md",
-        "content_sha256": digest(primer_path),
+        "content_sha256": hashlib.sha256(primer_pages).hexdigest(),
         "source_sha256": digest(primer_path),
         "origin_url": "https://github.com/bglenden/casa-rs",
         "license": {
@@ -336,7 +375,7 @@ def pack_manifest(payload: dict[str, Any], bundle_files: dict[str, bytes], pack_
             "year": source["year"],
         })
     manifest = {
-        "schema_version": 2,
+        "schema_version": PACK_SCHEMA_VERSION,
         "id": payload["id"],
         "version": payload["version"],
         "selection": payload["policy"]["selection"],
@@ -384,8 +423,219 @@ def pack_notice(payload: dict[str, Any]) -> bytes:
     return ("\n".join(lines)).encode()
 
 
-def main() -> None:
-    args = parse_args()
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise SystemExit(f"assistant-corpus pack: {message}")
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"assistant-corpus pack: read {path}: {error}") from error
+    require(isinstance(value, dict), f"{path} must contain one JSON object")
+    return value
+
+
+def safe_pack_path(pack_root: Path, relative: str) -> Path:
+    candidate = Path(relative)
+    require(not candidate.is_absolute(), f"absolute pack path is forbidden: {relative}")
+    require(".." not in candidate.parts, f"parent traversal is forbidden: {relative}")
+    require(candidate.parts[:1] == ("standard-v1",), f"content must live under standard-v1: {relative}")
+    resolved_root = pack_root.resolve()
+    resolved = (pack_root / candidate).resolve()
+    require(resolved.is_relative_to(resolved_root), f"pack path escapes resource root: {relative}")
+    return resolved
+
+
+def check_committed(inventory_path: Path, pack_root: Path, origin_audit_path: Path) -> None:
+    payload = load_json(inventory_path)
+    require(payload.get("schema_version") == 1, "unsupported inventory schema")
+    sources = payload.get("sources")
+    require(isinstance(sources, list), "inventory sources must be an array")
+    counts = {
+        "sources": len(sources),
+        "pages_or_slides": sum(source["page_or_slide_count"] for source in sources),
+        "books": sum(source["source_class"] == "book" for source in sources),
+        "nrao_synthesis_2024": sum(
+            source["collection_id"] == "nrao-synthesis-2024" for source in sources
+        ),
+        "nrao_synthesis_2026": sum(
+            source["collection_id"] == "nrao-synthesis-2026" for source in sources
+        ),
+    }
+    require(counts == EXPECTED_COUNTS, f"inventory release invariant drifted: {counts}")
+    require(payload["source_inventory"]["counts"] == counts, "stored source counts are not derived counts")
+    require(len({source["id"] for source in sources}) == len(sources), "source identities must be unique")
+    included = [source for source in sources if source["acquisition"]["included_in_baseline"]]
+    for source in sources:
+        label = source["id"]
+        require(bool(source.get("origin_url")), f"{label} has no origin")
+        require(SHA256.fullmatch(source.get("oracle_working_copy_sha256", "")) is not None,
+                f"{label} has no source digest")
+        require(SHA256.fullmatch(source.get("normalized_text_sha256", "")) is not None,
+                f"{label} has no normalized-text digest")
+        require(bool(source["citation"].get("label")), f"{label} has no citation label")
+        require(source["citation"].get("locator_kind") in {"book_page", "slide"},
+                f"{label} has no page or slide citation kind")
+        require(bool(source["license"].get("id") and source["license"].get("evidence")),
+                f"{label} has no license evidence")
+        if source["acquisition"]["included_in_baseline"]:
+            require(bool(source.get("download_url")), f"{label} has no acquisition URL")
+            require(source["redistribution"].get("bundled") is True,
+                    f"{label} is selected but not marked bundled")
+            require(source.get("bundle") is not None, f"{label} has no bundle record")
+            require(bool(source.get("contributors")), f"{label} has no contributors")
+            bundle_path = safe_pack_path(pack_root, source["bundle"]["path"])
+            require(bundle_path.is_file(), f"{label} bundle content is missing")
+            require(digest(bundle_path) == source["bundle"]["sha256"],
+                    f"{label} bundle digest does not match")
+        else:
+            require(bool(source["acquisition"].get("exclusion_reason")),
+                    f"{label} has no exclusion reason")
+            require(source["redistribution"].get("bundled") is False,
+                    f"{label} is excluded but marked bundled")
+            require(source.get("bundle") is None, f"{label} is excluded but has bundle content")
+
+    manifest_path = pack_root / "corpus-pack.json"
+    manifest = load_json(manifest_path)
+    require(manifest.get("schema_version") == PACK_SCHEMA_VERSION,
+            f"installed pack must use schema {PACK_SCHEMA_VERSION}")
+    require(manifest.get("id") == payload.get("id") and manifest.get("version") == payload.get("version"),
+            "installed pack identity differs from inventory")
+    documents = manifest.get("documents")
+    require(isinstance(documents, list), "installed pack documents must be an array")
+    require(len(documents) == len(included) + 1, "installed pack source count differs from selection")
+    page_total = 0
+    for document in documents:
+        relative = document.get("path", "")
+        require(document.get("format") == "normalized_pages_json",
+                f"unsupported installed content format: {relative}")
+        path = safe_pack_path(pack_root, relative)
+        require(path.is_file() and not path.is_symlink(), f"installed content is missing or linked: {relative}")
+        require(SHA256.fullmatch(document.get("content_sha256", "")) is not None,
+                f"installed content digest is missing: {relative}")
+        require(digest(path) == document["content_sha256"],
+                f"installed content digest differs: {relative}")
+        require(SHA256.fullmatch(document.get("source_sha256", "")) is not None,
+                f"source digest is missing: {relative}")
+        require(bool(document.get("origin_url") and document.get("redistribution_basis")),
+                f"origin or redistribution basis is missing: {relative}")
+        license_record = document.get("license", {})
+        require(bool(license_record.get("id") and license_record.get("name") and license_record.get("url")),
+                f"license record is incomplete: {relative}")
+        require(bool(document.get("contributors") and document.get("modifications")),
+                f"attribution or modifications are missing: {relative}")
+        pages = json.loads(path.read_text(encoding="utf-8"))
+        require(isinstance(pages, list) and pages,
+                f"normalized pages must be a non-empty array: {relative}")
+        require(all(
+            isinstance(page, dict)
+            and isinstance(page.get("page"), int)
+            and page["page"] > 0
+            and isinstance(page.get("content"), str)
+            and page["content"].strip()
+            for page in pages
+        ), f"normalized page content is invalid: {relative}")
+        require([page["page"] for page in pages] == list(range(1, len(pages) + 1)),
+                f"normalized page numbering is not contiguous: {relative}")
+        page_total += len(pages)
+    expected_pages = 1 + sum(source["page_or_slide_count"] for source in included)
+    require(page_total == expected_pages, f"installed page count is {page_total}, expected {expected_pages}")
+
+    notice = (pack_root / "NOTICE.md").read_text(encoding="utf-8")
+    require("A. Richard Thompson" in notice, "installed notice omits book authors")
+    require("Creative Commons Attribution-NonCommercial 4.0" in notice,
+            "installed notice omits book license")
+    require("images are omitted" in notice, "installed notice omits text-normalization disclosure")
+
+    audit = load_json(origin_audit_path)
+    require(audit.get("inventory_id") == payload.get("id"), "origin audit targets another inventory")
+    require(audit.get("inventory_version") == payload.get("version"), "origin audit targets another version")
+    require(audit["summary"].get("declared_included") == len(included),
+            "origin audit omitted selected sources")
+    require(audit["summary"].get("reachable") == len(included) and audit["summary"].get("failed") == 0,
+            "selected authoritative origins did not all pass the recorded audit")
+    print(f"assistant-corpus pack: {len(sources)} sources, {len(documents)} installed documents, {page_total} pages")
+
+
+def probe_origin(source: dict[str, Any], timeout: float) -> dict[str, Any]:
+    url = source["download_url"]
+    headers = {"User-Agent": "casa-rs-corpus-audit/1"}
+    request = urllib.request.Request(url, method="HEAD", headers=headers)
+    try:
+        response = urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.HTTPError as error:
+        if error.code not in {400, 403, 405}:
+            raise
+        response = urllib.request.urlopen(
+            urllib.request.Request(url, headers={**headers, "Range": "bytes=0-0"}),
+            timeout=timeout,
+        )
+    with response:
+        response_headers = response.headers
+        final_url = response.geturl()
+        status = response.status
+        length = response_headers.get("Content-Length")
+    return {
+        "id": source["id"],
+        "requested_url": url,
+        "final_url": final_url,
+        "status": status,
+        "content_length": int(length) if length and length.isdigit() else None,
+        "oracle_working_copy_size": source["source_size_bytes"],
+        "size_matches_oracle_working_copy": (
+            int(length) == source["source_size_bytes"] if length and length.isdigit() else False
+        ),
+        "etag": response_headers.get("ETag"),
+        "last_modified": response_headers.get("Last-Modified"),
+    }
+
+
+def audit_origins(inventory_path: Path, output: Path, timeout: float, workers: int) -> None:
+    inventory = load_json(inventory_path)
+    included = [
+        source for source in inventory["sources"]
+        if source["acquisition"]["included_in_baseline"]
+    ]
+    results: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        futures = {executor.submit(probe_origin, source, timeout): source for source in included}
+        for future in concurrent.futures.as_completed(futures):
+            source = futures[future]
+            try:
+                results.append(future.result())
+            except Exception as error:  # the audit artifact records every failure
+                failures.append({"id": source["id"], "url": source["download_url"], "error": str(error)})
+    results.sort(key=lambda item: item["id"])
+    failures.sort(key=lambda item: item["id"])
+    payload = {
+        "schema_version": 1,
+        "inventory_id": inventory["id"],
+        "inventory_version": inventory["version"],
+        "measured_at": dt.datetime.now(dt.UTC).isoformat(),
+        "summary": {
+            "declared_included": len(included),
+            "reachable": len(results),
+            "failed": len(failures),
+            "known_download_bytes": sum(item["content_length"] or 0 for item in results),
+            "unknown_content_lengths": sum(item["content_length"] is None for item in results),
+            "sizes_matching_oracle_working_copy": sum(
+                item["size_matches_oracle_working_copy"] for item in results
+            ),
+        },
+        "results": results,
+        "failures": failures,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(payload["summary"], indent=2))
+    if failures:
+        raise SystemExit("one or more selected authoritative origins failed")
+
+
+def generate(args: argparse.Namespace) -> None:
     if not str(args.oracle_root):
         raise SystemExit("--oracle-root or RADIO_ASTRONOMY_ORACLE_ROOT is required")
     payload, bundle_files = export(args.oracle_root.resolve())
@@ -409,6 +659,16 @@ def main() -> None:
     write_pack(payload, bundle_files, args.pack_root)
     print(f"wrote {args.output}", file=sys.stderr)
     print(f"wrote compact corpus pack at {args.pack_root}", file=sys.stderr)
+
+
+def main() -> None:
+    args = parse_args()
+    if args.command == "generate":
+        generate(args)
+    elif args.command == "check":
+        check_committed(args.inventory, args.pack_root, args.origin_audit)
+    else:
+        audit_origins(args.inventory, args.output, args.timeout, args.workers)
 
 
 if __name__ == "__main__":

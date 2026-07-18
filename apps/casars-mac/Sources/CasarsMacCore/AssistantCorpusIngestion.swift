@@ -26,6 +26,9 @@ package enum AssistantCorpusRefreshScope: Equatable {
 }
 
 package struct AssistantCorpusIngestor {
+    /// Local Vision bitmap envelope; extracted text is not truncated to this size.
+    private static let ocrMaximumScale: CGFloat = 2
+    private static let ocrMaximumDimension: CGFloat = 4_000
     private let fileManager = FileManager.default
 
     package init() {}
@@ -273,7 +276,7 @@ package struct AssistantCorpusIngestor {
               manifestValues.isSymbolicLink != true,
               let data = try? Data(contentsOf: manifestURL),
               let manifest = try? JSONDecoder().decode(AssistantBaselineManifest.self, from: data),
-              [1, 2].contains(manifest.schemaVersion)
+              manifest.schemaVersion == AssistantBaselineManifest.currentSchemaVersion
         else {
             diagnostics.append("Baseline corpus manifest is missing or unsupported at \(manifestURL.path)")
             return
@@ -281,13 +284,6 @@ package struct AssistantCorpusIngestor {
         let firstBaselineDocument = documents.count
         var availableSources = 0
         for entry in manifest.documents {
-            let cleared = manifest.schemaVersion == 1
-                ? entry.redistributionCleared == true
-                : entry.hasVersionedRedistributionRecord
-            guard cleared else {
-                diagnostics.append("Skipped uncleared baseline document \(entry.path)")
-                continue
-            }
             let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
             let unresolvedURL = root.appendingPathComponent(entry.path).standardizedFileURL
             let url = unresolvedURL.resolvingSymlinksInPath()
@@ -295,7 +291,10 @@ package struct AssistantCorpusIngestor {
             guard url.path.hasPrefix(canonicalRoot.path + "/"),
                   values?.isSymbolicLink != true,
                   fileManager.isReadableFile(atPath: url.path),
-                  entry.format == "normalized_pages_json" || supportedExtension(url.pathExtension)
+                  entry.path.hasPrefix("standard-v1/"),
+                  !entry.path.split(separator: "/").contains(".."),
+                  entry.format == "normalized_pages_json",
+                  entry.hasRequiredProvenance
             else {
                 diagnostics.append("Skipped invalid baseline path \(entry.path)")
                 continue
@@ -304,81 +303,36 @@ package struct AssistantCorpusIngestor {
                 diagnostics.append("Could not read baseline document \(entry.path)")
                 continue
             }
-            if let expected = entry.contentSHA256,
-               Self.sha256(contentData) != expected
-            {
+            if Self.sha256(contentData) != entry.contentSHA256 {
                 diagnostics.append("Skipped baseline document with mismatched digest \(entry.path)")
                 continue
             }
-            let sourcePath = entry.sourcePath ?? entry.path
+            let sourcePath = entry.sourcePath
             let citationPath = "baseline/\(manifest.id)/\(sourcePath)"
             let firstEntryDocument = documents.count
-            if entry.format == "normalized_pages_json" {
-                guard let pages = try? JSONDecoder().decode([AssistantBaselinePage].self, from: contentData)
-                else {
-                    diagnostics.append("Could not decode baseline pages \(entry.path)")
-                    continue
-                }
-                for page in pages where !page.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let locatorKind = entry.citationKind == "slide" ? "slide" : "page"
-                    documents.append(AssistantCorpusDocumentRequest(
-                        id: "baseline:\(manifest.id):\(manifest.version):\(entry.path)#page=\(page.page)",
-                        layer: "baseline",
-                        title: entry.title,
-                        sourceIdentity: "\(manifest.id)@\(manifest.version):\(entry.sourceSHA256 ?? entry.path)",
-                        content: page.content,
-                        citation: AssistantCorpusCitationRequest(
-                            label: entry.citationLabel,
-                            locator: "\(entry.citationLabel), \(locatorKind) \(page.page)",
-                            sourcePath: citationPath,
-                            page: UInt32(page.page),
-                            section: nil,
-                            lineStart: nil,
-                            lineEnd: nil,
-                            release: manifest.version,
-                            commit: nil
-                        ),
-                        redistributionCleared: true
-                    ))
-                }
-            } else if url.pathExtension.lowercased() == "pdf" {
-                for (page, content) in extractPDF(
-                    url, relative: citationPath, diagnostics: &diagnostics
-                ).pages {
-                    documents.append(AssistantCorpusDocumentRequest(
-                        id: "baseline:\(manifest.id):\(manifest.version):\(entry.path)#page=\(page)",
-                        layer: "baseline",
-                        title: entry.title,
-                        sourceIdentity: "\(manifest.id)@\(manifest.version):\(entry.path)",
-                        content: content,
-                        citation: AssistantCorpusCitationRequest(
-                            label: entry.citationLabel,
-                            locator: "\(citationPath), page \(page)",
-                            sourcePath: citationPath,
-                            page: UInt32(page),
-                            section: nil,
-                            lineStart: nil,
-                            lineEnd: nil,
-                            release: manifest.version,
-                            commit: nil
-                        ),
-                        redistributionCleared: true
-                    ))
-                }
-            } else if let content = String(data: contentData, encoding: .utf8),
-                      !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
+            guard let pages = try? JSONDecoder().decode([AssistantBaselinePage].self, from: contentData),
+                  !pages.isEmpty,
+                  pages.enumerated().allSatisfy({ offset, page in
+                      page.page == offset + 1
+                          && !page.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                  })
+            else {
+                diagnostics.append("Could not decode contiguous baseline pages \(entry.path)")
+                continue
+            }
+            for page in pages {
+                let locatorKind = entry.citationKind == "slide" ? "slide" : "page"
                 documents.append(AssistantCorpusDocumentRequest(
-                    id: "baseline:\(manifest.id):\(manifest.version):\(entry.path)",
+                    id: "baseline:\(manifest.id):\(manifest.version):\(entry.path)#page=\(page.page)",
                     layer: "baseline",
                     title: entry.title,
-                    sourceIdentity: "\(manifest.id)@\(manifest.version):\(entry.path)",
-                    content: content,
+                    sourceIdentity: "\(manifest.id)@\(manifest.version):\(entry.sourceSHA256)",
+                    content: page.content,
                     citation: AssistantCorpusCitationRequest(
                         label: entry.citationLabel,
-                        locator: citationPath,
+                        locator: "\(entry.citationLabel), \(locatorKind) \(page.page)",
                         sourcePath: citationPath,
-                        page: nil,
+                        page: UInt32(page.page),
                         section: nil,
                         lineStart: nil,
                         lineEnd: nil,
@@ -537,7 +491,10 @@ package struct AssistantCorpusIngestor {
 
     private func recognizeText(page: PDFPage) -> String {
         let bounds = page.bounds(for: .mediaBox)
-        let scale = min(2, 4_000 / max(max(bounds.width, bounds.height), 1))
+        let scale = min(
+            Self.ocrMaximumScale,
+            Self.ocrMaximumDimension / max(max(bounds.width, bounds.height), 1)
+        )
         let thumbnail = page.thumbnail(
             of: NSSize(width: max(1, bounds.width * scale), height: max(1, bounds.height * scale)),
             for: .mediaBox
@@ -678,6 +635,8 @@ private struct AssistantSourceManifest: Decodable {
 }
 
 private struct AssistantBaselineManifest: Decodable {
+    static let currentSchemaVersion = 3
+
     var schemaVersion: Int
     var id: String
     var version: String
@@ -691,29 +650,33 @@ private struct AssistantBaselineManifest: Decodable {
 
 private struct AssistantBaselineDocument: Decodable {
     var path: String
-    var format: String?
+    var format: String
     var title: String
     var citationLabel: String
-    var citationKind: String?
-    var sourcePath: String?
-    var contentSHA256: String?
-    var sourceSHA256: String?
-    var originURL: String?
-    var license: AssistantBaselineLicense?
-    var redistributionBasis: String?
-    var redistributionCleared: Bool?
+    var citationKind: String
+    var sourcePath: String
+    var contentSHA256: String
+    var sourceSHA256: String
+    var originURL: String
+    var license: AssistantBaselineLicense
+    var redistributionBasis: String
+    var contributors: [String]
+    var modifications: String
 
-    var hasVersionedRedistributionRecord: Bool {
-        contentSHA256?.count == 64
-            && sourceSHA256?.count == 64
-            && !(originURL ?? "").isEmpty
-            && !(license?.id ?? "").isEmpty
-            && !(license?.url ?? "").isEmpty
-            && !(redistributionBasis ?? "").isEmpty
+    var hasRequiredProvenance: Bool {
+        contentSHA256.count == 64
+            && sourceSHA256.count == 64
+            && !originURL.isEmpty
+            && !license.id.isEmpty
+            && !license.name.isEmpty
+            && !license.url.isEmpty
+            && !redistributionBasis.isEmpty
+            && !contributors.isEmpty
+            && !modifications.isEmpty
     }
 
     private enum CodingKeys: String, CodingKey {
-        case path, format, title, license
+        case path, format, title, license, contributors, modifications
         case citationLabel = "citation_label"
         case citationKind = "citation_kind"
         case sourcePath = "source_path"
@@ -721,12 +684,12 @@ private struct AssistantBaselineDocument: Decodable {
         case sourceSHA256 = "source_sha256"
         case originURL = "origin_url"
         case redistributionBasis = "redistribution_basis"
-        case redistributionCleared = "redistribution_cleared"
     }
 }
 
 private struct AssistantBaselineLicense: Decodable {
     var id: String
+    var name: String
     var url: String
 }
 

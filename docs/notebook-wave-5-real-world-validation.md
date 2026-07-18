@@ -459,7 +459,7 @@ Current final evidence on 2026-07-15, after the refactor and review fixes:
   blocked only by localhost-listener permissions. A later transient
   `casars-imager` shared test-lock failure passed immediately in isolation and
   did not reproduce in the green full rerun.
-- `python3 scripts/check-assistant-corpus-inventory.py` accounted for all 55
+- `python3 scripts/assistant-corpus-pack.py check` accounted for all 55
   candidate sources; `git diff --check` passed.
 - `just gui-test` built the native app/test bundle and passed the single
   consolidated foreground batch: 25 tests executed, 1 skipped, 0 failures.

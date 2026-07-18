@@ -1,4 +1,5 @@
 import Darwin
+import CasarsFrontendServices
 import Foundation
 
 package struct AgentSessionConfiguration: Equatable {
@@ -122,9 +123,70 @@ package enum AgentSessionError: Error, Equatable {
     case exited(Int32)
 }
 
+package struct AgentModelDescriptor: Equatable {
+    package var id: String
+    package var label: String
+    package var defaultEffort: String
+    package var supportedEfforts: [String]
+    package var isDefault: Bool
+    package var inputCapacityUnits: UInt64?
+    package var outputReserveUnits: UInt64?
+}
+
+package struct AgentAccountDescriptor: Equatable {
+    package var email: String?
+    package var plan: String?
+    package var requiresLogin: Bool
+}
+
+package struct AgentUsageDescriptor: Equatable {
+    package var plan: String?
+    package var primaryPercentUsed: Double?
+    package var secondaryPercentUsed: Double?
+    package var primaryResetAt: UInt64?
+    package var secondaryResetAt: UInt64?
+}
+
+package struct AgentItemDescriptor: Equatable {
+    package var id: String
+    package var kind: String
+    package var server: String?
+    package var tool: String?
+    package var completed: Bool
+    package var error: String?
+    package var citations: [AssistantCitationState] = []
+    package var taskSuggestions: [AssistantTaskSuggestionProjection] = []
+}
+
+package struct AgentApprovalDescriptor: Equatable {
+    package var id: String
+    package var method: String
+    package var summary: String
+}
+
+package enum AgentSessionEvent: Equatable {
+    case conversationStarted(threadID: String)
+    case models([AgentModelDescriptor])
+    case account(AgentAccountDescriptor)
+    case usage(AgentUsageDescriptor)
+    case authenticationURL(String)
+    case refreshAccount
+    case accountLoggedOut
+    case messageDelta(String)
+    case turnStarted(id: String?)
+    case turnCompleted(status: String, error: String?)
+    case item(AgentItemDescriptor)
+    case mcpStatus(name: String, status: String)
+    case approval(AgentApprovalDescriptor)
+    case unsupported(method: String)
+    case backendExited(status: Int32, pendingRequests: [String])
+    case failed(String)
+    case resumeFailed(String)
+}
+
 /// Agent-backend boundary used by production Codex App Server and deterministic tests.
 package protocol AgentSession: AnyObject {
-    func onEvent(_ handler: @escaping ([String: Any]) -> Void)
+    func onEvent(_ handler: @escaping (AgentSessionEvent) -> Void)
     func onStateChange(_ handler: @escaping (AssistantDiscussionActivity) -> Void)
     func prepare(_ completion: @escaping (Result<Void, Error>) -> Void)
     func startConversation(_ request: AgentConversationRequest)
@@ -201,8 +263,114 @@ package struct AgentTurnRequest: Equatable {
     package var effort: String
 }
 
+private enum AgentRequestKind: Equatable {
+    case initialize
+    case configRead
+    case conversation(resuming: Bool)
+    case turnStart
+    case accountLogout
+    case passive(method: String)
+
+    var method: String {
+        switch self {
+        case .initialize: "initialize"
+        case .configRead: "config/read"
+        case let .conversation(resuming): resuming ? "thread/resume" : "thread/start"
+        case .turnStart: "turn/start"
+        case .accountLogout: "account/logout"
+        case let .passive(method): method
+        }
+    }
+}
+
+private struct AgentRequestTracker {
+    enum Outcome: Equatable {
+        case succeeded
+        case rejected
+        case backendExited
+    }
+
+    struct Terminal: Equatable {
+        var kind: AgentRequestKind
+        var outcome: Outcome
+    }
+
+    enum Resolution: Equatable {
+        case pending(Terminal)
+        case duplicate(Terminal)
+        case unknown
+    }
+
+    private var pending: [Int: AgentRequestKind] = [:]
+    private var terminal: [Int: Terminal] = [:]
+
+    mutating func register(id: Int, kind: AgentRequestKind) throws {
+        guard pending[id] == nil, terminal[id] == nil else {
+            throw AgentSessionError.protocolFailure("duplicate outbound request ID \(id)")
+        }
+        pending[id] = kind
+    }
+
+    mutating func resolve(id: Int, outcome: Outcome) -> Resolution {
+        if let kind = pending.removeValue(forKey: id) {
+            let resolution = Terminal(kind: kind, outcome: outcome)
+            terminal[id] = resolution
+            return .pending(resolution)
+        }
+        if let resolution = terminal[id] { return .duplicate(resolution) }
+        return .unknown
+    }
+
+    mutating func terminatePending() -> [Terminal] {
+        let resolutions = pending.sorted { $0.key < $1.key }.map { id, kind in
+            let resolution = Terminal(kind: kind, outcome: .backendExited)
+            terminal[id] = resolution
+            return resolution
+        }
+        pending.removeAll()
+        return resolutions
+    }
+
+    mutating func reset() {
+        pending.removeAll()
+        terminal.removeAll()
+    }
+}
+
+private enum CodexRequestID: Equatable {
+    case integer(Int)
+    case string(String)
+
+    init?(_ value: Any) {
+        if let value = value as? Int {
+            self = .integer(value)
+        } else if let value = value as? String {
+            self = .string(value)
+        } else {
+            return nil
+        }
+    }
+
+    var jsonValue: Any {
+        switch self {
+        case let .integer(value): value
+        case let .string(value): value
+        }
+    }
+}
+
+private struct PendingAgentApproval: Equatable {
+    var id: CodexRequestID
+    var method: String
+}
+
 package final class CodexAppServerSession: AgentSession {
     package typealias CommandWriter = (FileHandle, Data) throws -> Void
+
+    /// UI liveness bound for adapter startup negotiation, not a resource budget.
+    private static let startupLivenessTimeout: TimeInterval = 10
+    /// Backend discovery page size; model capacity comes from each returned model.
+    private static let modelDiscoveryPageSize = 100
 
     private let configuration: AgentSessionConfiguration
     private let commandWriter: CommandWriter
@@ -210,23 +378,18 @@ package final class CodexAppServerSession: AgentSession {
     private let readQueue = DispatchQueue(label: "casars.mac.codex-app-server.read")
     private var process: Process?
     private var input: FileHandle?
-    private var eventHandler: (([String: Any]) -> Void)?
+    private var eventHandler: ((AgentSessionEvent) -> Void)?
     private var stateHandler: ((AssistantDiscussionActivity) -> Void)?
     private var nextID = 1
-    private var initializeID: Int?
-    private var configReadID: Int?
-    private var approvalRequestIDs: [String: Any] = [:]
-    private var approvalRequestMethods: [String: String] = [:]
+    private var pendingApprovals: [String: PendingAgentApproval] = [:]
     private var readySemaphore = DispatchSemaphore(value: 0)
     private var startupError: Error?
     private var processIsExploreRestricted = false
     private var configuredMCPServerNames: Set<String> = []
     private var configuredPluginIDs: Set<String> = []
     private var activeProjectMCPServerName: String?
-    private var conversationRequestWasResume: [Int: Bool] = [:]
-    private var turnStartRequestIDs: Set<Int> = []
-    private var accountLogoutRequestIDs: Set<Int> = []
     private var activeRuntimeProfile: CasaAgentRuntimeProfile?
+    private var requestTracker = AgentRequestTracker()
 
     package init(
         configuration: AgentSessionConfiguration,
@@ -238,16 +401,28 @@ package final class CodexAppServerSession: AgentSession {
 
     deinit { terminate() }
 
-    package func onEvent(_ handler: @escaping ([String: Any]) -> Void) { eventHandler = handler }
+    package func onEvent(_ handler: @escaping (AgentSessionEvent) -> Void) { eventHandler = handler }
     package func onStateChange(_ handler: @escaping (AssistantDiscussionActivity) -> Void) { stateHandler = handler }
 
     package func receiveTurnStartErrorForTesting(requestID: Int, message: String) throws {
-        turnStartRequestIDs.insert(requestID)
+        try requestTracker.register(id: requestID, kind: .turnStart)
         let value: [String: Any] = [
             "id": requestID,
             "error": ["code": -32603, "message": message],
         ]
         handleLine(try JSONSerialization.data(withJSONObject: value))
+    }
+
+    package func registerRequestForTesting(requestID: Int, method: String) throws {
+        try requestTracker.register(id: requestID, kind: .passive(method: method))
+    }
+
+    package func receiveJSONLineForTesting(_ value: [String: Any]) throws {
+        handleLine(try JSONSerialization.data(withJSONObject: value))
+    }
+
+    package func receiveRawLineForTesting(_ line: String) {
+        handleLine(Data(line.utf8))
     }
 
     package func prepare(_ completion: @escaping (Result<Void, Error>) -> Void) {
@@ -293,8 +468,11 @@ package final class CodexAppServerSession: AgentSession {
                     params["threadSource"] = "appServer"
                     params["serviceName"] = "casa-rs"
                 }
-                let requestID = try self.send(method: method, params: params)
-                self.conversationRequestWasResume[requestID] = request.resumeThreadID != nil
+                _ = try self.send(
+                    method: method,
+                    params: params,
+                    kind: .conversation(resuming: request.resumeThreadID != nil)
+                )
             } catch { self.publish(error) }
         }
     }
@@ -305,7 +483,7 @@ package final class CodexAppServerSession: AgentSession {
                 guard let self, let runtimeProfile = self.activeRuntimeProfile else {
                     throw AgentSessionError.protocolFailure("CASA runtime profile is unavailable")
                 }
-                let requestID = try self.send(method: "turn/start", params: [
+                _ = try self.send(method: "turn/start", params: [
                     "threadId": request.threadID,
                     "input": [["type": "text", "text": request.text]],
                     "model": request.model.isEmpty ? NSNull() : request.model,
@@ -314,37 +492,48 @@ package final class CodexAppServerSession: AgentSession {
                     // the current ephemeral profile on every turn so an old nonce can
                     // never win over the newly verified project MCP registration.
                     "additionalContext": Self.runtimeAdditionalContext(runtimeProfile),
-                ])
-                self.turnStartRequestIDs.insert(requestID)
+                ], kind: .turnStart)
             } catch { self?.publish(error) }
         }
     }
 
     package func cancel(threadID: String, turnID: String) {
         queue.async { [weak self] in
-            _ = try? self?.send(method: "turn/interrupt", params: ["threadId": threadID, "turnId": turnID])
+            guard let self else { return }
+            do {
+                _ = try self.send(
+                    method: "turn/interrupt",
+                    params: ["threadId": threadID, "turnId": turnID]
+                )
+            } catch { self.publish(error) }
         }
     }
 
     package func approve(requestID: String, decision: String) {
         queue.async { [weak self] in
             guard let self else { return }
-            let appServerID = self.approvalRequestIDs.removeValue(forKey: requestID) ?? requestID
-            let method = self.approvalRequestMethods.removeValue(forKey: requestID)
-            if method == "mcpServer/elicitation/request" {
-                try? self.write([
-                    "id": appServerID,
-                    "result": ["action": decision == "accept" ? "accept" : "decline", "content": [:]],
-                ])
-            } else {
-                try? self.write(["id": appServerID, "result": ["decision": decision]])
-            }
+            let pending = self.pendingApprovals.removeValue(forKey: requestID)
+                ?? PendingAgentApproval(id: .string(requestID), method: "")
+            let appServerID = pending.id.jsonValue
+            do {
+                if pending.method == "mcpServer/elicitation/request" {
+                    try self.write([
+                        "id": appServerID,
+                        "result": ["action": decision == "accept" ? "accept" : "decline", "content": [:]],
+                    ])
+                } else {
+                    try self.write(["id": appServerID, "result": ["decision": decision]])
+                }
+            } catch { self.publish(error) }
         }
     }
 
     package func requestAccountLogin() {
         queue.async { [weak self] in
-            _ = try? self?.send(method: "account/login/start", params: ["type": "chatgpt"])
+            guard let self else { return }
+            do {
+                _ = try self.send(method: "account/login/start", params: ["type": "chatgpt"])
+            } catch { self.publish(error) }
         }
     }
 
@@ -352,9 +541,7 @@ package final class CodexAppServerSession: AgentSession {
         queue.async { [weak self] in
             guard let self else { return }
             do {
-                self.accountLogoutRequestIDs.insert(
-                    try self.send(method: "account/logout", params: [:])
-                )
+                _ = try self.send(method: "account/logout", params: [:], kind: .accountLogout)
             } catch {
                 self.publish(error)
             }
@@ -363,8 +550,11 @@ package final class CodexAppServerSession: AgentSession {
 
     package func refreshAccount() {
         queue.async { [weak self] in
-            _ = try? self?.send(method: "account/read", params: ["refreshToken": false])
-            _ = try? self?.send(method: "account/rateLimits/read", params: [:])
+            guard let self else { return }
+            do {
+                _ = try self.send(method: "account/read", params: ["refreshToken": false])
+                _ = try self.send(method: "account/rateLimits/read", params: [:])
+            } catch { self.publish(error) }
         }
     }
 
@@ -442,7 +632,16 @@ package final class CodexAppServerSession: AgentSession {
             let error = AgentSessionError.exited(process.terminationStatus)
             self?.startupError = error
             self?.readySemaphore.signal()
-            self?.publish(error)
+            self?.queue.async { [weak self] in
+                guard let self else { return }
+                let pending = self.requestTracker.terminatePending().map { $0.kind.method }
+                DispatchQueue.main.async { [eventHandler = self.eventHandler] in
+                    eventHandler?(.backendExited(
+                        status: process.terminationStatus,
+                        pendingRequests: pending
+                    ))
+                }
+            }
         }
         do { try process.run() } catch {
             throw AgentSessionError.launchFailed(error.localizedDescription)
@@ -456,9 +655,8 @@ package final class CodexAppServerSession: AgentSession {
                 self?.publishLog(String(decoding: data, as: UTF8.self))
             }
         }
-        initializeID = nextID
-        try send(method: "initialize", params: Self.initializeParams)
-        guard readySemaphore.wait(timeout: .now() + 10) == .success else {
+        try send(method: "initialize", params: Self.initializeParams, kind: .initialize)
+        guard readySemaphore.wait(timeout: .now() + Self.startupLivenessTimeout) == .success else {
             terminateLocked()
             throw AgentSessionError.startupTimeout
         }
@@ -476,10 +674,15 @@ package final class CodexAppServerSession: AgentSession {
     }
 
     @discardableResult
-    private func send(method: String, params: [String: Any]) throws -> Int {
+    private func send(
+        method: String,
+        params: [String: Any],
+        kind: AgentRequestKind? = nil
+    ) throws -> Int {
         let id = nextID
         nextID += 1
         try write(["id": id, "method": method, "params": params])
+        try requestTracker.register(id: id, kind: kind ?? .passive(method: method))
         return id
     }
 
@@ -510,24 +713,61 @@ package final class CodexAppServerSession: AgentSession {
             publish(AgentSessionError.protocolFailure(String(decoding: data, as: UTF8.self)))
             return
         }
-        if let id = value["id"] as? Int, id == initializeID {
+        var resolvedRequest: AgentRequestKind?
+        if value["method"] == nil, let id = value["id"] as? Int {
+            let outcome: AgentRequestTracker.Outcome = value["error"] == nil
+                ? .succeeded : .rejected
+            switch requestTracker.resolve(id: id, outcome: outcome) {
+            case let .pending(terminal):
+                resolvedRequest = terminal.kind
+            case let .duplicate(terminal):
+                publish(AgentSessionError.protocolFailure(
+                    "duplicate terminal response for \(terminal.kind.method) request \(id)"
+                ))
+                return
+            case .unknown:
+                publish(AgentSessionError.protocolFailure("response for unknown request \(id)"))
+                return
+            }
+        }
+        switch resolvedRequest {
+        case .initialize:
             if let error = value["error"] {
                 startupError = AgentSessionError.protocolFailure(String(describing: error))
                 readySemaphore.signal()
             } else {
-                try? write(["method": "initialized"])
                 do {
-                    configReadID = try send(method: "config/read", params: ["includeLayers": false])
+                    try write(["method": "initialized"])
                 } catch {
                     startupError = error
                     readySemaphore.signal()
                     return
                 }
-                _ = try? send(method: "account/read", params: ["refreshToken": false])
-                _ = try? send(method: "account/rateLimits/read", params: [:])
-                _ = try? send(method: "model/list", params: ["limit": 100])
+                do {
+                    try send(
+                        method: "config/read",
+                        params: ["includeLayers": false],
+                        kind: .configRead
+                    )
+                } catch {
+                    startupError = error
+                    readySemaphore.signal()
+                    return
+                }
+                do {
+                    _ = try send(method: "account/read", params: ["refreshToken": false])
+                    _ = try send(method: "account/rateLimits/read", params: [:])
+                    _ = try send(
+                        method: "model/list",
+                        params: ["limit": Self.modelDiscoveryPageSize]
+                    )
+                } catch {
+                    startupError = error
+                    readySemaphore.signal()
+                    return
+                }
             }
-        } else if let id = value["id"] as? Int, id == configReadID {
+        case .configRead:
             if let error = value["error"] {
                 startupError = AgentSessionError.protocolFailure("read effective Codex config: \(error)")
             } else if let result = value["result"] as? [String: Any],
@@ -544,38 +784,28 @@ package final class CodexAppServerSession: AgentSession {
                 startupError = AgentSessionError.protocolFailure("effective Codex config is missing")
             }
             readySemaphore.signal()
-        }
-        if let id = value["id"] as? Int,
-           accountLogoutRequestIDs.remove(id) != nil
-        {
+        case .accountLogout:
             if let error = value["error"] {
                 publish(AgentSessionError.protocolFailure("log out: \(error)"))
             } else {
+                DispatchQueue.main.async { [eventHandler] in eventHandler?(.accountLoggedOut) }
+            }
+            return
+        case .turnStart:
+            if let error = value["error"] {
+                publish(AgentSessionError.protocolFailure("start turn: \(error)"))
+                return
+            }
+        case let .conversation(resuming):
+            if let error = value["error"] {
                 DispatchQueue.main.async { [eventHandler] in
-                    eventHandler?(["method": "casa/accountLogout/completed", "params": [:]])
+                    let message = String(describing: error)
+                    eventHandler?(resuming ? .resumeFailed(message) : .failed(message))
                 }
+                return
             }
-            return
-        }
-        if let id = value["id"] as? Int,
-           turnStartRequestIDs.remove(id) != nil,
-           let error = value["error"]
-        {
-            publish(AgentSessionError.protocolFailure("start turn: \(error)"))
-            return
-        }
-        if let id = value["id"] as? Int,
-           let wasResume = conversationRequestWasResume.removeValue(forKey: id),
-           let error = value["error"]
-        {
-            let method = wasResume ? "casa/resumeFailed" : "casa/error"
-            DispatchQueue.main.async { [eventHandler] in
-                eventHandler?([
-                    "method": method,
-                    "params": ["message": String(describing: error)],
-                ])
-            }
-            return
+        case .passive, nil:
+            break
         }
         if value["method"] as? String == "mcpServer/elicitation/request",
            let params = value["params"] as? [String: Any],
@@ -585,17 +815,23 @@ package final class CodexAppServerSession: AgentSession {
             // Every CASA project MCP tool is non-mutating. Its nonce-bound
             // reads and typed suggestions are part of the context plane, so a
             // confirmation for every lookup would make normal chat unusable.
-            try? write(["id": rawID, "result": ["action": "accept", "content": [:]]])
+            do {
+                try write(["id": rawID, "result": ["action": "accept", "content": [:]]])
+            } catch { publish(error) }
             return
         }
         var publishedValue = value
-        if let method = value["method"] as? String, let rawID = value["id"] {
+        if let method = value["method"] as? String,
+           let rawID = value["id"],
+           let id = CodexRequestID(rawID)
+        {
             let token = UUID().uuidString.lowercased()
-            approvalRequestIDs[token] = rawID
-            approvalRequestMethods[token] = method
+            pendingApprovals[token] = PendingAgentApproval(id: id, method: method)
             publishedValue["id"] = token
         }
-        DispatchQueue.main.async { [eventHandler] in eventHandler?(publishedValue) }
+        if let event = decodeEvent(publishedValue) {
+            DispatchQueue.main.async { [eventHandler] in eventHandler?(event) }
+        }
     }
 
     private func terminateLocked(publishUnavailable: Bool = true) {
@@ -606,9 +842,9 @@ package final class CodexAppServerSession: AgentSession {
         input?.closeFile()
         input = nil
         process = nil
-        conversationRequestWasResume.removeAll()
-        turnStartRequestIDs.removeAll()
-        accountLogoutRequestIDs.removeAll()
+        pendingApprovals.removeAll()
+        _ = requestTracker.terminatePending()
+        requestTracker.reset()
         activeRuntimeProfile = nil
         if publishUnavailable { publishState(.unavailable) }
     }
@@ -618,15 +854,189 @@ package final class CodexAppServerSession: AgentSession {
     }
 
     private func publish(_ error: Error) {
-        DispatchQueue.main.async { [eventHandler] in
-            eventHandler?(["method": "casa/error", "params": ["message": String(describing: error)]])
-        }
+        DispatchQueue.main.async { [eventHandler] in eventHandler?(.failed(String(describing: error))) }
     }
 
     private func publishLog(_ message: String) {
-        DispatchQueue.main.async { [eventHandler] in
-            eventHandler?(["method": "casa/log", "params": ["message": message]])
+        _ = message
+    }
+
+    private func decodeEvent(_ value: [String: Any]) -> AgentSessionEvent? {
+        if let method = value["method"] as? String {
+            let params = value["params"] as? [String: Any] ?? [:]
+            switch method {
+            case "item/agentMessage/delta":
+                guard let delta = params["delta"] as? String else {
+                    return .failed("Agent message delta is malformed")
+                }
+                return .messageDelta(delta)
+            case "turn/started":
+                return .turnStarted(id: (params["turn"] as? [String: Any])?["id"] as? String)
+            case "turn/completed":
+                guard let turn = params["turn"] as? [String: Any],
+                      let status = turn["status"] as? String
+                else { return .failed("Agent turn completion is malformed") }
+                return .turnCompleted(
+                    status: status,
+                    error: (turn["error"] as? [String: Any])?["message"] as? String
+                )
+            case "item/started", "item/completed":
+                guard let item = params["item"] as? [String: Any],
+                      let id = item["id"] as? String,
+                      let kind = item["type"] as? String
+                else { return .failed("Agent item event is malformed") }
+                let content = (item["result"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
+                let textResults = content.compactMap { block in
+                    block["type"] as? String == "text" ? block["text"] as? String : nil
+                }
+                let trusted = item["server"] as? String == activeProjectMCPServerName
+                let tool = item["tool"] as? String
+                var typedError = (item["error"] as? [String: Any])?["message"] as? String
+                var citations: [AssistantCitationState] = []
+                var taskSuggestions: [AssistantTaskSuggestionProjection] = []
+                if trusted, method == "item/completed", typedError == nil {
+                    if tool == "task.suggest" {
+                        for text in textResults {
+                            do {
+                                taskSuggestions.append(
+                                    try CasarsFrontendServices.assistantTaskSuggestion(toolOutput: text)
+                                )
+                            } catch {
+                                typedError = "Trusted CASA task suggestion is malformed: \(error)"
+                                break
+                            }
+                        }
+                    } else {
+                        for text in textResults {
+                            guard let decoded = Self.decodeCitations(text) else {
+                                typedError = "Trusted CASA citation result is malformed"
+                                break
+                            }
+                            citations.append(contentsOf: decoded)
+                        }
+                    }
+                }
+                return .item(AgentItemDescriptor(
+                    id: id,
+                    kind: kind,
+                    server: item["server"] as? String,
+                    tool: tool,
+                    completed: method == "item/completed",
+                    error: typedError,
+                    citations: citations,
+                    taskSuggestions: taskSuggestions
+                ))
+            case "account/updated", "account/login/completed":
+                return .refreshAccount
+            case "mcpServer/startupStatus/updated":
+                guard let name = params["name"] as? String,
+                      let status = params["status"] as? String
+                else { return .failed("MCP startup event is malformed") }
+                return .mcpStatus(name: name, status: status)
+            case "account/rateLimits/updated":
+                return .usage(Self.usageDescriptor(params))
+            case "item/commandExecution/requestApproval",
+                 "item/fileChange/requestApproval",
+                 "item/permissions/requestApproval",
+                 "mcpServer/elicitation/request":
+                guard let id = value["id"] else { return .failed("Approval request has no ID") }
+                return .approval(AgentApprovalDescriptor(
+                    id: String(describing: id),
+                    method: method,
+                    summary: params["command"] as? String
+                        ?? params["reason"] as? String
+                        ?? method.replacingOccurrences(of: "item/", with: "")
+                ))
+            case "error", "casa/error":
+                return .failed(params["message"] as? String ?? "Agent backend error")
+            case "casa/resumeFailed":
+                return .resumeFailed(
+                    params["message"] as? String ?? "backend session is incompatible"
+                )
+            default:
+                return .unsupported(method: method)
+            }
         }
+        guard let result = value["result"] as? [String: Any] else { return nil }
+        if let thread = result["thread"] as? [String: Any], let id = thread["id"] as? String {
+            return .conversationStarted(threadID: id)
+        }
+        if let data = result["data"] as? [[String: Any]] {
+            return .models(data.compactMap { model in
+                guard let id = model["id"] as? String else { return nil }
+                let efforts = (model["supportedReasoningEfforts"] as? [[String: Any]])?
+                    .compactMap { $0["reasoningEffort"] as? String ?? $0["effort"] as? String } ?? []
+                return AgentModelDescriptor(
+                    id: id,
+                    label: model["displayName"] as? String ?? id,
+                    defaultEffort: model["defaultReasoningEffort"] as? String ?? "medium",
+                    supportedEfforts: efforts,
+                    isDefault: model["isDefault"] as? Bool ?? false,
+                    inputCapacityUnits: (
+                        model["contextWindow"] as? NSNumber
+                            ?? model["contextWindowTokens"] as? NSNumber
+                    )?.uint64Value,
+                    outputReserveUnits: (
+                        model["maxOutputTokens"] as? NSNumber
+                            ?? model["maximumOutputTokens"] as? NSNumber
+                    )?.uint64Value
+                )
+            })
+        }
+        if result.keys.contains("requiresOpenaiAuth") {
+            let account = result["account"] as? [String: Any]
+            return .account(AgentAccountDescriptor(
+                email: account?["email"] as? String,
+                plan: account?["planType"] as? String,
+                requiresLogin: account == nil
+            ))
+        }
+        if result.keys.contains("rateLimits") { return .usage(Self.usageDescriptor(result)) }
+        if let url = result["authUrl"] as? String ?? result["authURL"] as? String {
+            return .authenticationURL(url)
+        }
+        return nil
+    }
+
+    private static func usageDescriptor(_ payload: [String: Any]) -> AgentUsageDescriptor {
+        let limits = payload["rateLimits"] as? [String: Any] ?? payload
+        let primary = limits["primary"] as? [String: Any]
+        let secondary = limits["secondary"] as? [String: Any]
+        return AgentUsageDescriptor(
+            plan: limits["planType"] as? String,
+            primaryPercentUsed: (primary?["usedPercent"] as? NSNumber)?.doubleValue,
+            secondaryPercentUsed: (secondary?["usedPercent"] as? NSNumber)?.doubleValue,
+            primaryResetAt: (primary?["resetsAt"] as? NSNumber)?.uint64Value,
+            secondaryResetAt: (secondary?["resetsAt"] as? NSNumber)?.uint64Value
+        )
+    }
+
+    private static func decodeCitations(_ text: String) -> [AssistantCitationState]? {
+        guard let data = text.data(using: .utf8),
+              let hits = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return nil }
+        var decoded: [AssistantCitationState] = []
+        for hit in hits {
+            guard let citation = hit["citation"] as? [String: Any],
+                  let locator = citation["locator"] as? String
+            else { return nil }
+            let layer = hit["layer"] as? String
+            decoded.append(AssistantCitationState(
+                id: hit["chunk_id"] as? String ?? locator,
+                kind: ["release_source", "live_source"].contains(layer) ? "source" : "document",
+                label: citation["label"] as? String ?? hit["title"] as? String ?? locator,
+                locator: locator,
+                excerpt: hit["text"] as? String ?? "",
+                sourcePath: citation["source_path"] as? String,
+                page: (citation["page"] as? NSNumber)?.uint32Value,
+                section: citation["section"] as? String,
+                lineStart: (citation["line_start"] as? NSNumber)?.uint32Value,
+                lineEnd: (citation["line_end"] as? NSNumber)?.uint32Value,
+                release: citation["release"] as? String,
+                commit: citation["commit"] as? String
+            ))
+        }
+        return decoded
     }
 
     package static func runtimeAdditionalContext(
@@ -638,6 +1048,15 @@ package final class CodexAppServerSession: AgentSession {
                 "value": instructions(profile),
             ],
         ]
+    }
+
+    package static func instructionResourceUnits(
+        _ profile: CasaAgentRuntimeProfile
+    ) -> UInt64? {
+        let baseUnits = UInt64(baseInstructions.utf8.count)
+        let profileUnits = UInt64(instructions(profile).utf8.count)
+        let (total, overflow) = baseUnits.addingReportingOverflow(profileUnits)
+        return overflow ? nil : total
     }
 
     private static func instructions(_ profile: CasaAgentRuntimeProfile) -> String {
@@ -697,12 +1116,12 @@ package final class CodexAppServerSession: AgentSession {
 /// Deterministic production-boundary fixture used by unit and XCUITest runs.
 /// It is reachable only through the explicit CASA_RS_AGENT_FIXTURE environment flag.
 package final class DeterministicAgentSession: AgentSession {
-    private var eventHandler: (([String: Any]) -> Void)?
+    private var eventHandler: ((AgentSessionEvent) -> Void)?
     private var stateHandler: ((AssistantDiscussionActivity) -> Void)?
     private var profile: CasaAgentRuntimeProfile?
     private let threadID = "fixture-codex-thread"
 
-    package func onEvent(_ handler: @escaping ([String: Any]) -> Void) { eventHandler = handler }
+    package func onEvent(_ handler: @escaping (AgentSessionEvent) -> Void) { eventHandler = handler }
     package func onStateChange(_ handler: @escaping (AssistantDiscussionActivity) -> Void) {
         stateHandler = handler
     }
@@ -715,71 +1134,87 @@ package final class DeterministicAgentSession: AgentSession {
 
     package func startConversation(_ request: AgentConversationRequest) {
         profile = request.runtimeProfile
-        eventHandler?(["method": "mcpServer/startupStatus/updated", "params": [
-            "name": request.runtimeProfile.mcpServerName,
-            "status": "ready",
-            "threadId": threadID,
-        ]])
-        eventHandler?(["result": ["thread": ["id": threadID]]])
+        eventHandler?(.conversationStarted(threadID: threadID))
     }
 
     package func sendTurn(_ request: AgentTurnRequest) {
         guard let profile else { return }
         stateHandler?(.streaming)
-        eventHandler?(["method": "turn/started", "params": ["turn": ["id": "fixture-turn"]]])
-        let citations = """
-        [{"chunk_id":"fixture-primer:0","layer":"baseline","title":"CASA-RS Radio Interferometry Primer","text":"Briggs weighting trades sensitivity against resolution.","citation":{"label":"CASA-RS Radio Interferometry Primer v1.0","locator":"baseline/casa-rs-radio-astronomy-primer/radio-interferometry-primer.md, Imaging","source_path":"baseline/casa-rs-radio-astronomy-primer/radio-interferometry-primer.md","section":"Imaging","release":"1.0.0"}}]
-        """
-        eventHandler?(["method": "item/completed", "params": ["item": [
-            "id": "fixture-citation", "type": "mcpToolCall",
-            "server": profile.mcpServerName, "tool": "corpus.search",
-            "result": ["content": [["type": "text", "text": citations]]],
-        ]]])
+        eventHandler?(.turnStarted(id: "fixture-turn"))
+        eventHandler?(.item(AgentItemDescriptor(
+            id: "fixture-citation",
+            kind: "mcpToolCall",
+            server: profile.mcpServerName,
+            tool: "corpus.search",
+            completed: true,
+            error: nil,
+            citations: [AssistantCitationState(
+                id: "fixture-primer:0",
+                kind: "document",
+                label: "CASA-RS Radio Interferometry Primer v1.0",
+                locator: "baseline/casa-rs-radio-astronomy-primer/radio-interferometry-primer.md, Imaging",
+                excerpt: "Briggs weighting trades sensitivity against resolution.",
+                sourcePath: "baseline/casa-rs-radio-astronomy-primer/radio-interferometry-primer.md",
+                page: nil,
+                section: "Imaging",
+                lineStart: nil,
+                lineEnd: nil,
+                release: "1.0.0",
+                commit: nil
+            )]
+        )))
         let suggestion = #"{"kind":"task_suggestion","task_id":"imager","parameters":{"vis":"input.ms","imagename":"products/image","weighting":"briggs","robust":"-0.5"},"validated_patch":{"values":{"vis":{"kind":"string","value":"input.ms"},"imagename":{"kind":"string","value":"products/image"},"weighting":{"kind":"string","value":"briggs"},"robust":{"kind":"float","value":-0.5}},"unset":[]}}"#
-        eventHandler?(["method": "item/completed", "params": ["item": [
-            "id": "fixture-task", "type": "mcpToolCall",
-            "server": profile.mcpServerName, "tool": "task.suggest",
-            "result": ["content": [["type": "text", "text": suggestion]]],
-        ]]])
-        eventHandler?(["method": "item/agentMessage/delta", "params": [
-            "delta": "Use **Briggs weighting** with robust -0.5 as a reviewable starting point.",
-        ]])
-        eventHandler?(["method": "turn/completed", "params": ["turn": ["status": "completed"]]])
+        let typedSuggestion = try? CasarsFrontendServices.assistantTaskSuggestion(
+            toolOutput: suggestion
+        )
+        eventHandler?(.item(AgentItemDescriptor(
+            id: "fixture-task",
+            kind: "mcpToolCall",
+            server: profile.mcpServerName,
+            tool: "task.suggest",
+            completed: true,
+            error: nil,
+            taskSuggestions: typedSuggestion.map { [$0] } ?? []
+        )))
+        eventHandler?(.messageDelta(
+            "Use **Briggs weighting** with robust -0.5 as a reviewable starting point."
+        ))
+        eventHandler?(.turnCompleted(status: "completed", error: nil))
         stateHandler?(.completed)
     }
 
     package func cancel(threadID: String, turnID: String) {
-        eventHandler?(["method": "turn/completed", "params": ["turn": ["status": "cancelled"]]])
+        eventHandler?(.turnCompleted(status: "cancelled", error: nil))
     }
 
     package func approve(requestID: String, decision: String) {}
     package func requestAccountLogin() { publishAccountAndModels() }
     package func requestAccountLogout() {
-        eventHandler?(["method": "casa/accountLogout/completed", "params": [:]])
+        eventHandler?(.accountLoggedOut)
     }
     package func refreshAccount() { publishAccountAndModels() }
     package func restart() { stateHandler?(.ready) }
     package func terminate() { stateHandler?(.unavailable) }
 
     private func publishAccountAndModels() {
-        eventHandler?(["result": [
-            "requiresOpenaiAuth": true,
-            "account": ["email": "fixture@casa-rs.invalid", "planType": "fixture"],
-        ]])
-        eventHandler?(["result": ["data": [[
-            "id": "fixture-codex",
-            "displayName": "Fixture Codex",
-            "defaultReasoningEffort": "medium",
-            "supportedReasoningEfforts": [
-                ["reasoningEffort": "low"],
-                ["reasoningEffort": "medium"],
-                ["reasoningEffort": "high"],
-            ],
-            "isDefault": true,
-        ]]]])
-        eventHandler?(["result": ["rateLimits": [
-            "planType": "fixture",
-            "primary": ["usedPercent": 12, "resetsAt": 4_000_000_000],
-        ]]])
+        eventHandler?(.account(AgentAccountDescriptor(
+            email: "fixture@casa-rs.invalid", plan: "fixture", requiresLogin: false
+        )))
+        eventHandler?(.models([AgentModelDescriptor(
+            id: "fixture-codex",
+            label: "Fixture Codex",
+            defaultEffort: "medium",
+            supportedEfforts: ["low", "medium", "high"],
+            isDefault: true,
+            inputCapacityUnits: 32_768,
+            outputReserveUnits: 4_096
+        )]))
+        eventHandler?(.usage(AgentUsageDescriptor(
+            plan: "fixture",
+            primaryPercentUsed: 12,
+            secondaryPercentUsed: nil,
+            primaryResetAt: 4_000_000_000,
+            secondaryResetAt: nil
+        )))
     }
 }
