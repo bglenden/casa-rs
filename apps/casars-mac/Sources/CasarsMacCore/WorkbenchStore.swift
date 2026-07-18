@@ -731,10 +731,7 @@ public struct UniFFIImageExplorerClient: ImageExplorerClient {
     public init() {}
 
     public func buildSnapshot(request: ImageExplorerSnapshotRequest) throws -> ImageExplorerSnapshot {
-        let requestData = try JSONEncoder().encode(request)
-        let requestJSON = String(decoding: requestData, as: UTF8.self)
-        let json = try CasarsFrontendServices.buildImageExplorerSnapshotFromRequestJson(requestJson: requestJSON)
-        return try JSONDecoder().decode(ImageExplorerSnapshot.self, from: Data(json.utf8))
+        try CasarsFrontendServices.buildImageExplorerSnapshot(request: request)
     }
 }
 
@@ -2842,10 +2839,10 @@ public final class WorkbenchStore: ObservableObject {
                 explorer.focus = request.focus
                 explorer.planeContentMode = request.planeContentMode
                 explorer.parameters = request.parameters
-                explorer.cursorX = request.cursorX
-                explorer.cursorY = request.cursorY
-                explorer.selectedProfileAxis = request.selectedProfileAxis
-                explorer.nonDisplayIndices = request.nonDisplayIndices
+                explorer.cursorX = request.cursorX.map(Int.init)
+                explorer.cursorY = request.cursorY.map(Int.init)
+                explorer.selectedProfileAxis = request.selectedProfileAxis.map(Int.init)
+                explorer.nonDisplayIndices = request.nonDisplayIndices.map(Int.init)
                 state.imageExplorers[source] = explorer
                 refreshImageExplorer(datasetID: source)
             }
@@ -2918,22 +2915,22 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private static func imagePlanePNG(
-        _ plane: ImageExplorerSnapshot.Plane,
+        _ plane: ImageExplorerPlane,
         colorMap: ImageExplorerColorMap
     ) -> Data? {
         guard plane.width > 0,
               plane.height > 0,
-              plane.pixelsU8.count == plane.width * plane.height,
+              plane.pixelsU8.count == Int(plane.width * plane.height),
               let bitmap = NSBitmapImageRep(
                 bitmapDataPlanes: nil,
-                pixelsWide: plane.width,
-                pixelsHigh: plane.height,
+                pixelsWide: Int(plane.width),
+                pixelsHigh: Int(plane.height),
                 bitsPerSample: 8,
                 samplesPerPixel: 4,
                 hasAlpha: true,
                 isPlanar: false,
                 colorSpaceName: .deviceRGB,
-                bytesPerRow: plane.width * 4,
+                bytesPerRow: Int(plane.width) * 4,
                 bitsPerPixel: 32
               ),
               let bytes = bitmap.bitmapData
@@ -5600,12 +5597,10 @@ public final class WorkbenchStore: ObservableObject {
         explorerState.status = .ready
         explorerState.lastError = nil
         explorerState.snapshot = snapshot
-        explorerState.cursorX = snapshot.planeCursor?.pixelX ?? explorerState.cursorX
-        explorerState.cursorY = snapshot.planeCursor?.pixelY ?? explorerState.cursorY
-        explorerState.nonDisplayIndices = snapshot.nonDisplayAxes?.map(\.index) ?? explorerState.nonDisplayIndices
-        if let parameters = snapshot.parameters {
-            explorerState.parameters = parameters
-        }
+        explorerState.cursorX = snapshot.planeCursor.map { Int($0.pixelX) } ?? explorerState.cursorX
+        explorerState.cursorY = snapshot.planeCursor.map { Int($0.pixelY) } ?? explorerState.cursorY
+        explorerState.nonDisplayIndices = snapshot.nonDisplayAxes.map { Int($0.index) }
+        explorerState.parameters = snapshot.parameters
         explorerState.transientCommands = []
     }
 
@@ -5719,7 +5714,7 @@ public final class WorkbenchStore: ObservableObject {
         refreshImageExplorer(datasetID: datasetID)
     }
 
-    public func setImageExplorerParameters(_ parameters: ImageExplorerParameters, datasetID: String) {
+    public func setimageExplorerParameters(_ parameters: ImageExplorerParameters, datasetID: String) {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.parameters = parameters
         for (name, value) in [
@@ -5763,7 +5758,7 @@ public final class WorkbenchStore: ObservableObject {
         parameters.stretch = "manual"
         parameters.clipLow = Self.formatImageExplorerClipValue(low)
         parameters.clipHigh = Self.formatImageExplorerClipValue(high)
-        setImageExplorerParameters(parameters, datasetID: datasetID)
+        setimageExplorerParameters(parameters, datasetID: datasetID)
     }
 
     public func setImageExplorerCursor(x: Int?, y: Int?, datasetID: String) {
@@ -5778,13 +5773,13 @@ public final class WorkbenchStore: ObservableObject {
         var explorerState = imageExplorerState(datasetID: datasetID)
         var indices = explorerState.nonDisplayIndices
         let snapshotAxes = explorerState.snapshot?.nonDisplayAxes ?? []
-        let axisPosition = snapshotAxes.firstIndex { $0.axis == axis }
+        let axisPosition = snapshotAxes.firstIndex { Int($0.axis) == axis }
         let snapshotAxis = axisPosition.map { snapshotAxes[$0] }
-        let currentIndex = snapshotAxis?.index
+        let currentIndex = snapshotAxis.map { Int($0.index) }
             ?? axisPosition.flatMap { indices[safe: $0] }
             ?? indices[safe: axis]
             ?? 0
-        let length = max(snapshotAxis?.length ?? currentIndex + 1, 1)
+        let length = max(snapshotAxis.map { Int($0.length) } ?? currentIndex + 1, 1)
         let nextIndex = min(max(currentIndex + delta, 0), length - 1)
         if let axisPosition {
             indices = normalizedNonDisplayIndices(from: indices, axes: snapshotAxes)
@@ -5807,9 +5802,9 @@ public final class WorkbenchStore: ObservableObject {
         var explorerState = imageExplorerState(datasetID: datasetID)
         var indices = explorerState.nonDisplayIndices
         let snapshotAxes = explorerState.snapshot?.nonDisplayAxes ?? []
-        let axisPosition = snapshotAxes.firstIndex { $0.axis == axis }
+        let axisPosition = snapshotAxes.firstIndex { Int($0.axis) == axis }
         let snapshotAxis = axisPosition.map { snapshotAxes[$0] }
-        let length = max(snapshotAxis?.length ?? index + 1, 1)
+        let length = max(snapshotAxis.map { Int($0.length) } ?? index + 1, 1)
         let nextIndex = min(max(index, 0), length - 1)
         if let axisPosition {
             indices = normalizedNonDisplayIndices(from: indices, axes: snapshotAxes)
@@ -5894,7 +5889,7 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
         let axis = explorerState.movieAxis
-            ?? explorerState.snapshot?.nonDisplayAxes?.first?.axis
+            ?? explorerState.snapshot?.nonDisplayAxes.first.map { Int($0.axis) }
             ?? explorerState.nonDisplayIndices.indices.first
         guard let axis else {
             explorerState.moviePlaying = false
@@ -5904,13 +5899,13 @@ public final class WorkbenchStore: ObservableObject {
 
         var indices = explorerState.nonDisplayIndices
         let snapshotAxes = explorerState.snapshot?.nonDisplayAxes ?? []
-        let axisPosition = snapshotAxes.firstIndex { $0.axis == axis }
+        let axisPosition = snapshotAxes.firstIndex { Int($0.axis) == axis }
         let snapshotAxis = axisPosition.map { snapshotAxes[$0] }
-        let currentIndex = snapshotAxis?.index
+        let currentIndex = snapshotAxis.map { Int($0.index) }
             ?? axisPosition.flatMap { indices[safe: $0] }
             ?? indices[safe: axis]
             ?? 0
-        let length = max(snapshotAxis?.length ?? currentIndex + 1, 1)
+        let length = max(snapshotAxis.map { Int($0.length) } ?? currentIndex + 1, 1)
         let proposedIndex = currentIndex + 1
         let nextIndex: Int
         if proposedIndex >= length {
@@ -6040,17 +6035,16 @@ public final class WorkbenchStore: ObservableObject {
         let explorerState = imageExplorerState(datasetID: datasetID)
         guard let snapshot = explorerState.snapshot,
               let region = snapshot.region,
-              let overlayShapes = region.overlayShapes,
-              overlayShapes.indices.contains(index)
+              region.overlayShapes.indices.contains(index)
         else {
             state.lastErrors.append("No region shape is available to delete.")
             return
         }
-        let remainingShapes = overlayShapes.enumerated().compactMap { shapeIndex, shape -> [(x: Int, y: Int)]? in
+        let remainingShapes = region.overlayShapes.enumerated().compactMap { shapeIndex, shape -> [(x: Int, y: Int)]? in
             guard shapeIndex != index, shape.closed, shape.vertices.count >= 3 else {
                 return nil
             }
-            return shape.vertices.map { Self.sourcePixel(for: $0, displayAxes: snapshot.displayAxes ?? []) }
+            return shape.vertices.map { Self.sourcePixel(for: $0, displayAxes: snapshot.displayAxes) }
         }
         if remainingShapes.isEmpty {
             clearImageExplorerRegionCommands(datasetID: datasetID)
@@ -6071,15 +6065,15 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private static func sourcePixel(
-        for vertex: ImageExplorerSnapshot.Region.OverlayVertex,
-        displayAxes: [ImageExplorerSnapshot.DisplayAxis]
+        for vertex: ImageExplorerRegionOverlayVertex,
+        displayAxes: [ImageExplorerDisplayAxis]
     ) -> (x: Int, y: Int) {
         guard let xAxis = displayAxes.first, let yAxis = displayAxes[safe: 1] else {
             return (Int(vertex.sampledX.rounded()), Int(vertex.sampledY.rounded()))
         }
         return (
-            x: xAxis.blc + Int((vertex.sampledX * Double(max(xAxis.inc, 1))).rounded()),
-            y: yAxis.blc + Int((vertex.sampledY * Double(max(yAxis.inc, 1))).rounded())
+            x: Int(xAxis.blc) + Int((vertex.sampledX * Double(max(xAxis.inc, 1))).rounded()),
+            y: Int(yAxis.blc) + Int((vertex.sampledY * Double(max(yAxis.inc, 1))).rounded())
         )
     }
 
@@ -8786,7 +8780,7 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("The resolved imexplore contract is missing a presentation parameter.")
             return nil
         }
-        let parameters = ImageExplorerParameters(
+        let parameters = imageExplorerParameters(
             blc: blc,
             trc: trc,
             inc: inc,
@@ -8856,16 +8850,16 @@ public final class WorkbenchStore: ObservableObject {
         guard let selector = normalizedImageExplorerAxisSelector(selector ?? "") else {
             return nil
         }
-        let selected = snapshot.nonDisplayAxes?.first { axis in
-            if let index = Int(selector), axis.axis == index {
+        let selected = snapshot.nonDisplayAxes.first { axis in
+            if let index = UInt64(selector), axis.axis == index {
                 return true
             }
             return axis.label.caseInsensitiveCompare(selector) == .orderedSame
         }
         guard let selected else {
-            let available = snapshot.nonDisplayAxes?
+            let available = snapshot.nonDisplayAxes
                 .map { "\($0.label) (\($0.axis))" }
-                .joined(separator: ", ") ?? "none"
+                .joined(separator: ", ")
             throw NSError(
                 domain: "CasarsMac.ImageExplorerProfile",
                 code: 1,
@@ -8875,7 +8869,7 @@ public final class WorkbenchStore: ObservableObject {
                 ]
             )
         }
-        return selected.axis
+        return Int(selected.axis)
     }
 
     private static func parseImageExplorerRegionReference(
@@ -9050,10 +9044,10 @@ public final class WorkbenchStore: ObservableObject {
 
     private func normalizedNonDisplayIndices(
         from indices: [Int],
-        axes: [ImageExplorerSnapshot.NonDisplayAxis]
+        axes: [ImageExplorerNonDisplayAxis]
     ) -> [Int] {
         axes.enumerated().map { position, axis in
-            indices[safe: position] ?? axis.index
+            indices[safe: position] ?? Int(axis.index)
         }
     }
 

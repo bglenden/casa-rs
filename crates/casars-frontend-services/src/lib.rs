@@ -73,41 +73,253 @@ const DEFAULT_PLOT_WIDTH: u32 = 960;
 #[cfg(test)]
 const DEFAULT_PLOT_HEIGHT: u32 = 600;
 
-#[derive(Debug, Clone, Deserialize)]
-struct ImageExplorerSnapshotRequest {
-    dataset_path: String,
-    #[serde(default = "default_image_browser_width")]
-    width: u16,
-    #[serde(default = "default_image_browser_height")]
-    height: u16,
-    #[serde(default = "default_image_browser_inspector_height")]
-    inspector_height: u16,
-    #[serde(default = "default_image_browser_plane_pixel_width")]
-    plane_pixel_width: u16,
-    #[serde(default = "default_image_browser_plane_pixel_height")]
-    plane_pixel_height: u16,
-    #[serde(default)]
-    active_view: Option<String>,
-    #[serde(default)]
-    focus: Option<String>,
-    #[serde(default)]
-    plane_content_mode: Option<String>,
-    #[serde(default)]
-    parameters: ImageBrowserParameters,
-    #[serde(default)]
-    cursor_x: Option<u64>,
-    #[serde(default)]
-    cursor_y: Option<u64>,
-    #[serde(default)]
-    selected_profile_axis: Option<u64>,
-    #[serde(default)]
-    non_display_indices: Vec<u64>,
-    #[serde(default)]
-    commands: Vec<ImageBrowserCommand>,
-    #[serde(default)]
-    transient_commands: Vec<ImageBrowserCommand>,
-    #[serde(default = "default_include_image_profile")]
-    include_profile: bool,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ImageExplorerParameters {
+    pub blc: String,
+    pub trc: String,
+    pub inc: String,
+    pub stretch: String,
+    pub autoscale: String,
+    pub clip_low: String,
+    pub clip_high: String,
+}
+
+impl From<ImageExplorerParameters> for ImageBrowserParameters {
+    fn from(value: ImageExplorerParameters) -> Self {
+        Self {
+            blc: value.blc,
+            trc: value.trc,
+            inc: value.inc,
+            stretch: value.stretch,
+            autoscale: value.autoscale,
+            clip_low: value.clip_low,
+            clip_high: value.clip_high,
+        }
+    }
+}
+
+impl From<&ImageBrowserParameters> for ImageExplorerParameters {
+    fn from(value: &ImageBrowserParameters) -> Self {
+        Self {
+            blc: value.blc.clone(),
+            trc: value.trc.clone(),
+            inc: value.inc.clone(),
+            stretch: value.stretch.clone(),
+            autoscale: value.autoscale.clone(),
+            clip_low: value.clip_low.clone(),
+            clip_high: value.clip_high.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum ImageExplorerRegionReference {
+    None,
+    Definition { name: String },
+    File { path: String },
+    Expression { expression: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ImageExplorerCommand {
+    pub command: String,
+    pub x: Option<u64>,
+    pub y: Option<u64>,
+    pub name: Option<String>,
+    pub new_name: Option<String>,
+    pub set_default: Option<bool>,
+    pub path: Option<String>,
+    pub region: Option<ImageExplorerRegionReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ImageExplorerSnapshotRequest {
+    pub dataset_path: String,
+    pub selected_view: String,
+    pub focus: String,
+    pub plane_content_mode: String,
+    pub parameters: ImageExplorerParameters,
+    pub cursor_x: Option<u64>,
+    pub cursor_y: Option<u64>,
+    pub selected_profile_axis: Option<u64>,
+    pub non_display_indices: Vec<u64>,
+    pub commands: Vec<ImageExplorerCommand>,
+    pub transient_commands: Vec<ImageExplorerCommand>,
+    pub include_profile: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ImageExplorerAxisValue {
+    pub name: String,
+    pub unit: String,
+    pub value: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ImageExplorerCapabilities {
+    pub renderable_plane: bool,
+    pub world_coords_available: bool,
+    pub pixel_only_mode: bool,
+    pub non_display_axis_selectors: bool,
+    pub mask_present: bool,
+    pub complex_unsupported: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ImageExplorerPlane {
+    pub width: u64,
+    pub height: u64,
+    pub pixels_u8: Vec<u8>,
+    pub clip_min: f64,
+    pub clip_max: f64,
+    pub data_min: f64,
+    pub data_max: f64,
+    pub value_unit: String,
+    pub histogram_bins: Vec<u32>,
+    pub masked_or_non_finite_count: u64,
+    pub no_finite_values: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ImageExplorerProfileSample {
+    pub sample_index: u64,
+    pub pixel_index: u64,
+    pub value: f64,
+    pub masked: bool,
+    pub finite: bool,
+    pub world_axis: Option<ImageExplorerAxisValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ImageExplorerProfile {
+    pub axis: u64,
+    pub axis_name: String,
+    pub axis_unit: String,
+    pub value_unit: String,
+    pub coord_type: String,
+    pub selected_sample_index: u64,
+    pub samples: Vec<ImageExplorerProfileSample>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ImageExplorerRegionOverlayVertex {
+    pub sampled_x: f64,
+    pub sampled_y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ImageExplorerRegionOverlayShape {
+    pub vertices: Vec<ImageExplorerRegionOverlayVertex>,
+    pub closed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ImageExplorerRegionStats {
+    pub pixel_count: u64,
+    pub median: f64,
+    pub min: f64,
+    pub max: f64,
+    pub mean: f64,
+    pub sigma: f64,
+    pub rms: f64,
+    pub sum: f64,
+    pub value_unit: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ImageExplorerRegion {
+    pub label: String,
+    pub shape_count: u64,
+    pub closed_shape_count: u64,
+    pub editing: bool,
+    pub active_shape_vertices: u64,
+    pub overlay_shapes: Vec<ImageExplorerRegionOverlayShape>,
+    pub stats: Option<ImageExplorerRegionStats>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ImageExplorerNavigation {
+    pub selected_index: u64,
+    pub total_items: u64,
+    pub viewport_items: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ImageExplorerDisplayAxis {
+    pub axis: u64,
+    pub name: String,
+    pub unit: String,
+    pub blc: u64,
+    pub trc: u64,
+    pub inc: u64,
+    pub sampled_len: u64,
+    pub world_increment: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ImageExplorerPlaneCursor {
+    pub sampled_x: u64,
+    pub sampled_y: u64,
+    pub pixel_x: u64,
+    pub pixel_y: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ImageExplorerNonDisplayAxis {
+    pub axis: u64,
+    pub label: String,
+    pub index: u64,
+    pub length: u64,
+    pub pixel: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ImageExplorerProbe {
+    pub pixel_indices: Vec<u64>,
+    pub pixel_axes: Vec<ImageExplorerAxisValue>,
+    pub value: f64,
+    pub masked: bool,
+    pub finite: bool,
+    pub world_axes: Vec<ImageExplorerAxisValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ImageExplorerBackendTiming {
+    pub plane_cache_result: String,
+    pub cached_plane_lookup_ns: u64,
+    pub plane_extract_ns: u64,
+    pub stat_collection_ns: u64,
+    pub histogram_ns: u64,
+    pub rasterize_ns: u64,
+    pub total_plane_ns: u64,
+    pub profile_cache_hits: u64,
+    pub profile_cache_misses: u64,
+    pub profile_extract_total_ns: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ImageExplorerSnapshot {
+    pub status_line: String,
+    pub active_view: String,
+    pub focus: String,
+    pub shape: Vec<u64>,
+    pub parameters: ImageExplorerParameters,
+    pub inspector_lines: Vec<String>,
+    pub content_lines: Vec<String>,
+    pub navigation: ImageExplorerNavigation,
+    pub plane: Option<ImageExplorerPlane>,
+    pub probe: Option<ImageExplorerProbe>,
+    pub profile: Option<ImageExplorerProfile>,
+    pub display_axes: Vec<ImageExplorerDisplayAxis>,
+    pub plane_cursor: Option<ImageExplorerPlaneCursor>,
+    pub non_display_axes: Vec<ImageExplorerNonDisplayAxis>,
+    pub region: Option<ImageExplorerRegion>,
+    pub saved_region_names: Vec<String>,
+    pub active_region_definition_name: Option<String>,
+    pub mask_names: Vec<String>,
+    pub default_mask_name: Option<String>,
+    pub backend_timing: Option<ImageExplorerBackendTiming>,
+    pub capabilities: ImageExplorerCapabilities,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -210,10 +422,6 @@ const fn default_image_browser_plane_pixel_width() -> u16 {
 
 const fn default_image_browser_plane_pixel_height() -> u16 {
     384
-}
-
-const fn default_include_image_profile() -> bool {
-    true
 }
 
 const fn default_table_browser_width() -> u16 {
@@ -4196,53 +4404,265 @@ fn spectral_window_frequency_bounds_ghz(
     (lower / 1.0e9, upper / 1.0e9)
 }
 
-#[uniffi::export]
-pub fn build_image_explorer_snapshot_json(
-    dataset_path: String,
-    width: u16,
-    height: u16,
-    inspector_height: u16,
-    plane_pixel_width: u16,
-    plane_pixel_height: u16,
-    active_view: Option<String>,
-) -> FrontendResult<String> {
-    let dataset_path = PathBuf::from(dataset_path);
-    if !dataset_path.exists() {
-        return Err(FrontendServiceError::InvalidPath {
-            reason: format!("{} does not exist", dataset_path.display()),
-        });
-    }
-    let viewport = ImageBrowserViewport::with_plane_pixels(
-        width.max(20),
-        height.max(8),
-        inspector_height,
-        plane_pixel_width,
-        plane_pixel_height,
-    );
-    let mut session = ImageBrowserSession::open(&dataset_path, viewport).map_err(|error| {
-        FrontendServiceError::ImageExplorer {
-            reason: format!("open {}: {error}", dataset_path.display()),
+fn required_image_command_field<T>(
+    command: &str,
+    field: &str,
+    value: Option<T>,
+) -> Result<T, String> {
+    value.ok_or_else(|| format!("image explorer command `{command}` requires `{field}`"))
+}
+
+fn image_region_reference_owner(
+    reference: ImageExplorerRegionReference,
+) -> casars_imagebrowser_protocol::ImageRegionReference {
+    match reference {
+        ImageExplorerRegionReference::None => {
+            casars_imagebrowser_protocol::ImageRegionReference::None
         }
-    })?;
-    let snapshot = image_snapshot_for_requested_view(&mut session, active_view.as_deref())
-        .map_err(|error| FrontendServiceError::ImageExplorer {
-            reason: format!("snapshot {}: {error}", dataset_path.display()),
-        })?;
-    serde_json::to_string(&snapshot).map_err(|error| FrontendServiceError::ImageExplorer {
-        reason: format!("encode snapshot {}: {error}", dataset_path.display()),
+        ImageExplorerRegionReference::Definition { name } => {
+            casars_imagebrowser_protocol::ImageRegionReference::Definition { name }
+        }
+        ImageExplorerRegionReference::File { path } => {
+            casars_imagebrowser_protocol::ImageRegionReference::File { path }
+        }
+        ImageExplorerRegionReference::Expression { expression } => {
+            casars_imagebrowser_protocol::ImageRegionReference::Expression { expression }
+        }
+    }
+}
+
+fn image_explorer_command_owner(
+    command: ImageExplorerCommand,
+) -> Result<ImageBrowserCommand, String> {
+    let name = command.command.as_str();
+    Ok(match name {
+        "start_region_shape" => ImageBrowserCommand::StartRegionShape,
+        "append_region_vertex" => ImageBrowserCommand::AppendRegionVertex {
+            x: required_image_command_field(name, "x", command.x)? as usize,
+            y: required_image_command_field(name, "y", command.y)? as usize,
+        },
+        "close_region_shape" => ImageBrowserCommand::CloseRegionShape,
+        "undo_region_vertex" => ImageBrowserCommand::UndoRegionVertex,
+        "cancel_region_shape" => ImageBrowserCommand::CancelRegionShape,
+        "clear_region" => ImageBrowserCommand::ClearRegion,
+        "save_region_definition" => ImageBrowserCommand::SaveRegionDefinition,
+        "load_next_region_definition" => ImageBrowserCommand::LoadNextRegionDefinition,
+        "load_region_definition" => ImageBrowserCommand::LoadRegionDefinition {
+            name: required_image_command_field(name, "name", command.name)?,
+        },
+        "delete_region_definition" => ImageBrowserCommand::DeleteRegionDefinition {
+            name: required_image_command_field(name, "name", command.name)?,
+        },
+        "set_default_mask" => ImageBrowserCommand::SetDefaultMask {
+            name: required_image_command_field(name, "name", command.name)?,
+        },
+        "unset_default_mask" => ImageBrowserCommand::UnsetDefaultMask,
+        "delete_mask" => ImageBrowserCommand::DeleteMask {
+            name: required_image_command_field(name, "name", command.name)?,
+        },
+        "write_region_mask" => ImageBrowserCommand::WriteRegionMask {
+            name: command.name,
+            set_default: command.set_default.unwrap_or(false),
+        },
+        "export_region_file" => ImageBrowserCommand::ExportRegionFile {
+            path: required_image_command_field(name, "path", command.path)?,
+        },
+        "load_region_file" => ImageBrowserCommand::LoadRegionFile {
+            path: required_image_command_field(name, "path", command.path)?,
+        },
+        "append_region_file" => ImageBrowserCommand::AppendRegionFile {
+            path: required_image_command_field(name, "path", command.path)?,
+        },
+        "set_selection_references" => ImageBrowserCommand::SetSelectionReferences {
+            region: command.region.map(image_region_reference_owner),
+            mask: None,
+        },
+        other => return Err(format!("unknown image explorer command `{other}`")),
     })
 }
 
+fn image_axis_value_projection(
+    value: &casars_imagebrowser_protocol::ImageBrowserAxisValue,
+) -> ImageExplorerAxisValue {
+    ImageExplorerAxisValue {
+        name: value.name.clone(),
+        unit: value.unit.clone(),
+        value: value.value,
+    }
+}
+
+fn image_explorer_snapshot_projection(
+    snapshot: casars_imagebrowser_protocol::ImageBrowserSnapshot,
+) -> ImageExplorerSnapshot {
+    ImageExplorerSnapshot {
+        status_line: snapshot.status_line,
+        active_view: serde_plain_view_name(snapshot.active_view.label()),
+        focus: snake_case_debug(snapshot.focus),
+        shape: snapshot
+            .shape
+            .into_iter()
+            .map(|value| value as u64)
+            .collect(),
+        parameters: (&snapshot.parameters).into(),
+        inspector_lines: snapshot.inspector_lines,
+        content_lines: snapshot.content_lines,
+        navigation: ImageExplorerNavigation {
+            selected_index: snapshot.navigation.selected_index as u64,
+            total_items: snapshot.navigation.total_items as u64,
+            viewport_items: snapshot.navigation.viewport_items as u64,
+        },
+        plane: snapshot.plane.map(|plane| ImageExplorerPlane {
+            width: plane.width as u64,
+            height: plane.height as u64,
+            pixels_u8: plane.pixels_u8,
+            clip_min: plane.clip_min,
+            clip_max: plane.clip_max,
+            data_min: plane.data_min,
+            data_max: plane.data_max,
+            value_unit: plane.value_unit,
+            histogram_bins: plane.histogram_bins,
+            masked_or_non_finite_count: plane.masked_or_non_finite_count as u64,
+            no_finite_values: plane.no_finite_values,
+        }),
+        probe: snapshot.probe.map(|probe| ImageExplorerProbe {
+            pixel_indices: probe
+                .pixel_indices
+                .into_iter()
+                .map(|value| value as u64)
+                .collect(),
+            pixel_axes: probe
+                .pixel_axes
+                .iter()
+                .map(image_axis_value_projection)
+                .collect(),
+            value: probe.value,
+            masked: probe.masked,
+            finite: probe.finite,
+            world_axes: probe
+                .world_axes
+                .iter()
+                .map(image_axis_value_projection)
+                .collect(),
+        }),
+        profile: snapshot.profile.map(|profile| ImageExplorerProfile {
+            axis: profile.axis as u64,
+            axis_name: profile.axis_name,
+            axis_unit: profile.axis_unit,
+            value_unit: profile.value_unit,
+            coord_type: profile.coord_type,
+            selected_sample_index: profile.selected_sample_index as u64,
+            samples: profile
+                .samples
+                .into_iter()
+                .map(|sample| ImageExplorerProfileSample {
+                    sample_index: sample.sample_index as u64,
+                    pixel_index: sample.pixel_index as u64,
+                    value: sample.value,
+                    masked: sample.masked,
+                    finite: sample.finite,
+                    world_axis: sample.world_axis.as_ref().map(image_axis_value_projection),
+                })
+                .collect(),
+        }),
+        display_axes: snapshot
+            .display_axes
+            .into_iter()
+            .map(|axis| ImageExplorerDisplayAxis {
+                axis: axis.axis as u64,
+                name: axis.name,
+                unit: axis.unit,
+                blc: axis.blc as u64,
+                trc: axis.trc as u64,
+                inc: axis.inc as u64,
+                sampled_len: axis.sampled_len as u64,
+                world_increment: axis.world_increment,
+            })
+            .collect(),
+        plane_cursor: snapshot
+            .plane_cursor
+            .map(|cursor| ImageExplorerPlaneCursor {
+                sampled_x: cursor.sampled_x as u64,
+                sampled_y: cursor.sampled_y as u64,
+                pixel_x: cursor.pixel_x as u64,
+                pixel_y: cursor.pixel_y as u64,
+            }),
+        non_display_axes: snapshot
+            .non_display_axes
+            .into_iter()
+            .map(|axis| ImageExplorerNonDisplayAxis {
+                axis: axis.axis as u64,
+                label: axis.label,
+                index: axis.index as u64,
+                length: axis.length as u64,
+                pixel: axis.pixel as u64,
+            })
+            .collect(),
+        region: snapshot.region.map(|region| ImageExplorerRegion {
+            label: region.label,
+            shape_count: region.shape_count as u64,
+            closed_shape_count: region.closed_shape_count as u64,
+            editing: region.editing,
+            active_shape_vertices: region.active_shape_vertices as u64,
+            overlay_shapes: region
+                .overlay_shapes
+                .into_iter()
+                .map(|shape| ImageExplorerRegionOverlayShape {
+                    vertices: shape
+                        .vertices
+                        .into_iter()
+                        .map(|vertex| ImageExplorerRegionOverlayVertex {
+                            sampled_x: vertex.sampled_x,
+                            sampled_y: vertex.sampled_y,
+                        })
+                        .collect(),
+                    closed: shape.closed,
+                })
+                .collect(),
+            stats: region.stats.map(|stats| ImageExplorerRegionStats {
+                pixel_count: stats.pixel_count as u64,
+                median: stats.median,
+                min: stats.min,
+                max: stats.max,
+                mean: stats.mean,
+                sigma: stats.sigma,
+                rms: stats.rms,
+                sum: stats.sum,
+                value_unit: stats.value_unit,
+            }),
+        }),
+        saved_region_names: snapshot.saved_region_names,
+        active_region_definition_name: snapshot.active_region_definition_name,
+        mask_names: snapshot.mask_names,
+        default_mask_name: snapshot.default_mask_name,
+        backend_timing: snapshot
+            .backend_timing
+            .map(|timing| ImageExplorerBackendTiming {
+                plane_cache_result: snake_case_debug(timing.plane_cache_result),
+                cached_plane_lookup_ns: timing.cached_plane_lookup_ns,
+                plane_extract_ns: timing.plane_extract_ns,
+                stat_collection_ns: timing.stat_collection_ns,
+                histogram_ns: timing.histogram_ns,
+                rasterize_ns: timing.rasterize_ns,
+                total_plane_ns: timing.total_plane_ns,
+                profile_cache_hits: timing.profile_cache_hits,
+                profile_cache_misses: timing.profile_cache_misses,
+                profile_extract_total_ns: timing.profile_extract_total_ns,
+            }),
+        capabilities: ImageExplorerCapabilities {
+            renderable_plane: snapshot.capabilities.renderable_plane,
+            world_coords_available: snapshot.capabilities.world_coords_available,
+            pixel_only_mode: snapshot.capabilities.pixel_only_mode,
+            non_display_axis_selectors: snapshot.capabilities.non_display_axis_selectors,
+            mask_present: snapshot.capabilities.mask_present,
+            complex_unsupported: snapshot.capabilities.complex_unsupported,
+        },
+    }
+}
+
 #[uniffi::export]
-pub fn build_image_explorer_snapshot_from_request_json(
-    request_json: String,
-) -> FrontendResult<String> {
-    let request: ImageExplorerSnapshotRequest =
-        serde_json::from_str(&request_json).map_err(|error| {
-            FrontendServiceError::ImageExplorer {
-                reason: format!("decode image explorer snapshot request: {error}"),
-            }
-        })?;
+pub fn build_image_explorer_snapshot(
+    request: ImageExplorerSnapshotRequest,
+) -> FrontendResult<ImageExplorerSnapshot> {
     let dataset_path = PathBuf::from(&request.dataset_path);
     if !dataset_path.exists() {
         return Err(FrontendServiceError::InvalidPath {
@@ -4250,32 +4670,30 @@ pub fn build_image_explorer_snapshot_from_request_json(
         });
     }
     let viewport = ImageBrowserViewport::with_plane_pixels(
-        request.width.max(20),
-        request.height.max(8),
-        request.inspector_height,
-        request.plane_pixel_width,
-        request.plane_pixel_height,
+        default_image_browser_width(),
+        default_image_browser_height(),
+        default_image_browser_inspector_height(),
+        default_image_browser_plane_pixel_width(),
+        default_image_browser_plane_pixel_height(),
     );
-    let mut session = ImageBrowserSession::open_with_parameters(
-        &dataset_path,
-        viewport,
-        Some(&request.parameters),
-    )
-    .map_err(|error| FrontendServiceError::ImageExplorer {
-        reason: format!("open {}: {error}", dataset_path.display()),
-    })?;
+    let parameters: ImageBrowserParameters = request.parameters.clone().into();
+    let mut session =
+        ImageBrowserSession::open_with_parameters(&dataset_path, viewport, Some(&parameters))
+            .map_err(|error| FrontendServiceError::ImageExplorer {
+                reason: format!("open {}: {error}", dataset_path.display()),
+            })?;
     apply_image_explorer_snapshot_request(&mut session, &request).map_err(|error| {
         FrontendServiceError::ImageExplorer {
             reason: format!("snapshot {}: {error}", dataset_path.display()),
         }
     })?;
-    let mode = parse_image_plane_content_mode(request.plane_content_mode.as_deref())
+    let mode = parse_image_plane_content_mode(Some(&request.plane_content_mode))
         .map_err(|reason| FrontendServiceError::ImageExplorer { reason })?;
     let snapshot = if !request.non_display_indices.is_empty() {
         session
             .preview_occurrence(&ImageBrowserPreviewRequest {
                 viewport,
-                parameters: request.parameters.clone(),
+                parameters,
                 plane_content_mode: mode,
                 non_display_indices: request
                     .non_display_indices
@@ -4294,9 +4712,7 @@ pub fn build_image_explorer_snapshot_from_request_json(
     .map_err(|error| FrontendServiceError::ImageExplorer {
         reason: format!("snapshot {}: {error}", dataset_path.display()),
     })?;
-    serde_json::to_string(&snapshot).map_err(|error| FrontendServiceError::ImageExplorer {
-        reason: format!("encode snapshot {}: {error}", dataset_path.display()),
-    })
+    Ok(image_explorer_snapshot_projection(snapshot))
 }
 
 #[uniffi::export]
@@ -5006,10 +5422,10 @@ fn apply_image_explorer_snapshot_request(
     session: &mut ImageBrowserSession,
     request: &ImageExplorerSnapshotRequest,
 ) -> Result<(), casa_images::ImageError> {
-    let mode = parse_image_plane_content_mode(request.plane_content_mode.as_deref())
+    let mode = parse_image_plane_content_mode(Some(&request.plane_content_mode))
         .map_err(casa_images::ImageError::InvalidMetadata)?;
     session.handle_command(ImageBrowserCommand::SetPlaneContentMode { mode })?;
-    if let Some(focus) = parse_image_browser_focus(request.focus.as_deref())
+    if let Some(focus) = parse_image_browser_focus(Some(&request.focus))
         .map_err(casa_images::ImageError::InvalidMetadata)?
     {
         session.handle_command(ImageBrowserCommand::SetFocus { focus })?;
@@ -5031,9 +5447,12 @@ fn apply_image_explorer_snapshot_request(
         .chain(request.transient_commands.iter())
         .cloned()
     {
-        session.handle_command(command)?;
+        session.handle_command(
+            image_explorer_command_owner(command)
+                .map_err(casa_images::ImageError::InvalidMetadata)?,
+        )?;
     }
-    let _ = image_snapshot_for_requested_view(session, request.active_view.as_deref())?;
+    let _ = image_snapshot_for_requested_view(session, Some(&request.selected_view))?;
     Ok(())
 }
 
@@ -7185,6 +7604,44 @@ mod tests {
         table.save(TableOptions::new(path)).expect("save table");
     }
 
+    fn image_explorer_request(path: &Path, selected_view: &str) -> ImageExplorerSnapshotRequest {
+        ImageExplorerSnapshotRequest {
+            dataset_path: path.display().to_string(),
+            selected_view: selected_view.to_string(),
+            focus: "content".to_string(),
+            plane_content_mode: "raster".to_string(),
+            parameters: ImageExplorerParameters {
+                blc: String::new(),
+                trc: String::new(),
+                inc: String::new(),
+                stretch: "percentile99".to_string(),
+                autoscale: "per_plane".to_string(),
+                clip_low: String::new(),
+                clip_high: String::new(),
+            },
+            cursor_x: None,
+            cursor_y: None,
+            selected_profile_axis: None,
+            non_display_indices: Vec::new(),
+            commands: Vec::new(),
+            transient_commands: Vec::new(),
+            include_profile: true,
+        }
+    }
+
+    fn image_explorer_command(command: &str) -> ImageExplorerCommand {
+        ImageExplorerCommand {
+            command: command.to_string(),
+            x: None,
+            y: None,
+            name: None,
+            new_name: None,
+            set_default: None,
+            path: None,
+            region: None,
+        }
+    }
+
     #[test]
     fn probe_measurement_set_reads_real_metadata() {
         let (_dir, ms_path) = unpack_small_ms();
@@ -8131,79 +8588,34 @@ mod tests {
                 .any(|line| line == "Beam: 0.42 x 0.31 arcsec, PA 12 deg")
         );
 
-        let plane_snapshot_json = build_image_explorer_snapshot_json(
-            path.display().to_string(),
-            100,
-            32,
-            8,
-            128,
-            96,
-            Some("plane".to_string()),
-        )
-        .expect("image explorer plane snapshot");
-        let plane_snapshot: serde_json::Value =
-            serde_json::from_str(&plane_snapshot_json).expect("plane snapshot json");
-        assert_eq!(plane_snapshot["active_view"], "plane");
-        assert_eq!(plane_snapshot["capabilities"]["renderable_plane"], true);
-        assert!(
-            plane_snapshot["plane"]["width"]
-                .as_u64()
-                .is_some_and(|width| width > 0)
-        );
-        assert!(
-            plane_snapshot["plane"]["height"]
-                .as_u64()
-                .is_some_and(|height| height > 0)
-        );
+        let plane_snapshot = build_image_explorer_snapshot(image_explorer_request(&path, "plane"))
+            .expect("image explorer plane snapshot");
+        assert_eq!(plane_snapshot.active_view, "plane");
+        assert!(plane_snapshot.capabilities.renderable_plane);
+        let plane = plane_snapshot.plane.expect("renderable plane");
+        assert!(plane.width > 0);
+        assert!(plane.height > 0);
 
-        let snapshot_json = build_image_explorer_snapshot_json(
-            path.display().to_string(),
-            100,
-            32,
-            8,
-            128,
-            96,
-            Some("spectrum".to_string()),
-        )
-        .expect("image explorer snapshot");
-        let snapshot: serde_json::Value =
-            serde_json::from_str(&snapshot_json).expect("snapshot json");
-        assert_eq!(snapshot["active_view"], "spectrum");
-        assert!(snapshot["profile"]["samples"].as_array().is_some());
+        let snapshot = build_image_explorer_snapshot(image_explorer_request(&path, "spectrum"))
+            .expect("image explorer snapshot");
+        assert_eq!(snapshot.active_view, "spectrum");
+        assert!(snapshot.profile.is_some());
 
-        let request_json = serde_json::json!({
-            "dataset_path": path.display().to_string(),
-            "width": 100,
-            "height": 32,
-            "inspector_height": 8,
-            "plane_pixel_width": 128,
-            "plane_pixel_height": 96,
-            "active_view": "plane",
-            "focus": "inspector",
-            "plane_content_mode": "spreadsheet",
-            "parameters": {
-                "blc": "0,0,0",
-                "trc": "3,3,0",
-                "inc": "1,1,1",
-                "stretch": "percentile99",
-                "autoscale": "per_plane",
-                "clip_low": "",
-                "clip_high": ""
-            },
-            "cursor_x": 1,
-            "cursor_y": 1,
-            "non_display_indices": [],
-            "include_profile": true
-        })
-        .to_string();
-        let requested_snapshot_json = build_image_explorer_snapshot_from_request_json(request_json)
-            .expect("image explorer requested snapshot");
-        let requested_snapshot: serde_json::Value =
-            serde_json::from_str(&requested_snapshot_json).expect("requested snapshot json");
-        assert_eq!(requested_snapshot["active_view"], "plane");
-        assert_eq!(requested_snapshot["focus"], "inspector");
-        assert_eq!(requested_snapshot["plane_cursor"]["pixel_x"], 1);
-        assert_eq!(requested_snapshot["plane_cursor"]["pixel_y"], 1);
+        let mut request = image_explorer_request(&path, "plane");
+        request.focus = "inspector".to_string();
+        request.plane_content_mode = "spreadsheet".to_string();
+        request.parameters.blc = "0,0,0".to_string();
+        request.parameters.trc = "3,3,0".to_string();
+        request.parameters.inc = "1,1,1".to_string();
+        request.cursor_x = Some(1);
+        request.cursor_y = Some(1);
+        let requested_snapshot =
+            build_image_explorer_snapshot(request).expect("image explorer requested snapshot");
+        assert_eq!(requested_snapshot.active_view, "plane");
+        assert_eq!(requested_snapshot.focus, "inspector");
+        let cursor = requested_snapshot.plane_cursor.expect("plane cursor");
+        assert_eq!(cursor.pixel_x, 1);
+        assert_eq!(cursor.pixel_y, 1);
 
         let region_path = path.with_extension("crtf");
         fs::write(
@@ -8211,60 +8623,52 @@ mod tests {
             "#CRTFv0 CASA Region Text Format version 0\nbox[[1pix,1pix],[2pix,2pix]]\n",
         )
         .expect("write test region");
-        let region_request_json = serde_json::json!({
-            "dataset_path": path.display().to_string(),
-            "width": 100,
-            "height": 32,
-            "inspector_height": 8,
-            "plane_pixel_width": 128,
-            "plane_pixel_height": 96,
-            "active_view": "plane",
-            "commands": [
-                {
-                    "command": "load_region_file",
-                    "path": region_path.display().to_string()
-                }
-            ],
-            "include_profile": true
-        })
-        .to_string();
-        let region_snapshot_json =
-            build_image_explorer_snapshot_from_request_json(region_request_json)
-                .expect("image explorer region load snapshot");
-        let region_snapshot: serde_json::Value =
-            serde_json::from_str(&region_snapshot_json).expect("region snapshot json");
-        assert_eq!(region_snapshot["region"]["label"], "restored");
-        assert_eq!(region_snapshot["region"]["shape_count"], 1);
+        let mut region_request = image_explorer_request(&path, "plane");
+        let mut load_region = image_explorer_command("load_region_file");
+        load_region.path = Some(region_path.display().to_string());
+        region_request.commands.push(load_region);
+        let region_snapshot = build_image_explorer_snapshot(region_request)
+            .expect("image explorer region load snapshot");
+        let region = region_snapshot.region.expect("loaded region");
+        assert_eq!(region.label, "restored");
+        assert_eq!(region.shape_count, 1);
 
-        let append_region_request_json = serde_json::json!({
-            "dataset_path": path.display().to_string(),
-            "width": 100,
-            "height": 32,
-            "inspector_height": 8,
-            "plane_pixel_width": 128,
-            "plane_pixel_height": 96,
-            "active_view": "plane",
-            "commands": [
-                {"command": "start_region_shape"},
-                {"command": "append_region_vertex", "x": 0, "y": 0},
-                {"command": "append_region_vertex", "x": 1, "y": 0},
-                {"command": "append_region_vertex", "x": 1, "y": 1},
-                {"command": "close_region_shape"},
-                {
-                    "command": "append_region_file",
-                    "path": region_path.display().to_string()
-                }
-            ],
-            "include_profile": true
-        })
-        .to_string();
-        let appended_region_snapshot_json =
-            build_image_explorer_snapshot_from_request_json(append_region_request_json)
-                .expect("image explorer region append snapshot");
-        let appended_region_snapshot: serde_json::Value =
-            serde_json::from_str(&appended_region_snapshot_json)
-                .expect("appended region snapshot json");
-        assert_eq!(appended_region_snapshot["region"]["shape_count"], 2);
+        let mut append_region_request = image_explorer_request(&path, "plane");
+        append_region_request
+            .commands
+            .push(image_explorer_command("start_region_shape"));
+        for (x, y) in [(0, 0), (1, 0), (1, 1)] {
+            let mut vertex = image_explorer_command("append_region_vertex");
+            vertex.x = Some(x);
+            vertex.y = Some(y);
+            append_region_request.commands.push(vertex);
+        }
+        append_region_request
+            .commands
+            .push(image_explorer_command("close_region_shape"));
+        let mut append_region = image_explorer_command("append_region_file");
+        append_region.path = Some(region_path.display().to_string());
+        append_region_request.commands.push(append_region);
+        let appended_region_snapshot = build_image_explorer_snapshot(append_region_request)
+            .expect("image explorer region append snapshot");
+        assert_eq!(
+            appended_region_snapshot
+                .region
+                .expect("appended region")
+                .shape_count,
+            2
+        );
+    }
+
+    #[test]
+    fn image_explorer_typed_commands_reject_unknown_or_incomplete_requests() {
+        let unknown = image_explorer_command_owner(image_explorer_command("mystery"))
+            .expect_err("unknown command must fail closed");
+        assert!(unknown.contains("unknown image explorer command `mystery`"));
+
+        let incomplete = image_explorer_command_owner(image_explorer_command("load_region_file"))
+            .expect_err("missing path must fail closed");
+        assert!(incomplete.contains("requires `path`"));
     }
 
     #[test]

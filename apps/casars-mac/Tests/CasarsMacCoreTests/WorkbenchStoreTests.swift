@@ -537,32 +537,34 @@ final class WorkbenchStoreTests: XCTestCase {
         )
         var snapshot = makeImageExplorerSnapshot()
         snapshot.displayAxes = [
-            ImageExplorerSnapshot.DisplayAxis(axis: 0, name: "Right Ascension", unit: "pix", blc: 0, trc: 3, inc: 1, sampledLen: 4),
-            ImageExplorerSnapshot.DisplayAxis(axis: 1, name: "Declination", unit: "pix", blc: 0, trc: 3, inc: 1, sampledLen: 4)
+            ImageExplorerDisplayAxis(axis: 0, name: "Right Ascension", unit: "pix", blc: 0, trc: 3, inc: 1, sampledLen: 4, worldIncrement: nil),
+            ImageExplorerDisplayAxis(axis: 1, name: "Declination", unit: "pix", blc: 0, trc: 3, inc: 1, sampledLen: 4, worldIncrement: nil)
         ]
-        snapshot.region = ImageExplorerSnapshot.Region(
+        snapshot.region = ImageExplorerRegion(
             label: "active region",
             shapeCount: 2,
             closedShapeCount: 2,
             editing: false,
+            activeShapeVertices: 0,
             overlayShapes: [
-                ImageExplorerSnapshot.Region.OverlayShape(
+                ImageExplorerRegionOverlayShape(
                     vertices: [
-                        ImageExplorerSnapshot.Region.OverlayVertex(sampledX: 0, sampledY: 0),
-                        ImageExplorerSnapshot.Region.OverlayVertex(sampledX: 1, sampledY: 0),
-                        ImageExplorerSnapshot.Region.OverlayVertex(sampledX: 1, sampledY: 1)
+                        ImageExplorerRegionOverlayVertex(sampledX: 0, sampledY: 0),
+                        ImageExplorerRegionOverlayVertex(sampledX: 1, sampledY: 0),
+                        ImageExplorerRegionOverlayVertex(sampledX: 1, sampledY: 1)
                     ],
                     closed: true
                 ),
-                ImageExplorerSnapshot.Region.OverlayShape(
+                ImageExplorerRegionOverlayShape(
                     vertices: [
-                        ImageExplorerSnapshot.Region.OverlayVertex(sampledX: 2, sampledY: 2),
-                        ImageExplorerSnapshot.Region.OverlayVertex(sampledX: 3, sampledY: 2),
-                        ImageExplorerSnapshot.Region.OverlayVertex(sampledX: 3, sampledY: 3)
+                        ImageExplorerRegionOverlayVertex(sampledX: 2, sampledY: 2),
+                        ImageExplorerRegionOverlayVertex(sampledX: 3, sampledY: 2),
+                        ImageExplorerRegionOverlayVertex(sampledX: 3, sampledY: 3)
                     ],
                     closed: true
                 )
-            ]
+            ],
+            stats: nil
         )
         var state = EmptyWorkbench.makeState()
         state.project = ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [imageDataset], source: .probed)
@@ -1902,8 +1904,8 @@ final class WorkbenchStoreTests: XCTestCase {
         )
         var snapshot = makeImageExplorerSnapshot()
         snapshot.nonDisplayAxes = [
-            ImageExplorerSnapshot.NonDisplayAxis(axis: 2, label: "Frequency", index: 0, length: 8, pixel: 0),
-            ImageExplorerSnapshot.NonDisplayAxis(axis: 3, label: "Stokes", index: 0, length: 4, pixel: 0),
+            ImageExplorerNonDisplayAxis(axis: 2, label: "Frequency", index: 0, length: 8, pixel: 0),
+            ImageExplorerNonDisplayAxis(axis: 3, label: "Stokes", index: 0, length: 4, pixel: 0),
         ]
         let imageClient = StubImageExplorerClient(snapshot: snapshot)
         var state = EmptyWorkbench.makeState()
@@ -3580,8 +3582,8 @@ final class WorkbenchStoreTests: XCTestCase {
         store.setImageExplorerFocus("inspector", datasetID: imageDataset.id)
         store.setImageExplorerPlaneContentMode("spreadsheet", datasetID: imageDataset.id)
         store.setImageExplorerCursor(x: 2, y: 3, datasetID: imageDataset.id)
-        store.setImageExplorerParameters(
-            ImageExplorerParameters(blc: "0,0", trc: "3,3", inc: "1,1", stretch: "minmax"),
+        store.setimageExplorerParameters(
+            imageExplorerParameters(blc: "0,0", trc: "3,3", inc: "1,1", stretch: "minmax"),
             datasetID: imageDataset.id
         )
         XCTAssertEqual(imageClient.requests.last?.focus, "inspector")
@@ -5935,10 +5937,10 @@ private final class StubImageExplorerClient: ImageExplorerClient {
                 focus: request.focus,
                 planeContentMode: request.planeContentMode,
                 parameters: request.parameters,
-                cursorX: request.cursorX,
-                cursorY: request.cursorY,
-                selectedProfileAxis: request.selectedProfileAxis,
-                nonDisplayIndices: request.nonDisplayIndices,
+                cursorX: request.cursorX.map(Int.init),
+                cursorY: request.cursorY.map(Int.init),
+                selectedProfileAxis: request.selectedProfileAxis.map(Int.init),
+                nonDisplayIndices: request.nonDisplayIndices.map(Int.init),
                 commands: request.commands,
                 transientCommands: request.transientCommands
             )
@@ -5951,7 +5953,7 @@ private final class StubImageExplorerClient: ImageExplorerClient {
         }
         var nextSnapshot = snapshot
         if let x = request.cursorX, let y = request.cursorY {
-            nextSnapshot.planeCursor = ImageExplorerSnapshot.PlaneCursor(
+            nextSnapshot.planeCursor = ImageExplorerPlaneCursor(
                 sampledX: x,
                 sampledY: y,
                 pixelX: x,
@@ -5959,9 +5961,9 @@ private final class StubImageExplorerClient: ImageExplorerClient {
             )
         }
         nextSnapshot.parameters = request.parameters
-        nextSnapshot.nonDisplayAxes = snapshot.nonDisplayAxes?.map { axis in
+        nextSnapshot.nonDisplayAxes = snapshot.nonDisplayAxes.map { axis in
             var nextAxis = axis
-            if let position = snapshot.nonDisplayAxes?.firstIndex(where: { $0.axis == axis.axis }),
+            if let position = snapshot.nonDisplayAxes.firstIndex(where: { $0.axis == axis.axis }),
                request.nonDisplayIndices.indices.contains(position)
             {
                 nextAxis.index = request.nonDisplayIndices[position]
@@ -6171,49 +6173,62 @@ private func makeImageExplorerSnapshot(nonDisplayIndex: Int = 0) -> ImageExplore
     ImageExplorerSnapshot(
         statusLine: "Browsing restored.image.",
         activeView: "plane",
+        focus: "content",
         shape: [4, 4, 8],
+        parameters: imageExplorerParameters(),
         inspectorLines: ["Cursor: 1,1", "Value: 2 Jy/beam"],
         contentLines: ["plane content"],
-        plane: ImageExplorerSnapshot.Plane(
+        navigation: ImageExplorerNavigation(selectedIndex: 0, totalItems: 1, viewportItems: 1),
+        plane: ImageExplorerPlane(
             width: 2,
             height: 2,
-            pixelsU8: [0, 64, 128, 255],
+            pixelsU8: Data([0, 64, 128, 255]),
             clipMin: 0,
             clipMax: 3,
             dataMin: 0,
             dataMax: 3,
             valueUnit: "Jy/beam",
-            maskedOrNonFiniteCount: 0
+            histogramBins: [],
+            maskedOrNonFiniteCount: 0,
+            noFiniteValues: false
         ),
-        profile: ImageExplorerSnapshot.Profile(
+        probe: nil,
+        profile: ImageExplorerProfile(
             axis: 2,
             axisName: "Frequency",
             axisUnit: "Hz",
             valueUnit: "Jy/beam",
+            coordType: "spectral",
+            selectedSampleIndex: 0,
             samples: [
-                ImageExplorerSnapshot.Profile.Sample(sampleIndex: 0, pixelIndex: 0, value: 1.0, finite: true),
-                ImageExplorerSnapshot.Profile.Sample(sampleIndex: 1, pixelIndex: 1, value: 2.0, finite: true)
+                ImageExplorerProfileSample(sampleIndex: 0, pixelIndex: 0, value: 1.0, masked: false, finite: true, worldAxis: nil),
+                ImageExplorerProfileSample(sampleIndex: 1, pixelIndex: 1, value: 2.0, masked: false, finite: true, worldAxis: nil)
             ]
         ),
-        planeCursor: ImageExplorerSnapshot.PlaneCursor(sampledX: 1, sampledY: 1, pixelX: 1, pixelY: 1),
+        displayAxes: [],
+        planeCursor: ImageExplorerPlaneCursor(sampledX: 1, sampledY: 1, pixelX: 1, pixelY: 1),
         nonDisplayAxes: [
-            ImageExplorerSnapshot.NonDisplayAxis(
+            ImageExplorerNonDisplayAxis(
                 axis: 2,
                 label: "Frequency",
-                index: nonDisplayIndex,
+                index: UInt64(nonDisplayIndex),
                 length: 8,
-                pixel: nonDisplayIndex
+                pixel: UInt64(nonDisplayIndex)
             )
         ],
-        region: ImageExplorerSnapshot.Region(label: "active region", shapeCount: 1, closedShapeCount: 1, editing: false),
+        region: ImageExplorerRegion(label: "active region", shapeCount: 1, closedShapeCount: 1, editing: false, activeShapeVertices: 0, overlayShapes: [], stats: nil),
         savedRegionNames: ["source"],
+        activeRegionDefinitionName: nil,
         maskNames: ["mask0"],
-        capabilities: ImageExplorerSnapshot.Capabilities(
+        defaultMaskName: nil,
+        backendTiming: nil,
+        capabilities: ImageExplorerCapabilities(
             renderablePlane: true,
             worldCoordsAvailable: true,
             pixelOnlyMode: false,
             nonDisplayAxisSelectors: true,
-            maskPresent: true
+            maskPresent: true,
+            complexUnsupported: false
         )
     )
 }

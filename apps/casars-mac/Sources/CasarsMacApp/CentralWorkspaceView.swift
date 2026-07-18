@@ -884,10 +884,10 @@ private struct ImageExplorerControlsView: View {
         self.datasetID = datasetID
         self.explorerState = explorerState
         self.snapshot = snapshot
-        let parameters = explorerState?.parameters ?? snapshot?.parameters ?? ImageExplorerParameters()
+        let parameters = explorerState?.parameters ?? snapshot?.parameters ?? imageExplorerParameters()
         _parameters = State(initialValue: parameters)
-        _cursorXText = State(initialValue: String(explorerState?.cursorX ?? snapshot?.planeCursor?.pixelX ?? 0))
-        _cursorYText = State(initialValue: String(explorerState?.cursorY ?? snapshot?.planeCursor?.pixelY ?? 0))
+        _cursorXText = State(initialValue: String(explorerState?.cursorX ?? snapshot?.planeCursor.map { Int($0.pixelX) } ?? 0))
+        _cursorYText = State(initialValue: String(explorerState?.cursorY ?? snapshot?.planeCursor.map { Int($0.pixelY) } ?? 0))
         _regionBoxText = State(initialValue: Self.defaultRegionBoxText(snapshot: snapshot))
         _regionLoadText = State(initialValue: Self.defaultRegionLoadText(store: store, imageDatasetID: datasetID))
         _movieFPSText = State(initialValue: Self.formatMovieFramesPerSecond(explorerState?.movieFramesPerSecond ?? 6.0))
@@ -903,7 +903,7 @@ private struct ImageExplorerControlsView: View {
                     controlsSection("Display") {
                         displayParameterControls
                     }
-                    if snapshot?.nonDisplayAxes?.isEmpty == false {
+                    if snapshot?.nonDisplayAxes.isEmpty == false {
                         controlsSection("Linked axes") {
                             movieControls
                             nonDisplayAxisControls
@@ -917,8 +917,8 @@ private struct ImageExplorerControlsView: View {
         }
         .workbenchFont(.caption)
         .onChange(of: snapshot?.planeCursor) { cursor in
-            cursorXText = String(cursor?.pixelX ?? explorerState?.cursorX ?? 0)
-            cursorYText = String(cursor?.pixelY ?? explorerState?.cursorY ?? 0)
+            cursorXText = String(cursor.map { Int($0.pixelX) } ?? explorerState?.cursorX ?? 0)
+            cursorYText = String(cursor.map { Int($0.pixelY) } ?? explorerState?.cursorY ?? 0)
         }
         .onChange(of: explorerState?.parameters) { nextParameters in
             if let nextParameters {
@@ -999,7 +999,7 @@ private struct ImageExplorerControlsView: View {
             TextField("High", text: $parameters.clipHigh)
                 .frame(width: 72)
             Button {
-                store.setImageExplorerParameters(parameters, datasetID: datasetID)
+                store.setimageExplorerParameters(parameters, datasetID: datasetID)
             } label: {
                 Label("Apply", systemImage: "slider.horizontal.3")
             }
@@ -1085,23 +1085,23 @@ private struct ImageExplorerControlsView: View {
     private var nonDisplayAxisControls: some View {
         if let axes = snapshot?.nonDisplayAxes, !axes.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(axes) { axis in
+                ForEach(axes, id: \.axis) { axis in
                     nonDisplayAxisControl(axis)
                 }
             }
         }
     }
 
-    private func nonDisplayAxisControl(_ axis: ImageExplorerSnapshot.NonDisplayAxis) -> some View {
+    private func nonDisplayAxisControl(_ axis: ImageExplorerNonDisplayAxis) -> some View {
         HStack(spacing: 4) {
             Button {
-                toggleMovie(axis: axis.axis)
+                toggleMovie(axis: Int(axis.axis))
             } label: {
-                Image(systemName: isMoviePlaying(axis: axis.axis) ? "pause.fill" : "play.fill")
+                Image(systemName: isMoviePlaying(axis: Int(axis.axis)) ? "pause.fill" : "play.fill")
             }
-            .help(isMoviePlaying(axis: axis.axis) ? "Pause movie playback" : "Play this axis as a movie")
+            .help(isMoviePlaying(axis: Int(axis.axis)) ? "Pause movie playback" : "Play this axis as a movie")
             Button {
-                store.stepImageExplorerNonDisplayAxis(axis: axis.axis, delta: -1, datasetID: datasetID)
+                store.stepImageExplorerNonDisplayAxis(axis: Int(axis.axis), delta: -1, datasetID: datasetID)
             } label: {
                 Image(systemName: "chevron.left")
             }
@@ -1109,12 +1109,12 @@ private struct ImageExplorerControlsView: View {
                 .workbenchFont(.caption)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button {
-                store.stepImageExplorerNonDisplayAxis(axis: axis.axis, delta: 1, datasetID: datasetID)
+                store.stepImageExplorerNonDisplayAxis(axis: Int(axis.axis), delta: 1, datasetID: datasetID)
             } label: {
                 Image(systemName: "chevron.right")
             }
             Button {
-                store.setImageExplorerSelectedProfileAxis(axis.axis, datasetID: datasetID)
+                store.setImageExplorerSelectedProfileAxis(Int(axis.axis), datasetID: datasetID)
             } label: {
                 Image(systemName: "waveform.path.ecg")
             }
@@ -1144,12 +1144,12 @@ private struct ImageExplorerControlsView: View {
         movieFPSText = Self.formatMovieFramesPerSecond(framesPerSecond)
     }
 
-    private func movieStatusText(axes: [ImageExplorerSnapshot.NonDisplayAxis]) -> String {
+    private func movieStatusText(axes: [ImageExplorerNonDisplayAxis]) -> String {
         guard explorerState?.moviePlaying == true else {
             return "Stopped"
         }
-        let axisID = explorerState?.movieAxis ?? axes.first?.axis
-        let axis = axes.first { $0.axis == axisID }
+        let axisID = explorerState?.movieAxis ?? axes.first.map { Int($0.axis) }
+        let axis = axes.first { Int($0.axis) == axisID }
         let label = axis?.label ?? "Axis \(axisID ?? 0)"
         let index = (axis?.index ?? 0) + 1
         let length = axis?.length ?? 1
@@ -1402,7 +1402,7 @@ private struct ImageExplorerControlsView: View {
     }
 
     private var hasActiveRegionShapes: Bool {
-        (snapshot?.region?.overlayShapes?.isEmpty == false)
+        (snapshot?.region?.overlayShapes.isEmpty == false)
     }
 
     private var imageAttachedRegionControls: some View {
@@ -1443,7 +1443,7 @@ private struct ImageExplorerControlsView: View {
         guard let region = snapshot?.region else {
             return "No active region loaded."
         }
-        let vertices = region.overlayShapes?.reduce(0) { $0 + $1.vertices.count } ?? 0
+        let vertices = region.overlayShapes.reduce(0) { $0 + $1.vertices.count }
         let persistence = activeRegionIsSaved ? "Saved region" : "Unsaved region"
         if let stats = region.stats {
             return "\(persistence): \(region.label), \(region.closedShapeCount) shape(s), \(vertices) vertices, \(stats.pixelCount) pixels."
@@ -1466,8 +1466,8 @@ private struct ImageExplorerControlsView: View {
 
     private func currentCursor() -> (x: Int, y: Int) {
         (
-            Int(cursorXText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? snapshot?.planeCursor?.pixelX ?? 0,
-            Int(cursorYText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? snapshot?.planeCursor?.pixelY ?? 0
+            Int(cursorXText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? snapshot?.planeCursor.map { Int($0.pixelX) } ?? 0,
+            Int(cursorYText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? snapshot?.planeCursor.map { Int($0.pixelY) } ?? 0
         )
     }
 
@@ -1685,14 +1685,14 @@ private struct ImageExplorerSnapshotView: View {
     }
 
     private var quickMovieAxis: Int? {
-        let axes = snapshot.nonDisplayAxes ?? []
-        if let movieAxis = explorerState?.movieAxis, axes.contains(where: { $0.axis == movieAxis }) {
+        let axes = snapshot.nonDisplayAxes
+        if let movieAxis = explorerState?.movieAxis, axes.contains(where: { Int($0.axis) == movieAxis }) {
             return movieAxis
         }
-        if let profileAxis = explorerState?.selectedProfileAxis, axes.contains(where: { $0.axis == profileAxis }) {
+        if let profileAxis = explorerState?.selectedProfileAxis, axes.contains(where: { Int($0.axis) == profileAxis }) {
             return profileAxis
         }
-        return axes.first?.axis
+        return axes.first.map { Int($0.axis) }
     }
 
     private func startQuickMovie() {
@@ -1709,10 +1709,10 @@ private struct ImageExplorerSnapshotView: View {
 
     private var controlSummary: String {
         let mode = explorerState?.planeContentMode ?? "raster"
-        let axes = snapshot.nonDisplayAxes ?? []
+        let axes = snapshot.nonDisplayAxes
         if explorerState?.moviePlaying == true {
-            let axisID = explorerState?.movieAxis ?? axes.first?.axis
-            let axis = axes.first { $0.axis == axisID }
+            let axisID = explorerState?.movieAxis ?? axes.first.map { Int($0.axis) }
+            let axis = axes.first { Int($0.axis) == axisID }
             let label = axis?.label ?? "axis \(axisID ?? 0)"
             return "\(mode), movie \(label)"
         }
@@ -1740,9 +1740,9 @@ private struct ImageExplorerImageWorkspaceView: View {
                         plane: plane,
                         cursor: snapshot.planeCursor,
                         region: snapshot.region,
-                        displayAxes: snapshot.displayAxes ?? [],
+                        displayAxes: snapshot.displayAxes,
                         probe: snapshot.probe,
-                        nonDisplayAxes: snapshot.nonDisplayAxes ?? [],
+                        nonDisplayAxes: snapshot.nonDisplayAxes,
                         regionTool: regionTool,
                         regionIsSaved: regionIsSaved,
                         colorMap: colorMap
@@ -1788,7 +1788,7 @@ private struct ImageExplorerImageWorkspaceView: View {
     private var rasterRenderIdentity: String {
         let regionIdentity: String
         if let region = snapshot.region {
-            let vertices = region.overlayShapes?.reduce(0) { $0 + $1.vertices.count } ?? 0
+            let vertices = region.overlayShapes.reduce(0) { $0 + $1.vertices.count }
             regionIdentity = "\(region.label)-\(region.shapeCount)-\(region.closedShapeCount)-\(vertices)"
         } else {
             regionIdentity = "no-region"
@@ -1869,7 +1869,7 @@ private final class KeyCaptureNSView: NSView {
 }
 
 private struct ImageProfilePanelView: View {
-    let profile: ImageExplorerSnapshot.Profile
+    let profile: ImageExplorerProfile
     let onSampleSelect: (Int, Int) -> Void
     @Environment(\.workbenchFontSize) private var workbenchFontSize
 
@@ -1890,7 +1890,7 @@ private struct ImageProfilePanelView: View {
                         DragGesture(minimumDistance: 0)
                             .onEnded { value in
                                 if let sampleIndex = sampleIndex(at: value.location, size: geometry.size, reservedRightGutter: reservedRightGutter) {
-                                    onSampleSelect(profile.axis, sampleIndex)
+                                    onSampleSelect(Int(profile.axis), sampleIndex)
                                 }
                             }
                     )
@@ -1912,10 +1912,10 @@ private struct ImageProfilePanelView: View {
             drawLength: plotRect.width,
             sampledLength: profile.samples.count
         )
-        return profile.samples[slot].sampleIndex
+        return Int(profile.samples[slot].sampleIndex)
     }
 
-    private func profilePlotDocument(_ profile: ImageExplorerSnapshot.Profile) -> WorkbenchPlotDocument {
+    private func profilePlotDocument(_ profile: ImageExplorerProfile) -> WorkbenchPlotDocument {
         let xAxisPresentation = profileXAxisPresentation(profile)
         let points = profile.samples
             .filter { $0.finite && $0.masked != true }
@@ -1971,7 +1971,7 @@ private struct ImageProfilePanelView: View {
         )
     }
 
-    private func profileXAxisPresentation(_ profile: ImageExplorerSnapshot.Profile) -> ProfileXAxisPresentation {
+    private func profileXAxisPresentation(_ profile: ImageExplorerProfile) -> ProfileXAxisPresentation {
         let worldValues = profile.samples.compactMap { $0.worldAxis?.value }.filter { $0.isFinite }
         let worldUnit = profile.samples.compactMap { $0.worldAxis?.unit }.first
         let unit = worldUnit ?? profile.axisUnit
@@ -2003,7 +2003,7 @@ private struct ProfileXAxisPresentation {
     let scale: Double
     let unit: String
 
-    func value(for sample: ImageExplorerSnapshot.Profile.Sample) -> Double {
+    func value(for sample: ImageExplorerProfileSample) -> Double {
         guard let worldValue = sample.worldAxis?.value else {
             return Double(sample.sampleIndex)
         }
@@ -2047,12 +2047,12 @@ private struct ImagePlaneRegionDrag {
 }
 
 private struct ImagePlaneRasterView: View {
-    let plane: ImageExplorerSnapshot.Plane
-    let cursor: ImageExplorerSnapshot.PlaneCursor?
-    let region: ImageExplorerSnapshot.Region?
-    let displayAxes: [ImageExplorerSnapshot.DisplayAxis]
-    let probe: ImageExplorerSnapshot.Probe?
-    let nonDisplayAxes: [ImageExplorerSnapshot.NonDisplayAxis]
+    let plane: ImageExplorerPlane
+    let cursor: ImageExplorerPlaneCursor?
+    let region: ImageExplorerRegion?
+    let displayAxes: [ImageExplorerDisplayAxis]
+    let probe: ImageExplorerProbe?
+    let nonDisplayAxes: [ImageExplorerNonDisplayAxis]
     let regionTool: String
     let regionIsSaved: Bool
     let colorMap: ImageExplorerColorMap
@@ -2236,7 +2236,7 @@ private struct ImagePlaneRasterView: View {
 
     private func deleteSelectedRegionShape() -> Bool {
         guard let selectedRegionShapeIndex,
-              region?.overlayShapes?.indices.contains(selectedRegionShapeIndex) == true
+              region?.overlayShapes.indices.contains(selectedRegionShapeIndex) == true
         else {
             return false
         }
@@ -2339,7 +2339,8 @@ private struct ImagePlaneRasterView: View {
         }
         context.stroke(wedgePath, with: .color(Color.secondary.opacity(0.65)), lineWidth: 1)
 
-        if let histogramRect = layout.histogramRect, let bins = plane.histogramBins, !bins.isEmpty {
+        if let histogramRect = layout.histogramRect, !plane.histogramBins.isEmpty {
+            let bins = plane.histogramBins
             drawHistogram(bins: bins, in: &context, rect: histogramRect)
         }
         drawScaleTicks(in: &context, layout: layout)
@@ -2408,7 +2409,7 @@ private struct ImagePlaneRasterView: View {
     private func drawPlaneOverlays(in context: inout GraphicsContext, layout: ImagePlaneViewportGeometry) {
         if let region {
             let regionColor = regionIsSaved ? Color.green : Color.yellow
-            for (shapeIndex, shape) in (region.overlayShapes ?? []).enumerated() {
+            for (shapeIndex, shape) in region.overlayShapes.enumerated() {
                 let points = shape.vertices.map { overlayPoint($0.sampledX, $0.sampledY, rect: layout.imageRect) }
                 strokeRegionPath(points: points, closed: shape.closed, color: regionColor.opacity(0.85), in: &context)
                 if selectedRegionShapeIndex == shapeIndex {
@@ -2527,8 +2528,8 @@ private struct ImagePlaneRasterView: View {
             return pixel
         }
         return (
-            x: Int((Double(pixel.x - xAxis.blc) / Double(max(xAxis.inc, 1))).rounded()),
-            y: Int((Double(pixel.y - yAxis.blc) / Double(max(yAxis.inc, 1))).rounded())
+            x: Int((Double(pixel.x - Int(xAxis.blc)) / Double(max(Int(xAxis.inc), 1))).rounded()),
+            y: Int((Double(pixel.y - Int(yAxis.blc)) / Double(max(Int(yAxis.inc), 1))).rounded())
         )
     }
 
@@ -2631,7 +2632,7 @@ private struct ImagePlaneRasterView: View {
     }
 
     private func activeOpenShapeVertices() -> [(x: Int, y: Int)]? {
-        guard let shape = region?.overlayShapes?.last(where: { !$0.closed }) else { return nil }
+        guard let shape = region?.overlayShapes.last(where: { !$0.closed }) else { return nil }
         return shape.vertices.map { sourcePixel(sampledX: $0.sampledX, sampledY: $0.sampledY) }
     }
 
@@ -2662,8 +2663,8 @@ private struct ImagePlaneRasterView: View {
 
     private func clampSourcePixel(_ pixel: (x: Int, y: Int)) -> (x: Int, y: Int) {
         (
-            x: min(max(pixel.x, 0), max(plane.width - 1, 0)),
-            y: min(max(pixel.y, 0), max(plane.height - 1, 0))
+            x: min(max(pixel.x, 0), max(Int(plane.width) - 1, 0)),
+            y: min(max(pixel.y, 0), max(Int(plane.height) - 1, 0))
         )
     }
 
@@ -2674,8 +2675,8 @@ private struct ImagePlaneRasterView: View {
             return (sampledXInt, sampledYInt)
         }
         return (
-            xAxis.blc + sampledXInt * max(xAxis.inc, 1),
-            yAxis.blc + sampledYInt * max(yAxis.inc, 1)
+            Int(xAxis.blc) + sampledXInt * max(Int(xAxis.inc), 1),
+            Int(yAxis.blc) + sampledYInt * max(Int(yAxis.inc), 1)
         )
     }
 
@@ -2750,33 +2751,33 @@ private struct ImagePlaneRasterView: View {
                 imageClickSampleIndex(
                     relative: location.x - layout.imageRect.minX,
                     drawLength: layout.imageRect.width,
-                    sampledLength: plane.width
+                    sampledLength: Int(plane.width)
                 ),
                 imageClickSampleIndex(
                     relative: location.y - layout.imageRect.minY,
                     drawLength: layout.imageRect.height,
-                    sampledLength: plane.height
+                    sampledLength: Int(plane.height)
                 )
             )
         }
         let sampledX = imageClickSampleIndex(
             relative: location.x - layout.imageRect.minX,
             drawLength: layout.imageRect.width,
-            sampledLength: xAxis.sampledLen
+            sampledLength: Int(xAxis.sampledLen)
         )
         let sampledY = imageClickSampleIndex(
             relative: location.y - layout.imageRect.minY,
             drawLength: layout.imageRect.height,
-            sampledLength: yAxis.sampledLen
+            sampledLength: Int(yAxis.sampledLen)
         )
         return (
-            xAxis.blc + sampledX * max(xAxis.inc, 1),
-            yAxis.blc + sampledY * max(yAxis.inc, 1)
+            Int(xAxis.blc) + sampledX * max(Int(xAxis.inc), 1),
+            Int(yAxis.blc) + sampledY * max(Int(yAxis.inc), 1)
         )
     }
 
     private func axisTicks(
-        axis: ImageExplorerSnapshot.DisplayAxis,
+        axis: ImageExplorerDisplayAxis,
         length: CGFloat,
         reverse: Bool
     ) -> [ImagePlaneAxisTick] {
@@ -2790,7 +2791,7 @@ private struct ImagePlaneRasterView: View {
         }
         indices = Array(NSOrderedSet(array: indices).compactMap { $0 as? Int })
         return indices.map { sampleIndex in
-            let pixel = axis.blc + sampleIndex * max(axis.inc, 1)
+            let pixel = Int(axis.blc) + sampleIndex * max(Int(axis.inc), 1)
             let fraction = maxIndex == 0 ? 0.5 : CGFloat(sampleIndex) / CGFloat(maxIndex)
             let position = reverse ? (1 - fraction) * length : fraction * length
             return ImagePlaneAxisTick(
@@ -2800,7 +2801,7 @@ private struct ImagePlaneRasterView: View {
         }
     }
 
-    private func axisTickLabel(axis: ImageExplorerSnapshot.DisplayAxis, pixel: Int) -> String {
+    private func axisTickLabel(axis: ImageExplorerDisplayAxis, pixel: Int) -> String {
         guard let value = axisWorldValue(axis: axis, pixel: pixel) else {
             return "\(pixel)"
         }
@@ -2816,19 +2817,20 @@ private struct ImagePlaneRasterView: View {
         return axis.unit.isEmpty ? trimFloatText(value) : "\(trimFloatText(value)) \(axis.unit)"
     }
 
-    private func axisWorldValue(axis: ImageExplorerSnapshot.DisplayAxis, pixel: Int) -> Double? {
+    private func axisWorldValue(axis: ImageExplorerDisplayAxis, pixel: Int) -> Double? {
+        let axisIndex = Int(axis.axis)
         guard let increment = axis.worldIncrement,
               let probe,
-              probe.worldAxes.indices.contains(axis.axis),
-              probe.pixelIndices.indices.contains(axis.axis) else {
+              probe.worldAxes.indices.contains(axisIndex),
+              probe.pixelIndices.indices.contains(axisIndex) else {
             return nil
         }
-        let probeWorld = probe.worldAxes[axis.axis].value
-        let probePixel = Double(probe.pixelIndices[axis.axis])
+        let probeWorld = probe.worldAxes[axisIndex].value
+        let probePixel = Double(probe.pixelIndices[axisIndex])
         return probeWorld + (Double(pixel) - probePixel) * increment
     }
 
-    private func axisTitle(_ axis: ImageExplorerSnapshot.DisplayAxis) -> String {
+    private func axisTitle(_ axis: ImageExplorerDisplayAxis) -> String {
         if isRightAscensionAxis(axis.name) {
             return "Right Ascension"
         }
@@ -2893,23 +2895,25 @@ private struct ImagePlaneRasterView: View {
             image = nil
             return
         }
+        let width = Int(plane.width)
+        let height = Int(plane.height)
         let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil,
-            pixelsWide: plane.width,
-            pixelsHigh: plane.height,
+            pixelsWide: width,
+            pixelsHigh: height,
             bitsPerSample: 8,
             samplesPerPixel: 4,
             hasAlpha: true,
             isPlanar: false,
             colorSpaceName: .deviceRGB,
-            bytesPerRow: plane.width * 4,
+            bytesPerRow: width * 4,
             bitsPerPixel: 32
         )
         guard let data = bitmap?.bitmapData else {
             image = nil
             return
         }
-        for index in 0..<(plane.width * plane.height) {
+        for index in 0..<(width * height) {
             let value = plane.pixelsU8[index]
             let color = imagePlaneRGB(value, colorMap: colorMap)
             let offset = index * 4
@@ -2918,7 +2922,7 @@ private struct ImagePlaneRasterView: View {
             data[offset + 2] = color.blue
             data[offset + 3] = 255
         }
-        let output = NSImage(size: NSSize(width: plane.width, height: plane.height))
+        let output = NSImage(size: NSSize(width: width, height: height))
         if let bitmap {
             output.addRepresentation(bitmap)
         }
@@ -3029,8 +3033,8 @@ private struct ImagePlaneViewportGeometry {
 
     init(
         size: CGSize,
-        plane: ImageExplorerSnapshot.Plane,
-        displayAxes: [ImageExplorerSnapshot.DisplayAxis],
+        plane: ImageExplorerPlane,
+        displayAxes: [ImageExplorerDisplayAxis],
         characterSize: Double
     ) {
         let showAxisAnnotations = displayAxes.count >= 2 && size.width >= 320 && size.height >= 220
@@ -3090,8 +3094,8 @@ private struct ImagePlaneViewportGeometry {
     }
 
     private static func displayAspectRatio(
-        displayAxes: [ImageExplorerSnapshot.DisplayAxis],
-        plane: ImageExplorerSnapshot.Plane
+        displayAxes: [ImageExplorerDisplayAxis],
+        plane: ImageExplorerPlane
     ) -> CGFloat {
         guard let x = displayAxes.first, let y = displayAxes[safe: 1] else {
             return CGFloat(max(plane.width, 1)) / CGFloat(max(plane.height, 1))

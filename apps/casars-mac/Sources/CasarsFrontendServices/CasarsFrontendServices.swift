@@ -1503,6 +1503,2166 @@ public func FfiConverterTypeDatasetProbe_lower(_ value: DatasetProbe) -> RustBuf
 }
 
 
+public struct ImageExplorerAxisValue {
+    public var name: String
+    public var unit: String
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, unit: String, value: Double) {
+        self.name = name
+        self.unit = unit
+        self.value = value
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerAxisValue: Sendable {}
+#endif
+
+
+extension ImageExplorerAxisValue: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerAxisValue, rhs: ImageExplorerAxisValue) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.unit != rhs.unit {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(unit)
+        hasher.combine(value)
+    }
+}
+
+extension ImageExplorerAxisValue: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerAxisValue: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerAxisValue {
+        return
+            try ImageExplorerAxisValue(
+                name: FfiConverterString.read(from: &buf),
+                unit: FfiConverterString.read(from: &buf),
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerAxisValue, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.unit, into: &buf)
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerAxisValue_lift(_ buf: RustBuffer) throws -> ImageExplorerAxisValue {
+    return try FfiConverterTypeImageExplorerAxisValue.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerAxisValue_lower(_ value: ImageExplorerAxisValue) -> RustBuffer {
+    return FfiConverterTypeImageExplorerAxisValue.lower(value)
+}
+
+
+public struct ImageExplorerBackendTiming {
+    public var planeCacheResult: String
+    public var cachedPlaneLookupNs: UInt64
+    public var planeExtractNs: UInt64
+    public var statCollectionNs: UInt64
+    public var histogramNs: UInt64
+    public var rasterizeNs: UInt64
+    public var totalPlaneNs: UInt64
+    public var profileCacheHits: UInt64
+    public var profileCacheMisses: UInt64
+    public var profileExtractTotalNs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(planeCacheResult: String, cachedPlaneLookupNs: UInt64, planeExtractNs: UInt64, statCollectionNs: UInt64, histogramNs: UInt64, rasterizeNs: UInt64, totalPlaneNs: UInt64, profileCacheHits: UInt64, profileCacheMisses: UInt64, profileExtractTotalNs: UInt64) {
+        self.planeCacheResult = planeCacheResult
+        self.cachedPlaneLookupNs = cachedPlaneLookupNs
+        self.planeExtractNs = planeExtractNs
+        self.statCollectionNs = statCollectionNs
+        self.histogramNs = histogramNs
+        self.rasterizeNs = rasterizeNs
+        self.totalPlaneNs = totalPlaneNs
+        self.profileCacheHits = profileCacheHits
+        self.profileCacheMisses = profileCacheMisses
+        self.profileExtractTotalNs = profileExtractTotalNs
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerBackendTiming: Sendable {}
+#endif
+
+
+extension ImageExplorerBackendTiming: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerBackendTiming, rhs: ImageExplorerBackendTiming) -> Bool {
+        if lhs.planeCacheResult != rhs.planeCacheResult {
+            return false
+        }
+        if lhs.cachedPlaneLookupNs != rhs.cachedPlaneLookupNs {
+            return false
+        }
+        if lhs.planeExtractNs != rhs.planeExtractNs {
+            return false
+        }
+        if lhs.statCollectionNs != rhs.statCollectionNs {
+            return false
+        }
+        if lhs.histogramNs != rhs.histogramNs {
+            return false
+        }
+        if lhs.rasterizeNs != rhs.rasterizeNs {
+            return false
+        }
+        if lhs.totalPlaneNs != rhs.totalPlaneNs {
+            return false
+        }
+        if lhs.profileCacheHits != rhs.profileCacheHits {
+            return false
+        }
+        if lhs.profileCacheMisses != rhs.profileCacheMisses {
+            return false
+        }
+        if lhs.profileExtractTotalNs != rhs.profileExtractTotalNs {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(planeCacheResult)
+        hasher.combine(cachedPlaneLookupNs)
+        hasher.combine(planeExtractNs)
+        hasher.combine(statCollectionNs)
+        hasher.combine(histogramNs)
+        hasher.combine(rasterizeNs)
+        hasher.combine(totalPlaneNs)
+        hasher.combine(profileCacheHits)
+        hasher.combine(profileCacheMisses)
+        hasher.combine(profileExtractTotalNs)
+    }
+}
+
+extension ImageExplorerBackendTiming: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerBackendTiming: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerBackendTiming {
+        return
+            try ImageExplorerBackendTiming(
+                planeCacheResult: FfiConverterString.read(from: &buf),
+                cachedPlaneLookupNs: FfiConverterUInt64.read(from: &buf),
+                planeExtractNs: FfiConverterUInt64.read(from: &buf),
+                statCollectionNs: FfiConverterUInt64.read(from: &buf),
+                histogramNs: FfiConverterUInt64.read(from: &buf),
+                rasterizeNs: FfiConverterUInt64.read(from: &buf),
+                totalPlaneNs: FfiConverterUInt64.read(from: &buf),
+                profileCacheHits: FfiConverterUInt64.read(from: &buf),
+                profileCacheMisses: FfiConverterUInt64.read(from: &buf),
+                profileExtractTotalNs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerBackendTiming, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.planeCacheResult, into: &buf)
+        FfiConverterUInt64.write(value.cachedPlaneLookupNs, into: &buf)
+        FfiConverterUInt64.write(value.planeExtractNs, into: &buf)
+        FfiConverterUInt64.write(value.statCollectionNs, into: &buf)
+        FfiConverterUInt64.write(value.histogramNs, into: &buf)
+        FfiConverterUInt64.write(value.rasterizeNs, into: &buf)
+        FfiConverterUInt64.write(value.totalPlaneNs, into: &buf)
+        FfiConverterUInt64.write(value.profileCacheHits, into: &buf)
+        FfiConverterUInt64.write(value.profileCacheMisses, into: &buf)
+        FfiConverterUInt64.write(value.profileExtractTotalNs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerBackendTiming_lift(_ buf: RustBuffer) throws -> ImageExplorerBackendTiming {
+    return try FfiConverterTypeImageExplorerBackendTiming.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerBackendTiming_lower(_ value: ImageExplorerBackendTiming) -> RustBuffer {
+    return FfiConverterTypeImageExplorerBackendTiming.lower(value)
+}
+
+
+public struct ImageExplorerCapabilities {
+    public var renderablePlane: Bool
+    public var worldCoordsAvailable: Bool
+    public var pixelOnlyMode: Bool
+    public var nonDisplayAxisSelectors: Bool
+    public var maskPresent: Bool
+    public var complexUnsupported: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(renderablePlane: Bool, worldCoordsAvailable: Bool, pixelOnlyMode: Bool, nonDisplayAxisSelectors: Bool, maskPresent: Bool, complexUnsupported: Bool) {
+        self.renderablePlane = renderablePlane
+        self.worldCoordsAvailable = worldCoordsAvailable
+        self.pixelOnlyMode = pixelOnlyMode
+        self.nonDisplayAxisSelectors = nonDisplayAxisSelectors
+        self.maskPresent = maskPresent
+        self.complexUnsupported = complexUnsupported
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerCapabilities: Sendable {}
+#endif
+
+
+extension ImageExplorerCapabilities: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerCapabilities, rhs: ImageExplorerCapabilities) -> Bool {
+        if lhs.renderablePlane != rhs.renderablePlane {
+            return false
+        }
+        if lhs.worldCoordsAvailable != rhs.worldCoordsAvailable {
+            return false
+        }
+        if lhs.pixelOnlyMode != rhs.pixelOnlyMode {
+            return false
+        }
+        if lhs.nonDisplayAxisSelectors != rhs.nonDisplayAxisSelectors {
+            return false
+        }
+        if lhs.maskPresent != rhs.maskPresent {
+            return false
+        }
+        if lhs.complexUnsupported != rhs.complexUnsupported {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(renderablePlane)
+        hasher.combine(worldCoordsAvailable)
+        hasher.combine(pixelOnlyMode)
+        hasher.combine(nonDisplayAxisSelectors)
+        hasher.combine(maskPresent)
+        hasher.combine(complexUnsupported)
+    }
+}
+
+extension ImageExplorerCapabilities: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerCapabilities: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerCapabilities {
+        return
+            try ImageExplorerCapabilities(
+                renderablePlane: FfiConverterBool.read(from: &buf),
+                worldCoordsAvailable: FfiConverterBool.read(from: &buf),
+                pixelOnlyMode: FfiConverterBool.read(from: &buf),
+                nonDisplayAxisSelectors: FfiConverterBool.read(from: &buf),
+                maskPresent: FfiConverterBool.read(from: &buf),
+                complexUnsupported: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerCapabilities, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.renderablePlane, into: &buf)
+        FfiConverterBool.write(value.worldCoordsAvailable, into: &buf)
+        FfiConverterBool.write(value.pixelOnlyMode, into: &buf)
+        FfiConverterBool.write(value.nonDisplayAxisSelectors, into: &buf)
+        FfiConverterBool.write(value.maskPresent, into: &buf)
+        FfiConverterBool.write(value.complexUnsupported, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerCapabilities_lift(_ buf: RustBuffer) throws -> ImageExplorerCapabilities {
+    return try FfiConverterTypeImageExplorerCapabilities.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerCapabilities_lower(_ value: ImageExplorerCapabilities) -> RustBuffer {
+    return FfiConverterTypeImageExplorerCapabilities.lower(value)
+}
+
+
+public struct ImageExplorerCommand {
+    public var command: String
+    public var x: UInt64?
+    public var y: UInt64?
+    public var name: String?
+    public var newName: String?
+    public var setDefault: Bool?
+    public var path: String?
+    public var region: ImageExplorerRegionReference?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(command: String, x: UInt64?, y: UInt64?, name: String?, newName: String?, setDefault: Bool?, path: String?, region: ImageExplorerRegionReference?) {
+        self.command = command
+        self.x = x
+        self.y = y
+        self.name = name
+        self.newName = newName
+        self.setDefault = setDefault
+        self.path = path
+        self.region = region
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerCommand: Sendable {}
+#endif
+
+
+extension ImageExplorerCommand: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerCommand, rhs: ImageExplorerCommand) -> Bool {
+        if lhs.command != rhs.command {
+            return false
+        }
+        if lhs.x != rhs.x {
+            return false
+        }
+        if lhs.y != rhs.y {
+            return false
+        }
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.newName != rhs.newName {
+            return false
+        }
+        if lhs.setDefault != rhs.setDefault {
+            return false
+        }
+        if lhs.path != rhs.path {
+            return false
+        }
+        if lhs.region != rhs.region {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(command)
+        hasher.combine(x)
+        hasher.combine(y)
+        hasher.combine(name)
+        hasher.combine(newName)
+        hasher.combine(setDefault)
+        hasher.combine(path)
+        hasher.combine(region)
+    }
+}
+
+extension ImageExplorerCommand: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerCommand: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerCommand {
+        return
+            try ImageExplorerCommand(
+                command: FfiConverterString.read(from: &buf),
+                x: FfiConverterOptionUInt64.read(from: &buf),
+                y: FfiConverterOptionUInt64.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                newName: FfiConverterOptionString.read(from: &buf),
+                setDefault: FfiConverterOptionBool.read(from: &buf),
+                path: FfiConverterOptionString.read(from: &buf),
+                region: FfiConverterOptionTypeImageExplorerRegionReference.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerCommand, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.command, into: &buf)
+        FfiConverterOptionUInt64.write(value.x, into: &buf)
+        FfiConverterOptionUInt64.write(value.y, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.newName, into: &buf)
+        FfiConverterOptionBool.write(value.setDefault, into: &buf)
+        FfiConverterOptionString.write(value.path, into: &buf)
+        FfiConverterOptionTypeImageExplorerRegionReference.write(value.region, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerCommand_lift(_ buf: RustBuffer) throws -> ImageExplorerCommand {
+    return try FfiConverterTypeImageExplorerCommand.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerCommand_lower(_ value: ImageExplorerCommand) -> RustBuffer {
+    return FfiConverterTypeImageExplorerCommand.lower(value)
+}
+
+
+public struct ImageExplorerDisplayAxis {
+    public var axis: UInt64
+    public var name: String
+    public var unit: String
+    public var blc: UInt64
+    public var trc: UInt64
+    public var inc: UInt64
+    public var sampledLen: UInt64
+    public var worldIncrement: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(axis: UInt64, name: String, unit: String, blc: UInt64, trc: UInt64, inc: UInt64, sampledLen: UInt64, worldIncrement: Double?) {
+        self.axis = axis
+        self.name = name
+        self.unit = unit
+        self.blc = blc
+        self.trc = trc
+        self.inc = inc
+        self.sampledLen = sampledLen
+        self.worldIncrement = worldIncrement
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerDisplayAxis: Sendable {}
+#endif
+
+
+extension ImageExplorerDisplayAxis: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerDisplayAxis, rhs: ImageExplorerDisplayAxis) -> Bool {
+        if lhs.axis != rhs.axis {
+            return false
+        }
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.unit != rhs.unit {
+            return false
+        }
+        if lhs.blc != rhs.blc {
+            return false
+        }
+        if lhs.trc != rhs.trc {
+            return false
+        }
+        if lhs.inc != rhs.inc {
+            return false
+        }
+        if lhs.sampledLen != rhs.sampledLen {
+            return false
+        }
+        if lhs.worldIncrement != rhs.worldIncrement {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(axis)
+        hasher.combine(name)
+        hasher.combine(unit)
+        hasher.combine(blc)
+        hasher.combine(trc)
+        hasher.combine(inc)
+        hasher.combine(sampledLen)
+        hasher.combine(worldIncrement)
+    }
+}
+
+extension ImageExplorerDisplayAxis: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerDisplayAxis: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerDisplayAxis {
+        return
+            try ImageExplorerDisplayAxis(
+                axis: FfiConverterUInt64.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                unit: FfiConverterString.read(from: &buf),
+                blc: FfiConverterUInt64.read(from: &buf),
+                trc: FfiConverterUInt64.read(from: &buf),
+                inc: FfiConverterUInt64.read(from: &buf),
+                sampledLen: FfiConverterUInt64.read(from: &buf),
+                worldIncrement: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerDisplayAxis, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.axis, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.unit, into: &buf)
+        FfiConverterUInt64.write(value.blc, into: &buf)
+        FfiConverterUInt64.write(value.trc, into: &buf)
+        FfiConverterUInt64.write(value.inc, into: &buf)
+        FfiConverterUInt64.write(value.sampledLen, into: &buf)
+        FfiConverterOptionDouble.write(value.worldIncrement, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerDisplayAxis_lift(_ buf: RustBuffer) throws -> ImageExplorerDisplayAxis {
+    return try FfiConverterTypeImageExplorerDisplayAxis.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerDisplayAxis_lower(_ value: ImageExplorerDisplayAxis) -> RustBuffer {
+    return FfiConverterTypeImageExplorerDisplayAxis.lower(value)
+}
+
+
+public struct ImageExplorerNavigation {
+    public var selectedIndex: UInt64
+    public var totalItems: UInt64
+    public var viewportItems: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(selectedIndex: UInt64, totalItems: UInt64, viewportItems: UInt64) {
+        self.selectedIndex = selectedIndex
+        self.totalItems = totalItems
+        self.viewportItems = viewportItems
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerNavigation: Sendable {}
+#endif
+
+
+extension ImageExplorerNavigation: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerNavigation, rhs: ImageExplorerNavigation) -> Bool {
+        if lhs.selectedIndex != rhs.selectedIndex {
+            return false
+        }
+        if lhs.totalItems != rhs.totalItems {
+            return false
+        }
+        if lhs.viewportItems != rhs.viewportItems {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(selectedIndex)
+        hasher.combine(totalItems)
+        hasher.combine(viewportItems)
+    }
+}
+
+extension ImageExplorerNavigation: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerNavigation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerNavigation {
+        return
+            try ImageExplorerNavigation(
+                selectedIndex: FfiConverterUInt64.read(from: &buf),
+                totalItems: FfiConverterUInt64.read(from: &buf),
+                viewportItems: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerNavigation, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.selectedIndex, into: &buf)
+        FfiConverterUInt64.write(value.totalItems, into: &buf)
+        FfiConverterUInt64.write(value.viewportItems, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerNavigation_lift(_ buf: RustBuffer) throws -> ImageExplorerNavigation {
+    return try FfiConverterTypeImageExplorerNavigation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerNavigation_lower(_ value: ImageExplorerNavigation) -> RustBuffer {
+    return FfiConverterTypeImageExplorerNavigation.lower(value)
+}
+
+
+public struct ImageExplorerNonDisplayAxis {
+    public var axis: UInt64
+    public var label: String
+    public var index: UInt64
+    public var length: UInt64
+    public var pixel: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(axis: UInt64, label: String, index: UInt64, length: UInt64, pixel: UInt64) {
+        self.axis = axis
+        self.label = label
+        self.index = index
+        self.length = length
+        self.pixel = pixel
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerNonDisplayAxis: Sendable {}
+#endif
+
+
+extension ImageExplorerNonDisplayAxis: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerNonDisplayAxis, rhs: ImageExplorerNonDisplayAxis) -> Bool {
+        if lhs.axis != rhs.axis {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.index != rhs.index {
+            return false
+        }
+        if lhs.length != rhs.length {
+            return false
+        }
+        if lhs.pixel != rhs.pixel {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(axis)
+        hasher.combine(label)
+        hasher.combine(index)
+        hasher.combine(length)
+        hasher.combine(pixel)
+    }
+}
+
+extension ImageExplorerNonDisplayAxis: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerNonDisplayAxis: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerNonDisplayAxis {
+        return
+            try ImageExplorerNonDisplayAxis(
+                axis: FfiConverterUInt64.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                index: FfiConverterUInt64.read(from: &buf),
+                length: FfiConverterUInt64.read(from: &buf),
+                pixel: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerNonDisplayAxis, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.axis, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterUInt64.write(value.index, into: &buf)
+        FfiConverterUInt64.write(value.length, into: &buf)
+        FfiConverterUInt64.write(value.pixel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerNonDisplayAxis_lift(_ buf: RustBuffer) throws -> ImageExplorerNonDisplayAxis {
+    return try FfiConverterTypeImageExplorerNonDisplayAxis.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerNonDisplayAxis_lower(_ value: ImageExplorerNonDisplayAxis) -> RustBuffer {
+    return FfiConverterTypeImageExplorerNonDisplayAxis.lower(value)
+}
+
+
+public struct ImageExplorerParameters {
+    public var blc: String
+    public var trc: String
+    public var inc: String
+    public var stretch: String
+    public var autoscale: String
+    public var clipLow: String
+    public var clipHigh: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(blc: String, trc: String, inc: String, stretch: String, autoscale: String, clipLow: String, clipHigh: String) {
+        self.blc = blc
+        self.trc = trc
+        self.inc = inc
+        self.stretch = stretch
+        self.autoscale = autoscale
+        self.clipLow = clipLow
+        self.clipHigh = clipHigh
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerParameters: Sendable {}
+#endif
+
+
+extension ImageExplorerParameters: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerParameters, rhs: ImageExplorerParameters) -> Bool {
+        if lhs.blc != rhs.blc {
+            return false
+        }
+        if lhs.trc != rhs.trc {
+            return false
+        }
+        if lhs.inc != rhs.inc {
+            return false
+        }
+        if lhs.stretch != rhs.stretch {
+            return false
+        }
+        if lhs.autoscale != rhs.autoscale {
+            return false
+        }
+        if lhs.clipLow != rhs.clipLow {
+            return false
+        }
+        if lhs.clipHigh != rhs.clipHigh {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(blc)
+        hasher.combine(trc)
+        hasher.combine(inc)
+        hasher.combine(stretch)
+        hasher.combine(autoscale)
+        hasher.combine(clipLow)
+        hasher.combine(clipHigh)
+    }
+}
+
+extension ImageExplorerParameters: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerParameters: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerParameters {
+        return
+            try ImageExplorerParameters(
+                blc: FfiConverterString.read(from: &buf),
+                trc: FfiConverterString.read(from: &buf),
+                inc: FfiConverterString.read(from: &buf),
+                stretch: FfiConverterString.read(from: &buf),
+                autoscale: FfiConverterString.read(from: &buf),
+                clipLow: FfiConverterString.read(from: &buf),
+                clipHigh: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerParameters, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.blc, into: &buf)
+        FfiConverterString.write(value.trc, into: &buf)
+        FfiConverterString.write(value.inc, into: &buf)
+        FfiConverterString.write(value.stretch, into: &buf)
+        FfiConverterString.write(value.autoscale, into: &buf)
+        FfiConverterString.write(value.clipLow, into: &buf)
+        FfiConverterString.write(value.clipHigh, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerParameters_lift(_ buf: RustBuffer) throws -> ImageExplorerParameters {
+    return try FfiConverterTypeImageExplorerParameters.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerParameters_lower(_ value: ImageExplorerParameters) -> RustBuffer {
+    return FfiConverterTypeImageExplorerParameters.lower(value)
+}
+
+
+public struct ImageExplorerPlane {
+    public var width: UInt64
+    public var height: UInt64
+    public var pixelsU8: Data
+    public var clipMin: Double
+    public var clipMax: Double
+    public var dataMin: Double
+    public var dataMax: Double
+    public var valueUnit: String
+    public var histogramBins: [UInt32]
+    public var maskedOrNonFiniteCount: UInt64
+    public var noFiniteValues: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(width: UInt64, height: UInt64, pixelsU8: Data, clipMin: Double, clipMax: Double, dataMin: Double, dataMax: Double, valueUnit: String, histogramBins: [UInt32], maskedOrNonFiniteCount: UInt64, noFiniteValues: Bool) {
+        self.width = width
+        self.height = height
+        self.pixelsU8 = pixelsU8
+        self.clipMin = clipMin
+        self.clipMax = clipMax
+        self.dataMin = dataMin
+        self.dataMax = dataMax
+        self.valueUnit = valueUnit
+        self.histogramBins = histogramBins
+        self.maskedOrNonFiniteCount = maskedOrNonFiniteCount
+        self.noFiniteValues = noFiniteValues
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerPlane: Sendable {}
+#endif
+
+
+extension ImageExplorerPlane: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerPlane, rhs: ImageExplorerPlane) -> Bool {
+        if lhs.width != rhs.width {
+            return false
+        }
+        if lhs.height != rhs.height {
+            return false
+        }
+        if lhs.pixelsU8 != rhs.pixelsU8 {
+            return false
+        }
+        if lhs.clipMin != rhs.clipMin {
+            return false
+        }
+        if lhs.clipMax != rhs.clipMax {
+            return false
+        }
+        if lhs.dataMin != rhs.dataMin {
+            return false
+        }
+        if lhs.dataMax != rhs.dataMax {
+            return false
+        }
+        if lhs.valueUnit != rhs.valueUnit {
+            return false
+        }
+        if lhs.histogramBins != rhs.histogramBins {
+            return false
+        }
+        if lhs.maskedOrNonFiniteCount != rhs.maskedOrNonFiniteCount {
+            return false
+        }
+        if lhs.noFiniteValues != rhs.noFiniteValues {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(width)
+        hasher.combine(height)
+        hasher.combine(pixelsU8)
+        hasher.combine(clipMin)
+        hasher.combine(clipMax)
+        hasher.combine(dataMin)
+        hasher.combine(dataMax)
+        hasher.combine(valueUnit)
+        hasher.combine(histogramBins)
+        hasher.combine(maskedOrNonFiniteCount)
+        hasher.combine(noFiniteValues)
+    }
+}
+
+extension ImageExplorerPlane: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerPlane: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerPlane {
+        return
+            try ImageExplorerPlane(
+                width: FfiConverterUInt64.read(from: &buf),
+                height: FfiConverterUInt64.read(from: &buf),
+                pixelsU8: FfiConverterData.read(from: &buf),
+                clipMin: FfiConverterDouble.read(from: &buf),
+                clipMax: FfiConverterDouble.read(from: &buf),
+                dataMin: FfiConverterDouble.read(from: &buf),
+                dataMax: FfiConverterDouble.read(from: &buf),
+                valueUnit: FfiConverterString.read(from: &buf),
+                histogramBins: FfiConverterSequenceUInt32.read(from: &buf),
+                maskedOrNonFiniteCount: FfiConverterUInt64.read(from: &buf),
+                noFiniteValues: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerPlane, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.width, into: &buf)
+        FfiConverterUInt64.write(value.height, into: &buf)
+        FfiConverterData.write(value.pixelsU8, into: &buf)
+        FfiConverterDouble.write(value.clipMin, into: &buf)
+        FfiConverterDouble.write(value.clipMax, into: &buf)
+        FfiConverterDouble.write(value.dataMin, into: &buf)
+        FfiConverterDouble.write(value.dataMax, into: &buf)
+        FfiConverterString.write(value.valueUnit, into: &buf)
+        FfiConverterSequenceUInt32.write(value.histogramBins, into: &buf)
+        FfiConverterUInt64.write(value.maskedOrNonFiniteCount, into: &buf)
+        FfiConverterBool.write(value.noFiniteValues, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerPlane_lift(_ buf: RustBuffer) throws -> ImageExplorerPlane {
+    return try FfiConverterTypeImageExplorerPlane.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerPlane_lower(_ value: ImageExplorerPlane) -> RustBuffer {
+    return FfiConverterTypeImageExplorerPlane.lower(value)
+}
+
+
+public struct ImageExplorerPlaneCursor {
+    public var sampledX: UInt64
+    public var sampledY: UInt64
+    public var pixelX: UInt64
+    public var pixelY: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sampledX: UInt64, sampledY: UInt64, pixelX: UInt64, pixelY: UInt64) {
+        self.sampledX = sampledX
+        self.sampledY = sampledY
+        self.pixelX = pixelX
+        self.pixelY = pixelY
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerPlaneCursor: Sendable {}
+#endif
+
+
+extension ImageExplorerPlaneCursor: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerPlaneCursor, rhs: ImageExplorerPlaneCursor) -> Bool {
+        if lhs.sampledX != rhs.sampledX {
+            return false
+        }
+        if lhs.sampledY != rhs.sampledY {
+            return false
+        }
+        if lhs.pixelX != rhs.pixelX {
+            return false
+        }
+        if lhs.pixelY != rhs.pixelY {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(sampledX)
+        hasher.combine(sampledY)
+        hasher.combine(pixelX)
+        hasher.combine(pixelY)
+    }
+}
+
+extension ImageExplorerPlaneCursor: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerPlaneCursor: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerPlaneCursor {
+        return
+            try ImageExplorerPlaneCursor(
+                sampledX: FfiConverterUInt64.read(from: &buf),
+                sampledY: FfiConverterUInt64.read(from: &buf),
+                pixelX: FfiConverterUInt64.read(from: &buf),
+                pixelY: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerPlaneCursor, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sampledX, into: &buf)
+        FfiConverterUInt64.write(value.sampledY, into: &buf)
+        FfiConverterUInt64.write(value.pixelX, into: &buf)
+        FfiConverterUInt64.write(value.pixelY, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerPlaneCursor_lift(_ buf: RustBuffer) throws -> ImageExplorerPlaneCursor {
+    return try FfiConverterTypeImageExplorerPlaneCursor.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerPlaneCursor_lower(_ value: ImageExplorerPlaneCursor) -> RustBuffer {
+    return FfiConverterTypeImageExplorerPlaneCursor.lower(value)
+}
+
+
+public struct ImageExplorerProbe {
+    public var pixelIndices: [UInt64]
+    public var pixelAxes: [ImageExplorerAxisValue]
+    public var value: Double
+    public var masked: Bool
+    public var finite: Bool
+    public var worldAxes: [ImageExplorerAxisValue]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(pixelIndices: [UInt64], pixelAxes: [ImageExplorerAxisValue], value: Double, masked: Bool, finite: Bool, worldAxes: [ImageExplorerAxisValue]) {
+        self.pixelIndices = pixelIndices
+        self.pixelAxes = pixelAxes
+        self.value = value
+        self.masked = masked
+        self.finite = finite
+        self.worldAxes = worldAxes
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerProbe: Sendable {}
+#endif
+
+
+extension ImageExplorerProbe: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerProbe, rhs: ImageExplorerProbe) -> Bool {
+        if lhs.pixelIndices != rhs.pixelIndices {
+            return false
+        }
+        if lhs.pixelAxes != rhs.pixelAxes {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        if lhs.masked != rhs.masked {
+            return false
+        }
+        if lhs.finite != rhs.finite {
+            return false
+        }
+        if lhs.worldAxes != rhs.worldAxes {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(pixelIndices)
+        hasher.combine(pixelAxes)
+        hasher.combine(value)
+        hasher.combine(masked)
+        hasher.combine(finite)
+        hasher.combine(worldAxes)
+    }
+}
+
+extension ImageExplorerProbe: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerProbe: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerProbe {
+        return
+            try ImageExplorerProbe(
+                pixelIndices: FfiConverterSequenceUInt64.read(from: &buf),
+                pixelAxes: FfiConverterSequenceTypeImageExplorerAxisValue.read(from: &buf),
+                value: FfiConverterDouble.read(from: &buf),
+                masked: FfiConverterBool.read(from: &buf),
+                finite: FfiConverterBool.read(from: &buf),
+                worldAxes: FfiConverterSequenceTypeImageExplorerAxisValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerProbe, into buf: inout [UInt8]) {
+        FfiConverterSequenceUInt64.write(value.pixelIndices, into: &buf)
+        FfiConverterSequenceTypeImageExplorerAxisValue.write(value.pixelAxes, into: &buf)
+        FfiConverterDouble.write(value.value, into: &buf)
+        FfiConverterBool.write(value.masked, into: &buf)
+        FfiConverterBool.write(value.finite, into: &buf)
+        FfiConverterSequenceTypeImageExplorerAxisValue.write(value.worldAxes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerProbe_lift(_ buf: RustBuffer) throws -> ImageExplorerProbe {
+    return try FfiConverterTypeImageExplorerProbe.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerProbe_lower(_ value: ImageExplorerProbe) -> RustBuffer {
+    return FfiConverterTypeImageExplorerProbe.lower(value)
+}
+
+
+public struct ImageExplorerProfile {
+    public var axis: UInt64
+    public var axisName: String
+    public var axisUnit: String
+    public var valueUnit: String
+    public var coordType: String
+    public var selectedSampleIndex: UInt64
+    public var samples: [ImageExplorerProfileSample]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(axis: UInt64, axisName: String, axisUnit: String, valueUnit: String, coordType: String, selectedSampleIndex: UInt64, samples: [ImageExplorerProfileSample]) {
+        self.axis = axis
+        self.axisName = axisName
+        self.axisUnit = axisUnit
+        self.valueUnit = valueUnit
+        self.coordType = coordType
+        self.selectedSampleIndex = selectedSampleIndex
+        self.samples = samples
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerProfile: Sendable {}
+#endif
+
+
+extension ImageExplorerProfile: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerProfile, rhs: ImageExplorerProfile) -> Bool {
+        if lhs.axis != rhs.axis {
+            return false
+        }
+        if lhs.axisName != rhs.axisName {
+            return false
+        }
+        if lhs.axisUnit != rhs.axisUnit {
+            return false
+        }
+        if lhs.valueUnit != rhs.valueUnit {
+            return false
+        }
+        if lhs.coordType != rhs.coordType {
+            return false
+        }
+        if lhs.selectedSampleIndex != rhs.selectedSampleIndex {
+            return false
+        }
+        if lhs.samples != rhs.samples {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(axis)
+        hasher.combine(axisName)
+        hasher.combine(axisUnit)
+        hasher.combine(valueUnit)
+        hasher.combine(coordType)
+        hasher.combine(selectedSampleIndex)
+        hasher.combine(samples)
+    }
+}
+
+extension ImageExplorerProfile: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerProfile: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerProfile {
+        return
+            try ImageExplorerProfile(
+                axis: FfiConverterUInt64.read(from: &buf),
+                axisName: FfiConverterString.read(from: &buf),
+                axisUnit: FfiConverterString.read(from: &buf),
+                valueUnit: FfiConverterString.read(from: &buf),
+                coordType: FfiConverterString.read(from: &buf),
+                selectedSampleIndex: FfiConverterUInt64.read(from: &buf),
+                samples: FfiConverterSequenceTypeImageExplorerProfileSample.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerProfile, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.axis, into: &buf)
+        FfiConverterString.write(value.axisName, into: &buf)
+        FfiConverterString.write(value.axisUnit, into: &buf)
+        FfiConverterString.write(value.valueUnit, into: &buf)
+        FfiConverterString.write(value.coordType, into: &buf)
+        FfiConverterUInt64.write(value.selectedSampleIndex, into: &buf)
+        FfiConverterSequenceTypeImageExplorerProfileSample.write(value.samples, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerProfile_lift(_ buf: RustBuffer) throws -> ImageExplorerProfile {
+    return try FfiConverterTypeImageExplorerProfile.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerProfile_lower(_ value: ImageExplorerProfile) -> RustBuffer {
+    return FfiConverterTypeImageExplorerProfile.lower(value)
+}
+
+
+public struct ImageExplorerProfileSample {
+    public var sampleIndex: UInt64
+    public var pixelIndex: UInt64
+    public var value: Double
+    public var masked: Bool
+    public var finite: Bool
+    public var worldAxis: ImageExplorerAxisValue?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sampleIndex: UInt64, pixelIndex: UInt64, value: Double, masked: Bool, finite: Bool, worldAxis: ImageExplorerAxisValue?) {
+        self.sampleIndex = sampleIndex
+        self.pixelIndex = pixelIndex
+        self.value = value
+        self.masked = masked
+        self.finite = finite
+        self.worldAxis = worldAxis
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerProfileSample: Sendable {}
+#endif
+
+
+extension ImageExplorerProfileSample: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerProfileSample, rhs: ImageExplorerProfileSample) -> Bool {
+        if lhs.sampleIndex != rhs.sampleIndex {
+            return false
+        }
+        if lhs.pixelIndex != rhs.pixelIndex {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        if lhs.masked != rhs.masked {
+            return false
+        }
+        if lhs.finite != rhs.finite {
+            return false
+        }
+        if lhs.worldAxis != rhs.worldAxis {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(sampleIndex)
+        hasher.combine(pixelIndex)
+        hasher.combine(value)
+        hasher.combine(masked)
+        hasher.combine(finite)
+        hasher.combine(worldAxis)
+    }
+}
+
+extension ImageExplorerProfileSample: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerProfileSample: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerProfileSample {
+        return
+            try ImageExplorerProfileSample(
+                sampleIndex: FfiConverterUInt64.read(from: &buf),
+                pixelIndex: FfiConverterUInt64.read(from: &buf),
+                value: FfiConverterDouble.read(from: &buf),
+                masked: FfiConverterBool.read(from: &buf),
+                finite: FfiConverterBool.read(from: &buf),
+                worldAxis: FfiConverterOptionTypeImageExplorerAxisValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerProfileSample, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sampleIndex, into: &buf)
+        FfiConverterUInt64.write(value.pixelIndex, into: &buf)
+        FfiConverterDouble.write(value.value, into: &buf)
+        FfiConverterBool.write(value.masked, into: &buf)
+        FfiConverterBool.write(value.finite, into: &buf)
+        FfiConverterOptionTypeImageExplorerAxisValue.write(value.worldAxis, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerProfileSample_lift(_ buf: RustBuffer) throws -> ImageExplorerProfileSample {
+    return try FfiConverterTypeImageExplorerProfileSample.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerProfileSample_lower(_ value: ImageExplorerProfileSample) -> RustBuffer {
+    return FfiConverterTypeImageExplorerProfileSample.lower(value)
+}
+
+
+public struct ImageExplorerRegion {
+    public var label: String
+    public var shapeCount: UInt64
+    public var closedShapeCount: UInt64
+    public var editing: Bool
+    public var activeShapeVertices: UInt64
+    public var overlayShapes: [ImageExplorerRegionOverlayShape]
+    public var stats: ImageExplorerRegionStats?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(label: String, shapeCount: UInt64, closedShapeCount: UInt64, editing: Bool, activeShapeVertices: UInt64, overlayShapes: [ImageExplorerRegionOverlayShape], stats: ImageExplorerRegionStats?) {
+        self.label = label
+        self.shapeCount = shapeCount
+        self.closedShapeCount = closedShapeCount
+        self.editing = editing
+        self.activeShapeVertices = activeShapeVertices
+        self.overlayShapes = overlayShapes
+        self.stats = stats
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerRegion: Sendable {}
+#endif
+
+
+extension ImageExplorerRegion: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerRegion, rhs: ImageExplorerRegion) -> Bool {
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.shapeCount != rhs.shapeCount {
+            return false
+        }
+        if lhs.closedShapeCount != rhs.closedShapeCount {
+            return false
+        }
+        if lhs.editing != rhs.editing {
+            return false
+        }
+        if lhs.activeShapeVertices != rhs.activeShapeVertices {
+            return false
+        }
+        if lhs.overlayShapes != rhs.overlayShapes {
+            return false
+        }
+        if lhs.stats != rhs.stats {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(label)
+        hasher.combine(shapeCount)
+        hasher.combine(closedShapeCount)
+        hasher.combine(editing)
+        hasher.combine(activeShapeVertices)
+        hasher.combine(overlayShapes)
+        hasher.combine(stats)
+    }
+}
+
+extension ImageExplorerRegion: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerRegion: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerRegion {
+        return
+            try ImageExplorerRegion(
+                label: FfiConverterString.read(from: &buf),
+                shapeCount: FfiConverterUInt64.read(from: &buf),
+                closedShapeCount: FfiConverterUInt64.read(from: &buf),
+                editing: FfiConverterBool.read(from: &buf),
+                activeShapeVertices: FfiConverterUInt64.read(from: &buf),
+                overlayShapes: FfiConverterSequenceTypeImageExplorerRegionOverlayShape.read(from: &buf),
+                stats: FfiConverterOptionTypeImageExplorerRegionStats.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerRegion, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterUInt64.write(value.shapeCount, into: &buf)
+        FfiConverterUInt64.write(value.closedShapeCount, into: &buf)
+        FfiConverterBool.write(value.editing, into: &buf)
+        FfiConverterUInt64.write(value.activeShapeVertices, into: &buf)
+        FfiConverterSequenceTypeImageExplorerRegionOverlayShape.write(value.overlayShapes, into: &buf)
+        FfiConverterOptionTypeImageExplorerRegionStats.write(value.stats, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerRegion_lift(_ buf: RustBuffer) throws -> ImageExplorerRegion {
+    return try FfiConverterTypeImageExplorerRegion.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerRegion_lower(_ value: ImageExplorerRegion) -> RustBuffer {
+    return FfiConverterTypeImageExplorerRegion.lower(value)
+}
+
+
+public struct ImageExplorerRegionOverlayShape {
+    public var vertices: [ImageExplorerRegionOverlayVertex]
+    public var closed: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(vertices: [ImageExplorerRegionOverlayVertex], closed: Bool) {
+        self.vertices = vertices
+        self.closed = closed
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerRegionOverlayShape: Sendable {}
+#endif
+
+
+extension ImageExplorerRegionOverlayShape: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerRegionOverlayShape, rhs: ImageExplorerRegionOverlayShape) -> Bool {
+        if lhs.vertices != rhs.vertices {
+            return false
+        }
+        if lhs.closed != rhs.closed {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(vertices)
+        hasher.combine(closed)
+    }
+}
+
+extension ImageExplorerRegionOverlayShape: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerRegionOverlayShape: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerRegionOverlayShape {
+        return
+            try ImageExplorerRegionOverlayShape(
+                vertices: FfiConverterSequenceTypeImageExplorerRegionOverlayVertex.read(from: &buf),
+                closed: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerRegionOverlayShape, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeImageExplorerRegionOverlayVertex.write(value.vertices, into: &buf)
+        FfiConverterBool.write(value.closed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerRegionOverlayShape_lift(_ buf: RustBuffer) throws -> ImageExplorerRegionOverlayShape {
+    return try FfiConverterTypeImageExplorerRegionOverlayShape.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerRegionOverlayShape_lower(_ value: ImageExplorerRegionOverlayShape) -> RustBuffer {
+    return FfiConverterTypeImageExplorerRegionOverlayShape.lower(value)
+}
+
+
+public struct ImageExplorerRegionOverlayVertex {
+    public var sampledX: Double
+    public var sampledY: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sampledX: Double, sampledY: Double) {
+        self.sampledX = sampledX
+        self.sampledY = sampledY
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerRegionOverlayVertex: Sendable {}
+#endif
+
+
+extension ImageExplorerRegionOverlayVertex: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerRegionOverlayVertex, rhs: ImageExplorerRegionOverlayVertex) -> Bool {
+        if lhs.sampledX != rhs.sampledX {
+            return false
+        }
+        if lhs.sampledY != rhs.sampledY {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(sampledX)
+        hasher.combine(sampledY)
+    }
+}
+
+extension ImageExplorerRegionOverlayVertex: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerRegionOverlayVertex: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerRegionOverlayVertex {
+        return
+            try ImageExplorerRegionOverlayVertex(
+                sampledX: FfiConverterDouble.read(from: &buf),
+                sampledY: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerRegionOverlayVertex, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.sampledX, into: &buf)
+        FfiConverterDouble.write(value.sampledY, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerRegionOverlayVertex_lift(_ buf: RustBuffer) throws -> ImageExplorerRegionOverlayVertex {
+    return try FfiConverterTypeImageExplorerRegionOverlayVertex.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerRegionOverlayVertex_lower(_ value: ImageExplorerRegionOverlayVertex) -> RustBuffer {
+    return FfiConverterTypeImageExplorerRegionOverlayVertex.lower(value)
+}
+
+
+public struct ImageExplorerRegionStats {
+    public var pixelCount: UInt64
+    public var median: Double
+    public var min: Double
+    public var max: Double
+    public var mean: Double
+    public var sigma: Double
+    public var rms: Double
+    public var sum: Double
+    public var valueUnit: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(pixelCount: UInt64, median: Double, min: Double, max: Double, mean: Double, sigma: Double, rms: Double, sum: Double, valueUnit: String) {
+        self.pixelCount = pixelCount
+        self.median = median
+        self.min = min
+        self.max = max
+        self.mean = mean
+        self.sigma = sigma
+        self.rms = rms
+        self.sum = sum
+        self.valueUnit = valueUnit
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerRegionStats: Sendable {}
+#endif
+
+
+extension ImageExplorerRegionStats: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerRegionStats, rhs: ImageExplorerRegionStats) -> Bool {
+        if lhs.pixelCount != rhs.pixelCount {
+            return false
+        }
+        if lhs.median != rhs.median {
+            return false
+        }
+        if lhs.min != rhs.min {
+            return false
+        }
+        if lhs.max != rhs.max {
+            return false
+        }
+        if lhs.mean != rhs.mean {
+            return false
+        }
+        if lhs.sigma != rhs.sigma {
+            return false
+        }
+        if lhs.rms != rhs.rms {
+            return false
+        }
+        if lhs.sum != rhs.sum {
+            return false
+        }
+        if lhs.valueUnit != rhs.valueUnit {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(pixelCount)
+        hasher.combine(median)
+        hasher.combine(min)
+        hasher.combine(max)
+        hasher.combine(mean)
+        hasher.combine(sigma)
+        hasher.combine(rms)
+        hasher.combine(sum)
+        hasher.combine(valueUnit)
+    }
+}
+
+extension ImageExplorerRegionStats: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerRegionStats: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerRegionStats {
+        return
+            try ImageExplorerRegionStats(
+                pixelCount: FfiConverterUInt64.read(from: &buf),
+                median: FfiConverterDouble.read(from: &buf),
+                min: FfiConverterDouble.read(from: &buf),
+                max: FfiConverterDouble.read(from: &buf),
+                mean: FfiConverterDouble.read(from: &buf),
+                sigma: FfiConverterDouble.read(from: &buf),
+                rms: FfiConverterDouble.read(from: &buf),
+                sum: FfiConverterDouble.read(from: &buf),
+                valueUnit: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerRegionStats, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.pixelCount, into: &buf)
+        FfiConverterDouble.write(value.median, into: &buf)
+        FfiConverterDouble.write(value.min, into: &buf)
+        FfiConverterDouble.write(value.max, into: &buf)
+        FfiConverterDouble.write(value.mean, into: &buf)
+        FfiConverterDouble.write(value.sigma, into: &buf)
+        FfiConverterDouble.write(value.rms, into: &buf)
+        FfiConverterDouble.write(value.sum, into: &buf)
+        FfiConverterString.write(value.valueUnit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerRegionStats_lift(_ buf: RustBuffer) throws -> ImageExplorerRegionStats {
+    return try FfiConverterTypeImageExplorerRegionStats.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerRegionStats_lower(_ value: ImageExplorerRegionStats) -> RustBuffer {
+    return FfiConverterTypeImageExplorerRegionStats.lower(value)
+}
+
+
+public struct ImageExplorerSnapshot {
+    public var statusLine: String
+    public var activeView: String
+    public var focus: String
+    public var shape: [UInt64]
+    public var parameters: ImageExplorerParameters
+    public var inspectorLines: [String]
+    public var contentLines: [String]
+    public var navigation: ImageExplorerNavigation
+    public var plane: ImageExplorerPlane?
+    public var probe: ImageExplorerProbe?
+    public var profile: ImageExplorerProfile?
+    public var displayAxes: [ImageExplorerDisplayAxis]
+    public var planeCursor: ImageExplorerPlaneCursor?
+    public var nonDisplayAxes: [ImageExplorerNonDisplayAxis]
+    public var region: ImageExplorerRegion?
+    public var savedRegionNames: [String]
+    public var activeRegionDefinitionName: String?
+    public var maskNames: [String]
+    public var defaultMaskName: String?
+    public var backendTiming: ImageExplorerBackendTiming?
+    public var capabilities: ImageExplorerCapabilities
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(statusLine: String, activeView: String, focus: String, shape: [UInt64], parameters: ImageExplorerParameters, inspectorLines: [String], contentLines: [String], navigation: ImageExplorerNavigation, plane: ImageExplorerPlane?, probe: ImageExplorerProbe?, profile: ImageExplorerProfile?, displayAxes: [ImageExplorerDisplayAxis], planeCursor: ImageExplorerPlaneCursor?, nonDisplayAxes: [ImageExplorerNonDisplayAxis], region: ImageExplorerRegion?, savedRegionNames: [String], activeRegionDefinitionName: String?, maskNames: [String], defaultMaskName: String?, backendTiming: ImageExplorerBackendTiming?, capabilities: ImageExplorerCapabilities) {
+        self.statusLine = statusLine
+        self.activeView = activeView
+        self.focus = focus
+        self.shape = shape
+        self.parameters = parameters
+        self.inspectorLines = inspectorLines
+        self.contentLines = contentLines
+        self.navigation = navigation
+        self.plane = plane
+        self.probe = probe
+        self.profile = profile
+        self.displayAxes = displayAxes
+        self.planeCursor = planeCursor
+        self.nonDisplayAxes = nonDisplayAxes
+        self.region = region
+        self.savedRegionNames = savedRegionNames
+        self.activeRegionDefinitionName = activeRegionDefinitionName
+        self.maskNames = maskNames
+        self.defaultMaskName = defaultMaskName
+        self.backendTiming = backendTiming
+        self.capabilities = capabilities
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerSnapshot: Sendable {}
+#endif
+
+
+extension ImageExplorerSnapshot: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerSnapshot, rhs: ImageExplorerSnapshot) -> Bool {
+        if lhs.statusLine != rhs.statusLine {
+            return false
+        }
+        if lhs.activeView != rhs.activeView {
+            return false
+        }
+        if lhs.focus != rhs.focus {
+            return false
+        }
+        if lhs.shape != rhs.shape {
+            return false
+        }
+        if lhs.parameters != rhs.parameters {
+            return false
+        }
+        if lhs.inspectorLines != rhs.inspectorLines {
+            return false
+        }
+        if lhs.contentLines != rhs.contentLines {
+            return false
+        }
+        if lhs.navigation != rhs.navigation {
+            return false
+        }
+        if lhs.plane != rhs.plane {
+            return false
+        }
+        if lhs.probe != rhs.probe {
+            return false
+        }
+        if lhs.profile != rhs.profile {
+            return false
+        }
+        if lhs.displayAxes != rhs.displayAxes {
+            return false
+        }
+        if lhs.planeCursor != rhs.planeCursor {
+            return false
+        }
+        if lhs.nonDisplayAxes != rhs.nonDisplayAxes {
+            return false
+        }
+        if lhs.region != rhs.region {
+            return false
+        }
+        if lhs.savedRegionNames != rhs.savedRegionNames {
+            return false
+        }
+        if lhs.activeRegionDefinitionName != rhs.activeRegionDefinitionName {
+            return false
+        }
+        if lhs.maskNames != rhs.maskNames {
+            return false
+        }
+        if lhs.defaultMaskName != rhs.defaultMaskName {
+            return false
+        }
+        if lhs.backendTiming != rhs.backendTiming {
+            return false
+        }
+        if lhs.capabilities != rhs.capabilities {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(statusLine)
+        hasher.combine(activeView)
+        hasher.combine(focus)
+        hasher.combine(shape)
+        hasher.combine(parameters)
+        hasher.combine(inspectorLines)
+        hasher.combine(contentLines)
+        hasher.combine(navigation)
+        hasher.combine(plane)
+        hasher.combine(probe)
+        hasher.combine(profile)
+        hasher.combine(displayAxes)
+        hasher.combine(planeCursor)
+        hasher.combine(nonDisplayAxes)
+        hasher.combine(region)
+        hasher.combine(savedRegionNames)
+        hasher.combine(activeRegionDefinitionName)
+        hasher.combine(maskNames)
+        hasher.combine(defaultMaskName)
+        hasher.combine(backendTiming)
+        hasher.combine(capabilities)
+    }
+}
+
+extension ImageExplorerSnapshot: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerSnapshot {
+        return
+            try ImageExplorerSnapshot(
+                statusLine: FfiConverterString.read(from: &buf),
+                activeView: FfiConverterString.read(from: &buf),
+                focus: FfiConverterString.read(from: &buf),
+                shape: FfiConverterSequenceUInt64.read(from: &buf),
+                parameters: FfiConverterTypeImageExplorerParameters.read(from: &buf),
+                inspectorLines: FfiConverterSequenceString.read(from: &buf),
+                contentLines: FfiConverterSequenceString.read(from: &buf),
+                navigation: FfiConverterTypeImageExplorerNavigation.read(from: &buf),
+                plane: FfiConverterOptionTypeImageExplorerPlane.read(from: &buf),
+                probe: FfiConverterOptionTypeImageExplorerProbe.read(from: &buf),
+                profile: FfiConverterOptionTypeImageExplorerProfile.read(from: &buf),
+                displayAxes: FfiConverterSequenceTypeImageExplorerDisplayAxis.read(from: &buf),
+                planeCursor: FfiConverterOptionTypeImageExplorerPlaneCursor.read(from: &buf),
+                nonDisplayAxes: FfiConverterSequenceTypeImageExplorerNonDisplayAxis.read(from: &buf),
+                region: FfiConverterOptionTypeImageExplorerRegion.read(from: &buf),
+                savedRegionNames: FfiConverterSequenceString.read(from: &buf),
+                activeRegionDefinitionName: FfiConverterOptionString.read(from: &buf),
+                maskNames: FfiConverterSequenceString.read(from: &buf),
+                defaultMaskName: FfiConverterOptionString.read(from: &buf),
+                backendTiming: FfiConverterOptionTypeImageExplorerBackendTiming.read(from: &buf),
+                capabilities: FfiConverterTypeImageExplorerCapabilities.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerSnapshot, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.statusLine, into: &buf)
+        FfiConverterString.write(value.activeView, into: &buf)
+        FfiConverterString.write(value.focus, into: &buf)
+        FfiConverterSequenceUInt64.write(value.shape, into: &buf)
+        FfiConverterTypeImageExplorerParameters.write(value.parameters, into: &buf)
+        FfiConverterSequenceString.write(value.inspectorLines, into: &buf)
+        FfiConverterSequenceString.write(value.contentLines, into: &buf)
+        FfiConverterTypeImageExplorerNavigation.write(value.navigation, into: &buf)
+        FfiConverterOptionTypeImageExplorerPlane.write(value.plane, into: &buf)
+        FfiConverterOptionTypeImageExplorerProbe.write(value.probe, into: &buf)
+        FfiConverterOptionTypeImageExplorerProfile.write(value.profile, into: &buf)
+        FfiConverterSequenceTypeImageExplorerDisplayAxis.write(value.displayAxes, into: &buf)
+        FfiConverterOptionTypeImageExplorerPlaneCursor.write(value.planeCursor, into: &buf)
+        FfiConverterSequenceTypeImageExplorerNonDisplayAxis.write(value.nonDisplayAxes, into: &buf)
+        FfiConverterOptionTypeImageExplorerRegion.write(value.region, into: &buf)
+        FfiConverterSequenceString.write(value.savedRegionNames, into: &buf)
+        FfiConverterOptionString.write(value.activeRegionDefinitionName, into: &buf)
+        FfiConverterSequenceString.write(value.maskNames, into: &buf)
+        FfiConverterOptionString.write(value.defaultMaskName, into: &buf)
+        FfiConverterOptionTypeImageExplorerBackendTiming.write(value.backendTiming, into: &buf)
+        FfiConverterTypeImageExplorerCapabilities.write(value.capabilities, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerSnapshot_lift(_ buf: RustBuffer) throws -> ImageExplorerSnapshot {
+    return try FfiConverterTypeImageExplorerSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerSnapshot_lower(_ value: ImageExplorerSnapshot) -> RustBuffer {
+    return FfiConverterTypeImageExplorerSnapshot.lower(value)
+}
+
+
+public struct ImageExplorerSnapshotRequest {
+    public var datasetPath: String
+    public var selectedView: String
+    public var focus: String
+    public var planeContentMode: String
+    public var parameters: ImageExplorerParameters
+    public var cursorX: UInt64?
+    public var cursorY: UInt64?
+    public var selectedProfileAxis: UInt64?
+    public var nonDisplayIndices: [UInt64]
+    public var commands: [ImageExplorerCommand]
+    public var transientCommands: [ImageExplorerCommand]
+    public var includeProfile: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(datasetPath: String, selectedView: String, focus: String, planeContentMode: String, parameters: ImageExplorerParameters, cursorX: UInt64?, cursorY: UInt64?, selectedProfileAxis: UInt64?, nonDisplayIndices: [UInt64], commands: [ImageExplorerCommand], transientCommands: [ImageExplorerCommand], includeProfile: Bool) {
+        self.datasetPath = datasetPath
+        self.selectedView = selectedView
+        self.focus = focus
+        self.planeContentMode = planeContentMode
+        self.parameters = parameters
+        self.cursorX = cursorX
+        self.cursorY = cursorY
+        self.selectedProfileAxis = selectedProfileAxis
+        self.nonDisplayIndices = nonDisplayIndices
+        self.commands = commands
+        self.transientCommands = transientCommands
+        self.includeProfile = includeProfile
+    }
+}
+
+#if compiler(>=6)
+extension ImageExplorerSnapshotRequest: Sendable {}
+#endif
+
+
+extension ImageExplorerSnapshotRequest: Equatable, Hashable {
+    public static func ==(lhs: ImageExplorerSnapshotRequest, rhs: ImageExplorerSnapshotRequest) -> Bool {
+        if lhs.datasetPath != rhs.datasetPath {
+            return false
+        }
+        if lhs.selectedView != rhs.selectedView {
+            return false
+        }
+        if lhs.focus != rhs.focus {
+            return false
+        }
+        if lhs.planeContentMode != rhs.planeContentMode {
+            return false
+        }
+        if lhs.parameters != rhs.parameters {
+            return false
+        }
+        if lhs.cursorX != rhs.cursorX {
+            return false
+        }
+        if lhs.cursorY != rhs.cursorY {
+            return false
+        }
+        if lhs.selectedProfileAxis != rhs.selectedProfileAxis {
+            return false
+        }
+        if lhs.nonDisplayIndices != rhs.nonDisplayIndices {
+            return false
+        }
+        if lhs.commands != rhs.commands {
+            return false
+        }
+        if lhs.transientCommands != rhs.transientCommands {
+            return false
+        }
+        if lhs.includeProfile != rhs.includeProfile {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(datasetPath)
+        hasher.combine(selectedView)
+        hasher.combine(focus)
+        hasher.combine(planeContentMode)
+        hasher.combine(parameters)
+        hasher.combine(cursorX)
+        hasher.combine(cursorY)
+        hasher.combine(selectedProfileAxis)
+        hasher.combine(nonDisplayIndices)
+        hasher.combine(commands)
+        hasher.combine(transientCommands)
+        hasher.combine(includeProfile)
+    }
+}
+
+extension ImageExplorerSnapshotRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerSnapshotRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerSnapshotRequest {
+        return
+            try ImageExplorerSnapshotRequest(
+                datasetPath: FfiConverterString.read(from: &buf),
+                selectedView: FfiConverterString.read(from: &buf),
+                focus: FfiConverterString.read(from: &buf),
+                planeContentMode: FfiConverterString.read(from: &buf),
+                parameters: FfiConverterTypeImageExplorerParameters.read(from: &buf),
+                cursorX: FfiConverterOptionUInt64.read(from: &buf),
+                cursorY: FfiConverterOptionUInt64.read(from: &buf),
+                selectedProfileAxis: FfiConverterOptionUInt64.read(from: &buf),
+                nonDisplayIndices: FfiConverterSequenceUInt64.read(from: &buf),
+                commands: FfiConverterSequenceTypeImageExplorerCommand.read(from: &buf),
+                transientCommands: FfiConverterSequenceTypeImageExplorerCommand.read(from: &buf),
+                includeProfile: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageExplorerSnapshotRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.datasetPath, into: &buf)
+        FfiConverterString.write(value.selectedView, into: &buf)
+        FfiConverterString.write(value.focus, into: &buf)
+        FfiConverterString.write(value.planeContentMode, into: &buf)
+        FfiConverterTypeImageExplorerParameters.write(value.parameters, into: &buf)
+        FfiConverterOptionUInt64.write(value.cursorX, into: &buf)
+        FfiConverterOptionUInt64.write(value.cursorY, into: &buf)
+        FfiConverterOptionUInt64.write(value.selectedProfileAxis, into: &buf)
+        FfiConverterSequenceUInt64.write(value.nonDisplayIndices, into: &buf)
+        FfiConverterSequenceTypeImageExplorerCommand.write(value.commands, into: &buf)
+        FfiConverterSequenceTypeImageExplorerCommand.write(value.transientCommands, into: &buf)
+        FfiConverterBool.write(value.includeProfile, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerSnapshotRequest_lift(_ buf: RustBuffer) throws -> ImageExplorerSnapshotRequest {
+    return try FfiConverterTypeImageExplorerSnapshotRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerSnapshotRequest_lower(_ value: ImageExplorerSnapshotRequest) -> RustBuffer {
+    return FfiConverterTypeImageExplorerSnapshotRequest.lower(value)
+}
+
+
 public struct MeasurementSetPlotRequest {
     public var datasetPath: String
     public var preset: MeasurementSetPlotPreset
@@ -9646,6 +11806,101 @@ extension FrontendServiceError: Foundation.LocalizedError {
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum ImageExplorerRegionReference {
+
+    case none
+    case definition(name: String
+    )
+    case file(path: String
+    )
+    case expression(expression: String
+    )
+}
+
+
+#if compiler(>=6)
+extension ImageExplorerRegionReference: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageExplorerRegionReference: FfiConverterRustBuffer {
+    typealias SwiftType = ImageExplorerRegionReference
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageExplorerRegionReference {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .none
+
+        case 2: return .definition(name: try FfiConverterString.read(from: &buf)
+        )
+
+        case 3: return .file(path: try FfiConverterString.read(from: &buf)
+        )
+
+        case 4: return .expression(expression: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ImageExplorerRegionReference, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .none:
+            writeInt(&buf, Int32(1))
+
+
+        case let .definition(name):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(name, into: &buf)
+
+
+        case let .file(path):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(path, into: &buf)
+
+
+        case let .expression(expression):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(expression, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerRegionReference_lift(_ buf: RustBuffer) throws -> ImageExplorerRegionReference {
+    return try FfiConverterTypeImageExplorerRegionReference.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageExplorerRegionReference_lower(_ value: ImageExplorerRegionReference) -> RustBuffer {
+    return FfiConverterTypeImageExplorerRegionReference.lower(value)
+}
+
+
+extension ImageExplorerRegionReference: Equatable, Hashable {}
+
+extension ImageExplorerRegionReference: Codable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum MeasurementSetPlotPreset {
 
     case uvCoverage
@@ -11426,6 +13681,30 @@ fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionBool: FfiConverterRustBuffer {
+    typealias SwiftType = Bool?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterBool.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterBool.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
     typealias SwiftType = String?
 
@@ -11466,6 +13745,198 @@ fileprivate struct FfiConverterOptionTypeDatasetProbe: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeDatasetProbe.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeImageExplorerAxisValue: FfiConverterRustBuffer {
+    typealias SwiftType = ImageExplorerAxisValue?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImageExplorerAxisValue.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImageExplorerAxisValue.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeImageExplorerBackendTiming: FfiConverterRustBuffer {
+    typealias SwiftType = ImageExplorerBackendTiming?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImageExplorerBackendTiming.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImageExplorerBackendTiming.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeImageExplorerPlane: FfiConverterRustBuffer {
+    typealias SwiftType = ImageExplorerPlane?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImageExplorerPlane.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImageExplorerPlane.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeImageExplorerPlaneCursor: FfiConverterRustBuffer {
+    typealias SwiftType = ImageExplorerPlaneCursor?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImageExplorerPlaneCursor.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImageExplorerPlaneCursor.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeImageExplorerProbe: FfiConverterRustBuffer {
+    typealias SwiftType = ImageExplorerProbe?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImageExplorerProbe.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImageExplorerProbe.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeImageExplorerProfile: FfiConverterRustBuffer {
+    typealias SwiftType = ImageExplorerProfile?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImageExplorerProfile.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImageExplorerProfile.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeImageExplorerRegion: FfiConverterRustBuffer {
+    typealias SwiftType = ImageExplorerRegion?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImageExplorerRegion.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImageExplorerRegion.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeImageExplorerRegionStats: FfiConverterRustBuffer {
+    typealias SwiftType = ImageExplorerRegionStats?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImageExplorerRegionStats.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImageExplorerRegionStats.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -11666,6 +14137,30 @@ fileprivate struct FfiConverterOptionTypeTaskUIManagedOutput: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeImageExplorerRegionReference: FfiConverterRustBuffer {
+    typealias SwiftType = ImageExplorerRegionReference?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImageExplorerRegionReference.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImageExplorerRegionReference.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeSurfaceParameterPredicate: FfiConverterRustBuffer {
     typealias SwiftType = SurfaceParameterPredicate?
 
@@ -11756,6 +14251,31 @@ fileprivate struct FfiConverterOptionSequenceTypeNotebookPythonOutputEvent: FfiC
         case 1: return try FfiConverterSequenceTypeNotebookPythonOutputEvent.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = [UInt32]
+
+    public static func write(_ value: [UInt32], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterUInt32.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UInt32] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UInt32]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterUInt32.read(from: &buf))
+        }
+        return seq
     }
 }
 
@@ -11879,6 +14399,181 @@ fileprivate struct FfiConverterSequenceTypeDatasetProbe: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeDatasetProbe.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImageExplorerAxisValue: FfiConverterRustBuffer {
+    typealias SwiftType = [ImageExplorerAxisValue]
+
+    public static func write(_ value: [ImageExplorerAxisValue], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImageExplorerAxisValue.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImageExplorerAxisValue] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImageExplorerAxisValue]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImageExplorerAxisValue.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImageExplorerCommand: FfiConverterRustBuffer {
+    typealias SwiftType = [ImageExplorerCommand]
+
+    public static func write(_ value: [ImageExplorerCommand], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImageExplorerCommand.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImageExplorerCommand] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImageExplorerCommand]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImageExplorerCommand.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImageExplorerDisplayAxis: FfiConverterRustBuffer {
+    typealias SwiftType = [ImageExplorerDisplayAxis]
+
+    public static func write(_ value: [ImageExplorerDisplayAxis], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImageExplorerDisplayAxis.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImageExplorerDisplayAxis] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImageExplorerDisplayAxis]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImageExplorerDisplayAxis.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImageExplorerNonDisplayAxis: FfiConverterRustBuffer {
+    typealias SwiftType = [ImageExplorerNonDisplayAxis]
+
+    public static func write(_ value: [ImageExplorerNonDisplayAxis], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImageExplorerNonDisplayAxis.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImageExplorerNonDisplayAxis] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImageExplorerNonDisplayAxis]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImageExplorerNonDisplayAxis.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImageExplorerProfileSample: FfiConverterRustBuffer {
+    typealias SwiftType = [ImageExplorerProfileSample]
+
+    public static func write(_ value: [ImageExplorerProfileSample], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImageExplorerProfileSample.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImageExplorerProfileSample] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImageExplorerProfileSample]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImageExplorerProfileSample.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImageExplorerRegionOverlayShape: FfiConverterRustBuffer {
+    typealias SwiftType = [ImageExplorerRegionOverlayShape]
+
+    public static func write(_ value: [ImageExplorerRegionOverlayShape], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImageExplorerRegionOverlayShape.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImageExplorerRegionOverlayShape] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImageExplorerRegionOverlayShape]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImageExplorerRegionOverlayShape.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImageExplorerRegionOverlayVertex: FfiConverterRustBuffer {
+    typealias SwiftType = [ImageExplorerRegionOverlayVertex]
+
+    public static func write(_ value: [ImageExplorerRegionOverlayVertex], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImageExplorerRegionOverlayVertex.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImageExplorerRegionOverlayVertex] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImageExplorerRegionOverlayVertex]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImageExplorerRegionOverlayVertex.read(from: &buf))
         }
         return seq
     }
@@ -12841,23 +15536,10 @@ public func assistantTaskSuggestion(toolOutput: String)throws  -> AssistantTaskS
     )
 })
 }
-public func buildImageExplorerSnapshotFromRequestJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_build_image_explorer_snapshot_from_request_json(
-        FfiConverterString.lower(requestJson),$0
-    )
-})
-}
-public func buildImageExplorerSnapshotJson(datasetPath: String, width: UInt16, height: UInt16, inspectorHeight: UInt16, planePixelWidth: UInt16, planePixelHeight: UInt16, activeView: String?)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_build_image_explorer_snapshot_json(
-        FfiConverterString.lower(datasetPath),
-        FfiConverterUInt16.lower(width),
-        FfiConverterUInt16.lower(height),
-        FfiConverterUInt16.lower(inspectorHeight),
-        FfiConverterUInt16.lower(planePixelWidth),
-        FfiConverterUInt16.lower(planePixelHeight),
-        FfiConverterOptionString.lower(activeView),$0
+public func buildImageExplorerSnapshot(request: ImageExplorerSnapshotRequest)throws  -> ImageExplorerSnapshot  {
+    return try  FfiConverterTypeImageExplorerSnapshot_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_build_image_explorer_snapshot(
+        FfiConverterTypeImageExplorerSnapshotRequest_lower(request),$0
     )
 })
 }
@@ -13307,10 +15989,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_assistant_task_suggestion() != 64746) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_build_image_explorer_snapshot_from_request_json() != 58871) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_build_image_explorer_snapshot_json() != 45506) {
+    if (uniffi_casars_frontend_services_checksum_func_build_image_explorer_snapshot() != 26564) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_build_measurement_set_plot() != 34309) {
