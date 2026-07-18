@@ -18,9 +18,7 @@
 #![cfg(feature = "cpp-interop-tests")]
 
 use casa_tables::{ColumnSchema, ColumnsIndex, DataManagerKind, Table, TableOptions, TableSchema};
-use casa_test_support::{
-    CppTableFixture, cpp_backend_available, cpp_columns_index_time_lookups, cpp_table_write,
-};
+use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 fn table_cell<'a>(
@@ -37,7 +35,7 @@ fn table_cell<'a>(
 /// Rust opens it, indexes it, and verifies exact + range lookups.
 #[test]
 fn cr_columns_index() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping cr_columns_index: C++ casacore not available");
         return;
     }
@@ -45,7 +43,7 @@ fn cr_columns_index() {
     let dir = tempfile::tempdir().expect("create temp dir");
     let table_path = dir.path().join("antenna.tbl");
 
-    cpp_table_write(CppTableFixture::ColumnsIndex, &table_path)
+    TableOracle::table_write(CppTableFixture::ColumnsIndex, &table_path)
         .expect("C++ should write columns_index fixture");
 
     let table =
@@ -111,7 +109,7 @@ fn cr_columns_index() {
 /// for debug builds and CI variance; the intent is to catch gross regressions).
 #[test]
 fn columns_index_perf_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping columns_index_perf_vs_cpp: C++ casacore not available");
         return;
     }
@@ -142,7 +140,7 @@ fn columns_index_perf_vs_cpp() {
 
     // ── C++ timing ──────────────────────────────────────────────────────────
     let (cpp_elapsed_ns, cpp_match_count) =
-        cpp_columns_index_time_lookups(&table_path, KEY, NQUERIES)
+        TableOracle::columns_index_time_lookups(&table_path, KEY, NQUERIES)
             .expect("C++ timing should succeed");
 
     assert_eq!(

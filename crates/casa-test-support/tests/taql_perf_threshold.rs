@@ -2,7 +2,7 @@
 //! TaQL performance threshold tests.
 //!
 //! Measures Rust query execution time and compares against the C++ baseline
-//! (via `cpp_taql_query` which returns wall-clock nanoseconds). Reports
+//! (via `TaqlOracle::query` which returns wall-clock nanoseconds). Reports
 //! threshold regressions by default and only enforces them when
 //! `CASA_RS_ENFORCE_PERF` is set.
 //!
@@ -38,10 +38,10 @@ fn median_ns(mut f: impl FnMut(), iterations: usize) -> u64 {
 /// Measure median C++ query time via the shim.
 fn cpp_median_ns(table_path: &Path, query: &str, iterations: usize) -> u64 {
     // Warm up
-    let _ = cpp_taql_query(table_path, query);
+    let _ = TaqlOracle::query(table_path, query);
     let mut times: Vec<u64> = Vec::with_capacity(iterations);
     for _ in 0..iterations {
-        let res = cpp_taql_query(table_path, query).expect("C++ query failed");
+        let res = TaqlOracle::query(table_path, query).expect("C++ query failed");
         times.push(res.elapsed_ns);
     }
     times.sort_unstable();

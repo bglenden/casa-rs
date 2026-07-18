@@ -10,10 +10,7 @@
 #![cfg(feature = "performance-tests")]
 
 use casa_tables::{ColumnSchema, Slicer, Table, TableOptions, TableSchema};
-use casa_test_support::{
-    CellSliceBenchParams, cpp_backend_available, cpp_bulk_scalar_io_bench, cpp_cell_slice_bench,
-    cpp_copy_rows_bench, cpp_deep_copy_bench, cpp_set_algebra_bench,
-};
+use casa_test_support::{CellSliceBenchParams, TableOracle, casacore_oracle_available};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ShapeBuilder;
 
@@ -31,7 +28,7 @@ fn table_cell<'a>(
 
 #[test]
 fn set_algebra_perf_100k_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping set_algebra_perf_vs_cpp: C++ casacore not available");
         return;
     }
@@ -44,7 +41,7 @@ fn set_algebra_perf_100k_vs_cpp() {
     let dir = tempfile::tempdir().expect("create temp dir");
     let cpp_path = dir.path().join("cpp_set_algebra.tbl");
 
-    let cpp = cpp_set_algebra_bench(&cpp_path, NROWS, SPLIT_A, SPLIT_B)
+    let cpp = TableOracle::set_algebra_bench(&cpp_path, NROWS, SPLIT_A, SPLIT_B)
         .expect("C++ set_algebra_bench should succeed");
 
     assert_eq!(cpp.union_rows, NROWS, "C++ union row count");
@@ -104,7 +101,7 @@ fn set_algebra_perf_100k_vs_cpp() {
 
 #[test]
 fn copy_rows_perf_10k_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping copy_rows_perf_vs_cpp: C++ casacore not available");
         return;
     }
@@ -116,7 +113,8 @@ fn copy_rows_perf_10k_vs_cpp() {
     let cpp_dir = dir.path().join("cpp_copy");
     std::fs::create_dir_all(&cpp_dir).unwrap();
 
-    let cpp_ns = cpp_copy_rows_bench(&cpp_dir, NROWS).expect("C++ copy_rows_bench should succeed");
+    let cpp_ns =
+        TableOracle::copy_rows_bench(&cpp_dir, NROWS).expect("C++ copy_rows_bench should succeed");
 
     // ── Rust timing ─────────────────────────────────────────────────────────
     let schema = TableSchema::new(vec![
@@ -174,7 +172,7 @@ fn copy_rows_perf_10k_vs_cpp() {
 
 #[test]
 fn cell_slice_perf_10k_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping cell_slice_perf_vs_cpp: C++ casacore not available");
         return;
     }
@@ -191,7 +189,7 @@ fn cell_slice_perf_10k_vs_cpp() {
     let dir = tempfile::tempdir().expect("create temp dir");
     let cpp_path = dir.path().join("cpp_slice.tbl");
 
-    let cpp = cpp_cell_slice_bench(
+    let cpp = TableOracle::cell_slice_bench(
         &cpp_path,
         &CellSliceBenchParams {
             nrows: NROWS,
@@ -268,7 +266,7 @@ fn cell_slice_perf_10k_vs_cpp() {
 
 #[test]
 fn bulk_scalar_io_100k_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping bulk_scalar_io_100k_vs_cpp: C++ casacore not available");
         return;
     }
@@ -279,7 +277,7 @@ fn bulk_scalar_io_100k_vs_cpp() {
     let dir = tempfile::tempdir().expect("create temp dir");
     let cpp_path = dir.path().join("cpp_bulk.tbl");
 
-    let cpp = cpp_bulk_scalar_io_bench(&cpp_path, NROWS)
+    let cpp = TableOracle::bulk_scalar_io_bench(&cpp_path, NROWS)
         .expect("C++ bulk_scalar_io_bench should succeed");
 
     // ── Rust write timing ───────────────────────────────────────────────────
@@ -361,7 +359,7 @@ fn bulk_scalar_io_100k_vs_cpp() {
 
 #[test]
 fn deep_copy_perf_10k_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping deep_copy_perf_10k_vs_cpp: C++ casacore not available");
         return;
     }
@@ -373,7 +371,8 @@ fn deep_copy_perf_10k_vs_cpp() {
     let cpp_dir = dir.path().join("cpp_copy");
     std::fs::create_dir_all(&cpp_dir).unwrap();
 
-    let cpp = cpp_deep_copy_bench(&cpp_dir, NROWS).expect("C++ deep_copy_bench should succeed");
+    let cpp =
+        TableOracle::deep_copy_bench(&cpp_dir, NROWS).expect("C++ deep_copy_bench should succeed");
 
     // ── Rust timing ─────────────────────────────────────────────────────────
     let rust_dir = dir.path().join("rust_copy");

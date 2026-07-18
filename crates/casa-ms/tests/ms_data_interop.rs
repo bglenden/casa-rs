@@ -12,8 +12,8 @@ mod common;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::{OptionalMainColumn, VisibilityDataColumn};
-use casa_test_support::cpp_backend_available;
-use casa_test_support::ms_interop::{cpp_ms_verify_basic_fixture, cpp_ms_write_basic_fixture};
+use casa_test_support::casacore_oracle_available;
+use casa_test_support::ms_interop::MeasurementSetOracle;
 use common::{NUM_CHAN, NUM_CORR, populate_main_rows, populate_subtables, verify_vis_data};
 use ndarray::{ArrayD, ShapeBuilder};
 
@@ -82,7 +82,7 @@ fn ms_data_column_mut_put() {
 /// through `casacore::MeasurementSet` and confirm the data fixture contents.
 #[test]
 fn ms_data_column_rust_to_cpp_round_trip() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping Rust→C++ MS interop test: C++ casacore not available");
         return;
     }
@@ -96,14 +96,15 @@ fn ms_data_column_rust_to_cpp_round_trip() {
     populate_main_rows(&mut ms, 6);
     ms.save().unwrap();
 
-    cpp_ms_verify_basic_fixture(&ms_path).expect("C++ should verify Rust-written MS");
+    MeasurementSetOracle::verify_basic_fixture(&ms_path)
+        .expect("C++ should verify Rust-written MS");
 }
 
 /// C++ write → Rust read: Rust must be able to open a MeasurementSet created
 /// with casacore's `MeasurementSet` and read back the same typed structure.
 #[test]
 fn ms_data_column_cpp_to_rust_round_trip() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping C++→Rust MS interop test: C++ casacore not available");
         return;
     }
@@ -111,7 +112,7 @@ fn ms_data_column_cpp_to_rust_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     let ms_path = dir.path().join("cpp_to_rust.ms");
 
-    cpp_ms_write_basic_fixture(&ms_path).expect("C++ should write fixture MS");
+    MeasurementSetOracle::write_basic_fixture(&ms_path).expect("C++ should write fixture MS");
 
     let ms = MeasurementSet::open(&ms_path).unwrap();
     let issues = ms.validate().unwrap();

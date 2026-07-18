@@ -5,9 +5,7 @@ use casa_ms::MeasurementSet;
 use casa_ms::columns::main_ids;
 use casa_ms::columns::time_columns::TimeColumn;
 use casa_ms::derived::engine::MsCalEngine;
-use casa_test_support::measures_interop::{
-    cpp_frequency_convert, cpp_frequency_convert_between_frames, cpp_radvel_convert,
-};
+use casa_test_support::measures_interop::MeasuresOracle;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use casa_types::measures::PositionRef;
 use casa_types::measures::direction::DirectionRef;
@@ -69,7 +67,7 @@ fn refim_cband_topo_to_lsrk_row_10557_stays_within_one_hz_of_casacore() {
             .convert_to(FrequencyRef::GEO, &frame)
             .expect("convert TOPO to GEO")
             .hz();
-        let cpp_hz = cpp_frequency_convert(
+        let cpp_hz = MeasuresOracle::frequency_convert(
             channel_frequencies_hz[channel],
             "TOPO",
             "LSRK",
@@ -82,7 +80,7 @@ fn refim_cband_topo_to_lsrk_row_10557_stays_within_one_hz_of_casacore() {
             observatory.values()[2],
         )
         .expect("C++ TOPO to LSRK");
-        let cpp_geo_hz = cpp_frequency_convert(
+        let cpp_geo_hz = MeasuresOracle::frequency_convert(
             channel_frequencies_hz[channel],
             "TOPO",
             "GEO",
@@ -133,7 +131,7 @@ fn refim_cband_topo_to_lsrk_row_10557_stays_within_one_hz_of_casacore() {
             .convert_to(FrequencyRef::LSRK, &first_frame)
             .expect("convert first-row TOPO to LSRK")
             .hz();
-        let cpp_hz = cpp_frequency_convert(
+        let cpp_hz = MeasuresOracle::frequency_convert(
             channel_frequencies_hz[channel],
             "TOPO",
             "LSRK",
@@ -281,7 +279,7 @@ fn debug_refim_cband_topo_frequency_steps_for_field1_channel106() {
         .convert_to(EpochRef::LAST, &frame)
         .expect("UTC to LAST");
     let tdb_epoch = epoch.convert_to(EpochRef::TDB, &frame).expect("UTC to TDB");
-    let cpp_geo_to_topo_ms = cpp_radvel_convert(
+    let cpp_geo_to_topo_ms = MeasuresOracle::radvel_convert(
         0.0,
         "GEO",
         "TOPO",
@@ -294,7 +292,7 @@ fn debug_refim_cband_topo_frequency_steps_for_field1_channel106() {
         position_wgs84.values()[2],
     )
     .expect("C++ GEO to TOPO radial velocity");
-    let cpp_topo_to_geo_ms = cpp_radvel_convert(
+    let cpp_topo_to_geo_ms = MeasuresOracle::radvel_convert(
         0.0,
         "TOPO",
         "GEO",
@@ -307,7 +305,7 @@ fn debug_refim_cband_topo_frequency_steps_for_field1_channel106() {
         position_wgs84.values()[2],
     )
     .expect("C++ TOPO to GEO radial velocity");
-    let cpp_geo_hz = cpp_frequency_convert(
+    let cpp_geo_hz = MeasuresOracle::frequency_convert(
         topo_hz,
         "TOPO",
         "GEO",
@@ -320,7 +318,7 @@ fn debug_refim_cband_topo_frequency_steps_for_field1_channel106() {
         position_wgs84.values()[2],
     )
     .expect("C++ TOPO to GEO");
-    let cpp_bary_hz = cpp_frequency_convert(
+    let cpp_bary_hz = MeasuresOracle::frequency_convert(
         topo_hz,
         "TOPO",
         "BARY",
@@ -333,7 +331,7 @@ fn debug_refim_cband_topo_frequency_steps_for_field1_channel106() {
         position_wgs84.values()[2],
     )
     .expect("C++ TOPO to BARY");
-    let cpp_lsrk_hz = cpp_frequency_convert(
+    let cpp_lsrk_hz = MeasuresOracle::frequency_convert(
         topo_hz,
         "TOPO",
         "LSRK",
@@ -447,7 +445,7 @@ fn debug_refim_cband_dual_frame_topo_to_lsrk_for_field1_channel106() {
             .convert_to(FrequencyRef::LSRK, &output_frame)
             .expect("BARY to LSRK")
             .hz();
-        let cpp_direct_hz = cpp_frequency_convert_between_frames(
+        let cpp_direct_hz = MeasuresOracle::frequency_convert_between_frames(
             topo_hz,
             "TOPO",
             "LSRK",

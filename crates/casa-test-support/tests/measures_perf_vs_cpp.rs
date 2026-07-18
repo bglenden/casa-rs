@@ -8,10 +8,7 @@
 //! when `CASA_RS_ENFORCE_PERF` is set.
 #![cfg(all(feature = "performance-tests", has_casacore_cpp))]
 
-use casa_test_support::measures_interop::{
-    cpp_bench_direction_convert, cpp_bench_doppler_convert, cpp_bench_epoch_convert,
-    cpp_bench_frequency_convert, cpp_bench_position_convert, cpp_bench_radvel_convert,
-};
+use casa_test_support::measures_interop::MeasuresOracle;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
@@ -39,7 +36,8 @@ fn bench_epoch(ref_in: EpochRef, ref_out: EpochRef) -> f64 {
 
     // --- C++ ---
     let cpp_ns =
-        cpp_bench_epoch_convert(J2000_MJD, COUNT, ref_in_str, ref_out_str, ITERATIONS).unwrap();
+        MeasuresOracle::bench_epoch_convert(J2000_MJD, COUNT, ref_in_str, ref_out_str, ITERATIONS)
+            .unwrap();
 
     let ratio = rust_ns as f64 / cpp_ns as f64;
     eprintln!(
@@ -84,9 +82,16 @@ fn bench_position(ref_in: PositionRef, ref_out: PositionRef) {
     let rust_ns = rust_start.elapsed().as_nanos() as u64;
 
     // --- C++ ---
-    let cpp_ns =
-        cpp_bench_position_convert(x_start, y, z, count, ref_in_str, ref_out_str, ITERATIONS)
-            .unwrap();
+    let cpp_ns = MeasuresOracle::bench_position_convert(
+        x_start,
+        y,
+        z,
+        count,
+        ref_in_str,
+        ref_out_str,
+        ITERATIONS,
+    )
+    .unwrap();
 
     let ratio = rust_ns as f64 / cpp_ns as f64;
     eprintln!(
@@ -156,8 +161,10 @@ fn perf_epoch_roundtrip_utc_tai() {
     let rust_ns = rust_start.elapsed().as_nanos() as u64;
 
     // --- C++ roundtrip: UTC→TAI + TAI→UTC ---
-    let cpp_ns_fwd = cpp_bench_epoch_convert(J2000_MJD, COUNT, "UTC", "TAI", ITERATIONS).unwrap();
-    let cpp_ns_rev = cpp_bench_epoch_convert(J2000_MJD, COUNT, "TAI", "UTC", ITERATIONS).unwrap();
+    let cpp_ns_fwd =
+        MeasuresOracle::bench_epoch_convert(J2000_MJD, COUNT, "UTC", "TAI", ITERATIONS).unwrap();
+    let cpp_ns_rev =
+        MeasuresOracle::bench_epoch_convert(J2000_MJD, COUNT, "TAI", "UTC", ITERATIONS).unwrap();
     let cpp_ns = cpp_ns_fwd + cpp_ns_rev;
 
     let ratio = rust_ns as f64 / cpp_ns as f64;
@@ -200,7 +207,8 @@ fn bench_doppler(ref_in: DopplerRef, ref_out: DopplerRef) {
     let rust_ns = rust_start.elapsed().as_nanos() as u64;
 
     let cpp_ns =
-        cpp_bench_doppler_convert(0.1, COUNT, ref_in_str, ref_out_str, ITERATIONS).unwrap();
+        MeasuresOracle::bench_doppler_convert(0.1, COUNT, ref_in_str, ref_out_str, ITERATIONS)
+            .unwrap();
 
     let ratio = rust_ns as f64 / cpp_ns as f64;
     eprintln!(
@@ -259,7 +267,7 @@ fn bench_direction(ref_in: DirectionRef, ref_out: DirectionRef, epoch_mjd: f64) 
     }
     let rust_ns = rust_start.elapsed().as_nanos() as u64;
 
-    let cpp_ns = cpp_bench_direction_convert(
+    let cpp_ns = MeasuresOracle::bench_direction_convert(
         1.0,
         0.5,
         COUNT,
@@ -317,7 +325,7 @@ fn bench_frequency(ref_in: FrequencyRef, ref_out: FrequencyRef) {
     }
     let rust_ns = rust_start.elapsed().as_nanos() as u64;
 
-    let cpp_ns = cpp_bench_frequency_convert(
+    let cpp_ns = MeasuresOracle::bench_frequency_convert(
         1.42e9,
         COUNT,
         ref_in_str,
@@ -376,7 +384,7 @@ fn bench_radvel(ref_in: RadialVelocityRef, ref_out: RadialVelocityRef) -> f64 {
     }
     let rust_ns = rust_start.elapsed().as_nanos() as u64;
 
-    let cpp_ns = cpp_bench_radvel_convert(
+    let cpp_ns = MeasuresOracle::bench_radvel_convert(
         50_000.0,
         COUNT,
         ref_in_str,
@@ -466,7 +474,7 @@ fn perf_epoch_ut1_to_gast() {
     let cpp_start = std::time::Instant::now();
     for i in 0..COUNT {
         let mjd = J2000_MJD + (i as f64) * 0.001;
-        let _ = casa_test_support::measures_interop::cpp_epoch_convert_with_frame(
+        let _ = casa_test_support::measures_interop::MeasuresOracle::epoch_convert_with_frame(
             mjd,
             "UT1",
             "GAST",

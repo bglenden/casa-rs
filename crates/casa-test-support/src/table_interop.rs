@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#[cfg(not(has_casacore_cpp))]
+use crate::TableOracle;
 use std::path::Path;
 
 use casa_tables::{EndianFormat, Table, TableError, TableOptions, TableSchema};
@@ -7,6 +9,8 @@ use casa_types::{RecordValue, Value};
 use crate::CppTableFixture;
 #[cfg(has_casacore_cpp)]
 use crate::oracle_runtime::{CasacoreOracleRuntime, OracleDomain};
+#[cfg(has_casacore_cpp)]
+use crate::table_oracle_impl::{cpp_table_verify_unlocked, cpp_table_write_unlocked};
 
 /// Which storage manager to use for the fixture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +118,7 @@ pub fn run_table_cross_matrix(
 
 /// Run CC (C++ write, C++ verify) test only. Skipped if C++ unavailable.
 pub fn run_cc_only(fixture: &TableFixture) -> Option<MatrixCellResult> {
-    if !crate::cpp_backend_available() {
+    if !crate::casacore_oracle_available() {
         return None;
     }
     fixture.cpp_fixture.map(run_cc)
@@ -136,7 +140,7 @@ pub fn run_full_cross_matrix(
         results.last().unwrap().passed
     );
 
-    if crate::cpp_backend_available() {
+    if crate::casacore_oracle_available() {
         if let Some(cpp_fix) = fixture.cpp_fixture {
             eprintln!("[cross-matrix] starting CC");
             results.push(run_cc(cpp_fix));
@@ -187,7 +191,7 @@ pub fn run_endian_cross_matrix(
         EndianFormat::LittleEndian,
     ));
 
-    if crate::cpp_backend_available() {
+    if crate::casacore_oracle_available() {
         if let Some(cpp_fix) = fixture.cpp_fixture {
             results.push(run_rc_with_endian(
                 fixture,
@@ -303,11 +307,11 @@ fn run_rc_with_endian(
     let verify_result = {
         #[cfg(has_casacore_cpp)]
         {
-            crate::cpp_table_verify_unlocked(cpp_fix, &table_path)
+            cpp_table_verify_unlocked(cpp_fix, &table_path)
         }
         #[cfg(not(has_casacore_cpp))]
         {
-            crate::cpp_table_verify(cpp_fix, &table_path)
+            TableOracle::table_verify(cpp_fix, &table_path)
         }
     };
     match verify_result {
@@ -358,11 +362,11 @@ fn run_cc(cpp_fix: CppTableFixture) -> MatrixCellResult {
     let write_result = {
         #[cfg(has_casacore_cpp)]
         {
-            crate::cpp_table_write_unlocked(cpp_fix, &table_path)
+            cpp_table_write_unlocked(cpp_fix, &table_path)
         }
         #[cfg(not(has_casacore_cpp))]
         {
-            crate::cpp_table_write(cpp_fix, &table_path)
+            TableOracle::table_write(cpp_fix, &table_path)
         }
     };
     if let Err(msg) = write_result {
@@ -376,11 +380,11 @@ fn run_cc(cpp_fix: CppTableFixture) -> MatrixCellResult {
     let verify_result = {
         #[cfg(has_casacore_cpp)]
         {
-            crate::cpp_table_verify_unlocked(cpp_fix, &table_path)
+            cpp_table_verify_unlocked(cpp_fix, &table_path)
         }
         #[cfg(not(has_casacore_cpp))]
         {
-            crate::cpp_table_verify(cpp_fix, &table_path)
+            TableOracle::table_verify(cpp_fix, &table_path)
         }
     };
     match verify_result {
@@ -411,11 +415,11 @@ fn run_cr(
     let write_result = {
         #[cfg(has_casacore_cpp)]
         {
-            crate::cpp_table_write_unlocked(cpp_fix, &table_path)
+            cpp_table_write_unlocked(cpp_fix, &table_path)
         }
         #[cfg(not(has_casacore_cpp))]
         {
-            crate::cpp_table_write(cpp_fix, &table_path)
+            TableOracle::table_write(cpp_fix, &table_path)
         }
     };
     if let Err(msg) = write_result {
@@ -473,11 +477,11 @@ fn run_rc(
     let verify_result = {
         #[cfg(has_casacore_cpp)]
         {
-            crate::cpp_table_verify_unlocked(cpp_fix, &table_path)
+            cpp_table_verify_unlocked(cpp_fix, &table_path)
         }
         #[cfg(not(has_casacore_cpp))]
         {
-            crate::cpp_table_verify(cpp_fix, &table_path)
+            TableOracle::table_verify(cpp_fix, &table_path)
         }
     };
     match verify_result {

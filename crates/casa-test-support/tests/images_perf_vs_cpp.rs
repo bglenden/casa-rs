@@ -15,11 +15,7 @@ use casa_images::expr_parser::{HashMapResolver, parse_image_expr};
 use casa_images::image::ImageInterface;
 use casa_images::{Image, ImageExpr, ImageIter, PagedImage};
 use casa_lattices::{ExecutionPolicy, Lattice, LatticeStatistics, Statistic};
-use casa_test_support::{
-    cpp_backend_available, cpp_create_image, cpp_create_image_tiled,
-    cpp_eval_image_expr_closeout_slice, cpp_eval_lel_expr, cpp_open_lel_expr_file,
-    cpp_profile_lel_scalar_expr, cpp_save_lel_expr_file,
-};
+use casa_test_support::{ImageOracle, casacore_oracle_available};
 use casa_types::Complex32;
 use ndarray::{ArrayD, IxDyn};
 use std::time::Instant;
@@ -59,7 +55,7 @@ fn assert_float_close(label: &str, actual: &[f32], expected: &[f32], tol: f32) {
 
 #[test]
 fn image_lifecycle_perf() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping image_lifecycle_perf: C++ casacore not available");
         return;
     }
@@ -81,12 +77,11 @@ fn image_lifecycle_perf() {
     let data: Vec<f32> = vec![1.0; n];
 
     let t0 = Instant::now();
-    casa_test_support::cpp_create_image(&cpp_path, &shape_i32, &data, "")
-        .expect("C++ create failed");
+    ImageOracle::create_image(&cpp_path, &shape_i32, &data, "").expect("C++ create failed");
     let cpp_write_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     let t0 = Instant::now();
-    let _cpp_data = casa_test_support::cpp_read_image_data(&cpp_path, n).expect("C++ read failed");
+    let _cpp_data = ImageOracle::read_image_data(&cpp_path, n).expect("C++ read failed");
     let cpp_read_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     let cpp_total_ms = cpp_write_ms + cpp_read_ms;
@@ -178,7 +173,7 @@ fn chunked_iteration_throughput() {
 
 #[test]
 fn subcube_slice_perf() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping subcube_slice_perf: C++ casacore not available");
         return;
     }
@@ -209,7 +204,7 @@ fn subcube_slice_perf() {
     }
 
     // C++ write
-    casa_test_support::cpp_create_image(&cpp_path, &shape_i32, &data, "").unwrap();
+    ImageOracle::create_image(&cpp_path, &shape_i32, &data, "").unwrap();
 
     // Slice parameters: quarter-size sub-cube from the center
     let quarter = size / 4;
@@ -229,8 +224,7 @@ fn subcube_slice_perf() {
 
     // C++ slice
     let t0 = Instant::now();
-    let cpp_slice =
-        casa_test_support::cpp_read_image_slice(&cpp_path, &start_i32, &length_i32).unwrap();
+    let cpp_slice = ImageOracle::read_image_slice(&cpp_path, &start_i32, &length_i32).unwrap();
     let cpp_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     let slice_n = rust_slice.len();
@@ -257,7 +251,7 @@ fn subcube_slice_perf() {
 
 #[test]
 fn complex32_lifecycle_perf() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping complex32_lifecycle_perf: C++ casacore not available");
         return;
     }
@@ -278,13 +272,13 @@ fn complex32_lifecycle_perf() {
 
     let cpp_path = dir.path().join("cpp_c32_perf.image");
     let t0 = Instant::now();
-    casa_test_support::cpp_create_image_complex32(&cpp_path, &shape_i32, &data, "")
+    ImageOracle::create_image_complex32(&cpp_path, &shape_i32, &data, "")
         .expect("C++ complex create failed");
     let cpp_write_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     let t0 = Instant::now();
-    let _cpp_data = casa_test_support::cpp_read_image_data_complex32(&cpp_path, n)
-        .expect("C++ complex read failed");
+    let _cpp_data =
+        ImageOracle::read_image_data_complex32(&cpp_path, n).expect("C++ complex read failed");
     let cpp_read_ms = t0.elapsed().as_secs_f64() * 1000.0;
     let cpp_total_ms = cpp_write_ms + cpp_read_ms;
 
@@ -319,7 +313,7 @@ fn complex32_lifecycle_perf() {
 }
 
 fn run_lazy_image_expr_closeout_slice_perf_vs_cpp(case_name: &str, size: usize, passes: usize) {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping {case_name}: C++ casacore not available");
         return;
     }
@@ -344,7 +338,7 @@ fn run_lazy_image_expr_closeout_slice_perf_vs_cpp(case_name: &str, size: usize, 
         img.put_slice(&arr, &[0, 0]).unwrap();
         img.save().unwrap();
     }
-    cpp_create_image(&cpp_path, &shape_i32, &data, "").unwrap();
+    ImageOracle::create_image(&cpp_path, &shape_i32, &data, "").unwrap();
 
     let image = Image::open(&rust_path).unwrap();
     let expr = ImageExpr::from_image(&image)
@@ -375,7 +369,7 @@ fn run_lazy_image_expr_closeout_slice_perf_vs_cpp(case_name: &str, size: usize, 
     let t0 = Instant::now();
     let mut cpp_total = 0.0f64;
     for _ in 0..passes {
-        let slice = cpp_eval_image_expr_closeout_slice(&cpp_path, &start, &length)
+        let slice = ImageOracle::eval_image_expr_closeout_slice(&cpp_path, &start, &length)
             .expect("C++ expr slice failed");
         cpp_total += slice.iter().map(|&v| v as f64).sum::<f64>();
     }
@@ -435,7 +429,7 @@ fn lazy_image_expr_closeout_slice_large_perf_vs_cpp() {
 
 #[test]
 fn parsed_lel_expr_perf_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping parsed_lel_expr_perf_vs_cpp: C++ casacore not available");
         return;
     }
@@ -452,7 +446,7 @@ fn parsed_lel_expr_perf_vs_cpp() {
     let dir = tempfile::tempdir().unwrap();
     let img_path = dir.path().join("lel_perf.image");
     let data: Vec<f32> = (0..n).map(|i| 0.5 + (i as f32) * 0.01).collect();
-    cpp_create_image(&img_path, &shape_i32, &data, "").unwrap();
+    ImageOracle::create_image(&img_path, &shape_i32, &data, "").unwrap();
 
     // LEL expression exercising arithmetic, transcendental, and 2-arg functions
     let lel = format!(
@@ -480,7 +474,7 @@ fn parsed_lel_expr_perf_vs_cpp() {
     let t0 = Instant::now();
     let mut cpp_sum = 0.0f64;
     for _ in 0..passes {
-        let (vals, _shape) = cpp_eval_lel_expr(&lel, n).unwrap();
+        let (vals, _shape) = ImageOracle::eval_lel_expr(&lel, n).unwrap();
         cpp_sum += vals.iter().map(|&v| v as f64).sum::<f64>();
     }
     let cpp_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -512,7 +506,7 @@ fn parsed_lel_expr_perf_vs_cpp() {
 
 #[test]
 fn parsed_two_image_virtual_expr_perf_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping parsed_two_image_virtual_expr_perf_vs_cpp: C++ casacore not available");
         return;
     }
@@ -534,8 +528,8 @@ fn parsed_two_image_virtual_expr_perf_vs_cpp() {
     let rhs_data: Vec<f32> = (0..n)
         .map(|i| 0.25 + ((i % (size + 3)) as f32) * 0.02)
         .collect();
-    cpp_create_image(&lhs_path, &shape_i32, &lhs_data, "").unwrap();
-    cpp_create_image(&rhs_path, &shape_i32, &rhs_data, "").unwrap();
+    ImageOracle::create_image(&lhs_path, &shape_i32, &lhs_data, "").unwrap();
+    ImageOracle::create_image(&rhs_path, &shape_i32, &rhs_data, "").unwrap();
 
     let lhs_str = lhs_path.to_str().unwrap();
     let rhs_str = rhs_path.to_str().unwrap();
@@ -566,7 +560,7 @@ fn parsed_two_image_virtual_expr_perf_vs_cpp() {
         1.0e-5,
     );
 
-    let (cpp_once, cpp_shape) = cpp_eval_lel_expr(&lel, n).unwrap();
+    let (cpp_once, cpp_shape) = ImageOracle::eval_lel_expr(&lel, n).unwrap();
     assert_eq!(cpp_shape, shape_i32.to_vec());
     assert_float_close("C++ two-image virtual expr", &cpp_once, &expected, 1.0e-4);
 
@@ -582,7 +576,7 @@ fn parsed_two_image_virtual_expr_perf_vs_cpp() {
     let t0 = Instant::now();
     let mut cpp_sum = 0.0f64;
     for _ in 0..passes {
-        let (vals, _shape) = cpp_eval_lel_expr(&lel, n).unwrap();
+        let (vals, _shape) = ImageOracle::eval_lel_expr(&lel, n).unwrap();
         cpp_sum += vals.iter().map(|&v| v as f64).sum::<f64>();
     }
     let cpp_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -620,7 +614,7 @@ fn parsed_two_image_virtual_expr_perf_vs_cpp() {
 
 #[test]
 fn imgexpr_save_open_perf_vs_cpp() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping imgexpr_save_open_perf_vs_cpp: C++ casacore not available");
         return;
     }
@@ -637,7 +631,7 @@ fn imgexpr_save_open_perf_vs_cpp() {
     let dir = tempfile::tempdir().unwrap();
     let img_path = dir.path().join("src.image");
     let data: Vec<f32> = (0..n).map(|i| 0.5 + (i as f32) * 0.01).collect();
-    cpp_create_image(&img_path, &shape_i32, &data, "").unwrap();
+    ImageOracle::create_image(&img_path, &shape_i32, &data, "").unwrap();
 
     let img_str = img_path.to_str().unwrap();
     let expr_str = format!("'{img_str}' * 2.0 + 1.0");
@@ -665,8 +659,8 @@ fn imgexpr_save_open_perf_vs_cpp() {
     let mut cpp_sum = 0.0f64;
     for i in 0..passes {
         let save_path = dir.path().join(format!("cpp_expr_{i}.imgexpr"));
-        cpp_save_lel_expr_file(&expr_str, &save_path).unwrap();
-        let (vals, _shape) = cpp_open_lel_expr_file(&save_path, n).unwrap();
+        ImageOracle::save_lel_expr_file(&expr_str, &save_path).unwrap();
+        let (vals, _shape) = ImageOracle::open_lel_expr_file(&save_path, n).unwrap();
         cpp_sum += vals.iter().map(|&v| v as f64).sum::<f64>();
     }
     let cpp_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -697,7 +691,7 @@ fn imgexpr_save_open_perf_vs_cpp() {
 // =========================================================================
 
 fn run_perf_wave14_reduction_vs_cpp(case_name: &str, size: usize, passes: usize) {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping {case_name}: C++ casacore not available");
         return;
     }
@@ -707,7 +701,7 @@ fn run_perf_wave14_reduction_vs_cpp(case_name: &str, size: usize, passes: usize)
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cube.image");
     let data: Vec<f32> = (0..n).map(|i| (i as f32) * 0.001).collect();
-    cpp_create_image(&path, &shape_i32, &data, "").unwrap();
+    ImageOracle::create_image(&path, &shape_i32, &data, "").unwrap();
 
     let a = PagedImage::<f32>::open(&path).unwrap();
     let a_str = path.to_str().unwrap();
@@ -732,12 +726,12 @@ fn run_perf_wave14_reduction_vs_cpp(case_name: &str, size: usize, passes: usize)
 
     let t0 = Instant::now();
     for _ in 0..passes {
-        let (_vals, shape) = cpp_eval_lel_expr(&expr_sum, 1).unwrap();
+        let (_vals, shape) = ImageOracle::eval_lel_expr(&expr_sum, 1).unwrap();
         assert!(
             shape.is_empty(),
             "C++ sum should be scalar, got shape {shape:?}"
         );
-        let (_vals, shape) = cpp_eval_lel_expr(&expr_mean, 1).unwrap();
+        let (_vals, shape) = ImageOracle::eval_lel_expr(&expr_mean, 1).unwrap();
         assert!(
             shape.is_empty(),
             "C++ mean should be scalar, got shape {shape:?}"
@@ -764,7 +758,7 @@ fn run_compiled_expr_get_vs_cpp_shape(
     passes: usize,
     masked: bool,
 ) {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping {case_name}: C++ casacore not available");
         return;
     }
@@ -781,7 +775,7 @@ fn run_compiled_expr_get_vs_cpp_shape(
     let path = dir.path().join("compiled_cube_cpp.image");
     let rust_path = dir.path().join("compiled_cube_rust.image");
     let data: Vec<f32> = (0..n).map(|i| (i as f32) * 0.001 - 64.0).collect();
-    cpp_create_image_tiled(&path, &shape_i32, &tile_i32, &data, "").unwrap();
+    ImageOracle::create_image_tiled(&path, &shape_i32, &tile_i32, &data, "").unwrap();
 
     {
         let mut rust_image = PagedImage::<f32>::create_with_tile_shape(
@@ -901,7 +895,7 @@ fn run_compiled_expr_get_vs_cpp_shape(
     let t0 = Instant::now();
     let mut cpp_sum = 0.0f64;
     for _ in 0..passes {
-        let (vals, shape) = cpp_eval_lel_expr(&expr_str, n).unwrap();
+        let (vals, shape) = ImageOracle::eval_lel_expr(&expr_str, n).unwrap();
         assert_eq!(shape, shape_i32, "{case_name}: C++ shape mismatch");
         cpp_sum += vals.iter().map(|&value| value as f64).sum::<f64>();
     }
@@ -1003,7 +997,7 @@ fn run_reduction_breakdown(size: usize, passes: usize) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cube.image");
     let data: Vec<f32> = (0..n).map(|i| (i as f32) * 0.001).collect();
-    cpp_create_image(&path, &shape_i32, &data, "").unwrap();
+    ImageOracle::create_image(&path, &shape_i32, &data, "").unwrap();
 
     let image = PagedImage::<f32>::open(&path).unwrap();
     let image_ref = &image as &dyn ImageInterface<f32>;
@@ -1107,7 +1101,7 @@ fn perf_wave14_reduction_breakdown_128_cube() {
 #[test]
 #[ignore = "diagnostic C++ scalar reduction profile; run explicitly when investigating medium-size gap"]
 fn perf_wave14_reduction_cpp_profile_64_cube() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -1119,13 +1113,13 @@ fn perf_wave14_reduction_cpp_profile_64_cube() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cube.image");
     let data: Vec<f32> = (0..n).map(|i| (i as f32) * 0.001).collect();
-    cpp_create_image(&path, &shape_i32, &data, "").unwrap();
+    ImageOracle::create_image(&path, &shape_i32, &data, "").unwrap();
 
     let expr_sum = format!("sum('{}')", path.display());
     let expr_mean = format!("mean('{}')", path.display());
 
-    let sum = cpp_profile_lel_scalar_expr(&expr_sum, passes).unwrap();
-    let mean = cpp_profile_lel_scalar_expr(&expr_mean, passes).unwrap();
+    let sum = ImageOracle::profile_lel_scalar_expr(&expr_sum, passes).unwrap();
+    let mean = ImageOracle::profile_lel_scalar_expr(&expr_mean, passes).unwrap();
 
     eprintln!(
         "wave14 C++ scalar profile (64^3, {passes} passes):\n  \
@@ -1141,7 +1135,7 @@ fn perf_wave14_reduction_cpp_profile_64_cube() {
 
 #[test]
 fn perf_wave14_iif_64_cube() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping: C++ casacore not available");
         return;
     }
@@ -1152,7 +1146,7 @@ fn perf_wave14_iif_64_cube() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cube.image");
     let data: Vec<f32> = (0..n).map(|i| (i as f32) * 0.001 - 128.0).collect();
-    cpp_create_image(&path, &shape_i32, &data, "").unwrap();
+    ImageOracle::create_image(&path, &shape_i32, &data, "").unwrap();
 
     let a = PagedImage::<f32>::open(&path).unwrap();
     let a_str = path.to_str().unwrap();
@@ -1174,7 +1168,7 @@ fn perf_wave14_iif_64_cube() {
 
     let t0 = Instant::now();
     for _ in 0..passes {
-        let _ = cpp_eval_lel_expr(&expr_str, n).unwrap();
+        let _ = ImageOracle::eval_lel_expr(&expr_str, n).unwrap();
     }
     let cpp_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -1223,7 +1217,7 @@ fn perf_wave14_type_projection_48_cube() {
 
 #[test]
 fn plane_by_plane_perf() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping plane_by_plane_perf: C++ casacore not available");
         return;
     }
@@ -1246,7 +1240,7 @@ fn plane_by_plane_perf() {
     // --- C++ benchmark ---
     let cpp_path = dir.path().join("cpp_pbp.image");
     let (cpp_create_ms, cpp_write_ms, cpp_read_ms) =
-        casa_test_support::cpp_bench_image_plane_by_plane(&cpp_path, &shape_i32, &tile_i32, 0)
+        ImageOracle::bench_image_plane_by_plane(&cpp_path, &shape_i32, &tile_i32, 0)
             .expect("C++ plane-by-plane benchmark failed");
     let cpp_total_ms = cpp_create_ms + cpp_write_ms + cpp_read_ms;
 
@@ -1325,7 +1319,7 @@ fn plane_by_plane_perf() {
 #[test]
 #[ignore = "large bounded-cache perf comparison; run explicitly when evaluating steady-state disk I/O"]
 fn plane_by_plane_bounded_cache_perf() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping plane_by_plane_bounded_cache_perf: C++ casacore not available");
         return;
     }
@@ -1393,10 +1387,8 @@ fn plane_by_plane_bounded_cache_perf() {
     // --- C++ benchmark ---
     let cpp_path = dir.path().join("cpp_pbp_bounded.image");
     let (cpp_create_ms, cpp_write_ms, cpp_read_ms) =
-        casa_test_support::cpp_bench_image_plane_by_plane(
-            &cpp_path, &shape_i32, &tile_i32, cache_mib,
-        )
-        .expect("C++ bounded-cache benchmark failed");
+        ImageOracle::bench_image_plane_by_plane(&cpp_path, &shape_i32, &tile_i32, cache_mib)
+            .expect("C++ bounded-cache benchmark failed");
     let cpp_total_ms = cpp_create_ms + cpp_write_ms + cpp_read_ms;
 
     let rust_total_ms = rust_create_ms + rust_write_ms + rust_read_ms;
@@ -1424,7 +1416,7 @@ fn plane_by_plane_bounded_cache_perf() {
 #[test]
 #[ignore = "large bounded-cache Complex32 perf comparison; run explicitly when evaluating steady-state disk I/O"]
 fn plane_by_plane_complex32_bounded_cache_perf() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!(
             "skipping plane_by_plane_complex32_bounded_cache_perf: C++ casacore not available"
         );
@@ -1497,7 +1489,7 @@ fn plane_by_plane_complex32_bounded_cache_perf() {
     // --- C++ benchmark ---
     let cpp_path = dir.path().join("cpp_pbp_c32.image");
     let (cpp_create_ms, cpp_write_ms, cpp_read_ms) =
-        casa_test_support::cpp_bench_image_plane_by_plane_complex(
+        ImageOracle::bench_image_plane_by_plane_complex(
             &cpp_path, &shape_i32, &tile_i32, cache_mib,
         )
         .expect("C++ complex32 plane-by-plane benchmark failed");
@@ -1527,7 +1519,7 @@ fn plane_by_plane_complex32_bounded_cache_perf() {
 #[test]
 #[ignore = "large bounded-cache perf comparison; run explicitly when evaluating steady-state disk I/O"]
 fn spectrum_by_spectrum_bounded_cache_perf() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping spectrum_by_spectrum_bounded_cache_perf: C++ casacore not available");
         return;
     }
@@ -1601,10 +1593,8 @@ fn spectrum_by_spectrum_bounded_cache_perf() {
     // --- C++ benchmark ---
     let cpp_path = dir.path().join("cpp_sbs_bounded.image");
     let (cpp_create_ms, cpp_write_ms, cpp_read_ms) =
-        casa_test_support::cpp_bench_image_spectrum_by_spectrum(
-            &cpp_path, &shape_i32, &tile_i32, cache_mib,
-        )
-        .expect("C++ spectrum-by-spectrum benchmark failed");
+        ImageOracle::bench_image_spectrum_by_spectrum(&cpp_path, &shape_i32, &tile_i32, cache_mib)
+            .expect("C++ spectrum-by-spectrum benchmark failed");
     let cpp_total_ms = cpp_create_ms + cpp_write_ms + cpp_read_ms;
 
     let rust_total_ms = rust_create_ms + rust_write_ms + rust_read_ms;

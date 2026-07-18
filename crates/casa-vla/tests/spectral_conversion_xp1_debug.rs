@@ -5,10 +5,7 @@ use std::process::Command;
 
 use casa_ms::SubTable;
 use casa_ms::ms::MeasurementSet;
-use casa_test_support::measures_interop::{
-    cpp_frequency_convert, cpp_frequency_convert_between_frames, cpp_frequency_convert_via_model,
-    cpp_frequency_convert_via_mutated_model,
-};
+use casa_test_support::measures_interop::MeasuresOracle;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier, discover_casa_python};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
@@ -258,7 +255,7 @@ fn xp1_first_lsrk_channel_matches_cpp_conversion() {
             let observatory_wgs84 = observatory
                 .convert_to(PositionRef::WGS84)
                 .expect("observatory WGS84");
-            let cpp_hz = cpp_frequency_convert(
+            let cpp_hz = MeasuresOracle::frequency_convert(
                 topo_hz,
                 "TOPO",
                 "LSRK",
@@ -342,7 +339,7 @@ fn xp1_compare_direct_and_frame_bound_cpp_conversion() {
                 .expect("observatory WGS84");
             let epoch_mjd = frame.epoch().expect("frame epoch").value().as_mjd();
 
-            let direct_cpp = cpp_frequency_convert(
+            let direct_cpp = MeasuresOracle::frequency_convert(
                 topo_hz,
                 "TOPO",
                 "LSRK",
@@ -355,7 +352,7 @@ fn xp1_compare_direct_and_frame_bound_cpp_conversion() {
                 observatory_wgs84.values()[2],
             )
             .expect("direct C++ TOPO to LSRK");
-            let frame_bound_cpp = cpp_frequency_convert_between_frames(
+            let frame_bound_cpp = MeasuresOracle::frequency_convert_between_frames(
                 topo_hz,
                 "TOPO",
                 "LSRK",
@@ -375,7 +372,7 @@ fn xp1_compare_direct_and_frame_bound_cpp_conversion() {
                 observatory_wgs84.values()[2],
             )
             .expect("frame-bound C++ TOPO to LSRK");
-            let via_model_cpp = cpp_frequency_convert_via_model(
+            let via_model_cpp = MeasuresOracle::frequency_convert_via_model(
                 topo_hz,
                 "TOPO",
                 "LSRK",
@@ -388,7 +385,7 @@ fn xp1_compare_direct_and_frame_bound_cpp_conversion() {
                 observatory_wgs84.values()[2],
             )
             .expect("via-model C++ TOPO to LSRK");
-            let via_mutated_model_cpp = cpp_frequency_convert_via_mutated_model(
+            let via_mutated_model_cpp = MeasuresOracle::frequency_convert_via_mutated_model(
                 topo_hz,
                 "TOPO",
                 "LSRK",
@@ -801,7 +798,7 @@ fn xp1_find_time_direction_combo_closest_to_casa_spw_seed() {
 
     for (freq_index, freq_candidate) in candidates.iter().enumerate() {
         for (frame_index, frame_candidate) in candidates.iter().enumerate() {
-            let cpp_hz = cpp_frequency_convert(
+            let cpp_hz = MeasuresOracle::frequency_convert(
                 freq_candidate.topo_hz,
                 "TOPO",
                 "LSRK",

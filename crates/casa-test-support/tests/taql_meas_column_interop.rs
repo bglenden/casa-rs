@@ -15,11 +15,9 @@ use tempfile::TempDir;
 
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-use casa_test_support::table_measures_interop::{
-    cpp_create_direction_fixed, cpp_create_epoch_fixed,
-};
+use casa_test_support::table_measures_interop::TableMeasuresOracle;
 use casa_test_support::taql_interop::{
-    CppTaqlQueryResult, TaqlQueryResult, cpp_taql_query, rust_taql_query,
+    CppTaqlQueryResult, TaqlOracle, TaqlQueryResult, rust_taql_query,
 };
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, Value};
 
@@ -164,7 +162,7 @@ fn rc_epoch_meas_column_matches_cpp_taql() {
     let rust_result = rust_taql_query(&mut rust_table, RUST_EPOCH_QUERY).unwrap();
     rust_table.save(TableOptions::new(&path)).unwrap();
 
-    let cpp_result = cpp_taql_query(&path, CPP_EPOCH_QUERY).unwrap();
+    let cpp_result = TaqlOracle::query(&path, CPP_EPOCH_QUERY).unwrap();
     assert_single_float_column_matches(&rust_result, &cpp_result, 1.0e-9);
 }
 
@@ -172,9 +170,9 @@ fn rc_epoch_meas_column_matches_cpp_taql() {
 fn cr_epoch_meas_column_matches_cpp_taql() {
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("cr_epoch.tab");
-    cpp_create_epoch_fixed(path.to_str().unwrap()).unwrap();
+    TableMeasuresOracle::create_epoch_fixed(path.to_str().unwrap()).unwrap();
 
-    let cpp_result = cpp_taql_query(&path, CPP_EPOCH_QUERY).unwrap();
+    let cpp_result = TaqlOracle::query(&path, CPP_EPOCH_QUERY).unwrap();
     let mut rust_table = Table::open(TableOptions::new(&path)).unwrap();
     let rust_result = rust_taql_query(&mut rust_table, RUST_EPOCH_QUERY).unwrap();
 
@@ -190,7 +188,7 @@ fn rc_direction_meas_column_matches_cpp_taql() {
     let rust_result = rust_taql_query(&mut rust_table, RUST_DIRECTION_QUERY).unwrap();
     rust_table.save(TableOptions::new(&path)).unwrap();
 
-    let cpp_result = cpp_taql_query(&path, CPP_DIRECTION_QUERY).unwrap();
+    let cpp_result = TaqlOracle::query(&path, CPP_DIRECTION_QUERY).unwrap();
     assert_single_array_column_matches(&rust_result, &cpp_result, 5.0e-6);
 }
 
@@ -198,9 +196,9 @@ fn rc_direction_meas_column_matches_cpp_taql() {
 fn cr_direction_meas_column_matches_cpp_taql() {
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("cr_direction.tab");
-    cpp_create_direction_fixed(path.to_str().unwrap()).unwrap();
+    TableMeasuresOracle::create_direction_fixed(path.to_str().unwrap()).unwrap();
 
-    let cpp_result = cpp_taql_query(&path, CPP_DIRECTION_QUERY).unwrap();
+    let cpp_result = TaqlOracle::query(&path, CPP_DIRECTION_QUERY).unwrap();
     let mut rust_table = Table::open(TableOptions::new(&path)).unwrap();
     let rust_result = rust_taql_query(&mut rust_table, RUST_DIRECTION_QUERY).unwrap();
 

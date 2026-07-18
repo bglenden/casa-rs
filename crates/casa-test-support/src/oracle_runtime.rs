@@ -96,6 +96,18 @@ impl CasacoreOracleRuntime {
     }
 
     #[cfg(has_casacore_cpp)]
+    pub(crate) fn c_path(
+        context: &'static str,
+        path: &std::path::Path,
+    ) -> Result<CString, OracleError> {
+        let value = path.to_str().ok_or_else(|| OracleError::InvalidInput {
+            context,
+            message: format!("path is not UTF-8: {}", path.display()),
+        })?;
+        Self::c_string(context, value)
+    }
+
+    #[cfg(has_casacore_cpp)]
     pub(crate) fn output_string(
         operation: &'static str,
         bytes: &[u8],
@@ -114,6 +126,15 @@ impl CasacoreOracleRuntime {
     }
 
     #[cfg(has_casacore_cpp)]
+    pub(crate) fn output_c_char_string(
+        operation: &'static str,
+        bytes: &[std::ffi::c_char],
+    ) -> Result<String, OracleError> {
+        let bytes = unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), bytes.len()) };
+        Self::output_string(operation, bytes)
+    }
+
+    #[cfg(has_casacore_cpp)]
     pub(crate) fn status(operation: &'static str, status: i32) -> Result<(), OracleError> {
         if status == 0 {
             Ok(())
@@ -126,12 +147,11 @@ impl CasacoreOracleRuntime {
     }
 
     #[cfg(has_casacore_cpp)]
-    pub(crate) unsafe fn cpp_error(
-        operation: &'static str,
+    pub(crate) unsafe fn cpp_error_message(
         pointer: *mut std::ffi::c_char,
         free: unsafe extern "C" fn(*mut std::ffi::c_char),
-    ) -> OracleError {
-        let message = if pointer.is_null() {
+    ) -> String {
+        if pointer.is_null() {
             "no diagnostic returned".to_owned()
         } else {
             let message = unsafe { CStr::from_ptr(pointer) }
@@ -139,8 +159,60 @@ impl CasacoreOracleRuntime {
                 .into_owned();
             unsafe { free(pointer) };
             message
-        };
+        }
+    }
+
+    #[cfg(has_casacore_cpp)]
+    pub(crate) unsafe fn cpp_error(
+        operation: &'static str,
+        pointer: *mut std::ffi::c_char,
+        free: unsafe extern "C" fn(*mut std::ffi::c_char),
+    ) -> OracleError {
+        let message = unsafe { Self::cpp_error_message(pointer, free) };
         OracleError::CppFailure { operation, message }
+    }
+
+    #[cfg(has_casacore_cpp)]
+    pub(crate) unsafe fn owned_string(
+        operation: &'static str,
+        pointer: *mut std::ffi::c_char,
+        free: unsafe extern "C" fn(*mut std::ffi::c_char),
+    ) -> Result<String, OracleError> {
+        if pointer.is_null() {
+            return Err(OracleError::InvalidOutput {
+                operation,
+                message: "null string pointer".to_owned(),
+            });
+        }
+        let result = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { free(pointer) };
+        Ok(result)
+    }
+
+    #[cfg(has_casacore_cpp)]
+    pub(crate) unsafe fn owned_vec<T: Copy>(
+        operation: &'static str,
+        pointer: *mut T,
+        len: usize,
+        free: unsafe extern "C" fn(*mut T),
+    ) -> Result<Vec<T>, OracleError> {
+        if len == 0 {
+            if !pointer.is_null() {
+                unsafe { free(pointer) };
+            }
+            return Ok(Vec::new());
+        }
+        if pointer.is_null() {
+            return Err(OracleError::InvalidOutput {
+                operation,
+                message: format!("null vector pointer for {len} elements"),
+            });
+        }
+        let result = unsafe { std::slice::from_raw_parts(pointer, len) }.to_vec();
+        unsafe { free(pointer) };
+        Ok(result)
     }
 
     #[cfg(has_casacore_cpp)]
@@ -179,6 +251,20 @@ impl CasacoreOracleRuntime {
                 OracleDomain::MeasuresIau2000A | OracleDomain::Quanta => None,
             },
         })
+    }
+
+    /// Acquire the proven global-state domain for an operation, if it needs one.
+    #[cfg(has_casacore_cpp)]
+    pub(crate) fn lock_operation(
+        operation: &'static str,
+    ) -> Result<Option<OracleGuard>, OracleError> {
+        let domain = match operation {
+            "measures.iau2000_precession_matrix" | "measures.direction_convert_iau2000a" => {
+                Some(OracleDomain::MeasuresIau2000A)
+            }
+            _ => None,
+        };
+        domain.map(Self::lock).transpose()
     }
 }
 
@@ -225,26 +311,18 @@ impl OracleFileLock {
     }
 }
 
-#[cfg(all(has_casacore_cpp, unix))]
-impl Drop for OracleFileLock {
-    fn drop(&mut self) {
-        unsafe {
-            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{CasacoreOracleRuntime, OracleError};
+    use super::*;
 
     #[test]
-    fn interior_nul_is_a_typed_input_error() {
-        let error = CasacoreOracleRuntime::c_string("unit", "m\0s").unwrap_err();
+    fn c_string_rejects_embedded_nul_with_context() {
+        let error = CasacoreOracleRuntime::c_string("test value", "bad\0value")
+            .expect_err("embedded NUL must be rejected");
         assert!(matches!(
             error,
             OracleError::InvalidInput {
-                context: "unit",
+                context: "test value",
                 ..
             }
         ));
@@ -259,5 +337,81 @@ mod tests {
                 capability: "quanta"
             })
         );
+    }
+
+    #[cfg(has_casacore_cpp)]
+    #[test]
+    fn output_string_rejects_missing_nul() {
+        let error = CasacoreOracleRuntime::output_string("test.output", b"unterminated")
+            .expect_err("unterminated output must be rejected");
+        assert!(matches!(
+            error,
+            OracleError::InvalidOutput {
+                operation: "test.output",
+                ..
+            }
+        ));
+    }
+
+    #[cfg(has_casacore_cpp)]
+    #[test]
+    fn same_domain_calls_are_serialized() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let first = CasacoreOracleRuntime::lock(OracleDomain::MeasuresIau2000A)
+            .expect("acquire first measures guard");
+        let (attempted_tx, attempted_rx) = mpsc::channel();
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            attempted_tx.send(()).expect("report lock attempt");
+            let _second = CasacoreOracleRuntime::lock(OracleDomain::MeasuresIau2000A)
+                .expect("acquire second measures guard");
+            acquired_tx.send(()).expect("report acquired lock");
+        });
+
+        attempted_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker attempted lock");
+        assert!(
+            acquired_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "same-domain lock was acquired while the first guard was held"
+        );
+        drop(first);
+        acquired_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker acquired released lock");
+        worker.join().expect("worker completed");
+    }
+
+    #[cfg(has_casacore_cpp)]
+    #[test]
+    fn independent_domains_can_run_in_parallel() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let measures = CasacoreOracleRuntime::lock(OracleDomain::MeasuresIau2000A)
+            .expect("acquire measures guard");
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _quanta = CasacoreOracleRuntime::lock(OracleDomain::Quanta)
+                .expect("acquire independent quanta guard");
+            acquired_tx.send(()).expect("report acquired lock");
+        });
+
+        acquired_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("independent domain remained available");
+        drop(measures);
+        worker.join().expect("worker completed");
+    }
+}
+
+#[cfg(all(has_casacore_cpp, unix))]
+impl Drop for OracleFileLock {
+    fn drop(&mut self) {
+        unsafe {
+            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+        }
     }
 }

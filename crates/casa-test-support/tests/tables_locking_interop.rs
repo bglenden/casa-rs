@@ -10,9 +10,7 @@
 //! These tests are skipped when `pkg-config casacore` is not available.
 #![cfg(all(feature = "cpp-interop-tests", unix))]
 
-use casa_test_support::{
-    CppTableFixture, cpp_backend_available, cpp_table_verify, cpp_table_write,
-};
+use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
 
 use casa_tables::{
     ColumnSchema, LockMode, LockOptions, LockType, Table, TableOptions, TableSchema,
@@ -46,14 +44,14 @@ fn build_lock_test_table() -> Table {
 /// Validates that our C++ shim itself works (baseline).
 #[test]
 fn cc_lock_file() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping CC lock test: C++ casacore not available");
         return;
     }
     let dir = tempfile::tempdir().expect("create temp dir");
     let table_path = dir.path().join("cc_lock_table");
 
-    cpp_table_write(CppTableFixture::LockFile, &table_path)
+    TableOracle::table_write(CppTableFixture::LockFile, &table_path)
         .expect("C++ write with lock should succeed");
 
     // Verify lock file exists.
@@ -62,7 +60,7 @@ fn cc_lock_file() {
         "C++ should create table.lock"
     );
 
-    cpp_table_verify(CppTableFixture::LockFile, &table_path)
+    TableOracle::table_verify(CppTableFixture::LockFile, &table_path)
         .expect("C++ verify with lock should succeed");
 }
 
@@ -72,7 +70,7 @@ fn cc_lock_file() {
 /// (sync data format, request list layout).
 #[test]
 fn cr_lock_file() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping CR lock test: C++ casacore not available");
         return;
     }
@@ -80,7 +78,7 @@ fn cr_lock_file() {
     let table_path = dir.path().join("cr_lock_table");
 
     // C++ writes with locking.
-    cpp_table_write(CppTableFixture::LockFile, &table_path)
+    TableOracle::table_write(CppTableFixture::LockFile, &table_path)
         .expect("C++ write with lock should succeed");
 
     assert!(
@@ -115,7 +113,7 @@ fn cr_lock_file() {
 /// with C++ casacore's `LockFile` / `TableLockData`.
 #[test]
 fn rc_lock_file() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping RC lock test: C++ casacore not available");
         return;
     }
@@ -143,7 +141,7 @@ fn rc_lock_file() {
     );
 
     // C++ opens with locking and verifies.
-    cpp_table_verify(CppTableFixture::LockFile, &table_path)
+    TableOracle::table_verify(CppTableFixture::LockFile, &table_path)
         .expect("C++ should read Rust-produced table with lock file");
 }
 

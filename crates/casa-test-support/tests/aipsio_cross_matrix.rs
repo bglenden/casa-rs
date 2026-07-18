@@ -2,12 +2,13 @@
 #![cfg(feature = "cpp-interop-tests")]
 
 use casa_test_support::{
-    AipsIoCrossError, cpp_backend_available, primitive_cross_check_values, run_aipsio_cross_matrix,
+    AipsIoCrossError, casacore_oracle_available, primitive_cross_check_values,
+    run_aipsio_cross_matrix,
 };
 
 #[test]
 fn primitive_aipsio_rust_cpp_cross_matrix() {
-    if !cpp_backend_available() {
+    if !casacore_oracle_available() {
         eprintln!("skipping C++ AipsIO cross-matrix test: casacore backend unavailable");
         return;
     }

@@ -7,8 +7,8 @@
 #![cfg(feature = "cpp-interop-tests")]
 
 use casa_tables::{Table, TableInfo, TableOptions};
-use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{ManagerKind, TableFixture};
+use casa_test_support::{CppTableFixture, TableOracle};
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 use casa_tables::ColumnSchema;
@@ -95,7 +95,7 @@ fn table_info_cc() {
 /// CR: C++ write → Rust read. Verify row data AND TableInfo.
 #[test]
 fn table_info_cr() {
-    if !casa_test_support::cpp_backend_available() {
+    if !casa_test_support::casacore_oracle_available() {
         eprintln!("skipping: C++ casacore unavailable");
         return;
     }
@@ -104,8 +104,7 @@ fn table_info_cr() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cr_info");
 
-    casa_test_support::cpp_table_write(CppTableFixture::TableInfoMetadata, &path)
-        .expect("C++ write");
+    TableOracle::table_write(CppTableFixture::TableInfoMetadata, &path).expect("C++ write");
 
     // Verify row data via standard fixture comparison
     casa_test_support::table_interop::read_and_verify(&fixture, ManagerKind::StManAipsIO, &path)
@@ -119,7 +118,7 @@ fn table_info_cr() {
 /// RC: Rust write → C++ verify. Verify row data AND TableInfo.
 #[test]
 fn table_info_rc() {
-    if !casa_test_support::cpp_backend_available() {
+    if !casa_test_support::casacore_oracle_available() {
         eprintln!("skipping: C++ casacore unavailable");
         return;
     }
@@ -135,6 +134,6 @@ fn table_info_rc() {
         .save(TableOptions::new(&path).with_data_manager(casa_tables::DataManagerKind::StManAipsIO))
         .unwrap();
 
-    casa_test_support::cpp_table_verify(CppTableFixture::TableInfoMetadata, &path)
+    TableOracle::table_verify(CppTableFixture::TableInfoMetadata, &path)
         .expect("RC: C++ verify failed");
 }
