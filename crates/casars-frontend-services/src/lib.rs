@@ -58,10 +58,6 @@ use casars_tablebrowser_protocol::{BrowserCommand, BrowserFocus, BrowserView, Br
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const TUTORIAL_TASK_PARAMETER_AUDIT_JSON: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../resources/tutorial-task-parameter-audit.json"
-));
 const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
 const MAX_PROJECT_SCAN_DEPTH: usize = 4;
 const DEFAULT_GUI_MAX_PLOT_POINTS: u64 = 250_000;
@@ -1968,72 +1964,189 @@ pub struct AssistantTaskSuggestionProjection {
     pub validated_patch: SurfaceParameterPatch,
 }
 
-#[derive(Debug, Deserialize)]
-struct TutorialForkRequest {
-    project_root: String,
-    template_path: String,
-    filename: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum TutorialAcquisitionPhase {
+    Missing,
+    Downloading,
+    Verifying,
+    Unpacking,
+    Checking,
+    Materializing,
+    Ready,
+    Cancelled,
+    NetworkFailed,
+    ChecksumFailed,
+    UnsafeArchive,
+    DestinationCollision,
 }
 
-#[derive(Debug, Deserialize)]
-struct TutorialMigrateRequest {
-    pack_path: String,
-    destination: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum TutorialPersistenceAction {
+    Resume,
+    Restart,
+    Retry,
+    Cancel,
+    Advance,
 }
 
-#[derive(Debug, Deserialize)]
-struct TutorialNotebookRequest {
-    project_root: String,
-    notebook_id: casa_notebook::NotebookId,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialSectionState {
+    pub id: String,
+    pub title: String,
+    pub dataset_ids: Vec<String>,
+    pub cell_ids: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct TutorialPlanRequest {
-    project_root: String,
-    notebook_id: casa_notebook::NotebookId,
-    dataset_id: String,
-    source_override: Option<String>,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialOptionalCheckState {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub path: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct TutorialBeginRequest {
-    project_root: String,
-    plan: casa_notebook::TutorialAcquisitionPlan,
-    approval: TutorialAcquisitionApproval,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialUnpackState {
+    pub format: String,
+    pub archive_root: Option<String>,
+    pub max_entries: u64,
+    pub max_expanded_bytes: u64,
 }
 
-#[derive(Debug, Deserialize)]
-struct TutorialActionRequest {
-    project_root: String,
-    notebook_id: casa_notebook::NotebookId,
-    dataset_id: String,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialCheckOutcomeState {
+    pub check_id: String,
+    pub status: String,
+    pub detail: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct TutorialGenerationActionRequest {
-    project_root: String,
-    notebook_id: casa_notebook::NotebookId,
-    dataset_id: String,
-    generation: u64,
-    #[serde(default = "default_tutorial_download_chunk")]
-    max_download_bytes: u64,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialDatasetAttemptState {
+    pub generation: u64,
+    pub kind: String,
+    pub phase: TutorialAcquisitionPhase,
+    pub requested_uri: String,
+    pub resolved_uri: String,
+    pub redirects: Vec<String>,
+    pub expected_size_bytes: Option<u64>,
+    pub expected_sha256: Option<String>,
+    pub approval_sha256: String,
+    pub approved_missing_digest: bool,
+    pub skipped_check_ids: Vec<String>,
+    pub downloaded_bytes: u64,
+    pub computed_sha256: Option<String>,
+    pub checks: Vec<TutorialCheckOutcomeState>,
+    pub error: Option<String>,
+    pub started_at: u64,
+    pub finished_at: Option<u64>,
 }
 
-const fn default_tutorial_download_chunk() -> u64 {
-    1024 * 1024
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialDatasetState {
+    pub id: String,
+    pub display_name: String,
+    pub uri: String,
+    pub destination: String,
+    pub expected_size_bytes: Option<u64>,
+    pub sha256: Option<String>,
+    pub unpack: Option<TutorialUnpackState>,
+    pub checks: Vec<TutorialOptionalCheckState>,
+    pub phase: TutorialAcquisitionPhase,
+    pub staged: bool,
+    pub current_generation: u64,
+    pub pinned_sha256: Option<String>,
+    pub attempts: Vec<TutorialDatasetAttemptState>,
 }
 
-#[derive(Serialize)]
-struct TutorialTemplateProjection<'a> {
-    root: String,
-    content_sha256: &'a str,
-    manifest: &'a casa_notebook::TutorialManifest,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialLockState {
+    pub schema_version: u32,
+    pub registry_version: u32,
+    pub notebook_id: String,
+    pub notebook_filename: String,
+    pub tutorial_id: String,
+    pub title: String,
+    pub template_sha256: String,
+    pub sections: Vec<TutorialSectionState>,
+    pub datasets: Vec<TutorialDatasetState>,
 }
 
-#[derive(Serialize)]
-struct TutorialForkProjection {
-    notebook: NotebookDocumentProjection,
-    tutorial: casa_notebook::TutorialLock,
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TutorialProjectProjection {
+    pub notebook: NotebookDocumentProjection,
+    pub tutorial: TutorialLockState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialAcquisitionPlanState {
+    pub approval_sha256: String,
+    pub registry_version: u32,
+    pub notebook_id: String,
+    pub dataset_id: String,
+    pub scheme: String,
+    pub requested_uri: String,
+    pub resolved_uri: String,
+    pub redirects: Vec<String>,
+    pub expected_size_bytes: Option<u64>,
+    pub resolved_size_bytes: Option<u64>,
+    pub destination: String,
+    pub expected_sha256: Option<String>,
+    pub required_disk_bytes: u64,
+    pub available_disk_bytes: u64,
+    pub unpack: Option<TutorialUnpackState>,
+    pub checks: Vec<TutorialOptionalCheckState>,
+    pub missing_digest: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialAcquisitionApprovalState {
+    pub approval_sha256: String,
+    pub allow_missing_digest: bool,
+    pub skipped_check_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialTemplateState {
+    pub root: String,
+    pub content_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialForkRequest {
+    pub project_root: String,
+    pub template_path: String,
+    pub filename: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialMigrateRequest {
+    pub pack_path: String,
+    pub destination: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialPlanRequest {
+    pub project_root: String,
+    pub notebook_id: String,
+    pub dataset_id: String,
+    pub source_override: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialBeginRequest {
+    pub project_root: String,
+    pub plan: TutorialAcquisitionPlanState,
+    pub approval: TutorialAcquisitionApprovalState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TutorialActionRequest {
+    pub action: TutorialPersistenceAction,
+    pub project_root: String,
+    pub notebook_id: String,
+    pub dataset_id: String,
+    pub generation: Option<u64>,
+    pub max_download_bytes: Option<u64>,
 }
 
 fn notebook_error(action: &str, error: impl std::fmt::Display) -> FrontendServiceError {
@@ -2060,15 +2173,277 @@ fn corpus_error(action: &str, error: impl std::fmt::Display) -> FrontendServiceE
     }
 }
 
-fn parse_tutorial_request<T: for<'de> Deserialize<'de>>(
-    action: &str,
-    request_json: &str,
-) -> FrontendResult<T> {
-    serde_json::from_str(request_json).map_err(|error| tutorial_error(action, error))
+fn tutorial_notebook_id(value: &str) -> FrontendResult<NotebookId> {
+    value
+        .parse()
+        .map_err(|error| tutorial_error("parse tutorial notebook ID", error))
 }
 
-fn serialize_tutorial<T: Serialize>(action: &str, value: &T) -> FrontendResult<String> {
-    serde_json::to_string(value).map_err(|error| tutorial_error(action, error))
+fn tutorial_phase_projection(
+    phase: casa_notebook::TutorialAcquisitionPhase,
+) -> TutorialAcquisitionPhase {
+    match phase {
+        casa_notebook::TutorialAcquisitionPhase::Missing => TutorialAcquisitionPhase::Missing,
+        casa_notebook::TutorialAcquisitionPhase::Downloading => {
+            TutorialAcquisitionPhase::Downloading
+        }
+        casa_notebook::TutorialAcquisitionPhase::Verifying => TutorialAcquisitionPhase::Verifying,
+        casa_notebook::TutorialAcquisitionPhase::Unpacking => TutorialAcquisitionPhase::Unpacking,
+        casa_notebook::TutorialAcquisitionPhase::Checking => TutorialAcquisitionPhase::Checking,
+        casa_notebook::TutorialAcquisitionPhase::Materializing => {
+            TutorialAcquisitionPhase::Materializing
+        }
+        casa_notebook::TutorialAcquisitionPhase::Ready => TutorialAcquisitionPhase::Ready,
+        casa_notebook::TutorialAcquisitionPhase::Cancelled => TutorialAcquisitionPhase::Cancelled,
+        casa_notebook::TutorialAcquisitionPhase::NetworkFailed => {
+            TutorialAcquisitionPhase::NetworkFailed
+        }
+        casa_notebook::TutorialAcquisitionPhase::ChecksumFailed => {
+            TutorialAcquisitionPhase::ChecksumFailed
+        }
+        casa_notebook::TutorialAcquisitionPhase::UnsafeArchive => {
+            TutorialAcquisitionPhase::UnsafeArchive
+        }
+        casa_notebook::TutorialAcquisitionPhase::DestinationCollision => {
+            TutorialAcquisitionPhase::DestinationCollision
+        }
+    }
+}
+
+fn tutorial_unpack_projection(value: casa_notebook::TutorialUnpackPlan) -> TutorialUnpackState {
+    let format = match value.format {
+        casa_notebook::TutorialArchiveFormat::Tar => "tar",
+        casa_notebook::TutorialArchiveFormat::TarGz => "tar_gz",
+    };
+    TutorialUnpackState {
+        format: format.to_owned(),
+        archive_root: value.archive_root.map(|path| path.display().to_string()),
+        max_entries: value.max_entries,
+        max_expanded_bytes: value.max_expanded_bytes,
+    }
+}
+
+fn tutorial_unpack_owner(
+    value: TutorialUnpackState,
+) -> FrontendResult<casa_notebook::TutorialUnpackPlan> {
+    let format = match value.format.as_str() {
+        "tar" => casa_notebook::TutorialArchiveFormat::Tar,
+        "tar_gz" => casa_notebook::TutorialArchiveFormat::TarGz,
+        other => {
+            return Err(tutorial_error(
+                "parse tutorial archive format",
+                format!("unsupported format `{other}`"),
+            ));
+        }
+    };
+    Ok(casa_notebook::TutorialUnpackPlan {
+        format,
+        archive_root: value.archive_root.map(PathBuf::from),
+        max_entries: value.max_entries,
+        max_expanded_bytes: value.max_expanded_bytes,
+    })
+}
+
+fn tutorial_check_kind_projection(kind: casa_notebook::TutorialCheckKind) -> String {
+    match kind {
+        casa_notebook::TutorialCheckKind::PathExists => "path_exists",
+        casa_notebook::TutorialCheckKind::RegularFile => "regular_file",
+        casa_notebook::TutorialCheckKind::Directory => "directory",
+        casa_notebook::TutorialCheckKind::MeasurementSet => "measurement_set",
+    }
+    .to_owned()
+}
+
+fn tutorial_check_kind_owner(value: &str) -> FrontendResult<casa_notebook::TutorialCheckKind> {
+    match value {
+        "path_exists" => Ok(casa_notebook::TutorialCheckKind::PathExists),
+        "regular_file" => Ok(casa_notebook::TutorialCheckKind::RegularFile),
+        "directory" => Ok(casa_notebook::TutorialCheckKind::Directory),
+        "measurement_set" => Ok(casa_notebook::TutorialCheckKind::MeasurementSet),
+        other => Err(tutorial_error(
+            "parse tutorial check kind",
+            format!("unsupported kind `{other}`"),
+        )),
+    }
+}
+
+fn tutorial_check_projection(
+    value: casa_notebook::TutorialOptionalCheck,
+) -> TutorialOptionalCheckState {
+    TutorialOptionalCheckState {
+        id: value.id,
+        label: value.label,
+        kind: tutorial_check_kind_projection(value.kind),
+        path: value.path.display().to_string(),
+    }
+}
+
+fn tutorial_check_owner(
+    value: TutorialOptionalCheckState,
+) -> FrontendResult<casa_notebook::TutorialOptionalCheck> {
+    Ok(casa_notebook::TutorialOptionalCheck {
+        id: value.id,
+        label: value.label,
+        kind: tutorial_check_kind_owner(&value.kind)?,
+        path: PathBuf::from(value.path),
+    })
+}
+
+fn tutorial_attempt_projection(
+    value: casa_notebook::TutorialDatasetAttempt,
+) -> TutorialDatasetAttemptState {
+    let kind = match value.kind {
+        casa_notebook::TutorialAttemptKind::Initial => "initial",
+        casa_notebook::TutorialAttemptKind::Resume => "resume",
+        casa_notebook::TutorialAttemptKind::Restart => "restart",
+        casa_notebook::TutorialAttemptKind::Retry => "retry",
+    };
+    TutorialDatasetAttemptState {
+        generation: value.generation,
+        kind: kind.to_owned(),
+        phase: tutorial_phase_projection(value.phase),
+        requested_uri: value.requested_uri,
+        resolved_uri: value.resolved_uri,
+        redirects: value.redirects,
+        expected_size_bytes: value.expected_size_bytes,
+        expected_sha256: value.expected_sha256,
+        approval_sha256: value.approval_sha256,
+        approved_missing_digest: value.approved_missing_digest,
+        skipped_check_ids: value.skipped_check_ids,
+        downloaded_bytes: value.downloaded_bytes,
+        computed_sha256: value.computed_sha256,
+        checks: value
+            .checks
+            .into_iter()
+            .map(|check| TutorialCheckOutcomeState {
+                check_id: check.check_id,
+                status: match check.status {
+                    casa_notebook::TutorialCheckStatus::Passed => "passed",
+                    casa_notebook::TutorialCheckStatus::Failed => "failed",
+                    casa_notebook::TutorialCheckStatus::Skipped => "skipped",
+                }
+                .to_owned(),
+                detail: check.detail,
+            })
+            .collect(),
+        error: value.error,
+        started_at: value.started_at.0,
+        finished_at: value.finished_at.map(|timestamp| timestamp.0),
+    }
+}
+
+fn tutorial_dataset_projection(value: casa_notebook::TutorialDatasetLock) -> TutorialDatasetState {
+    TutorialDatasetState {
+        id: value.dataset.id,
+        display_name: value.dataset.display_name,
+        uri: value.dataset.uri,
+        destination: value.dataset.destination.display().to_string(),
+        expected_size_bytes: value.dataset.expected_size_bytes,
+        sha256: value.dataset.sha256,
+        unpack: value.dataset.unpack.map(tutorial_unpack_projection),
+        checks: value
+            .dataset
+            .checks
+            .into_iter()
+            .map(tutorial_check_projection)
+            .collect(),
+        phase: tutorial_phase_projection(value.phase),
+        staged: value.staged,
+        current_generation: value.current_generation,
+        pinned_sha256: value.pinned_sha256,
+        attempts: value
+            .attempts
+            .into_iter()
+            .map(tutorial_attempt_projection)
+            .collect(),
+    }
+}
+
+fn tutorial_lock_projection(value: casa_notebook::TutorialLock) -> TutorialLockState {
+    TutorialLockState {
+        schema_version: value.schema_version,
+        registry_version: value.registry_version,
+        notebook_id: value.notebook_id.to_string(),
+        notebook_filename: value.notebook_filename,
+        tutorial_id: value.tutorial_id,
+        title: value.title,
+        template_sha256: value.template_sha256,
+        sections: value
+            .sections
+            .into_iter()
+            .map(|section| TutorialSectionState {
+                id: section.id,
+                title: section.title,
+                dataset_ids: section.dataset_ids,
+                cell_ids: section
+                    .cell_ids
+                    .into_iter()
+                    .map(|id| id.to_string())
+                    .collect(),
+            })
+            .collect(),
+        datasets: value
+            .datasets
+            .into_iter()
+            .map(tutorial_dataset_projection)
+            .collect(),
+    }
+}
+
+fn tutorial_plan_projection(
+    value: casa_notebook::TutorialAcquisitionPlan,
+) -> TutorialAcquisitionPlanState {
+    TutorialAcquisitionPlanState {
+        approval_sha256: value.approval_sha256,
+        registry_version: value.registry_version,
+        notebook_id: value.notebook_id.to_string(),
+        dataset_id: value.dataset_id,
+        scheme: value.scheme,
+        requested_uri: value.requested_uri,
+        resolved_uri: value.resolved_uri,
+        redirects: value.redirects,
+        expected_size_bytes: value.expected_size_bytes,
+        resolved_size_bytes: value.resolved_size_bytes,
+        destination: value.destination.display().to_string(),
+        expected_sha256: value.expected_sha256,
+        required_disk_bytes: value.required_disk_bytes,
+        available_disk_bytes: value.available_disk_bytes,
+        unpack: value.unpack.map(tutorial_unpack_projection),
+        checks: value
+            .checks
+            .into_iter()
+            .map(tutorial_check_projection)
+            .collect(),
+        missing_digest: value.missing_digest,
+    }
+}
+
+fn tutorial_plan_owner(
+    value: TutorialAcquisitionPlanState,
+) -> FrontendResult<casa_notebook::TutorialAcquisitionPlan> {
+    Ok(casa_notebook::TutorialAcquisitionPlan {
+        approval_sha256: value.approval_sha256,
+        registry_version: value.registry_version,
+        notebook_id: tutorial_notebook_id(&value.notebook_id)?,
+        dataset_id: value.dataset_id,
+        scheme: value.scheme,
+        requested_uri: value.requested_uri,
+        resolved_uri: value.resolved_uri,
+        redirects: value.redirects,
+        expected_size_bytes: value.expected_size_bytes,
+        resolved_size_bytes: value.resolved_size_bytes,
+        destination: PathBuf::from(value.destination),
+        expected_sha256: value.expected_sha256,
+        required_disk_bytes: value.required_disk_bytes,
+        available_disk_bytes: value.available_disk_bytes,
+        unpack: value.unpack.map(tutorial_unpack_owner).transpose()?,
+        checks: value
+            .checks
+            .into_iter()
+            .map(tutorial_check_owner)
+            .collect::<FrontendResult<Vec<_>>>()?,
+        missing_digest: value.missing_digest,
+    })
 }
 
 fn notebook_value_from_json(value: &serde_json::Value) -> FrontendResult<NotebookValue> {
@@ -3554,43 +3929,36 @@ pub fn assistant_corpus_search(
         .collect())
 }
 
-fn tutorial_template_projection(template: &TutorialTemplate) -> TutorialTemplateProjection<'_> {
-    TutorialTemplateProjection {
+fn tutorial_template_projection(template: TutorialTemplate) -> TutorialTemplateState {
+    TutorialTemplateState {
         root: template.root.to_string_lossy().into_owned(),
-        content_sha256: &template.content_sha256,
-        manifest: &template.manifest,
+        content_sha256: template.content_sha256,
     }
 }
 
-/// Validate and preview one immutable portable tutorial template.
-#[uniffi::export]
-pub fn tutorial_template_json(template_path: String) -> FrontendResult<String> {
-    let template = TutorialProject::load_template(&template_path)
-        .map_err(|error| tutorial_error("load tutorial template", error))?;
-    serialize_tutorial(
-        "serialize tutorial template",
-        &tutorial_template_projection(&template),
-    )
+fn tutorial_project_projection(
+    store: &NotebookStore,
+    lock: casa_notebook::TutorialLock,
+) -> FrontendResult<TutorialProjectProjection> {
+    Ok(TutorialProjectProjection {
+        notebook: notebook_projection(store, &lock.notebook_filename)?,
+        tutorial: tutorial_lock_projection(lock),
+    })
 }
 
 /// One-shot conversion of `tutorial-pack.v0` into a portable v1 template.
 #[uniffi::export]
-pub fn tutorial_migrate_v0_json(request_json: String) -> FrontendResult<String> {
-    let request: TutorialMigrateRequest =
-        parse_tutorial_request("parse tutorial migration request", &request_json)?;
+pub fn tutorial_migrate_v0(
+    request: TutorialMigrateRequest,
+) -> FrontendResult<TutorialTemplateState> {
     let template = TutorialProject::migrate_v0_template(&request.pack_path, &request.destination)
         .map_err(|error| tutorial_error("migrate tutorial-pack v0", error))?;
-    serialize_tutorial(
-        "serialize migrated tutorial template",
-        &tutorial_template_projection(&template),
-    )
+    Ok(tutorial_template_projection(template))
 }
 
 /// Fork one immutable template into an editable learner notebook and managed lock.
 #[uniffi::export]
-pub fn tutorial_fork_json(request_json: String) -> FrontendResult<String> {
-    let request: TutorialForkRequest =
-        parse_tutorial_request("parse tutorial fork request", &request_json)?;
+pub fn tutorial_fork(request: TutorialForkRequest) -> FrontendResult<TutorialProjectProjection> {
     let template = TutorialProject::load_template(&request.template_path)
         .map_err(|error| tutorial_error("load tutorial template", error))?;
     let project = TutorialProject::open(&request.project_root)
@@ -3600,155 +3968,135 @@ pub fn tutorial_fork_json(request_json: String) -> FrontendResult<String> {
         .map_err(|error| tutorial_error("fork tutorial template", error))?;
     let store = NotebookStore::open(&request.project_root)
         .map_err(|error| tutorial_error("open tutorial notebook store", error))?;
-    serialize_tutorial(
-        "serialize forked tutorial",
-        &TutorialForkProjection {
-            notebook: notebook_projection(&store, &forked.notebook.entry.filename)?,
-            tutorial: forked.lock,
-        },
-    )
-}
-
-/// Reopen one learner tutorial entirely from Rust-owned project state.
-#[uniffi::export]
-pub fn tutorial_project_json(request_json: String) -> FrontendResult<String> {
-    let request: TutorialNotebookRequest =
-        parse_tutorial_request("parse tutorial project request", &request_json)?;
-    let project = TutorialProject::open(&request.project_root)
-        .map_err(|error| tutorial_error("open tutorial project", error))?;
-    let lock = project
-        .load_lock(request.notebook_id)
-        .map_err(|error| tutorial_error("load tutorial lock", error))?;
-    let store = NotebookStore::open(&request.project_root)
-        .map_err(|error| tutorial_error("open tutorial notebook store", error))?;
-    serialize_tutorial(
-        "serialize tutorial project",
-        &TutorialForkProjection {
-            notebook: notebook_projection(&store, &lock.notebook_filename)?,
-            tutorial: lock,
-        },
-    )
+    tutorial_project_projection(&store, forked.lock)
 }
 
 /// List every Rust-owned learner tutorial in one project.
 #[uniffi::export]
-pub fn tutorial_project_list_json(project_root: String) -> FrontendResult<String> {
+pub fn tutorial_project_list(
+    project_root: String,
+) -> FrontendResult<Vec<TutorialProjectProjection>> {
     let project = TutorialProject::open(&project_root)
         .map_err(|error| tutorial_error("open tutorial project", error))?;
     let store = NotebookStore::open(&project_root)
         .map_err(|error| tutorial_error("open tutorial notebook store", error))?;
-    let tutorials = project
+    project
         .list_locks()
         .map_err(|error| tutorial_error("list tutorial locks", error))?
         .into_iter()
-        .map(|lock| {
-            Ok(TutorialForkProjection {
-                notebook: notebook_projection(&store, &lock.notebook_filename)?,
-                tutorial: lock,
-            })
-        })
-        .collect::<FrontendResult<Vec<_>>>()?;
-    serialize_tutorial("serialize tutorial project list", &tutorials)
+        .map(|lock| tutorial_project_projection(&store, lock))
+        .collect()
 }
 
 /// Resolve the exact source, redirect, integrity, disk, and extraction approval facts.
 #[uniffi::export]
-pub fn tutorial_plan_acquisition_json(request_json: String) -> FrontendResult<String> {
-    let request: TutorialPlanRequest =
-        parse_tutorial_request("parse tutorial acquisition plan request", &request_json)?;
+pub fn tutorial_plan_acquisition(
+    request: TutorialPlanRequest,
+) -> FrontendResult<TutorialAcquisitionPlanState> {
     let plan = TutorialProject::open(&request.project_root)
         .map_err(|error| tutorial_error("open tutorial project", error))?
         .plan_acquisition(
-            request.notebook_id,
+            tutorial_notebook_id(&request.notebook_id)?,
             &request.dataset_id,
             request.source_override.as_deref(),
         )
         .map_err(|error| tutorial_error("plan tutorial acquisition", error))?;
-    serialize_tutorial("serialize tutorial acquisition plan", &plan)
+    Ok(tutorial_plan_projection(plan))
 }
 
 /// Begin one exact explicitly approved acquisition generation.
 #[uniffi::export]
-pub fn tutorial_begin_acquisition_json(request_json: String) -> FrontendResult<String> {
-    let request: TutorialBeginRequest =
-        parse_tutorial_request("parse tutorial acquisition approval", &request_json)?;
+pub fn tutorial_begin_acquisition(
+    request: TutorialBeginRequest,
+) -> FrontendResult<TutorialDatasetState> {
+    let plan = tutorial_plan_owner(request.plan)?;
+    let approval = TutorialAcquisitionApproval {
+        approval_sha256: request.approval.approval_sha256,
+        allow_missing_digest: request.approval.allow_missing_digest,
+        skipped_check_ids: request.approval.skipped_check_ids,
+    };
     let state = TutorialProject::open(&request.project_root)
         .map_err(|error| tutorial_error("open tutorial project", error))?
-        .begin_acquisition(&request.plan, request.approval)
+        .begin_acquisition(&plan, approval)
         .map_err(|error| tutorial_error("begin tutorial acquisition", error))?;
-    serialize_tutorial("serialize tutorial acquisition state", &state)
+    Ok(tutorial_dataset_projection(state))
 }
 
-fn tutorial_action(
-    request_json: &str,
-    action: &'static str,
-    apply: impl FnOnce(
-        &TutorialProject,
-        casa_notebook::NotebookId,
-        &str,
-    ) -> Result<casa_notebook::TutorialDatasetLock, casa_notebook::TutorialError>,
-) -> FrontendResult<String> {
-    let request: TutorialActionRequest = parse_tutorial_request(action, request_json)?;
+/// Apply one typed acquisition transition. Generation-bound actions require an
+/// exact generation; only bounded advance accepts a byte budget.
+#[uniffi::export]
+pub fn tutorial_acquisition_action(
+    request: TutorialActionRequest,
+) -> FrontendResult<TutorialDatasetState> {
+    let notebook_id = tutorial_notebook_id(&request.notebook_id)?;
     let project = TutorialProject::open(&request.project_root)
         .map_err(|error| tutorial_error("open tutorial project", error))?;
-    let state = apply(&project, request.notebook_id, &request.dataset_id)
-        .map_err(|error| tutorial_error(action, error))?;
-    serialize_tutorial("serialize tutorial acquisition state", &state)
-}
-
-#[uniffi::export]
-pub fn tutorial_resume_acquisition_json(request_json: String) -> FrontendResult<String> {
-    tutorial_action(
-        &request_json,
-        "resume tutorial acquisition",
-        |project, id, dataset| project.resume_acquisition(id, dataset),
-    )
-}
-
-#[uniffi::export]
-pub fn tutorial_restart_acquisition_json(request_json: String) -> FrontendResult<String> {
-    tutorial_action(
-        &request_json,
-        "restart tutorial acquisition",
-        |project, id, dataset| project.restart_acquisition(id, dataset),
-    )
-}
-
-#[uniffi::export]
-pub fn tutorial_retry_acquisition_json(request_json: String) -> FrontendResult<String> {
-    tutorial_action(
-        &request_json,
-        "retry tutorial acquisition",
-        |project, id, dataset| project.retry_acquisition(id, dataset),
-    )
-}
-
-#[uniffi::export]
-pub fn tutorial_cancel_acquisition_json(request_json: String) -> FrontendResult<String> {
-    let request: TutorialGenerationActionRequest =
-        parse_tutorial_request("parse tutorial cancellation", &request_json)?;
-    let state = TutorialProject::open(&request.project_root)
-        .map_err(|error| tutorial_error("open tutorial project", error))?
-        .cancel_acquisition(request.notebook_id, &request.dataset_id, request.generation)
-        .map_err(|error| tutorial_error("cancel tutorial acquisition", error))?;
-    serialize_tutorial("serialize tutorial acquisition state", &state)
-}
-
-/// Advance one bounded chunk/phase so the GUI can remain responsive and cancellation-aware.
-#[uniffi::export]
-pub fn tutorial_advance_acquisition_json(request_json: String) -> FrontendResult<String> {
-    let request: TutorialGenerationActionRequest =
-        parse_tutorial_request("parse tutorial acquisition advance", &request_json)?;
-    let state = TutorialProject::open(&request.project_root)
-        .map_err(|error| tutorial_error("open tutorial project", error))?
-        .advance_acquisition(
-            request.notebook_id,
-            &request.dataset_id,
-            request.generation,
-            request.max_download_bytes,
-        )
-        .map_err(|error| tutorial_error("advance tutorial acquisition", error))?;
-    serialize_tutorial("serialize tutorial acquisition state", &state)
+    let state = match request.action {
+        TutorialPersistenceAction::Resume => {
+            if request.generation.is_some() || request.max_download_bytes.is_some() {
+                return Err(tutorial_error(
+                    "resume tutorial acquisition",
+                    "resume does not accept generation or byte-budget fields",
+                ));
+            }
+            project.resume_acquisition(notebook_id, &request.dataset_id)
+        }
+        TutorialPersistenceAction::Restart => {
+            if request.generation.is_some() || request.max_download_bytes.is_some() {
+                return Err(tutorial_error(
+                    "restart tutorial acquisition",
+                    "restart does not accept generation or byte-budget fields",
+                ));
+            }
+            project.restart_acquisition(notebook_id, &request.dataset_id)
+        }
+        TutorialPersistenceAction::Retry => {
+            if request.generation.is_some() || request.max_download_bytes.is_some() {
+                return Err(tutorial_error(
+                    "retry tutorial acquisition",
+                    "retry does not accept generation or byte-budget fields",
+                ));
+            }
+            project.retry_acquisition(notebook_id, &request.dataset_id)
+        }
+        TutorialPersistenceAction::Cancel => {
+            if request.max_download_bytes.is_some() {
+                return Err(tutorial_error(
+                    "cancel tutorial acquisition",
+                    "cancel does not accept a byte budget",
+                ));
+            }
+            let generation = request.generation.ok_or_else(|| {
+                tutorial_error(
+                    "cancel tutorial acquisition",
+                    "cancel requires an exact generation",
+                )
+            })?;
+            project.cancel_acquisition(notebook_id, &request.dataset_id, generation)
+        }
+        TutorialPersistenceAction::Advance => {
+            let generation = request.generation.ok_or_else(|| {
+                tutorial_error(
+                    "advance tutorial acquisition",
+                    "advance requires an exact generation",
+                )
+            })?;
+            let max_download_bytes = request.max_download_bytes.ok_or_else(|| {
+                tutorial_error(
+                    "advance tutorial acquisition",
+                    "advance requires an explicit byte budget",
+                )
+            })?;
+            project.advance_acquisition(
+                notebook_id,
+                &request.dataset_id,
+                generation,
+                max_download_bytes,
+            )
+        }
+    }
+    .map_err(|error| tutorial_error("apply tutorial acquisition action", error))?;
+    Ok(tutorial_dataset_projection(state))
 }
 
 #[uniffi::export]
@@ -4548,11 +4896,6 @@ fn write_parameter_profile(
         bytes_written: outcome.bytes_written as u64,
         managed_kind: None,
     })
-}
-
-#[uniffi::export]
-pub fn tutorial_task_parameter_audit_json() -> String {
-    TUTORIAL_TASK_PARAMETER_AUDIT_JSON.to_string()
 }
 
 fn insert_first_default(defaults: &mut BTreeMap<String, String>, key: &str, values: &[String]) {
@@ -10189,6 +10532,22 @@ mod tests {
         })
         .expect_err("oversized query must fail closed");
         assert!(error.to_string().contains("host limit"));
+    }
+
+    #[test]
+    fn tutorial_typed_action_rejects_fields_that_do_not_belong_to_transition() {
+        let project = tempfile::tempdir().expect("project");
+        let error = tutorial_acquisition_action(TutorialActionRequest {
+            action: TutorialPersistenceAction::Resume,
+            project_root: project.path().display().to_string(),
+            notebook_id: NotebookId::new().to_string(),
+            dataset_id: "science".to_owned(),
+            generation: Some(1),
+            max_download_bytes: None,
+        })
+        .expect_err("resume generation must fail closed");
+
+        assert!(error.to_string().contains("does not accept generation"));
     }
 
     #[test]

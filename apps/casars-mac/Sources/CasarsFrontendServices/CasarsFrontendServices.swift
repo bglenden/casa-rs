@@ -16014,6 +16014,1670 @@ public func FfiConverterTypeTaskUISchema_lower(_ value: TaskUiSchema) -> RustBuf
     return FfiConverterTypeTaskUISchema.lower(value)
 }
 
+
+public struct TutorialAcquisitionApprovalState {
+    public var approvalSha256: String
+    public var allowMissingDigest: Bool
+    public var skippedCheckIds: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(approvalSha256: String, allowMissingDigest: Bool, skippedCheckIds: [String]) {
+        self.approvalSha256 = approvalSha256
+        self.allowMissingDigest = allowMissingDigest
+        self.skippedCheckIds = skippedCheckIds
+    }
+}
+
+#if compiler(>=6)
+extension TutorialAcquisitionApprovalState: Sendable {}
+#endif
+
+
+extension TutorialAcquisitionApprovalState: Equatable, Hashable {
+    public static func ==(lhs: TutorialAcquisitionApprovalState, rhs: TutorialAcquisitionApprovalState) -> Bool {
+        if lhs.approvalSha256 != rhs.approvalSha256 {
+            return false
+        }
+        if lhs.allowMissingDigest != rhs.allowMissingDigest {
+            return false
+        }
+        if lhs.skippedCheckIds != rhs.skippedCheckIds {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(approvalSha256)
+        hasher.combine(allowMissingDigest)
+        hasher.combine(skippedCheckIds)
+    }
+}
+
+extension TutorialAcquisitionApprovalState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialAcquisitionApprovalState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialAcquisitionApprovalState {
+        return
+            try TutorialAcquisitionApprovalState(
+                approvalSha256: FfiConverterString.read(from: &buf),
+                allowMissingDigest: FfiConverterBool.read(from: &buf),
+                skippedCheckIds: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialAcquisitionApprovalState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.approvalSha256, into: &buf)
+        FfiConverterBool.write(value.allowMissingDigest, into: &buf)
+        FfiConverterSequenceString.write(value.skippedCheckIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialAcquisitionApprovalState_lift(_ buf: RustBuffer) throws -> TutorialAcquisitionApprovalState {
+    return try FfiConverterTypeTutorialAcquisitionApprovalState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialAcquisitionApprovalState_lower(_ value: TutorialAcquisitionApprovalState) -> RustBuffer {
+    return FfiConverterTypeTutorialAcquisitionApprovalState.lower(value)
+}
+
+
+public struct TutorialAcquisitionPlanState {
+    public var approvalSha256: String
+    public var registryVersion: UInt32
+    public var notebookId: String
+    public var datasetId: String
+    public var scheme: String
+    public var requestedUri: String
+    public var resolvedUri: String
+    public var redirects: [String]
+    public var expectedSizeBytes: UInt64?
+    public var resolvedSizeBytes: UInt64?
+    public var destination: String
+    public var expectedSha256: String?
+    public var requiredDiskBytes: UInt64
+    public var availableDiskBytes: UInt64
+    public var unpack: TutorialUnpackState?
+    public var checks: [TutorialOptionalCheckState]
+    public var missingDigest: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(approvalSha256: String, registryVersion: UInt32, notebookId: String, datasetId: String, scheme: String, requestedUri: String, resolvedUri: String, redirects: [String], expectedSizeBytes: UInt64?, resolvedSizeBytes: UInt64?, destination: String, expectedSha256: String?, requiredDiskBytes: UInt64, availableDiskBytes: UInt64, unpack: TutorialUnpackState?, checks: [TutorialOptionalCheckState], missingDigest: Bool) {
+        self.approvalSha256 = approvalSha256
+        self.registryVersion = registryVersion
+        self.notebookId = notebookId
+        self.datasetId = datasetId
+        self.scheme = scheme
+        self.requestedUri = requestedUri
+        self.resolvedUri = resolvedUri
+        self.redirects = redirects
+        self.expectedSizeBytes = expectedSizeBytes
+        self.resolvedSizeBytes = resolvedSizeBytes
+        self.destination = destination
+        self.expectedSha256 = expectedSha256
+        self.requiredDiskBytes = requiredDiskBytes
+        self.availableDiskBytes = availableDiskBytes
+        self.unpack = unpack
+        self.checks = checks
+        self.missingDigest = missingDigest
+    }
+}
+
+#if compiler(>=6)
+extension TutorialAcquisitionPlanState: Sendable {}
+#endif
+
+
+extension TutorialAcquisitionPlanState: Equatable, Hashable {
+    public static func ==(lhs: TutorialAcquisitionPlanState, rhs: TutorialAcquisitionPlanState) -> Bool {
+        if lhs.approvalSha256 != rhs.approvalSha256 {
+            return false
+        }
+        if lhs.registryVersion != rhs.registryVersion {
+            return false
+        }
+        if lhs.notebookId != rhs.notebookId {
+            return false
+        }
+        if lhs.datasetId != rhs.datasetId {
+            return false
+        }
+        if lhs.scheme != rhs.scheme {
+            return false
+        }
+        if lhs.requestedUri != rhs.requestedUri {
+            return false
+        }
+        if lhs.resolvedUri != rhs.resolvedUri {
+            return false
+        }
+        if lhs.redirects != rhs.redirects {
+            return false
+        }
+        if lhs.expectedSizeBytes != rhs.expectedSizeBytes {
+            return false
+        }
+        if lhs.resolvedSizeBytes != rhs.resolvedSizeBytes {
+            return false
+        }
+        if lhs.destination != rhs.destination {
+            return false
+        }
+        if lhs.expectedSha256 != rhs.expectedSha256 {
+            return false
+        }
+        if lhs.requiredDiskBytes != rhs.requiredDiskBytes {
+            return false
+        }
+        if lhs.availableDiskBytes != rhs.availableDiskBytes {
+            return false
+        }
+        if lhs.unpack != rhs.unpack {
+            return false
+        }
+        if lhs.checks != rhs.checks {
+            return false
+        }
+        if lhs.missingDigest != rhs.missingDigest {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(approvalSha256)
+        hasher.combine(registryVersion)
+        hasher.combine(notebookId)
+        hasher.combine(datasetId)
+        hasher.combine(scheme)
+        hasher.combine(requestedUri)
+        hasher.combine(resolvedUri)
+        hasher.combine(redirects)
+        hasher.combine(expectedSizeBytes)
+        hasher.combine(resolvedSizeBytes)
+        hasher.combine(destination)
+        hasher.combine(expectedSha256)
+        hasher.combine(requiredDiskBytes)
+        hasher.combine(availableDiskBytes)
+        hasher.combine(unpack)
+        hasher.combine(checks)
+        hasher.combine(missingDigest)
+    }
+}
+
+extension TutorialAcquisitionPlanState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialAcquisitionPlanState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialAcquisitionPlanState {
+        return
+            try TutorialAcquisitionPlanState(
+                approvalSha256: FfiConverterString.read(from: &buf),
+                registryVersion: FfiConverterUInt32.read(from: &buf),
+                notebookId: FfiConverterString.read(from: &buf),
+                datasetId: FfiConverterString.read(from: &buf),
+                scheme: FfiConverterString.read(from: &buf),
+                requestedUri: FfiConverterString.read(from: &buf),
+                resolvedUri: FfiConverterString.read(from: &buf),
+                redirects: FfiConverterSequenceString.read(from: &buf),
+                expectedSizeBytes: FfiConverterOptionUInt64.read(from: &buf),
+                resolvedSizeBytes: FfiConverterOptionUInt64.read(from: &buf),
+                destination: FfiConverterString.read(from: &buf),
+                expectedSha256: FfiConverterOptionString.read(from: &buf),
+                requiredDiskBytes: FfiConverterUInt64.read(from: &buf),
+                availableDiskBytes: FfiConverterUInt64.read(from: &buf),
+                unpack: FfiConverterOptionTypeTutorialUnpackState.read(from: &buf),
+                checks: FfiConverterSequenceTypeTutorialOptionalCheckState.read(from: &buf),
+                missingDigest: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialAcquisitionPlanState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.approvalSha256, into: &buf)
+        FfiConverterUInt32.write(value.registryVersion, into: &buf)
+        FfiConverterString.write(value.notebookId, into: &buf)
+        FfiConverterString.write(value.datasetId, into: &buf)
+        FfiConverterString.write(value.scheme, into: &buf)
+        FfiConverterString.write(value.requestedUri, into: &buf)
+        FfiConverterString.write(value.resolvedUri, into: &buf)
+        FfiConverterSequenceString.write(value.redirects, into: &buf)
+        FfiConverterOptionUInt64.write(value.expectedSizeBytes, into: &buf)
+        FfiConverterOptionUInt64.write(value.resolvedSizeBytes, into: &buf)
+        FfiConverterString.write(value.destination, into: &buf)
+        FfiConverterOptionString.write(value.expectedSha256, into: &buf)
+        FfiConverterUInt64.write(value.requiredDiskBytes, into: &buf)
+        FfiConverterUInt64.write(value.availableDiskBytes, into: &buf)
+        FfiConverterOptionTypeTutorialUnpackState.write(value.unpack, into: &buf)
+        FfiConverterSequenceTypeTutorialOptionalCheckState.write(value.checks, into: &buf)
+        FfiConverterBool.write(value.missingDigest, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialAcquisitionPlanState_lift(_ buf: RustBuffer) throws -> TutorialAcquisitionPlanState {
+    return try FfiConverterTypeTutorialAcquisitionPlanState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialAcquisitionPlanState_lower(_ value: TutorialAcquisitionPlanState) -> RustBuffer {
+    return FfiConverterTypeTutorialAcquisitionPlanState.lower(value)
+}
+
+
+public struct TutorialActionRequest {
+    public var action: TutorialPersistenceAction
+    public var projectRoot: String
+    public var notebookId: String
+    public var datasetId: String
+    public var generation: UInt64?
+    public var maxDownloadBytes: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(action: TutorialPersistenceAction, projectRoot: String, notebookId: String, datasetId: String, generation: UInt64?, maxDownloadBytes: UInt64?) {
+        self.action = action
+        self.projectRoot = projectRoot
+        self.notebookId = notebookId
+        self.datasetId = datasetId
+        self.generation = generation
+        self.maxDownloadBytes = maxDownloadBytes
+    }
+}
+
+#if compiler(>=6)
+extension TutorialActionRequest: Sendable {}
+#endif
+
+
+extension TutorialActionRequest: Equatable, Hashable {
+    public static func ==(lhs: TutorialActionRequest, rhs: TutorialActionRequest) -> Bool {
+        if lhs.action != rhs.action {
+            return false
+        }
+        if lhs.projectRoot != rhs.projectRoot {
+            return false
+        }
+        if lhs.notebookId != rhs.notebookId {
+            return false
+        }
+        if lhs.datasetId != rhs.datasetId {
+            return false
+        }
+        if lhs.generation != rhs.generation {
+            return false
+        }
+        if lhs.maxDownloadBytes != rhs.maxDownloadBytes {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(action)
+        hasher.combine(projectRoot)
+        hasher.combine(notebookId)
+        hasher.combine(datasetId)
+        hasher.combine(generation)
+        hasher.combine(maxDownloadBytes)
+    }
+}
+
+extension TutorialActionRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialActionRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialActionRequest {
+        return
+            try TutorialActionRequest(
+                action: FfiConverterTypeTutorialPersistenceAction.read(from: &buf),
+                projectRoot: FfiConverterString.read(from: &buf),
+                notebookId: FfiConverterString.read(from: &buf),
+                datasetId: FfiConverterString.read(from: &buf),
+                generation: FfiConverterOptionUInt64.read(from: &buf),
+                maxDownloadBytes: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialActionRequest, into buf: inout [UInt8]) {
+        FfiConverterTypeTutorialPersistenceAction.write(value.action, into: &buf)
+        FfiConverterString.write(value.projectRoot, into: &buf)
+        FfiConverterString.write(value.notebookId, into: &buf)
+        FfiConverterString.write(value.datasetId, into: &buf)
+        FfiConverterOptionUInt64.write(value.generation, into: &buf)
+        FfiConverterOptionUInt64.write(value.maxDownloadBytes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialActionRequest_lift(_ buf: RustBuffer) throws -> TutorialActionRequest {
+    return try FfiConverterTypeTutorialActionRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialActionRequest_lower(_ value: TutorialActionRequest) -> RustBuffer {
+    return FfiConverterTypeTutorialActionRequest.lower(value)
+}
+
+
+public struct TutorialBeginRequest {
+    public var projectRoot: String
+    public var plan: TutorialAcquisitionPlanState
+    public var approval: TutorialAcquisitionApprovalState
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(projectRoot: String, plan: TutorialAcquisitionPlanState, approval: TutorialAcquisitionApprovalState) {
+        self.projectRoot = projectRoot
+        self.plan = plan
+        self.approval = approval
+    }
+}
+
+#if compiler(>=6)
+extension TutorialBeginRequest: Sendable {}
+#endif
+
+
+extension TutorialBeginRequest: Equatable, Hashable {
+    public static func ==(lhs: TutorialBeginRequest, rhs: TutorialBeginRequest) -> Bool {
+        if lhs.projectRoot != rhs.projectRoot {
+            return false
+        }
+        if lhs.plan != rhs.plan {
+            return false
+        }
+        if lhs.approval != rhs.approval {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(projectRoot)
+        hasher.combine(plan)
+        hasher.combine(approval)
+    }
+}
+
+extension TutorialBeginRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialBeginRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialBeginRequest {
+        return
+            try TutorialBeginRequest(
+                projectRoot: FfiConverterString.read(from: &buf),
+                plan: FfiConverterTypeTutorialAcquisitionPlanState.read(from: &buf),
+                approval: FfiConverterTypeTutorialAcquisitionApprovalState.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialBeginRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.projectRoot, into: &buf)
+        FfiConverterTypeTutorialAcquisitionPlanState.write(value.plan, into: &buf)
+        FfiConverterTypeTutorialAcquisitionApprovalState.write(value.approval, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialBeginRequest_lift(_ buf: RustBuffer) throws -> TutorialBeginRequest {
+    return try FfiConverterTypeTutorialBeginRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialBeginRequest_lower(_ value: TutorialBeginRequest) -> RustBuffer {
+    return FfiConverterTypeTutorialBeginRequest.lower(value)
+}
+
+
+public struct TutorialCheckOutcomeState {
+    public var checkId: String
+    public var status: String
+    public var detail: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(checkId: String, status: String, detail: String) {
+        self.checkId = checkId
+        self.status = status
+        self.detail = detail
+    }
+}
+
+#if compiler(>=6)
+extension TutorialCheckOutcomeState: Sendable {}
+#endif
+
+
+extension TutorialCheckOutcomeState: Equatable, Hashable {
+    public static func ==(lhs: TutorialCheckOutcomeState, rhs: TutorialCheckOutcomeState) -> Bool {
+        if lhs.checkId != rhs.checkId {
+            return false
+        }
+        if lhs.status != rhs.status {
+            return false
+        }
+        if lhs.detail != rhs.detail {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(checkId)
+        hasher.combine(status)
+        hasher.combine(detail)
+    }
+}
+
+extension TutorialCheckOutcomeState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialCheckOutcomeState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialCheckOutcomeState {
+        return
+            try TutorialCheckOutcomeState(
+                checkId: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialCheckOutcomeState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.checkId, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialCheckOutcomeState_lift(_ buf: RustBuffer) throws -> TutorialCheckOutcomeState {
+    return try FfiConverterTypeTutorialCheckOutcomeState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialCheckOutcomeState_lower(_ value: TutorialCheckOutcomeState) -> RustBuffer {
+    return FfiConverterTypeTutorialCheckOutcomeState.lower(value)
+}
+
+
+public struct TutorialDatasetAttemptState {
+    public var generation: UInt64
+    public var kind: String
+    public var phase: TutorialAcquisitionPhase
+    public var requestedUri: String
+    public var resolvedUri: String
+    public var redirects: [String]
+    public var expectedSizeBytes: UInt64?
+    public var expectedSha256: String?
+    public var approvalSha256: String
+    public var approvedMissingDigest: Bool
+    public var skippedCheckIds: [String]
+    public var downloadedBytes: UInt64
+    public var computedSha256: String?
+    public var checks: [TutorialCheckOutcomeState]
+    public var error: String?
+    public var startedAt: UInt64
+    public var finishedAt: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(generation: UInt64, kind: String, phase: TutorialAcquisitionPhase, requestedUri: String, resolvedUri: String, redirects: [String], expectedSizeBytes: UInt64?, expectedSha256: String?, approvalSha256: String, approvedMissingDigest: Bool, skippedCheckIds: [String], downloadedBytes: UInt64, computedSha256: String?, checks: [TutorialCheckOutcomeState], error: String?, startedAt: UInt64, finishedAt: UInt64?) {
+        self.generation = generation
+        self.kind = kind
+        self.phase = phase
+        self.requestedUri = requestedUri
+        self.resolvedUri = resolvedUri
+        self.redirects = redirects
+        self.expectedSizeBytes = expectedSizeBytes
+        self.expectedSha256 = expectedSha256
+        self.approvalSha256 = approvalSha256
+        self.approvedMissingDigest = approvedMissingDigest
+        self.skippedCheckIds = skippedCheckIds
+        self.downloadedBytes = downloadedBytes
+        self.computedSha256 = computedSha256
+        self.checks = checks
+        self.error = error
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+    }
+}
+
+#if compiler(>=6)
+extension TutorialDatasetAttemptState: Sendable {}
+#endif
+
+
+extension TutorialDatasetAttemptState: Equatable, Hashable {
+    public static func ==(lhs: TutorialDatasetAttemptState, rhs: TutorialDatasetAttemptState) -> Bool {
+        if lhs.generation != rhs.generation {
+            return false
+        }
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.phase != rhs.phase {
+            return false
+        }
+        if lhs.requestedUri != rhs.requestedUri {
+            return false
+        }
+        if lhs.resolvedUri != rhs.resolvedUri {
+            return false
+        }
+        if lhs.redirects != rhs.redirects {
+            return false
+        }
+        if lhs.expectedSizeBytes != rhs.expectedSizeBytes {
+            return false
+        }
+        if lhs.expectedSha256 != rhs.expectedSha256 {
+            return false
+        }
+        if lhs.approvalSha256 != rhs.approvalSha256 {
+            return false
+        }
+        if lhs.approvedMissingDigest != rhs.approvedMissingDigest {
+            return false
+        }
+        if lhs.skippedCheckIds != rhs.skippedCheckIds {
+            return false
+        }
+        if lhs.downloadedBytes != rhs.downloadedBytes {
+            return false
+        }
+        if lhs.computedSha256 != rhs.computedSha256 {
+            return false
+        }
+        if lhs.checks != rhs.checks {
+            return false
+        }
+        if lhs.error != rhs.error {
+            return false
+        }
+        if lhs.startedAt != rhs.startedAt {
+            return false
+        }
+        if lhs.finishedAt != rhs.finishedAt {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(generation)
+        hasher.combine(kind)
+        hasher.combine(phase)
+        hasher.combine(requestedUri)
+        hasher.combine(resolvedUri)
+        hasher.combine(redirects)
+        hasher.combine(expectedSizeBytes)
+        hasher.combine(expectedSha256)
+        hasher.combine(approvalSha256)
+        hasher.combine(approvedMissingDigest)
+        hasher.combine(skippedCheckIds)
+        hasher.combine(downloadedBytes)
+        hasher.combine(computedSha256)
+        hasher.combine(checks)
+        hasher.combine(error)
+        hasher.combine(startedAt)
+        hasher.combine(finishedAt)
+    }
+}
+
+extension TutorialDatasetAttemptState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialDatasetAttemptState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialDatasetAttemptState {
+        return
+            try TutorialDatasetAttemptState(
+                generation: FfiConverterUInt64.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                phase: FfiConverterTypeTutorialAcquisitionPhase.read(from: &buf),
+                requestedUri: FfiConverterString.read(from: &buf),
+                resolvedUri: FfiConverterString.read(from: &buf),
+                redirects: FfiConverterSequenceString.read(from: &buf),
+                expectedSizeBytes: FfiConverterOptionUInt64.read(from: &buf),
+                expectedSha256: FfiConverterOptionString.read(from: &buf),
+                approvalSha256: FfiConverterString.read(from: &buf),
+                approvedMissingDigest: FfiConverterBool.read(from: &buf),
+                skippedCheckIds: FfiConverterSequenceString.read(from: &buf),
+                downloadedBytes: FfiConverterUInt64.read(from: &buf),
+                computedSha256: FfiConverterOptionString.read(from: &buf),
+                checks: FfiConverterSequenceTypeTutorialCheckOutcomeState.read(from: &buf),
+                error: FfiConverterOptionString.read(from: &buf),
+                startedAt: FfiConverterUInt64.read(from: &buf),
+                finishedAt: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialDatasetAttemptState, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.generation, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterTypeTutorialAcquisitionPhase.write(value.phase, into: &buf)
+        FfiConverterString.write(value.requestedUri, into: &buf)
+        FfiConverterString.write(value.resolvedUri, into: &buf)
+        FfiConverterSequenceString.write(value.redirects, into: &buf)
+        FfiConverterOptionUInt64.write(value.expectedSizeBytes, into: &buf)
+        FfiConverterOptionString.write(value.expectedSha256, into: &buf)
+        FfiConverterString.write(value.approvalSha256, into: &buf)
+        FfiConverterBool.write(value.approvedMissingDigest, into: &buf)
+        FfiConverterSequenceString.write(value.skippedCheckIds, into: &buf)
+        FfiConverterUInt64.write(value.downloadedBytes, into: &buf)
+        FfiConverterOptionString.write(value.computedSha256, into: &buf)
+        FfiConverterSequenceTypeTutorialCheckOutcomeState.write(value.checks, into: &buf)
+        FfiConverterOptionString.write(value.error, into: &buf)
+        FfiConverterUInt64.write(value.startedAt, into: &buf)
+        FfiConverterOptionUInt64.write(value.finishedAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialDatasetAttemptState_lift(_ buf: RustBuffer) throws -> TutorialDatasetAttemptState {
+    return try FfiConverterTypeTutorialDatasetAttemptState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialDatasetAttemptState_lower(_ value: TutorialDatasetAttemptState) -> RustBuffer {
+    return FfiConverterTypeTutorialDatasetAttemptState.lower(value)
+}
+
+
+public struct TutorialDatasetState {
+    public var id: String
+    public var displayName: String
+    public var uri: String
+    public var destination: String
+    public var expectedSizeBytes: UInt64?
+    public var sha256: String?
+    public var unpack: TutorialUnpackState?
+    public var checks: [TutorialOptionalCheckState]
+    public var phase: TutorialAcquisitionPhase
+    public var staged: Bool
+    public var currentGeneration: UInt64
+    public var pinnedSha256: String?
+    public var attempts: [TutorialDatasetAttemptState]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, displayName: String, uri: String, destination: String, expectedSizeBytes: UInt64?, sha256: String?, unpack: TutorialUnpackState?, checks: [TutorialOptionalCheckState], phase: TutorialAcquisitionPhase, staged: Bool, currentGeneration: UInt64, pinnedSha256: String?, attempts: [TutorialDatasetAttemptState]) {
+        self.id = id
+        self.displayName = displayName
+        self.uri = uri
+        self.destination = destination
+        self.expectedSizeBytes = expectedSizeBytes
+        self.sha256 = sha256
+        self.unpack = unpack
+        self.checks = checks
+        self.phase = phase
+        self.staged = staged
+        self.currentGeneration = currentGeneration
+        self.pinnedSha256 = pinnedSha256
+        self.attempts = attempts
+    }
+}
+
+#if compiler(>=6)
+extension TutorialDatasetState: Sendable {}
+#endif
+
+
+extension TutorialDatasetState: Equatable, Hashable {
+    public static func ==(lhs: TutorialDatasetState, rhs: TutorialDatasetState) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.displayName != rhs.displayName {
+            return false
+        }
+        if lhs.uri != rhs.uri {
+            return false
+        }
+        if lhs.destination != rhs.destination {
+            return false
+        }
+        if lhs.expectedSizeBytes != rhs.expectedSizeBytes {
+            return false
+        }
+        if lhs.sha256 != rhs.sha256 {
+            return false
+        }
+        if lhs.unpack != rhs.unpack {
+            return false
+        }
+        if lhs.checks != rhs.checks {
+            return false
+        }
+        if lhs.phase != rhs.phase {
+            return false
+        }
+        if lhs.staged != rhs.staged {
+            return false
+        }
+        if lhs.currentGeneration != rhs.currentGeneration {
+            return false
+        }
+        if lhs.pinnedSha256 != rhs.pinnedSha256 {
+            return false
+        }
+        if lhs.attempts != rhs.attempts {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(displayName)
+        hasher.combine(uri)
+        hasher.combine(destination)
+        hasher.combine(expectedSizeBytes)
+        hasher.combine(sha256)
+        hasher.combine(unpack)
+        hasher.combine(checks)
+        hasher.combine(phase)
+        hasher.combine(staged)
+        hasher.combine(currentGeneration)
+        hasher.combine(pinnedSha256)
+        hasher.combine(attempts)
+    }
+}
+
+extension TutorialDatasetState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialDatasetState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialDatasetState {
+        return
+            try TutorialDatasetState(
+                id: FfiConverterString.read(from: &buf),
+                displayName: FfiConverterString.read(from: &buf),
+                uri: FfiConverterString.read(from: &buf),
+                destination: FfiConverterString.read(from: &buf),
+                expectedSizeBytes: FfiConverterOptionUInt64.read(from: &buf),
+                sha256: FfiConverterOptionString.read(from: &buf),
+                unpack: FfiConverterOptionTypeTutorialUnpackState.read(from: &buf),
+                checks: FfiConverterSequenceTypeTutorialOptionalCheckState.read(from: &buf),
+                phase: FfiConverterTypeTutorialAcquisitionPhase.read(from: &buf),
+                staged: FfiConverterBool.read(from: &buf),
+                currentGeneration: FfiConverterUInt64.read(from: &buf),
+                pinnedSha256: FfiConverterOptionString.read(from: &buf),
+                attempts: FfiConverterSequenceTypeTutorialDatasetAttemptState.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialDatasetState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.displayName, into: &buf)
+        FfiConverterString.write(value.uri, into: &buf)
+        FfiConverterString.write(value.destination, into: &buf)
+        FfiConverterOptionUInt64.write(value.expectedSizeBytes, into: &buf)
+        FfiConverterOptionString.write(value.sha256, into: &buf)
+        FfiConverterOptionTypeTutorialUnpackState.write(value.unpack, into: &buf)
+        FfiConverterSequenceTypeTutorialOptionalCheckState.write(value.checks, into: &buf)
+        FfiConverterTypeTutorialAcquisitionPhase.write(value.phase, into: &buf)
+        FfiConverterBool.write(value.staged, into: &buf)
+        FfiConverterUInt64.write(value.currentGeneration, into: &buf)
+        FfiConverterOptionString.write(value.pinnedSha256, into: &buf)
+        FfiConverterSequenceTypeTutorialDatasetAttemptState.write(value.attempts, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialDatasetState_lift(_ buf: RustBuffer) throws -> TutorialDatasetState {
+    return try FfiConverterTypeTutorialDatasetState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialDatasetState_lower(_ value: TutorialDatasetState) -> RustBuffer {
+    return FfiConverterTypeTutorialDatasetState.lower(value)
+}
+
+
+public struct TutorialForkRequest {
+    public var projectRoot: String
+    public var templatePath: String
+    public var filename: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(projectRoot: String, templatePath: String, filename: String) {
+        self.projectRoot = projectRoot
+        self.templatePath = templatePath
+        self.filename = filename
+    }
+}
+
+#if compiler(>=6)
+extension TutorialForkRequest: Sendable {}
+#endif
+
+
+extension TutorialForkRequest: Equatable, Hashable {
+    public static func ==(lhs: TutorialForkRequest, rhs: TutorialForkRequest) -> Bool {
+        if lhs.projectRoot != rhs.projectRoot {
+            return false
+        }
+        if lhs.templatePath != rhs.templatePath {
+            return false
+        }
+        if lhs.filename != rhs.filename {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(projectRoot)
+        hasher.combine(templatePath)
+        hasher.combine(filename)
+    }
+}
+
+extension TutorialForkRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialForkRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialForkRequest {
+        return
+            try TutorialForkRequest(
+                projectRoot: FfiConverterString.read(from: &buf),
+                templatePath: FfiConverterString.read(from: &buf),
+                filename: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialForkRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.projectRoot, into: &buf)
+        FfiConverterString.write(value.templatePath, into: &buf)
+        FfiConverterString.write(value.filename, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialForkRequest_lift(_ buf: RustBuffer) throws -> TutorialForkRequest {
+    return try FfiConverterTypeTutorialForkRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialForkRequest_lower(_ value: TutorialForkRequest) -> RustBuffer {
+    return FfiConverterTypeTutorialForkRequest.lower(value)
+}
+
+
+public struct TutorialLockState {
+    public var schemaVersion: UInt32
+    public var registryVersion: UInt32
+    public var notebookId: String
+    public var notebookFilename: String
+    public var tutorialId: String
+    public var title: String
+    public var templateSha256: String
+    public var sections: [TutorialSectionState]
+    public var datasets: [TutorialDatasetState]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt32, registryVersion: UInt32, notebookId: String, notebookFilename: String, tutorialId: String, title: String, templateSha256: String, sections: [TutorialSectionState], datasets: [TutorialDatasetState]) {
+        self.schemaVersion = schemaVersion
+        self.registryVersion = registryVersion
+        self.notebookId = notebookId
+        self.notebookFilename = notebookFilename
+        self.tutorialId = tutorialId
+        self.title = title
+        self.templateSha256 = templateSha256
+        self.sections = sections
+        self.datasets = datasets
+    }
+}
+
+#if compiler(>=6)
+extension TutorialLockState: Sendable {}
+#endif
+
+
+extension TutorialLockState: Equatable, Hashable {
+    public static func ==(lhs: TutorialLockState, rhs: TutorialLockState) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.registryVersion != rhs.registryVersion {
+            return false
+        }
+        if lhs.notebookId != rhs.notebookId {
+            return false
+        }
+        if lhs.notebookFilename != rhs.notebookFilename {
+            return false
+        }
+        if lhs.tutorialId != rhs.tutorialId {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.templateSha256 != rhs.templateSha256 {
+            return false
+        }
+        if lhs.sections != rhs.sections {
+            return false
+        }
+        if lhs.datasets != rhs.datasets {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(registryVersion)
+        hasher.combine(notebookId)
+        hasher.combine(notebookFilename)
+        hasher.combine(tutorialId)
+        hasher.combine(title)
+        hasher.combine(templateSha256)
+        hasher.combine(sections)
+        hasher.combine(datasets)
+    }
+}
+
+extension TutorialLockState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialLockState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialLockState {
+        return
+            try TutorialLockState(
+                schemaVersion: FfiConverterUInt32.read(from: &buf),
+                registryVersion: FfiConverterUInt32.read(from: &buf),
+                notebookId: FfiConverterString.read(from: &buf),
+                notebookFilename: FfiConverterString.read(from: &buf),
+                tutorialId: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                templateSha256: FfiConverterString.read(from: &buf),
+                sections: FfiConverterSequenceTypeTutorialSectionState.read(from: &buf),
+                datasets: FfiConverterSequenceTypeTutorialDatasetState.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialLockState, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.schemaVersion, into: &buf)
+        FfiConverterUInt32.write(value.registryVersion, into: &buf)
+        FfiConverterString.write(value.notebookId, into: &buf)
+        FfiConverterString.write(value.notebookFilename, into: &buf)
+        FfiConverterString.write(value.tutorialId, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.templateSha256, into: &buf)
+        FfiConverterSequenceTypeTutorialSectionState.write(value.sections, into: &buf)
+        FfiConverterSequenceTypeTutorialDatasetState.write(value.datasets, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialLockState_lift(_ buf: RustBuffer) throws -> TutorialLockState {
+    return try FfiConverterTypeTutorialLockState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialLockState_lower(_ value: TutorialLockState) -> RustBuffer {
+    return FfiConverterTypeTutorialLockState.lower(value)
+}
+
+
+public struct TutorialMigrateRequest {
+    public var packPath: String
+    public var destination: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(packPath: String, destination: String) {
+        self.packPath = packPath
+        self.destination = destination
+    }
+}
+
+#if compiler(>=6)
+extension TutorialMigrateRequest: Sendable {}
+#endif
+
+
+extension TutorialMigrateRequest: Equatable, Hashable {
+    public static func ==(lhs: TutorialMigrateRequest, rhs: TutorialMigrateRequest) -> Bool {
+        if lhs.packPath != rhs.packPath {
+            return false
+        }
+        if lhs.destination != rhs.destination {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(packPath)
+        hasher.combine(destination)
+    }
+}
+
+extension TutorialMigrateRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialMigrateRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialMigrateRequest {
+        return
+            try TutorialMigrateRequest(
+                packPath: FfiConverterString.read(from: &buf),
+                destination: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialMigrateRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.packPath, into: &buf)
+        FfiConverterString.write(value.destination, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialMigrateRequest_lift(_ buf: RustBuffer) throws -> TutorialMigrateRequest {
+    return try FfiConverterTypeTutorialMigrateRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialMigrateRequest_lower(_ value: TutorialMigrateRequest) -> RustBuffer {
+    return FfiConverterTypeTutorialMigrateRequest.lower(value)
+}
+
+
+public struct TutorialOptionalCheckState {
+    public var id: String
+    public var label: String
+    public var kind: String
+    public var path: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, label: String, kind: String, path: String) {
+        self.id = id
+        self.label = label
+        self.kind = kind
+        self.path = path
+    }
+}
+
+#if compiler(>=6)
+extension TutorialOptionalCheckState: Sendable {}
+#endif
+
+
+extension TutorialOptionalCheckState: Equatable, Hashable {
+    public static func ==(lhs: TutorialOptionalCheckState, rhs: TutorialOptionalCheckState) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.path != rhs.path {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(label)
+        hasher.combine(kind)
+        hasher.combine(path)
+    }
+}
+
+extension TutorialOptionalCheckState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialOptionalCheckState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialOptionalCheckState {
+        return
+            try TutorialOptionalCheckState(
+                id: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                path: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialOptionalCheckState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialOptionalCheckState_lift(_ buf: RustBuffer) throws -> TutorialOptionalCheckState {
+    return try FfiConverterTypeTutorialOptionalCheckState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialOptionalCheckState_lower(_ value: TutorialOptionalCheckState) -> RustBuffer {
+    return FfiConverterTypeTutorialOptionalCheckState.lower(value)
+}
+
+
+public struct TutorialPlanRequest {
+    public var projectRoot: String
+    public var notebookId: String
+    public var datasetId: String
+    public var sourceOverride: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(projectRoot: String, notebookId: String, datasetId: String, sourceOverride: String?) {
+        self.projectRoot = projectRoot
+        self.notebookId = notebookId
+        self.datasetId = datasetId
+        self.sourceOverride = sourceOverride
+    }
+}
+
+#if compiler(>=6)
+extension TutorialPlanRequest: Sendable {}
+#endif
+
+
+extension TutorialPlanRequest: Equatable, Hashable {
+    public static func ==(lhs: TutorialPlanRequest, rhs: TutorialPlanRequest) -> Bool {
+        if lhs.projectRoot != rhs.projectRoot {
+            return false
+        }
+        if lhs.notebookId != rhs.notebookId {
+            return false
+        }
+        if lhs.datasetId != rhs.datasetId {
+            return false
+        }
+        if lhs.sourceOverride != rhs.sourceOverride {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(projectRoot)
+        hasher.combine(notebookId)
+        hasher.combine(datasetId)
+        hasher.combine(sourceOverride)
+    }
+}
+
+extension TutorialPlanRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialPlanRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialPlanRequest {
+        return
+            try TutorialPlanRequest(
+                projectRoot: FfiConverterString.read(from: &buf),
+                notebookId: FfiConverterString.read(from: &buf),
+                datasetId: FfiConverterString.read(from: &buf),
+                sourceOverride: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialPlanRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.projectRoot, into: &buf)
+        FfiConverterString.write(value.notebookId, into: &buf)
+        FfiConverterString.write(value.datasetId, into: &buf)
+        FfiConverterOptionString.write(value.sourceOverride, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialPlanRequest_lift(_ buf: RustBuffer) throws -> TutorialPlanRequest {
+    return try FfiConverterTypeTutorialPlanRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialPlanRequest_lower(_ value: TutorialPlanRequest) -> RustBuffer {
+    return FfiConverterTypeTutorialPlanRequest.lower(value)
+}
+
+
+public struct TutorialProjectProjection {
+    public var notebook: NotebookDocumentProjection
+    public var tutorial: TutorialLockState
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(notebook: NotebookDocumentProjection, tutorial: TutorialLockState) {
+        self.notebook = notebook
+        self.tutorial = tutorial
+    }
+}
+
+#if compiler(>=6)
+extension TutorialProjectProjection: Sendable {}
+#endif
+
+
+extension TutorialProjectProjection: Equatable, Hashable {
+    public static func ==(lhs: TutorialProjectProjection, rhs: TutorialProjectProjection) -> Bool {
+        if lhs.notebook != rhs.notebook {
+            return false
+        }
+        if lhs.tutorial != rhs.tutorial {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(notebook)
+        hasher.combine(tutorial)
+    }
+}
+
+extension TutorialProjectProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialProjectProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialProjectProjection {
+        return
+            try TutorialProjectProjection(
+                notebook: FfiConverterTypeNotebookDocumentProjection.read(from: &buf),
+                tutorial: FfiConverterTypeTutorialLockState.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialProjectProjection, into buf: inout [UInt8]) {
+        FfiConverterTypeNotebookDocumentProjection.write(value.notebook, into: &buf)
+        FfiConverterTypeTutorialLockState.write(value.tutorial, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialProjectProjection_lift(_ buf: RustBuffer) throws -> TutorialProjectProjection {
+    return try FfiConverterTypeTutorialProjectProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialProjectProjection_lower(_ value: TutorialProjectProjection) -> RustBuffer {
+    return FfiConverterTypeTutorialProjectProjection.lower(value)
+}
+
+
+public struct TutorialSectionState {
+    public var id: String
+    public var title: String
+    public var datasetIds: [String]
+    public var cellIds: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, title: String, datasetIds: [String], cellIds: [String]) {
+        self.id = id
+        self.title = title
+        self.datasetIds = datasetIds
+        self.cellIds = cellIds
+    }
+}
+
+#if compiler(>=6)
+extension TutorialSectionState: Sendable {}
+#endif
+
+
+extension TutorialSectionState: Equatable, Hashable {
+    public static func ==(lhs: TutorialSectionState, rhs: TutorialSectionState) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.datasetIds != rhs.datasetIds {
+            return false
+        }
+        if lhs.cellIds != rhs.cellIds {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(title)
+        hasher.combine(datasetIds)
+        hasher.combine(cellIds)
+    }
+}
+
+extension TutorialSectionState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialSectionState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialSectionState {
+        return
+            try TutorialSectionState(
+                id: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                datasetIds: FfiConverterSequenceString.read(from: &buf),
+                cellIds: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialSectionState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterSequenceString.write(value.datasetIds, into: &buf)
+        FfiConverterSequenceString.write(value.cellIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialSectionState_lift(_ buf: RustBuffer) throws -> TutorialSectionState {
+    return try FfiConverterTypeTutorialSectionState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialSectionState_lower(_ value: TutorialSectionState) -> RustBuffer {
+    return FfiConverterTypeTutorialSectionState.lower(value)
+}
+
+
+public struct TutorialTemplateState {
+    public var root: String
+    public var contentSha256: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(root: String, contentSha256: String) {
+        self.root = root
+        self.contentSha256 = contentSha256
+    }
+}
+
+#if compiler(>=6)
+extension TutorialTemplateState: Sendable {}
+#endif
+
+
+extension TutorialTemplateState: Equatable, Hashable {
+    public static func ==(lhs: TutorialTemplateState, rhs: TutorialTemplateState) -> Bool {
+        if lhs.root != rhs.root {
+            return false
+        }
+        if lhs.contentSha256 != rhs.contentSha256 {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(root)
+        hasher.combine(contentSha256)
+    }
+}
+
+extension TutorialTemplateState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialTemplateState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialTemplateState {
+        return
+            try TutorialTemplateState(
+                root: FfiConverterString.read(from: &buf),
+                contentSha256: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialTemplateState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.root, into: &buf)
+        FfiConverterString.write(value.contentSha256, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialTemplateState_lift(_ buf: RustBuffer) throws -> TutorialTemplateState {
+    return try FfiConverterTypeTutorialTemplateState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialTemplateState_lower(_ value: TutorialTemplateState) -> RustBuffer {
+    return FfiConverterTypeTutorialTemplateState.lower(value)
+}
+
+
+public struct TutorialUnpackState {
+    public var format: String
+    public var archiveRoot: String?
+    public var maxEntries: UInt64
+    public var maxExpandedBytes: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(format: String, archiveRoot: String?, maxEntries: UInt64, maxExpandedBytes: UInt64) {
+        self.format = format
+        self.archiveRoot = archiveRoot
+        self.maxEntries = maxEntries
+        self.maxExpandedBytes = maxExpandedBytes
+    }
+}
+
+#if compiler(>=6)
+extension TutorialUnpackState: Sendable {}
+#endif
+
+
+extension TutorialUnpackState: Equatable, Hashable {
+    public static func ==(lhs: TutorialUnpackState, rhs: TutorialUnpackState) -> Bool {
+        if lhs.format != rhs.format {
+            return false
+        }
+        if lhs.archiveRoot != rhs.archiveRoot {
+            return false
+        }
+        if lhs.maxEntries != rhs.maxEntries {
+            return false
+        }
+        if lhs.maxExpandedBytes != rhs.maxExpandedBytes {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(format)
+        hasher.combine(archiveRoot)
+        hasher.combine(maxEntries)
+        hasher.combine(maxExpandedBytes)
+    }
+}
+
+extension TutorialUnpackState: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialUnpackState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialUnpackState {
+        return
+            try TutorialUnpackState(
+                format: FfiConverterString.read(from: &buf),
+                archiveRoot: FfiConverterOptionString.read(from: &buf),
+                maxEntries: FfiConverterUInt64.read(from: &buf),
+                maxExpandedBytes: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TutorialUnpackState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.format, into: &buf)
+        FfiConverterOptionString.write(value.archiveRoot, into: &buf)
+        FfiConverterUInt64.write(value.maxEntries, into: &buf)
+        FfiConverterUInt64.write(value.maxExpandedBytes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialUnpackState_lift(_ buf: RustBuffer) throws -> TutorialUnpackState {
+    return try FfiConverterTypeTutorialUnpackState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialUnpackState_lower(_ value: TutorialUnpackState) -> RustBuffer {
+    return FfiConverterTypeTutorialUnpackState.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
@@ -18694,6 +20358,245 @@ extension TaskProductRole: CaseIterable {}
 
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum TutorialAcquisitionPhase {
+
+    case missing
+    case downloading
+    case verifying
+    case unpacking
+    case checking
+    case materializing
+    case ready
+    case cancelled
+    case networkFailed
+    case checksumFailed
+    case unsafeArchive
+    case destinationCollision
+}
+
+
+#if compiler(>=6)
+extension TutorialAcquisitionPhase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialAcquisitionPhase: FfiConverterRustBuffer {
+    typealias SwiftType = TutorialAcquisitionPhase
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialAcquisitionPhase {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .missing
+
+        case 2: return .downloading
+
+        case 3: return .verifying
+
+        case 4: return .unpacking
+
+        case 5: return .checking
+
+        case 6: return .materializing
+
+        case 7: return .ready
+
+        case 8: return .cancelled
+
+        case 9: return .networkFailed
+
+        case 10: return .checksumFailed
+
+        case 11: return .unsafeArchive
+
+        case 12: return .destinationCollision
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TutorialAcquisitionPhase, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .missing:
+            writeInt(&buf, Int32(1))
+
+
+        case .downloading:
+            writeInt(&buf, Int32(2))
+
+
+        case .verifying:
+            writeInt(&buf, Int32(3))
+
+
+        case .unpacking:
+            writeInt(&buf, Int32(4))
+
+
+        case .checking:
+            writeInt(&buf, Int32(5))
+
+
+        case .materializing:
+            writeInt(&buf, Int32(6))
+
+
+        case .ready:
+            writeInt(&buf, Int32(7))
+
+
+        case .cancelled:
+            writeInt(&buf, Int32(8))
+
+
+        case .networkFailed:
+            writeInt(&buf, Int32(9))
+
+
+        case .checksumFailed:
+            writeInt(&buf, Int32(10))
+
+
+        case .unsafeArchive:
+            writeInt(&buf, Int32(11))
+
+
+        case .destinationCollision:
+            writeInt(&buf, Int32(12))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialAcquisitionPhase_lift(_ buf: RustBuffer) throws -> TutorialAcquisitionPhase {
+    return try FfiConverterTypeTutorialAcquisitionPhase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialAcquisitionPhase_lower(_ value: TutorialAcquisitionPhase) -> RustBuffer {
+    return FfiConverterTypeTutorialAcquisitionPhase.lower(value)
+}
+
+
+extension TutorialAcquisitionPhase: Equatable, Hashable {}
+
+extension TutorialAcquisitionPhase: Codable {}
+
+
+
+
+extension TutorialAcquisitionPhase: CaseIterable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum TutorialPersistenceAction {
+
+    case resume
+    case restart
+    case retry
+    case cancel
+    case advance
+}
+
+
+#if compiler(>=6)
+extension TutorialPersistenceAction: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTutorialPersistenceAction: FfiConverterRustBuffer {
+    typealias SwiftType = TutorialPersistenceAction
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TutorialPersistenceAction {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .resume
+
+        case 2: return .restart
+
+        case 3: return .retry
+
+        case 4: return .cancel
+
+        case 5: return .advance
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TutorialPersistenceAction, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .resume:
+            writeInt(&buf, Int32(1))
+
+
+        case .restart:
+            writeInt(&buf, Int32(2))
+
+
+        case .retry:
+            writeInt(&buf, Int32(3))
+
+
+        case .cancel:
+            writeInt(&buf, Int32(4))
+
+
+        case .advance:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialPersistenceAction_lift(_ buf: RustBuffer) throws -> TutorialPersistenceAction {
+    return try FfiConverterTypeTutorialPersistenceAction.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTutorialPersistenceAction_lower(_ value: TutorialPersistenceAction) -> RustBuffer {
+    return FfiConverterTypeTutorialPersistenceAction.lower(value)
+}
+
+
+extension TutorialPersistenceAction: Equatable, Hashable {}
+
+extension TutorialPersistenceAction: Codable {}
+
+
+
+
+extension TutorialPersistenceAction: CaseIterable {}
+
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -19361,6 +21264,30 @@ fileprivate struct FfiConverterOptionTypeTaskUIManagedOutput: FfiConverterRustBu
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeTaskUIManagedOutput.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeTutorialUnpackState: FfiConverterRustBuffer {
+    typealias SwiftType = TutorialUnpackState?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTutorialUnpackState.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTutorialUnpackState.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -20987,6 +22914,156 @@ fileprivate struct FfiConverterSequenceTypeTaskUIInjectedArgument: FfiConverterR
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeTutorialCheckOutcomeState: FfiConverterRustBuffer {
+    typealias SwiftType = [TutorialCheckOutcomeState]
+
+    public static func write(_ value: [TutorialCheckOutcomeState], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTutorialCheckOutcomeState.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TutorialCheckOutcomeState] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TutorialCheckOutcomeState]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTutorialCheckOutcomeState.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTutorialDatasetAttemptState: FfiConverterRustBuffer {
+    typealias SwiftType = [TutorialDatasetAttemptState]
+
+    public static func write(_ value: [TutorialDatasetAttemptState], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTutorialDatasetAttemptState.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TutorialDatasetAttemptState] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TutorialDatasetAttemptState]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTutorialDatasetAttemptState.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTutorialDatasetState: FfiConverterRustBuffer {
+    typealias SwiftType = [TutorialDatasetState]
+
+    public static func write(_ value: [TutorialDatasetState], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTutorialDatasetState.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TutorialDatasetState] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TutorialDatasetState]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTutorialDatasetState.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTutorialOptionalCheckState: FfiConverterRustBuffer {
+    typealias SwiftType = [TutorialOptionalCheckState]
+
+    public static func write(_ value: [TutorialOptionalCheckState], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTutorialOptionalCheckState.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TutorialOptionalCheckState] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TutorialOptionalCheckState]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTutorialOptionalCheckState.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTutorialProjectProjection: FfiConverterRustBuffer {
+    typealias SwiftType = [TutorialProjectProjection]
+
+    public static func write(_ value: [TutorialProjectProjection], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTutorialProjectProjection.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TutorialProjectProjection] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TutorialProjectProjection]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTutorialProjectProjection.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTutorialSectionState: FfiConverterRustBuffer {
+    typealias SwiftType = [TutorialSectionState]
+
+    public static func write(_ value: [TutorialSectionState], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTutorialSectionState.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TutorialSectionState] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TutorialSectionState]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTutorialSectionState.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeNotebookValue: FfiConverterRustBuffer {
     typealias SwiftType = [NotebookValue]
 
@@ -21621,116 +23698,63 @@ public func taskUiSchema(surfaceId: String)throws  -> TaskUiSchema  {
 })
 }
 /**
- * Advance one bounded chunk/phase so the GUI can remain responsive and cancellation-aware.
+ * Apply one typed acquisition transition. Generation-bound actions require an
+ * exact generation; only bounded advance accepts a byte budget.
  */
-public func tutorialAdvanceAcquisitionJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_tutorial_advance_acquisition_json(
-        FfiConverterString.lower(requestJson),$0
+public func tutorialAcquisitionAction(request: TutorialActionRequest)throws  -> TutorialDatasetState  {
+    return try  FfiConverterTypeTutorialDatasetState_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_acquisition_action(
+        FfiConverterTypeTutorialActionRequest_lower(request),$0
     )
 })
 }
 /**
  * Begin one exact explicitly approved acquisition generation.
  */
-public func tutorialBeginAcquisitionJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_tutorial_begin_acquisition_json(
-        FfiConverterString.lower(requestJson),$0
-    )
-})
-}
-public func tutorialCancelAcquisitionJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_tutorial_cancel_acquisition_json(
-        FfiConverterString.lower(requestJson),$0
+public func tutorialBeginAcquisition(request: TutorialBeginRequest)throws  -> TutorialDatasetState  {
+    return try  FfiConverterTypeTutorialDatasetState_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_begin_acquisition(
+        FfiConverterTypeTutorialBeginRequest_lower(request),$0
     )
 })
 }
 /**
  * Fork one immutable template into an editable learner notebook and managed lock.
  */
-public func tutorialForkJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_tutorial_fork_json(
-        FfiConverterString.lower(requestJson),$0
+public func tutorialFork(request: TutorialForkRequest)throws  -> TutorialProjectProjection  {
+    return try  FfiConverterTypeTutorialProjectProjection_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_fork(
+        FfiConverterTypeTutorialForkRequest_lower(request),$0
     )
 })
 }
 /**
  * One-shot conversion of `tutorial-pack.v0` into a portable v1 template.
  */
-public func tutorialMigrateV0Json(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_tutorial_migrate_v0_json(
-        FfiConverterString.lower(requestJson),$0
+public func tutorialMigrateV0(request: TutorialMigrateRequest)throws  -> TutorialTemplateState  {
+    return try  FfiConverterTypeTutorialTemplateState_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_migrate_v0(
+        FfiConverterTypeTutorialMigrateRequest_lower(request),$0
     )
 })
 }
 /**
  * Resolve the exact source, redirect, integrity, disk, and extraction approval facts.
  */
-public func tutorialPlanAcquisitionJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_tutorial_plan_acquisition_json(
-        FfiConverterString.lower(requestJson),$0
-    )
-})
-}
-/**
- * Reopen one learner tutorial entirely from Rust-owned project state.
- */
-public func tutorialProjectJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_tutorial_project_json(
-        FfiConverterString.lower(requestJson),$0
+public func tutorialPlanAcquisition(request: TutorialPlanRequest)throws  -> TutorialAcquisitionPlanState  {
+    return try  FfiConverterTypeTutorialAcquisitionPlanState_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_plan_acquisition(
+        FfiConverterTypeTutorialPlanRequest_lower(request),$0
     )
 })
 }
 /**
  * List every Rust-owned learner tutorial in one project.
  */
-public func tutorialProjectListJson(projectRoot: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_tutorial_project_list_json(
+public func tutorialProjectList(projectRoot: String)throws  -> [TutorialProjectProjection]  {
+    return try  FfiConverterSequenceTypeTutorialProjectProjection.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_tutorial_project_list(
         FfiConverterString.lower(projectRoot),$0
-    )
-})
-}
-public func tutorialRestartAcquisitionJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_tutorial_restart_acquisition_json(
-        FfiConverterString.lower(requestJson),$0
-    )
-})
-}
-public func tutorialResumeAcquisitionJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_tutorial_resume_acquisition_json(
-        FfiConverterString.lower(requestJson),$0
-    )
-})
-}
-public func tutorialRetryAcquisitionJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_tutorial_retry_acquisition_json(
-        FfiConverterString.lower(requestJson),$0
-    )
-})
-}
-public func tutorialTaskParameterAuditJson() -> String  {
-    return try!  FfiConverterString.lift(try! rustCall() {
-    uniffi_casars_frontend_services_fn_func_tutorial_task_parameter_audit_json($0
-    )
-})
-}
-/**
- * Validate and preview one immutable portable tutorial template.
- */
-public func tutorialTemplateJson(templatePath: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_tutorial_template_json(
-        FfiConverterString.lower(templatePath),$0
     )
 })
 }
@@ -21873,43 +23897,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_task_ui_schema() != 31518) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_advance_acquisition_json() != 4234) {
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_acquisition_action() != 9226) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_begin_acquisition_json() != 26041) {
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_begin_acquisition() != 19171) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_cancel_acquisition_json() != 24226) {
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_fork() != 1723) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_fork_json() != 50317) {
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_migrate_v0() != 37593) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_migrate_v0_json() != 19951) {
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_plan_acquisition() != 39238) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_plan_acquisition_json() != 45282) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_project_json() != 61175) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_project_list_json() != 23138) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_restart_acquisition_json() != 34501) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_resume_acquisition_json() != 39062) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_retry_acquisition_json() != 15683) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_task_parameter_audit_json() != 21445) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_tutorial_template_json() != 59443) {
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_project_list() != 26685) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_accepted_durable_change() != 59881) {
