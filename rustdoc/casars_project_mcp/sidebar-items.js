@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["PROTOCOL_VERSION"],"fn":["call_tool","compact_task_catalog","frontend_error","handle","main","parse_args","read_projection","run","source_hits_only","task_schema_for_agent","text_parameter_value","tool","tool_definitions","validate_task_suggestion"]};
+window.SIDEBAR_ITEMS = {"constant":["PROTOCOL_VERSION"],"fn":["call_tool","frontend_error","handle","main","parse_args","read_projection","run","source_hits_only","task_schema_for_agent","tool","tool_definitions","validate_task_suggestion"]};

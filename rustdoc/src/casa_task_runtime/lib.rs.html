@@ -5,33 +5,41 @@
 <a href=#5 id=5 data-nosnippet>5</a>//! latter live in [`casa_provider_contracts`], allowing CLI, TUI, GUI/UniFFI,
 <a href=#6 id=6 data-nosnippet>6</a>//! Python, and providers to resolve the same self-contained surface bundle.
 <a href=#7 id=7 data-nosnippet>7</a>
-<a href=#8 id=8 data-nosnippet>8</a></span><span class="kw">mod </span>diagnostic;
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">mod </span>invocation;
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">mod </span>normalize;
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">mod </span>profile;
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">mod </span>safety;
-<a href=#13 id=13 data-nosnippet>13</a><span class="kw">mod </span>session;
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">mod </span>storage;
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">mod </span>ui_projection;
-<a href=#16 id=16 data-nosnippet>16</a>
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">pub use </span>diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLevel, SourceLocation};
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">pub use </span>invocation::{
-<a href=#19 id=19 data-nosnippet>19</a>    ProviderInvocationError, parameter_value_is_omitted, project_parameter_value,
-<a href=#20 id=20 data-nosnippet>20</a>    project_provider_invocation, provider_parameter_applies,
+<a href=#8 id=8 data-nosnippet>8</a></span><span class="kw">mod </span>cli;
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">mod </span>diagnostic;
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">mod </span>invocation;
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">mod </span>normalize;
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">mod </span>profile;
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">mod </span>runtime;
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">mod </span>safety;
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">mod </span>session;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">mod </span>storage;
+<a href=#17 id=17 data-nosnippet>17</a>
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">pub use </span>cli::{
+<a href=#19 id=19 data-nosnippet>19</a>    TaskCliAction, TaskCliError, TaskCliHost, parse_task_cli_action, read_task_request,
+<a href=#20 id=20 data-nosnippet>20</a>    task_cli_machine_help,
 <a href=#21 id=21 data-nosnippet>21</a>};
-<a href=#22 id=22 data-nosnippet>22</a><span class="kw">pub use </span>normalize::{NormalizationError, normalize_value, semantic_eq, validate_value};
-<a href=#23 id=23 data-nosnippet>23</a><span class="kw">pub use </span>profile::{
-<a href=#24 id=24 data-nosnippet>24</a>    PROFILE_FORMAT_VERSION, ParameterProfile, ProfileError, ProfileHeader, ResolvedProfile,
-<a href=#25 id=25 data-nosnippet>25</a>    parse_profile, render_documented_template, render_sparse_profile, resolve_profile,
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">pub use </span>diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLevel, SourceLocation};
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">pub use </span>invocation::{
+<a href=#24 id=24 data-nosnippet>24</a>    ProviderInvocationError, parameter_value_is_omitted, project_parameter_value,
+<a href=#25 id=25 data-nosnippet>25</a>    project_provider_invocation, provider_parameter_applies,
 <a href=#26 id=26 data-nosnippet>26</a>};
-<a href=#27 id=27 data-nosnippet>27</a><span class="kw">pub use </span>safety::{RunSafetyEvaluationError, RunSafetyRequirements, required_run_safety};
-<a href=#28 id=28 data-nosnippet>28</a><span class="kw">pub use </span>session::{
-<a href=#29 id=29 data-nosnippet>29</a>    BaseSource, ParameterOrigin, ParameterSession, ParameterSessionError, ParameterState,
-<a href=#30 id=30 data-nosnippet>30</a>    ResolutionPatch,
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">pub use </span>normalize::{NormalizationError, normalize_value, semantic_eq, validate_value};
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">pub use </span>profile::{
+<a href=#29 id=29 data-nosnippet>29</a>    PROFILE_FORMAT_VERSION, ParameterProfile, ProfileError, ProfileHeader, ResolvedProfile,
+<a href=#30 id=30 data-nosnippet>30</a>    parse_profile, render_documented_template, render_sparse_profile, resolve_profile,
 <a href=#31 id=31 data-nosnippet>31</a>};
-<a href=#32 id=32 data-nosnippet>32</a><span class="kw">pub use </span>storage::{
-<a href=#33 id=33 data-nosnippet>33</a>    AutomaticSaveReport, ManagedProfileKind, ManagedStateError, ManagedStateStore,
-<a href=#34 id=34 data-nosnippet>34</a>    SessionLastState, StateWriteOutcome, TaskLastState, write_parameter_profile_atomic,
+<a href=#32 id=32 data-nosnippet>32</a><span class="kw">pub use </span>runtime::{
+<a href=#33 id=33 data-nosnippet>33</a>    OpenSessionRequest, ParameterRuntime, ParameterRuntimeError, ParameterTextError,
+<a href=#34 id=34 data-nosnippet>34</a>    parse_parameter_text,
 <a href=#35 id=35 data-nosnippet>35</a>};
-<a href=#36 id=36 data-nosnippet>36</a><span class="kw">pub use </span>ui_projection::project_ui_schema;
+<a href=#36 id=36 data-nosnippet>36</a><span class="kw">pub use </span>safety::{RunSafetyEvaluationError, RunSafetyRequirements, required_run_safety};
+<a href=#37 id=37 data-nosnippet>37</a><span class="kw">pub use </span>session::{
+<a href=#38 id=38 data-nosnippet>38</a>    BaseSource, ParameterOrigin, ParameterSession, ParameterSessionError, ParameterState,
+<a href=#39 id=39 data-nosnippet>39</a>    ResolutionPatch,
+<a href=#40 id=40 data-nosnippet>40</a>};
+<a href=#41 id=41 data-nosnippet>41</a><span class="kw">pub use </span>storage::{
+<a href=#42 id=42 data-nosnippet>42</a>    ManagedProfileKind, ManagedStateError, ManagedStateStore, SessionLastCoordinator,
+<a href=#43 id=43 data-nosnippet>43</a>    StateWriteOutcome, TaskLastCoordinator, write_parameter_profile_atomic,
+<a href=#44 id=44 data-nosnippet>44</a>};
 </code></pre></div></section></main></body></html>

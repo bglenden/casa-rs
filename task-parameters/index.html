@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -1004,6 +1004,10 @@ merging into a dirty form.</p>
 specified. Interactive TUI and GUI editors may start from a valid Last source,
 but must show the active source, modified state, validation, and per-field
 origins.</p>
+<p>A missing managed profile is distinct from an unreadable or invalid profile:
+interactive callers may explicitly choose Defaults when no Last file exists,
+but a present corrupt Last file is reported and is never silently replaced by
+Defaults.</p>
 <h2 id="managed-last-files">Managed Last files<a class="headerlink" href="#managed-last-files" title="Permanent link">&para;</a></h2>
 <p>By default, managed state lives under the workspace:</p>
 <div class="codehilite"><pre><span></span><code>&lt;workspace&gt;/.casa-rs/parameters/&lt;surface-id&gt;/last.toml
@@ -1018,6 +1022,12 @@ opens successfully and after validated durable settings change. Browser
 sessions do not have <code>last-successful.toml</code>. Cursor movement, scrolling,
 viewport changes, playback, caches, and command history are live state and do
 not trigger profile writes.</p>
+<p><code>casa-task-runtime::ParameterRuntime</code> owns source resolution and
+<code>SessionLastCoordinator</code> owns successful-open persistence, the 350 ms debounce,
+coalescing by normalized workspace/surface destination, background writes, and
+clean-close flushing. Swift, Python, CLI, and TUI projections report lifecycle
+events to that boundary rather than carrying independent timers or Last-state
+maps.</p>
 <p><code>tablebrowser</code> bookmark values use stable explicit forms:
 <code>cell:ROW:COLUMN</code>, <code>table-keyword:PATH</code>,
 <code>column-keyword:COLUMN:PATH</code>, or <code>subtable:NAME</code>.</p>
@@ -1173,7 +1183,7 @@ under the current contract and defaults.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

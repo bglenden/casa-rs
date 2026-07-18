@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["command_schema","main","os_args_to_strings","parse_args","parse_merge","run","run_with_args","schema_bundle","usage"],"struct":["Request"]};
+window.SIDEBAR_ITEMS = {"fn":["command_schema","execute_task_request","main","mutation","os_args_to_strings","parse_args","parse_merge","run","run_with_args","usage"]};

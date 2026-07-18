@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FlagManagerTaskResult"],"fn":["flagdata_task_schema_bundle","flagmanager_task_schema_bundle","mstransform_task_schema_bundle"],"struct":["FlagDataTaskRequest","FlagManagerMutationResult","FlagManagerTaskRequest","MsTransformTaskRequest"]};

@@ -61,67 +61,64 @@
 <a href=#61 id=61 data-nosnippet>61</a></span><span class="kw">pub mod </span>analysis;
 <a href=#62 id=62 data-nosnippet>62</a><span class="kw">pub mod </span>beam;
 <a href=#63 id=63 data-nosnippet>63</a><span class="kw">pub mod </span>browser_render;
-<a href=#64 id=64 data-nosnippet>64</a><span class="kw">pub mod </span>command_schema;
-<a href=#65 id=65 data-nosnippet>65</a><span class="kw">pub mod </span>error;
-<a href=#66 id=66 data-nosnippet>66</a><span class="kw">pub mod </span>expr_file;
-<a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub mod </span>expr_parser;
-<a href=#68 id=68 data-nosnippet>68</a><span class="kw">pub mod </span>image;
-<a href=#69 id=69 data-nosnippet>69</a><span class="kw">pub mod </span>image_expr;
-<a href=#70 id=70 data-nosnippet>70</a><span class="kw">pub mod </span>image_info;
-<a href=#71 id=71 data-nosnippet>71</a><span class="kw">pub mod </span>image_view;
-<a href=#72 id=72 data-nosnippet>72</a><span class="kw">pub mod </span>imagebrowser_session;
-<a href=#73 id=73 data-nosnippet>73</a><span class="kw">pub mod </span>iterator;
-<a href=#74 id=74 data-nosnippet>74</a><span class="kw">pub mod </span>movie;
-<a href=#75 id=75 data-nosnippet>75</a><span class="kw">pub mod </span>subimage;
-<a href=#76 id=76 data-nosnippet>76</a><span class="kw">pub mod </span>temp_image;
-<a href=#77 id=77 data-nosnippet>77</a>
-<a href=#78 id=78 data-nosnippet>78</a><span class="attr">#[cfg(test)]
-<a href=#79 id=79 data-nosnippet>79</a></span><span class="kw">mod </span>mask;
-<a href=#80 id=80 data-nosnippet>80</a>
-<a href=#81 id=81 data-nosnippet>81</a><span class="kw">pub use </span>analysis::{
-<a href=#82 id=82 data-nosnippet>82</a>    ExportFitsRequest, FeatherRequest, FeatherSummary, FitsExportSummary, FitsImportSummary,
-<a href=#83 id=83 data-nosnippet>83</a>    ImageAnalysisProtocolInfo, ImageAnalysisTaskRequest, ImageAnalysisTaskResult,
-<a href=#84 id=84 data-nosnippet>84</a>    ImageAnalysisTaskSchemaBundle, ImageHeaderSummary, ImageMathSummary, ImageRegridSummary,
-<a href=#85 id=85 data-nosnippet>85</a>    ImageStatisticsSummary, ImageSubimageSummary, ImheadRequest, ImmathRequest, ImmomentsRequest,
-<a href=#86 id=86 data-nosnippet>86</a>    ImpbcorRequest, ImportFitsRequest, ImpvRequest, ImregridRequest, ImstatRequest,
-<a href=#87 id=87 data-nosnippet>87</a>    ImsubimageRequest, MomentMapSummary, PbcorSummary, PvImageSummary, export_fits, feather,
-<a href=#88 id=88 data-nosnippet>88</a>    image_analysis_ui_schema_json, imhead, imhead_put, immath, immoments, impbcor, import_fits,
-<a href=#89 id=89 data-nosnippet>89</a>    impv, imregrid, imstat, imsubimage, read_image_analysis_request_source,
-<a href=#90 id=90 data-nosnippet>90</a>    run_image_analysis_task,
-<a href=#91 id=91 data-nosnippet>91</a>};
-<a href=#92 id=92 data-nosnippet>92</a><span class="kw">pub use </span>beam::{GaussianBeam, ImageBeamSet};
-<a href=#93 id=93 data-nosnippet>93</a><span class="kw">pub use </span>browser_render::{
-<a href=#94 id=94 data-nosnippet>94</a>    BrowserRenderTheme, ImagePlaneColormap, ImagePlaneDrawGeometry, ImagePlaneLayout,
-<a href=#95 id=95 data-nosnippet>95</a>    ImagePlaneOverlayMarker, ImagePlaneRenderInput, ImageSpectrumLayout,
-<a href=#96 id=96 data-nosnippet>96</a>    ImageSpectrumOverlaySeries, ImageSpectrumRenderInput, image_plane_draw_geometry,
-<a href=#97 id=97 data-nosnippet>97</a>    image_plane_layout, image_spectrum_layout, render_image_plane_image,
-<a href=#98 id=98 data-nosnippet>98</a>    render_image_spectrum_image,
-<a href=#99 id=99 data-nosnippet>99</a>};
-<a href=#100 id=100 data-nosnippet>100</a><span class="kw">pub use </span>command_schema::ui_schema_json <span class="kw">as </span>imexplore_ui_schema_json;
-<a href=#101 id=101 data-nosnippet>101</a><span class="kw">pub use </span>error::ImageError;
-<a href=#102 id=102 data-nosnippet>102</a><span class="kw">pub use </span>image::{
-<a href=#103 id=103 data-nosnippet>103</a>    AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
-<a href=#104 id=104 data-nosnippet>104</a>    PagedImage, image_pixel_type,
-<a href=#105 id=105 data-nosnippet>105</a>};
-<a href=#106 id=106 data-nosnippet>106</a><span class="kw">pub use </span>image_expr::{
-<a href=#107 id=107 data-nosnippet>107</a>    CompiledImageExpr, CompiledMaskExpr, ImageExpr, ImageExprBinaryOp, ImageExprCompareOp,
-<a href=#108 id=108 data-nosnippet>108</a>    ImageExprUnaryOp, MaskExpr, MaskLogicalOp, ReductionOp,
-<a href=#109 id=109 data-nosnippet>109</a>};
-<a href=#110 id=110 data-nosnippet>110</a><span class="kw">pub use </span>image_info::{ImageInfo, ImageType};
-<a href=#111 id=111 data-nosnippet>111</a><span class="kw">pub use </span>image_view::{
-<a href=#112 id=112 data-nosnippet>112</a>    ImageAxisModel, ImageAxisValue, ImageDisplayAxis, ImageMetadataSection, ImageNonDisplayAxis,
-<a href=#113 id=113 data-nosnippet>113</a>    ImageProbe, ImageProfile, ImageProfileSample, ImageViewCapabilities, ImageViewWindow,
-<a href=#114 id=114 data-nosnippet>114</a>    OpenedImageView, PlaneRaster,
-<a href=#115 id=115 data-nosnippet>115</a>};
-<a href=#116 id=116 data-nosnippet>116</a><span class="kw">pub use </span>imagebrowser_session::ImageBrowserSession;
-<a href=#117 id=117 data-nosnippet>117</a><span class="kw">pub use </span>iterator::{ImageChunk, ImageIter, ImageIterMut};
-<a href=#118 id=118 data-nosnippet>118</a><span class="kw">pub use </span>movie::{
-<a href=#119 id=119 data-nosnippet>119</a>    ImageMovieBundleCache, ImageMovieBundleEngine, ImageMovieBundleKey, ImageMovieBundleRequest,
-<a href=#120 id=120 data-nosnippet>120</a>    ImageMovieOccurrence, ImageMoviePreparedBundle, ImageMoviePreparedSurface,
-<a href=#121 id=121 data-nosnippet>121</a>    ImageMoviePresentationCoordinator, ImageMoviePresentationPoll, ImageMovieRender,
-<a href=#122 id=122 data-nosnippet>122</a>    ImageMovieRenderedBundle, ImageMovieRenderedSurface, ImageMovieSurfaceKind,
-<a href=#123 id=123 data-nosnippet>123</a>    ImageMovieSurfaceRequest, ImageMovieSurfaceSpec,
-<a href=#124 id=124 data-nosnippet>124</a>};
-<a href=#125 id=125 data-nosnippet>125</a><span class="kw">pub use </span>subimage::{SubImage, SubImageMut};
-<a href=#126 id=126 data-nosnippet>126</a><span class="kw">pub use </span>temp_image::TempImage;
+<a href=#64 id=64 data-nosnippet>64</a><span class="kw">pub mod </span>error;
+<a href=#65 id=65 data-nosnippet>65</a><span class="kw">pub mod </span>expr_file;
+<a href=#66 id=66 data-nosnippet>66</a><span class="kw">pub mod </span>expr_parser;
+<a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub mod </span>image;
+<a href=#68 id=68 data-nosnippet>68</a><span class="kw">pub mod </span>image_expr;
+<a href=#69 id=69 data-nosnippet>69</a><span class="kw">pub mod </span>image_info;
+<a href=#70 id=70 data-nosnippet>70</a><span class="kw">pub mod </span>image_view;
+<a href=#71 id=71 data-nosnippet>71</a><span class="kw">pub mod </span>imagebrowser_session;
+<a href=#72 id=72 data-nosnippet>72</a><span class="kw">pub mod </span>iterator;
+<a href=#73 id=73 data-nosnippet>73</a><span class="kw">pub mod </span>movie;
+<a href=#74 id=74 data-nosnippet>74</a><span class="kw">pub mod </span>subimage;
+<a href=#75 id=75 data-nosnippet>75</a><span class="kw">pub mod </span>temp_image;
+<a href=#76 id=76 data-nosnippet>76</a>
+<a href=#77 id=77 data-nosnippet>77</a><span class="attr">#[cfg(test)]
+<a href=#78 id=78 data-nosnippet>78</a></span><span class="kw">mod </span>mask;
+<a href=#79 id=79 data-nosnippet>79</a>
+<a href=#80 id=80 data-nosnippet>80</a><span class="kw">pub use </span>analysis::{
+<a href=#81 id=81 data-nosnippet>81</a>    ExportFitsRequest, FeatherRequest, FeatherSummary, FitsExportSummary, FitsImportSummary,
+<a href=#82 id=82 data-nosnippet>82</a>    ImageAnalysisTaskRequest, ImageAnalysisTaskResult, ImageHeaderSummary, ImageMathSummary,
+<a href=#83 id=83 data-nosnippet>83</a>    ImageRegridSummary, ImageStatisticsSummary, ImageSubimageSummary, ImheadRequest, ImmathRequest,
+<a href=#84 id=84 data-nosnippet>84</a>    ImmomentsRequest, ImpbcorRequest, ImportFitsRequest, ImpvRequest, ImregridRequest,
+<a href=#85 id=85 data-nosnippet>85</a>    ImstatRequest, ImsubimageRequest, MomentMapSummary, PbcorSummary, PvImageSummary,
+<a href=#86 id=86 data-nosnippet>86</a>    dispatch_image_analysis_task_cli, export_fits, feather, image_analysis_protocol_descriptor,
+<a href=#87 id=87 data-nosnippet>87</a>    image_analysis_task_schema_bundle, imhead, imhead_put, immath, immoments, impbcor, import_fits,
+<a href=#88 id=88 data-nosnippet>88</a>    impv, imregrid, imstat, imsubimage, run_image_analysis_task,
+<a href=#89 id=89 data-nosnippet>89</a>};
+<a href=#90 id=90 data-nosnippet>90</a><span class="kw">pub use </span>beam::{GaussianBeam, ImageBeamSet};
+<a href=#91 id=91 data-nosnippet>91</a><span class="kw">pub use </span>browser_render::{
+<a href=#92 id=92 data-nosnippet>92</a>    BrowserRenderTheme, ImagePlaneColormap, ImagePlaneDrawGeometry, ImagePlaneLayout,
+<a href=#93 id=93 data-nosnippet>93</a>    ImagePlaneOverlayMarker, ImagePlaneRenderInput, ImageSpectrumLayout,
+<a href=#94 id=94 data-nosnippet>94</a>    ImageSpectrumOverlaySeries, ImageSpectrumRenderInput, image_plane_draw_geometry,
+<a href=#95 id=95 data-nosnippet>95</a>    image_plane_layout, image_spectrum_layout, render_image_plane_image,
+<a href=#96 id=96 data-nosnippet>96</a>    render_image_spectrum_image,
+<a href=#97 id=97 data-nosnippet>97</a>};
+<a href=#98 id=98 data-nosnippet>98</a><span class="kw">pub use </span>error::ImageError;
+<a href=#99 id=99 data-nosnippet>99</a><span class="kw">pub use </span>image::{
+<a href=#100 id=100 data-nosnippet>100</a>    AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
+<a href=#101 id=101 data-nosnippet>101</a>    PagedImage, image_pixel_type,
+<a href=#102 id=102 data-nosnippet>102</a>};
+<a href=#103 id=103 data-nosnippet>103</a><span class="kw">pub use </span>image_expr::{
+<a href=#104 id=104 data-nosnippet>104</a>    CompiledImageExpr, CompiledMaskExpr, ImageExpr, ImageExprBinaryOp, ImageExprCompareOp,
+<a href=#105 id=105 data-nosnippet>105</a>    ImageExprUnaryOp, MaskExpr, MaskLogicalOp, ReductionOp,
+<a href=#106 id=106 data-nosnippet>106</a>};
+<a href=#107 id=107 data-nosnippet>107</a><span class="kw">pub use </span>image_info::{ImageInfo, ImageType};
+<a href=#108 id=108 data-nosnippet>108</a><span class="kw">pub use </span>image_view::{
+<a href=#109 id=109 data-nosnippet>109</a>    ImageAxisModel, ImageAxisValue, ImageDisplayAxis, ImageMetadataSection, ImageNonDisplayAxis,
+<a href=#110 id=110 data-nosnippet>110</a>    ImageProbe, ImageProfile, ImageProfileSample, ImageViewCapabilities, ImageViewWindow,
+<a href=#111 id=111 data-nosnippet>111</a>    OpenedImageView, PlaneRaster,
+<a href=#112 id=112 data-nosnippet>112</a>};
+<a href=#113 id=113 data-nosnippet>113</a><span class="kw">pub use </span>imagebrowser_session::ImageBrowserSession;
+<a href=#114 id=114 data-nosnippet>114</a><span class="kw">pub use </span>iterator::{ImageChunk, ImageIter, ImageIterMut};
+<a href=#115 id=115 data-nosnippet>115</a><span class="kw">pub use </span>movie::{
+<a href=#116 id=116 data-nosnippet>116</a>    ImageMovieBundleCache, ImageMovieBundleEngine, ImageMovieBundleKey, ImageMovieBundleRequest,
+<a href=#117 id=117 data-nosnippet>117</a>    ImageMovieOccurrence, ImageMoviePreparedBundle, ImageMoviePreparedSurface,
+<a href=#118 id=118 data-nosnippet>118</a>    ImageMoviePresentationCoordinator, ImageMoviePresentationPoll, ImageMovieRender,
+<a href=#119 id=119 data-nosnippet>119</a>    ImageMovieRenderedBundle, ImageMovieRenderedSurface, ImageMovieSurfaceKind,
+<a href=#120 id=120 data-nosnippet>120</a>    ImageMovieSurfaceRequest, ImageMovieSurfaceSpec,
+<a href=#121 id=121 data-nosnippet>121</a>};
+<a href=#122 id=122 data-nosnippet>122</a><span class="kw">pub use </span>subimage::{SubImage, SubImageMut};
+<a href=#123 id=123 data-nosnippet>123</a><span class="kw">pub use </span>temp_image::TempImage;
 </code></pre></div></section></main></body></html>

@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -849,17 +849,19 @@ independent migration or default table.</p>
 resolution. Session surfaces use only <code>last.toml</code>. An explicit source profile
 is never overwritten without an explicit save.</p>
 <h2 id="provider-protocol-compatibility">Provider protocol compatibility<a class="headerlink" href="#provider-protocol-compatibility" title="Permanent link">&para;</a></h2>
-<p><code>casars.tasks.calibrate</code> resolves binaries in this order:</p>
-<ol>
-<li>explicit <code>binary=</code> argument on the function call</li>
-<li>module configuration via <code>casars.tasks.calibrate.configure(binary=...)</code></li>
-<li>the <code>CASARS_CALIBRATE_BIN</code> environment variable</li>
-<li>the suite root override <code>CASARS_SUITE_ROOT</code>, resolved as <code>&lt;suite-root&gt;/bin/calibrate</code></li>
-<li>a suite-installed sibling binary discovered relative to the installed Python package</li>
-<li>the conventional user install root <code>~/.local/opt/casa-rs/current/bin/calibrate</code></li>
-<li>repo-local development binaries in <code>target/debug</code> or <code>target/release</code></li>
-<li><code>PATH</code></li>
-</ol>
+<p>Python task launch metadata comes from the provider-owned application catalog.
+An explicit <code>binary=</code> argument or module <code>configure(binary=...)</code> value selects
+that exact file. Otherwise <code>CASARS_LAUNCH_MODE</code> selects exactly one policy:</p>
+<ul>
+<li><code>installed_suite</code> (the default) uses the catalog entry's override variable,
+  or the single path <code>&lt;CASARS_SUITE_ROOT&gt;/bin/&lt;executable&gt;</code>. Without an explicit
+  suite root, <code>~/.local/opt/casa-rs/current</code> is the root.</li>
+<li><code>development_workspace</code> uses the single path
+  <code>&lt;CASARS_DEVELOPMENT_WORKSPACE&gt;/target/debug/&lt;executable&gt;</code>.</li>
+</ul>
+<p>A missing file is an error in the selected mode. Python does not inspect the
+current directory, package ancestors, neighboring build profiles, or <code>PATH</code>,
+and it never switches launch modes automatically.</p>
 <p>Before the first task execution for a resolved binary, the wrapper requires a matching protocol descriptor from <code>calibrate --protocol-info</code>.</p>
 <p>The current protocol contract is:</p>
 <ul>
@@ -968,7 +970,7 @@ and <code>casars.data.schema_bundle()</code> is currently:</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

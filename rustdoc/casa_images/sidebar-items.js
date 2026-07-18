@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["analysis","beam","browser_render","command_schema","error","expr_file","expr_parser","image","image_expr","image_info","image_view","imagebrowser_session","iterator","movie","subimage","temp_image"]};
+window.SIDEBAR_ITEMS = {"mod":["analysis","beam","browser_render","error","expr_file","expr_parser","image","image_expr","image_info","image_view","imagebrowser_session","iterator","movie","subimage","temp_image"]};
