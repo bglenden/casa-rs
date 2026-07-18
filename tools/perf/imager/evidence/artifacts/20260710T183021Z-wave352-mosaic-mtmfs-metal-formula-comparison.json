@@ -1,10 +1,6 @@
 {
   "artifacts": {
-    "comparison_root": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/comparisons/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938",
-    "products_root": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/products/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938",
-    "result_dir": "/private/tmp/wave352-formula-mtmfs-comparison",
-    "root": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts",
-    "tmp_root": "/private/tmp/wave352-formula-mtmfs-comparison-artifacts/tmp"
+    "checked_in_path": "/Users/brianglendenning/.codex/worktrees/dcd3/casa-rs/tools/perf/imager/evidence/artifacts/20260710T183021Z-wave352-mosaic-mtmfs-metal-formula-comparison.json"
   },
   "benchmark_features": {
     "backend": {
@@ -188,7 +184,7 @@
     ]
   },
   "completed_at": "2026-07-10T18:30:56.026350Z",
-  "created_at": "2026-07-10T18:30:21.394782Z",
+  "created_at": "2026-07-10T18:30:21Z",
   "dataset": {
     "key": "wave1-alma-mosaic-large",
     "path": "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
@@ -196,16 +192,33 @@
     "root_env": "CASA_RS_IMPERF_DATA_ROOT"
   },
   "environment": {
-    "bench_script": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
-    "bench_script_sha256": "ae11ebebc5b7741314d5aade375da2eb3491557f886d8155447d849caad56de5",
-    "casa_python": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python",
-    "git_branch": "codex/improve-imaging-performance",
-    "git_commit": "04a7eda96ffc463bb8109b145df268e5a640fb10",
-    "logical_cores": 10,
-    "physical_cores": 10,
-    "physical_memory_bytes": 34359738368,
-    "python": "3.13.5",
-    "repo_root": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs"
+    "datasets": {
+      "measurement_set": null
+    },
+    "executables": {
+      "bench_script": null,
+      "casa_python": null
+    },
+    "migration": {
+      "method": "checked-in one-time v1-to-v2 migration",
+      "source_schema_version": 1
+    },
+    "repository": {
+      "branch": null,
+      "dirty": null,
+      "revision": null,
+      "root": null
+    },
+    "runtime": {
+      "logical_cores": null,
+      "machine": null,
+      "physical_cores": null,
+      "physical_memory_bytes": null,
+      "platform": null,
+      "python": null
+    },
+    "schema_version": 1,
+    "storage_label": null
   },
   "exit_code": 0,
   "human_review": {
@@ -229,6 +242,7 @@
     },
     "structured_difference_summary": "overall good; good: .image.tt0, .image.tt1, .psf.tt0, .psf.tt1, .psf.tt2, .residual.tt0, .residual.tt1"
   },
+  "kind": "workload_run",
   "logs": {
     "benchmark_log": "/private/tmp/wave352-formula-mtmfs-comparison/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938.log"
   },
@@ -3241,18 +3255,16 @@
     "storage_label": "external-ssd-wave1-large",
     "stream_log": false
   },
-  "run_id": "20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938",
+  "run_id": "mosaic-mtmfs-formula-planner-comparison",
   "run_support": {
     "bench_script": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
     "reason": null,
     "status": "runnable"
   },
-  "schema_version": 1,
+  "schema_version": 2,
   "started_at": "2026-07-10T18:30:21.418874Z",
   "status": "completed",
   "workload": {
-    "description": "Issue #352 large-tier ALMA mosaic MT-MFS dirty-product Metal f32 row using all seven fields, 16 selected channels, and a 1280 image.",
-    "id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32",
-    "mode_id": "mosaic-mtmfs-large"
+    "id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32"
   }
 }

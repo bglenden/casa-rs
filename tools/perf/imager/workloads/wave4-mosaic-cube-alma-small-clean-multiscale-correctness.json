@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave4-mosaic-cube-alma-small-clean-multiscale-correctness",
   "mode_id": "mosaic-cube-clean-multiscale-niter2",
   "description": "Wave 4 W4-21 PB-aware mosaic multiscale shallow clean cube correctness workload using the small ALMA mosaic row.",

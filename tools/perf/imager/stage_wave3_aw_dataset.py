@@ -8,10 +8,12 @@ import json
 import math
 import pathlib
 import struct
-import subprocess
 import sys
 import time
 from typing import Any
+
+from perf_harness import atomic_write_json
+from perf_harness.subprocesses import run_command
 
 try:
     import numpy as np
@@ -67,9 +69,9 @@ def main() -> None:
         if args.run_native:
             run_native_simobserve(args.binary, paths)
             manifest["actual"] = collect_actual(paths)
-            write_json(paths["manifest"], manifest)
+            atomic_write_json(paths["manifest"], manifest)
         else:
-            write_json(paths["manifest"], manifest)
+            atomic_write_json(paths["manifest"], manifest)
         print(paths["manifest"])
     except StageError as error:
         print(f"error: {error}", file=sys.stderr)
@@ -138,8 +140,8 @@ def materialize_inputs(paths: dict[str, pathlib.Path], manifest: dict[str, Any])
     for key in ("model", "request", "manifest", "ms"):
         paths[key].parent.mkdir(parents=True, exist_ok=True)
     write_widefield_fits(paths["model"])
-    write_json(paths["request"], build_request(paths))
-    write_json(paths["manifest"], manifest)
+    atomic_write_json(paths["request"], build_request(paths))
+    atomic_write_json(paths["manifest"], manifest)
 
 
 def build_request(paths: dict[str, pathlib.Path]) -> dict[str, Any]:
@@ -270,13 +272,10 @@ def widefield_components() -> list[dict[str, float | str]]:
 def run_native_simobserve(binary: pathlib.Path, paths: dict[str, pathlib.Path]) -> None:
     if not binary.exists():
         raise StageError(f"simobserve binary does not exist: {binary}")
-    completed = subprocess.run(
+    completed = run_command(
         [str(binary), "--json-run", str(paths["request"])],
-        cwd=str(REPO_ROOT),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
+        cwd=REPO_ROOT,
+        merge_stderr=False,
     )
     (paths["dataset_dir"] / "simobserve-stdout.json").write_text(completed.stdout, encoding="utf-8")
     (paths["dataset_dir"] / "simobserve-stderr.log").write_text(completed.stderr, encoding="utf-8")
@@ -309,11 +308,6 @@ def format_card(key: str, value: str) -> str:
 
 def pad_block(data: bytes) -> bytes:
     return data + b" " * ((-len(data)) % 2880)
-
-
-def write_json(path: pathlib.Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

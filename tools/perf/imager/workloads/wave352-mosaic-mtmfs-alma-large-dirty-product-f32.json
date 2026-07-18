@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave352-mosaic-mtmfs-alma-large-dirty-product-f32",
   "mode_id": "mosaic-mtmfs-large",
   "description": "Issue #352 large-tier ALMA mosaic MT-MFS dirty-product CPU f32 row using all seven fields, 16 selected channels, and a 1280 image.",

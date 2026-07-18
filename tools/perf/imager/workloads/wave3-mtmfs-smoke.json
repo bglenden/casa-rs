@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave3-mtmfs-smoke",
   "mode_id": "wave3-mtmfs",
   "description": "Wave 3 #278 MT-MFS smoke row: VLA small MS, 8 channels, 512 image, Briggs, nterms=2, niter=100.",

@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave3-mosaic-mfs-alma-large-stress-auto",
   "mode_id": "mosaic-mfs-one-channel",
   "description": "Wave 3 #280 generated ALMA mosaic-large stress row using all seven mosaic fields, a bounded MFS channel slice, and a 0.08 arcsec cell image large enough to cover the mosaic pointing footprint.",

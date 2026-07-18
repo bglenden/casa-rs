@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave262-mosaic-mtmfs-small-casa-oracle",
   "mode_id": "mosaic-mtmfs-first-slice",
   "description": "Issue #262 final CASA oracle for the first supported mosaic MT-MFS slice at the intended 1280-pixel geometry.",

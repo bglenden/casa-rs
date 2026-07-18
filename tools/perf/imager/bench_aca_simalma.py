@@ -15,19 +15,30 @@ import os
 import pathlib
 import shutil
 import statistics
-import subprocess
 import sys
 import time
 from typing import Any
 
 import bench_simobserve
 import perf_paths
+from perf_harness import (
+    RUN_RESULT_SCHEMA_VERSION,
+    atomic_write_json,
+    validate_run_result,
+)
+from perf_harness.casa_protocol import run_json_file_protocol
+from perf_harness.ms_compare import compare_measurement_set_pairs
+from perf_harness.provenance import capture_provenance
+from perf_harness.subprocesses import run_command
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "simobserve"
 DEFAULT_IMAGER_BINARY = REPO_ROOT / "target" / "release" / "casars-imager"
 DEFAULT_OUTPUT_DIR = perf_paths.artifact_path("simulation-breadth", "aca-simalma")
+CASA_SCENARIO_PROGRAM = (
+    pathlib.Path(__file__).resolve().parent / "perf_harness" / "casa_aca_scenarios.py"
+)
 DEFAULT_CASA_PYTHON = os.environ.get(
     "CASA_RS_CASA_PYTHON",
     "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python",
@@ -249,10 +260,10 @@ def main() -> None:
 
     try:
         result = run_assessment(args)
-        result_path = pathlib.Path(result["result_json"])
-        bench_simobserve.write_json(result_path, result)
+        result_path = pathlib.Path(result["artifacts"]["result_json"])
+        atomic_write_json(result_path, result)
         print(result_path)
-        status = result["closeout_gate"]["status"]
+        status = result["results"]["aca_simalma"]["closeout_gate"]["status"]
         if status != "passed" and not args.allow_incomplete:
             raise SystemExit(2)
     except AcaSimalmaError as error:
@@ -291,10 +302,7 @@ def run_assessment(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     result_path = run_root / "aca-simalma-benchmark.json"
-    return {
-        "schema_version": 1,
-        "result_json": str(result_path),
-        "run_root": str(run_root),
+    details = {
         "selected_scenarios": selected,
         "targets": {
             "native_floor_mb_per_second": TARGET_NATIVE_MB_PER_SECOND,
@@ -312,6 +320,67 @@ def run_assessment(args: argparse.Namespace) -> dict[str, Any]:
         "comparisons": comparisons,
         "closeout_gate": closeout_gate,
     }
+    status = aca_evidence_status(closeout_gate, comparisons)
+    results: dict[str, Any] = {"aca_simalma": details}
+    if status != "completed":
+        results["failure"] = {
+            "kind": (
+                "comparison_tolerance"
+                if status == "out_of_tolerance"
+                else "comparison"
+                if status == "failed_comparison"
+                else "evidence_unavailable"
+            ),
+            "reason": "; ".join(
+                str(blocker.get("reason", "blocked"))
+                for blocker in closeout_gate["blockers"]
+            ),
+        }
+    result = {
+        "schema_version": RUN_RESULT_SCHEMA_VERSION,
+        "kind": "aca_simalma_benchmark",
+        "status": status,
+        "run_id": run_id,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "environment": capture_provenance(
+            repo_root=REPO_ROOT,
+            executables={
+                "native_simobserve": args.casars_binary,
+                "native_imager": args.casars_imager_binary,
+                "casa_python": args.casa_python,
+            },
+            datasets={
+                "testdata_root": testdata_root,
+                "config_root": config_root,
+            },
+            storage_label="aca-simalma-benchmark",
+        ),
+        "artifacts": {
+            "result_json": str(result_path),
+            "run_root": str(run_root),
+        },
+        "results": results,
+    }
+    validate_run_result(result, source=str(result_path))
+    return result
+
+
+def aca_evidence_status(
+    closeout_gate: dict[str, Any], comparisons: dict[str, Any]
+) -> str:
+    if closeout_gate["status"] == "passed":
+        return "completed"
+    if any(
+        blocker.get("reason") == "native throughput below floor"
+        for blocker in closeout_gate["blockers"]
+    ):
+        return "out_of_tolerance"
+    comparison_statuses = {
+        value.get("status") for value in comparisons.values() if isinstance(value, dict)
+    }
+    if comparison_statuses & {"failed", "failed_execution", "failed_comparison"}:
+        return "failed_comparison"
+    return "unavailable"
 
 
 def selected_scenarios(value: str) -> list[str]:
@@ -561,8 +630,11 @@ def run_casa_section(
             "status": "not_run",
             "reason": "CASA oracle staged but --run-casa was not requested",
             "casa_python": str(casa_python),
-            "scripts": {
-                scenario: write_casa_script(scenario, staged[scenario], run_root / "casa" / scenario)
+            "programs": {
+                scenario: {
+                    "script": str(CASA_SCENARIO_PROGRAM),
+                    "status": "checked_in",
+                }
                 for scenario in scenarios
             },
         }
@@ -578,228 +650,50 @@ def run_casa_section(
     return {"status": status, "casa_python": str(casa_python), "scenarios": results}
 
 
-def write_casa_script(
-    scenario: str,
-    staged: dict[str, Any],
-    output_dir: pathlib.Path,
-) -> dict[str, Any]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    script = output_dir / f"run-casa-{scenario}.py"
-    script.write_text(casa_script_for(scenario, staged), encoding="utf-8")
-    return {"script": str(script), "status": "written"}
-
-
 def run_casa_scenario(
     casa_python: str,
     scenario: str,
     staged: dict[str, Any],
     output_dir: pathlib.Path,
 ) -> dict[str, Any]:
-    script_info = write_casa_script(scenario, staged, output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
-    env = os.environ.copy()
-    env.setdefault("QT_QPA_PLATFORM", "offscreen")
-    env.setdefault("MPLBACKEND", "Agg")
-    env.setdefault("DISPLAY", ":99")
-    env.setdefault("MPLCONFIGDIR", str(output_dir / "matplotlib"))
-    pathlib.Path(env["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
-    completed = subprocess.run(
-        [casa_python, script_info["script"]],
+    environment = os.environ.copy()
+    environment.setdefault("QT_QPA_PLATFORM", "offscreen")
+    environment.setdefault("MPLBACKEND", "Agg")
+    environment.setdefault("DISPLAY", ":99")
+    environment.setdefault("MPLCONFIGDIR", str(output_dir / "matplotlib"))
+    pathlib.Path(environment["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
+    protocol = run_json_file_protocol(
+        casa_python=casa_python,
+        script=CASA_SCENARIO_PROGRAM,
+        request={"schema_version": 1, "scenario": scenario, "staged": staged},
+        request_path=output_dir / "scenario.request.json",
+        output_path=output_dir / "scenario.result.json",
+        log_path=output_dir / "scenario.log",
         cwd=output_dir,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
+        environment=environment,
     )
     elapsed = time.perf_counter() - started
-    (output_dir / "stdout.jsonl").write_text(completed.stdout, encoding="utf-8")
-    (output_dir / "stderr.log").write_text(completed.stderr, encoding="utf-8")
-    if completed.returncode != 0:
+    if protocol.status != "completed" or protocol.output is None:
         return {
-            "status": "failed",
+            "status": protocol.status,
             "elapsed_seconds": elapsed,
-            "script": script_info["script"],
-            "stderr_tail": completed.stderr[-4000:],
+            "script": str(CASA_SCENARIO_PROGRAM),
+            "reason": protocol.reason,
+            "log": str(protocol.log_path),
         }
-    payload = bench_simobserve.parse_json_from_stdout(completed.stdout, f"CASA {scenario}")
     size_bytes = directory_size_or_zero(output_dir)
     return {
         "status": "run",
         "elapsed_seconds": elapsed,
-        "script": script_info["script"],
+        "script": str(CASA_SCENARIO_PROGRAM),
         "output_dir": str(output_dir),
         "size_bytes": size_bytes,
         "mb_per_second": bench_simobserve.mb_per_second(size_bytes, elapsed),
-        "payload": payload,
+        "payload": protocol.output,
+        "log": str(protocol.log_path),
     }
-
-
-def casa_script_for(scenario: str, staged: dict[str, Any]) -> str:
-    payload = json.dumps(staged, sort_keys=True)
-    if scenario == "simalma":
-        return CASA_SIMALMA_SCRIPT.replace("__STAGED_JSON__", repr(payload))
-    if scenario == "aca":
-        return CASA_ACA_SCRIPT.replace("__STAGED_JSON__", repr(payload))
-    raise AcaSimalmaError(f"unknown scenario {scenario!r}")
-
-
-CASA_SIMALMA_SCRIPT = r'''
-import json
-import pathlib
-import shutil
-import time
-
-from casatasks import simalma
-
-staged = json.loads(__STAGED_JSON__)
-work = pathlib.Path.cwd()
-model = pathlib.Path(staged["inputs"]["m51ha_fits"]["path"])
-local_model = work / "M51ha.fits"
-if not local_model.exists():
-    shutil.copy2(model, local_model)
-
-started = time.perf_counter()
-simalma(
-    project="m51",
-    overwrite=True,
-    skymodel=str(local_model),
-    indirection="J2000 23h59m59.96s -34d59m59.50s",
-    incell="0.1arcsec",
-    inbright="0.004",
-    incenter="330.076GHz",
-    inwidth="50MHz",
-    antennalist=[
-        staged["configs"]["alma.cycle6.3.cfg"]["path"],
-        staged["configs"]["aca.cycle6.cfg"]["path"],
-    ],
-    totaltime="1800s",
-    tpnant=2,
-    tptime="7200s",
-    pwv=0.6,
-    imsize=[128, 128],
-    mapsize="1arcmin",
-    dryrun=False,
-)
-elapsed = time.perf_counter() - started
-outputs = sorted(str(path.relative_to(work)) for path in work.glob("m51*"))
-print(json.dumps({"scenario": "simalma", "elapsed_seconds": elapsed, "outputs": outputs}, sort_keys=True))
-'''
-
-
-CASA_ACA_SCRIPT = r'''
-import json
-import pathlib
-import time
-
-from casatasks import feather as casa_feather
-from casatasks import simanalyze, simobserve
-from casatasks.private import task_simanalyze
-
-task_simanalyze.feather = casa_feather
-
-staged = json.loads(__STAGED_JSON__)
-work = pathlib.Path.cwd()
-model = staged["inputs"]["m51ha_model"]["path"]
-project = "m51c"
-
-started = time.perf_counter()
-simobserve(
-    project=project,
-    skymodel=model,
-    inbright="0.004",
-    indirection="B1950 23h59m59.96 -34d59m59.50",
-    incell="0.1arcsec",
-    incenter="330.076GHz",
-    inwidth="50MHz",
-    setpointings=True,
-    integration="10s",
-    mapsize="1arcmin",
-    maptype="hex",
-    pointingspacing="9arcsec",
-    obsmode="int",
-    refdate="2012/11/21/20:00:00",
-    totaltime="3600s",
-    antennalist="alma;0.5arcsec",
-    thermalnoise="",
-    graphics="file",
-    verbose=True,
-    overwrite=True,
-)
-simobserve(
-    project=project,
-    skymodel=model,
-    inbright="0.004",
-    indirection="B1950 23h59m59.96 -34d59m59.50",
-    incell="0.1arcsec",
-    incenter="330.076GHz",
-    inwidth="50MHz",
-    setpointings=True,
-    integration="10s",
-    mapsize="1arcmin",
-    maptype="square",
-    pointingspacing="9arcsec",
-    obsmode="sd",
-    refdate="2012/11/21/20:00:00",
-    totaltime="2h",
-    sdantlist=staged["configs"]["aca.tp.cfg"]["path"],
-    sdant=0,
-    thermalnoise="",
-    graphics="file",
-    verbose=True,
-    overwrite=True,
-)
-simobserve(
-    project=project,
-    skymodel=model,
-    inbright="0.004",
-    indirection="B1950 23h59m59.96 -34d59m59.50",
-    incell="0.1arcsec",
-    incenter="330.076GHz",
-    inwidth="50MHz",
-    setpointings=True,
-    integration="10s",
-    mapsize="1arcmin",
-    maptype="hex",
-    pointingspacing="15arcsec",
-    obsmode="int",
-    refdate="2012/11/21/20:00:00",
-    totaltime="3",
-    antennalist=staged["configs"]["aca.i.cfg"]["path"],
-    thermalnoise="",
-    graphics="file",
-    verbose=True,
-    overwrite=True,
-)
-simanalyze(
-    project=project,
-    vis="$project.aca.i.ms,$project.aca.tp.sd.ms",
-    image=True,
-    imsize=[512, 512],
-    cell="0.2arcsec",
-    modelimage="$project.sd.image",
-    analyze=True,
-    showpsf=False,
-    showresidual=False,
-    showconvolved=True,
-    graphics="file",
-)
-simanalyze(
-    project=project,
-    vis="$project.alma_0.5arcsec.ms",
-    image=True,
-    imsize=[512, 512],
-    cell="0.2arcsec",
-    modelimage="$project.aca.i.image",
-    analyze=True,
-    showpsf=False,
-    showresidual=False,
-    showconvolved=True,
-    graphics="file",
-)
-elapsed = time.perf_counter() - started
-outputs = sorted(str(path.relative_to(work)) for path in work.rglob("m51c*"))
-print(json.dumps({"scenario": "aca", "elapsed_seconds": elapsed, "outputs": outputs}, sort_keys=True))
-'''
 
 
 def collect_casa_field_center_overrides(
@@ -834,49 +728,22 @@ def collect_scenario_casa_field_centers(
             specs.append({"native_run": spec["native_run"], "casa_ms": str(casa_ms)})
     if not specs:
         return {}
-    script = r'''
-import json
-import sys
-
-import numpy as np
-from casatools import table
-
-specs = json.loads(sys.argv[1])
-result = {}
-for spec in specs:
-    tb = table()
-    tb.open(spec["casa_ms"] + "/FIELD")
-    try:
-        phase_dir = np.asarray(tb.getcol("PHASE_DIR"), dtype=np.float64)
-    finally:
-        tb.close()
-    if phase_dir.ndim == 3:
-        centers = phase_dir[:, 0, :].T
-    elif phase_dir.ndim == 2:
-        centers = phase_dir.T
-    else:
-        raise RuntimeError(f"unexpected PHASE_DIR shape {phase_dir.shape} in {spec['casa_ms']}")
-    result[spec["native_run"]] = [
-        [float(row[0]), float(row[1])] for row in centers
-    ]
-print(json.dumps(result, sort_keys=True))
-'''
-    completed = subprocess.run(
-        [casa_python, "-c", script, json.dumps(specs)],
-        text=True,
-        capture_output=True,
-        check=False,
+    protocol = run_json_file_protocol(
+        casa_python=casa_python,
+        script=bench_simobserve.CASA_MS_TOOLS,
+        request={"operation": "field_centers", "specs": specs},
+        request_path=casa_output_dir / "field-centers.request.json",
+        output_path=casa_output_dir / "field-centers.result.json",
+        log_path=casa_output_dir / "field-centers.log",
+        cwd=REPO_ROOT,
     )
-    if completed.returncode != 0:
+    if protocol.status != "completed" or protocol.output is None:
         raise AcaSimalmaError(
-            "failed to export CASA FIELD centers: " + completed.stderr.strip()
+            f"failed to export CASA FIELD centers: {protocol.status}: {protocol.reason}"
         )
-    payload = bench_simobserve.parse_json_from_stdout(
-        completed.stdout, f"{scenario} CASA FIELD centers"
-    )
     return {
         str(native_run): centers
-        for native_run, centers in payload.items()
+        for native_run, centers in protocol.output.items()
         if isinstance(centers, list)
     }
 
@@ -1242,14 +1109,12 @@ def run_native_family_plan(
                 pathlib.Path(plan["output_ms"]).stem + f"-run-{repeat + 1:02d}.ms"
             )
             request["request"]["output_ms"] = str(output_ms)
-        bench_simobserve.write_json(request_path, request)
+        atomic_write_json(request_path, request)
         started = time.perf_counter()
-        completed = subprocess.run(
+        completed = run_command(
             [str(binary), "--json-run", str(request_path)],
             cwd=REPO_ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
+            merge_stderr=False,
         )
         elapsed = time.perf_counter() - started
         stdout_path = request_path.with_suffix(f".run-{repeat + 1:02d}.stdout.json")
@@ -1420,12 +1285,10 @@ def run_native_imager_product(
     if spec.get("phasecenter"):
         command.extend(["--phasecenter", spec["phasecenter"]])
     started = time.perf_counter()
-    completed = subprocess.run(
+    completed = run_command(
         command,
         cwd=REPO_ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
+        merge_stderr=False,
     )
     elapsed = time.perf_counter() - started
     stdout_path = image_dir / f"{spec['name']}.stdout.json"
@@ -1480,7 +1343,7 @@ def write_total_power_sampled_product(
         "source_ms_mb_per_second": run.get("mb_per_second"),
         "simobserve_payload": run.get("payload"),
     }
-    bench_simobserve.write_json(product_path, payload)
+    atomic_write_json(product_path, payload)
     return {
         "status": "run",
         "kind": "total_power_sampled",
@@ -1579,285 +1442,21 @@ def collect_ms_comparisons(
     return run_ms_comparison_script(casa_python, pairs)
 
 
-def run_ms_comparison_script(casa_python: str, pairs: list[dict[str, str]]) -> dict[str, Any]:
-    script = r'''
-import json
-import math
-import sys
-
-import numpy as np
-from casatools import table
-
-pairs = json.loads(sys.argv[1])
-SUBTABLES = [
-    "ANTENNA",
-    "FIELD",
-    "POINTING",
-    "PROCESSOR",
-    "SPECTRAL_WINDOW",
-    "POLARIZATION",
-    "DATA_DESCRIPTION",
-    "OBSERVATION",
-]
-SAMPLE_ROWS = 513
-
-def open_table(path):
-    tb = table()
-    tb.open(path)
-    return tb
-
-def subtable_rows(path):
-    rows = {}
-    for name in SUBTABLES:
-        tb = open_table(path + "/" + name)
-        try:
-            rows[name] = int(tb.nrows())
-        finally:
-            tb.close()
-    return rows
-
-def field_centers(path):
-    tb = open_table(path + "/FIELD")
-    try:
-        phase_dir = np.asarray(tb.getcol("PHASE_DIR"), dtype=np.float64)
-    finally:
-        tb.close()
-    if phase_dir.ndim == 3:
-        centers = phase_dir[:, 0, :].T
-    elif phase_dir.ndim == 2:
-        centers = phase_dir.T
-    else:
-        centers = np.zeros((0, 2), dtype=np.float64)
-    return centers
-
-def summarize_ms(path):
-    tb = open_table(path)
-    try:
-        rows = int(tb.nrows())
-        colnames = tb.colnames()
-        data_shape = list(np.asarray(tb.getcell("DATA", 0)).shape)
-        times = np.asarray(tb.getcol("TIME"), dtype=np.float64)
-        field_ids = np.asarray(tb.getcol("FIELD_ID"), dtype=np.int64)
-        antenna1 = np.asarray(tb.getcol("ANTENNA1"), dtype=np.int64)
-        antenna2 = np.asarray(tb.getcol("ANTENNA2"), dtype=np.int64)
-        flags = np.asarray(tb.getcol("FLAG"), dtype=bool)
-        flag_rows = np.asarray(tb.getcol("FLAG_ROW"), dtype=bool)
-        weight0 = np.asarray(tb.getcell("WEIGHT", 0), dtype=np.float64)
-        sigma0 = np.asarray(tb.getcell("SIGMA", 0), dtype=np.float64)
-    finally:
-        tb.close()
-    spw = open_table(path + "/SPECTRAL_WINDOW")
-    try:
-        chan_freq = np.asarray(spw.getcell("CHAN_FREQ", 0), dtype=np.float64)
-        chan_width = np.asarray(spw.getcell("CHAN_WIDTH", 0), dtype=np.float64)
-    finally:
-        spw.close()
-    centers = field_centers(path)
-    return {
-        "rows": rows,
-        "columns": colnames,
-        "data_shape": data_shape,
-        "time": {
-            "first": float(times[0]),
-            "last": float(times[-1]),
-            "unique": int(np.unique(times).size),
-        },
-        "field_unique": int(np.unique(field_ids).size),
-        "field_centers_rad": [[float(row[0]), float(row[1])] for row in centers],
-        "antenna_unique": int(np.unique(np.concatenate([antenna1, antenna2])).size),
-        "flag_counts": {
-            "flag_true_cells": int(np.count_nonzero(flags)),
-            "flag_row_true_rows": int(np.count_nonzero(flag_rows)),
-            "effective_flag_true_cells": int(
-                np.count_nonzero(flags | flag_rows.reshape(1, 1, -1))
-            ),
-        },
-        "first_weight": [float(value) for value in weight0],
-        "first_sigma": [float(value) for value in sigma0],
-        "spw": {
-            "chan_freq_hz": [float(value) for value in chan_freq],
-            "chan_width_hz": [float(value) for value in chan_width],
-        },
-        "subtable_rows": subtable_rows(path),
-    }
-
-def field_center_delta(native, casa):
-    native_centers = np.asarray(native["field_centers_rad"], dtype=np.float64)
-    casa_centers = np.asarray(casa["field_centers_rad"], dtype=np.float64)
-    if native_centers.shape != casa_centers.shape:
-        return {"shape": [list(native_centers.shape), list(casa_centers.shape)], "max_abs": math.inf}
-    if native_centers.size == 0:
-        return {"shape": [list(native_centers.shape), list(casa_centers.shape)], "max_abs": 0.0}
-    return {
-        "shape": [list(native_centers.shape), list(casa_centers.shape)],
-        "max_abs": float(np.max(np.abs(native_centers - casa_centers))),
-    }
-
-def sampled_value_deltas(native_path, casa_path):
-    native_tb = open_table(native_path)
-    casa_tb = open_table(casa_path)
-    try:
-        rows = int(native_tb.nrows())
-        if rows <= SAMPLE_ROWS:
-            sample_rows = list(range(rows))
-        else:
-            sample_rows = sorted(set(np.linspace(0, rows - 1, SAMPLE_ROWS, dtype=np.int64).tolist()))
-        uvw_max_abs = 0.0
-        data_max_abs = 0.0
-        data_sum_abs = 0.0
-        data_casa_sum_abs = 0.0
-        data_count = 0
-        data_max_relative = 0.0
-        data_amplitude_ratios = []
-        flag_mismatches = 0
-        flag_row_mismatches = 0
-        weight_max_abs = 0.0
-        sigma_max_abs = 0.0
-        worst = []
-        for row in sample_rows:
-            row = int(row)
-            native_uvw = np.asarray(native_tb.getcell("UVW", row), dtype=np.float64)
-            casa_uvw = np.asarray(casa_tb.getcell("UVW", row), dtype=np.float64)
-            uvw_max_abs = max(uvw_max_abs, float(np.max(np.abs(native_uvw - casa_uvw))))
-            native_data = np.asarray(native_tb.getcell("DATA", row))
-            casa_data = np.asarray(casa_tb.getcell("DATA", row))
-            native_flag = np.asarray(native_tb.getcell("FLAG", row), dtype=bool)
-            casa_flag = np.asarray(casa_tb.getcell("FLAG", row), dtype=bool)
-            native_flag_row = bool(native_tb.getcell("FLAG_ROW", row))
-            casa_flag_row = bool(casa_tb.getcell("FLAG_ROW", row))
-            flag_mismatches += int(np.count_nonzero(native_flag != casa_flag))
-            flag_row_mismatches += int(native_flag_row != casa_flag_row)
-            mask = ~(native_flag | casa_flag | native_flag_row | casa_flag_row)
-            delta = np.abs(native_data - casa_data)
-            if np.any(mask):
-                selected = delta[mask]
-                casa_amp = np.abs(casa_data)[mask]
-                data_max_abs = max(data_max_abs, float(np.max(selected)))
-                data_sum_abs += float(np.sum(selected))
-                data_casa_sum_abs += float(np.sum(casa_amp))
-                data_count += int(selected.size)
-                relative = selected / np.maximum(casa_amp, 1.0e-12)
-                data_max_relative = max(data_max_relative, float(np.max(relative)))
-                ratio_mask = casa_amp > 1.0e-9
-                if np.any(ratio_mask):
-                    data_amplitude_ratios.extend(
-                        (np.abs(native_data)[mask][ratio_mask] / casa_amp[ratio_mask]).ravel().tolist()
-                    )
-                ordinal = int(np.argmax(selected))
-                corr, chan = np.argwhere(mask)[ordinal]
-                worst.append({
-                    "row": row,
-                    "correlation": int(corr),
-                    "channel": int(chan),
-                    "abs": float(selected[ordinal]),
-                    "relative": float(relative[ordinal]),
-                    "native_abs": float(abs(native_data[corr, chan])),
-                    "casa_abs": float(abs(casa_data[corr, chan])),
-                })
-            native_weight = np.asarray(native_tb.getcell("WEIGHT", row), dtype=np.float64)
-            casa_weight = np.asarray(casa_tb.getcell("WEIGHT", row), dtype=np.float64)
-            native_sigma = np.asarray(native_tb.getcell("SIGMA", row), dtype=np.float64)
-            casa_sigma = np.asarray(casa_tb.getcell("SIGMA", row), dtype=np.float64)
-            weight_max_abs = max(weight_max_abs, float(np.max(np.abs(native_weight - casa_weight))))
-            sigma_max_abs = max(sigma_max_abs, float(np.max(np.abs(native_sigma - casa_sigma))))
-    finally:
-        native_tb.close()
-        casa_tb.close()
-    ratio_values = np.asarray(data_amplitude_ratios, dtype=np.float64)
-    ratio_summary = {
-        "count": int(ratio_values.size),
-        "mean": float(np.mean(ratio_values)) if ratio_values.size else 0.0,
-        "median": float(np.median(ratio_values)) if ratio_values.size else 0.0,
-        "p05": float(np.quantile(ratio_values, 0.05)) if ratio_values.size else 0.0,
-        "p95": float(np.quantile(ratio_values, 0.95)) if ratio_values.size else 0.0,
-        "min": float(np.min(ratio_values)) if ratio_values.size else 0.0,
-        "max": float(np.max(ratio_values)) if ratio_values.size else 0.0,
-    }
-    casa_mean_abs = data_casa_sum_abs / data_count if data_count else 0.0
-    mean_abs = data_sum_abs / data_count if data_count else 0.0
-    return {
-        "rows_sampled": len(sample_rows),
-        "uvw": {"max_abs": uvw_max_abs},
-        "data": {
-            "compared_unflagged_cells": data_count,
-            "max_abs": data_max_abs,
-            "mean_abs": mean_abs,
-            "casa_mean_abs": casa_mean_abs,
-            "mean_abs_over_casa_mean": mean_abs / casa_mean_abs if casa_mean_abs else 0.0,
-            "max_relative": data_max_relative,
-            "amplitude_ratio": ratio_summary,
-            "worst_cells": worst[-10:],
-        },
-        "flag_mismatches": flag_mismatches,
-        "flag_row_mismatches": flag_row_mismatches,
-        "weight": {"max_abs": weight_max_abs},
-        "sigma": {"max_abs": sigma_max_abs},
-    }
-
-def compare_pair(pair):
-    native = summarize_ms(pair["native_ms"])
-    casa = summarize_ms(pair["casa_ms"])
-    reasons = []
-    for key in ["rows", "data_shape", "field_unique", "antenna_unique", "subtable_rows", "spw"]:
-        if native[key] != casa[key]:
-            reasons.append(f"{key} differs")
-    for key in ["first", "last", "unique"]:
-        if abs(native["time"][key] - casa["time"][key]) > 1.0e-6:
-            reasons.append(f"time.{key} differs")
-    fields = field_center_delta(native, casa)
-    if fields["max_abs"] > 1.0e-10:
-        reasons.append("FIELD phase centers differ")
-    deltas = sampled_value_deltas(pair["native_ms"], pair["casa_ms"])
-    if deltas["uvw"]["max_abs"] > 1.0e-3:
-        reasons.append("sampled UVW differs")
-    if deltas["flag_mismatches"] or deltas["flag_row_mismatches"]:
-        reasons.append("sampled FLAG/FLAG_ROW differs")
-    if deltas["weight"]["max_abs"] > 1.0e-6:
-        reasons.append("sampled WEIGHT differs")
-    if deltas["sigma"]["max_abs"] > 1.0e-6:
-        reasons.append("sampled SIGMA differs")
-    data = deltas["data"]
-    ratio = data["amplitude_ratio"]
-    if (
-        data["mean_abs_over_casa_mean"] > 0.06
-        or abs(ratio["median"] - 1.0) > 0.08
-        or ratio["p05"] < 0.85
-        or ratio["p95"] > 1.15
-    ):
-        reasons.append("sampled DATA differs")
-    return {
-        "id": pair["id"],
-        "status": "passed" if not reasons else "failed",
-        "reasons": reasons,
-        "native_ms": pair["native_ms"],
-        "casa_ms": pair["casa_ms"],
-        "native": native,
-        "casa": casa,
-        "field_center_deltas": fields,
-        "sampled_deltas": deltas,
-    }
-
-pair_results = [compare_pair(pair) for pair in pairs]
-failed = [entry for entry in pair_results if entry["status"] != "passed"]
-print(json.dumps({
-    "status": "passed" if not failed else "failed",
-    "reason": "CASA/native MS comparison failed" if failed else "CASA/native MS comparison passed",
-    "pairs": pair_results,
-}, sort_keys=True))
-'''
-    completed = subprocess.run(
-        [casa_python, "-c", script, json.dumps(pairs)],
-        text=True,
-        capture_output=True,
-        check=False,
+def run_ms_comparison_script(
+    casa_python: str, pairs: list[dict[str, str]]
+) -> dict[str, Any]:
+    artifact_prefix = (
+        pathlib.Path(pairs[0]["native_ms"]).parent.parent
+        / "ms-comparison"
+        / "aca-pairs"
     )
-    if completed.returncode != 0:
-        return {
-            "status": "failed",
-            "reason": "CASA/native MS comparison script failed",
-            "stderr_tail": completed.stderr[-4000:],
-        }
-    return bench_simobserve.parse_json_from_stdout(completed.stdout, "ACA/simalma MS comparison")
+    artifact_prefix.parent.mkdir(parents=True, exist_ok=True)
+    return compare_measurement_set_pairs(
+        casa_python=casa_python,
+        pairs=pairs,
+        artifact_prefix=artifact_prefix,
+        cwd=REPO_ROOT,
+    )
 
 
 def unsupported_native_steps(scenario: str) -> list[dict[str, Any]]:

@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave3-aw-widefield-medium-auto",
   "mode_id": "aw-style-widefield-single-plane",
   "description": "Wave 3 #281 AW/widefield alias auto-default row on the generated 33 GiB VLA B L-band wide-field MS, all 512 channels, 4096 image, Briggs, niter=100.",

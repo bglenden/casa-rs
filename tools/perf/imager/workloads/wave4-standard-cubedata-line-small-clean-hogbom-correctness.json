@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave4-standard-cubedata-line-small-clean-hogbom-correctness",
   "mode_id": "standard-cubedata-line-clean-hogbom-casa-niter2-small",
   "description": "Wave 4 W4-20 small full-channel standard-gridder cubedata Hogbom clean workload for CASA shape/correctness coverage.",

@@ -13,6 +13,14 @@ import statistics
 import sys
 from typing import Any
 
+from perf_harness import (
+    ContractError,
+    finite_number as contract_finite_number,
+    load_json_object,
+    load_run_result,
+)
+from perf_harness.artifacts import ArtifactError
+
 
 LEDGER_PATH = (
     pathlib.Path(__file__).resolve().parent / "imaging_performance_ledger.json"
@@ -221,11 +229,9 @@ def main() -> None:
 
 def load_ledger(path: pathlib.Path) -> dict[str, Any]:
     try:
-        ledger = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise LedgerError(f"parse {path}: {error}") from error
-    if not isinstance(ledger, dict):
-        raise LedgerError(f"{path} must contain a JSON object")
+        ledger = load_json_object(path, description="imaging performance ledger")
+    except ArtifactError as error:
+        raise LedgerError(str(error)) from error
     validate_ledger(ledger, path)
     return ledger
 
@@ -591,8 +597,14 @@ def derive_counterbalanced_evidence(
     artifact: dict[str, Any], path: str
 ) -> dict[str, Any]:
     payload = artifact["payload"]
-    if payload.get("status") != "completed":
-        raise LedgerError(f"{path}.status must be completed")
+    if payload.get("status") not in {"completed", "out_of_tolerance"}:
+        raise LedgerError(f"{path}.status must be completed or out_of_tolerance")
+    results = payload.get("results")
+    if not isinstance(results, dict) or not isinstance(
+        results.get("alternating_comparison"), dict
+    ):
+        raise LedgerError(f"{path}.results.alternating_comparison must be an object")
+    payload = results["alternating_comparison"]
     configuration = payload.get("configuration")
     if not isinstance(configuration, dict):
         raise LedgerError(f"{path}.configuration must be an object")
@@ -1572,15 +1584,9 @@ def load_evidence_manifest(
     except ValueError:
         raise LedgerError("evidence_manifest must resolve under evidence/") from None
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except OSError as error:
-        raise LedgerError(f"read evidence manifest {manifest_path}: {error}") from error
-    except json.JSONDecodeError as error:
-        raise LedgerError(
-            f"parse evidence manifest {manifest_path}: {error}"
-        ) from error
-    if not isinstance(manifest, dict):
-        raise LedgerError(f"{manifest_path} must contain a JSON object")
+        manifest = load_json_object(manifest_path, description="evidence manifest")
+    except ArtifactError as error:
+        raise LedgerError(str(error)) from error
     if manifest.get("schema_version") != 1:
         raise LedgerError("evidence manifest schema_version must be 1")
     artifacts = list_field(manifest, "artifacts")
@@ -1648,26 +1654,19 @@ def load_evidence_manifest(
                 f"recorded {sha256}, computed {actual_sha256}"
             )
         try:
-            payload = json.loads(checked_in_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            payload = load_run_result(checked_in_path)
+        except ContractError as error:
+            raise LedgerError(str(error)) from error
+        payload_workload = payload.get("workload")
+        if not isinstance(payload_workload, dict):
             raise LedgerError(
-                f"parse {artifact_path}.checked_in_path {checked_in_reference}: {error}"
-            ) from error
-        if not isinstance(payload, dict):
-            raise LedgerError(
-                f"{artifact_path}.checked_in_path must contain a JSON object"
+                f"{artifact_path}.checked_in_path workload must be an object"
             )
-        if artifact_role in {"baseline", "candidate", "casa_oracle"}:
-            payload_workload = payload.get("workload")
-            if not isinstance(payload_workload, dict):
-                raise LedgerError(
-                    f"{artifact_path}.checked_in_path workload must be an object"
-                )
-            if payload_workload.get("id") != workload_id:
-                raise LedgerError(
-                    f"{artifact_path}.checked_in_path workload.id does not match "
-                    f"manifest workload_id {workload_id}"
-                )
+        if payload_workload.get("id") != workload_id:
+            raise LedgerError(
+                f"{artifact_path}.checked_in_path workload.id does not match "
+                f"manifest workload_id {workload_id}"
+            )
         artifacts_by_id[artifact_id] = {
             "artifact_id": artifact_id,
             "workload_id": workload_id,
@@ -1756,13 +1755,12 @@ def non_empty_string(value: Any, path: str) -> str:
 
 
 def finite_number(value: Any, path: str) -> float:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(value)
-    ):
-        raise LedgerError(f"{path} must be a finite number")
-    return float(value)
+    try:
+        number = contract_finite_number(value, field=path, optional=False)
+    except ContractError as error:
+        raise LedgerError(str(error)) from error
+    assert number is not None
+    return number
 
 
 def positive_number(value: Any, path: str) -> float:

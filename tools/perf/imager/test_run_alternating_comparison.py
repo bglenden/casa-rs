@@ -76,22 +76,23 @@ class AggregationTests(unittest.TestCase):
             runs=runs,
         )
 
-        self.assertEqual(3, len(report["paired_deltas"]))
-        self.assertEqual(6, len(report["adjacent_pair_deltas"]))
-        self.assertEqual("pass", report["verdict"]["status"])
-        self.assertTrue(report["verdict"]["no_slowdown"])
+        details = report["results"]["alternating_comparison"]
+        self.assertEqual(3, len(details["paired_deltas"]))
+        self.assertEqual(6, len(details["adjacent_pair_deltas"]))
+        self.assertEqual("pass", details["verdict"]["status"])
+        self.assertTrue(details["verdict"]["no_slowdown"])
         self.assertEqual(
-            6, report["measured_summaries"]["baseline"]["total_wall_seconds"]["count"]
+            6, details["measured_summaries"]["baseline"]["total_wall_seconds"]["count"]
         )
         self.assertEqual(
             100.0,
-            report["measured_summaries"]["baseline"]["stage_timings_ms"]["rust"][
+            details["measured_summaries"]["baseline"]["stage_timings_ms"]["rust"][
                 "total"
             ]["median"],
         )
         self.assertEqual(
             "cpu",
-            report["measured_summaries"]["baseline"]["backend_identities"][0][
+            details["measured_summaries"]["baseline"]["backend_identities"][0][
                 "benchmark_features"
             ]["resolved_backend"],
         )
@@ -112,8 +113,9 @@ class AggregationTests(unittest.TestCase):
             runs=runs,
         )
 
-        self.assertEqual("inconclusive", report["verdict"]["status"])
-        self.assertIsNone(report["verdict"]["no_slowdown"])
+        verdict = report["results"]["alternating_comparison"]["verdict"]
+        self.assertEqual("inconclusive", verdict["status"])
+        self.assertIsNone(verdict["no_slowdown"])
 
     def test_slowdown_beyond_tolerance_fails_verdict(self) -> None:
         verdict = alternating.build_verdict(
@@ -192,8 +194,9 @@ class OrchestrationTests(unittest.TestCase):
                     environment["ALTERNATING_COMPARISON_TEST_SENTINEL"],
                 )
             self.assertTrue(report_path.is_file())
-            self.assertEqual("pass", report["verdict"]["status"])
-            first_paths = report["runs"][0]["recorded_paths"]
+            details = report["results"]["alternating_comparison"]
+            self.assertEqual("pass", details["verdict"]["status"])
+            first_paths = details["runs"][0]["recorded_paths"]
             self.assertIn("result_json", {entry["field"] for entry in first_paths})
             self.assertIn(
                 "/artifacts/products_root", {entry["field"] for entry in first_paths}
@@ -202,30 +205,6 @@ class OrchestrationTests(unittest.TestCase):
                 "/results/product_comparison/panel_dir",
                 {entry["field"] for entry in first_paths},
             )
-
-    def test_run_command_passes_environment_to_subprocess(self) -> None:
-        command = ["python3", "run_workload.py"]
-        environment = {
-            "PATH": "/test/bin",
-            "CASA_RS_BENCH_PROFILE_REPEATS": "1",
-        }
-        completed = subprocess.CompletedProcess(command, 0, "result.json\n", None)
-
-        with mock.patch.object(
-            alternating.subprocess, "run", return_value=completed
-        ) as subprocess_run:
-            actual = alternating.run_command(command, environment)
-
-        self.assertIs(completed, actual)
-        subprocess_run.assert_called_once_with(
-            command,
-            cwd=alternating.REPO_ROOT,
-            env=environment,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
 
     def test_managed_run_workload_options_are_rejected(self) -> None:
         config = comparison_config(run_workload_options=("--repeats=4",))
@@ -293,17 +272,21 @@ class OrchestrationTests(unittest.TestCase):
 
             self.assertEqual(1, len(commands))
             self.assertTrue(report_path.is_file())
-            self.assertEqual("failed", report["status"])
-            self.assertEqual("execution_failed", report["runs"][0]["result_status"])
-            self.assertEqual("inconclusive", report["verdict"]["status"])
+            self.assertEqual("failed_execution", report["status"])
+            details = report["results"]["alternating_comparison"]
+            self.assertEqual("execution_failed", details["runs"][0]["result_status"])
+            self.assertEqual("inconclusive", details["verdict"]["status"])
 
 
 class MainExitTests(unittest.TestCase):
     def test_failed_no_slowdown_verdict_exits_nonzero(self) -> None:
         report = {
             "status": "completed",
-            "error": None,
-            "verdict": {"status": "fail", "no_slowdown": False},
+            "results": {
+                "alternating_comparison": {
+                    "verdict": {"status": "fail", "no_slowdown": False}
+                }
+            },
         }
         with mock.patch.object(
             alternating,
@@ -315,8 +298,11 @@ class MainExitTests(unittest.TestCase):
     def test_inconclusive_verdict_exits_nonzero(self) -> None:
         report = {
             "status": "completed",
-            "error": None,
-            "verdict": {"status": "inconclusive", "no_slowdown": None},
+            "results": {
+                "alternating_comparison": {
+                    "verdict": {"status": "inconclusive", "no_slowdown": None}
+                }
+            },
         }
         with mock.patch.object(
             alternating,
@@ -360,8 +346,13 @@ def fake_run(item: alternating.ScheduleItem, wall: float) -> dict:
 
 def fake_result(wall: float, output_dir: Path) -> dict:
     return {
+        "schema_version": 2,
+        "kind": "workload_run",
         "status": "completed",
+        "run_id": "fake-run",
+        "created_at": "2026-07-18T00:00:00Z",
         "manifest_path": "/tmp/workload.json",
+        "environment": {},
         "artifacts": {"products_root": str(output_dir / "products")},
         "benchmark_features": {"backend": {"resolved_backend": "cpu"}},
         "results": {

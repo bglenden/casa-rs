@@ -15,6 +15,14 @@ import time
 from typing import Any
 
 import perf_paths
+from perf_harness import (
+    ContractError,
+    atomic_write_json,
+    load_json_object,
+    validate_workload_manifest,
+)
+from perf_harness.artifacts import ArtifactError
+from perf_harness.provenance import capture_provenance
 
 try:
     import numpy as np
@@ -84,7 +92,7 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        registry = read_json(args.registry)
+        registry = load_json_object(args.registry, description="dataset registry")
         specs = select_datasets(
             registry,
             dataset_ids=args.dataset,
@@ -100,23 +108,11 @@ def main() -> None:
             materialize_models(plan)
         if args.materialize_workloads and not args.dry_run:
             materialize_workloads(plan, args.output_dir / "workloads")
-        write_json(plan_path, plan)
+        atomic_write_json(plan_path, plan)
         print(plan_path)
-    except DatasetError as error:
+    except (DatasetError, ArtifactError) as error:
         print(f"error: {error}", file=sys.stderr)
         raise SystemExit(2) from None
-
-
-def read_json(path: pathlib.Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as error:
-        raise DatasetError(f"read {path}: {error}") from error
-    except json.JSONDecodeError as error:
-        raise DatasetError(f"parse {path}: {error}") from error
-    if not isinstance(value, dict):
-        raise DatasetError(f"{path} must contain a JSON object")
-    return value
 
 
 def select_datasets(
@@ -251,6 +247,12 @@ def build_plan(
         "external_root_hint": registry.get("external_root_hint"),
         "large_tier_policy": registry.get("large_tier_policy"),
         "datasets": planned,
+        "provenance": capture_provenance(
+            repo_root=pathlib.Path(__file__).resolve().parents[3],
+            executables={},
+            datasets={"data_root": data_root, "registry": REGISTRY_PATH},
+            storage_label=str(registry.get("external_root_hint") or "unlabeled"),
+        ),
     }
 
 
@@ -307,9 +309,9 @@ def materialize_models(plan: dict[str, Any]) -> None:
             family=dataset["family"],
         )
         spectral_profile = build_spectral_profile(dataset)
-        write_json(profile_path, spectral_profile)
-        write_json(request_path, build_casars_simobserve_request(dataset))
-        write_json(casa_plan_path, build_casa_simulation_plan(dataset))
+        atomic_write_json(profile_path, spectral_profile)
+        atomic_write_json(request_path, build_casars_simobserve_request(dataset))
+        atomic_write_json(casa_plan_path, build_casa_simulation_plan(dataset))
         dataset["artifacts"] = {
             "continuum_model_sha256": sha256_file(model_path),
             "spectral_profile_sha256": sha256_file(profile_path),
@@ -323,7 +325,13 @@ def materialize_workloads(plan: dict[str, Any], output_dir: pathlib.Path) -> Non
     for dataset in plan["datasets"]:
         for mode_id in dataset["selected_modes"]:
             workload = build_workload_manifest(dataset, mode_id)
-            write_json(output_dir / f"{dataset['id']}-{mode_id}.json", workload)
+            try:
+                validate_workload_manifest(
+                    workload, source=f"generated workload {dataset['id']}-{mode_id}"
+                )
+            except ContractError as error:
+                raise DatasetError(str(error)) from error
+            atomic_write_json(output_dir / f"{dataset['id']}-{mode_id}.json", workload)
 
 
 def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, Any]:
@@ -378,6 +386,7 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
     if hogbom_iteration_mode is not None:
         imaging["hogbom_iteration_mode"] = hogbom_iteration_mode
     return {
+        "schema_version": 1,
         "id": f"{dataset['id']}-{mode_id}",
         "mode_id": mode_id,
         "description": f"{dataset['id']} {mode_id} generated from ImPerformance Wave 1 dataset plan.",
@@ -973,11 +982,6 @@ def sha256_file(path: pathlib.Path) -> str:
 
 def utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def write_json(path: pathlib.Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def required_object(obj: dict[str, Any], key: str) -> dict[str, Any]:

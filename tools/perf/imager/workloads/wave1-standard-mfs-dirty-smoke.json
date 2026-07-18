@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave1-standard-mfs-dirty-smoke",
   "mode_id": "standard-mfs-dirty-control",
   "description": "Small standard-gridder MFS dirty control workload for ImPerformance Wave 1 harness validation.",

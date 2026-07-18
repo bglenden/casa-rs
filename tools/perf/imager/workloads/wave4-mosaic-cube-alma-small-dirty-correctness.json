@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave4-mosaic-cube-alma-small-dirty-correctness",
   "mode_id": "mosaic-cube-bounded",
   "description": "Wave 4 W4-12 PB-aware mosaic dirty cube correctness workload using the small ALMA mosaic row.",

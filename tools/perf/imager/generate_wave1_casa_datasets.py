@@ -13,7 +13,6 @@ import math
 import os
 import pathlib
 import shutil
-import subprocess
 import sys
 import time
 from typing import Any
@@ -21,6 +20,8 @@ from typing import Any
 import numpy as np
 
 import stage_wave1_datasets as stage
+from perf_harness import atomic_write_json, load_json_object
+from perf_harness.subprocesses import run_command
 
 
 def main() -> None:
@@ -36,7 +37,7 @@ def main() -> None:
     if args.overwrite:
         args.skip_existing = False
 
-    plan = read_json(args.plan)
+    plan = load_json_object(args.plan, description="Wave 1 dataset plan")
     datasets = plan["datasets"]
     if args.dataset:
         wanted = set(args.dataset)
@@ -58,7 +59,7 @@ def main() -> None:
         print(json.dumps(result, sort_keys=True), flush=True)
 
     summary_path = pathlib.Path(plan["data_root"]) / "wave1" / "generation-summary.json"
-    write_json(summary_path, {"generated_at": utc_now(), "datasets": results})
+    atomic_write_json(summary_path, {"generated_at": utc_now(), "datasets": results})
     print(summary_path)
 
 
@@ -84,7 +85,7 @@ def generate_dataset(
     if canonical_ms.exists() and skip_existing:
         shape = inspect_ms(canonical_ms)
         shape_path = metadata_dir / "ms-shape.json"
-        write_json(shape_path, shape)
+        atomic_write_json(shape_path, shape)
         preview_path = None
         if preview and not (preview_dir / "dirty-mfs-panel.png").exists():
             preview_path = make_preview(dataset, canonical_ms, preview_dir, preview_max_pixels)
@@ -118,7 +119,7 @@ def generate_dataset(
 
     shape = inspect_ms(canonical_ms)
     shape_path = metadata_dir / "ms-shape.json"
-    write_json(shape_path, shape)
+    atomic_write_json(shape_path, shape)
     preview_path = make_preview(dataset, canonical_ms, preview_dir, preview_max_pixels) if preview else None
     return {
         "dataset": dataset_id,
@@ -399,8 +400,12 @@ def remove_path(path: pathlib.Path) -> None:
 
 
 def du_bytes(path: pathlib.Path) -> int:
-    output = subprocess.check_output(["du", "-sk", str(path.resolve())], text=True)
-    return int(output.split()[0]) * 1024
+    completed = run_command(
+        ["du", "-sk", str(path.resolve())],
+        merge_stderr=False,
+        check=True,
+    )
+    return int(completed.stdout.split()[0]) * 1024
 
 
 def antenna_list(instrument: str) -> str:
@@ -440,15 +445,6 @@ def gaussian_array(
     x: np.ndarray, y: np.ndarray, x0: float, y0: float, sigma: float
 ) -> np.ndarray:
     return np.exp(-(((x - x0) ** 2 + (y - y0) ** 2) / (2.0 * sigma**2)))
-
-
-def read_json(path: pathlib.Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: pathlib.Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def utc_now() -> str:

@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave3-standard-mfs-single-term-smoke",
   "mode_id": "standard-mfs-single-term",
   "description": "Wave 3 #276 smoke row for standard MFS single-term regression evidence.",

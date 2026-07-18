@@ -6,11 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from subprocess import CalledProcessError
 from typing import Iterable
+
+from perf_harness.subprocesses import run_command
 
 
 DEFAULT_PATHS = [
@@ -137,12 +139,10 @@ class FileMetrics:
 
 
 def run_git(args: list[str]) -> str:
-    result = subprocess.run(
+    result = run_command(
         ["git", *args],
+        merge_stderr=False,
         check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
     )
     return result.stdout
 
@@ -154,7 +154,7 @@ def expand_paths(paths: Iterable[str], rev: str | None) -> list[str]:
         if rev:
             try:
                 entries = run_git(["ls-tree", "-r", "--name-only", rev, "--", path])
-            except subprocess.CalledProcessError:
+            except CalledProcessError:
                 continue
             for entry in entries.splitlines():
                 if entry.endswith(".rs") or entry.endswith(".html") or entry.endswith(".md"):
@@ -175,7 +175,7 @@ def read_text(path: str, rev: str | None) -> str | None:
     if rev:
         try:
             return run_git(["show", f"{rev}:{path}"])
-        except subprocess.CalledProcessError:
+        except CalledProcessError:
             return None
     try:
         return Path(path).read_text(encoding="utf-8")

@@ -510,7 +510,9 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            result = wave4_acceleration_matrix.load_result(path)
+            result = wave4_acceleration_matrix.load_run_result(
+                path, source_key="_source_path"
+            )
 
         self.assertEqual(str(path), result["_source_path"])
 
@@ -623,8 +625,13 @@ def fake_result(
     if row_id.endswith("_multiscale"):
         mode["deconvolver"] = "multiscale"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        "kind": "workload_run",
         "status": "completed",
+        "run_id": f"{row_id}-{role}",
+        "created_at": "2026-07-18T00:00:00Z",
+        "environment": {},
+        "artifacts": {},
         "mode": mode,
         "dataset": {"key": "wave1-vla-single-medium"},
         "run": {"storage_label": "medium-row", "evidence_role": role},

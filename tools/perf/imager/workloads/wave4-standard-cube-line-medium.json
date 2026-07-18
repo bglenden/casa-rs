@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave4-standard-cube-line-medium",
   "mode_id": "standard-cube-line",
   "description": "Wave 4 medium standard-gridder cube dirty workload for W4-17/W4-18 serial versus auto closeout evidence.",

@@ -9,6 +9,9 @@ import pathlib
 import sys
 from typing import Any
 
+from perf_harness import load_json_object
+from perf_harness.artifacts import ArtifactError
+
 
 MATRIX_PATH = pathlib.Path(__file__).resolve().parent / "wave3_single_plane_matrix.json"
 REQUIRED_TIERS = {"smoke", "medium", "stress"}
@@ -62,11 +65,9 @@ def main() -> None:
 
 def load_matrix(path: pathlib.Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise MatrixError(f"parse {path}: {error}") from error
-    if not isinstance(value, dict):
-        raise MatrixError(f"{path} must contain a JSON object")
+        value = load_json_object(path, description="Wave 3 matrix")
+    except ArtifactError as error:
+        raise MatrixError(str(error)) from error
     validate_matrix(value)
     return value
 

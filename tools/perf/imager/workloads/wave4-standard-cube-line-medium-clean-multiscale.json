@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "id": "wave4-standard-cube-line-medium-clean-multiscale",
   "mode_id": "standard-cube-line-clean-multiscale-deep10000",
   "description": "Wave 4 W4-16 medium standard-gridder cube multiscale deep clean workload for resident clean-control correctness and backend reuse evidence.",
