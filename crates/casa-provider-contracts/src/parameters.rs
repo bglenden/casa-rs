@@ -793,17 +793,14 @@ pub struct RunProductDescriptor {
 }
 
 /// Explicit product classification for every surface.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SurfaceProductContract {
+    #[default]
     NoProducts,
-    Declared { products: Vec<RunProductDescriptor> },
-}
-
-impl Default for SurfaceProductContract {
-    fn default() -> Self {
-        Self::NoProducts
-    }
+    Declared {
+        products: Vec<RunProductDescriptor>,
+    },
 }
 
 impl SurfaceProductContract {

@@ -17,8 +17,9 @@ CONTRACT_ROOT = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources"
 SURFACES_PATH = CONTRACT_ROOT / "parameter-surfaces.json"
 CATALOG_PATH = CONTRACT_ROOT / "parameter-catalog.json"
 APPLICATIONS_PATH = CONTRACT_ROOT / "application-catalog.json"
-TASK_OUTPUT = REPO_ROOT / "crates/casars-python/python/casars/tasks/catalog.py"
-TASK_STUB = REPO_ROOT / "crates/casars-python/python/casars/tasks/catalog.pyi"
+TASK_OUTPUT = REPO_ROOT / "crates/casars-python/python/casars/tasks/_catalog.py"
+TASK_STUB = REPO_ROOT / "crates/casars-python/python/casars/tasks/_catalog.pyi"
+TASK_INIT = REPO_ROOT / "crates/casars-python/python/casars/tasks/__init__.py"
 SESSION_OUTPUT = REPO_ROOT / "crates/casars-python/python/casars/_session_catalog.py"
 SESSION_STUB = REPO_ROOT / "crates/casars-python/python/casars/_session_catalog.pyi"
 
@@ -475,6 +476,44 @@ def update(path: Path, content: str, *, check: bool) -> None:
     print(f"generated {path.relative_to(REPO_ROOT)}")
 
 
+def render_task_init(surfaces: list[dict[str, Any]]) -> str:
+    names = [str(surface["id"]) for surface in surfaces if surface["kind"] == "task"]
+    imports = "\n".join(f"    {name}," for name in names)
+    exports = [
+        "CasarsBinaryNotFoundError",
+        "TaskBaseSource",
+        "TaskCompletion",
+        "TaskExecutionError",
+        "TaskInvocationError",
+        "TaskResultError",
+        "TASK_SURFACES",
+        "run",
+        *names,
+    ]
+    return "\n".join(
+        [
+            '"""Generated CASA-named task entry points for casa-rs."""',
+            "",
+            "from ._catalog import (",
+            "    TASK_SURFACES,",
+            imports,
+            ")",
+            "from ._runner import (",
+            "    CasarsBinaryNotFoundError,",
+            "    TaskBaseSource,",
+            "    TaskCompletion,",
+            "    TaskExecutionError,",
+            "    TaskInvocationError,",
+            "    TaskResultError,",
+            "    run,",
+            ")",
+            "",
+            f"__all__ = {exports!r}",
+            "",
+        ]
+    )
+
+
 def main() -> int:
     args = parse_args()
     try:
@@ -483,6 +522,7 @@ def main() -> int:
         outputs = {
             TASK_OUTPUT: render_task_module(surfaces, concepts, stub=False),
             TASK_STUB: render_task_module(surfaces, concepts, stub=True),
+            TASK_INIT: render_task_init(surfaces),
             SESSION_OUTPUT: render_session_module(surfaces, concepts, stub=False),
             SESSION_STUB: render_session_module(surfaces, concepts, stub=True),
         }

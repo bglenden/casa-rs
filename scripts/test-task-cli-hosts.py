@@ -15,7 +15,7 @@ from pathlib import Path
 # to join the common process contract. Browser-session JSONL hosts are excluded.
 HOSTED_TASKS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("calibrate", ()),
-    ("casars-importvla", ()),
+    ("importvla", ()),
     ("msexplore", ()),
     ("simobserve", ()),
     ("casars-imager", ()),

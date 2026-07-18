@@ -732,7 +732,7 @@ final class WorkbenchStoreTests: XCTestCase {
         for argumentID in tutorialArguments {
             XCTAssertTrue(argumentIDs.contains(argumentID), "missing \(argumentID)")
         }
-        XCTAssertEqual(schema.managedOutput?.decoder, "imager-run-v1")
+        XCTAssertEqual(schema.managedOutput?.renderer, "imager-run-v1")
         XCTAssertEqual(schema.managedOutput?.injectArguments.first?.flag, "--managed-output")
         XCTAssertEqual(schema.managedOutput?.injectArguments.first?.value, "true")
     }

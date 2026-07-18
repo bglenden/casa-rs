@@ -5,8 +5,8 @@ import importlib.util
 from pathlib import Path
 from typing import Any
 
-from casars import _session_catalog, parameters, sessions
-from casars.tasks import catalog, profiles
+from casars import _session_catalog, parameters, sessions, tasks
+from casars.tasks import _catalog
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -19,13 +19,8 @@ def test_catalog_generates_one_wrapper_for_every_task() -> None:
         if surface["kind"] == "task"
     )
     assert len(task_ids) == 40
-    assert catalog.TASK_SURFACES == task_ids
-    assert all(callable(getattr(catalog, name)) for name in catalog.TASK_SURFACES)
-    assert profiles.TASK_SURFACES == task_ids
-    assert all(
-        getattr(profiles, name) is getattr(catalog, name)
-        for name in catalog.TASK_SURFACES
-    )
+    assert tasks.TASK_SURFACES == task_ids
+    assert all(callable(getattr(tasks, name)) for name in tasks.TASK_SURFACES)
 
 
 def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -> None:
@@ -35,8 +30,8 @@ def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -
         captured.update(task=task, **options)
         return object()
 
-    monkeypatch.setattr(catalog, "_run", fake_run)
-    catalog.imager(
+    monkeypatch.setattr(_catalog, "_run", fake_run)
+    tasks.imager(
         vis="target.ms",
         imagename="target",
         imsize=1024,
@@ -67,9 +62,9 @@ def test_importvla_wrapper_preserves_the_archive_path_list(monkeypatch) -> None:
         captured.update(task=task, **options)
         return object()
 
-    monkeypatch.setattr(catalog, "_run", fake_run)
+    monkeypatch.setattr(_catalog, "_run", fake_run)
     archivefiles = ["raw/one.exp", "raw/two.xp1"]
-    catalog.importvla(archivefiles=archivefiles)
+    tasks.importvla(archivefiles=archivefiles)
 
     assert captured["task"] == "importvla"
     assert captured["overrides"] == {"archivefiles": archivefiles}
@@ -119,7 +114,7 @@ def _annotations(function: ast.FunctionDef) -> dict[str, str]:
 
 def test_generated_stubs_use_catalog_domains_and_surface_refinements() -> None:
     task_functions = _stub_functions(
-        REPO_ROOT / "crates/casars-python/python/casars/tasks/catalog.pyi"
+        REPO_ROOT / "crates/casars-python/python/casars/tasks/_catalog.pyi"
     )
     session_functions = _stub_functions(
         REPO_ROOT / "crates/casars-python/python/casars/_session_catalog.pyi"

@@ -45,6 +45,9 @@ echo "==> Generating Python UniFFI bindings"
 mkdir -p "$python_out"
 cargo run -p casars-frontend-services --bin casars-frontend-bindgen -- python "$lib_path" "$python_out"
 cp "$lib_path" "$python_out/$lib_name"
+python3 scripts/package-python-frontend-binding.py \
+  "$python_out/casars_frontend_services.py" \
+  "$python_out/_frontend.py"
 
 echo "==> Generating Swift UniFFI bindings"
 mkdir -p "$swift_out"
@@ -59,6 +62,8 @@ if [[ "$mode" == "write" && -d "$repo_root/apps/casars-mac/Sources/CasarsFronten
     "$repo_root/apps/casars-mac/Sources/CasarsFrontendServicesFFI/CasarsFrontendServicesFFI.h"
   cp "$swift_out/CasarsFrontendServicesFFI.modulemap" \
     "$repo_root/apps/casars-mac/Sources/CasarsFrontendServicesFFI/module.modulemap"
+  cp "$python_out/_frontend.py" \
+    "$repo_root/crates/casars-python/python/casars/_frontend.py"
 fi
 
 if [[ "$mode" == "check" ]]; then
@@ -80,6 +85,9 @@ if [[ "$mode" == "check" ]]; then
   compare_artifact \
     "$swift_out/CasarsFrontendServicesFFI.modulemap" \
     "$check_root/CasarsFrontendServicesFFI/module.modulemap"
+  compare_artifact \
+    "$python_out/_frontend.py" \
+    "$repo_root/crates/casars-python/python/casars/_frontend.py"
   if [[ "$status" -ne 0 ]]; then
     echo "frontend bindings are stale; run scripts/generate-frontend-bindings.sh" >&2
     exit "$status"

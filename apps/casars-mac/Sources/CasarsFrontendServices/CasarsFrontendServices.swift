@@ -11161,11 +11161,13 @@ public func FfiConverterTypeSurfaceExecutionProjection_lower(_ value: SurfaceExe
 
 public struct SurfaceNarrowingConstraint {
     public var kind: String
+    public var values: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: String) {
+    public init(kind: String, values: [String]) {
         self.kind = kind
+        self.values = values
     }
 }
 
@@ -11179,11 +11181,15 @@ extension SurfaceNarrowingConstraint: Equatable, Hashable {
         if lhs.kind != rhs.kind {
             return false
         }
+        if lhs.values != rhs.values {
+            return false
+        }
         return true
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(kind)
+        hasher.combine(values)
     }
 }
 
@@ -11198,12 +11204,14 @@ public struct FfiConverterTypeSurfaceNarrowingConstraint: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceNarrowingConstraint {
         return
             try SurfaceNarrowingConstraint(
-                kind: FfiConverterString.read(from: &buf)
+                kind: FfiConverterString.read(from: &buf),
+                values: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
     public static func write(_ value: SurfaceNarrowingConstraint, into buf: inout [UInt8]) {
         FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterSequenceString.write(value.values, into: &buf)
     }
 }
 
@@ -11484,6 +11492,86 @@ public func FfiConverterTypeSurfaceParameterCatalog_lift(_ buf: RustBuffer) thro
 #endif
 public func FfiConverterTypeSurfaceParameterCatalog_lower(_ value: SurfaceParameterCatalog) -> RustBuffer {
     return FfiConverterTypeSurfaceParameterCatalog.lower(value)
+}
+
+
+public struct SurfaceParameterCatalogEnvelope {
+    public var schemaVersion: UInt64
+    public var catalog: SurfaceParameterCatalog
+    public var surfaces: [SurfaceParameterDefinition]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(schemaVersion: UInt64, catalog: SurfaceParameterCatalog, surfaces: [SurfaceParameterDefinition]) {
+        self.schemaVersion = schemaVersion
+        self.catalog = catalog
+        self.surfaces = surfaces
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterCatalogEnvelope: Sendable {}
+#endif
+
+
+extension SurfaceParameterCatalogEnvelope: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterCatalogEnvelope, rhs: SurfaceParameterCatalogEnvelope) -> Bool {
+        if lhs.schemaVersion != rhs.schemaVersion {
+            return false
+        }
+        if lhs.catalog != rhs.catalog {
+            return false
+        }
+        if lhs.surfaces != rhs.surfaces {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(schemaVersion)
+        hasher.combine(catalog)
+        hasher.combine(surfaces)
+    }
+}
+
+extension SurfaceParameterCatalogEnvelope: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterCatalogEnvelope: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterCatalogEnvelope {
+        return
+            try SurfaceParameterCatalogEnvelope(
+                schemaVersion: FfiConverterUInt64.read(from: &buf),
+                catalog: FfiConverterTypeSurfaceParameterCatalog.read(from: &buf),
+                surfaces: FfiConverterSequenceTypeSurfaceParameterDefinition.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterCatalogEnvelope, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.schemaVersion, into: &buf)
+        FfiConverterTypeSurfaceParameterCatalog.write(value.catalog, into: &buf)
+        FfiConverterSequenceTypeSurfaceParameterDefinition.write(value.surfaces, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterCatalogEnvelope_lift(_ buf: RustBuffer) throws -> SurfaceParameterCatalogEnvelope {
+    return try FfiConverterTypeSurfaceParameterCatalogEnvelope.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterCatalogEnvelope_lower(_ value: SurfaceParameterCatalogEnvelope) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterCatalogEnvelope.lower(value)
 }
 
 
@@ -12378,13 +12466,15 @@ public func FfiConverterTypeSurfaceParameterPresentation_lower(_ value: SurfaceP
 public struct SurfaceParameterProjections {
     public var cli: SurfaceParameterCliProjection?
     public var provider: SurfaceParameterProviderProjection?
+    public var python: SurfaceParameterPythonProjection?
     public var presentation: SurfaceParameterPresentation
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cli: SurfaceParameterCliProjection?, provider: SurfaceParameterProviderProjection?, presentation: SurfaceParameterPresentation) {
+    public init(cli: SurfaceParameterCliProjection?, provider: SurfaceParameterProviderProjection?, python: SurfaceParameterPythonProjection?, presentation: SurfaceParameterPresentation) {
         self.cli = cli
         self.provider = provider
+        self.python = python
         self.presentation = presentation
     }
 }
@@ -12402,6 +12492,9 @@ extension SurfaceParameterProjections: Equatable, Hashable {
         if lhs.provider != rhs.provider {
             return false
         }
+        if lhs.python != rhs.python {
+            return false
+        }
         if lhs.presentation != rhs.presentation {
             return false
         }
@@ -12411,6 +12504,7 @@ extension SurfaceParameterProjections: Equatable, Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(cli)
         hasher.combine(provider)
+        hasher.combine(python)
         hasher.combine(presentation)
     }
 }
@@ -12428,6 +12522,7 @@ public struct FfiConverterTypeSurfaceParameterProjections: FfiConverterRustBuffe
             try SurfaceParameterProjections(
                 cli: FfiConverterOptionTypeSurfaceParameterCliProjection.read(from: &buf),
                 provider: FfiConverterOptionTypeSurfaceParameterProviderProjection.read(from: &buf),
+                python: FfiConverterOptionTypeSurfaceParameterPythonProjection.read(from: &buf),
                 presentation: FfiConverterTypeSurfaceParameterPresentation.read(from: &buf)
         )
     }
@@ -12435,6 +12530,7 @@ public struct FfiConverterTypeSurfaceParameterProjections: FfiConverterRustBuffe
     public static func write(_ value: SurfaceParameterProjections, into buf: inout [UInt8]) {
         FfiConverterOptionTypeSurfaceParameterCliProjection.write(value.cli, into: &buf)
         FfiConverterOptionTypeSurfaceParameterProviderProjection.write(value.provider, into: &buf)
+        FfiConverterOptionTypeSurfaceParameterPythonProjection.write(value.python, into: &buf)
         FfiConverterTypeSurfaceParameterPresentation.write(value.presentation, into: &buf)
     }
 }
@@ -12532,6 +12628,78 @@ public func FfiConverterTypeSurfaceParameterProviderProjection_lift(_ buf: RustB
 #endif
 public func FfiConverterTypeSurfaceParameterProviderProjection_lower(_ value: SurfaceParameterProviderProjection) -> RustBuffer {
     return FfiConverterTypeSurfaceParameterProviderProjection.lower(value)
+}
+
+
+public struct SurfaceParameterPythonProjection {
+    public var name: String
+    public var typeHint: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, typeHint: String?) {
+        self.name = name
+        self.typeHint = typeHint
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterPythonProjection: Sendable {}
+#endif
+
+
+extension SurfaceParameterPythonProjection: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterPythonProjection, rhs: SurfaceParameterPythonProjection) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.typeHint != rhs.typeHint {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(typeHint)
+    }
+}
+
+extension SurfaceParameterPythonProjection: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterPythonProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterPythonProjection {
+        return
+            try SurfaceParameterPythonProjection(
+                name: FfiConverterString.read(from: &buf),
+                typeHint: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterPythonProjection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.typeHint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterPythonProjection_lift(_ buf: RustBuffer) throws -> SurfaceParameterPythonProjection {
+    return try FfiConverterTypeSurfaceParameterPythonProjection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterPythonProjection_lower(_ value: SurfaceParameterPythonProjection) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterPythonProjection.lower(value)
 }
 
 
@@ -15792,7 +15960,7 @@ public func FfiConverterTypeTaskUIInjectedArgument_lower(_ value: TaskUiInjected
 
 
 public struct TaskUiManagedOutput {
-    public var decoder: String
+    public var renderer: String
     public var stdoutFormat: String
     public var injectArguments: [TaskUiInjectedArgument]
     public var rawStdoutAvailable: Bool
@@ -15800,8 +15968,8 @@ public struct TaskUiManagedOutput {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(decoder: String, stdoutFormat: String, injectArguments: [TaskUiInjectedArgument], rawStdoutAvailable: Bool, rawStderrAvailable: Bool) {
-        self.decoder = decoder
+    public init(renderer: String, stdoutFormat: String, injectArguments: [TaskUiInjectedArgument], rawStdoutAvailable: Bool, rawStderrAvailable: Bool) {
+        self.renderer = renderer
         self.stdoutFormat = stdoutFormat
         self.injectArguments = injectArguments
         self.rawStdoutAvailable = rawStdoutAvailable
@@ -15816,7 +15984,7 @@ extension TaskUiManagedOutput: Sendable {}
 
 extension TaskUiManagedOutput: Equatable, Hashable {
     public static func ==(lhs: TaskUiManagedOutput, rhs: TaskUiManagedOutput) -> Bool {
-        if lhs.decoder != rhs.decoder {
+        if lhs.renderer != rhs.renderer {
             return false
         }
         if lhs.stdoutFormat != rhs.stdoutFormat {
@@ -15835,7 +16003,7 @@ extension TaskUiManagedOutput: Equatable, Hashable {
     }
 
     public func hash(into hasher: inout Hasher) {
-        hasher.combine(decoder)
+        hasher.combine(renderer)
         hasher.combine(stdoutFormat)
         hasher.combine(injectArguments)
         hasher.combine(rawStdoutAvailable)
@@ -15854,7 +16022,7 @@ public struct FfiConverterTypeTaskUIManagedOutput: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskUiManagedOutput {
         return
             try TaskUiManagedOutput(
-                decoder: FfiConverterString.read(from: &buf),
+                renderer: FfiConverterString.read(from: &buf),
                 stdoutFormat: FfiConverterString.read(from: &buf),
                 injectArguments: FfiConverterSequenceTypeTaskUIInjectedArgument.read(from: &buf),
                 rawStdoutAvailable: FfiConverterBool.read(from: &buf),
@@ -15863,7 +16031,7 @@ public struct FfiConverterTypeTaskUIManagedOutput: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: TaskUiManagedOutput, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.decoder, into: &buf)
+        FfiConverterString.write(value.renderer, into: &buf)
         FfiConverterString.write(value.stdoutFormat, into: &buf)
         FfiConverterSequenceTypeTaskUIInjectedArgument.write(value.injectArguments, into: &buf)
         FfiConverterBool.write(value.rawStdoutAvailable, into: &buf)
@@ -21152,6 +21320,30 @@ fileprivate struct FfiConverterOptionTypeSurfaceParameterProviderProjection: Ffi
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeSurfaceParameterPythonProjection: FfiConverterRustBuffer {
+    typealias SwiftType = SurfaceParameterPythonProjection?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSurfaceParameterPythonProjection.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSurfaceParameterPythonProjection.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeSurfaceParameterSnapshot: FfiConverterRustBuffer {
     typealias SwiftType = SurfaceParameterSnapshot?
 
@@ -22514,6 +22706,31 @@ fileprivate struct FfiConverterSequenceTypeSurfaceParameterConcept: FfiConverter
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeSurfaceParameterDefinition: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceParameterDefinition]
+
+    public static func write(_ value: [SurfaceParameterDefinition], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceParameterDefinition.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceParameterDefinition] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceParameterDefinition]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceParameterDefinition.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeSurfaceParameterDiagnostic: FfiConverterRustBuffer {
     typealias SwiftType = [SurfaceParameterDiagnostic]
 
@@ -23539,6 +23756,15 @@ public func notebookSaveVisualization(request: NotebookSaveVisualizationEnvelope
 })
 }
 /**
+ * Return the complete checked parameter catalog for generated frontends.
+ */
+public func parameterCatalog()throws  -> SurfaceParameterCatalogEnvelope  {
+    return try  FfiConverterTypeSurfaceParameterCatalogEnvelope_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_catalog($0
+    )
+})
+}
+/**
  * Resolve the current defaults and UI state for one surface.
  */
 public func parameterDefaults(surfaceId: String)throws  -> SurfaceParameterSnapshot  {
@@ -23569,6 +23795,16 @@ public func parameterLoad(surfaceId: String, profileToml: String, sourcePath: St
         FfiConverterString.lower(surfaceId),
         FfiConverterString.lower(profileToml),
         FfiConverterString.lower(sourcePath),$0
+    )
+})
+}
+/**
+ * Parse the canonical surface identity from one sparse profile.
+ */
+public func parameterProfileSurface(profileToml: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_profile_surface(
+        FfiConverterString.lower(profileToml),$0
     )
 })
 }
@@ -23639,6 +23875,29 @@ public func parameterSurfaceBundle(surfaceId: String)throws  -> SurfaceParameter
     return try  FfiConverterTypeSurfaceParameterBundle_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_parameter_surface_bundle(
         FfiConverterString.lower(surfaceId),$0
+    )
+})
+}
+/**
+ * Render the catalog-owned commented reference template for one surface.
+ */
+public func parameterTemplateToml(surfaceId: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_template_toml(
+        FfiConverterString.lower(surfaceId),$0
+    )
+})
+}
+/**
+ * Explicitly write Last or Last Successful for one workspace.
+ */
+public func parameterWriteManaged(surfaceId: String, workspace: String, values: [String: SurfaceParameterValue], successful: Bool)throws  -> SurfaceParameterWriteResult  {
+    return try  FfiConverterTypeSurfaceParameterWriteResult_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_write_managed(
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(workspace),
+        FfiConverterDictionaryStringTypeSurfaceParameterValue.lower(values),
+        FfiConverterBool.lower(successful),$0
     )
 })
 }
@@ -23849,6 +24108,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_notebook_save_visualization() != 39730) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_catalog() != 25079) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_casars_frontend_services_checksum_func_parameter_defaults() != 26772) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -23856,6 +24118,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_parameter_load() != 19398) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_profile_surface() != 39106) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_parameter_provider_invocation() != 18733) {
@@ -23874,6 +24139,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_parameter_surface_bundle() != 8856) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_template_toml() != 38211) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_write_managed() != 30614) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_probe_measurement_set_time_range() != 14615) {

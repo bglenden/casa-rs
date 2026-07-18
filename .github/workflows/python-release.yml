@@ -73,33 +73,18 @@ jobs:
 
           python -m pip install --upgrade pip
           python -m pip install "${wheels[0]}"
-          CASARS_CALIBRATE_BIN="$GITHUB_WORKSPACE/target/release/calibrate" \
-          CASARS_IMPORTVLA_BIN="$GITHUB_WORKSPACE/target/release/casars-importvla" \
-          CASARS_MSEXPLORE_BIN="$GITHUB_WORKSPACE/target/release/msexplore" \
-          CASARS_IMAGER_BIN="$GITHUB_WORKSPACE/target/release/casars-imager" \
-          CASARS_IMMOMENTS_BIN="$GITHUB_WORKSPACE/target/release/immoments" \
-          CASA_RS_IMPBCOR_BIN="$GITHUB_WORKSPACE/target/release/impbcor" \
-          CASARS_EXPORTFITS_BIN="$GITHUB_WORKSPACE/target/release/exportfits" \
-          CASARS_IMPORTFITS_BIN="$GITHUB_WORKSPACE/target/release/importfits" \
           python - <<'PY'
+          import inspect
           import casars
-          from casars.tasks import calibrate, image_analysis, imager, importvla, msexplore
+          from casars import tasks
+          from casars.parameters import TaskParameters
 
           assert casars.__version__
-          info = calibrate.protocol_info()
-          assert info.protocol_name == "casa_calibration_task"
-          assert info.protocol_version == 1
-          assert importvla.protocol_info().protocol_name == "casa_importvla_task"
-          assert msexplore.protocol_info().protocol_name == "casa_msexplore_task"
-          assert imager.protocol_info().protocol_name == "casa_imager_task"
-          assert image_analysis.immoments_protocol_info().protocol_name == "casa_image_analysis_task"
-          assert image_analysis.impbcor_protocol_info().protocol_name == "casa_image_analysis_task"
-          assert image_analysis.exportfits_protocol_info().protocol_name == "casa_image_analysis_task"
-          assert image_analysis.importfits_protocol_info().protocol_name == "casa_image_analysis_task"
-          schema = calibrate.schema()
-          assert "request_schema" in schema
-          assert "result_schema" in schema
-          calibrate.validate_signature_parity()
+          for name in ("calibrate", "importvla", "msexplore", "imager", "immoments", "impbcor", "exportfits", "importfits"):
+              assert callable(getattr(tasks, name))
+          assert "vis" in inspect.signature(tasks.calibrate).parameters
+          assert "imagename" in inspect.signature(tasks.immoments).parameters
+          assert TaskParameters.defaults("calibrate").surface == "calibrate"
           PY
 
       - name: Package suite and standalone binary bundles
@@ -162,30 +147,18 @@ jobs:
 
           python -m pip install --upgrade pip
           python -m pip install "${sdists[0]}"
-          CASARS_CALIBRATE_BIN="$GITHUB_WORKSPACE/target/debug/calibrate" \
-          CASARS_IMPORTVLA_BIN="$GITHUB_WORKSPACE/target/debug/casars-importvla" \
-          CASARS_MSEXPLORE_BIN="$GITHUB_WORKSPACE/target/debug/msexplore" \
-          CASARS_IMAGER_BIN="$GITHUB_WORKSPACE/target/debug/casars-imager" \
-          CASARS_IMMOMENTS_BIN="$GITHUB_WORKSPACE/target/debug/immoments" \
-          CASA_RS_IMPBCOR_BIN="$GITHUB_WORKSPACE/target/debug/impbcor" \
-          CASARS_EXPORTFITS_BIN="$GITHUB_WORKSPACE/target/debug/exportfits" \
-          CASARS_IMPORTFITS_BIN="$GITHUB_WORKSPACE/target/debug/importfits" \
           python - <<'PY'
+          import inspect
           import casars
-          from casars.tasks import calibrate, image_analysis, imager, importvla, msexplore
+          from casars import tasks
+          from casars.parameters import TaskParameters
 
           assert casars.__version__
-          info = calibrate.protocol_info()
-          assert info.protocol_name == "casa_calibration_task"
-          assert info.protocol_version == 1
-          assert importvla.protocol_info().protocol_name == "casa_importvla_task"
-          assert msexplore.protocol_info().protocol_name == "casa_msexplore_task"
-          assert imager.protocol_info().protocol_name == "casa_imager_task"
-          assert image_analysis.immoments_protocol_info().protocol_name == "casa_image_analysis_task"
-          assert image_analysis.impbcor_protocol_info().protocol_name == "casa_image_analysis_task"
-          assert image_analysis.exportfits_protocol_info().protocol_name == "casa_image_analysis_task"
-          assert image_analysis.importfits_protocol_info().protocol_name == "casa_image_analysis_task"
-          calibrate.validate_signature_parity()
+          for name in ("calibrate", "importvla", "msexplore", "imager", "immoments", "impbcor", "exportfits", "importfits"):
+              assert callable(getattr(tasks, name))
+          assert "vis" in inspect.signature(tasks.calibrate).parameters
+          assert "imagename" in inspect.signature(tasks.immoments).parameters
+          assert TaskParameters.defaults("calibrate").surface == "calibrate"
           PY
 
       - name: Upload sdist artifact

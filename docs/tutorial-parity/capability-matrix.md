@@ -33,8 +33,8 @@ Status legend:
   precision/backend policy, and diagnostic memory/I/O/worker/backend telemetry.
 - `casa-images`, `casa-lattices`, `casa-coordinates`: image/lattice/coordinate
   storage and analysis substrate.
-- `casa-vla` and `casars-importvla`: VLA archive import surface.
-- `casars-python`: `casars.data` object layer and calibration/importvla task
+- `casa-vla`: VLA archive import library and canonical `importvla` executable.
+- `casars-python`: `casars.data` object layer and generated calibration/importvla task
   projections; broader imager/MS/image-creation bindings are not yet complete.
 
 ## Capability Matrix
@@ -65,15 +65,15 @@ Status legend:
 | `clearcal` / `delmod` | missing/partial | `casa-ms`, `casa-calibration` | none | model/corrected column lifecycle | CASA MS column state | calibration/imaging timings | #128 |
 | `ft` | missing/partial | `casa-imaging`, `casa-ms` | none | model prediction for source subtraction | CASA MODEL_DATA comparison | source-subtraction timing | #128 |
 | component list tool `cl.addcomponent` | missing | future model/component owner | none | source subtraction and simulation component-list support | CASA component list / predicted MS | source-subtraction/simulation timings | #128, #129 |
-| `imhead` | partial/available | `casa-images`, `casa-coordinates` | `imexplore imhead`, `casars.tasks.image_analysis.imhead`; VLA imaging slice includes `mode='put', hdkey='bunit'` | broader edit modes and long-tail metadata formatting | CASA `imhead` output and image keywords | image-analysis timing | #120, #125, #175 |
-| `imstat` | partial/available | `casa-images`, `casa-lattices` | `imexplore imstat`, `casars.tasks.image_analysis.imstat` | full region grammar and long-tail CASA parameters | CASA `imstat` numeric output | image-analysis timing | #120, #125 |
-| `immoments` | partial/available | `casa-images`, `casa-lattices`, `casa-coordinates` | `immoments`, `casars.tasks.image_analysis.immoments` | moments outside -1..3 and output-coordinate tails | CASA moment images | image-analysis timing | #120, #123 |
+| `imhead` | partial/available | `casa-images`, `casa-coordinates` | `imexplore imhead`, `casars.tasks.imhead`; VLA imaging slice includes `mode='put', hdkey='bunit'` | broader edit modes and long-tail metadata formatting | CASA `imhead` output and image keywords | image-analysis timing | #120, #125, #175 |
+| `imstat` | partial/available | `casa-images`, `casa-lattices` | `imexplore imstat`, `casars.tasks.imstat` | full region grammar and long-tail CASA parameters | CASA `imstat` numeric output | image-analysis timing | #120, #125 |
+| `immoments` | partial/available | `casa-images`, `casa-lattices`, `casa-coordinates` | `immoments`, `casars.tasks.immoments` | moments outside -1..3 and output-coordinate tails | CASA moment images | image-analysis timing | #120, #123 |
 | `impbcor` | partial/available | `casa-images`, `casars-imager` | `immath` division for regular PB correction; `casars-imager --pbcor` for direct PB-corrected products | CASA task-name compatibility is not a target; VLA imaging uses equivalent image/PB division with casa-rs-generated `.pb` products | CASA `impbcor` image products | image-analysis timing inside #175 runner | #120, #163, #175 |
 | `widebandpbcor` | partial/available | `casars-imager`, `casa-images` | `casars-imager --pbcor` writes MTMFS `.pbcor.image.tt0` plus PB spectral-index-corrected `.pbcor.image.alpha` for the VLA imaging guide | broader CASA task-name and multi-action parameter surface | CASA `widebandpbcor` products | #175 runner timing | #175 |
-| `exportfits` | partial/available | `casa-images`, `casa-coordinates` | `exportfits`, `casars.tasks.image_analysis.exportfits` | full FITS-header fidelity and binary-table needs | CASA FITS headers and WCS | export timing | #120 |
+| `exportfits` | partial/available | `casa-images`, `casa-coordinates` | `exportfits`, `casars.tasks.exportfits` | full FITS-header fidelity and binary-table needs | CASA FITS headers and WCS | export timing | #120 |
 | `importfits` | partial | `casa-images`, `casa-coordinates` | future task/Python projection | simulation model-image ingestion | CASA imported image metadata | simulation setup timing | #124 |
 | `imregrid` | missing/partial | `casa-images`, `casa-coordinates` | none | data-combination and feathering image alignment | CASA regridded image | breadth timing | #127 |
-| `immath` | partial/available | `casa-images` | `immath`, `casars.tasks.image_analysis.immath` | broader CASA expression grammar beyond tutorial binary operations and scalar multiples of `IM0` | CASA image products | breadth timing | #120, #127, #175 |
+| `immath` | partial/available | `casa-images` | `immath`, `casars.tasks.immath` | broader CASA expression grammar beyond tutorial binary operations and scalar multiples of `IM0` | CASA image products | breadth timing | #120, #127, #175 |
 | `imsubimage` / `imcollapse` | missing/partial | `casa-images`, `casa-lattices` | future task/Python projection | region/channel slicing and collapsed outputs | CASA output images | breadth timing | #127 |
 | `imfit` | missing | `casa-images` | none | Gaussian/source fitting for polarization/source-subtraction tutorials | CASA fit records | breadth timing | #127, #128 |
 | `impv` | missing | `casa-images`, `casa-coordinates` | none | position-velocity extraction and metadata | CASA PV image output | VLA IRC timing | #123 |

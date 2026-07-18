@@ -265,22 +265,25 @@ def run_cli(pack_root: Path, exportfits: Path) -> dict[str, Any]:
     return payload
 
 
-def run_python(pack_root: Path, exportfits: Path) -> dict[str, Any]:
+def run_python(pack_root: Path, exportfits: Path, casars: Path) -> dict[str, Any]:
     results = []
     (pack_root / OUTDIR).mkdir(parents=True, exist_ok=True)
-    env = {"PYTHONPATH": str(REPO_ROOT / "crates/casars-python/python")}
+    env = {
+        "PYTHONPATH": str(REPO_ROOT / "crates/casars-python/python"),
+        "CASARS_EXPORTFITS_BIN": str(exportfits),
+    }
     for product in PRODUCTS:
         fits_path = OUTDIR / f"{Path(product['fits_basename']).stem}.python.fits"
         script = "\n".join(
             [
                 "import json",
-                "from casars.tasks import image_analysis",
+                "from casars import tasks",
                 (
-                    "result = image_analysis.exportfits("
-                    f"{product['imagename']!r}, {str(fits_path)!r}, "
-                    f"velocity={product['velocity']!r}, overwrite=True, binary={str(exportfits)!r})"
+                    "result = tasks.exportfits("
+                    f"imagename={product['imagename']!r}, fitsimage={str(fits_path)!r}, "
+                    f"velocity={product['velocity']!r}, overwrite=True, binary={str(casars)!r})"
                 ),
-                "print(json.dumps(result, indent=2, sort_keys=True))",
+                "print(json.dumps(json.loads(result.stdout), indent=2, sort_keys=True))",
             ]
         )
         run = run_command(["python3", "-c", script], cwd=pack_root, env=env)
@@ -455,7 +458,7 @@ def write_review_record(pack_root: Path, comparison: dict[str, Any]) -> dict[str
                         for product in PRODUCTS
                     ]
                 },
-                "command_template": "casars.tasks.image_analysis.exportfits(imagename, fitsimage, velocity=..., overwrite=True)",
+                "command_template": "casars.tasks.exportfits(imagename=..., fitsimage=..., velocity=..., overwrite=True)",
             },
             "tui": {
                 "provider_kind": "native-rust",
@@ -599,7 +602,7 @@ The guide exports the continuum image directly and exports the N2H+ cube with `v
 | --- | --- | --- |
 | GUI | Open the tutorial pack, select section 04, open `Images > Export FITS`, run once for each product. | Continuum: Image `twhya_cont.image`, FITS `.casa-rs/workspace/native/04-exportfits-products/twhya_cont.gui.fits`, Velocity Axis off, Overwrite on. Cube: Image `twhya_n2hp.image`, FITS `.casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.gui.fits`, Velocity Axis on, Overwrite on. |
 | TUI | `casars exportfits` opens the Export FITS form. Fill the same fields as the GUI, then press `r` to run and confirm if prompted. | Same text fields as GUI. |
-| Python | Call `casars.tasks.image_analysis.exportfits(...)` twice. | `exportfits('twhya_cont.image', '.../twhya_cont.python.fits', overwrite=True)` and `exportfits('twhya_n2hp.image', '.../twhya_n2hp.python.fits', velocity=True, overwrite=True)`. |
+| Python | Call `casars.tasks.exportfits(...)` twice. | `exportfits(imagename='twhya_cont.image', fitsimage='.../twhya_cont.python.fits', overwrite=True)` and `exportfits(imagename='twhya_n2hp.image', fitsimage='.../twhya_n2hp.python.fits', velocity=True, overwrite=True)`. |
 | Command line | Run the task binary from the pack root twice. | `exportfits twhya_cont.image .casa-rs/workspace/native/04-exportfits-products/twhya_cont.fits --overwrite`; `exportfits twhya_n2hp.image .casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.fits --velocity --overwrite`. |
 
 ## Visible Evidence
@@ -633,7 +636,7 @@ The guide exports the continuum image directly and exports the N2H+ cube with `v
 <table><tr><th>Surface</th><th>Execution</th><th>Parameters</th></tr>
 <tr><td>GUI</td><td>Open section 04, Images &gt; Export FITS, run once for each product.</td><td>Continuum: Image <code>twhya_cont.image</code>, FITS <code>.casa-rs/workspace/native/04-exportfits-products/twhya_cont.gui.fits</code>, Velocity Axis off, Overwrite on.<br>Cube: Image <code>twhya_n2hp.image</code>, FITS <code>.casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.gui.fits</code>, Velocity Axis on, Overwrite on.</td></tr>
 <tr><td>TUI</td><td><code>casars exportfits</code>, fill the Export FITS form, press <code>r</code>, confirm if prompted.</td><td>Same fields as GUI.</td></tr>
-<tr><td>Python</td><td><code>casars.tasks.image_analysis.exportfits(...)</code></td><td><code>exportfits('twhya_cont.image', '.../twhya_cont.python.fits', overwrite=True)</code><br><code>exportfits('twhya_n2hp.image', '.../twhya_n2hp.python.fits', velocity=True, overwrite=True)</code></td></tr>
+<tr><td>Python</td><td><code>casars.tasks.exportfits(...)</code></td><td><code>exportfits(imagename='twhya_cont.image', fitsimage='.../twhya_cont.python.fits', overwrite=True)</code><br><code>exportfits(imagename='twhya_n2hp.image', fitsimage='.../twhya_n2hp.python.fits', velocity=True, overwrite=True)</code></td></tr>
 <tr><td>Command line</td><td>Run from pack root.</td><td><code>exportfits twhya_cont.image .casa-rs/workspace/native/04-exportfits-products/twhya_cont.fits --overwrite</code><br><code>exportfits twhya_n2hp.image .casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.fits --velocity --overwrite</code></td></tr>
 </table>
 <h2>Observable Result</h2>
@@ -658,14 +661,15 @@ def main() -> None:
 
     pack_root = args.pack.expanduser().resolve()
     exportfits = REPO_ROOT / "target/debug/exportfits"
-    if not exportfits.exists():
-        raise SystemExit("run `cargo build -p casa-images --bin exportfits` first")
+    casars = REPO_ROOT / "target/debug/casars"
+    if not exportfits.exists() or not casars.exists():
+        raise SystemExit("run `cargo build -p casa-images --bin exportfits` and `cargo build -p casars` first")
 
     shutil.rmtree(pack_root / OUTDIR, ignore_errors=True)
     shutil.rmtree(pack_root / ORACLE_OUTDIR, ignore_errors=True)
     run_oracle(pack_root, args.casa_python)
     run_cli(pack_root, exportfits)
-    run_python(pack_root, exportfits)
+    run_python(pack_root, exportfits, casars)
     comparison = run_comparison(pack_root)
     figures = run_figures(pack_root, args.casa_python)
     review = write_review_record(pack_root, comparison)

@@ -128,10 +128,10 @@ def file_record(path: Path, pack_root: Path) -> dict[str, Any]:
 def python_surface_code(outputvis: str, binary: str) -> str:
     return (
         "import json; "
-        "from casars.tasks import split; "
-        "result = split.split('twhya_calibrated.ms', "
-        f"{outputvis!r}, field='5', width=8, datacolumn='data', binary={binary!r}); "
-        "print(json.dumps(result, sort_keys=True))"
+        "from casars import tasks; "
+        "result = tasks.split(vis='twhya_calibrated.ms', "
+        f"outputvis={outputvis!r}, field='5', width=8, datacolumn='data', binary={binary!r}); "
+        "print(json.dumps(json.loads(result.stdout), sort_keys=True))"
     )
 
 
@@ -271,7 +271,7 @@ img {{ max-width: 100%; border: 1px solid #bbb; }}
 <tr><th>Surface</th><th>Task</th><th>Parameters</th></tr>
 <tr><td>CASA</td><td><code>split</code></td><td><code>vis=twhya_calibrated.ms</code>, <code>field=5</code>, <code>width=8</code>, <code>outputvis=twhya_smoothed.ms</code>, <code>datacolumn=data</code></td></tr>
 <tr><td>CLI</td><td><code>mstransform</code>/<code>split</code></td><td><code>--vis twhya_calibrated.ms --outputvis twhya_smoothed.cli.ms --field 5 --width 8 --datacolumn DATA</code></td></tr>
-<tr><td>Python</td><td><code>casars.tasks.split.split</code></td><td><code>vis='twhya_calibrated.ms'</code>, <code>outputvis='twhya_smoothed.python.ms'</code>, <code>field='5'</code>, <code>width=8</code>, <code>datacolumn='data'</code></td></tr>
+<tr><td>Python</td><td><code>casars.tasks.split</code></td><td><code>vis='twhya_calibrated.ms'</code>, <code>outputvis='twhya_smoothed.python.ms'</code>, <code>field='5'</code>, <code>width=8</code>, <code>datacolumn='data'</code></td></tr>
 <tr><td>TUI</td><td><code>casars split</code></td><td>Same parameters as CLI; captured with <code>tools/ghostty-surface-capture</code>.</td></tr>
 <tr><td>GUI</td><td><code>Tasks &gt; Split</code></td><td><code>Input MS=twhya_calibrated.ms</code>, <code>Output MS=twhya_smoothed.gui.ms</code>, <code>Field=5</code>, <code>Spectral Window=0</code> (equivalent to CASA's omitted/default SPW for this one-SPW dataset), <code>Channel Width=8</code>, <code>Data Column=DATA</code>, <code>Keep Fully Flagged Rows=true</code>.</td></tr>
 </table>
@@ -401,11 +401,12 @@ def main() -> None:
         + os.pathsep
         + python_env.get("PYTHONPATH", "")
     )
+    python_env["CASARS_MSTRANSFORM_BIN"] = str(args.mstransform_binary)
     python_run = run_command(
         [
             str(args.python),
             "-c",
-            python_surface_code(SURFACE_OUTPUTS["python"], str(args.mstransform_binary)),
+            python_surface_code(SURFACE_OUTPUTS["python"], str(args.casars_binary)),
         ],
         cwd=pack_root,
         env=python_env,

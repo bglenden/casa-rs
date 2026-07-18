@@ -34,23 +34,19 @@ echo "==> Installing wheel into a clean environment and running smoke checks"
 "$python_bin" -m venv "$wheel_venv"
 source "$wheel_venv/bin/activate"
 python -m pip install "$wheel_path"
-CASARS_CALIBRATE_BIN="$repo_root/target/debug/calibrate" python - <<'PY'
+python - <<'PY'
+import inspect
 import casars
-from casars.tasks import calibrate
+from casars import tasks
+from casars.parameters import TaskParameters
 
 assert hasattr(casars, "Image")
 assert hasattr(casars, "Table")
 assert casars.__version__
 
-info = calibrate.protocol_info()
-assert info.protocol_name == "casa_calibration_task"
-assert info.protocol_version == 1
-
-schema = calibrate.schema()
-assert "request_schema" in schema
-assert "result_schema" in schema
-
-calibrate.validate_signature_parity()
+assert callable(tasks.calibrate)
+assert "vis" in inspect.signature(tasks.calibrate).parameters
+assert TaskParameters.defaults("calibrate").surface == "calibrate"
 PY
 deactivate
 

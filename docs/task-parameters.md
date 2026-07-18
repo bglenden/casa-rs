@@ -213,10 +213,9 @@ Companion constructors are `parameters.last(...)`,
 `parameters.last_successful(...)`, and `parameters.load(path, ...)`.
 `TaskParameters` supports mapping-style updates, `reset(name)`, `reload()`,
 `save(path)`, and `run()`. `tasks.run()` accepts every catalog task and routes
-through the common runner; existing protocol-specific convenience modules
-remain available for their specialized result APIs. Catalog-generated
-CASA-named keyword wrappers and type stubs are available under
-`casars.tasks.catalog` without copying defaults into Python signatures.
+through the common runner. Catalog-generated CASA-named keyword wrappers and
+type stubs are available directly under `casars.tasks` without copying defaults
+into Python signatures; there is no second provider-specific task API.
 
 Session profiles for `imexplore` and `tablebrowser` use the same constructors
 and validation model. Open them with `sessions.open(surface, parameters=p)` or

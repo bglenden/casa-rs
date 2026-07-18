@@ -12,7 +12,7 @@ from tempfile import TemporaryDirectory
 from typing import Literal, TypeAlias
 
 from .._task_runtime import _resolve_task_binary
-from ..parameters import ParameterData, SurfaceParameters, TaskParameters
+from ..parameters import ParameterData, SurfaceParameters, TaskParameters, _frontend
 
 StrPath: TypeAlias = str | PathLike[str]
 TaskBaseSource: TypeAlias = Literal["defaults", "last", "last_successful"]
@@ -23,6 +23,10 @@ class CasarsBinaryNotFoundError(FileNotFoundError):
 
 class TaskInvocationError(RuntimeError):
     """Raised when the canonical runner could not start."""
+
+
+class TaskResultError(RuntimeError):
+    """Raised when Rust rejects a successful provider result contract."""
 
 
 class TaskExecutionError(RuntimeError):
@@ -47,12 +51,21 @@ class TaskCompletion:
     stdout: str
     stderr: str
     parameters_toml: str
+    result: object | None
 
     @property
     def successful(self) -> bool:
         """Whether the ``casars`` process and provider completed successfully."""
 
         return self.returncode == 0
+
+    @property
+    def products(self) -> tuple[object, ...]:
+        """Typed contract-declared products from the Rust completion decoder."""
+
+        if self.result is None:
+            return ()
+        return tuple(self.result.products)  # type: ignore[attr-defined]
 
     def check_returncode(self) -> TaskCompletion:
         """Raise :class:`TaskExecutionError` for a failed completion."""
@@ -157,6 +170,26 @@ def run(
                 f"failed to start the canonical casars runner {executable!r}: {error}"
             ) from error
 
+    result = None
+    if process.returncode == 0:
+        api = _frontend()
+        values = [
+            api.TaskParameterValue(name=name, value=_display_value(state.value))
+            for name, state in sorted(resolved.states.items())
+            if state.value is not None
+        ]
+        try:
+            result = api.task_completion(
+                task,
+                process.stdout,
+                str(resolved_workspace),
+                values,
+            )
+        except api.FrontendServiceError as error:
+            raise TaskResultError(
+                f"{task} produced a successful but invalid result: {error}"
+            ) from error
+
     completion = TaskCompletion(
         task=task,
         command=tuple(command),
@@ -165,6 +198,7 @@ def run(
         stdout=process.stdout,
         stderr=process.stderr,
         parameters_toml=parameters_toml,
+        result=result,
     )
     if check:
         completion.check_returncode()
@@ -252,11 +286,28 @@ def _resolve_casars_binary(binary: StrPath | None) -> str:
     )
 
 
+def _display_value(value: ParameterData) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return format(value, ".15g")
+    if isinstance(value, (str, int)):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return ",".join(_display_value(item) for item in value)
+    if isinstance(value, Mapping):
+        import json
+
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return str(value)
+
+
 __all__ = [
     "CasarsBinaryNotFoundError",
     "TaskCompletion",
     "TaskExecutionError",
     "TaskInvocationError",
+    "TaskResultError",
     "TaskBaseSource",
     "run",
 ]

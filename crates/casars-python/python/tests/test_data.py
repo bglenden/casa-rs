@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+from enum import Enum
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import numpy as np
 
+from casars import data
 from casars.data import Image, Table, protocol_info, schema_bundle
 
 
@@ -63,6 +66,89 @@ def test_data_schema_bundle_reports_object_surface() -> None:
     image_methods = {entry["name"]: entry for entry in objects["Image"]["methods"]}
     mask_result = image_methods["get_mask_slice"]["result_schema"]
     assert "null" in json.dumps(mask_result)
+
+
+def test_measurement_set_plot_uses_typed_generated_boundary(
+    monkeypatch,
+) -> None:
+    captured = []
+
+    class Preset(Enum):
+        AMPLITUDE_VS_TIME = 0
+
+    class FrontendServiceError(Exception):
+        pass
+
+    def request(**values):
+        captured.append(values)
+        return SimpleNamespace(**values)
+
+    axis = SimpleNamespace(
+        id="x",
+        label="Time (s)",
+        unit="s",
+        lower=1.0,
+        upper=2.0,
+    )
+    y_axis = SimpleNamespace(
+        id="y",
+        label="Amplitude (Jy)",
+        unit="Jy",
+        lower=3.0,
+        upper=4.0,
+    )
+    provenance = SimpleNamespace(row=5, corr=0, chan_start=0, chan_end=1)
+    layer = SimpleNamespace(
+        title="field 0",
+        color_group="field-0",
+        y_axis_id="y",
+        x_values=[1.0, 2.0],
+        y_values=[3.0, 4.0],
+        provenance=[provenance],
+    )
+    panel = SimpleNamespace(
+        id="main",
+        title="Amplitude vs time",
+        axes=[axis, y_axis],
+        layers=[layer],
+    )
+    result = SimpleNamespace(
+        title="Amplitude vs time",
+        summary="2 selected visibility samples",
+        dataset_path="tutorial.ms",
+        preset=Preset.AMPLITUDE_VS_TIME,
+        selection_summary="field=0",
+        document=SimpleNamespace(
+            id="plot",
+            title="Amplitude vs time",
+            header_lines=[],
+            show_legend=True,
+            axes=[],
+            layers=[],
+            panels=[panel],
+        ),
+    )
+    api = SimpleNamespace(
+        MeasurementSetPlotPreset=Preset,
+        MeasurementSetPlotRequest=request,
+        FrontendServiceError=FrontendServiceError,
+        build_measurement_set_plot=lambda request: result,
+    )
+    monkeypatch.setattr(data, "_frontend", lambda: api)
+
+    plot = data.measurement_set_plot(
+        "tutorial.ms",
+        preset="amplitude_vs_time",
+        selection={"field": "0", "spw": "1"},
+    )
+
+    assert captured[0]["dataset_path"] == "tutorial.ms"
+    assert captured[0]["preset"] is Preset.AMPLITUDE_VS_TIME
+    assert captured[0]["field"] == "0"
+    assert captured[0]["spectral_window"] == "1"
+    assert np.array_equal(plot.panels[0].series[0].x, np.array([1.0, 2.0]))
+    assert np.array_equal(plot.panels[0].series[0].y, np.array([3.0, 4.0]))
+    assert plot.panels[0].series[0].provenance[0]["row"] == 5
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]

@@ -36,13 +36,14 @@ use casa_notebook::{
 use casa_provider_contracts::{
     ParameterValue, ProviderInvocationAdaptation, RunProductKind, RunProductRole, RunSafetyClass,
     SurfaceContractBundle, SurfaceKind, builtin_application_catalog, builtin_surface_bundle,
+    builtin_surface_catalog,
 };
 use casa_tables::{ArrayShapeContract, ColumnType, Table, TableBrowser, TableOptions};
 use casa_task_runtime::{
     BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, OpenSessionRequest,
     ParameterRuntime, ParameterSession, ResolutionPatch, SessionLastCoordinator,
-    TaskLastCoordinator, TaskOutputValue, decode_task_completion, project_provider_invocation,
-    write_parameter_profile_atomic,
+    TaskLastCoordinator, TaskOutputValue, decode_task_completion, parse_profile,
+    project_provider_invocation, render_documented_template, write_parameter_profile_atomic,
 };
 use casa_types::measures::direction::{
     angular_increment_arcseconds, declination_increment_arcseconds, format_declination_labeled,
@@ -781,6 +782,13 @@ pub struct SurfaceParameterCatalog {
     pub concepts: Vec<SurfaceParameterConcept>,
 }
 
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterCatalogEnvelope {
+    pub schema_version: u64,
+    pub catalog: SurfaceParameterCatalog,
+    pub surfaces: Vec<SurfaceParameterDefinition>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SurfaceParameterConceptReference {
     pub id: String,
@@ -810,16 +818,24 @@ pub struct SurfaceParameterProviderProjection {
     pub emit_when: Option<SurfaceParameterPredicate>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SurfaceParameterPythonProjection {
+    pub name: String,
+    pub type_hint: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct SurfaceParameterProjections {
     pub cli: Option<SurfaceParameterCliProjection>,
     pub provider: Option<SurfaceParameterProviderProjection>,
+    pub python: Option<SurfaceParameterPythonProjection>,
     pub presentation: SurfaceParameterPresentation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SurfaceNarrowingConstraint {
     pub kind: String,
+    pub values: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -1001,7 +1017,7 @@ pub struct TaskUISchema {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
 pub struct TaskUIManagedOutput {
-    pub decoder: String,
+    pub renderer: String,
     pub stdout_format: String,
     pub inject_arguments: Vec<TaskUIInjectedArgument>,
     pub raw_stdout_available: bool,
@@ -4156,7 +4172,7 @@ pub fn application_catalog() -> FrontendResult<ApplicationCatalogEnvelope> {
                 )?)?,
                 browser_kind: application
                     .browser_kind
-                    .map(|kind| serde_json::to_value(kind))
+                    .map(serde_json::to_value)
                     .transpose()
                     .map_err(|error| FrontendServiceError::Probe {
                         reason: format!("project browser kind: {error}"),
@@ -4383,6 +4399,13 @@ fn surface_parameter_binding(
                     casa_provider_contracts::NarrowingConstraint::SquarePair => "square_pair",
                 }
                 .to_string(),
+                values: match constraint {
+                    casa_provider_contracts::NarrowingConstraint::AllowedValues { values }
+                    | casa_provider_contracts::NarrowingConstraint::SelectorCapabilities {
+                        capabilities: values,
+                    } => values.clone(),
+                    _ => Vec::new(),
+                },
             })
             .collect(),
         context_role: value.context_role.map(snake_case_debug),
@@ -4408,6 +4431,12 @@ fn surface_parameter_binding(
                         .map(surface_parameter_predicate),
                 }
             }),
+            python: value.projections.python.as_ref().map(|projection| {
+                SurfaceParameterPythonProjection {
+                    name: projection.name.clone(),
+                    type_hint: projection.type_hint.clone(),
+                }
+            }),
             presentation: SurfaceParameterPresentation {
                 label: value.projections.presentation.label.clone(),
                 group: value.projections.presentation.group.clone(),
@@ -4418,51 +4447,59 @@ fn surface_parameter_binding(
     }
 }
 
-fn surface_parameter_bundle(value: SurfaceContractBundle) -> SurfaceParameterBundle {
-    let surface = SurfaceParameterDefinition {
-        kind: value.surface.kind().to_string(),
-        id: value.surface.id().to_string(),
-        contract_version: value.surface.contract_version() as u64,
-        display_name: value.surface.display_name().to_string(),
-        category: value.surface.category().to_string(),
-        summary: value.surface.summary().to_string(),
+fn surface_parameter_definition(
+    value: &casa_provider_contracts::SurfaceDefinition,
+) -> SurfaceParameterDefinition {
+    SurfaceParameterDefinition {
+        kind: value.kind().to_string(),
+        id: value.id().to_string(),
+        contract_version: value.contract_version() as u64,
+        display_name: value.display_name().to_string(),
+        category: value.category().to_string(),
+        summary: value.summary().to_string(),
         execution: SurfaceExecutionProjection {
-            invocation_name: value.surface.execution().invocation_name.clone(),
-            fixed_args: value.surface.execution().fixed_args.clone(),
+            invocation_name: value.execution().invocation_name.clone(),
+            fixed_args: value.execution().fixed_args.clone(),
         },
         bindings: value
-            .surface
             .bindings()
             .iter()
             .map(surface_parameter_binding)
             .collect(),
-    };
-    let catalog = SurfaceParameterCatalog {
-        schema_version: value.catalog.schema_version as u64,
+    }
+}
+
+fn surface_parameter_catalog(
+    value: &casa_provider_contracts::ParameterCatalog,
+) -> SurfaceParameterCatalog {
+    SurfaceParameterCatalog {
+        schema_version: value.schema_version as u64,
         concepts: value
-            .catalog
             .concepts
-            .into_iter()
+            .iter()
             .map(|concept| SurfaceParameterConcept {
-                id: concept.id.0,
+                id: concept.id.0.clone(),
                 semantic_revision: concept.semantic_revision.0 as u64,
-                casa_name: concept.casa_name,
+                casa_name: concept.casa_name.clone(),
                 value_domain: surface_parameter_type(&concept.value_domain),
-                unit_dimension: concept.unit_dimension.map(snake_case_debug),
+                unit_dimension: concept.unit_dimension.as_ref().map(snake_case_debug),
                 semantic_role: snake_case_debug(concept.semantic_role),
                 documentation: SurfaceParameterDocumentation {
-                    summary: concept.documentation.summary,
-                    details: concept.documentation.details,
-                    examples: concept.documentation.examples,
+                    summary: concept.documentation.summary.clone(),
+                    details: concept.documentation.details.clone(),
+                    examples: concept.documentation.examples.clone(),
                 },
                 persistence_class: snake_case_debug(concept.persistence_class),
             })
             .collect(),
-    };
+    }
+}
+
+fn surface_parameter_bundle(value: SurfaceContractBundle) -> SurfaceParameterBundle {
     SurfaceParameterBundle {
         schema_version: value.schema_version as u64,
-        surface,
-        catalog,
+        surface: surface_parameter_definition(&value.surface),
+        catalog: surface_parameter_catalog(&value.catalog),
     }
 }
 
@@ -4724,6 +4761,37 @@ pub fn parameter_surface_bundle(surface_id: String) -> FrontendResult<SurfacePar
     Ok(surface_parameter_bundle(parameter_bundle(&surface_id)?))
 }
 
+/// Return the complete checked parameter catalog for generated frontends.
+#[uniffi::export]
+pub fn parameter_catalog() -> FrontendResult<SurfaceParameterCatalogEnvelope> {
+    let catalog = builtin_surface_catalog()
+        .map_err(|error| parameter_error("load parameter catalog", error))?;
+    Ok(SurfaceParameterCatalogEnvelope {
+        schema_version: catalog.schema_version as u64,
+        catalog: surface_parameter_catalog(&catalog.catalog),
+        surfaces: catalog
+            .surfaces
+            .iter()
+            .map(surface_parameter_definition)
+            .collect(),
+    })
+}
+
+/// Parse the canonical surface identity from one sparse profile.
+#[uniffi::export]
+pub fn parameter_profile_surface(profile_toml: String) -> FrontendResult<String> {
+    parse_profile(&profile_toml)
+        .map(|profile| profile.header.surface)
+        .map_err(|error| parameter_error("parse parameter profile", error))
+}
+
+/// Render the catalog-owned commented reference template for one surface.
+#[uniffi::export]
+pub fn parameter_template_toml(surface_id: String) -> FrontendResult<String> {
+    render_documented_template(&parameter_bundle(&surface_id)?)
+        .map_err(|error| parameter_error("render parameter template", error))
+}
+
 /// Resolve the current defaults and UI state for one surface.
 #[uniffi::export]
 pub fn parameter_defaults(surface_id: String) -> FrontendResult<SurfaceParameterSnapshot> {
@@ -4875,6 +4943,41 @@ pub fn parameter_save(
 ) -> FrontendResult<SurfaceParameterWriteResult> {
     let profile = parameter_render_toml(surface_id, values)?;
     write_parameter_profile(Path::new(&destination_path), &profile)
+}
+
+/// Explicitly write Last or Last Successful for one workspace.
+#[uniffi::export]
+pub fn parameter_write_managed(
+    surface_id: String,
+    workspace: String,
+    values: HashMap<String, SurfaceParameterValue>,
+    successful: bool,
+) -> FrontendResult<SurfaceParameterWriteResult> {
+    let bundle = parameter_bundle(&surface_id)?;
+    if successful && bundle.surface.kind() == SurfaceKind::Session {
+        return Err(parameter_error(
+            "write managed parameter profile",
+            format!("session surface {surface_id:?} does not have Last Successful"),
+        ));
+    }
+    let profile = parameter_render_toml(surface_id.clone(), values)?;
+    let kind = if successful {
+        ManagedProfileKind::LastSuccessful
+    } else {
+        ManagedProfileKind::Last
+    };
+    let outcome = ManagedStateStore::for_workspace(workspace)
+        .write(&surface_id, kind, &profile)
+        .map_err(|error| parameter_error("write managed parameter profile", error))?;
+    Ok(SurfaceParameterWriteResult {
+        path: outcome.path.to_string_lossy().into_owned(),
+        bytes_written: profile.len() as u64,
+        managed_kind: Some(if successful {
+            "last_successful".to_string()
+        } else {
+            "last".to_string()
+        }),
+    })
 }
 
 #[uniffi::export]

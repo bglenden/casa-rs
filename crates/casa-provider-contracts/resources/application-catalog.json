@@ -42,8 +42,8 @@
       "id": "importvla",
       "kind": "task",
       "launch": {
-        "executable": "casars-importvla",
-        "cargo_package": "casars-importvla",
+        "executable": "importvla",
+        "cargo_package": "casa-vla",
         "override_env": "CASARS_IMPORTVLA_BIN"
       },
       "shell_kind": "workflow",

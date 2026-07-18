@@ -181,30 +181,31 @@ print("JSON_RESULT_END")
 """
 
 
-def python_surface_code(python_prefix: str, imager_binary: str) -> str:
+def python_surface_code(python_prefix: str, casars_binary: str) -> str:
     return f"""
 import json
-from casars.tasks import imager
+from casars import tasks
 
-result = imager.mfs(
-    {MS_PATH!r},
-    {python_prefix!r},
-    image_size=250,
-    cell_arcsec=0.1,
-    field_ids=[0],
-    phasecenter_field=0,
+result = tasks.imager(
+    vis={MS_PATH!r},
+    imagename={python_prefix!r},
+    imsize=250,
+    cell="0.1arcsec",
+    field="0",
+    phasecenter_field="0",
+    specmode="mfs",
     weighting="briggs",
     robust=0.5,
     deconvolver="hogbom",
     niter=10000,
-    threshold_jy=0.015,
-    mosaic_pb_limit=0.2,
+    threshold="0.015Jy",
+    pblimit=0.2,
     write_pb=True,
     dirty_only=False,
-    mask_boxes=[(100, 100, 150, 150)],
-    binary={imager_binary!r},
+    mask_box="100,100,150,150",
+    binary={casars_binary!r},
 )
-print(json.dumps(result, indent=2, sort_keys=True))
+print(json.dumps(json.loads(result.stdout), indent=2, sort_keys=True))
 """
 
 
@@ -452,7 +453,7 @@ CASA source page: {CASA_GUIDE_URL}
 | --- | --- | --- |
 | CASA | `tclean` | `vis="twhya_smoothed.cli.ms"`, `imagename=".casa-rs/workspace/oracle/07-science-target-auto-clean/twhya_cont_auto.casa"`, `field="0"`, auto data-column selection, `specmode="mfs"`, `deconvolver="hogbom"`, `gridder="standard"`, `imsize=[250,250]`, `cell=["0.1arcsec"]`, `weighting="briggs"`, `robust=0.5`, `niter=10000`, `threshold="15mJy"`, `interactive=False`, `mask="box[[100pix,100pix],[150pix,150pix]]"` |
 | CLI | `casars-imager` | `--ms twhya_smoothed.cli.ms --imagename .casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.cli --imsize 250 --cell-arcsec 0.1 --field 0 --phasecenter-field 0 --specmode mfs --deconvolver hogbom --weighting briggs --robust 0.5 --threshold-jy 0.015 --niter 10000 --mask-box 100,100,150,150 --pblimit 0.2 --write-pb` |
-| Python | `casars.tasks.imager.mfs` | `measurement_set="twhya_smoothed.cli.ms"`, `image_name=".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.python"`, `image_size=250`, `cell_arcsec=0.1`, `field_ids=[0]`, `phasecenter_field=0`, `weighting="briggs"`, `robust=0.5`, `deconvolver="hogbom"`, `niter=10000`, `threshold_jy=0.015`, `mosaic_pb_limit=0.2`, `write_pb=True`, `dirty_only=False`, `mask_boxes=[(100,100,150,150)]` |
+| Python | `casars.tasks.imager` | `vis="twhya_smoothed.cli.ms"`, `imagename=".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.python"`, `imsize=250`, `cell="0.1arcsec"`, `field="0"`, `phasecenter_field="0"`, `weighting="briggs"`, `robust=0.5`, `deconvolver="hogbom"`, `niter=10000`, `threshold="0.015Jy"`, `pblimit=0.2`, `write_pb=True`, `dirty_only=False`, `mask_box="100,100,150,150"` |
 | TUI | `casars imager` | Same parameter values as CLI; the captured run presses `r` twice to confirm execution. |
 | GUI | `Tasks > Imager` and `Image Explorer` | Same parameter values as CLI; the GUI task is run with `write_pb=True`, then Image Explorer opens the GUI-produced clean image. |
 
@@ -525,7 +526,7 @@ img {{ max-width: 100%; border: 1px solid #ddd; }}
 <tr><th>Surface</th><th>Task</th><th>Parameters</th></tr>
 <tr><td>CASA</td><td><code>tclean</code></td><td><code>field=0</code>, auto data-column selection, <code>imsize=[250,250]</code>, <code>cell=["0.1arcsec"]</code>, <code>weighting=briggs</code>, <code>robust=0.5</code>, <code>niter=10000</code>, <code>threshold=15mJy</code>, <code>mask=box[[100pix,100pix],[150pix,150pix]]</code></td></tr>
 <tr><td>CLI</td><td><code>casars-imager</code></td><td><code>--field 0 --phasecenter-field 0 --imsize 250 --cell-arcsec 0.1 --weighting briggs --robust 0.5 --niter 10000 --threshold-jy 0.015 --mask-box 100,100,150,150 --pblimit 0.2 --write-pb</code></td></tr>
-<tr><td>Python</td><td><code>casars.tasks.imager.mfs</code></td><td><code>field_ids=[0]</code>, <code>phasecenter_field=0</code>, <code>niter=10000</code>, <code>threshold_jy=0.015</code>, <code>mosaic_pb_limit=0.2</code>, <code>write_pb=True</code>, <code>mask_boxes=[(100,100,150,150)]</code></td></tr>
+<tr><td>Python</td><td><code>casars.tasks.imager</code></td><td><code>field=0</code>, <code>phasecenter_field=0</code>, <code>niter=10000</code>, <code>threshold=0.015Jy</code>, <code>pblimit=0.2</code>, <code>write_pb=True</code>, <code>mask_box=100,100,150,150</code></td></tr>
 <tr><td>TUI</td><td><code>casars imager</code></td><td>Same parameter values as CLI; captured through <code>tools/ghostty-surface-capture</code>.</td></tr>
 <tr><td>GUI</td><td><code>Tasks &gt; Imager</code></td><td>Same parameter values as CLI; the GUI task is run and the GUI-produced image is opened in Image Explorer.</td></tr>
 </table>
@@ -655,8 +656,9 @@ def run_section(args: argparse.Namespace) -> dict[str, Any]:
         + os.pathsep
         + python_env.get("PYTHONPATH", "")
     )
+    python_env["CASARS_IMAGER_BIN"] = str(imager_binary)
     python_run = run_command(
-        [str(python), "-c", python_surface_code(str(python_prefix.relative_to(pack_root)), str(imager_binary))],
+        [str(python), "-c", python_surface_code(str(python_prefix.relative_to(pack_root)), str(args.casars_binary))],
         cwd=pack_root,
         env=python_env,
         timeout_seconds=args.timeout_seconds,

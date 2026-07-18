@@ -18,11 +18,10 @@ extension-module = ["pyo3/extension-module"]
 [dependencies]
 casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
-casa-ms = { path = "../casa-ms" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
-casa-task-runtime = { path = "../casa-task-runtime" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
+casars-frontend-services = { path = "../casars-frontend-services" }
 ndarray.workspace = true
 numpy = "0.28"
 pyo3 = "0.28"

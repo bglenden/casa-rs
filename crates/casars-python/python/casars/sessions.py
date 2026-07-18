@@ -11,13 +11,19 @@ import subprocess
 import threading
 from typing import Any, Literal, TypeAlias
 
-from . import _core
 from ._task_runtime import _resolve_task_binary, resolve_imexplore_binary
-from .parameters import ParameterData, SessionParameters
+from .parameters import ParameterData, SessionParameters, _frontend
 
 StrPath: TypeAlias = str | PathLike[str]
 SessionBaseSource: TypeAlias = Literal["defaults", "last"]
-_SESSION_LIFECYCLE = _core.ParameterSessionLifecycle()
+_SESSION_LIFECYCLE: Any | None = None
+
+
+def _session_lifecycle() -> Any:
+    global _SESSION_LIFECYCLE
+    if _SESSION_LIFECYCLE is None:
+        _SESSION_LIFECYCLE = _frontend().ParameterSessionLifecycle()
+    return _SESSION_LIFECYCLE
 
 
 class SessionProtocolError(RuntimeError):
@@ -101,7 +107,9 @@ class JsonlSession:
 
     def close(self) -> None:
         self.warnings.extend(
-            _SESSION_LIFECYCLE.flush(self.parameters.surface, self.parameters.workspace)
+            _session_lifecycle().flush(
+                self.parameters.surface, str(self.parameters.workspace)
+            )
         )
         _close_process(self._process)
 
@@ -160,10 +168,10 @@ class JsonlSession:
         self._opened = True
         try:
             self.warnings.extend(
-                _SESSION_LIFECYCLE.opened(
+                _session_lifecycle().opened(
                     self.parameters.surface,
-                    self.parameters.workspace,
-                    self.parameters._resolved_values_json(),
+                    str(self.parameters.workspace),
+                    self.parameters._resolved_values(),
                     self._save_last,
                 )
             )
@@ -175,10 +183,10 @@ class JsonlSession:
             return
         try:
             self.warnings.extend(
-                _SESSION_LIFECYCLE.accepted_durable_change(
+                _session_lifecycle().accepted_durable_change(
                     self.parameters.surface,
-                    self.parameters.workspace,
-                    self.parameters._resolved_values_json(),
+                    str(self.parameters.workspace),
+                    self.parameters._resolved_values(),
                     self._save_last,
                 )
             )

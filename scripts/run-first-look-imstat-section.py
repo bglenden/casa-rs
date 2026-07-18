@@ -208,9 +208,9 @@ def run_cli(case: ImstatCase, pack_root: Path, imexplore: Path) -> tuple[dict[st
     return payload, result
 
 
-def run_python(case: ImstatCase, pack_root: Path, imexplore: Path) -> tuple[dict[str, Any], CommandResult]:
+def run_python(case: ImstatCase, pack_root: Path, imexplore: Path, casars: Path) -> tuple[dict[str, Any], CommandResult]:
     image_path = pack_root / "inputs" / case.image
-    kwargs = [f"binary={str(imexplore)!r}"]
+    kwargs = [f"binary={str(casars)!r}"]
     region_path = region_file_path(pack_root, case)
     if region_path is not None:
         kwargs.append(f"region={str(region_path)!r}")
@@ -221,11 +221,15 @@ def run_python(case: ImstatCase, pack_root: Path, imexplore: Path) -> tuple[dict
     script = (
         "import json,sys;"
         f"sys.path.insert(0,{str(REPO_ROOT / 'crates/casars-python/python')!r});"
-        "from casars.tasks import image_analysis;"
-        f"result=image_analysis.imstat({str(image_path)!r}, {', '.join(kwargs)});"
-        "print(json.dumps(result, indent=2, sort_keys=True))"
+        "from casars import tasks;"
+        f"result=tasks.imstat(imagename={str(image_path)!r}, {', '.join(kwargs)});"
+        "print(json.dumps(json.loads(result.stdout), indent=2, sort_keys=True))"
     )
-    result = run_command([sys.executable, "-c", script], cwd=REPO_ROOT)
+    result = run_command(
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT,
+        env={"CASARS_IMEXPLORE_BIN": str(imexplore)},
+    )
     payload = parse_json_stdout(result.stdout)
     write_json(pack_root / ".casa-rs/workspace/native" / SECTION_ID / case.case_id / "python-imstat.json", payload)
     return payload, result
@@ -395,7 +399,7 @@ def write_docs(pack_root: Path, results: dict[str, Any], comparison: dict[str, A
     <table><tr><th>Parameter</th><th>Value</th></tr>{parameter_rows}</table>
     <p><strong>CASA:</strong> <code>{html.escape(case.casa_call)}</code></p>
     <p><strong>Shell:</strong> <code>{html.escape(' '.join(imstat_argv(Path('target/debug/imexplore'), Path(case.image), case)))}</code></p>
-    <p><strong>Python:</strong> <code>casars.tasks.image_analysis.imstat('{html.escape(case.image)}'{', region=' + repr(rel(pack_root, region_path)) if region_path is not None else (', box=' + repr(case.box) if case.box else '')}{', chans=' + repr(case.chans) if case.chans else ''})</code></p>
+    <p><strong>Python:</strong> <code>casars.tasks.imstat(imagename='{html.escape(case.image)}'{', region=' + repr(rel(pack_root, region_path)) if region_path is not None else (', box=' + repr(case.box) if case.box else '')}{', chans=' + repr(case.chans) if case.chans else ''})</code></p>
     <p><strong>TUI:</strong> choose task <code>imstat</code>, set the same <code>imagename</code> and selection fields, enable JSON output.</p>
     <p><strong>GUI task:</strong> open the tutorial pack, choose this section, set <code>Image Path</code> plus the same <code>box</code>, <code>region</code>, or <code>chans</code>, then Run. The <code>region</code> widget accepts CASA CRTF region files from the dataset list, inline pixel syntax such as <code>box[[100pix,100pix],[150pix,150pix]]</code>, or world-coordinate CRTF exported by the image explorer.</p>
     <pre>{html.escape(json.dumps(case_result['cli'], indent=2, sort_keys=True))}</pre>
@@ -515,7 +519,7 @@ def write_review(pack_root: Path, results: dict[str, Any], comparison: dict[str,
         },
         "casars_equivalents": {
             "cli": "imexplore imstat <image> --json [--box ...|--region path|CRTF box] [--chans ...]",
-            "python": "casars.tasks.image_analysis.imstat(..., region=...)",
+            "python": "casars.tasks.imstat(imagename=..., region=...)",
             "tui": "casars imstat <image> --json [--box ...|--region path|CRTF box] [--chans ...]",
             "gui": "Tutorial pack task panel for imstat; image explorer region controls export region files that appear in the dataset list.",
         },
@@ -577,7 +581,7 @@ def main() -> None:
             region_debug = None
             region_result = None
         cli_payload, cli_result = run_cli(case, pack_root, imexplore)
-        python_payload, python_result = run_python(case, pack_root, imexplore)
+        python_payload, python_result = run_python(case, pack_root, imexplore, casars)
         if args.skip_gui:
             gui_payload = cli_payload
             gui_debug = {}

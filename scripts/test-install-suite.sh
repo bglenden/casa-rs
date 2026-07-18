@@ -85,22 +85,16 @@ done < <(scripts/list-suite-binaries.py)
 echo "==> Verifying installed Python package"
 source "$install_root/$version/python/bin/activate"
 python - <<'PY'
+import inspect
 import casars
-from casars.tasks import calibrate, image_analysis, imager, importvla, msexplore
+from casars import tasks
+from casars.parameters import TaskParameters
 
 assert casars.__version__
-info = calibrate.protocol_info()
-assert info.protocol_name == "casa_calibration_task"
-assert info.protocol_version == 1
-assert importvla.protocol_info().protocol_name == "casa_importvla_task"
-assert msexplore.protocol_info().protocol_name == "casa_msexplore_task"
-assert imager.protocol_info().protocol_name == "casa_imager_task"
-assert image_analysis.immoments_protocol_info().protocol_name == "casa_image_analysis_task"
-assert image_analysis.impv_protocol_info().protocol_name == "casa_image_analysis_task"
-assert image_analysis.imsubimage_protocol_info().protocol_name == "casa_image_analysis_task"
-assert image_analysis.immath_protocol_info().protocol_name == "casa_image_analysis_task"
-assert image_analysis.exportfits_protocol_info().protocol_name == "casa_image_analysis_task"
-assert image_analysis.importfits_protocol_info().protocol_name == "casa_image_analysis_task"
+for name in ("calibrate", "importvla", "msexplore", "imager", "immoments", "impv", "imsubimage", "immath", "exportfits", "importfits"):
+    assert callable(getattr(tasks, name))
+assert "vis" in inspect.signature(tasks.calibrate).parameters
+assert TaskParameters.defaults("calibrate").surface == "calibrate"
 PY
 deactivate
 
