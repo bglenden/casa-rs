@@ -66,8 +66,11 @@ Verification: just verify
 - Heavy parity suites: `scripts/test-slow.sh`
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
-- GitHub PR CI: lint/test plus editable Python package checks
-- GitHub tag CI: PR CI plus smoke, suite-install, and CI-like coverage
+- GitHub PR CI: lint/test, editable Python package, strict docs, and native GUI
+  checks for non-draft PRs
+- GitHub tag CI: lint/test and editable Python package checks plus smoke,
+  suite-install, and CI-like coverage
+- Main-branch pushes run the rustdoc and MkDocs deployment workflow
 
 `just quick` includes `scripts/test-task-cli-hosts.py`, which builds and runs
 every one-shot binary hosted by `casa-task-runtime::TaskCliHost`. The explicit
