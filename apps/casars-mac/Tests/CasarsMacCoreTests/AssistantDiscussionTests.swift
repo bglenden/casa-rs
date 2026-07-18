@@ -1249,6 +1249,54 @@ final class AssistantDiscussionTests: XCTestCase {
         wait(for: [ready], timeout: 1)
     }
 
+    func testDeterministicAgentTaskSuggestionIncludesValidatedPatch() throws {
+        let fixture = DeterministicAgentSession()
+        var events: [[String: Any]] = []
+        fixture.onEvent { events.append($0) }
+        fixture.startConversation(AgentConversationRequest(
+            projectRoot: "/tmp/project",
+            model: "fixture-model",
+            effort: "medium",
+            resumeThreadID: nil,
+            runtimeProfile: CasaAgentRuntimeProfile(
+                authority: .work,
+                sessionNonce: String(repeating: "n", count: 24),
+                pythonCommand: "python3"
+            )
+        ))
+        fixture.sendTurn(AgentTurnRequest(
+            threadID: "fixture-codex-thread",
+            text: "Suggest an imaging task",
+            model: "fixture-model",
+            effort: "medium"
+        ))
+
+        let toolEvent = try XCTUnwrap(events.first { event in
+            guard event["method"] as? String == "item/completed",
+                  let params = event["params"] as? [String: Any],
+                  let item = params["item"] as? [String: Any]
+            else { return false }
+            return item["tool"] as? String == "task.suggest"
+        })
+        let params = try XCTUnwrap(toolEvent["params"] as? [String: Any])
+        let item = try XCTUnwrap(params["item"] as? [String: Any])
+        let result = try XCTUnwrap(item["result"] as? [String: Any])
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        let text = try XCTUnwrap(content.first?["text"] as? String)
+        let data = try XCTUnwrap(text.data(using: .utf8))
+        let suggestion = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        let patchObject = try XCTUnwrap(suggestion["validated_patch"])
+        let patchData = try JSONSerialization.data(withJSONObject: patchObject)
+        let patch = try JSONDecoder().decode(SurfaceParameterPatch.self, from: patchData)
+
+        XCTAssertEqual(patch.values["vis"], .string("input.ms"))
+        XCTAssertEqual(patch.values["weighting"], .string("briggs"))
+        XCTAssertEqual(patch.values["robust"], .float(-0.5))
+        XCTAssertTrue(patch.unset.isEmpty)
+    }
+
     func testOptInCodexSubscriptionSmoke() throws {
         guard ProcessInfo.processInfo.environment["CASA_RS_CODEX_LIVE_SMOKE"] == "1" else {
             throw XCTSkip("set CASA_RS_CODEX_LIVE_SMOKE=1 to exercise the installed Codex App Server subscription login")
