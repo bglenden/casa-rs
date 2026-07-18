@@ -802,8 +802,8 @@ and oracle map; it does not add public APIs.</p>
   precision/backend policy, and diagnostic memory/I/O/worker/backend telemetry.</li>
 <li><code>casa-images</code>, <code>casa-lattices</code>, <code>casa-coordinates</code>: image/lattice/coordinate
   storage and analysis substrate.</li>
-<li><code>casa-vla</code> and <code>casars-importvla</code>: VLA archive import surface.</li>
-<li><code>casars-python</code>: <code>casars.data</code> object layer and calibration/importvla task
+<li><code>casa-vla</code>: VLA archive import library and canonical <code>importvla</code> executable.</li>
+<li><code>casars-python</code>: <code>casars.data</code> object layer and generated calibration/importvla task
   projections; broader imager/MS/image-creation bindings are not yet complete.</li>
 </ul>
 <h2 id="capability-matrix">Capability Matrix<a class="headerlink" href="#capability-matrix" title="Permanent link">&para;</a></h2>
@@ -1065,7 +1065,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>imhead</code></td>
 <td>partial/available</td>
 <td><code>casa-images</code>, <code>casa-coordinates</code></td>
-<td><code>imexplore imhead</code>, <code>casars.tasks.image_analysis.imhead</code>; VLA imaging slice includes <code>mode='put', hdkey='bunit'</code></td>
+<td><code>imexplore imhead</code>, <code>casars.tasks.imhead</code>; VLA imaging slice includes <code>mode='put', hdkey='bunit'</code></td>
 <td>broader edit modes and long-tail metadata formatting</td>
 <td>CASA <code>imhead</code> output and image keywords</td>
 <td>image-analysis timing</td>
@@ -1075,7 +1075,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>imstat</code></td>
 <td>partial/available</td>
 <td><code>casa-images</code>, <code>casa-lattices</code></td>
-<td><code>imexplore imstat</code>, <code>casars.tasks.image_analysis.imstat</code></td>
+<td><code>imexplore imstat</code>, <code>casars.tasks.imstat</code></td>
 <td>full region grammar and long-tail CASA parameters</td>
 <td>CASA <code>imstat</code> numeric output</td>
 <td>image-analysis timing</td>
@@ -1085,7 +1085,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>immoments</code></td>
 <td>partial/available</td>
 <td><code>casa-images</code>, <code>casa-lattices</code>, <code>casa-coordinates</code></td>
-<td><code>immoments</code>, <code>casars.tasks.image_analysis.immoments</code></td>
+<td><code>immoments</code>, <code>casars.tasks.immoments</code></td>
 <td>moments outside -1..3 and output-coordinate tails</td>
 <td>CASA moment images</td>
 <td>image-analysis timing</td>
@@ -1115,7 +1115,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>exportfits</code></td>
 <td>partial/available</td>
 <td><code>casa-images</code>, <code>casa-coordinates</code></td>
-<td><code>exportfits</code>, <code>casars.tasks.image_analysis.exportfits</code></td>
+<td><code>exportfits</code>, <code>casars.tasks.exportfits</code></td>
 <td>full FITS-header fidelity and binary-table needs</td>
 <td>CASA FITS headers and WCS</td>
 <td>export timing</td>
@@ -1145,7 +1145,7 @@ and oracle map; it does not add public APIs.</p>
 <td><code>immath</code></td>
 <td>partial/available</td>
 <td><code>casa-images</code></td>
-<td><code>immath</code>, <code>casars.tasks.image_analysis.immath</code></td>
+<td><code>immath</code>, <code>casars.tasks.immath</code></td>
 <td>broader CASA expression grammar beyond tutorial binary operations and scalar multiples of <code>IM0</code></td>
 <td>CASA image products</td>
 <td>breadth timing</td>

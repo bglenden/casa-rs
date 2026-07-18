@@ -1111,10 +1111,9 @@ confirmation remain outside the saved science parameters.</p>
 <code>parameters.last_successful(...)</code>, and <code>parameters.load(path, ...)</code>.
 <code>TaskParameters</code> supports mapping-style updates, <code>reset(name)</code>, <code>reload()</code>,
 <code>save(path)</code>, and <code>run()</code>. <code>tasks.run()</code> accepts every catalog task and routes
-through the common runner; existing protocol-specific convenience modules
-remain available for their specialized result APIs. Catalog-generated
-CASA-named keyword wrappers and type stubs are available under
-<code>casars.tasks.catalog</code> without copying defaults into Python signatures.</p>
+through the common runner. Catalog-generated CASA-named keyword wrappers and
+type stubs are available directly under <code>casars.tasks</code> without copying defaults
+into Python signatures; there is no second provider-specific task API.</p>
 <p>Session profiles for <code>imexplore</code> and <code>tablebrowser</code> use the same constructors
 and validation model. Open them with <code>sessions.open(surface, parameters=p)</code> or
 <code>SessionParameters.open()</code>. Their live command/event streams remain session

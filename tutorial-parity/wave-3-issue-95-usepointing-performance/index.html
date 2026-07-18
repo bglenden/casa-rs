@@ -788,7 +788,7 @@ POINTING-table direction resolver just to infer that the run is standard MFS.</p
 <li>CLI: <code>--usepointing</code> and <code>--use-pointing</code></li>
 <li>JSON task contract: <code>use_pointing: bool</code>, default <code>false</code></li>
 <li>UI schema: <code>usepointing</code> advanced toggle, default <code>false</code></li>
-<li>Python helper: <code>casars.tasks.imager.mfs(..., use_pointing=False)</code></li>
+<li>Python helper: <code>casars.tasks.imager(..., usepointing=False)</code></li>
 </ul>
 <p>When <code>usepointing=true</code>, casa-rs preserves the previous POINTING-based antenna
 direction resolution. When it is <code>false</code>, POINTING data is ignored for row

@@ -1338,7 +1338,7 @@
 <a href=#1338 id=1338 data-nosnippet>1338</a>        );
 <a href=#1339 id=1339 data-nosnippet>1339</a>
 <a href=#1340 id=1340 data-nosnippet>1340</a>        <span class="kw">let </span>saved = render_sparse_profile(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>resolved.values).unwrap();
-<a href=#1341 id=1341 data-nosnippet>1341</a>        <span class="macro">assert!</span>(saved.contains(<span class="string">"contract = 2"</span>));
+<a href=#1341 id=1341 data-nosnippet>1341</a>        <span class="macro">assert!</span>(saved.contains(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"contract = {}"</span>, bundle.surface.contract_version())));
 <a href=#1342 id=1342 data-nosnippet>1342</a>        <span class="macro">assert!</span>(saved.contains(<span class="string">"imsize = [256, 256]"</span>));
 <a href=#1343 id=1343 data-nosnippet>1343</a>        <span class="macro">assert!</span>(!saved.contains(<span class="string">"pixels"</span>));
 <a href=#1344 id=1344 data-nosnippet>1344</a>        <span class="macro">assert!</span>(!saved.contains(<span class="string">"cell ="</span>));
@@ -1373,7 +1373,7 @@
 <a href=#1373 id=1373 data-nosnippet>1373</a>        );
 <a href=#1374 id=1374 data-nosnippet>1374</a>
 <a href=#1375 id=1375 data-nosnippet>1375</a>        <span class="kw">let </span>saved = render_sparse_profile(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>resolved.values).unwrap();
-<a href=#1376 id=1376 data-nosnippet>1376</a>        <span class="macro">assert!</span>(saved.contains(<span class="string">"contract = 2"</span>));
+<a href=#1376 id=1376 data-nosnippet>1376</a>        <span class="macro">assert!</span>(saved.contains(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"contract = {}"</span>, bundle.surface.contract_version())));
 <a href=#1377 id=1377 data-nosnippet>1377</a>        <span class="macro">assert!</span>(saved.contains(<span class="string">"archivefiles = [\"raw/one.exp\"]"</span>));
 <a href=#1378 id=1378 data-nosnippet>1378</a>    }
 <a href=#1379 id=1379 data-nosnippet>1379</a>
@@ -1400,7 +1400,7 @@
 <a href=#1400 id=1400 data-nosnippet>1400</a>            ParameterValue::String(<span class="string">"17"</span>.into())
 <a href=#1401 id=1401 data-nosnippet>1401</a>        );
 <a href=#1402 id=1402 data-nosnippet>1402</a>        <span class="kw">let </span>saved = render_sparse_profile(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>resolved.values).unwrap();
-<a href=#1403 id=1403 data-nosnippet>1403</a>        <span class="macro">assert!</span>(saved.contains(<span class="string">"contract = 3"</span>));
+<a href=#1403 id=1403 data-nosnippet>1403</a>        <span class="macro">assert!</span>(saved.contains(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"contract = {}"</span>, bundle.surface.contract_version())));
 <a href=#1404 id=1404 data-nosnippet>1404</a>        <span class="macro">assert!</span>(saved.contains(<span class="string">"flag_panel = \"17\""</span>));
 <a href=#1405 id=1405 data-nosnippet>1405</a>    }
 <a href=#1406 id=1406 data-nosnippet>1406</a>

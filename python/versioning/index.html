@@ -705,10 +705,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provider-protocol-compatibility" class="md-nav__link">
+  <a href="#task-runner-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Provider protocol compatibility
+        Task-runner compatibility
       
     </span>
   </a>
@@ -797,10 +797,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provider-protocol-compatibility" class="md-nav__link">
+  <a href="#task-runner-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Provider protocol compatibility
+        Task-runner compatibility
       
     </span>
   </a>
@@ -848,10 +848,12 @@ independent migration or default table.</p>
 <p><code>CASA_RS_STATE_DIR</code> redirects the managed root without changing workspace path
 resolution. Session surfaces use only <code>last.toml</code>. An explicit source profile
 is never overwritten without an explicit save.</p>
-<h2 id="provider-protocol-compatibility">Provider protocol compatibility<a class="headerlink" href="#provider-protocol-compatibility" title="Permanent link">&para;</a></h2>
-<p>Python task launch metadata comes from the provider-owned application catalog.
-An explicit <code>binary=</code> argument or module <code>configure(binary=...)</code> value selects
-that exact file. Otherwise <code>CASARS_LAUNCH_MODE</code> selects exactly one policy:</p>
+<h2 id="task-runner-compatibility">Task-runner compatibility<a class="headerlink" href="#task-runner-compatibility" title="Permanent link">&para;</a></h2>
+<p>Python has one task transport: every generated <code>casars.tasks.&lt;task&gt;</code> callable
+delegates to <code>casars run</code>, which resolves the provider through the canonical
+application catalog and <code>casa-task-runtime</code>. An explicit <code>binary=</code> argument
+selects the exact <code>casars</code> runner file. Otherwise <code>CASARS_LAUNCH_MODE</code> selects
+exactly one policy:</p>
 <ul>
 <li><code>installed_suite</code> (the default) uses the catalog entry's override variable,
   or the single path <code>&lt;CASARS_SUITE_ROOT&gt;/bin/&lt;executable&gt;</code>. Without an explicit
@@ -859,17 +861,11 @@ that exact file. Otherwise <code>CASARS_LAUNCH_MODE</code> selects exactly one p
 <li><code>development_workspace</code> uses the single path
   <code>&lt;CASARS_DEVELOPMENT_WORKSPACE&gt;/target/debug/&lt;executable&gt;</code>.</li>
 </ul>
-<p>A missing file is an error in the selected mode. Python does not inspect the
+<p>A missing runner is an error in the selected mode. Python does not inspect the
 current directory, package ancestors, neighboring build profiles, or <code>PATH</code>,
-and it never switches launch modes automatically.</p>
-<p>Before the first task execution for a resolved binary, the wrapper requires a matching protocol descriptor from <code>calibrate --protocol-info</code>.</p>
-<p>The current protocol contract is:</p>
-<ul>
-<li>protocol name: <code>casa_calibration_task</code></li>
-<li>protocol version: <code>1</code></li>
-<li>surface kind: <code>task</code></li>
-</ul>
-<p>If the binary reports a different protocol name or version, the Python wrapper raises immediately instead of attempting a best-effort invocation. This is the guard against version skew between the Python package and the task binary.</p>
+and it never switches launch modes automatically. The runner validates the
+provider contract and invocation before execution; Python does not maintain a
+second protocol descriptor, provider schema, or compatibility handshake.</p>
 <p>Release tags also build and publish Python package artifacts separately from the
 Rust binaries:</p>
 <ul>
@@ -880,7 +876,8 @@ Rust binaries:</p>
 <p>That means Python package compatibility has two layers:</p>
 <ol>
 <li>package-version compatibility with the published wheel or sdist</li>
-<li>runtime protocol compatibility with the resolved <code>calibrate</code> binary</li>
+<li>runtime contract compatibility with the resolved <code>casars</code> suite and its
+   catalog-owned providers</li>
 </ol>
 <p>The <code>casars.data</code> surface has its own narrower stability boundary in v1:</p>
 <ul>
