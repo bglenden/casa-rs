@@ -795,8 +795,8 @@
 
 <h1 id="standard-radio-astronomy-assistant-corpus">Standard Radio-Astronomy Assistant Corpus<a class="headerlink" href="#standard-radio-astronomy-assistant-corpus" title="Permanent link">&para;</a></h1>
 <p>Truth class: normative runtime and maintenance contract
-Last reality check: 2026-07-15
-Verification: <code>python3 scripts/check-assistant-corpus-inventory.py</code></p>
+Last reality check: 2026-07-18
+Verification: <code>python3 scripts/assistant-corpus-pack.py check</code></p>
 <h2 id="installed-baseline">Installed baseline<a class="headerlink" href="#installed-baseline" title="Permanent link">&para;</a></h2>
 <p><code>casars-mac</code> ships one versioned, read-only baseline resource pack. It is an app
 resource, not a project document and not a copy of the maintainer's
@@ -822,7 +822,7 @@ authorized bundling it on 2026-07-15; the durable authorization and selection
 are recorded in issue #420.</p>
 <h2 id="representation-and-provenance">Representation and provenance<a class="headerlink" href="#representation-and-provenance" title="Permanent link">&para;</a></h2>
 <p>The app bundles compact, normalized page/slide text rather than duplicating the
-source PDFs. <code>corpus-pack.json</code> schema v2 binds every included source to:</p>
+source PDFs. <code>corpus-pack.json</code> schema v3 binds every included source to:</p>
 <ul>
 <li>pack identity and version,</li>
 <li>original title and page/slide citation kind,</li>
@@ -870,13 +870,13 @@ are modest; no 128 MB or executable-location policy is inferred from them.</p>
 <h2 id="maintenance">Maintenance<a class="headerlink" href="#maintenance" title="Permanent link">&para;</a></h2>
 <p>Maintainers regenerate the inventory and compact pack from an audited Oracle
 checkout:</p>
-<div class="codehilite"><pre><span></span><code>python3<span class="w"> </span>scripts/export-assistant-corpus-inventory.py<span class="w"> </span><span class="se">\</span>
+<div class="codehilite"><pre><span></span><code>python3<span class="w"> </span>scripts/assistant-corpus-pack.py<span class="w"> </span>generate<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--oracle-root<span class="w"> </span>/path/to/RadioAstronomyOracle
-python3<span class="w"> </span>scripts/check-assistant-corpus-inventory.py
+python3<span class="w"> </span>scripts/assistant-corpus-pack.py<span class="w"> </span>check
 </code></pre></div>
 
-<p><code>--check</code> proves that the checkout-derived inventory and all compact page files
-match the committed pack. <code>scripts/audit-assistant-corpus-origins.py</code> is an
+<p>The <code>generate --check</code> form proves that the checkout-derived inventory and all
+compact page files match the committed pack. <code>scripts/assistant-corpus-pack.py audit</code> is an
 explicit networked maintainer audit; it is not an end-user startup action or a
 default offline gate. A new selection or changed source content requires a new
 pack version, regenerated digests, a fresh origin audit, representative visual
