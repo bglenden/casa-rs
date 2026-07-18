@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Shared machine-readable CLI schema for launcher-style frontends.
+//! Shared machine-readable presentation form for launcher-style frontends.
 
 use std::fmt::Write as _;
 
@@ -8,10 +8,10 @@ use casa_logging::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Machine-readable UI schema emitted by `--ui-schema`.
+/// Machine-readable presentation form projected from a canonical surface.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiCommandSchema {
-    /// Schema version for the `--ui-schema` payload itself.
+    /// Schema version for the projected presentation payload.
     pub schema_version: u32,
     /// Stable command identifier shared across aliases.
     pub command_id: String,
@@ -74,7 +74,7 @@ impl UiCommandSchema {
     }
 }
 
-/// Argument definition within the `--ui-schema` payload.
+/// Argument definition within the projected presentation payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiArgumentSchema {
     /// Stable argument identifier used by launchers and tests.
@@ -257,8 +257,6 @@ pub enum UiValueKind {
 pub enum UiActionKind {
     /// Render human-readable help.
     Help,
-    /// Emit the machine-readable UI schema.
-    UiSchema,
 }
 
 /// Structured-output contract for rich UI renderers.

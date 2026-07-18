@@ -83,9 +83,9 @@ use casa_ms::MeasurementSet;
 #[cfg(test)]
 use casa_ms::columns::time_columns::TimeColumn;
 use casa_ms::derived::engine::{MsCalEngine, resolve_field_phase_direction_j2000};
+use casa_ms::presentation::UiCommandSchema;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::spectral_selection::{CubeGridChannelContributions, CubeRowSpectralContributions};
-use casa_ms::ui_schema::UiCommandSchema;
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
     CubeSpectralSetup, SourcePartition, VisibilityBuffer, VisibilityBufferFillReport,
@@ -155,11 +155,11 @@ pub use task_contract::{
     ImagerProgressDeconvolution, ImagerProgressDetail, ImagerProgressDiagnostics,
     ImagerProgressEvent, ImagerProgressMemory, ImagerProgressMemoryCategory,
     ImagerProgressMsWindow, ImagerProgressOptions, ImagerProgressRuntime, ImagerProgressUvCoverage,
-    ImagerProgressUvPoint, ImagerProgressWork, ImagerProtocolInfo, ImagerRestoringBeamMode,
-    ImagerRunDiagnosticSummary, ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult,
-    ImagerSaveModel, ImagerSourceReadDiagnostic, ImagerSpectralMode, ImagerStageDiagnosticSummary,
-    ImagerTaskRequest, ImagerTaskResult, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
-    ImagerWTermMode, ImagerWeighting,
+    ImagerProgressUvPoint, ImagerProgressWork, ImagerRestoringBeamMode, ImagerRunDiagnosticSummary,
+    ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel,
+    ImagerSourceReadDiagnostic, ImagerSpectralMode, ImagerStageDiagnosticSummary,
+    ImagerTaskRequest, ImagerTaskResult, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode,
+    ImagerWeighting, imager_protocol_descriptor, imager_task_schema_bundle,
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -5258,48 +5258,6 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
 /// Run the imager CLI with already-split argument strings.
 pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(), String> {
     let args = args.into_iter().collect::<Vec<_>>();
-    if args
-        .iter()
-        .any(|arg| matches!(arg.to_str(), Some("--ui-schema")))
-    {
-        println!(
-            "{}",
-            command_schema("casars-imager")
-                .render_json_pretty()
-                .map_err(|error| format!("serialize ui schema: {error}"))?
-        );
-        return Ok(());
-    }
-    if args
-        .iter()
-        .any(|arg| matches!(arg.to_str(), Some("--json-schema")))
-    {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&ImagerTaskSchemaBundle::current())
-                .map_err(|error| format!("serialize imager task schema: {error}"))?
-        );
-        return Ok(());
-    }
-    if args
-        .iter()
-        .any(|arg| matches!(arg.to_str(), Some("--protocol-info")))
-    {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&ImagerProtocolInfo::current())
-                .map_err(|error| format!("serialize imager protocol info: {error}"))?
-        );
-        return Ok(());
-    }
-    if args
-        .iter()
-        .any(|arg| matches!(arg.to_str(), Some("-h" | "--help")))
-    {
-        println!("{}", render_help(&command_schema("casars-imager")));
-        return Ok(());
-    }
-
     let (progress_jsonl_path, filtered_args) = extract_string_option(&args, "--progress-jsonl")?;
     let (progress_detail, filtered_args) =
         extract_string_option(&filtered_args, "--progress-detail")?;
@@ -5307,39 +5265,48 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         .as_deref()
         .map(str::parse::<ImagerProgressDetail>)
         .transpose()?;
-    let (json_run, filtered_args) = extract_string_option(&filtered_args, "--json-run")?;
-    if let Some(source) = json_run {
-        let request = ImagerTaskRequest::read_from_source(&source)?;
-        let progress_options = match &request {
-            ImagerTaskRequest::Run(request) => request.progress.clone(),
-        };
-        let progress_options = if progress_jsonl_path.is_some() || progress_detail.is_some() {
-            let mut options = progress_options.unwrap_or_else(|| ImagerProgressOptions {
-                enabled: true,
-                ..Default::default()
-            });
-            if let Some(progress_jsonl_path) = progress_jsonl_path.as_ref() {
-                options.enabled = true;
-                options.telemetry_jsonl_path = Some(PathBuf::from(progress_jsonl_path));
-            }
-            if let Some(progress_detail) = progress_detail {
-                options.enabled = true;
-                options.detail = progress_detail;
-            }
-            Some(options)
-        } else {
-            progress_options
-        };
-        let _progress_guard = match progress_options.as_ref() {
-            Some(options) => begin_imager_progress(options)?,
-            None => None,
-        };
-        let result = execute_json_task_request_with_progress(&request)?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&result)
-                .map_err(|error| format!("serialize imager task result: {error}"))?
-        );
+    let host = casa_task_runtime::TaskCliHost::new(
+        imager_task_schema_bundle(),
+        |request: ImagerTaskRequest| {
+            let progress_options = match &request {
+                ImagerTaskRequest::Run(request) => request.progress.clone(),
+            };
+            let progress_options = if progress_jsonl_path.is_some() || progress_detail.is_some() {
+                let mut options = progress_options.unwrap_or_else(|| ImagerProgressOptions {
+                    enabled: true,
+                    ..Default::default()
+                });
+                if let Some(progress_jsonl_path) = progress_jsonl_path.as_ref() {
+                    options.enabled = true;
+                    options.telemetry_jsonl_path = Some(PathBuf::from(progress_jsonl_path));
+                }
+                if let Some(progress_detail) = progress_detail {
+                    options.enabled = true;
+                    options.detail = progress_detail;
+                }
+                Some(options)
+            } else {
+                progress_options
+            };
+            let _progress_guard = match progress_options.as_ref() {
+                Some(options) => begin_imager_progress(options)?,
+                None => None,
+            };
+            execute_json_task_request_with_progress(&request)
+        },
+    );
+    if let Some(output) = host
+        .dispatch(&filtered_args)
+        .map_err(|error| error.to_string())?
+    {
+        println!("{output}");
+        return Ok(());
+    }
+    if filtered_args
+        .iter()
+        .any(|arg| matches!(arg.to_str(), Some("-h" | "--help")))
+    {
+        println!("{}", render_help(&command_schema("casars-imager")));
         return Ok(());
     }
 
@@ -5577,8 +5544,9 @@ fn extract_string_option(
 
 fn render_help(schema: &UiCommandSchema) -> String {
     format!(
-        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical imager task JSON schema\n  --protocol-info          Emit the imager task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON ImagerTaskRequest from SOURCE or - for stdin\n  --progress-jsonl PATH    Write low-rate progress telemetry to newline-delimited JSON side channel\n  --progress true|false    Emit low-rate launcher progress telemetry on stderr\n  --progress-detail MODE   Set progress detail: basic or diagnostic\n",
-        schema.render_help()
+        "{}\n\n{}\n  --progress-jsonl PATH    Write low-rate progress telemetry to newline-delimited JSON side channel\n  --progress true|false    Emit low-rate launcher progress telemetry on stderr\n  --progress-detail MODE   Set progress detail: basic or diagnostic\n",
+        schema.render_help(),
+        casa_task_runtime::task_cli_machine_help("ImagerTaskRequest")
     )
 }
 
@@ -46924,7 +46892,6 @@ Options:
   --imaging-prepare-workers N
                             override shared bounded source-stream prepare worker count
   --no-preview-pngs         skip writing PNG preview sidecars
-  --ui-schema               emit the launcher/TUI schema
   --json-schema             emit the canonical imager task JSON schema
   --protocol-info           emit the imager task protocol descriptor
   --json-run <SOURCE>       execute one JSON ImagerTaskRequest from SOURCE or - for stdin
@@ -57262,7 +57229,6 @@ mod tests {
     #[test]
     fn render_help_mentions_json_protocol_surface() {
         let help = render_help(&command_schema("casars-imager-test"));
-        assert!(help.contains("--ui-schema"));
         assert!(help.contains("--json-schema"));
         assert!(help.contains("--protocol-info"));
         assert!(help.contains("--json-run <SOURCE>"));
@@ -57273,10 +57239,6 @@ mod tests {
     #[test]
     fn run_with_cli_args_handles_meta_output_flags() {
         for args in [
-            vec![
-                OsString::from("casars-imager"),
-                OsString::from("--ui-schema"),
-            ],
             vec![
                 OsString::from("casars-imager"),
                 OsString::from("--json-schema"),

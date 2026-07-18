@@ -10,9 +10,6 @@ use crate::{
 /// CLI machine-action projections derived from the canonical contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProviderCliMachineActions {
-    /// Legacy compatibility view used by the current launcher/TUI integration.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ui_schema: Option<String>,
     /// Canonical schema bundle action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub json_schema: Option<String>,
@@ -40,30 +37,13 @@ pub struct ProviderProjectionMetadata {
     /// CLI projection metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cli: Option<ProviderCliProjection>,
-    /// Legacy `--ui-schema` compatibility view when the surface still exposes it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ui_schema: Option<JsonValue>,
     /// Python binding projection metadata for direct in-process object surfaces.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub python: Option<JsonValue>,
 }
 
-/// Annotations noting that the legacy UI schema is a derived compatibility view.
-pub fn derived_ui_schema_annotations() -> JsonValue {
-    json!({
-        "ui_schema": {
-            "status": "derived_compatibility_view"
-        }
-    })
-}
-
-/// Project a canonical surface definition into the legacy launcher form shape.
-///
-/// This is a one-way compatibility projection. Parameter names, types,
-/// defaults, concepts, and private provider mappings remain authoritative in
-/// the embedded [`SurfaceContractBundle`]. Provider crates must not carry a
-/// separately authored UI parameter schema.
-pub fn project_ui_schema(bundle: &SurfaceContractBundle) -> JsonValue {
+/// Project a canonical surface definition into a presentation form.
+pub fn project_ui_form(bundle: &SurfaceContractBundle) -> JsonValue {
     let surface = &bundle.surface;
     let mut bindings = surface.bindings().iter().collect::<Vec<_>>();
     bindings.sort_by_key(|binding| binding.order);
@@ -80,19 +60,6 @@ pub fn project_ui_schema(bundle: &SurfaceContractBundle) -> JsonValue {
         "required": false,
         "default": null,
         "help": "Show help generated from the canonical surface definition.",
-        "group": "Meta",
-        "advanced": true,
-        "hidden_in_tui": false
-    }));
-    arguments.push(json!({
-        "id": "ui_schema",
-        "label": "UI Schema",
-        "order": 1_000_001,
-        "parser": {"kind": "action", "flags": ["--ui-schema"], "action": "ui_schema"},
-        "value_kind": "none",
-        "required": false,
-        "default": null,
-        "help": "Show the derived UI projection of the canonical surface definition.",
         "group": "Meta",
         "advanced": true,
         "hidden_in_tui": false

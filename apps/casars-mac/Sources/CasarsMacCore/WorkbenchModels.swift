@@ -334,103 +334,79 @@ public enum TaskRunState: String, Codable, Equatable {
     case cancelled
 }
 
-public struct TaskCatalogEnvelope: Codable, Equatable {
+public struct ApplicationCatalogEnvelope: Codable, Equatable {
     public var schemaVersion: UInt64
-    public var tasks: [TaskCatalogEntry]
+    public var applications: [ApplicationCatalogEntry]
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
-        case tasks
+        case applications
     }
 }
 
-public struct TaskCatalogEntry: Codable, Equatable, Identifiable {
+public struct ApplicationCatalogEntry: Codable, Equatable, Identifiable {
     public var id: String
+    public var kind: String
     public var category: String
     public var displayName: String
-    public var binaryName: String
+    public var executable: String
     public var cargoPackage: String
     public var overrideEnv: String
     public var shellKind: String
     public var interaction: String
     public var browserKind: String?
     public var datasetKinds: [String]
-    public var schemaSource: String
     public var showInTUI: Bool
     public var showInSwift: Bool
     public var includeInSuite: Bool
 
+    public init(
+        id: String,
+        kind: String = "task",
+        category: String,
+        displayName: String,
+        executable: String,
+        cargoPackage: String,
+        overrideEnv: String,
+        shellKind: String,
+        interaction: String,
+        browserKind: String?,
+        datasetKinds: [String],
+        showInTUI: Bool,
+        showInSwift: Bool,
+        includeInSuite: Bool
+    ) {
+        self.id = id
+        self.kind = kind
+        self.category = category
+        self.displayName = displayName
+        self.executable = executable
+        self.cargoPackage = cargoPackage
+        self.overrideEnv = overrideEnv
+        self.shellKind = shellKind
+        self.interaction = interaction
+        self.browserKind = browserKind
+        self.datasetKinds = datasetKinds
+        self.showInTUI = showInTUI
+        self.showInSwift = showInSwift
+        self.includeInSuite = includeInSuite
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
+        case kind
         case category
         case displayName = "display_name"
-        case binaryName = "binary_name"
+        case executable
         case cargoPackage = "cargo_package"
         case overrideEnv = "override_env"
         case shellKind = "shell_kind"
         case interaction
         case browserKind = "browser_kind"
         case datasetKinds = "dataset_kinds"
-        case schemaSource = "schema_source"
         case showInTUI = "show_in_tui"
         case showInSwift = "show_in_swift"
         case includeInSuite = "include_in_suite"
-    }
-}
-
-public struct TaskExecutionMatrixEnvelope: Codable, Equatable {
-    public var schemaVersion: UInt64
-    public var generatedFor: String
-    public var scopeNote: String
-    public var rows: [TaskExecutionMatrixRow]
-
-    enum CodingKeys: String, CodingKey {
-        case schemaVersion = "schema_version"
-        case generatedFor = "generated_for"
-        case scopeNote = "scope_note"
-        case rows
-    }
-}
-
-public struct TaskExecutionMatrixRow: Codable, Equatable, Identifiable {
-    public var id: String { taskID }
-
-    public var taskID: String
-    public var displayName: String
-    public var category: String
-    public var catalogPresence: String
-    public var binaryName: String
-    public var cargoPackage: String
-    public var datasetKinds: [String]
-    public var suiteInstall: String
-    public var localInstall: String
-    public var releaseInstall: String
-    public var tuiStatus: String
-    public var guiStatus: String
-    public var optionSource: String
-    public var fullControlStatus: String
-    public var mutationClass: String
-    public var confirmation: String
-    public var smokeEvidence: String
-
-    enum CodingKeys: String, CodingKey {
-        case taskID = "task_id"
-        case displayName = "display_name"
-        case category
-        case catalogPresence = "catalog_presence"
-        case binaryName = "binary_name"
-        case cargoPackage = "cargo_package"
-        case datasetKinds = "dataset_kinds"
-        case suiteInstall = "suite_install"
-        case localInstall = "local_install"
-        case releaseInstall = "release_install"
-        case tuiStatus = "tui_status"
-        case guiStatus = "gui_status"
-        case optionSource = "option_source"
-        case fullControlStatus = "full_control_status"
-        case mutationClass = "mutation_class"
-        case confirmation
-        case smokeEvidence = "smoke_evidence"
     }
 }
 
@@ -2758,8 +2734,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var jobs: [String: WorkbenchJob]
     public var activeJobIDsByTab: [String: String]
     public var runProductGroups: [RunProductGroup]
-    public var taskCatalog: [TaskCatalogEntry]
-    public var taskExecutionMatrixRows: [TaskExecutionMatrixRow]
+    public var applicationCatalog: [ApplicationCatalogEntry]
     /// Rust-backed portable learner tutorials for the open project.
     package var tutorialProjects: [TutorialProjectState]
     /// Exact Rust-issued plan awaiting explicit user approval.
@@ -2810,8 +2785,7 @@ public struct WorkbenchState: Codable, Equatable {
         jobs: [String: WorkbenchJob] = [:],
         activeJobIDsByTab: [String: String] = [:],
         runProductGroups: [RunProductGroup] = [],
-        taskCatalog: [TaskCatalogEntry] = [],
-        taskExecutionMatrixRows: [TaskExecutionMatrixRow] = [],
+        applicationCatalog: [ApplicationCatalogEntry] = [],
         activeTaskID: String = "imager",
         taskUISchemas: [String: TaskUISchema] = [:],
         parameterSessions: [String: SurfaceParameterSession] = [:],
@@ -2843,8 +2817,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.jobs = jobs
         self.activeJobIDsByTab = activeJobIDsByTab
         self.runProductGroups = runProductGroups
-        self.taskCatalog = taskCatalog
-        self.taskExecutionMatrixRows = taskExecutionMatrixRows
+        self.applicationCatalog = applicationCatalog
         tutorialProjects = []
         pendingTutorialAcquisitionPlan = nil
         scientificNotebooks = nil
@@ -3115,7 +3088,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var taskDiagnostics: [String]
     public var taskOutputPaths: [String]
     public var taskImagerProgress: ImagerProgressSnapshot?
-    public var taskCatalog: [TaskCatalogEntry]
+    public var applicationCatalog: [ApplicationCatalogEntry]
     public var aiProposalStates: [String: AIProposalState]
     public var pythonOwner: PythonOwner
     public var measurementSetPlots: [String: DebugMeasurementSetPlotSnapshot]
@@ -3162,7 +3135,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         taskDiagnostics = state.taskRun.diagnostics
         taskOutputPaths = state.taskRun.outputPaths
         taskImagerProgress = state.taskRun.imagerProgress
-        taskCatalog = state.taskCatalog
+        applicationCatalog = state.applicationCatalog
         aiProposalStates = Dictionary(
             uniqueKeysWithValues: state.aiProposals.map { ($0.id, $0.state) }
         )

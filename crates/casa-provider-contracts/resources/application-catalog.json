@@ -1,0 +1,788 @@
+{
+  "schema_version": 1,
+  "applications": [
+    {
+      "id": "msexplore",
+      "kind": "task",
+      "launch": {
+        "executable": "msexplore",
+        "cargo_package": "casa-ms",
+        "override_env": "CASARS_MSEXPLORE_BIN"
+      },
+      "shell_kind": "inspect",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "calibrate",
+      "kind": "task",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set",
+        "calibration_table"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "importvla",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-importvla",
+        "cargo_package": "casars-importvla",
+        "override_env": "CASARS_IMPORTVLA_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "archive"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "imager",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-imager",
+        "cargo_package": "casars-imager",
+        "override_env": "CASARS_IMAGER_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "simobserve",
+      "kind": "task",
+      "launch": {
+        "executable": "simobserve",
+        "cargo_package": "casa-ms",
+        "override_env": "CASARS_SIMOBSERVE_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image",
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": false
+    },
+    {
+      "id": "tablebrowser",
+      "kind": "task",
+      "launch": {
+        "executable": "tablebrowser",
+        "cargo_package": "casa-tables",
+        "override_env": "CASARS_TABLEBROWSER_BIN"
+      },
+      "shell_kind": "browser",
+      "interaction": "browser_session",
+      "browser_kind": "table",
+      "dataset_kinds": [
+        "table",
+        "measurement_set",
+        "calibration_table"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": false
+    },
+    {
+      "id": "imexplore",
+      "kind": "task",
+      "launch": {
+        "executable": "imexplore",
+        "cargo_package": "casa-images",
+        "override_env": "CASARS_IMEXPLORE_BIN"
+      },
+      "shell_kind": "browser",
+      "interaction": "browser_session",
+      "browser_kind": "image",
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "imhead",
+      "kind": "task",
+      "launch": {
+        "executable": "imexplore",
+        "cargo_package": "casa-images",
+        "override_env": "CASARS_IMEXPLORE_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "imstat",
+      "kind": "task",
+      "launch": {
+        "executable": "imexplore",
+        "cargo_package": "casa-images",
+        "override_env": "CASARS_IMEXPLORE_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "immoments",
+      "kind": "task",
+      "launch": {
+        "executable": "immoments",
+        "cargo_package": "casa-images",
+        "override_env": "CASARS_IMMOMENTS_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "exportfits",
+      "kind": "task",
+      "launch": {
+        "executable": "exportfits",
+        "cargo_package": "casa-images",
+        "override_env": "CASARS_EXPORTFITS_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "mstransform",
+      "kind": "task",
+      "launch": {
+        "executable": "mstransform",
+        "cargo_package": "casa-ms",
+        "override_env": "CASARS_MSTRANSFORM_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "split",
+      "kind": "task",
+      "launch": {
+        "executable": "mstransform",
+        "cargo_package": "casa-ms",
+        "override_env": "CASARS_MSTRANSFORM_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "uvcontsub",
+      "kind": "task",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "applycal",
+      "kind": "task",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set",
+        "calibration_table"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "gaincal",
+      "kind": "task",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "bandpass",
+      "kind": "task",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "fluxscale",
+      "kind": "task",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "calibration_table"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "gencal",
+      "kind": "task",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "plotms",
+      "kind": "task",
+      "launch": {
+        "executable": "msexplore",
+        "cargo_package": "casa-ms",
+        "override_env": "CASARS_MSEXPLORE_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "plotcal",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "calibration_table",
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "flagdata",
+      "kind": "task",
+      "launch": {
+        "executable": "flagdata",
+        "cargo_package": "casa-ms",
+        "override_env": "CASARS_FLAGDATA_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "flagmanager",
+      "kind": "task",
+      "launch": {
+        "executable": "flagmanager",
+        "cargo_package": "casa-ms",
+        "override_env": "CASARS_FLAGMANAGER_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "imcollapse",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "imfit",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "impbcor",
+      "kind": "task",
+      "launch": {
+        "executable": "impbcor",
+        "cargo_package": "casa-images",
+        "override_env": "CASA_RS_IMPBCOR_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "widebandpbcor",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image",
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "imcontsub",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "impv",
+      "kind": "task",
+      "launch": {
+        "executable": "impv",
+        "cargo_package": "casa-images",
+        "override_env": "CASARS_IMPV_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "imsubimage",
+      "kind": "task",
+      "launch": {
+        "executable": "imsubimage",
+        "cargo_package": "casa-images",
+        "override_env": "CASARS_IMSUBIMAGE_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "immath",
+      "kind": "task",
+      "launch": {
+        "executable": "immath",
+        "cargo_package": "casa-images",
+        "override_env": "CASARS_IMMATH_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "imregrid",
+      "kind": "task",
+      "launch": {
+        "executable": "imregrid",
+        "cargo_package": "casa-images",
+        "override_env": "CASARS_IMREGRID_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "feather",
+      "kind": "task",
+      "launch": {
+        "executable": "feather",
+        "cargo_package": "casa-images",
+        "override_env": "CASARS_FEATHER_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "importfits",
+      "kind": "task",
+      "launch": {
+        "executable": "importfits",
+        "cargo_package": "casa-images",
+        "override_env": "CASARS_IMPORTFITS_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image",
+        "fits"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "concat",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "statwt",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "hanningsmooth",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "clearcal",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "delmod",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "ft",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set",
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "simanalyze",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "measurement_set",
+        "image"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "simalma",
+      "kind": "task",
+      "launch": {
+        "executable": "casars-casa-task",
+        "cargo_package": "casars",
+        "override_env": "CASARS_CASA_TASK_BIN"
+      },
+      "shell_kind": "workflow",
+      "interaction": "one_shot",
+      "browser_kind": null,
+      "dataset_kinds": [
+        "image",
+        "measurement_set"
+      ],
+      "show_in_tui": true,
+      "show_in_swift": true,
+      "include_in_suite": true
+    },
+    {
+      "id": "casars",
+      "kind": "launcher",
+      "launch": {
+        "executable": "casars",
+        "cargo_package": "casars",
+        "override_env": "CASARS_BIN"
+      },
+      "shell_kind": "launcher",
+      "interaction": "launcher",
+      "browser_kind": null,
+      "dataset_kinds": [],
+      "show_in_tui": false,
+      "show_in_swift": false,
+      "include_in_suite": true
+    }
+  ]
+}

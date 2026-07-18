@@ -545,6 +545,380 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 }
 
 
+
+
+/**
+ * Rust-owned session persistence lifecycle used by generated frontends.
+ */
+public protocol ParameterSessionLifecycleProtocol: AnyObject, Sendable {
+
+    /**
+     * Queue one backend-accepted durable session change.
+     */
+    func acceptedDurableChange(surfaceId: String, workspace: String, valuesJson: String, enabled: Bool) throws  -> [String]
+
+    /**
+     * Flush one destination on clean session close.
+     */
+    func flush(surfaceId: String, workspace: String)  -> [String]
+
+    /**
+     * Flush every destination on clean frontend shutdown.
+     */
+    func flushAll()  -> [String]
+
+    /**
+     * Record one successfully opened session root.
+     */
+    func opened(surfaceId: String, workspace: String, valuesJson: String, enabled: Bool) throws  -> [String]
+
+    /**
+     * Drain any asynchronous persistence warnings.
+     */
+    func takeWarnings()  -> [String]
+
+}
+/**
+ * Rust-owned session persistence lifecycle used by generated frontends.
+ */
+open class ParameterSessionLifecycle: ParameterSessionLifecycleProtocol, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_casars_frontend_services_fn_clone_parametersessionlifecycle(self.pointer, $0) }
+    }
+public convenience init() {
+    let pointer =
+        try! rustCall() {
+    uniffi_casars_frontend_services_fn_constructor_parametersessionlifecycle_new($0
+    )
+}
+    self.init(unsafeFromRawPointer: pointer)
+}
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_casars_frontend_services_fn_free_parametersessionlifecycle(pointer, $0) }
+    }
+
+
+
+
+    /**
+     * Queue one backend-accepted durable session change.
+     */
+open func acceptedDurableChange(surfaceId: String, workspace: String, valuesJson: String, enabled: Bool)throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_method_parametersessionlifecycle_accepted_durable_change(self.uniffiClonePointer(),
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(workspace),
+        FfiConverterString.lower(valuesJson),
+        FfiConverterBool.lower(enabled),$0
+    )
+})
+}
+
+    /**
+     * Flush one destination on clean session close.
+     */
+open func flush(surfaceId: String, workspace: String) -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_casars_frontend_services_fn_method_parametersessionlifecycle_flush(self.uniffiClonePointer(),
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(workspace),$0
+    )
+})
+}
+
+    /**
+     * Flush every destination on clean frontend shutdown.
+     */
+open func flushAll() -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_casars_frontend_services_fn_method_parametersessionlifecycle_flush_all(self.uniffiClonePointer(),$0
+    )
+})
+}
+
+    /**
+     * Record one successfully opened session root.
+     */
+open func opened(surfaceId: String, workspace: String, valuesJson: String, enabled: Bool)throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_method_parametersessionlifecycle_opened(self.uniffiClonePointer(),
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(workspace),
+        FfiConverterString.lower(valuesJson),
+        FfiConverterBool.lower(enabled),$0
+    )
+})
+}
+
+    /**
+     * Drain any asynchronous persistence warnings.
+     */
+open func takeWarnings() -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_casars_frontend_services_fn_method_parametersessionlifecycle_take_warnings(self.uniffiClonePointer(),$0
+    )
+})
+}
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeParameterSessionLifecycle: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = ParameterSessionLifecycle
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> ParameterSessionLifecycle {
+        return ParameterSessionLifecycle(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: ParameterSessionLifecycle) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ParameterSessionLifecycle {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: ParameterSessionLifecycle, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeParameterSessionLifecycle_lift(_ pointer: UnsafeMutableRawPointer) throws -> ParameterSessionLifecycle {
+    return try FfiConverterTypeParameterSessionLifecycle.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeParameterSessionLifecycle_lower(_ value: ParameterSessionLifecycle) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeParameterSessionLifecycle.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Rust-owned task-attempt persistence lifecycle used by generated frontends.
+ */
+public protocol ParameterTaskLifecycleProtocol: AnyObject, Sendable {
+
+    /**
+     * Complete an attempt, promoting its captured snapshot only on success.
+     */
+    func afterCompletion(attemptId: String, successful: Bool)  -> [String]
+
+    /**
+     * Capture and persist the exact validated snapshot immediately before execution.
+     */
+    func beforeExecution(attemptId: String, surfaceId: String, workspace: String, valuesJson: String, enabled: Bool) throws  -> [String]
+
+}
+/**
+ * Rust-owned task-attempt persistence lifecycle used by generated frontends.
+ */
+open class ParameterTaskLifecycle: ParameterTaskLifecycleProtocol, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_casars_frontend_services_fn_clone_parametertasklifecycle(self.pointer, $0) }
+    }
+public convenience init() {
+    let pointer =
+        try! rustCall() {
+    uniffi_casars_frontend_services_fn_constructor_parametertasklifecycle_new($0
+    )
+}
+    self.init(unsafeFromRawPointer: pointer)
+}
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_casars_frontend_services_fn_free_parametertasklifecycle(pointer, $0) }
+    }
+
+
+
+
+    /**
+     * Complete an attempt, promoting its captured snapshot only on success.
+     */
+open func afterCompletion(attemptId: String, successful: Bool) -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_casars_frontend_services_fn_method_parametertasklifecycle_after_completion(self.uniffiClonePointer(),
+        FfiConverterString.lower(attemptId),
+        FfiConverterBool.lower(successful),$0
+    )
+})
+}
+
+    /**
+     * Capture and persist the exact validated snapshot immediately before execution.
+     */
+open func beforeExecution(attemptId: String, surfaceId: String, workspace: String, valuesJson: String, enabled: Bool)throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_method_parametertasklifecycle_before_execution(self.uniffiClonePointer(),
+        FfiConverterString.lower(attemptId),
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(workspace),
+        FfiConverterString.lower(valuesJson),
+        FfiConverterBool.lower(enabled),$0
+    )
+})
+}
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeParameterTaskLifecycle: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = ParameterTaskLifecycle
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> ParameterTaskLifecycle {
+        return ParameterTaskLifecycle(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: ParameterTaskLifecycle) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ParameterTaskLifecycle {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: ParameterTaskLifecycle, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeParameterTaskLifecycle_lift(_ pointer: UnsafeMutableRawPointer) throws -> ParameterTaskLifecycle {
+    return try FfiConverterTypeParameterTaskLifecycle.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeParameterTaskLifecycle_lower(_ value: ParameterTaskLifecycle) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeParameterTaskLifecycle.lower(value)
+}
+
+
+
+
 public struct DatasetProbe {
     public var id: String
     public var name: String
@@ -3897,6 +4271,12 @@ fileprivate struct FfiConverterSequenceTypePlotSeriesMetadata: FfiConverterRustB
         return seq
     }
 }
+public func applicationCatalogJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_application_catalog_json($0
+    )
+})
+}
 /**
  * List the provider-neutral visible conversations persisted for one project.
  */
@@ -4150,6 +4530,16 @@ public func parameterDefaultsJson(surfaceId: String)throws  -> String  {
 })
 }
 /**
+ * Project a canonical task or session definition into the launcher form shape.
+ */
+public func parameterFormJson(surfaceId: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_form_json(
+        FfiConverterString.lower(surfaceId),$0
+    )
+})
+}
+/**
  * Load Last or Last Successful from the managed store, if present.
  */
 public func parameterLastJson(surfaceId: String, workspace: String, successful: Bool)throws  -> String?  {
@@ -4262,29 +4652,6 @@ public func parameterSurfaceDefinitionJson(surfaceId: String)throws  -> String  
     )
 })
 }
-/**
- * Project a canonical task or session definition into the launcher UI schema shape.
- */
-public func parameterUiSchemaJson(surfaceId: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_ui_schema_json(
-        FfiConverterString.lower(surfaceId),$0
-    )
-})
-}
-/**
- * Explicitly write Last or Last Successful for a validated resolved value set.
- */
-public func parameterWriteLastJson(surfaceId: String, workspace: String, valuesJson: String, successful: Bool)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_parameter_write_last_json(
-        FfiConverterString.lower(surfaceId),
-        FfiConverterString.lower(workspace),
-        FfiConverterString.lower(valuesJson),
-        FfiConverterBool.lower(successful),$0
-    )
-})
-}
 public func probeMeasurementSetTimeRange(datasetPath: String)throws  -> MeasurementSetTimeRangeProbe  {
     return try  FfiConverterTypeMeasurementSetTimeRangeProbe_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_probe_measurement_set_time_range(
@@ -4313,32 +4680,10 @@ public func probeProject(path: String)throws  -> ProjectProbe  {
     )
 })
 }
-public func taskCatalogJson()throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_task_catalog_json($0
-    )
-})
-}
 public func taskContextOptionsJson(datasetPath: String)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_task_context_options_json(
         FfiConverterString.lower(datasetPath),$0
-    )
-})
-}
-public func taskExecutionMatrixJson()throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_task_execution_matrix_json($0
-    )
-})
-}
-/**
- * Compatibility entrypoint for task launchers; delegates to the canonical projection.
- */
-public func taskUiSchemaJson(taskId: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_task_ui_schema_json(
-        FfiConverterString.lower(taskId),$0
     )
 })
 }
@@ -4472,6 +4817,9 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_casars_frontend_services_checksum_func_application_catalog_json() != 28610) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_casars_frontend_services_checksum_func_assistant_conversations_json() != 59160) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4553,6 +4901,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_parameter_defaults_json() != 55005) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_form_json() != 42757) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_casars_frontend_services_checksum_func_parameter_last_json() != 64934) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4583,12 +4934,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_parameter_surface_definition_json() != 4630) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_ui_schema_json() != 43699) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_parameter_write_last_json() != 32737) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_casars_frontend_services_checksum_func_probe_measurement_set_time_range() != 14615) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4601,16 +4946,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_probe_project() != 9335) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_task_catalog_json() != 57208) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_casars_frontend_services_checksum_func_task_context_options_json() != 343) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_task_execution_matrix_json() != 33299) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_task_ui_schema_json() != 63431) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_tutorial_advance_acquisition_json() != 4234) {
@@ -4650,6 +4986,33 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_tutorial_template_json() != 59443) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_accepted_durable_change() != 38748) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_flush() != 14560) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_flush_all() != 3951) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_opened() != 48722) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_method_parametersessionlifecycle_take_warnings() != 14397) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_method_parametertasklifecycle_after_completion() != 64932) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_method_parametertasklifecycle_before_execution() != 26659) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_constructor_parametersessionlifecycle_new() != 9529) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_constructor_parametertasklifecycle_new() != 47930) {
         return InitializationResult.apiChecksumMismatch
     }
 

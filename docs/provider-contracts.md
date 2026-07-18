@@ -150,6 +150,33 @@ should contain at least:
 The semantic layer is authoritative. Annotations and projections may add
 presentation or mapping metadata, but they must not change semantic meaning.
 
+Task and session providers use the shared
+`ProviderContractEnvelope<Semantic, Schemas>` implementation in
+`casa-provider-contracts`. The envelope owns protocol identity, semantic
+operations, reusable components, annotations, projections, and embedded
+parameter surfaces. Provider crates supply only their typed domain schemas and
+operations. The common validator rejects wrong surface kinds, missing
+parameter surfaces, noncanonical actions, duplicate operations, protocol
+metadata errors, and semantic/flattened schema drift.
+
+## Application Catalog and Launching
+
+`casa-provider-contracts` also owns the single `ApplicationCatalog`. Every
+parameter surface has exactly one task-application entry that references the
+surface by stable ID; the `casars` launcher is the sole typed exception without
+a surface. Display name, category, and protocol family are projected from the
+referenced surface rather than copied into another inventory. Each application
+adds only executable/package identity, its explicit override variable,
+interaction metadata, and packaging visibility.
+
+The supported launch modes are `installed_suite` and
+`development_workspace`. A process selects one mode at composition/startup.
+Installed resolution uses only the installed-suite configuration; development
+resolution uses only the declared workspace and Cargo package. A missing
+executable is an error in that mode and never triggers a search of the current
+directory, neighboring targets, or another mode. GUI, TUI, Python, MCP,
+packaging scripts, and suite inventory all project from this catalog.
+
 ## Parameter Catalog and Surface Definitions
 
 ADR-0006 defines the common parameter model.
@@ -219,20 +246,21 @@ selected workspace or process current directory, not the profile file's parent.
 See [Task and Session Parameter Profiles](task-parameters.md) for the user
 contract and managed-state lifecycle.
 
-## `--json-schema` and `--ui-schema`
+## Canonical schema discovery and presentation projection
 
-For new work, `--json-schema` should emit a machine representation of the
+`--json-schema` emits a machine representation of the
 canonical provider bundle, including the parameter catalog and applicable
 surface definition.
 
-If `--ui-schema` exists, it should be treated as:
+Frontends project presentation forms in-process from the embedded canonical
+surface. Providers expose no second schema-discovery action or cached
+presentation payload.
 
-- a derived compatibility view of the canonical schema bundle, or
-- a legacy alias retained for current launcher integration
-
-`--ui-schema` must not become a separate source of truth. If a field, enum, or
-operation exists for UI use, it should exist in the canonical schema bundle
-first and then be projected into the UI-specific view.
+One-shot provider binaries use `casa-task-runtime::TaskCliHost` for
+`--json-schema`, `--protocol-info`, and `--json-run <SOURCE>`. The host owns
+stdin/file ingestion, JSON decoding and encoding, and stable failure wording.
+Provider CLIs retain only their human argument projection and typed execution
+function.
 
 ## Shared Versioned Component Schemas
 

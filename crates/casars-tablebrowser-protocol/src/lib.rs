@@ -9,14 +9,13 @@
 //! extensions can target the same contract without a wire redesign.
 
 use casa_provider_contracts::{
-    ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
-    ProviderProjectionMetadata, ProviderSurfaceKind, SessionSemanticContract,
-    SurfaceContractBundle, builtin_surface_bundle, derived_ui_schema_annotations,
-    merged_components, project_ui_schema,
+    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
+    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
+    SessionProviderContract, SessionProviderSchemas, SessionSemanticContract,
+    builtin_surface_bundle, merged_components,
 };
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 /// Stable protocol name advertised by `tablebrowser --protocol-info`.
 pub const TABLEBROWSER_SESSION_PROTOCOL_NAME: &str = "casa_tablebrowser_session";
@@ -24,94 +23,48 @@ pub const TABLEBROWSER_SESSION_PROTOCOL_NAME: &str = "casa_tablebrowser_session"
 /// Current JSON protocol version.
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// Version/compatibility information for the tablebrowser session protocol.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct BrowserProtocolInfo {
-    /// Stable protocol identifier.
-    pub protocol_name: String,
-    /// Monotonic protocol version for compatibility checks.
-    pub protocol_version: u32,
-    /// Provider surface kind defined by the shared architecture contract.
-    pub surface_kind: ProviderSurfaceKind,
-    /// Binary version implementing the protocol.
-    pub binary_version: String,
+/// Build the current tablebrowser session protocol descriptor.
+pub fn browser_protocol_descriptor() -> ProviderProtocolDescriptor {
+    ProviderProtocolDescriptor::new(
+        TABLEBROWSER_SESSION_PROTOCOL_NAME,
+        PROTOCOL_VERSION,
+        ProviderSurfaceKind::Session,
+        env!("CARGO_PKG_VERSION"),
+    )
 }
 
-impl BrowserProtocolInfo {
-    /// Build the current tablebrowser session protocol descriptor.
-    pub fn current() -> Self {
-        Self {
-            protocol_name: TABLEBROWSER_SESSION_PROTOCOL_NAME.to_string(),
-            protocol_version: PROTOCOL_VERSION,
-            surface_kind: ProviderSurfaceKind::Session,
-            binary_version: env!("CARGO_PKG_VERSION").to_string(),
-        }
-    }
-}
-
-/// Canonical JSON-schema bundle for the public tablebrowser session protocol.
-#[derive(Debug, Clone, Serialize)]
-pub struct BrowserSessionSchemaBundle {
-    /// Compatibility descriptor for the session protocol.
-    pub protocol: BrowserProtocolInfo,
-    /// Canonical semantic session contract.
-    pub semantic: SessionSemanticContract,
-    /// Shared component schemas reusable across projections.
-    pub components: ProviderComponentSchemas,
-    /// Presentation annotations carried with the canonical bundle.
-    pub annotations: JsonValue,
-    /// Derived projection metadata for UI and CLI consumers.
-    pub projections: ProviderProjectionMetadata,
-    /// Canonical durable parameter contract for the session.
-    pub parameter_surfaces: Vec<SurfaceContractBundle>,
-    /// JSON schema for [`BrowserRequestEnvelope`].
-    pub request_schema: schemars::schema::RootSchema,
-    /// JSON schema for [`BrowserResponseEnvelope`].
-    pub response_schema: schemars::schema::RootSchema,
-}
-
-impl BrowserSessionSchemaBundle {
-    /// Build the current tablebrowser schema bundle.
-    pub fn current() -> Self {
-        let request_schema = schema_for!(BrowserRequestEnvelope);
-        let response_schema = schema_for!(BrowserResponseEnvelope);
-        let canonical_surface = builtin_surface_bundle("tablebrowser")
-            .expect("built-in tablebrowser parameter surface must remain valid");
-        let ui_schema = project_ui_schema(&canonical_surface);
-        Self {
-            protocol: BrowserProtocolInfo::current(),
-            semantic: SessionSemanticContract {
-                transport: "jsonl_stdio".to_string(),
-                request_schema: request_schema.clone(),
-                response_schema: response_schema.clone(),
-            },
-            components: merged_components([&request_schema, &response_schema]),
-            annotations: derived_ui_schema_annotations(),
-            projections: ProviderProjectionMetadata {
-                cli: Some(ProviderCliProjection {
-                    machine_actions: ProviderCliMachineActions {
-                        ui_schema: Some("--ui-schema".to_string()),
-                        json_schema: Some("--json-schema".to_string()),
-                        protocol_info: Some("--protocol-info".to_string()),
-                        json_run: None,
-                        session: Some("--session".to_string()),
-                    },
-                }),
-                ui_schema: Some(ui_schema),
-                python: None,
-            },
-            parameter_surfaces: vec![canonical_surface],
+/// Build the current tablebrowser schema bundle.
+pub fn browser_session_schema_bundle() -> SessionProviderContract {
+    let request_schema = schema_for!(BrowserRequestEnvelope);
+    let response_schema = schema_for!(BrowserResponseEnvelope);
+    let canonical_surface = builtin_surface_bundle("tablebrowser")
+        .expect("built-in tablebrowser parameter surface must remain valid");
+    SessionProviderContract {
+        protocol: browser_protocol_descriptor(),
+        semantic: SessionSemanticContract {
+            transport: "jsonl_stdio".to_string(),
+            request_schema: request_schema.clone(),
+            response_schema: response_schema.clone(),
+        },
+        components: merged_components([&request_schema, &response_schema]),
+        annotations: serde_json::json!({}),
+        projections: ProviderProjectionMetadata {
+            cli: Some(ProviderCliProjection {
+                machine_actions: ProviderCliMachineActions {
+                    json_schema: Some("--json-schema".to_string()),
+                    protocol_info: Some("--protocol-info".to_string()),
+                    json_run: None,
+                    session: Some("--session".to_string()),
+                },
+            }),
+            python: None,
+        },
+        parameter_surfaces: vec![canonical_surface],
+        domain_schemas: SessionProviderSchemas {
             request_schema,
             response_schema,
-        }
-    }
-
-    /// Return the launcher/TUI compatibility view projected from the bundle.
-    pub fn ui_schema_projection(&self) -> Result<JsonValue, String> {
-        self.projections
-            .ui_schema
-            .clone()
-            .ok_or_else(|| "missing ui_schema projection".to_string())
+            additional: NoAdditionalProviderSchemas::default(),
+        },
     }
 }
 
@@ -773,7 +726,7 @@ pub fn response_schema_json() -> Result<String, serde_json::Error> {
 
 /// Render the canonical schema bundle as pretty JSON.
 pub fn schema_bundle_json() -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&BrowserSessionSchemaBundle::current())
+    browser_session_schema_bundle().to_pretty_json()
 }
 
 #[cfg(test)]
@@ -799,7 +752,8 @@ mod tests {
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_transport() {
-        let bundle = BrowserSessionSchemaBundle::current();
+        let bundle = browser_session_schema_bundle();
+        bundle.validate().expect("tablebrowser provider contract");
         assert_eq!(
             bundle.protocol.protocol_name,
             TABLEBROWSER_SESSION_PROTOCOL_NAME
@@ -821,44 +775,7 @@ mod tests {
                 .len(),
             1
         );
-        let ui_schema = bundle.ui_schema_projection().unwrap();
-        assert_eq!(ui_schema["schema_version"], 2);
-        assert_eq!(ui_schema["command_id"], "tablebrowser");
-        assert!(
-            ui_schema["arguments"]
-                .as_array()
-                .is_some_and(|args| !args.is_empty())
-        );
-    }
-
-    #[test]
-    fn ui_schema_projection_reports_missing_projection() {
-        let bundle = BrowserSessionSchemaBundle {
-            protocol: BrowserProtocolInfo::current(),
-            semantic: SessionSemanticContract {
-                transport: "jsonl_stdio".to_string(),
-                request_schema: schema_for!(BrowserRequestEnvelope),
-                response_schema: schema_for!(BrowserResponseEnvelope),
-            },
-            components: ProviderComponentSchemas::new(),
-            annotations: serde_json::json!({}),
-            projections: ProviderProjectionMetadata {
-                cli: None,
-                ui_schema: None,
-                python: None,
-            },
-            parameter_surfaces: vec![
-                builtin_surface_bundle("tablebrowser")
-                    .expect("built-in tablebrowser parameter surface must remain valid"),
-            ],
-            request_schema: schema_for!(BrowserRequestEnvelope),
-            response_schema: schema_for!(BrowserResponseEnvelope),
-        };
-
-        assert_eq!(
-            bundle.ui_schema_projection().unwrap_err(),
-            "missing ui_schema projection"
-        );
+        assert!(bundle.projections.cli.is_some());
     }
 
     #[test]

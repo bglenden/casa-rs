@@ -5,11 +5,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process;
 
-use casa_images::{
-    ImageAnalysisProtocolInfo, ImageAnalysisTaskResult, ImageAnalysisTaskSchemaBundle, ImpvRequest,
-    image_analysis_ui_schema_json, impv, read_image_analysis_request_source,
-    run_image_analysis_task,
-};
+use casa_images::{ImageAnalysisTaskResult, ImpvRequest, dispatch_image_analysis_task_cli, impv};
 
 fn main() {
     match run() {
@@ -23,29 +19,8 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args = env::args().skip(1).collect::<Vec<_>>();
-    if args.first().is_some_and(|arg| arg == "--protocol-info") {
-        print_json(&ImageAnalysisProtocolInfo::current())?;
-        return Ok(());
-    }
-    if args.first().is_some_and(|arg| arg == "--json-schema") {
-        print_json(&ImageAnalysisTaskSchemaBundle::current("impv"))?;
-        return Ok(());
-    }
-    if args.first().is_some_and(|arg| arg == "--ui-schema") {
-        print!(
-            "{}",
-            image_analysis_ui_schema_json("impv").map_err(|error| error.to_string())?
-        );
-        return Ok(());
-    }
-    if args.first().is_some_and(|arg| arg == "--json-run") {
-        let source = args
-            .get(1)
-            .ok_or_else(|| "--json-run requires <SOURCE> or -".to_string())?;
-        let request =
-            read_image_analysis_request_source(source).map_err(|error| error.to_string())?;
-        let result = run_image_analysis_task(request).map_err(|error| error.to_string())?;
-        print_json(&result)?;
+    if let Some(output) = dispatch_image_analysis_task_cli(&args, &usage())? {
+        println!("{output}");
         return Ok(());
     }
     let request = parse_request(&args)?;

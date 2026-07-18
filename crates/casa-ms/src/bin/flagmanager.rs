@@ -5,13 +5,12 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process;
 
-use casa_ms::ui_schema::UiCommandSchema;
+use casa_ms::presentation::UiCommandSchema;
 use casa_ms::{
-    FlagMerge, MeasurementSet, delete_flag_version, list_flag_versions, rename_flag_version,
-    restore_flag_version, save_flag_version,
+    FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult, FlagMerge,
+    MeasurementSet, delete_flag_version, flagmanager_task_schema_bundle, list_flag_versions,
+    rename_flag_version, restore_flag_version, save_flag_version,
 };
-use schemars::schema_for;
-use serde_json::json;
 
 fn main() {
     if let Err(error) = run() {
@@ -24,7 +23,6 @@ fn run() -> Result<(), String> {
     let (logging_guard, args) =
         casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1))
             .map_err(|error| format!("failed to initialize logging: {error}"))?;
-    let args = os_args_to_strings(args)?;
     tracing::info!("flagmanager started");
     let result = run_with_args(args);
     if result.is_ok() {
@@ -38,33 +36,37 @@ fn run() -> Result<(), String> {
     result
 }
 
-fn run_with_args(args: Vec<String>) -> Result<(), String> {
+fn run_with_args(args: Vec<OsString>) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{}", command_schema("flagmanager").render_help());
-        return Ok(());
-    }
-    if args.iter().any(|arg| arg == "--ui-schema") {
         println!(
-            "{}",
-            command_schema("flagmanager")
-                .render_json_pretty()
-                .map_err(|error| error.to_string())?
+            "{}\n\n{}",
+            command_schema("flagmanager").render_help(),
+            casa_task_runtime::task_cli_machine_help("FlagManagerTaskRequest")
         );
         return Ok(());
     }
-    if args.iter().any(|arg| arg == "--json-schema") {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&schema_bundle("flagmanager"))
-                .map_err(|error| error.to_string())?
-        );
+    let host =
+        casa_task_runtime::TaskCliHost::new(flagmanager_task_schema_bundle(), execute_task_request);
+    if let Some(output) = host.dispatch(&args).map_err(|error| error.to_string())? {
+        println!("{output}");
         return Ok(());
     }
+    let args = os_args_to_strings(args)?;
     let request = parse_args(&args)?;
+    let value = execute_task_request(request)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+fn execute_task_request(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, String> {
     let mut ms = MeasurementSet::open(&request.vis).map_err(|error| error.to_string())?;
     let value = match request.mode.as_str() {
-        "list" => serde_json::to_value(list_flag_versions(&ms).map_err(|error| error.to_string())?)
-            .map_err(|error| error.to_string())?,
+        "list" => FlagManagerTaskResult::Versions(
+            list_flag_versions(&ms).map_err(|error| error.to_string())?,
+        ),
         "save" => {
             save_flag_version(
                 &ms,
@@ -73,7 +75,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), String> {
                 request.merge,
             )
             .map_err(|error| error.to_string())?;
-            serde_json::json!({"mode":"save","versionname":request.versionname})
+            mutation("save", request.versionname, None)
         }
         "restore" => {
             restore_flag_version(
@@ -84,12 +86,12 @@ fn run_with_args(args: Vec<String>) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
             ms.save_main_table_only_assuming_valid()
                 .map_err(|error| error.to_string())?;
-            serde_json::json!({"mode":"restore","versionname":request.versionname})
+            mutation("restore", request.versionname, None)
         }
         "delete" => {
             delete_flag_version(&ms, request.versionname.as_deref().ok_or_else(usage)?)
                 .map_err(|error| error.to_string())?;
-            serde_json::json!({"mode":"delete","versionname":request.versionname})
+            mutation("delete", request.versionname, None)
         }
         "rename" => {
             rename_flag_version(
@@ -99,15 +101,23 @@ fn run_with_args(args: Vec<String>) -> Result<(), String> {
                 request.comment.as_deref().unwrap_or(""),
             )
             .map_err(|error| error.to_string())?;
-            serde_json::json!({"mode":"rename","oldname":request.oldname,"versionname":request.versionname})
+            mutation("rename", request.versionname, request.oldname)
         }
         other => return Err(format!("unsupported mode {other:?}\n{}", usage())),
     };
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?
-    );
-    Ok(())
+    Ok(value)
+}
+
+fn mutation(
+    mode: &str,
+    versionname: Option<String>,
+    oldname: Option<String>,
+) -> FlagManagerTaskResult {
+    FlagManagerTaskResult::Mutation(FlagManagerMutationResult {
+        mode: mode.to_string(),
+        versionname,
+        oldname,
+    })
 }
 
 fn os_args_to_strings(args: Vec<OsString>) -> Result<Vec<String>, String> {
@@ -119,8 +129,8 @@ fn os_args_to_strings(args: Vec<OsString>) -> Result<Vec<String>, String> {
         .collect()
 }
 
-fn parse_args(args: &[String]) -> Result<Request, String> {
-    let mut request = Request {
+fn parse_args(args: &[String]) -> Result<FlagManagerTaskRequest, String> {
+    let mut request = FlagManagerTaskRequest {
         vis: PathBuf::new(),
         mode: "list".to_string(),
         versionname: None,
@@ -178,85 +188,26 @@ fn usage() -> String {
     "usage: flagmanager --vis <ms> --mode list|save|restore|delete|rename [--versionname <name>] [--oldname <name>] [--comment <text>] [--merge replace|or|and]".to_string()
 }
 
-struct Request {
-    vis: PathBuf,
-    mode: String,
-    versionname: Option<String>,
-    oldname: Option<String>,
-    comment: Option<String>,
-    merge: FlagMerge,
-}
-
 fn command_schema(program_name: &str) -> UiCommandSchema {
     let bundle = casa_provider_contracts::builtin_surface_bundle("flagmanager")
         .expect("built-in flagmanager parameter surface must remain valid");
     let mut schema: UiCommandSchema =
-        serde_json::from_value(casa_provider_contracts::project_ui_schema(&bundle))
+        serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
             .expect("canonical flagmanager UI projection must match UiCommandSchema");
     schema.invocation_name = program_name.to_string();
     schema.usage = format!("{program_name} [parameters]");
     schema
 }
-fn schema_bundle(program_name: &str) -> serde_json::Value {
-    let parameter_surfaces = vec![
-        casa_provider_contracts::builtin_surface_bundle("flagmanager")
-            .expect("built-in flagmanager parameter surface must remain valid"),
-    ];
-    json!({
-        "protocol": {
-            "protocol_name": "casa_ms_flagmanager_task",
-            "protocol_version": 1,
-            "surface_kind": "task"
-        },
-        "projections": {
-            "ui_schema": command_schema(program_name)
-        },
-        "parameter_surfaces": parameter_surfaces,
-        "request_schema": {
-            "type": "object",
-            "required": ["vis"],
-            "properties": {
-                "vis": {"type": "string"},
-                "mode": {"type": "string", "enum": ["list", "save", "restore", "delete", "rename"]},
-                "versionname": {"type": "string"},
-                "oldname": {"type": "string"},
-                "comment": {"type": "string"},
-                "merge": {"type": "string", "enum": ["replace", "or", "and"]}
-            }
-        },
-        "result_schema": {
-            "oneOf": [
-                {"type": "array", "items": schema_for!(casa_ms::FlagVersionEntry)},
-                {"type": "object"}
-            ]
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::SurfaceContractBundle;
-
     use super::*;
 
     #[test]
-    fn schema_bundle_embeds_flagmanager_parameter_contract() {
-        let bundle = schema_bundle("flagmanager");
-        assert_eq!(
-            bundle["protocol"]["protocol_name"],
-            "casa_ms_flagmanager_task"
-        );
-        assert!(bundle["request_schema"]["properties"]["mode"].is_object());
-        assert!(bundle["result_schema"].is_object());
-
-        let surfaces = serde_json::from_value::<Vec<SurfaceContractBundle>>(
-            bundle["parameter_surfaces"].clone(),
-        )
-        .expect("serialized flagmanager parameter surface");
-        assert_eq!(surfaces.len(), 1);
-        assert_eq!(surfaces[0].surface.id(), "flagmanager");
-        surfaces[0]
-            .validate()
-            .expect("embedded flagmanager parameter surface");
+    fn provider_bundle_embeds_flagmanager_parameter_contract() {
+        let bundle = flagmanager_task_schema_bundle();
+        assert_eq!(bundle.protocol.protocol_name, "casa_ms_flagmanager_task");
+        assert_eq!(bundle.parameter_surfaces.len(), 1);
+        assert_eq!(bundle.parameter_surfaces[0].surface.id(), "flagmanager");
+        bundle.validate().expect("valid flagmanager provider");
     }
 }

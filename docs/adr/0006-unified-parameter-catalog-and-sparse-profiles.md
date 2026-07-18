@@ -104,6 +104,13 @@ validated durable-setting changes; sessions have no `last-successful.toml`
 because they have no single successful-completion event. Failed opens and
 transient navigation do not replace Last.
 
+`casa-task-runtime` is the sole application lifecycle owner for these rules.
+Task and session consumers delegate source parsing, resolution, attempted-state
+capture, managed persistence, completion, debounce, and coalescing to its typed
+coordinators. GUI, TUI, Python, assistant, and project-MCP layers may project
+state or report warnings, but may not maintain alternate lifecycle maps,
+timers, Last writers, or test-only persistence paths.
+
 Opening an explicit profile never grants permission to overwrite that file.
 Automatic persistence always targets the managed store; changing an explicit
 file requires Save As or another explicit save operation.
@@ -138,6 +145,7 @@ Neutral / tradeoffs:
 
 This decision is enforced by:
 - tests: catalog completeness, contract invariants, sparse TOML round trips, migrations, managed-store lifecycle, and cross-surface resolution parity
+- lifecycle conformance: real runtime coordinators cover task success/failure/cancellation and deterministic session debounce/coalescing; consumer tests prove delegation rather than reimplementing those transitions
 - lint/import/dependency rules: consumer layers may project provider definitions but may not introduce authoritative app-local defaults or aliases
 - CI checks: `just verify` plus frontend-specific contract and projection tests
 - append-only semantic fingerprints: a changed concept revision or surface

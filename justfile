@@ -11,6 +11,7 @@ quick:
     cargo fmt --all -- --check
     CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings
     CARGO_INCREMENTAL=0 RUST_TEST_THREADS=1 cargo test --workspace
+    python3 scripts/test-task-cli-hosts.py
 
 verify:
     just quick

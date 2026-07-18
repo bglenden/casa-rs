@@ -27,7 +27,7 @@ The canonical schema bundle now wraps those envelope schemas with:
 
 - protocol metadata including `surface_kind: "session"`
 - a `semantic.transport` value of `jsonl_stdio`
-- derived projection metadata for the legacy `--ui-schema` launcher view
+- CLI discovery metadata for the canonical schema bundle and session action
 
 ## Request Envelope
 

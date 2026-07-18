@@ -4,11 +4,12 @@ use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use casa_provider_contracts::{ParameterValue, builtin_surface_bundle};
 use casa_task_runtime::{
-    ManagedProfileKind, ManagedStateStore, ParameterSession, SessionLastState, TaskLastState,
+    ManagedProfileKind, ManagedStateStore, ParameterSession, SessionLastCoordinator,
+    TaskLastCoordinator,
 };
 
 fn task_session(vis: &str, comment: &str) -> ParameterSession {
@@ -38,15 +39,16 @@ fn read_slot(store: &ManagedStateStore, surface: &str, kind: ManagedProfileKind)
 
 #[test]
 fn successful_task_promotes_exact_attempted_snapshot() {
-    let state_root = tempfile::tempdir().unwrap();
-    let store = ManagedStateStore::with_state_root(state_root.path());
+    let workspace = tempfile::tempdir().unwrap();
+    let store = ManagedStateStore::for_workspace(workspace.path());
     let mut session = task_session("attempt.ms", "attempted");
     let attempted = session.render_sparse().unwrap();
-    let mut lifecycle = TaskLastState::new(store.clone(), "flagmanager", true);
+    let lifecycle = TaskLastCoordinator::new();
 
-    let before = lifecycle.before_execution(&session).unwrap();
-    assert!(before.warning.is_none());
-    assert!(before.outcome.is_some());
+    lifecycle
+        .before_execution("attempt", workspace.path(), "flagmanager", true, &session)
+        .unwrap();
+    assert!(lifecycle.take_warnings().is_empty());
     assert_eq!(
         read_slot(&store, "flagmanager", ManagedProfileKind::Last),
         Some(attempted.clone())
@@ -61,24 +63,22 @@ fn successful_task_promotes_exact_attempted_snapshot() {
     session
         .set("comment", ParameterValue::String("edited later".into()))
         .unwrap();
-    let completed = lifecycle.after_completion(true);
-    assert!(completed.warning.is_none());
-    assert!(completed.outcome.is_some());
+    lifecycle.after_completion("attempt", true);
+    assert!(lifecycle.take_warnings().is_empty());
     assert_eq!(
         read_slot(&store, "flagmanager", ManagedProfileKind::LastSuccessful),
         Some(attempted)
     );
 
     // Promotion consumes the attempt and cannot accidentally run twice.
-    let duplicate = lifecycle.after_completion(true);
-    assert!(duplicate.outcome.is_none());
-    assert!(duplicate.warning.is_none());
+    lifecycle.after_completion("attempt", true);
+    assert!(lifecycle.take_warnings().is_empty());
 }
 
 #[test]
 fn failed_and_cancelled_tasks_keep_attempted_last_without_promoting() {
-    let state_root = tempfile::tempdir().unwrap();
-    let store = ManagedStateStore::with_state_root(state_root.path());
+    let workspace = tempfile::tempdir().unwrap();
+    let store = ManagedStateStore::for_workspace(workspace.path());
     let prior_success = task_session("prior.ms", "prior success")
         .render_sparse()
         .unwrap();
@@ -92,11 +92,12 @@ fn failed_and_cancelled_tasks_keep_attempted_last_without_promoting() {
 
     let failed = task_session("failed.ms", "failed attempt");
     let failed_snapshot = failed.render_sparse().unwrap();
-    let mut failure = TaskLastState::new(store.clone(), "flagmanager", true);
-    failure.before_execution(&failed).unwrap();
-    let report = failure.after_completion(false);
-    assert!(report.outcome.is_none());
-    assert!(report.warning.is_none());
+    let failure = TaskLastCoordinator::new();
+    failure
+        .before_execution("failure", workspace.path(), "flagmanager", true, &failed)
+        .unwrap();
+    failure.after_completion("failure", false);
+    assert!(failure.take_warnings().is_empty());
     assert_eq!(
         read_slot(&store, "flagmanager", ManagedProfileKind::Last),
         Some(failed_snapshot)
@@ -109,8 +110,16 @@ fn failed_and_cancelled_tasks_keep_attempted_last_without_promoting() {
     let cancelled = task_session("cancelled.ms", "cancelled attempt");
     let cancelled_snapshot = cancelled.render_sparse().unwrap();
     {
-        let mut cancellation = TaskLastState::new(store.clone(), "flagmanager", true);
-        cancellation.before_execution(&cancelled).unwrap();
+        let cancellation = TaskLastCoordinator::new();
+        cancellation
+            .before_execution(
+                "cancellation",
+                workspace.path(),
+                "flagmanager",
+                true,
+                &cancelled,
+            )
+            .unwrap();
         // Dropping without after_completion models cancellation or process
         // termination after launch: attempted Last remains, with no promotion.
     }
@@ -126,15 +135,14 @@ fn failed_and_cancelled_tasks_keep_attempted_last_without_promoting() {
 
 #[test]
 fn failed_session_open_and_preopen_changes_preserve_last() {
-    let state_root = tempfile::tempdir().unwrap();
-    let store = ManagedStateStore::with_state_root(state_root.path());
+    let workspace = tempfile::tempdir().unwrap();
+    let store = ManagedStateStore::for_workspace(workspace.path());
     let prior = image_session("prior.image").render_sparse().unwrap();
     store
         .write("imexplore", ManagedProfileKind::Last, &prior)
         .unwrap();
 
-    let mut lifecycle =
-        SessionLastState::new(store.clone(), "imexplore", true, Duration::from_millis(100));
+    let lifecycle = SessionLastCoordinator::new(Duration::from_secs(60));
 
     // A valid launch whose backend fails never calls opened(). Pre-open UI
     // changes are therefore ignored by the lifecycle.
@@ -142,20 +150,23 @@ fn failed_session_open_and_preopen_changes_preserve_last() {
     backend_rejected
         .set("view", ParameterValue::String("spectrum".into()))
         .unwrap();
-    lifecycle
-        .accepted_durable_change(&backend_rejected, Instant::now())
-        .unwrap();
-    assert!(lifecycle.flush().outcome.is_none());
+    assert!(lifecycle.take_warnings().is_empty());
 
     // Validation failure in the success callback likewise cannot replace the
     // prior complete Last profile or mark the lifecycle opened.
     let incomplete =
         ParameterSession::defaults(builtin_surface_bundle("imexplore").unwrap()).unwrap();
-    assert!(lifecycle.opened(&incomplete).is_err());
-    lifecycle
-        .accepted_durable_change(&incomplete, Instant::now())
-        .unwrap();
-    assert!(lifecycle.flush().outcome.is_none());
+    assert!(
+        lifecycle
+            .opened(workspace.path(), "imexplore", true, &incomplete)
+            .is_err()
+    );
+    assert!(
+        lifecycle
+            .accepted_durable_change(workspace.path(), "imexplore", true, &incomplete)
+            .is_err()
+    );
+    lifecycle.flush_all();
     assert_eq!(
         read_slot(&store, "imexplore", ManagedProfileKind::Last),
         Some(prior)
@@ -164,16 +175,16 @@ fn failed_session_open_and_preopen_changes_preserve_last() {
 
 #[test]
 fn session_open_debounces_latest_accepted_durable_state_and_flushes_on_close() {
-    let state_root = tempfile::tempdir().unwrap();
-    let store = ManagedStateStore::with_state_root(state_root.path());
+    let workspace = tempfile::tempdir().unwrap();
+    let store = ManagedStateStore::for_workspace(workspace.path());
     let mut session = image_session("current.image");
     let opened_snapshot = session.render_sparse().unwrap();
-    let debounce = Duration::from_millis(100);
-    let mut lifecycle = SessionLastState::new(store.clone(), "imexplore", true, debounce);
+    let lifecycle = SessionLastCoordinator::new(Duration::from_secs(60));
 
-    let opened = lifecycle.opened(&session).unwrap();
-    assert!(opened.warning.is_none());
-    assert!(opened.outcome.is_some());
+    lifecycle
+        .opened(workspace.path(), "imexplore", true, &session)
+        .unwrap();
+    assert!(lifecycle.take_warnings().is_empty());
     assert_eq!(
         read_slot(&store, "imexplore", ManagedProfileKind::Last),
         Some(opened_snapshot.clone())
@@ -183,60 +194,38 @@ fn session_open_debounces_latest_accepted_durable_state_and_flushes_on_close() {
         None
     );
 
-    let start = Instant::now();
     session
         .set("stretch", ParameterValue::String("manual".into()))
         .unwrap();
     session
         .set("clip_low", ParameterValue::String("1".into()))
         .unwrap();
-    lifecycle.accepted_durable_change(&session, start).unwrap();
+    lifecycle
+        .accepted_durable_change(workspace.path(), "imexplore", true, &session)
+        .unwrap();
     session
         .set("clip_low", ParameterValue::String("2".into()))
         .unwrap();
     lifecycle
-        .accepted_durable_change(&session, start + Duration::from_millis(50))
+        .accepted_durable_change(workspace.path(), "imexplore", true, &session)
         .unwrap();
     let latest_accepted = session.render_sparse().unwrap();
-
-    // The second accepted change resets the deadline; the first deadline does
-    // not flush stale state.
-    assert!(lifecycle.flush_if_due(start + debounce).outcome.is_none());
-    assert_eq!(
-        read_slot(&store, "imexplore", ManagedProfileKind::Last),
-        Some(opened_snapshot)
-    );
 
     // A local/transient edit that was not acknowledged by the backend is not
     // part of the queued snapshot.
     session
         .set("clip_high", ParameterValue::String("unaccepted".into()))
         .unwrap();
-    let due = lifecycle.flush_if_due(start + Duration::from_millis(150));
-    assert!(due.warning.is_none());
-    assert!(due.outcome.is_some());
+    lifecycle.flush(workspace.path(), "imexplore");
+    assert!(lifecycle.take_warnings().is_empty());
     assert_eq!(
         read_slot(&store, "imexplore", ManagedProfileKind::Last),
         Some(latest_accepted)
     );
 
-    // Clean close flushes the newest accepted durable state even before its
-    // debounce deadline.
-    session
-        .set("clip_high", ParameterValue::String("3".into()))
-        .unwrap();
-    lifecycle
-        .accepted_durable_change(&session, start + Duration::from_millis(160))
-        .unwrap();
-    let close_snapshot = session.render_sparse().unwrap();
-    let close = lifecycle.flush();
-    assert!(close.warning.is_none());
-    assert!(close.outcome.is_some());
-    assert_eq!(
-        read_slot(&store, "imexplore", ManagedProfileKind::Last),
-        Some(close_snapshot)
-    );
-    assert!(lifecycle.flush().outcome.is_none());
+    // A second clean-close notification is harmless.
+    lifecycle.flush(workspace.path(), "imexplore");
+    assert!(lifecycle.take_warnings().is_empty());
 }
 
 #[test]

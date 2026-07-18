@@ -218,8 +218,7 @@ final class WorkbenchStoreTests: XCTestCase {
     func testNotebookPrototypeFactoryUsesFixtureBootstrapContracts() {
         let store = WorkbenchStore.notebookPrototype(scenario: .primary)
 
-        XCTAssertTrue(store.state.taskCatalog.isEmpty)
-        XCTAssertTrue(store.state.taskExecutionMatrixRows.isEmpty)
+        XCTAssertTrue(store.state.applicationCatalog.isEmpty)
         XCTAssertTrue(store.state.lastErrors.isEmpty)
         XCTAssertTrue(store.state.isNotebookPrototype)
     }
@@ -384,12 +383,11 @@ final class WorkbenchStoreTests: XCTestCase {
     func testTaskTabsCanOpenMultiplePanesAndRenameToSelectedTask() throws {
         let store = WorkbenchStore(
             state: EmptyWorkbench.makeState(),
-            taskCatalogClient: StubTaskCatalogClient(tasks: [
-                makeImheadTaskCatalogEntry(),
-                makeTaskCatalogEntry(id: "immoments", displayName: "Image Moments"),
+            applicationCatalogClient: StubApplicationCatalogClient(tasks: [
+                makeImheadApplicationCatalogEntry(),
+                makeApplicationCatalogEntry(id: "immoments", displayName: "Image Moments"),
             ]),
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.openDefaultTab(kind: .task)
@@ -446,19 +444,18 @@ final class WorkbenchStoreTests: XCTestCase {
             source: .probed
         )
         state.selectedDatasetID = regionURL.path
-        state.taskCatalog = [
-            TaskCatalogEntry(
+        state.applicationCatalog = [
+            ApplicationCatalogEntry(
                 id: "imstat",
                 category: "Images",
                 displayName: "Image Statistics",
-                binaryName: "imexplore",
+                executable: "imexplore",
                 cargoPackage: "casa-images",
                 overrideEnv: "CASARS_IMEXPLORE_BIN",
                 shellKind: "workflow",
                 interaction: "one_shot",
                 browserKind: nil,
                 datasetKinds: ["image_cube"],
-                schemaSource: "binary",
                 showInTUI: true,
                 showInSwift: true,
                 includeInSuite: true
@@ -467,7 +464,6 @@ final class WorkbenchStoreTests: XCTestCase {
         let store = WorkbenchStore(
             state: state,
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImstatTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.loadTaskUISchemaIfNeeded("imstat")
@@ -651,23 +647,14 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(world?.yExtentLabel, "25.00 arcsec")
     }
 
-    func testTaskCatalogLoadsFromFrontendServicesIntoDebugState() throws {
+    func testApplicationCatalogLoadsFromFrontendServicesIntoDebugState() throws {
         let store = WorkbenchStore()
 
-        let tasks = store.debugSnapshot().taskCatalog
+        let tasks = store.debugSnapshot().applicationCatalog
 
         XCTAssertTrue(tasks.contains { $0.id == "msexplore" && $0.includeInSuite })
         XCTAssertTrue(tasks.contains { $0.id == "tablebrowser" && !$0.includeInSuite })
-        XCTAssertTrue(tasks.contains { $0.id == "imager" && $0.binaryName == "casars-imager" })
-    }
-
-    func testTaskExecutionMatrixLoadsFromFrontendServices() throws {
-        let matrix = try UniFFITaskExecutionMatrixClient().loadTaskExecutionMatrix()
-
-        XCTAssertTrue(matrix.rows.contains { $0.taskID == "msexplore" && $0.tuiStatus == "invokable" })
-        XCTAssertTrue(matrix.rows.contains { $0.taskID == "imager" && $0.guiStatus == "invokable" })
-        XCTAssertTrue(matrix.rows.contains { $0.taskID == "flagdata" && $0.tuiStatus == "invokable" })
-        XCTAssertTrue(matrix.rows.contains { $0.taskID == "mstransform" && $0.tuiStatus == "invokable" })
+        XCTAssertTrue(tasks.contains { $0.id == "imager" && $0.executable == "casars-imager" })
     }
 
     func testTaskContextOptionsDecodeRealDataChoices() throws {
@@ -759,7 +746,7 @@ final class WorkbenchStoreTests: XCTestCase {
         )
         let request = GenericTaskRequest(
             runID: "run-1",
-            task: makeTaskCatalogEntry(id: "flagdata", displayName: "Flag Data"),
+            task: makeApplicationCatalogEntry(id: "flagdata", displayName: "Flag Data"),
             providerInvocation: invocation
         )
 
@@ -774,7 +761,7 @@ final class WorkbenchStoreTests: XCTestCase {
         ]
         let request = GenericTaskRequest(
             runID: "run-cube",
-            task: makeImagerTaskCatalogEntry(),
+            task: makeImagerApplicationCatalogEntry(),
             providerInvocation: SurfaceProviderInvocation(args: providerArguments)
         )
 
@@ -793,7 +780,7 @@ final class WorkbenchStoreTests: XCTestCase {
         )
         let request = GenericTaskRequest(
             runID: "run-1",
-            task: makeTaskCatalogEntry(id: "applycal", displayName: "Applycal"),
+            task: makeApplicationCatalogEntry(id: "applycal", displayName: "Applycal"),
             providerInvocation: invocation,
             parameterBundle: try UniFFISurfaceParameterClient().loadBundle(surfaceID: "applycal"),
             parameterValues: ["measurement_set": .string("/data/input.ms")]
@@ -808,7 +795,7 @@ final class WorkbenchStoreTests: XCTestCase {
         )
         let request = GenericTaskRequest(
             runID: "run-1",
-            task: makeImheadTaskCatalogEntry(),
+            task: makeImheadApplicationCatalogEntry(),
             providerInvocation: invocation,
             parameterBundle: try UniFFISurfaceParameterClient().loadBundle(surfaceID: "imhead"),
             parameterValues: [
@@ -828,18 +815,17 @@ final class WorkbenchStoreTests: XCTestCase {
         let outputDirectory = rootURL.appendingPathComponent("casa-rs-runs", isDirectory: true)
         let request = GenericTaskRequest(
             runID: "run-1",
-            task: TaskCatalogEntry(
+            task: ApplicationCatalogEntry(
                 id: "exportfits",
                 category: "Images",
                 displayName: "Export FITS",
-                binaryName: "exportfits",
+                executable: "exportfits",
                 cargoPackage: "casa-images",
                 overrideEnv: "CASARS_EXPORTFITS_BIN",
                 shellKind: "workflow",
                 interaction: "one_shot",
                 browserKind: nil,
                 datasetKinds: ["image"],
-                schemaSource: "binary",
                 showInTUI: true,
                 showInSwift: true,
                 includeInSuite: true
@@ -897,14 +883,13 @@ final class WorkbenchStoreTests: XCTestCase {
             source: .probed
         )
         state.selectedDatasetID = imageURL.path
-        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.applicationCatalog = [makeImheadApplicationCatalogEntry()]
         state.activeTaskID = "imhead"
 
         let store = WorkbenchStore(
             state: state,
             genericTaskClient: taskClient,
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.loadTaskUISchemaIfNeeded("imhead")
@@ -940,11 +925,10 @@ final class WorkbenchStoreTests: XCTestCase {
 
         var state = EmptyWorkbench.makeState()
         state.project = ProjectFixture(name: "Synthetic", rootPath: rootURL.path, datasets: [], source: .probed)
-        state.taskCatalog = [makeSimobserveTaskCatalogEntry()]
+        state.applicationCatalog = [makeSimobserveApplicationCatalogEntry()]
         state.activeTaskID = "simobserve"
         let store = WorkbenchStore(
             state: state,
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.loadTaskUISchemaIfNeeded("simobserve")
@@ -993,13 +977,12 @@ final class WorkbenchStoreTests: XCTestCase {
         var state = EmptyWorkbench.makeState()
         state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [image], source: .probed)
         state.selectedDatasetID = image.id
-        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.applicationCatalog = [makeImheadApplicationCatalogEntry()]
         state.activeTaskID = "imhead"
         let store = WorkbenchStore(
             state: state,
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
             surfaceParameterClient: RecordingSurfaceParameterClient(),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.loadTaskUISchemaIfNeeded("imhead")
@@ -1025,16 +1008,17 @@ final class WorkbenchStoreTests: XCTestCase {
         let imageURL = rootURL.appendingPathComponent("input.image", isDirectory: true)
         let taskClient = HoldingGenericTaskClient()
         let parameterClient = RecordingSurfaceParameterClient()
+        let taskLifecycleClient = RecordingTaskParameterLifecycleClient(parameterClient)
         var state = EmptyWorkbench.makeState()
         state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [], source: .probed)
-        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.applicationCatalog = [makeImheadApplicationCatalogEntry()]
         state.activeTaskID = "imhead"
         let store = WorkbenchStore(
             state: state,
             genericTaskClient: taskClient,
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
             surfaceParameterClient: parameterClient,
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+            taskParameterLifecycleClient: taskLifecycleClient
         )
 
         store.loadTaskUISchemaIfNeeded("imhead")
@@ -1121,14 +1105,13 @@ final class WorkbenchStoreTests: XCTestCase {
             source: .probed
         )
         state.selectedDatasetID = image.id
-        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.applicationCatalog = [makeImheadApplicationCatalogEntry()]
         state.activeTaskID = "imhead"
         let store = WorkbenchStore(
             state: state,
             genericTaskClient: taskClient,
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
             surfaceParameterClient: parameterClient,
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.loadTaskUISchemaIfNeeded("imhead")
@@ -1166,7 +1149,7 @@ final class WorkbenchStoreTests: XCTestCase {
 
     func testParameterDraftsAreIndependentPerTaskTab() throws {
         var state = EmptyWorkbench.makeState()
-        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.applicationCatalog = [makeImheadApplicationCatalogEntry()]
         state.activeTaskID = "imhead"
         state.tabs = [
             WorkbenchTab(id: "tab-task-a", title: "A", kind: .task, taskID: "imhead"),
@@ -1177,7 +1160,6 @@ final class WorkbenchStoreTests: XCTestCase {
             state: state,
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
             surfaceParameterClient: RecordingSurfaceParameterClient(),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.loadTaskUISchemaIfNeeded("imhead", instanceID: "tab-task-a")
@@ -1291,17 +1273,18 @@ final class WorkbenchStoreTests: XCTestCase {
         )
         let taskClient = HoldingGenericTaskClient()
         let parameterClient = RecordingSurfaceParameterClient()
+        let taskLifecycleClient = RecordingTaskParameterLifecycleClient(parameterClient)
         var state = EmptyWorkbench.makeState()
         state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [image], source: .probed)
         state.selectedDatasetID = image.id
-        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.applicationCatalog = [makeImheadApplicationCatalogEntry()]
         state.activeTaskID = "imhead"
         let store = WorkbenchStore(
             state: state,
             genericTaskClient: taskClient,
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
             surfaceParameterClient: parameterClient,
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+            taskParameterLifecycleClient: taskLifecycleClient
         )
 
         store.loadTaskUISchemaIfNeeded("imhead")
@@ -1355,13 +1338,12 @@ final class WorkbenchStoreTests: XCTestCase {
             source: .probed
         )
         state.selectedDatasetID = imageURL.path
-        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.applicationCatalog = [makeImheadApplicationCatalogEntry()]
         state.activeTaskID = "imhead"
         let store = WorkbenchStore(
             state: state,
             genericTaskClient: taskClient,
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
         store.installNotebookPersistenceClientForTesting(notebookClient)
         store.loadTaskUISchemaIfNeeded("imhead")
@@ -1407,13 +1389,12 @@ final class WorkbenchStoreTests: XCTestCase {
         )
         var state = EmptyWorkbench.makeState()
         state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [], source: .probed)
-        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.applicationCatalog = [makeImheadApplicationCatalogEntry()]
         state.activeTaskID = "imhead"
         let store = WorkbenchStore(
             state: state,
             genericTaskClient: taskClient,
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
         store.installNotebookPersistenceClientForTesting(notebookClient)
         store.loadTaskUISchemaIfNeeded("imhead")
@@ -1434,11 +1415,10 @@ final class WorkbenchStoreTests: XCTestCase {
 
         var state = EmptyWorkbench.makeState()
         state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [], source: .probed)
-        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.applicationCatalog = [makeImheadApplicationCatalogEntry()]
         let store = WorkbenchStore(
             state: state,
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
         store.createScientificNotebook(filename: "Analysis.md", title: "Analysis")
         let created = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook)
@@ -1797,7 +1777,7 @@ final class WorkbenchStoreTests: XCTestCase {
             state: state,
             imageExplorerClient: imageClient,
             surfaceParameterClient: parameterClient,
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+            sessionParameterLifecycleClient: RecordingSessionParameterLifecycleClient(parameterClient),
         )
 
         store.openDatasetExplorer(image.id)
@@ -1857,7 +1837,7 @@ final class WorkbenchStoreTests: XCTestCase {
             state: state,
             imageExplorerClient: imageClient,
             surfaceParameterClient: parameterClient,
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+            sessionParameterLifecycleClient: RecordingSessionParameterLifecycleClient(parameterClient),
         )
         let profileURL = rootURL.appendingPathComponent("image-spreadsheet.toml")
         try """
@@ -1941,7 +1921,6 @@ final class WorkbenchStoreTests: XCTestCase {
             state: state,
             imageExplorerClient: imageClient,
             surfaceParameterClient: RecordingSurfaceParameterClient(),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.selectParameterSource(
@@ -2015,7 +1994,7 @@ final class WorkbenchStoreTests: XCTestCase {
                 state: state,
                 imageExplorerClient: imageClient,
                 surfaceParameterClient: parameterClient,
-                taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+                sessionParameterLifecycleClient: RecordingSessionParameterLifecycleClient(parameterClient),
             )
             store.selectParameterSource(
                 .file,
@@ -2074,7 +2053,8 @@ final class WorkbenchStoreTests: XCTestCase {
         let store = WorkbenchStore(
             state: state,
             imageExplorerClient: StubImageExplorerClient(snapshot: makeImageExplorerSnapshot()),
-            surfaceParameterClient: parameterClient
+            surfaceParameterClient: parameterClient,
+            sessionParameterLifecycleClient: RecordingSessionParameterLifecycleClient(parameterClient)
         )
 
         for (image, workspaceURL) in zip(images, workspaceURLs) {
@@ -2094,11 +2074,14 @@ final class WorkbenchStoreTests: XCTestCase {
             store.closeActiveTab()
         }
 
-        XCTAssertEqual(parameterClient.writes.map(\.workspace), workspaceURLs.map(\.path))
-        XCTAssertEqual(parameterClient.writes.count, 2)
-        XCTAssertEqual(parameterClient.writes[0].values, parameterClient.writes[1].values)
-        XCTAssertEqual(parameterClient.writes[0].values["image"], .string("shared.image"))
-        XCTAssertEqual(parameterClient.writes[0].values["colormap"], .string("inferno"))
+        let explicitWorkspaceWrites = parameterClient.writes.filter {
+            workspaceURLs.map(\.path).contains($0.workspace)
+        }
+        XCTAssertEqual(explicitWorkspaceWrites.map(\.workspace), workspaceURLs.map(\.path))
+        XCTAssertEqual(explicitWorkspaceWrites.count, 2)
+        XCTAssertEqual(explicitWorkspaceWrites[0].values, explicitWorkspaceWrites[1].values)
+        XCTAssertEqual(explicitWorkspaceWrites[0].values["image"], .string("shared.image"))
+        XCTAssertEqual(explicitWorkspaceWrites[0].values["colormap"], .string("inferno"))
     }
 
     func testSameNormalizedWorkspaceStaleSessionCannotOverwriteNewerLast() throws {
@@ -2125,7 +2108,8 @@ final class WorkbenchStoreTests: XCTestCase {
         let store = WorkbenchStore(
             state: state,
             imageExplorerClient: StubImageExplorerClient(snapshot: makeImageExplorerSnapshot()),
-            surfaceParameterClient: parameterClient
+            surfaceParameterClient: parameterClient,
+            sessionParameterLifecycleClient: RecordingSessionParameterLifecycleClient(parameterClient)
         )
 
         store.openDatasetExplorer(images[0].id)
@@ -2143,15 +2127,15 @@ final class WorkbenchStoreTests: XCTestCase {
         store.setImageExplorerColorMap(.inferno, datasetID: images[1].id)
         store.closeActiveTab()
 
-        XCTAssertEqual(parameterClient.writes.count, 1)
         XCTAssertEqual(parameterClient.writes.last?.workspace, rootURL.path)
         XCTAssertEqual(parameterClient.writes.last?.values["colormap"], .string("inferno"))
+        let writesAfterNewerSessionClosed = parameterClient.writes.count
         runCurrentRunLoop(for: 0.4)
 
-        XCTAssertEqual(parameterClient.writes.count, 1)
+        XCTAssertEqual(parameterClient.writes.count, writesAfterNewerSessionClosed)
         XCTAssertEqual(parameterClient.writes.last?.values["colormap"], .string("inferno"))
         store.closeActiveTab()
-        XCTAssertEqual(parameterClient.writes.count, 1)
+        XCTAssertEqual(parameterClient.writes.count, writesAfterNewerSessionClosed)
     }
 
     func testTableBrowserProfileAppliesBookmarkAndPresentationBeforeUpdatingLast() throws {
@@ -2180,7 +2164,8 @@ final class WorkbenchStoreTests: XCTestCase {
                 diagnostics: []
             )),
             tableBrowserClient: tableClient,
-            surfaceParameterClient: parameterClient
+            surfaceParameterClient: parameterClient,
+            sessionParameterLifecycleClient: RecordingSessionParameterLifecycleClient(parameterClient)
         )
         store.openProject(path: rootURL.path)
         runCurrentRunLoop(for: 0.4)
@@ -2288,7 +2273,6 @@ final class WorkbenchStoreTests: XCTestCase {
             state: state,
             tableBrowserClient: tableClient,
             surfaceParameterClient: RecordingSurfaceParameterClient(),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.selectParameterSource(
@@ -2373,7 +2357,10 @@ final class WorkbenchStoreTests: XCTestCase {
         defer { unsetenv("CASARS_SIMOBSERVE_BIN") }
 
         let request = try makeSimobserveGenericTaskRequest(rootURL: rootURL)
-        let client = ProcessGenericTaskClient(queue: DispatchQueue(label: "test.simobserve.family"))
+        let client = ProcessGenericTaskClient(
+            queue: DispatchQueue(label: "test.simobserve.family"),
+            launchMode: .installedSuite
+        )
         let semaphore = DispatchSemaphore(value: 0)
         var event: GenericTaskEvent?
         _ = try client.startTask(request: request) {
@@ -2408,7 +2395,10 @@ final class WorkbenchStoreTests: XCTestCase {
         defer { unsetenv("CASARS_SIMOBSERVE_BIN") }
 
         let request = try makeSimobserveGenericTaskRequest(rootURL: rootURL)
-        let client = ProcessGenericTaskClient(queue: DispatchQueue(label: "test.simobserve.family.failure"))
+        let client = ProcessGenericTaskClient(
+            queue: DispatchQueue(label: "test.simobserve.family.failure"),
+            launchMode: .installedSuite
+        )
         let semaphore = DispatchSemaphore(value: 0)
         var event: GenericTaskEvent?
         _ = try client.startTask(request: request) {
@@ -2515,19 +2505,18 @@ final class WorkbenchStoreTests: XCTestCase {
         """
         var state = EmptyWorkbench.makeState()
         state.project = ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed)
-        state.taskCatalog = [
-            TaskCatalogEntry(
+        state.applicationCatalog = [
+            ApplicationCatalogEntry(
                 id: "immoments",
                 category: "Images",
                 displayName: "Image Moments",
-                binaryName: "immoments",
+                executable: "immoments",
                 cargoPackage: "casa-images",
                 overrideEnv: "CASARS_IMMOMENTS_BIN",
                 shellKind: "workflow",
                 interaction: "one_shot",
                 browserKind: nil,
                 datasetKinds: ["image"],
-                schemaSource: "binary",
                 showInTUI: true,
                 showInSwift: true,
                 includeInSuite: true
@@ -2608,7 +2597,7 @@ final class WorkbenchStoreTests: XCTestCase {
         """
         var state = EmptyWorkbench.makeState()
         state.project = ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed)
-        state.taskCatalog = [makeTaskCatalogEntry(id: "importfits", displayName: "Import FITS")]
+        state.applicationCatalog = [makeApplicationCatalogEntry(id: "importfits", displayName: "Import FITS")]
         state.activeTaskID = "importfits"
         let store = WorkbenchStore(
             state: state,
@@ -3063,7 +3052,7 @@ final class WorkbenchStoreTests: XCTestCase {
         ]
         let request = GenericTaskRequest(
             runID: "run-1",
-            task: makeImagerTaskCatalogEntry(),
+            task: makeImagerApplicationCatalogEntry(),
             providerInvocation: SurfaceProviderInvocation(args: providerArguments)
         )
 
@@ -3091,40 +3080,20 @@ final class WorkbenchStoreTests: XCTestCase {
           ]
         }
         """.utf8))
-        let task = TaskCatalogEntry(
+        let task = ApplicationCatalogEntry(
             id: "flagdata",
             category: "Flagging",
             displayName: "Flag Data",
-            binaryName: "flagdata",
+            executable: "flagdata",
             cargoPackage: "casa-ms",
             overrideEnv: "CASARS_FLAGDATA_BIN",
             shellKind: "workflow",
             interaction: "one_shot",
             browserKind: nil,
             datasetKinds: ["measurement_set"],
-            schemaSource: "binary",
             showInTUI: true,
             showInSwift: true,
             includeInSuite: true
-        )
-        let matrixRow = TaskExecutionMatrixRow(
-            taskID: "flagdata",
-            displayName: "Flag Data",
-            category: "Flagging",
-            catalogPresence: "catalog",
-            binaryName: "flagdata",
-            cargoPackage: "casa-ms",
-            datasetKinds: ["measurement_set"],
-            suiteInstall: "installed",
-            localInstall: "installed",
-            releaseInstall: "installed",
-            tuiStatus: "invokable",
-            guiStatus: "invokable",
-            optionSource: "ui_schema_and_dataset_probe",
-            fullControlStatus: "partial",
-            mutationClass: "mutates_input",
-            confirmation: "required_backup_confirmation",
-            smokeEvidence: "unit test"
         )
         let taskClient = StubGenericTaskClient()
         var state = EmptyWorkbench.makeState()
@@ -3134,14 +3103,12 @@ final class WorkbenchStoreTests: XCTestCase {
             datasets: [],
             source: .probed
         )
-        state.taskCatalog = [task]
-        state.taskExecutionMatrixRows = [matrixRow]
+        state.applicationCatalog = [task]
         state.activeTaskID = "flagdata"
         let store = WorkbenchStore(
             state: state,
             genericTaskClient: taskClient,
-            taskUISchemaClient: StubTaskUISchemaClient(schema: schema),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [matrixRow])
+            taskUISchemaClient: StubTaskUISchemaClient(schema: schema)
         )
 
         store.loadTaskUISchemaIfNeeded("flagdata")
@@ -3779,7 +3746,6 @@ final class WorkbenchStoreTests: XCTestCase {
         let store = WorkbenchStore(
             state: state,
             imageExplorerClient: imageClient,
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
         store.installNotebookPersistenceClientForTesting(notebookClient)
         store.refreshImageExplorer(datasetID: imageDataset.id)
@@ -4305,9 +4271,8 @@ final class WorkbenchStoreTests: XCTestCase {
         )
         let store = WorkbenchStore(
             probeClient: client,
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImagerTaskCatalogEntry()]),
+            applicationCatalogClient: StubApplicationCatalogClient(tasks: [makeImagerApplicationCatalogEntry()]),
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.openDefaultTab(kind: .aiChat)
@@ -4397,9 +4362,8 @@ final class WorkbenchStoreTests: XCTestCase {
     func testOpenImagerProgressMockupSeedsRunningReviewState() throws {
         let store = WorkbenchStore(
             state: FixtureWorkbench.makeState(),
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeTaskCatalogEntry(id: "imager", displayName: "Imager")]),
+            applicationCatalogClient: StubApplicationCatalogClient(tasks: [makeApplicationCatalogEntry(id: "imager", displayName: "Imager")]),
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.openImagerProgressMockup()
@@ -4733,9 +4697,8 @@ final class WorkbenchStoreTests: XCTestCase {
                     diagnostics: []
                 )
             ),
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImagerTaskCatalogEntry()]),
+            applicationCatalogClient: StubApplicationCatalogClient(tasks: [makeImagerApplicationCatalogEntry()]),
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.openProject(path: "/data")
@@ -4783,9 +4746,8 @@ final class WorkbenchStoreTests: XCTestCase {
                     diagnostics: []
                 )
             ),
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImagerTaskCatalogEntry()]),
+            applicationCatalogClient: StubApplicationCatalogClient(tasks: [makeImagerApplicationCatalogEntry()]),
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.openProject(path: "/data")
@@ -4820,9 +4782,8 @@ final class WorkbenchStoreTests: XCTestCase {
         let probeClient = RecordingDirectMeasurementSetProbeClient(probedDataset: probedDataset)
         let store = WorkbenchStore(
             probeClient: probeClient,
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImagerTaskCatalogEntry()]),
+            applicationCatalogClient: StubApplicationCatalogClient(tasks: [makeImagerApplicationCatalogEntry()]),
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.openExternalMeasurementSetForImaging(path: "/data/large.ms")
@@ -4915,9 +4876,8 @@ final class WorkbenchStoreTests: XCTestCase {
         let store = WorkbenchStore(
             probeClient: probeClient,
             genericTaskClient: taskClient,
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImagerTaskCatalogEntry()]),
+            applicationCatalogClient: StubApplicationCatalogClient(tasks: [makeImagerApplicationCatalogEntry()]),
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.openProject(path: "/data")
@@ -4996,9 +4956,8 @@ final class WorkbenchStoreTests: XCTestCase {
                 )
             ),
             genericTaskClient: client,
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImagerTaskCatalogEntry()]),
+            applicationCatalogClient: StubApplicationCatalogClient(tasks: [makeImagerApplicationCatalogEntry()]),
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.openProject(path: "/data")
@@ -5071,9 +5030,8 @@ final class WorkbenchStoreTests: XCTestCase {
                 )
             ),
             genericTaskClient: client,
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImagerTaskCatalogEntry()]),
+            applicationCatalogClient: StubApplicationCatalogClient(tasks: [makeImagerApplicationCatalogEntry()]),
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.openProject(path: "/data")
@@ -5158,9 +5116,8 @@ final class WorkbenchStoreTests: XCTestCase {
                     diagnostics: []
                 )
             ),
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImagerTaskCatalogEntry()]),
+            applicationCatalogClient: StubApplicationCatalogClient(tasks: [makeImagerApplicationCatalogEntry()]),
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.openProject(path: "/data")
@@ -5211,9 +5168,8 @@ final class WorkbenchStoreTests: XCTestCase {
                     diagnostics: []
                 )
             ),
-            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImagerTaskCatalogEntry()]),
+            applicationCatalogClient: StubApplicationCatalogClient(tasks: [makeImagerApplicationCatalogEntry()]),
             taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema()),
-            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.openProject(path: "/data")
@@ -5693,8 +5649,10 @@ final class WorkbenchStoreTests: XCTestCase {
         try helperScript.write(to: helperURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helperURL.path)
 
-        var task = makeImagerTaskCatalogEntry()
-        task.binaryName = helperURL.path
+        var task = makeImagerApplicationCatalogEntry()
+        task.executable = helperURL.path
+        setenv(task.overrideEnv, helperURL.path, 1)
+        defer { unsetenv(task.overrideEnv) }
         let request = GenericTaskRequest(
             runID: "large-stdout",
             task: task,
@@ -5703,7 +5661,8 @@ final class WorkbenchStoreTests: XCTestCase {
             )
         )
         let client = ProcessGenericTaskClient(
-            queue: DispatchQueue(label: "casars.mac.test.large-stdout")
+            queue: DispatchQueue(label: "casars.mac.test.large-stdout"),
+            launchMode: .installedSuite
         )
         let lock = NSLock()
         var succeededResult: GenericTaskResult?
@@ -5783,8 +5742,10 @@ final class WorkbenchStoreTests: XCTestCase {
         try helperScript.write(to: helperURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helperURL.path)
 
-        var task = makeImagerTaskCatalogEntry()
-        task.binaryName = helperURL.path
+        var task = makeImagerApplicationCatalogEntry()
+        task.executable = helperURL.path
+        setenv(task.overrideEnv, helperURL.path, 1)
+        defer { unsetenv(task.overrideEnv) }
         let request = GenericTaskRequest(
             runID: "jsonl-progress",
             task: task,
@@ -5794,7 +5755,8 @@ final class WorkbenchStoreTests: XCTestCase {
             workingDirectoryPath: tempRoot.path
         )
         let client = ProcessGenericTaskClient(
-            queue: DispatchQueue(label: "casars.mac.test.jsonl-progress")
+            queue: DispatchQueue(label: "casars.mac.test.jsonl-progress"),
+            launchMode: .installedSuite
         )
         let lock = NSLock()
         var succeededResult: GenericTaskResult?
@@ -5852,11 +5814,11 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertNotEqual(first, second)
     }
 
-    func testGenericTaskClientFindsBundledAndReleaseHelpers() {
+    func testGenericTaskClientResolvesOnlyInstalledSuiteLocations() throws {
         let bundleExecutable = URL(fileURLWithPath: "/Applications/casars-mac.app/Contents/MacOS/casars-mac")
 
         XCTAssertEqual(
-            ProcessGenericTaskClient.resolvedExecutablePath(
+            try ProcessGenericTaskClient.installedExecutablePath(
                 binaryName: "immoments",
                 overrideEnv: "CASARS_IMMOMENTS_BIN",
                 environment: ["CASARS_IMMOMENTS_BIN": "/custom/immoments"],
@@ -5866,7 +5828,7 @@ final class WorkbenchStoreTests: XCTestCase {
             "/custom/immoments"
         )
         XCTAssertEqual(
-            ProcessGenericTaskClient.resolvedExecutablePath(
+            try ProcessGenericTaskClient.installedExecutablePath(
                 binaryName: "immoments",
                 overrideEnv: "CASARS_IMMOMENTS_BIN",
                 environment: [:],
@@ -5875,38 +5837,46 @@ final class WorkbenchStoreTests: XCTestCase {
             ),
             "/Applications/casars-mac.app/Contents/MacOS/immoments"
         )
-        XCTAssertEqual(
-            ProcessGenericTaskClient.resolvedExecutablePath(
+        XCTAssertThrowsError(
+            try ProcessGenericTaskClient.installedExecutablePath(
                 binaryName: "immoments",
                 overrideEnv: "CASARS_IMMOMENTS_BIN",
                 environment: ["CASA_RS_REPO_ROOT": "/repo"],
                 bundleExecutableURL: nil,
                 isExecutable: { $0 == "/repo/target/release/immoments" }
             ),
-            "/repo/target/release/immoments"
+        )
+    }
+
+    func testGenericTaskClientLaunchModesAreExplicit() throws {
+        XCTAssertEqual(
+            try ProcessGenericTaskClient.launchMode(
+                environment: ["CASARS_LAUNCH_MODE": "installed_suite"]
+            ),
+            .installedSuite
         )
         XCTAssertEqual(
-            ProcessGenericTaskClient.resolvedExecutablePath(
-                binaryName: "immoments",
-                overrideEnv: "CASARS_IMMOMENTS_BIN",
-                environment: [:],
-                bundleExecutableURL: nil,
-                currentDirectoryPath: "/repo/apps/casars-mac",
-                isExecutable: { $0 == "/repo/target/debug/immoments" }
+            try ProcessGenericTaskClient.launchMode(
+                environment: ["CASARS_LAUNCH_MODE": "development_workspace"]
             ),
-            "/repo/target/debug/immoments"
+            .developmentWorkspace
+        )
+        XCTAssertThrowsError(
+            try ProcessGenericTaskClient.launchMode(
+                environment: ["CASARS_LAUNCH_MODE": "search_everywhere"]
+            )
         )
     }
 
     func testGenericTaskClientCanResolveEverySwiftVisibleBundledHelper() throws {
         let bundleExecutable = URL(fileURLWithPath: "/Applications/casars-mac.app/Contents/MacOS/casars-mac")
-        let tasks = try UniFFITaskCatalogClient().loadTaskCatalog()
-        let binaries = Set(tasks.filter(\.showInSwift).map(\.binaryName))
+        let tasks = try UniFFIApplicationCatalogClient().loadApplicationCatalog()
+        let binaries = Set(tasks.filter(\.showInSwift).map(\.executable))
 
         for binary in binaries.sorted() {
             let bundledPath = "/Applications/casars-mac.app/Contents/MacOS/\(binary)"
             XCTAssertEqual(
-                ProcessGenericTaskClient.resolvedExecutablePath(
+                try ProcessGenericTaskClient.installedExecutablePath(
                     binaryName: binary,
                     overrideEnv: "__unused_\(binary)",
                     environment: [:],
@@ -6592,24 +6562,11 @@ private struct StubTaskUISchemaClient: TaskUISchemaClient {
     }
 }
 
-private struct StubTaskCatalogClient: TaskCatalogClient {
-    var tasks: [TaskCatalogEntry]
+private struct StubApplicationCatalogClient: ApplicationCatalogClient {
+    var tasks: [ApplicationCatalogEntry]
 
-    func loadTaskCatalog() throws -> [TaskCatalogEntry] {
+    func loadApplicationCatalog() throws -> [ApplicationCatalogEntry] {
         tasks
-    }
-}
-
-private struct StubTaskExecutionMatrixClient: TaskExecutionMatrixClient {
-    var rows: [TaskExecutionMatrixRow]
-
-    func loadTaskExecutionMatrix() throws -> TaskExecutionMatrixEnvelope {
-        TaskExecutionMatrixEnvelope(
-            schemaVersion: 1,
-            generatedFor: "test",
-            scopeNote: "test",
-            rows: rows
-        )
     }
 }
 
@@ -6632,61 +6589,58 @@ private func canonicalJSONObject(_ value: SurfaceParameterValue) -> Any {
     }
 }
 
-private func makeImheadTaskCatalogEntry() -> TaskCatalogEntry {
-    makeTaskCatalogEntry(id: "imhead", displayName: "Image Header")
+private func makeImheadApplicationCatalogEntry() -> ApplicationCatalogEntry {
+    makeApplicationCatalogEntry(id: "imhead", displayName: "Image Header")
 }
 
-private func makeSimobserveTaskCatalogEntry() -> TaskCatalogEntry {
-    TaskCatalogEntry(
+private func makeSimobserveApplicationCatalogEntry() -> ApplicationCatalogEntry {
+    ApplicationCatalogEntry(
         id: "simobserve",
         category: "Simulation",
         displayName: "SimObserve",
-        binaryName: "simobserve",
+        executable: "simobserve",
         cargoPackage: "casa-ms",
         overrideEnv: "CASARS_SIMOBSERVE_BIN",
         shellKind: "workflow",
         interaction: "one_shot",
         browserKind: nil,
         datasetKinds: ["measurement_set"],
-        schemaSource: "binary",
         showInTUI: true,
         showInSwift: true,
         includeInSuite: true
     )
 }
 
-private func makeImagerTaskCatalogEntry() -> TaskCatalogEntry {
-    TaskCatalogEntry(
+private func makeImagerApplicationCatalogEntry() -> ApplicationCatalogEntry {
+    ApplicationCatalogEntry(
         id: "imager",
         category: "Imaging",
         displayName: "Imager",
-        binaryName: "casars-imager",
+        executable: "casars-imager",
         cargoPackage: "casars-imager",
         overrideEnv: "CASARS_IMAGER_BIN",
         shellKind: "workflow",
         interaction: "one_shot",
         browserKind: nil,
         datasetKinds: ["measurement_set"],
-        schemaSource: "binary",
         showInTUI: true,
         showInSwift: true,
         includeInSuite: true
     )
 }
 
-private func makeTaskCatalogEntry(id: String, displayName: String) -> TaskCatalogEntry {
-    TaskCatalogEntry(
+private func makeApplicationCatalogEntry(id: String, displayName: String) -> ApplicationCatalogEntry {
+    ApplicationCatalogEntry(
         id: id,
         category: "Images",
         displayName: displayName,
-        binaryName: "imexplore",
+        executable: "imexplore",
         cargoPackage: "casa-images",
         overrideEnv: "CASARS_IMEXPLORE_BIN",
         shellKind: "workflow",
         interaction: "one_shot",
         browserKind: nil,
         datasetKinds: ["image_cube"],
-        schemaSource: "binary",
         showInTUI: true,
         showInSwift: true,
         includeInSuite: true
@@ -6864,6 +6818,155 @@ private final class RecordingSurfaceParameterClient: SurfaceParameterClient {
     }
 }
 
+private final class RecordingSessionParameterLifecycleClient: SessionParameterLifecycleClient {
+    private struct Destination: Hashable {
+        var surfaceID: String
+        var workspace: String
+    }
+
+    private struct Pending {
+        var workItem: DispatchWorkItem
+        var values: [String: SurfaceParameterValue]
+    }
+
+    private let parameterClient: RecordingSurfaceParameterClient
+    private var persisted: [Destination: [String: SurfaceParameterValue]] = [:]
+    private var pending: [Destination: Pending] = [:]
+
+    init(_ parameterClient: RecordingSurfaceParameterClient) {
+        self.parameterClient = parameterClient
+    }
+
+    func opened(
+        surfaceID: String,
+        workspace: String,
+        values: [String: SurfaceParameterValue],
+        enabled: Bool
+    ) throws -> [String] {
+        guard enabled else { return [] }
+        let destination = normalizedDestination(surfaceID: surfaceID, workspace: workspace)
+        pending.removeValue(forKey: destination)?.workItem.cancel()
+        guard persisted[destination] != values else { return [] }
+        try persist(destination: destination, values: values)
+        return []
+    }
+
+    func acceptedDurableChange(
+        surfaceID: String,
+        workspace: String,
+        values: [String: SurfaceParameterValue],
+        enabled: Bool
+    ) throws -> [String] {
+        guard enabled else { return [] }
+        let destination = normalizedDestination(surfaceID: surfaceID, workspace: workspace)
+        guard persisted[destination] != values else {
+            pending.removeValue(forKey: destination)?.workItem.cancel()
+            return []
+        }
+        pending.removeValue(forKey: destination)?.workItem.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            try? self?.flush(destination)
+        }
+        pending[destination] = Pending(workItem: workItem, values: values)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
+        return []
+    }
+
+    func flush(surfaceID: String, workspace: String) -> [String] {
+        try? flush(normalizedDestination(surfaceID: surfaceID, workspace: workspace))
+        return []
+    }
+
+    func flushAll() -> [String] {
+        for destination in Array(pending.keys) {
+            try? flush(destination)
+        }
+        return []
+    }
+
+    func takeWarnings() -> [String] {
+        []
+    }
+
+    private func persist(
+        destination: Destination,
+        values: [String: SurfaceParameterValue]
+    ) throws {
+        _ = try parameterClient.writeLast(
+            surfaceID: destination.surfaceID,
+            workspace: destination.workspace,
+            values: values,
+            successful: false
+        )
+        persisted[destination] = values
+    }
+
+    private func flush(_ destination: Destination) throws {
+        guard let update = pending.removeValue(forKey: destination) else { return }
+        update.workItem.cancel()
+        try persist(destination: destination, values: update.values)
+    }
+
+    private func normalizedDestination(surfaceID: String, workspace: String) -> Destination {
+        Destination(
+            surfaceID: surfaceID,
+            workspace: URL(fileURLWithPath: workspace).standardizedFileURL.path
+        )
+    }
+}
+
+private final class RecordingTaskParameterLifecycleClient: TaskParameterLifecycleClient {
+    private struct Attempt {
+        var surfaceID: String
+        var workspace: String
+        var values: [String: SurfaceParameterValue]
+        var enabled: Bool
+    }
+
+    private let parameterClient: RecordingSurfaceParameterClient
+    private var attempts: [String: Attempt] = [:]
+
+    init(_ parameterClient: RecordingSurfaceParameterClient) {
+        self.parameterClient = parameterClient
+    }
+
+    func beforeExecution(
+        attemptID: String,
+        surfaceID: String,
+        workspace: String,
+        values: [String: SurfaceParameterValue],
+        enabled: Bool
+    ) throws -> [String] {
+        attempts[attemptID] = Attempt(
+            surfaceID: surfaceID,
+            workspace: workspace,
+            values: values,
+            enabled: enabled
+        )
+        guard enabled else { return [] }
+        _ = try parameterClient.writeLast(
+            surfaceID: surfaceID,
+            workspace: workspace,
+            values: values,
+            successful: false
+        )
+        return []
+    }
+
+    func afterCompletion(attemptID: String, successful: Bool) -> [String] {
+        guard let attempt = attempts.removeValue(forKey: attemptID),
+              successful,
+              attempt.enabled else { return [] }
+        _ = try? parameterClient.writeLast(
+            surfaceID: attempt.surfaceID,
+            workspace: attempt.workspace,
+            values: attempt.values,
+            successful: true
+        )
+        return []
+    }
+}
+
 private final class RecordingNotebookPersistenceClient: NotebookPersistenceClient {
     private let base = UniFFINotebookPersistenceClient()
     private(set) var beginRequests: [NotebookBeginRecordingRequest] = []
@@ -6942,7 +7045,7 @@ private final class HoldingGenericTaskClient: GenericTaskClient {
 private func makeSimobserveGenericTaskRequest(rootURL: URL) throws -> GenericTaskRequest {
     GenericTaskRequest(
         runID: "simobserve-1",
-        task: makeSimobserveTaskCatalogEntry(),
+        task: makeSimobserveApplicationCatalogEntry(),
         providerInvocation: SurfaceProviderInvocation(
             args: ["--json-run", "-"],
             stdin: #"{"kind":"family","request":{"model":"model.image","output_ms":"products/family.ms"}}"#

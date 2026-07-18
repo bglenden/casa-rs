@@ -84,7 +84,6 @@ fn msexplore_help_mentions_plot_controls() {
     assert!(stdout.contains("--plot-format <FORMAT>"));
     assert!(stdout.contains("--msselect <EXPR>"));
     assert!(stdout.contains("--page-spec <PATH>"));
-    assert!(stdout.contains("--ui-schema"));
     assert!(stdout.contains("--json-schema"));
     assert!(stdout.contains("--protocol-info"));
     assert!(stdout.contains("--json-run <SOURCE>"));
@@ -184,7 +183,7 @@ fn msexplore_run_task_writes_summary_and_flag_preview_artifacts() {
 }
 
 #[test]
-fn msexplore_ui_schema_round_trips_help() {
+fn msexplore_presentation_form_round_trips_help() {
     let help = Command::new(env!("CARGO_BIN_EXE_msexplore"))
         .arg("--help")
         .output()
@@ -212,7 +211,7 @@ fn msexplore_json_schema_emits_canonical_task_bundle() {
     assert_eq!(schema["protocol"]["surface_kind"], "task");
     assert_eq!(schema["semantic"]["operations"][0]["request_kind"], "run");
     assert_eq!(
-        schema["projections"]["ui_schema"]["command_id"],
+        schema["parameter_surfaces"][0]["surface"]["id"],
         "msexplore"
     );
 }
@@ -232,7 +231,7 @@ fn msexplore_protocol_info_reports_task_surface() {
 }
 
 #[test]
-fn msexplore_ui_schema_describes_launcher_contract() {
+fn msexplore_presentation_form_describes_launcher_contract() {
     let schema = command_schema("msexplore");
     assert_eq!(schema.command_id, "msexplore");
     assert_eq!(schema.display_name, "MSExplore");

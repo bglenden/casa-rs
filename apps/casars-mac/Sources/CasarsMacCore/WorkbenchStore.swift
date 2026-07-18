@@ -52,50 +52,25 @@ public struct UniFFIProjectProbeClient: ProjectProbeClient {
     }
 }
 
-public protocol TaskCatalogClient {
-    func loadTaskCatalog() throws -> [TaskCatalogEntry]
+public protocol ApplicationCatalogClient {
+    func loadApplicationCatalog() throws -> [ApplicationCatalogEntry]
 }
 
-public struct UniFFITaskCatalogClient: TaskCatalogClient {
+public struct UniFFIApplicationCatalogClient: ApplicationCatalogClient {
     public init() {}
 
-    public func loadTaskCatalog() throws -> [TaskCatalogEntry] {
-        let json = try CasarsFrontendServices.taskCatalogJson()
+    public func loadApplicationCatalog() throws -> [ApplicationCatalogEntry] {
+        let json = try CasarsFrontendServices.applicationCatalogJson()
         let data = Data(json.utf8)
-        let envelope = try JSONDecoder().decode(TaskCatalogEnvelope.self, from: data)
-        return envelope.tasks.filter(\.showInSwift)
-    }
-}
-
-public protocol TaskExecutionMatrixClient {
-    func loadTaskExecutionMatrix() throws -> TaskExecutionMatrixEnvelope
-}
-
-public struct UniFFITaskExecutionMatrixClient: TaskExecutionMatrixClient {
-    public init() {}
-
-    public func loadTaskExecutionMatrix() throws -> TaskExecutionMatrixEnvelope {
-        let json = try CasarsFrontendServices.taskExecutionMatrixJson()
-        let data = Data(json.utf8)
-        return try JSONDecoder().decode(TaskExecutionMatrixEnvelope.self, from: data)
+        let envelope = try JSONDecoder().decode(ApplicationCatalogEnvelope.self, from: data)
+        return envelope.applications.filter(\.showInSwift)
     }
 }
 
 /// Bootstrap adapters used before the notebook prototype is visible. They
-/// deliberately expose no production catalog or execution metadata.
-private struct PrototypeTaskCatalogClient: TaskCatalogClient {
-    func loadTaskCatalog() throws -> [TaskCatalogEntry] { [] }
-}
-
-private struct PrototypeTaskExecutionMatrixClient: TaskExecutionMatrixClient {
-    func loadTaskExecutionMatrix() throws -> TaskExecutionMatrixEnvelope {
-        TaskExecutionMatrixEnvelope(
-            schemaVersion: 1,
-            generatedFor: "notebook-prototype",
-            scopeNote: "fixture-only",
-            rows: []
-        )
-    }
+/// deliberately expose no production catalog.
+private struct PrototypeApplicationCatalogClient: ApplicationCatalogClient {
+    func loadApplicationCatalog() throws -> [ApplicationCatalogEntry] { [] }
 }
 
 private struct NotebookPrototypeBoundaryViolation: Error, CustomStringConvertible {
@@ -227,15 +202,6 @@ private struct NotebookPrototypeDeniedProductionClient:
         try denied("parameter save")
     }
 
-    func writeLast(
-        surfaceID: String,
-        workspace: String,
-        values: [String: SurfaceParameterValue],
-        successful: Bool
-    ) throws -> SurfaceParameterWriteResult {
-        try denied("parameter history write")
-    }
-
     func runSafety(
         surfaceID: String,
         values: [String: SurfaceParameterValue]
@@ -321,7 +287,7 @@ public struct UniFFITaskUISchemaClient: TaskUISchemaClient {
     public init() {}
 
     public func loadTaskUISchema(taskID: String) throws -> TaskUISchema {
-        let json = try CasarsFrontendServices.taskUiSchemaJson(taskId: taskID)
+        let json = try CasarsFrontendServices.parameterFormJson(surfaceId: taskID)
         let data = Data(json.utf8)
         return try JSONDecoder().decode(TaskUISchema.self, from: data)
     }
@@ -810,13 +776,6 @@ public struct UniFFITableBrowserClient: TableBrowserClient {
     }
 }
 
-private struct TaskParameterAttempt {
-    var surfaceID: String
-    var workspace: String
-    var values: [String: SurfaceParameterValue]
-    var saveLast: Bool
-}
-
 private enum AssistantNotebookPinError: LocalizedError {
     case invalidTaskSuggestion(String)
 
@@ -825,20 +784,6 @@ private enum AssistantNotebookPinError: LocalizedError {
         case let .invalidTaskSuggestion(detail):
             "Cannot add the suggested task to the notebook: \(detail)"
         }
-    }
-}
-
-private struct SessionLastDestination: Hashable {
-    var surfaceID: String
-    var workspace: String
-
-    init(surfaceID: String, workspace: String) {
-        self.surfaceID = surfaceID
-        let expanded = (workspace as NSString).expandingTildeInPath
-        self.workspace = URL(fileURLWithPath: expanded, isDirectory: true)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-            .path
     }
 }
 
@@ -874,7 +819,8 @@ public final class WorkbenchStore: ObservableObject {
     private let genericTaskClient: GenericTaskClient
     private let taskUISchemaClient: TaskUISchemaClient
     private let surfaceParameterClient: SurfaceParameterClient
-    private let taskExecutionMatrixClient: TaskExecutionMatrixClient
+    private let sessionParameterLifecycleClient: SessionParameterLifecycleClient
+    private let taskParameterLifecycleClient: TaskParameterLifecycleClient
     private var notebookPersistenceClient: NotebookPersistenceClient
     private var tutorialPersistenceClient: TutorialPersistenceClient
     private var assistantPersistenceClient: AssistantPersistenceClient
@@ -900,19 +846,11 @@ public final class WorkbenchStore: ObservableObject {
     private var pendingAssistantCorpusRefresh: AssistantCorpusRefreshRequest?
     private var fullyRefreshedAssistantCorpusProject: String?
     private var activeTaskExecutions: [String: TaskExecution] = [:]
-    private var taskParameterAttempts: [String: TaskParameterAttempt] = [:]
     private var notebookAttemptHandles: [String: NotebookAttemptHandle] = [:]
     private var pythonKernels: [String: PersistentPythonKernel] = [:]
     private var pythonKernelStatuses: [String: NotebookPythonKernelStatus] = [:]
     private var pythonExecutableOverride: String?
-    private var measurementSetParameterAttempts: [String: TaskParameterAttempt] = [:]
     private var measurementSetPlotSurfaceRequests: Set<String> = []
-    private var acceptedSessionParameterValues: [String: [String: SurfaceParameterValue]] = [:]
-    private var acceptedSessionParameterSequence: [String: UInt64] = [:]
-    private var nextSessionParameterSequence: UInt64 = 0
-    private var sessionLastValues: [SessionLastDestination: [String: SurfaceParameterValue]] = [:]
-    private var sessionLastSequence: [SessionLastDestination: UInt64] = [:]
-    private var sessionLastWrites: [String: DispatchWorkItem] = [:]
     private var tableBrowserCellWindowGenerations: [String: Int] = [:]
     private var temporaryDemoProjectRoot: String?
     private var lastProjectDiskRefresh: Date = .distantPast
@@ -925,25 +863,19 @@ public final class WorkbenchStore: ObservableObject {
         imageExplorerClient: ImageExplorerClient = UniFFIImageExplorerClient(),
         tableBrowserClient: TableBrowserClient = UniFFITableBrowserClient(),
         genericTaskClient: GenericTaskClient = ProcessGenericTaskClient(),
-        taskCatalogClient: TaskCatalogClient = UniFFITaskCatalogClient(),
+        applicationCatalogClient: ApplicationCatalogClient = UniFFIApplicationCatalogClient(),
         taskUISchemaClient: TaskUISchemaClient = UniFFITaskUISchemaClient(),
         surfaceParameterClient: SurfaceParameterClient = UniFFISurfaceParameterClient(),
-        taskExecutionMatrixClient: TaskExecutionMatrixClient = UniFFITaskExecutionMatrixClient(),
+        sessionParameterLifecycleClient: SessionParameterLifecycleClient = UniFFISessionParameterLifecycleClient(),
+        taskParameterLifecycleClient: TaskParameterLifecycleClient = UniFFITaskParameterLifecycleClient(),
         imagerProgressSource: ImagerProgressSource = EmptyImagerProgressSource()
     ) {
         var initialState = state
-        if initialState.taskCatalog.isEmpty {
+        if initialState.applicationCatalog.isEmpty {
             do {
-                initialState.taskCatalog = try taskCatalogClient.loadTaskCatalog()
+                initialState.applicationCatalog = try applicationCatalogClient.loadApplicationCatalog()
             } catch {
                 initialState.lastErrors.append("Load task catalog: \(error)")
-            }
-        }
-        if initialState.taskExecutionMatrixRows.isEmpty {
-            do {
-                initialState.taskExecutionMatrixRows = try taskExecutionMatrixClient.loadTaskExecutionMatrix().rows
-            } catch {
-                initialState.lastErrors.append("Load task execution matrix: \(error)")
             }
         }
         self.state = initialState
@@ -966,7 +898,8 @@ public final class WorkbenchStore: ObservableObject {
         self.genericTaskClient = genericTaskClient
         self.taskUISchemaClient = taskUISchemaClient
         self.surfaceParameterClient = surfaceParameterClient
-        self.taskExecutionMatrixClient = taskExecutionMatrixClient
+        self.sessionParameterLifecycleClient = sessionParameterLifecycleClient
+        self.taskParameterLifecycleClient = taskParameterLifecycleClient
         notebookPersistenceClient = UniFFINotebookPersistenceClient()
         tutorialPersistenceClient = UniFFITutorialPersistenceClient()
         assistantPersistenceClient = UniFFIAssistantPersistenceClient()
@@ -1017,10 +950,7 @@ public final class WorkbenchStore: ObservableObject {
         pythonKernels.values.forEach { $0.terminate() }
         agentSession?.terminate()
         guard runtimeKind == .production else { return }
-        sessionLastWrites.values.forEach { $0.cancel() }
-        for sessionKey in acceptedSessionParameterValues.keys {
-            persistSessionLastIfChanged(sessionKey: sessionKey)
-        }
+        _ = sessionParameterLifecycleClient.flushAll()
         cleanupTemporaryDemoProject()
     }
 
@@ -1045,10 +975,9 @@ public final class WorkbenchStore: ObservableObject {
             imageExplorerClient: dependencies.imageExplorerClient,
             tableBrowserClient: dependencies.tableBrowserClient,
             genericTaskClient: dependencies.genericTaskClient,
-            taskCatalogClient: PrototypeTaskCatalogClient(),
+            applicationCatalogClient: PrototypeApplicationCatalogClient(),
             taskUISchemaClient: dependencies.taskUISchemaClient,
             surfaceParameterClient: dependencies.surfaceParameterClient,
-            taskExecutionMatrixClient: PrototypeTaskExecutionMatrixClient(),
             imagerProgressSource: EmptyImagerProgressSource()
         )
     }
@@ -1066,10 +995,9 @@ public final class WorkbenchStore: ObservableObject {
             imageExplorerClient: dependencies.imageExplorerClient,
             tableBrowserClient: dependencies.tableBrowserClient,
             genericTaskClient: dependencies.genericTaskClient,
-            taskCatalogClient: PrototypeTaskCatalogClient(),
+            applicationCatalogClient: PrototypeApplicationCatalogClient(),
             taskUISchemaClient: dependencies.taskUISchemaClient,
             surfaceParameterClient: dependencies.surfaceParameterClient,
-            taskExecutionMatrixClient: PrototypeTaskExecutionMatrixClient(),
             imagerProgressSource: EmptyImagerProgressSource()
         )
     }
@@ -1087,10 +1015,9 @@ public final class WorkbenchStore: ObservableObject {
             imageExplorerClient: dependencies.imageExplorerClient,
             tableBrowserClient: dependencies.tableBrowserClient,
             genericTaskClient: dependencies.genericTaskClient,
-            taskCatalogClient: PrototypeTaskCatalogClient(),
+            applicationCatalogClient: PrototypeApplicationCatalogClient(),
             taskUISchemaClient: dependencies.taskUISchemaClient,
             surfaceParameterClient: dependencies.surfaceParameterClient,
-            taskExecutionMatrixClient: PrototypeTaskExecutionMatrixClient(),
             imagerProgressSource: EmptyImagerProgressSource()
         )
     }
@@ -1108,10 +1035,9 @@ public final class WorkbenchStore: ObservableObject {
             imageExplorerClient: dependencies.imageExplorerClient,
             tableBrowserClient: dependencies.tableBrowserClient,
             genericTaskClient: dependencies.genericTaskClient,
-            taskCatalogClient: PrototypeTaskCatalogClient(),
+            applicationCatalogClient: PrototypeApplicationCatalogClient(),
             taskUISchemaClient: dependencies.taskUISchemaClient,
             surfaceParameterClient: dependencies.surfaceParameterClient,
-            taskExecutionMatrixClient: PrototypeTaskExecutionMatrixClient(),
             imagerProgressSource: EmptyImagerProgressSource()
         )
     }
@@ -1302,7 +1228,7 @@ public final class WorkbenchStore: ObservableObject {
     public func openFixtureProject() {
         guard !rejectPrototypeProductionAction("Demo projects") else { return }
         let interfaceFontSize = state.interfaceFontSize
-        let taskCatalog = state.taskCatalog
+        let applicationCatalog = state.applicationCatalog
         cleanupTemporaryDemoProject()
         do {
             let probed = try demoProjectClient.createDemoProject()
@@ -1310,7 +1236,7 @@ public final class WorkbenchStore: ObservableObject {
             var project = probed.project
             project.datasets = orderedDemoDatasets(project.datasets)
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
-            state.taskCatalog = taskCatalog
+            state.applicationCatalog = applicationCatalog
             state.project = project
             state.probeDiagnostics = probed.diagnostics
             state.selectedDatasetID = project.datasets.first?.id
@@ -1332,7 +1258,7 @@ public final class WorkbenchStore: ObservableObject {
             )
         } catch {
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
-            state.taskCatalog = taskCatalog
+            state.applicationCatalog = applicationCatalog
             state.lastErrors.append("Open tutorial demo project: \(error)")
         }
     }
@@ -1344,12 +1270,12 @@ public final class WorkbenchStore: ObservableObject {
         pendingAssistantCorpusRefresh = nil
         fullyRefreshedAssistantCorpusProject = nil
         let interfaceFontSize = state.interfaceFontSize
-        let taskCatalog = state.taskCatalog
+        let applicationCatalog = state.applicationCatalog
         cleanupTemporaryDemoProject()
         do {
             let probed = try probeClient.probeProject(path: path)
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
-            state.taskCatalog = taskCatalog
+            state.applicationCatalog = applicationCatalog
             state.project = probed.project
             state.probeDiagnostics = probed.diagnostics
             state.selectedDatasetID = probed.project.datasets.first?.id
@@ -1382,7 +1308,7 @@ public final class WorkbenchStore: ObservableObject {
     public func openExternalMeasurementSetForImaging(path: String) {
         guard !rejectPrototypeProductionAction("External MeasurementSet opening") else { return }
         let interfaceFontSize = state.interfaceFontSize
-        let taskCatalog = state.taskCatalog
+        let applicationCatalog = state.applicationCatalog
         cleanupTemporaryDemoProject()
         let standardizedPath = Self.standardizedDatasetPath(path)
         let url = URL(fileURLWithPath: standardizedPath)
@@ -1420,7 +1346,7 @@ public final class WorkbenchStore: ObservableObject {
             )
         }
         state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
-        state.taskCatalog = taskCatalog
+        state.applicationCatalog = applicationCatalog
         state.project = ProjectFixture(
             name: url.deletingPathExtension().lastPathComponent,
             rootPath: rootPath,
@@ -2126,22 +2052,17 @@ public final class WorkbenchStore: ObservableObject {
 
         var plotState = measurementSetPlotState(for: datasetID)
         let instanceID = parameterInstanceID(surfaceID: "msexplore", datasetID: datasetID)
-        let parameterAttempt = parameterSession(surfaceID: "msexplore", instanceID: instanceID).map {
-            TaskParameterAttempt(
-                surfaceID: "msexplore",
-                workspace: $0.workspace,
-                values: $0.values,
-                saveLast: $0.saveLast
-            )
-        }
-        if let parameterAttempt, parameterAttempt.saveLast {
+        let parameterSession = parameterSession(surfaceID: "msexplore", instanceID: instanceID)
+        let jobID = nextJobID(prefix: "ms-plot")
+        if let parameterSession {
             do {
-                _ = try surfaceParameterClient.writeLast(
-                    surfaceID: parameterAttempt.surfaceID,
-                    workspace: parameterAttempt.workspace,
-                    values: parameterAttempt.values,
-                    successful: false
-                )
+                state.lastErrors.append(contentsOf: try taskParameterLifecycleClient.beforeExecution(
+                    attemptID: jobID,
+                    surfaceID: "msexplore",
+                    workspace: parameterSession.workspace,
+                    values: parameterSession.values,
+                    enabled: parameterSession.saveLast
+                ))
             } catch {
                 state.lastErrors.append("Automatic msexplore Last save failed: \(error)")
             }
@@ -2151,18 +2072,10 @@ public final class WorkbenchStore: ObservableObject {
             plotState.status = .ready
             plotState.lastError = nil
             state.measurementSetPlots[datasetID] = plotState
-            if let parameterAttempt, parameterAttempt.saveLast {
-                do {
-                    _ = try surfaceParameterClient.writeLast(
-                        surfaceID: parameterAttempt.surfaceID,
-                        workspace: parameterAttempt.workspace,
-                        values: parameterAttempt.values,
-                        successful: true
-                    )
-                } catch {
-                    state.lastErrors.append("Automatic msexplore Last Successful save failed: \(error)")
-                }
-            }
+            state.lastErrors.append(contentsOf: taskParameterLifecycleClient.afterCompletion(
+                attemptID: jobID,
+                successful: true
+            ))
             return
         }
 
@@ -2195,10 +2108,6 @@ public final class WorkbenchStore: ObservableObject {
             maxPlotPoints: plotState.maxPlotPoints
         )
         let tabID = dataset.explorerTabID
-        let jobID = nextJobID(prefix: "ms-plot")
-        if let parameterAttempt {
-            measurementSetParameterAttempts[jobID] = parameterAttempt
-        }
         startJob(
             WorkbenchJob(
                 id: jobID,
@@ -2375,11 +2284,12 @@ public final class WorkbenchStore: ObservableObject {
 
         let closingSessionKeys = state.parameterSessions.keys.filter { $0.hasPrefix("\(tabID)::") }
         for sessionKey in closingSessionKeys {
-            sessionLastWrites[sessionKey]?.cancel()
-            persistSessionLastIfChanged(sessionKey: sessionKey)
-            sessionLastWrites.removeValue(forKey: sessionKey)
-            acceptedSessionParameterValues.removeValue(forKey: sessionKey)
-            acceptedSessionParameterSequence.removeValue(forKey: sessionKey)
+            if let session = state.parameterSessions[sessionKey] {
+                state.lastErrors.append(contentsOf: sessionParameterLifecycleClient.flush(
+                    surfaceID: session.snapshot.surfaceID,
+                    workspace: session.workspace
+                ))
+            }
             state.parameterSessions.removeValue(forKey: sessionKey)
         }
         let wasActive = state.activeTabID == tabID
@@ -3398,7 +3308,7 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("No task parameters exist for notebook cell \(cellID)")
             return
         }
-        guard state.taskCatalog.contains(where: { $0.id == intent.surface }) else {
+        guard state.applicationCatalog.contains(where: { $0.id == intent.surface }) else {
             state.lastErrors.append("Notebook task \(intent.surface) is not in the current task catalog")
             return
         }
@@ -4496,9 +4406,18 @@ public final class WorkbenchStore: ObservableObject {
     private func appendAssistantTaskSuggestion(_ value: [String: Any], id: String) {
         guard value["kind"] as? String == "task_suggestion",
               let taskID = value["task_id"] as? String,
-              let parameters = value["parameters"] as? [String: String]
+              let parameters = value["parameters"] as? [String: String],
+              let patchObject = value["validated_patch"],
+              JSONSerialization.isValidJSONObject(patchObject),
+              let patchData = try? JSONSerialization.data(withJSONObject: patchObject),
+              let validatedPatch = try? JSONDecoder().decode(SurfaceParameterPatch.self, from: patchData)
         else { return }
-        let suggestion = AssistantTaskSuggestionState(id: id, taskId: taskID, parameters: parameters)
+        let suggestion = AssistantTaskSuggestionState(
+            id: id,
+            taskId: taskID,
+            parameters: parameters,
+            validatedPatch: validatedPatch
+        )
         if let index = assistantPendingTaskSuggestions.firstIndex(where: { $0.id == id }) {
             assistantPendingTaskSuggestions[index] = suggestion
         } else {
@@ -5060,7 +4979,7 @@ public final class WorkbenchStore: ObservableObject {
         guard let suggestion = state.assistantDiscussion?.activeConversation?.messages
             .first(where: { $0.id == messageID })?.taskSuggestions
             .first(where: { $0.id == suggestionID }),
-              state.taskCatalog.contains(where: { $0.id == suggestion.taskId })
+              state.applicationCatalog.contains(where: { $0.id == suggestion.taskId })
         else {
             recordAssistantError("The suggested task is not available in this build")
             return
@@ -5089,6 +5008,10 @@ public final class WorkbenchStore: ObservableObject {
             instanceID: instanceID
         )
         do {
+            guard let validatedPatch = suggestion.validatedPatch else {
+                recordAssistantError("The suggested task has no canonical validated patch")
+                return false
+            }
             let bundle = try surfaceParameterClient.loadBundle(surfaceID: suggestion.taskId)
             let defaults = try surfaceParameterClient.defaults(surfaceID: suggestion.taskId)
             var session = SurfaceParameterSession(
@@ -5099,16 +5022,7 @@ public final class WorkbenchStore: ObservableObject {
                 baseProfilePath: nil,
                 workspace: parameterWorkspacePath()
             )
-            for (name, text) in suggestion.parameters {
-                guard let concept = bundle.concept(for: name) else {
-                    recordAssistantError("The suggested task contains unknown parameter \(name)")
-                    return false
-                }
-                let normalized = concept.valueDomain.isPathLike && !Self.isInlineRegionSyntax(text)
-                    ? projectRelativePath(text)
-                    : text
-                session.overridePatch.values[name] = concept.valueDomain.value(from: normalized)
-            }
+            session.overridePatch = validatedPatch
             guard resolveParameterSession(
                 &session,
                 editedParameters: Set(suggestion.parameters.keys)
@@ -6681,7 +6595,7 @@ public final class WorkbenchStore: ObservableObject {
 
     public func selectTask(_ taskID: String, tabID: String? = nil) {
         guard !rejectPrototypeProductionAction("Task selection") else { return }
-        guard state.taskCatalog.contains(where: { $0.id == taskID }) else {
+        guard state.applicationCatalog.contains(where: { $0.id == taskID }) else {
             state.lastErrors.append("Unknown task \(taskID)")
             return
         }
@@ -6983,10 +6897,6 @@ public final class WorkbenchStore: ObservableObject {
         state.notebookRecordingBypassTabs.contains(tabID)
     }
 
-    public func taskExecutionMatrixRow(taskID: String? = nil) -> TaskExecutionMatrixRow? {
-        state.taskExecutionMatrixRows.first { $0.taskID == (taskID ?? state.activeTaskID) }
-    }
-
     public func taskRunSafety(
         taskID: String? = nil,
         instanceID: String? = nil
@@ -7045,7 +6955,7 @@ public final class WorkbenchStore: ObservableObject {
     private func runGenericTask() {
         let taskID = state.activeTaskID
         let instanceID = parameterInstanceID(surfaceID: taskID)
-        guard let task = state.taskCatalog.first(where: { $0.id == taskID }) else {
+        guard let task = state.applicationCatalog.first(where: { $0.id == taskID }) else {
             state.lastErrors.append("Unknown task \(taskID)")
             return
         }
@@ -7170,14 +7080,14 @@ public final class WorkbenchStore: ObservableObject {
             progress: 0.05,
             title: task.displayName,
             detail: summary,
-            logLines: ["Starting \(task.binaryName).", summary],
+            logLines: ["Starting \(task.executable).", summary],
             lastEvent: "started"
         ))
         state.taskRun = TaskRun(
             runID: runID,
             state: .running,
             progress: 0.05,
-            logLines: ["Starting \(task.binaryName).", summary],
+            logLines: ["Starting \(task.executable).", summary],
             warnings: [],
             products: [],
             diagnostics: [],
@@ -7185,24 +7095,16 @@ public final class WorkbenchStore: ObservableObject {
             imagerProgress: imagerProgressSnapshot(taskID: taskID, runID: runID, taskState: .running, progress: 0.05)
         )
 
-        let parameterAttempt = TaskParameterAttempt(
-            surfaceID: taskID,
-            workspace: parameterSession.workspace,
-            values: parameterSession.values,
-            saveLast: parameterSession.saveLast
-        )
-        taskParameterAttempts[runID] = parameterAttempt
-        if parameterAttempt.saveLast {
-            do {
-                _ = try surfaceParameterClient.writeLast(
-                    surfaceID: taskID,
-                    workspace: parameterAttempt.workspace,
-                    values: parameterAttempt.values,
-                    successful: false
-                )
-            } catch {
-                state.taskRun.warnings.append("Automatic Last save failed: \(error)")
-            }
+        do {
+            state.taskRun.warnings.append(contentsOf: try taskParameterLifecycleClient.beforeExecution(
+                attemptID: runID,
+                surfaceID: taskID,
+                workspace: parameterSession.workspace,
+                values: parameterSession.values,
+                enabled: parameterSession.saveLast
+            ))
+        } catch {
+            state.taskRun.warnings.append("Automatic Last save failed: \(error)")
         }
 
         do {
@@ -7222,7 +7124,10 @@ public final class WorkbenchStore: ObservableObject {
             }
             activeTaskExecutions[runID] = execution
         } catch {
-            taskParameterAttempts.removeValue(forKey: runID)
+            state.taskRun.warnings.append(contentsOf: taskParameterLifecycleClient.afterCompletion(
+                attemptID: runID,
+                successful: false
+            ))
             finalizeNotebookTaskRecording(
                 runID: runID,
                 status: "failed",
@@ -7231,7 +7136,7 @@ public final class WorkbenchStore: ObservableObject {
             state.taskRun = TaskRun(
                 state: .failed,
                 progress: 1.0,
-                logLines: ["Failed to start \(task.binaryName)."],
+                logLines: ["Failed to start \(task.executable)."],
                 warnings: [],
                 products: [],
                 diagnostics: ["\(error)"],
@@ -7894,7 +7799,10 @@ public final class WorkbenchStore: ObservableObject {
 
         switch job.kind {
         case .measurementSetPlot:
-            measurementSetParameterAttempts.removeValue(forKey: jobID)
+            state.lastErrors.append(contentsOf: taskParameterLifecycleClient.afterCompletion(
+                attemptID: jobID,
+                successful: false
+            ))
             if let datasetID = datasetIDForExplorerTabID(job.tabID),
                var plotState = state.measurementSetPlots[datasetID] {
                 plotState.status = .idle
@@ -7904,7 +7812,10 @@ public final class WorkbenchStore: ObservableObject {
         case .genericTask:
             activeTaskExecutions[jobID]?.cancel()
             activeTaskExecutions.removeValue(forKey: jobID)
-            taskParameterAttempts.removeValue(forKey: jobID)
+            state.taskRun.warnings.append(contentsOf: taskParameterLifecycleClient.afterCompletion(
+                attemptID: jobID,
+                successful: false
+            ))
             finalizeNotebookTaskRecording(
                 runID: jobID,
                 status: "cancelled",
@@ -7938,7 +7849,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func taskTitle(_ taskID: String) -> String {
-        state.taskCatalog.first { $0.id == taskID }?.displayName ?? "Tasks"
+        state.applicationCatalog.first { $0.id == taskID }?.displayName ?? "Tasks"
     }
 
     private func datasetIDForExplorerTabID(_ tabID: String) -> String? {
@@ -8248,26 +8159,27 @@ public final class WorkbenchStore: ObservableObject {
         do {
             let bundle = try surfaceParameterClient.loadBundle(surfaceID: surfaceID)
             let workspace = parameterWorkspacePath()
+            let lastSnapshot: SurfaceParameterSnapshot?
             do {
-                if let snapshot = try surfaceParameterClient.last(
+                lastSnapshot = try surfaceParameterClient.last(
                     surfaceID: surfaceID,
                     workspace: workspace,
                     successful: false
-                ) {
-                    state.parameterSessions[sessionKey] = SurfaceParameterSession(
-                        bundle: bundle,
-                        snapshot: snapshot,
-                        selectedSource: .last,
-                        baseProfileTOML: snapshot.profileTOML,
-                        baseProfilePath: nil,
-                        workspace: workspace
-                    )
-                    return
-                }
-            } catch {
-                state.lastErrors.append(
-                    "Last parameters for \(surfaceID) could not be loaded; using Defaults: \(error)"
                 )
+            } catch {
+                state.lastErrors.append("Load Last parameters for \(surfaceID): \(error)")
+                return
+            }
+            if let snapshot = lastSnapshot {
+                state.parameterSessions[sessionKey] = SurfaceParameterSession(
+                    bundle: bundle,
+                    snapshot: snapshot,
+                    selectedSource: .last,
+                    baseProfileTOML: snapshot.profileTOML,
+                    baseProfilePath: nil,
+                    workspace: workspace
+                )
+                return
             }
             let snapshot = try surfaceParameterClient.defaults(surfaceID: surfaceID)
             state.parameterSessions[sessionKey] = SurfaceParameterSession(
@@ -8491,49 +8403,16 @@ public final class WorkbenchStore: ObservableObject {
     private func acceptSessionParameters(_ surfaceID: String, instanceID: String? = nil) {
         let sessionKey = parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)
         guard let session = state.parameterSessions[sessionKey],
-              session.snapshot.surfaceKind == "session",
-              !session.hasErrors
+            session.snapshot.surfaceKind == "session",
+            !session.hasErrors
         else { return }
-        nextSessionParameterSequence &+= 1
-        acceptedSessionParameterValues[sessionKey] = session.values
-        acceptedSessionParameterSequence[sessionKey] = nextSessionParameterSequence
-        scheduleSessionLast(sessionKey: sessionKey)
-    }
-
-    private func scheduleSessionLast(sessionKey: String) {
-        sessionLastWrites[sessionKey]?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.persistSessionLastIfChanged(sessionKey: sessionKey)
-            self?.sessionLastWrites.removeValue(forKey: sessionKey)
-        }
-        sessionLastWrites[sessionKey] = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
-    }
-
-    private func persistSessionLastIfChanged(sessionKey: String) {
-        guard runtimeKind == .production else { return }
-        guard let session = state.parameterSessions[sessionKey] else { return }
-        let surfaceID = session.snapshot.surfaceID
-        let destination = SessionLastDestination(surfaceID: surfaceID, workspace: session.workspace)
-        guard session.snapshot.surfaceKind == "session",
-              session.saveLast,
-              let acceptedValues = acceptedSessionParameterValues[sessionKey],
-              let acceptedSequence = acceptedSessionParameterSequence[sessionKey],
-              acceptedSequence >= (sessionLastSequence[destination] ?? 0)
-        else { return }
-        if sessionLastValues[destination] == acceptedValues {
-            sessionLastSequence[destination] = acceptedSequence
-            return
-        }
         do {
-            _ = try surfaceParameterClient.writeLast(
-                surfaceID: surfaceID,
+            state.lastErrors.append(contentsOf: try sessionParameterLifecycleClient.acceptedDurableChange(
+                surfaceID: session.snapshot.surfaceID,
                 workspace: session.workspace,
-                values: acceptedValues,
-                successful: false
-            )
-            sessionLastValues[destination] = acceptedValues
-            sessionLastSequence[destination] = acceptedSequence
+                values: session.values,
+                enabled: session.saveLast
+            ))
         } catch {
             state.lastErrors.append("Automatic Last save failed for \(surfaceID): \(error)")
         }
@@ -8789,19 +8668,10 @@ public final class WorkbenchStore: ObservableObject {
         )
         state.jobs[jobID] = job
         state.activeJobIDsByTab.removeValue(forKey: job.tabID)
-        if let parameterAttempt = measurementSetParameterAttempts.removeValue(forKey: jobID),
-           parameterAttempt.saveLast {
-            do {
-                _ = try surfaceParameterClient.writeLast(
-                    surfaceID: parameterAttempt.surfaceID,
-                    workspace: parameterAttempt.workspace,
-                    values: parameterAttempt.values,
-                    successful: true
-                )
-            } catch {
-                state.lastErrors.append("Automatic msexplore Last Successful save failed: \(error)")
-            }
-        }
+        state.lastErrors.append(contentsOf: taskParameterLifecycleClient.afterCompletion(
+            attemptID: jobID,
+            successful: true
+        ))
     }
 
     private func failMeasurementSetPlotJob(
@@ -8829,7 +8699,10 @@ public final class WorkbenchStore: ObservableObject {
         job.logLines.append(error)
         state.jobs[jobID] = job
         state.activeJobIDsByTab.removeValue(forKey: job.tabID)
-        measurementSetParameterAttempts.removeValue(forKey: jobID)
+        state.lastErrors.append(contentsOf: taskParameterLifecycleClient.afterCompletion(
+            attemptID: jobID,
+            successful: false
+        ))
         state.lastErrors.append("Render plot for \(datasetName): \(error)")
     }
 
@@ -9406,7 +9279,19 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
         activeTaskExecutions.removeValue(forKey: runID)
-        let parameterAttempt = taskParameterAttempts.removeValue(forKey: runID)
+        let taskSucceeded: Bool
+        switch event {
+        case .succeeded:
+            taskSucceeded = true
+        case .failed, .cancelled:
+            taskSucceeded = false
+        case .progress:
+            return
+        }
+        state.taskRun.warnings.append(contentsOf: taskParameterLifecycleClient.afterCompletion(
+            attemptID: runID,
+            successful: taskSucceeded
+        ))
         if var job = state.jobs[runID] {
             if case .cancelled = event {
                 job.progress = min(1, max(0, job.progress))
@@ -9500,18 +9385,6 @@ public final class WorkbenchStore: ObservableObject {
                     stdout: result.stdout,
                     stderr: result.stderr
                 )
-                if let parameterAttempt, parameterAttempt.saveLast {
-                    do {
-                        _ = try surfaceParameterClient.writeLast(
-                            surfaceID: parameterAttempt.surfaceID,
-                            workspace: parameterAttempt.workspace,
-                            values: parameterAttempt.values,
-                            successful: true
-                        )
-                    } catch {
-                        state.taskRun.warnings.append("Automatic Last Successful save failed: \(error)")
-                    }
-                }
             case .failed(let failure):
                 job.status = .failed
                 job.error = failure.message

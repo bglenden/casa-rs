@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Machine-readable UI schema for `casars-imager`.
 
-use casa_ms::ui_schema::UiCommandSchema;
+use casa_ms::presentation::UiCommandSchema;
 
 /// Build the launcher-facing UI schema for the standalone imager.
 pub fn command_schema(program_name: &str) -> UiCommandSchema {
     let bundle = casa_provider_contracts::builtin_surface_bundle("imager")
         .expect("built-in imager parameter surface must remain valid");
     let mut schema: UiCommandSchema =
-        serde_json::from_value(casa_provider_contracts::project_ui_schema(&bundle))
+        serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
             .expect("canonical imager UI projection must match UiCommandSchema");
     schema.invocation_name = program_name.to_string();
     schema.usage = format!("{program_name} [parameters]");
@@ -18,7 +18,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
 #[cfg(test)]
 mod tests {
     use super::command_schema;
-    use casa_ms::ui_schema::{UiArgumentParser, UiValueKind};
+    use casa_ms::presentation::{UiArgumentParser, UiValueKind};
 
     #[test]
     fn schema_exposes_workflow_surface_for_casars() {

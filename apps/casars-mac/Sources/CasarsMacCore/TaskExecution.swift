@@ -6,7 +6,7 @@ public protocol TaskExecution {
 
 public struct GenericTaskRequest: Equatable {
     public var runID: String
-    public var task: TaskCatalogEntry
+    public var task: ApplicationCatalogEntry
     public var parameterBundle: SurfaceParameterBundle?
     public var providerInvocation: SurfaceProviderInvocation
     public var parameterValues: [String: SurfaceParameterValue]
@@ -14,7 +14,7 @@ public struct GenericTaskRequest: Equatable {
 
     public init(
         runID: String,
-        task: TaskCatalogEntry,
+        task: ApplicationCatalogEntry,
         providerInvocation: SurfaceProviderInvocation,
         parameterBundle: SurfaceParameterBundle? = nil,
         parameterValues: [String: SurfaceParameterValue] = [:],
@@ -231,9 +231,14 @@ public struct ManagedImagingOutput: Codable, Equatable {
 
 public final class ProcessGenericTaskClient: GenericTaskClient {
     private let queue: DispatchQueue
+    private let configuredLaunchMode: LaunchMode?
 
-    public init(queue: DispatchQueue = DispatchQueue(label: "casars.mac.generic-task", qos: .userInitiated)) {
+    public init(
+        queue: DispatchQueue = DispatchQueue(label: "casars.mac.generic-task", qos: .userInitiated),
+        launchMode: LaunchMode? = nil
+    ) {
         self.queue = queue
+        configuredLaunchMode = launchMode
     }
 
     public func startTask(
@@ -285,12 +290,14 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                 }
                 progressTailer?.start()
                 let output = try Self.runProcess(
-                    binaryName: executionRequest.task.binaryName,
+                    binaryName: executionRequest.task.executable,
+                    cargoPackage: executionRequest.task.cargoPackage,
                     overrideEnv: executionRequest.task.overrideEnv,
                     arguments: arguments,
                     standardInput: executionRequest.providerInvocation.stdin,
                     workingDirectoryPath: executionRequest.workingDirectoryPath,
                     execution: execution,
+                    launchMode: self.configuredLaunchMode,
                     stderrChunkHandler: handleProgressChunk,
                     stderrChunkHandlerQueue: progressParserQueue,
                     storesStderr: !isImagerTask || usesProgressTelemetry
@@ -335,7 +342,7 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                     )))
                 } else {
                     eventHandler(.failed(GenericTaskFailure(
-                        message: "\(executionRequest.task.binaryName) exited with \(output.exitCode).",
+                        message: "\(executionRequest.task.executable) exited with \(output.exitCode).",
                         diagnostics: [stderr, output.stdout].filter { !$0.isEmpty }
                     )))
                 }
@@ -453,11 +460,13 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
 
     private static func runProcess(
         binaryName: String,
+        cargoPackage: String,
         overrideEnv: String,
         arguments: [String],
         standardInput: String?,
         workingDirectoryPath: String?,
         execution: ProcessTaskExecution,
+        launchMode: LaunchMode?,
         stderrChunkHandler: ((String) -> Void)? = nil,
         stderrChunkHandlerQueue: DispatchQueue? = nil,
         storesStderr: Bool = true
@@ -466,12 +475,28 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
             return ProcessOutput(exitCode: -1, stdout: "", stderr: "cancelled before launch")
         }
         let process = Process()
-        if let executablePath = resolvedExecutablePath(binaryName: binaryName, overrideEnv: overrideEnv) {
+        switch try launchMode ?? Self.launchMode() {
+        case .installedSuite:
+            let executablePath = try installedExecutablePath(
+                binaryName: binaryName,
+                overrideEnv: overrideEnv
+            )
             process.executableURL = URL(fileURLWithPath: executablePath)
             process.arguments = arguments
-        } else {
+        case .developmentWorkspace:
+            guard let repoRoot = ProcessInfo.processInfo.environment["CASA_RS_REPO_ROOT"],
+                  !repoRoot.isEmpty else {
+                throw GenericTaskFailure(
+                    message: "Development launch requires CASA_RS_REPO_ROOT.",
+                    diagnostics: ["Set CASA_RS_REPO_ROOT to the casa-rs checkout selected at application startup."]
+                )
+            }
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = [binaryName] + arguments
+            process.arguments = [
+                ProcessInfo.processInfo.environment["CARGO"] ?? "cargo",
+                "run", "--manifest-path", "\(repoRoot)/Cargo.toml", "-q",
+                "-p", cargoPackage, "--bin", binaryName, "--",
+            ] + arguments
         }
         let stdout = Pipe()
         let stderr = Pipe()
@@ -522,14 +547,37 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         )
     }
 
-    static func resolvedExecutablePath(
+    public enum LaunchMode: String {
+        case installedSuite = "installed_suite"
+        case developmentWorkspace = "development_workspace"
+    }
+
+    static func launchMode(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> LaunchMode {
+        if let configured = environment["CASARS_LAUNCH_MODE"] {
+            guard let mode = LaunchMode(rawValue: configured) else {
+                throw GenericTaskFailure(
+                    message: "Invalid CASARS_LAUNCH_MODE \(configured).",
+                    diagnostics: ["Expected installed_suite or development_workspace."]
+                )
+            }
+            return mode
+        }
+        #if DEBUG
+        return .developmentWorkspace
+        #else
+        return .installedSuite
+        #endif
+    }
+
+    static func installedExecutablePath(
         binaryName: String,
         overrideEnv: String,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         bundleExecutableURL: URL? = Bundle.main.executableURL,
-        currentDirectoryPath: String = FileManager.default.currentDirectoryPath,
         isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
-    ) -> String? {
+    ) throws -> String {
         if let path = environment[overrideEnv], !path.isEmpty {
             return path
         }
@@ -540,41 +588,10 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
            isExecutable(bundled) {
             return bundled
         }
-        if let repoRoot = environment["CASA_RS_REPO_ROOT"], !repoRoot.isEmpty {
-            for profile in ["release", "debug"] {
-                let candidate = URL(fileURLWithPath: repoRoot, isDirectory: true)
-                    .appendingPathComponent("target/\(profile)/\(binaryName)")
-                    .path
-                if isExecutable(candidate) {
-                    return candidate
-                }
-            }
-        }
-        var cursor = URL(fileURLWithPath: currentDirectoryPath, isDirectory: true)
-        for _ in 0..<6 {
-            for profile in ["release", "debug"] {
-                let candidate = cursor.appendingPathComponent("target/\(profile)/\(binaryName)").path
-                if isExecutable(candidate) {
-                    return candidate
-                }
-            }
-            let parent = cursor.deletingLastPathComponent()
-            if parent.path == cursor.path {
-                break
-            }
-            cursor = parent
-        }
-        for directory in (environment["PATH"] ?? "").split(separator: ":") {
-            let candidate = URL(fileURLWithPath: String(directory), isDirectory: true)
-                .appendingPathComponent(binaryName)
-                .standardizedFileURL
-                .resolvingSymlinksInPath()
-                .path
-            if isExecutable(candidate) {
-                return candidate
-            }
-        }
-        return nil
+        throw GenericTaskFailure(
+            message: "Installed-suite executable \(binaryName) is missing.",
+            diagnostics: ["Install \(binaryName) beside the app launcher or set \(overrideEnv) to its installed path."]
+        )
     }
 
     private static func stderrWithoutImagerProgress(_ stderr: String) -> String {

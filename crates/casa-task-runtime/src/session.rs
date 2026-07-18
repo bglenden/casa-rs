@@ -351,6 +351,8 @@ pub enum ParameterSessionError {
     UnknownParameter(String),
     #[error("invalid parameter base source: {0}")]
     InvalidSource(String),
+    #[error("invalid parameter lifecycle transition: {0}")]
+    InvalidLifecycle(String),
 }
 
 #[cfg(test)]

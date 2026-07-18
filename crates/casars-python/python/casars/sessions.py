@@ -7,16 +7,17 @@ import json
 import os
 from os import PathLike
 from pathlib import Path
-import shutil
 import subprocess
 import threading
 from typing import Any, Literal, TypeAlias
 
-from ._task_runtime import resolve_imexplore_binary
+from . import _core
+from ._task_runtime import _resolve_task_binary, resolve_imexplore_binary
 from .parameters import ParameterData, SessionParameters
 
 StrPath: TypeAlias = str | PathLike[str]
 SessionBaseSource: TypeAlias = Literal["defaults", "last"]
+_SESSION_LIFECYCLE = _core.ParameterSessionLifecycle()
 
 
 class SessionProtocolError(RuntimeError):
@@ -52,7 +53,6 @@ class JsonlSession:
         self._save_last = save_last
         self._viewport = dict(viewport)
         self._opened = False
-        self._last_timer: threading.Timer | None = None
         self._last_response = first_response
 
     @property
@@ -100,7 +100,9 @@ class JsonlSession:
         self._queue_last_save()
 
     def close(self) -> None:
-        self._flush_last_save()
+        self.warnings.extend(
+            _SESSION_LIFECYCLE.flush(self.parameters.surface, self.parameters.workspace)
+        )
         _close_process(self._process)
 
     def __enter__(self) -> "JsonlSession":
@@ -156,28 +158,30 @@ class JsonlSession:
 
     def _mark_opened(self) -> None:
         self._opened = True
-        if self._save_last:
-            self._write_last_warning_only()
+        try:
+            self.warnings.extend(
+                _SESSION_LIFECYCLE.opened(
+                    self.parameters.surface,
+                    self.parameters.workspace,
+                    self.parameters._resolved_values_json(),
+                    self._save_last,
+                )
+            )
+        except Exception as error:  # automatic state failure must not fail valid science
+            self.warnings.append(f"could not save Last parameters: {error}")
 
     def _queue_last_save(self) -> None:
         if not self._save_last or not self._opened:
             return
-        if self._last_timer is not None:
-            self._last_timer.cancel()
-        self._last_timer = threading.Timer(0.35, self._flush_last_save)
-        self._last_timer.daemon = True
-        self._last_timer.start()
-
-    def _flush_last_save(self) -> None:
-        timer = self._last_timer
-        self._last_timer = None
-        if timer is not None:
-            timer.cancel()
-            self._write_last_warning_only()
-
-    def _write_last_warning_only(self) -> None:
         try:
-            self.parameters.write_last()
+            self.warnings.extend(
+                _SESSION_LIFECYCLE.accepted_durable_change(
+                    self.parameters.surface,
+                    self.parameters.workspace,
+                    self.parameters._resolved_values_json(),
+                    self._save_last,
+                )
+            )
         except Exception as error:  # automatic state failure must not fail valid science
             self.warnings.append(f"could not save Last parameters: {error}")
 
@@ -714,25 +718,12 @@ def _close_process(process: subprocess.Popen[str]) -> None:
 
 
 def _resolve_tablebrowser_binary(binary: StrPath | None) -> str:
-    if binary is not None:
-        path = os.fspath(binary)
-        if Path(path).is_file():
-            return path
-        raise FileNotFoundError(f"tablebrowser binary does not exist: {path}")
-    override = os.environ.get("CASARS_TABLEBROWSER_BIN")
-    if override:
-        return _resolve_tablebrowser_binary(override)
-    suite_root = os.environ.get("CASARS_SUITE_ROOT")
-    if suite_root:
-        candidate = Path(suite_root) / "bin" / "tablebrowser"
-        if candidate.is_file():
-            return str(candidate)
-    found = shutil.which("tablebrowser")
-    if found is not None:
-        return found
-    raise FileNotFoundError(
-        "tablebrowser binary was not found; pass binary=, set "
-        "CASARS_TABLEBROWSER_BIN/CASARS_SUITE_ROOT, or install it on PATH"
+    return _resolve_task_binary(
+        application_id="tablebrowser",
+        binary=binary,
+        configured_binary=None,
+        missing_error_cls=FileNotFoundError,
+        description="tablebrowser",
     )
 
 

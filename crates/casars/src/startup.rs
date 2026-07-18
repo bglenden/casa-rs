@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use casa_task_runtime::ParameterSession;
 
-use casa_ms::ui_schema::{UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema};
+use casa_ms::presentation::{UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema};
 
 use crate::registry::{RegistryApp, registered_apps, resolve_app};
 
@@ -150,9 +150,6 @@ fn parse_schema_prefill_args(
                     }
                     let text = match action {
                         UiActionKind::Help => schema.render_help(),
-                        UiActionKind::UiSchema => schema.render_json_pretty().map_err(|error| {
-                            format!("serialize {} ui schema: {error}", schema.command_id)
-                        })?,
                     };
                     return Ok(SchemaPrefillParse::PrintText(text));
                 }
@@ -447,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_parser_supports_prefill_launches_and_schema_dump_actions() {
+    fn startup_parser_supports_prefill_launches() {
         match parse_startup_args(vec![
             OsString::from("msexplore"),
             OsString::from("/tmp/example.ms"),
@@ -467,19 +464,6 @@ mod tests {
                 }));
             }
             other => panic!("expected startup app selection, got {other:?}"),
-        }
-
-        match parse_startup_args(vec![
-            OsString::from("msexplore"),
-            OsString::from("--ui-schema"),
-        ])
-        .expect("ui schema action")
-        {
-            StartupSelection::PrintText(text) => {
-                assert!(text.contains("\"command_id\": \"msexplore\""));
-                assert!(text.contains("\"schema_version\": 2"));
-            }
-            other => panic!("expected ui schema text, got {other:?}"),
         }
     }
 

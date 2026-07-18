@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List package/binary entries from the shared frontend task catalog."""
+"""List package/binary entries from the canonical application catalog."""
 
 from __future__ import annotations
 
@@ -11,10 +11,16 @@ import sys
 
 def load_catalog() -> list[dict[str, object]]:
     repo_root = pathlib.Path(__file__).resolve().parents[1]
-    catalog_path = repo_root / "resources" / "task-catalog.json"
+    catalog_path = (
+        repo_root
+        / "crates"
+        / "casa-provider-contracts"
+        / "resources"
+        / "application-catalog.json"
+    )
     with catalog_path.open("r", encoding="utf-8") as handle:
         catalog = json.load(handle)
-    return list(catalog["tasks"])
+    return list(catalog["applications"])
 
 
 def main() -> int:
@@ -31,17 +37,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    tasks = load_catalog()
+    applications = load_catalog()
     seen: set[str] = set()
-    for task in tasks:
-        if not args.all and not task.get("include_in_suite", False):
+    for application in applications:
+        if not args.all and not application.get("include_in_suite", False):
             continue
-        binary = str(task["binary_name"])
+        launch = application["launch"]
+        binary = str(launch["executable"])
         if binary in seen:
             continue
         seen.add(binary)
         if args.package_binary:
-            print(f"{task['cargo_package']} {binary}")
+            print(f"{launch['cargo_package']} {binary}")
         else:
             print(binary)
     return 0

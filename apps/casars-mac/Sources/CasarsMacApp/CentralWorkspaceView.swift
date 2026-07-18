@@ -6699,8 +6699,8 @@ struct TaskPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    TaskCatalogBlock(
-                        tasks: store.state.taskCatalog,
+                    ApplicationCatalogBlock(
+                        tasks: store.state.applicationCatalog,
                         activeTaskID: "calibrate",
                         categoryFilter: .constant(.all),
                         searchText: .constant("")
@@ -8033,8 +8033,8 @@ struct GenericTaskPanel: View {
         GridItem(.adaptive(minimum: 260), alignment: .topLeading)
     ]
 
-    private var task: TaskCatalogEntry? {
-        store.state.taskCatalog.first { $0.id == activeTaskID }
+    private var task: ApplicationCatalogEntry? {
+        store.state.applicationCatalog.first { $0.id == activeTaskID }
     }
 
     private var schema: TaskUISchema? {
@@ -8095,7 +8095,7 @@ struct GenericTaskPanel: View {
                         runStatusBlock
                     }
                     if showingTaskList {
-                        TaskCatalogBlock(
+                        ApplicationCatalogBlock(
                             tasks: filteredTasks,
                             activeTaskID: activeTaskID,
                             categoryFilter: $categoryFilter,
@@ -8149,9 +8149,9 @@ struct GenericTaskPanel: View {
         showingTaskList = false
     }
 
-    private var filteredTasks: [TaskCatalogEntry] {
+    private var filteredTasks: [ApplicationCatalogEntry] {
         let query = taskSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return store.state.taskCatalog
+        return store.state.applicationCatalog
             .filter { $0.showInSwift }
             .filter { !Self.explorerTaskIDs.contains($0.id) }
             .filter { categoryFilter.matches(task: $0) }
@@ -8160,7 +8160,7 @@ struct GenericTaskPanel: View {
                     || task.displayName.lowercased().contains(query)
                     || task.id.lowercased().contains(query)
                     || task.category.lowercased().contains(query)
-                    || task.binaryName.lowercased().contains(query)
+                    || task.executable.lowercased().contains(query)
                     || task.shellKind.lowercased().contains(query)
             }
             .sorted {
@@ -8415,11 +8415,6 @@ struct GenericTaskPanel: View {
                 Text(safety.classes.joined(separator: ", "))
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
-                if let row = store.taskExecutionMatrixRow(taskID: taskID) {
-                    Text("Historical execution matrix: \(row.mutationClass) / \(row.confirmation)")
-                        .workbenchFont(.caption)
-                        .foregroundStyle(.secondary)
-                }
             }
             .taskCard()
         }
@@ -9423,15 +9418,15 @@ private enum TaskParameterOpenPanel {
 
 }
 
-struct TaskCatalogBlock: View {
-    var tasks: [TaskCatalogEntry]
+struct ApplicationCatalogBlock: View {
+    var tasks: [ApplicationCatalogEntry]
     var activeTaskID: String
     @Binding var categoryFilter: CasaTaskCategoryFilter
     @Binding var searchText: String
     var selectTask: ((String) -> Void)? = nil
     private static let explorerTaskIDs: Set<String> = ["imexplore", "tablebrowser"]
 
-    private var taskRows: [TaskCatalogEntry] {
+    private var taskRows: [ApplicationCatalogEntry] {
         tasks.filter { !Self.explorerTaskIDs.contains($0.id) }
     }
 
@@ -9470,7 +9465,7 @@ struct TaskCatalogBlock: View {
         .accessibilityIdentifier("task.catalog")
     }
 
-    private func taskRow(_ task: TaskCatalogEntry) -> some View {
+    private func taskRow(_ task: ApplicationCatalogEntry) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: CasaTaskCategoryFilter.categoryIcon(for: task))
                 .foregroundStyle(task.id == activeTaskID ? Color.accentColor : Color.secondary)
@@ -9495,8 +9490,6 @@ enum CasaTaskCategoryFilter: String, CaseIterable, Identifiable {
     case flagging
     case calibration
     case imaging
-    case singleDish
-    case manipulation
     case analysis
     case visualization
     case simulation
@@ -9511,23 +9504,21 @@ enum CasaTaskCategoryFilter: String, CaseIterable, Identifiable {
         case .flagging: return "Flagging"
         case .calibration: return "Calibration"
         case .imaging: return "Imaging"
-        case .singleDish: return "Single Dish"
-        case .manipulation: return "Manipulation"
         case .analysis: return "Analysis"
         case .visualization: return "Visualization"
         case .simulation: return "Simulation"
         }
     }
 
-    func matches(task: TaskCatalogEntry) -> Bool {
+    func matches(task: ApplicationCatalogEntry) -> Bool {
         self == .all || Self.category(for: task) == self
     }
 
-    static func categoryTitle(for task: TaskCatalogEntry) -> String {
+    static func categoryTitle(for task: ApplicationCatalogEntry) -> String {
         category(for: task).title
     }
 
-    static func categoryIcon(for task: TaskCatalogEntry) -> String {
+    static func categoryIcon(for task: ApplicationCatalogEntry) -> String {
         switch category(for: task) {
         case .all:
             return "square.grid.2x2"
@@ -9541,10 +9532,6 @@ enum CasaTaskCategoryFilter: String, CaseIterable, Identifiable {
             return "slider.horizontal.3"
         case .imaging:
             return "photo"
-        case .singleDish:
-            return "dot.radiowaves.left.and.right"
-        case .manipulation:
-            return "rectangle.2.swap"
         case .analysis:
             return "chart.xyaxis.line"
         case .visualization:
@@ -9554,45 +9541,26 @@ enum CasaTaskCategoryFilter: String, CaseIterable, Identifiable {
         }
     }
 
-    static func category(for task: TaskCatalogEntry) -> CasaTaskCategoryFilter {
-        switch task.id {
-        case "importvla", "importfits", "exportfits":
+    static func category(for task: ApplicationCatalogEntry) -> CasaTaskCategoryFilter {
+        switch task.category.lowercased() {
+        case "import":
             return .inputOutput
-        case "msexplore", "tablebrowser":
+        case "measurementset", "tables":
             return .information
-        case "flagdata", "flagmanager":
+        case "flagging":
             return .flagging
-        case "calibrate", "applycal", "bandpass", "fluxscale", "gaincal", "gencal":
+        case "calibration":
             return .calibration
-        case "imager", "feather":
+        case "imaging":
             return .imaging
-        case "mstransform", "split", "uvcontsub":
-            return .manipulation
-        case "immath", "immoments", "impv", "imregrid", "imsubimage":
+        case "images":
             return .analysis
-        case "imexplore":
+        case "plotting":
             return .visualization
-        case "simobserve":
+        case "simulation":
             return .simulation
         default:
-            switch task.category.lowercased() {
-            case "import":
-                return .inputOutput
-            case "measurementset":
-                return .information
-            case "flagging":
-                return .flagging
-            case "calibration":
-                return .calibration
-            case "imaging":
-                return .imaging
-            case "images":
-                return .analysis
-            case "simulation":
-                return .simulation
-            default:
-                return .information
-            }
+            return .information
         }
     }
 }

@@ -92,6 +92,7 @@ final class AssistantDiscussionTests: XCTestCase {
         let configuration = try AgentSessionConfiguration.discover(environment: [
             "CASA_RS_AGENT_COMMAND": codex.path,
             "CASA_RS_PROJECT_MCP": mcp.path,
+            "CASARS_LAUNCH_MODE": "installed_suite",
             "PATH": "",
         ])
         XCTAssertEqual(configuration.agentExecutable, codex.path)
@@ -102,6 +103,26 @@ final class AssistantDiscussionTests: XCTestCase {
                 environment: ["PATH": directory.path]
             ),
             python.path
+        )
+    }
+
+    func testDevelopmentProjectMCPLaunchUsesExactCargoPackageAndBinary() throws {
+        let configuration = try AgentSessionConfiguration.discover(environment: [
+            "CASA_RS_AGENT_COMMAND": "/usr/bin/false",
+            "CASARS_LAUNCH_MODE": "development_workspace",
+            "CASA_RS_REPO_ROOT": "/checkout",
+            "CARGO": "/toolchain/cargo",
+            "PATH": "",
+        ])
+
+        XCTAssertEqual(configuration.projectMCPExecutable, "/usr/bin/env")
+        XCTAssertEqual(
+            configuration.projectMCPArguments,
+            [
+                "/toolchain/cargo",
+                "run", "--manifest-path", "/checkout/Cargo.toml", "-q",
+                "-p", "casars-frontend-services", "--bin", "casars-project-mcp", "--",
+            ]
         )
     }
 
@@ -823,7 +844,13 @@ final class AssistantDiscussionTests: XCTestCase {
                     "imagename": "products/image",
                     "robust": "-0.5",
                     "weighting": "briggs",
-                ]
+                ],
+                validatedPatch: SurfaceParameterPatch(values: [
+                    "vis": .string("input.ms"),
+                    "imagename": .string("products/image"),
+                    "robust": .float(-0.5),
+                    "weighting": .string("briggs"),
+                ])
             )],
             pins: []
         ))
@@ -975,7 +1002,15 @@ final class AssistantDiscussionTests: XCTestCase {
                         "band": "Band 6",
                         "pointing_count": "4",
                         "output_ms": "products/alma-mosaic.ms",
-                    ]
+                    ],
+                    validatedPatch: SurfaceParameterPatch(values: [
+                        "request_kind": .string("family"),
+                        "telescope": .string("ALMA"),
+                        "array_config": .string("alma.cycle10.5.cfg"),
+                        "band": .string("Band 6"),
+                        "pointing_count": .integer(4),
+                        "output_ms": .string("products/alma-mosaic.ms"),
+                    ])
                 ),
             ],
             pins: []
@@ -1212,6 +1247,54 @@ final class AssistantDiscussionTests: XCTestCase {
         ))
         XCTAssertEqual(fixture.conversations.count, 1)
         wait(for: [ready], timeout: 1)
+    }
+
+    func testDeterministicAgentTaskSuggestionIncludesValidatedPatch() throws {
+        let fixture = DeterministicAgentSession()
+        var events: [[String: Any]] = []
+        fixture.onEvent { events.append($0) }
+        fixture.startConversation(AgentConversationRequest(
+            projectRoot: "/tmp/project",
+            model: "fixture-model",
+            effort: "medium",
+            resumeThreadID: nil,
+            runtimeProfile: CasaAgentRuntimeProfile(
+                authority: .work,
+                sessionNonce: String(repeating: "n", count: 24),
+                pythonCommand: "python3"
+            )
+        ))
+        fixture.sendTurn(AgentTurnRequest(
+            threadID: "fixture-codex-thread",
+            text: "Suggest an imaging task",
+            model: "fixture-model",
+            effort: "medium"
+        ))
+
+        let toolEvent = try XCTUnwrap(events.first { event in
+            guard event["method"] as? String == "item/completed",
+                  let params = event["params"] as? [String: Any],
+                  let item = params["item"] as? [String: Any]
+            else { return false }
+            return item["tool"] as? String == "task.suggest"
+        })
+        let params = try XCTUnwrap(toolEvent["params"] as? [String: Any])
+        let item = try XCTUnwrap(params["item"] as? [String: Any])
+        let result = try XCTUnwrap(item["result"] as? [String: Any])
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        let text = try XCTUnwrap(content.first?["text"] as? String)
+        let data = try XCTUnwrap(text.data(using: .utf8))
+        let suggestion = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        let patchObject = try XCTUnwrap(suggestion["validated_patch"])
+        let patchData = try JSONSerialization.data(withJSONObject: patchObject)
+        let patch = try JSONDecoder().decode(SurfaceParameterPatch.self, from: patchData)
+
+        XCTAssertEqual(patch.values["vis"], .string("input.ms"))
+        XCTAssertEqual(patch.values["weighting"], .string("briggs"))
+        XCTAssertEqual(patch.values["robust"], .float(-0.5))
+        XCTAssertTrue(patch.unset.isEmpty)
     }
 
     func testOptInCodexSubscriptionSmoke() throws {

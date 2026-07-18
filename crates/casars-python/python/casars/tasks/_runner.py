@@ -17,10 +17,6 @@ from ..parameters import ParameterData, SurfaceParameters, TaskParameters
 StrPath: TypeAlias = str | PathLike[str]
 TaskBaseSource: TypeAlias = Literal["defaults", "last", "last_successful"]
 
-CASARS_BINARY_ENVVAR = "CASARS_BIN"
-CASARS_BINARY_NAME = "casars"
-
-
 class CasarsBinaryNotFoundError(FileNotFoundError):
     """Raised when the canonical ``casars`` executable cannot be resolved."""
 
@@ -248,10 +244,9 @@ def _merge_overrides(
 
 def _resolve_casars_binary(binary: StrPath | None) -> str:
     return _resolve_task_binary(
+        application_id="casars",
         binary=binary,
         configured_binary=None,
-        envvar=CASARS_BINARY_ENVVAR,
-        binary_name=CASARS_BINARY_NAME,
         missing_error_cls=CasarsBinaryNotFoundError,
         description="casars task runner",
     )

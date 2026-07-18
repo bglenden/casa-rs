@@ -43,6 +43,6 @@ pub use summary::{
 };
 pub use task_contract::{
     IMPORTVLA_TASK_PROTOCOL_NAME, IMPORTVLA_TASK_PROTOCOL_VERSION, ImportVlaImportTaskRequest,
-    ImportVlaProtocolInfo, ImportVlaScanTaskRequest, ImportVlaTaskRequest, ImportVlaTaskResult,
-    ImportVlaTaskSchemaBundle,
+    ImportVlaScanTaskRequest, ImportVlaTaskRequest, ImportVlaTaskResult,
+    importvla_protocol_descriptor, importvla_task_schema_bundle,
 };

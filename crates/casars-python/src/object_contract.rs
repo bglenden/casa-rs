@@ -521,7 +521,6 @@ impl DataObjectSchemaBundle {
             }),
             projections: ProviderProjectionMetadata {
                 cli: None,
-                ui_schema: None,
                 python: Some(json!({
                     "module": "casars.data",
                     "objects": [

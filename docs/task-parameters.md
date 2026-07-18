@@ -84,6 +84,11 @@ specified. Interactive TUI and GUI editors may start from a valid Last source,
 but must show the active source, modified state, validation, and per-field
 origins.
 
+A missing managed profile is distinct from an unreadable or invalid profile:
+interactive callers may explicitly choose Defaults when no Last file exists,
+but a present corrupt Last file is reported and is never silently replaced by
+Defaults.
+
 ## Managed Last files
 
 By default, managed state lives under the workspace:
@@ -102,6 +107,13 @@ opens successfully and after validated durable settings change. Browser
 sessions do not have `last-successful.toml`. Cursor movement, scrolling,
 viewport changes, playback, caches, and command history are live state and do
 not trigger profile writes.
+
+`casa-task-runtime::ParameterRuntime` owns source resolution and
+`SessionLastCoordinator` owns successful-open persistence, the 350 ms debounce,
+coalescing by normalized workspace/surface destination, background writes, and
+clean-close flushing. Swift, Python, CLI, and TUI projections report lifecycle
+events to that boundary rather than carrying independent timers or Last-state
+maps.
 
 `tablebrowser` bookmark values use stable explicit forms:
 `cell:ROW:COLUMN`, `table-keyword:PATH`,

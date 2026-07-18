@@ -3,21 +3,15 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::OnceLock;
-use std::time::SystemTime;
 
-use casa_ms::ui_schema::UiCommandSchema;
-use casa_provider_contracts::builtin_surface_bundle;
-use casa_task_runtime::project_ui_schema;
-use serde::Deserialize;
-
-const TASK_CATALOG_JSON: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../resources/task-catalog.json"
-));
+use casa_ms::presentation::UiCommandSchema;
+use casa_provider_contracts::{
+    ApplicationBrowserKind, ApplicationDefinition, ApplicationInteraction, ApplicationKind,
+    ApplicationLaunchMode, ApplicationShellKind, builtin_application_catalog,
+    builtin_surface_bundle,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RegistryApp {
@@ -57,68 +51,58 @@ pub(crate) enum BrowserAppKind {
     Image,
 }
 
-#[derive(Debug, Deserialize)]
-struct TaskCatalog {
-    tasks: Vec<TaskCatalogEntry>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TaskCatalogEntry {
-    id: String,
-    category: String,
-    display_name: String,
-    binary_name: String,
-    cargo_package: String,
-    override_env: String,
-    shell_kind: String,
-    interaction: String,
-    browser_kind: Option<String>,
-    show_in_tui: bool,
-}
-
-fn task_catalog_entries() -> &'static [TaskCatalogEntry] {
-    static CATALOG: OnceLock<Vec<TaskCatalogEntry>> = OnceLock::new();
-    CATALOG.get_or_init(|| {
-        serde_json::from_str::<TaskCatalog>(TASK_CATALOG_JSON)
-            .expect("resources/task-catalog.json should parse")
-            .tasks
-    })
-}
-
-fn registry_app_from_catalog(entry: &TaskCatalogEntry) -> Option<RegistryApp> {
-    if !entry.show_in_tui {
+fn registry_app_from_catalog(entry: &ApplicationDefinition) -> Option<RegistryApp> {
+    if !entry.show_in_tui || entry.kind != ApplicationKind::Task {
         return None;
     }
-    let shell_kind = match entry.shell_kind.as_str() {
-        "inspect" => AppShellKind::Inspect,
-        "browser" => AppShellKind::Browser,
-        "workflow" => AppShellKind::Workflow,
-        _ => return None,
+    let surface = entry.surface_bundle().ok()??;
+    let shell_kind = match entry.shell_kind {
+        ApplicationShellKind::Inspect => AppShellKind::Inspect,
+        ApplicationShellKind::Browser => AppShellKind::Browser,
+        ApplicationShellKind::Workflow => AppShellKind::Workflow,
+        ApplicationShellKind::Launcher => return None,
     };
-    let interaction = match entry.interaction.as_str() {
-        "one_shot" => AppInteraction::OneShot,
-        "browser_session" => {
-            let browser_kind = match entry.browser_kind.as_deref() {
-                Some("table") => BrowserAppKind::Table,
-                Some("image") => BrowserAppKind::Image,
+    let interaction = match entry.interaction {
+        ApplicationInteraction::OneShot => AppInteraction::OneShot,
+        ApplicationInteraction::BrowserSession => {
+            let browser_kind = match entry.browser_kind {
+                Some(ApplicationBrowserKind::Table) => BrowserAppKind::Table,
+                Some(ApplicationBrowserKind::Image) => BrowserAppKind::Image,
                 _ => return None,
             };
             AppInteraction::BrowserSession(browser_kind)
         }
-        _ => return None,
+        ApplicationInteraction::Launcher => return None,
     };
     Some(RegistryApp {
         id: entry.id.clone(),
-        category: entry.category.clone(),
-        display_name: entry.display_name.clone(),
+        category: surface.surface.category().to_string(),
+        display_name: surface.surface.display_name().to_string(),
         shell_kind,
         kind: RegistryAppKind::Subprocess {
-            binary_name: entry.binary_name.clone(),
-            cargo_package: entry.cargo_package.clone(),
-            override_env: entry.override_env.clone(),
+            binary_name: entry.launch.executable.clone(),
+            cargo_package: entry.launch.cargo_package.clone(),
+            override_env: entry.launch.override_env.clone(),
             interaction,
         },
     })
+}
+
+fn configured_launch_mode() -> Result<ApplicationLaunchMode, String> {
+    match env::var("CASARS_LAUNCH_MODE") {
+        Ok(value) if value == "installed_suite" => Ok(ApplicationLaunchMode::InstalledSuite),
+        Ok(value) if value == "development_workspace" => {
+            Ok(ApplicationLaunchMode::DevelopmentWorkspace)
+        }
+        Ok(value) => Err(format!(
+            "invalid CASARS_LAUNCH_MODE {value:?}; expected installed_suite or development_workspace"
+        )),
+        Err(env::VarError::NotPresent) if cfg!(debug_assertions) => {
+            Ok(ApplicationLaunchMode::DevelopmentWorkspace)
+        }
+        Err(env::VarError::NotPresent) => Ok(ApplicationLaunchMode::InstalledSuite),
+        Err(error) => Err(format!("read CASARS_LAUNCH_MODE: {error}")),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -148,7 +132,7 @@ impl RegistryApp {
     /// Provider subprocesses no longer supply a fallback schema or alias table.
     pub(crate) fn load_schema(&self) -> Result<UiCommandSchema, String> {
         let bundle = builtin_surface_bundle(&self.id)?;
-        serde_json::from_value(project_ui_schema(&bundle))
+        serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
             .map_err(|error| format!("project {} parameter definition: {error}", self.id))
     }
 
@@ -166,42 +150,36 @@ impl RegistryApp {
                 prefix_args: Vec::new(),
             });
         }
-        if let Some(path) = env::var_os(format!("CARGO_BIN_EXE_{binary_name}")) {
-            return Ok(ResolvedCommand {
-                program: path,
-                prefix_args: Vec::new(),
-            });
-        }
-        if let Some(path) = sibling_binary(binary_name) {
-            if !self.prefers_cargo_workspace_fallback_for_stale_sibling()
-                || !sibling_binary_is_stale_for_current_process(&path)
-            {
-                return Ok(ResolvedCommand {
+        match configured_launch_mode()? {
+            ApplicationLaunchMode::InstalledSuite => {
+                let path = sibling_binary(binary_name).ok_or_else(|| {
+                    format!(
+                        "installed-suite executable {binary_name:?} is missing beside the casars launcher; set {override_env} to its installed path"
+                    )
+                })?;
+                Ok(ResolvedCommand {
                     program: path.into_os_string(),
                     prefix_args: Vec::new(),
-                });
+                })
+            }
+            ApplicationLaunchMode::DevelopmentWorkspace => {
+                let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+                Ok(ResolvedCommand {
+                    program: cargo,
+                    prefix_args: vec![
+                        OsString::from("run"),
+                        OsString::from("--manifest-path"),
+                        workspace_manifest_path().into_os_string(),
+                        OsString::from("-q"),
+                        OsString::from("-p"),
+                        OsString::from(cargo_package),
+                        OsString::from("--bin"),
+                        OsString::from(binary_name),
+                        OsString::from("--"),
+                    ],
+                })
             }
         }
-
-        let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-        Ok(ResolvedCommand {
-            program: cargo,
-            prefix_args: vec![
-                OsString::from("run"),
-                OsString::from("--manifest-path"),
-                workspace_manifest_path().into_os_string(),
-                OsString::from("-q"),
-                OsString::from("-p"),
-                OsString::from(cargo_package),
-                OsString::from("--bin"),
-                OsString::from(binary_name),
-                OsString::from("--"),
-            ],
-        })
-    }
-
-    fn prefers_cargo_workspace_fallback_for_stale_sibling(&self) -> bool {
-        matches!(self.id.as_str(), "msexplore" | "calibrate" | "importvla")
     }
 
     pub(crate) fn is_browser_session(&self) -> bool {
@@ -272,7 +250,9 @@ pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
 }
 
 pub(crate) fn registered_apps() -> Vec<RegistryApp> {
-    task_catalog_entries()
+    builtin_application_catalog()
+        .expect("built-in application catalog should validate")
+        .applications
         .iter()
         .filter_map(registry_app_from_catalog)
         .collect()
@@ -327,31 +307,6 @@ fn workspace_manifest_path() -> PathBuf {
         .join("Cargo.toml")
 }
 
-fn sibling_binary_is_stale_for_current_process(sibling_path: &std::path::Path) -> bool {
-    let current_exe = match env::current_exe() {
-        Ok(path) => path,
-        Err(_) => return false,
-    };
-    is_binary_stale(
-        file_modified_time(sibling_path),
-        file_modified_time(&current_exe),
-    )
-}
-
-fn file_modified_time(path: &std::path::Path) -> Option<SystemTime> {
-    fs::metadata(path).ok()?.modified().ok()
-}
-
-fn is_binary_stale(
-    binary_modified: Option<SystemTime>,
-    reference_modified: Option<SystemTime>,
-) -> bool {
-    match (binary_modified, reference_modified) {
-        (Some(binary_modified), Some(reference_modified)) => binary_modified < reference_modified,
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,10 +330,8 @@ mod tests {
         assert!(imager.argument("cell_arcsec").is_none());
 
         // These catalog surfaces intentionally share executable routes without
-        // a provider surface selector. Their live family binary cannot
-        // distinguish the alias for `--ui-schema`, so frontend schema loading
-        // must project each catalog surface directly instead of inferring alias
-        // semantics from the provider-family schema.
+        // a provider surface selector, so frontend forms are projected directly
+        // from each canonical surface rather than inferred from a family binary.
         let split_app = resolve_app(Some("split")).unwrap();
         let mstransform_app = resolve_app(Some("mstransform")).unwrap();
         let RegistryAppKind::Subprocess {
@@ -428,21 +381,29 @@ mod tests {
         let variable = "CASARS_IMAGER_BIN";
         let _guard = crate::test_env_lock();
         // SAFETY: the test holds the crate-wide environment lock.
+        unsafe { env::set_var("CASARS_LAUNCH_MODE", "installed_suite") };
+        // SAFETY: the test holds the crate-wide environment lock.
         unsafe { env::set_var(variable, "/tmp/canonical-imager") };
         let command = app.resolve_command().unwrap().command();
         assert_eq!(command.get_program(), "/tmp/canonical-imager");
         // SAFETY: the test holds the crate-wide environment lock.
         unsafe { env::remove_var(variable) };
+        // SAFETY: the test holds the crate-wide environment lock.
+        unsafe { env::remove_var("CASARS_LAUNCH_MODE") };
     }
 
     #[test]
-    fn stale_comparison_is_conservative_without_timestamps() {
-        let now = SystemTime::now();
-        assert!(is_binary_stale(
-            Some(now - std::time::Duration::from_secs(1)),
-            Some(now)
-        ));
-        assert!(!is_binary_stale(None, Some(now)));
-        assert!(!is_binary_stale(Some(now), None));
+    fn invalid_launch_mode_fails_without_searching_or_switching_modes() {
+        let app = imager_app();
+        let _guard = crate::test_env_lock();
+        // SAFETY: the test holds the crate-wide environment lock.
+        unsafe {
+            env::remove_var("CASARS_IMAGER_BIN");
+            env::set_var("CASARS_LAUNCH_MODE", "search_everywhere");
+        }
+        let error = app.resolve_command().unwrap_err();
+        assert!(error.contains("invalid CASARS_LAUNCH_MODE"), "{error}");
+        // SAFETY: the test holds the crate-wide environment lock.
+        unsafe { env::remove_var("CASARS_LAUNCH_MODE") };
     }
 }

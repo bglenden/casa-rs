@@ -12,9 +12,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use casa_provider_contracts::builtin_surface_bundle;
+use casa_task_runtime::{
+    BaseSource, OpenSessionRequest, ParameterRuntime, ResolutionPatch, parse_parameter_text,
+};
 use casars_frontend_services::{
-    assistant_corpus_search_json, parameter_resolve_json, parameter_surface_bundle_json,
-    parameter_surface_catalog_json, task_ui_schema_json,
+    application_catalog_json, assistant_corpus_search_json, parameter_form_json,
+    parameter_surface_bundle_json,
 };
 use serde_json::{Value, json};
 
@@ -116,7 +120,7 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "task.schema",
-            "Read the canonical CASA task UI schema, parameter types, and mode-dependent activity and requirement predicates for one task.",
+            "Read the canonical CASA task form, parameter types, and mode-dependent activity and requirement predicates for one task.",
             json!({"task_id": {"type": "string"}}),
             &["task_id"],
         ),
@@ -227,9 +231,7 @@ fn call_tool(project_root: &Path, nonce: &str, request: &Value) -> Result<Value,
                 .ok_or_else(|| (-32602, "task.schema requires task_id".to_owned()))?;
             task_schema_for_agent(task_id)?
         }
-        "task.catalog" => {
-            compact_task_catalog(&parameter_surface_catalog_json().map_err(frontend_error)?)?
-        }
+        "task.catalog" => application_catalog_json().map_err(frontend_error)?,
         "task.suggest" => {
             let task_id = arguments
                 .get("task_id")
@@ -269,11 +271,12 @@ fn call_tool(project_root: &Path, nonce: &str, request: &Value) -> Result<Value,
                     ),
                 ));
             }
-            validate_task_suggestion(task_id, &schema, parameters)?;
+            let validated_patch = validate_task_suggestion(task_id, parameters, project_root)?;
             json!({
                 "kind": "task_suggestion",
                 "task_id": task_id,
-                "parameters": parameters
+                "parameters": parameters,
+                "validated_patch": validated_patch,
             })
             .to_string()
         }
@@ -284,7 +287,7 @@ fn call_tool(project_root: &Path, nonce: &str, request: &Value) -> Result<Value,
 
 fn task_schema_for_agent(task_id: &str) -> Result<String, (i64, String)> {
     let mut schema: Value =
-        serde_json::from_str(&task_ui_schema_json(task_id.to_owned()).map_err(frontend_error)?)
+        serde_json::from_str(&parameter_form_json(task_id.to_owned()).map_err(frontend_error)?)
             .map_err(|error| (-32003, format!("parse task schema: {error}")))?;
     let bundle: Value = serde_json::from_str(
         &parameter_surface_bundle_json(task_id.to_owned()).map_err(frontend_error)?,
@@ -346,46 +349,43 @@ fn task_schema_for_agent(task_id: &str) -> Result<String, (i64, String)> {
 
 fn validate_task_suggestion(
     task_id: &str,
-    schema: &Value,
     parameters: &serde_json::Map<String, Value>,
-) -> Result<(), (i64, String)> {
-    let arguments = schema
-        .get("arguments")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|argument| Some((argument.get("id")?.as_str()?.to_owned(), argument)))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let mut values = serde_json::Map::new();
+    project_root: &Path,
+) -> Result<ResolutionPatch, (i64, String)> {
+    let bundle = builtin_surface_bundle(task_id).map_err(frontend_error)?;
+    let mut values = std::collections::BTreeMap::new();
     for (name, value) in parameters {
         let text = value.as_str().expect("string parameters checked by caller");
-        let argument = arguments
-            .get(name)
+        let binding = bundle
+            .surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == *name)
             .ok_or_else(|| (-32602, format!("unknown {task_id} parameter {name}")))?;
-        let typed = text_parameter_value(
-            task_id,
-            name,
-            argument.get("value_domain").ok_or_else(|| {
-                (
-                    -32003,
-                    format!("task schema omits the value domain for {name}"),
-                )
-            })?,
-            text,
-        )?;
+        let concept = bundle.catalog.concept(&binding.concept).ok_or_else(|| {
+            (
+                -32003,
+                format!("task contract omits the value domain for {name}"),
+            )
+        })?;
+        let typed = parse_parameter_text(text, &concept.value_domain)
+            .map_err(|error| (-32602, format!("invalid {task_id}.{name} value: {error}")))?;
         values.insert(name.clone(), typed);
     }
-    let empty_patch = json!({"values": {}, "unset": []}).to_string();
-    let override_patch = json!({"values": values, "unset": []}).to_string();
-    let snapshot: Value = serde_json::from_str(
-        &parameter_resolve_json(
-            task_id.to_owned(),
-            "defaults".to_owned(),
-            None,
-            None,
-            empty_patch,
-            override_patch,
-        )
+    let patch = ResolutionPatch {
+        values,
+        unset: std::collections::BTreeSet::new(),
+    };
+    let session = ParameterRuntime::default()
+        .open_session(OpenSessionRequest {
+            bundle,
+            workspace: project_root.to_path_buf(),
+            source: BaseSource::Defaults,
+            profile_text: None,
+            context_patch: ResolutionPatch::default(),
+            override_patch: patch.clone(),
+            managed_save: false,
+        })
         .map_err(|error| {
             (
                 -32602,
@@ -393,19 +393,15 @@ fn validate_task_suggestion(
                     "task.suggest parameters do not form a runnable {task_id} request: {error}"
                 ),
             )
-        })?,
-    )
-    .map_err(|error| (-32003, format!("parse resolved task suggestion: {error}")))?;
-    let errors = snapshot
-        .get("diagnostics")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|diagnostic| diagnostic.get("level").and_then(Value::as_str) == Some("error"))
-        .filter_map(|diagnostic| diagnostic.get("message").and_then(Value::as_str))
+        })?;
+    let errors = session
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.level == casa_task_runtime::DiagnosticLevel::Error)
+        .map(|diagnostic| diagnostic.message.as_str())
         .collect::<Vec<_>>();
     if errors.is_empty() {
-        Ok(())
+        Ok(patch)
     } else {
         Err((
             -32602,
@@ -414,97 +410,6 @@ fn validate_task_suggestion(
                 errors.join("; ")
             ),
         ))
-    }
-}
-
-fn text_parameter_value(
-    task_id: &str,
-    name: &str,
-    domain: &Value,
-    text: &str,
-) -> Result<Value, (i64, String)> {
-    let kind = domain
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or("string");
-    match kind {
-        "bool" => Ok(json!({
-            "kind": "bool",
-            "value": match text.to_ascii_lowercase().as_str() {
-                "true" | "1" | "yes" | "on" => true,
-                "false" | "0" | "no" | "off" => false,
-                _ => return Err((-32602, format!("{task_id}.{name} requires a boolean value"))),
-            }
-        })),
-        "integer" => Ok(json!({
-            "kind": "integer",
-            "value": text.parse::<i64>().map_err(|_| {
-                (-32602, format!("{task_id}.{name} requires an integer value"))
-            })?
-        })),
-        "float" => Ok(json!({
-            "kind": "float",
-            "value": text.parse::<f64>().map_err(|_| {
-                (-32602, format!("{task_id}.{name} requires a numeric value"))
-            })?
-        })),
-        "optional" => {
-            if domain["states"]
-                .as_array()
-                .is_some_and(|states| states.iter().any(|state| state.as_str() == Some(text)))
-            {
-                Ok(json!({"kind": "string", "value": text}))
-            } else {
-                text_parameter_value(task_id, name, &domain["value"], text)
-            }
-        }
-        "array" => {
-            let body = text
-                .strip_prefix('[')
-                .and_then(|value| value.strip_suffix(']'))
-                .unwrap_or(text);
-            let parts = body.split(',').map(str::trim).collect::<Vec<_>>();
-            if domain["allow_scalar"].as_bool() == Some(true) && parts.len() == 1 {
-                return text_parameter_value(task_id, name, &domain["element"], parts[0]);
-            }
-            Ok(json!({
-                "kind": "array",
-                "value": parts
-                    .into_iter()
-                    .map(|part| text_parameter_value(task_id, name, &domain["element"], part))
-                    .collect::<Result<Vec<_>, _>>()?
-            }))
-        }
-        "table" => {
-            let object: serde_json::Map<String, Value> =
-                serde_json::from_str(text).map_err(|_| {
-                    (
-                        -32602,
-                        format!("{task_id}.{name} requires a JSON object value"),
-                    )
-                })?;
-            let fields = domain["fields"].as_object().ok_or_else(|| {
-                (
-                    -32003,
-                    format!("task schema has an invalid table domain for {name}"),
-                )
-            })?;
-            let mut values = serde_json::Map::new();
-            for (field, field_domain) in fields {
-                let value = object.get(field).and_then(Value::as_str).ok_or_else(|| {
-                    (
-                        -32602,
-                        format!("{task_id}.{name}.{field} requires a string-encoded value"),
-                    )
-                })?;
-                values.insert(
-                    field.clone(),
-                    text_parameter_value(task_id, &format!("{name}.{field}"), field_domain, value)?,
-                );
-            }
-            Ok(json!({"kind": "table", "value": values}))
-        }
-        _ => Ok(json!({"kind": "string", "value": text})),
     }
 }
 
@@ -524,33 +429,6 @@ fn source_hits_only(output: &str, limit: usize) -> Result<String, (i64, String)>
             .collect::<Vec<_>>(),
     )
     .map_err(|error| (-32003, format!("serialize source search results: {error}")))
-}
-
-fn compact_task_catalog(output: &str) -> Result<String, (i64, String)> {
-    let catalog: Value = serde_json::from_str(output)
-        .map_err(|error| (-32003, format!("parse task catalog: {error}")))?;
-    let surfaces = catalog
-        .get("surfaces")
-        .and_then(Value::as_array)
-        .ok_or_else(|| (-32003, "task catalog has no surfaces".to_owned()))?;
-    let tasks = surfaces
-        .iter()
-        .map(|surface| {
-            json!({
-                "id": surface.get("id").and_then(Value::as_str),
-                "kind": surface.get("kind").and_then(Value::as_str),
-                "display_name": surface.get("display_name").and_then(Value::as_str),
-                "category": surface.get("category").and_then(Value::as_str),
-                "summary": surface.get("summary").and_then(Value::as_str),
-                "contract_version": surface.get("contract_version").and_then(Value::as_u64),
-            })
-        })
-        .collect::<Vec<_>>();
-    serde_json::to_string(&json!({
-        "schema_version": catalog.get("schema_version").and_then(Value::as_u64),
-        "tasks": tasks,
-    }))
-    .map_err(|error| (-32003, format!("serialize task catalog: {error}")))
 }
 
 fn read_projection(project_root: &Path, key: &str) -> Result<String, (i64, String)> {
@@ -708,24 +586,15 @@ mod tests {
     }
 
     #[test]
-    fn task_catalog_is_a_compact_discovery_surface() {
-        let compact = compact_task_catalog(
-            &json!({
-                "schema_version": 1,
-                "catalog": {"concepts": [{"id": "large-contract"}]},
-                "surfaces": [{
-                    "kind": "task", "id": "imager", "display_name": "Imager",
-                    "category": "Imaging", "summary": "Make an image",
-                    "contract_version": 2, "bindings": [{"name": "vis"}]
-                }]
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let value: Value = serde_json::from_str(&compact).unwrap();
-        assert_eq!(value["tasks"][0]["id"], "imager");
-        assert!(value["tasks"][0].get("bindings").is_none());
-        assert!(value.get("catalog").is_none());
+    fn task_catalog_is_the_canonical_application_catalog() {
+        let value: Value = serde_json::from_str(&application_catalog_json().unwrap()).unwrap();
+        assert!(
+            value["applications"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| { entry["id"] == "imager" && entry["kind"] == "task" })
+        );
     }
 
     #[test]

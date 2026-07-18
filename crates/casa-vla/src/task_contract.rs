@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Canonical `importvla` task request/result contracts shared by CLI, shell, and Python.
 
-use casa_ms::ui_schema::UiCommandSchema;
 use casa_provider_contracts::{
-    ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
-    ProviderProjectionMetadata, ProviderSurfaceKind, SurfaceContractBundle,
-    TaskOperationDescriptor, TaskSemanticContract, builtin_surface_bundle,
-    derived_ui_schema_annotations, merged_components, project_ui_schema,
+    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
+    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
+    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
+    builtin_surface_bundle, merged_components,
 };
-use schemars::{JsonSchema, schema::RootSchema, schema_for};
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 use crate::{
     ArchiveSummary, ImportReport, ImportVlaOptions,
@@ -22,29 +20,14 @@ pub const IMPORTVLA_TASK_PROTOCOL_NAME: &str = "casa_importvla_task";
 /// Stable protocol version advertised by `importvla --protocol-info`.
 pub const IMPORTVLA_TASK_PROTOCOL_VERSION: u32 = 1;
 
-/// Version/compatibility information for the JSON task protocol.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImportVlaProtocolInfo {
-    /// Stable protocol identifier.
-    pub protocol_name: String,
-    /// Monotonic protocol version for compatibility checks.
-    pub protocol_version: u32,
-    /// Provider surface kind defined by the shared architecture contract.
-    pub surface_kind: ProviderSurfaceKind,
-    /// Binary version implementing the protocol.
-    pub binary_version: String,
-}
-
-impl ImportVlaProtocolInfo {
-    /// Build the current `importvla` protocol descriptor.
-    pub fn current() -> Self {
-        Self {
-            protocol_name: IMPORTVLA_TASK_PROTOCOL_NAME.to_string(),
-            protocol_version: IMPORTVLA_TASK_PROTOCOL_VERSION,
-            surface_kind: ProviderSurfaceKind::Task,
-            binary_version: env!("CARGO_PKG_VERSION").to_string(),
-        }
-    }
+/// Build the current shared `importvla` protocol descriptor.
+pub fn importvla_protocol_descriptor() -> ProviderProtocolDescriptor {
+    ProviderProtocolDescriptor::new(
+        IMPORTVLA_TASK_PROTOCOL_NAME,
+        IMPORTVLA_TASK_PROTOCOL_VERSION,
+        ProviderSurfaceKind::Task,
+        env!("CARGO_PKG_VERSION"),
+    )
 }
 
 /// Request for scanning VLA export archives without writing an MS.
@@ -97,75 +80,39 @@ pub enum ImportVlaTaskResult {
     Import(ImportReport),
 }
 
-/// JSON-schema bundle for the public `importvla` task protocol.
-#[derive(Debug, Clone, Serialize)]
-pub struct ImportVlaTaskSchemaBundle {
-    /// Compatibility descriptor for the request/result schemas.
-    pub protocol: ImportVlaProtocolInfo,
-    /// Canonical semantic task contract.
-    pub semantic: TaskSemanticContract,
-    /// Shared component schemas reusable across projections.
-    pub components: ProviderComponentSchemas,
-    /// Presentation annotations carried with the canonical bundle.
-    pub annotations: JsonValue,
-    /// Derived projection metadata for UI and CLI consumers.
-    pub projections: ProviderProjectionMetadata,
-    /// Canonical parameter contract embedded for self-contained consumers.
-    pub parameter_surfaces: Vec<SurfaceContractBundle>,
-    /// JSON schema for [`ImportVlaTaskRequest`].
-    pub request_schema: RootSchema,
-    /// JSON schema for [`ImportVlaTaskResult`].
-    pub result_schema: RootSchema,
-}
-
-impl ImportVlaTaskSchemaBundle {
-    /// Build the current request/result schema bundle.
-    pub fn current() -> Self {
-        let request_schema = schema_for!(ImportVlaTaskRequest);
-        let result_schema = schema_for!(ImportVlaTaskResult);
-        let ui_schema = project_ui_schema(
-            &builtin_surface_bundle("importvla")
+/// Build the current request/result schema bundle with the shared envelope.
+pub fn importvla_task_schema_bundle() -> TaskProviderContract {
+    let request_schema = schema_for!(ImportVlaTaskRequest);
+    let result_schema = schema_for!(ImportVlaTaskResult);
+    TaskProviderContract {
+        protocol: importvla_protocol_descriptor(),
+        semantic: TaskSemanticContract {
+            request_schema: request_schema.clone(),
+            result_schema: result_schema.clone(),
+            operations: importvla_task_operations(),
+        },
+        components: merged_components([&request_schema, &result_schema]),
+        annotations: serde_json::json!({}),
+        projections: ProviderProjectionMetadata {
+            cli: Some(ProviderCliProjection {
+                machine_actions: ProviderCliMachineActions {
+                    json_schema: Some("--json-schema".to_string()),
+                    protocol_info: Some("--protocol-info".to_string()),
+                    json_run: Some("--json-run <SOURCE>".to_string()),
+                    session: None,
+                },
+            }),
+            python: None,
+        },
+        parameter_surfaces: vec![
+            builtin_surface_bundle("importvla")
                 .expect("built-in importvla parameter surface must remain valid"),
-        );
-        Self {
-            protocol: ImportVlaProtocolInfo::current(),
-            semantic: TaskSemanticContract {
-                request_schema: request_schema.clone(),
-                result_schema: result_schema.clone(),
-                operations: importvla_task_operations(),
-            },
-            components: merged_components([&request_schema, &result_schema]),
-            annotations: derived_ui_schema_annotations(),
-            projections: ProviderProjectionMetadata {
-                cli: Some(ProviderCliProjection {
-                    machine_actions: ProviderCliMachineActions {
-                        ui_schema: Some("--ui-schema".to_string()),
-                        json_schema: Some("--json-schema".to_string()),
-                        protocol_info: Some("--protocol-info".to_string()),
-                        json_run: Some("--json-run <SOURCE>".to_string()),
-                        session: None,
-                    },
-                }),
-                ui_schema: Some(ui_schema),
-                python: None,
-            },
-            parameter_surfaces: vec![
-                builtin_surface_bundle("importvla")
-                    .expect("built-in importvla parameter surface must remain valid"),
-            ],
+        ],
+        domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-        }
-    }
-
-    /// Return the launcher/TUI compatibility view projected from the bundle.
-    pub fn ui_schema_projection(&self) -> Result<UiCommandSchema, String> {
-        let value = self
-            .projections
-            .ui_schema
-            .clone()
-            .ok_or_else(|| "missing ui_schema projection".to_string())?;
-        serde_json::from_value(value).map_err(|error| format!("parse importvla ui schema: {error}"))
+            additional: NoAdditionalProviderSchemas {},
+        },
     }
 }
 
@@ -190,7 +137,8 @@ mod tests {
 
     #[test]
     fn schema_bundle_advertises_importvla_protocol_and_actions() {
-        let bundle = ImportVlaTaskSchemaBundle::current();
+        let bundle = importvla_task_schema_bundle();
+        bundle.validate().expect("shared provider envelope");
         assert_eq!(bundle.protocol.protocol_name, IMPORTVLA_TASK_PROTOCOL_NAME);
         assert_eq!(
             bundle.protocol.protocol_version,
@@ -224,11 +172,10 @@ mod tests {
     }
 
     #[test]
-    fn schema_bundle_projects_ui_schema() {
-        let ui_schema = ImportVlaTaskSchemaBundle::current()
-            .ui_schema_projection()
-            .expect("ui schema projection");
-        assert_eq!(ui_schema.command_id, "importvla");
-        assert!(ui_schema.render_help().contains("--archivefiles"));
+    fn canonical_surface_projects_presentation_form() {
+        let bundle = importvla_task_schema_bundle();
+        let form = casa_provider_contracts::project_ui_form(&bundle.parameter_surfaces[0]);
+        assert_eq!(form["command_id"], "importvla");
+        assert!(form.to_string().contains("--archivefiles"));
     }
 }

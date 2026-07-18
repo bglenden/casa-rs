@@ -8,60 +8,33 @@ import json
 import os
 from os import PathLike
 from pathlib import Path
-import shutil
 import subprocess
 from typing import Any, TypeAlias
+
+from . import _core
 
 StrPath: TypeAlias = str | PathLike[str]
 
 CALIBRATION_PROTOCOL_NAME = "casa_calibration_task"
 CALIBRATION_PROTOCOL_VERSION = 1
-CALIBRATE_BINARY_NAME = "calibrate"
-CALIBRATE_BINARY_ENVVAR = "CASARS_CALIBRATE_BIN"
 
 IMPORTVLA_PROTOCOL_NAME = "casa_importvla_task"
 IMPORTVLA_PROTOCOL_VERSION = 1
-IMPORTVLA_BINARY_NAME = "casars-importvla"
-IMPORTVLA_BINARY_ENVVAR = "CASARS_IMPORTVLA_BIN"
 
 SIMOBSERVE_PROTOCOL_NAME = "casa_simobserve_task"
 SIMOBSERVE_PROTOCOL_VERSION = 2
-SIMOBSERVE_BINARY_NAME = "simobserve"
-SIMOBSERVE_BINARY_ENVVAR = "CASARS_SIMOBSERVE_BIN"
 
 MSEXPLORE_PROTOCOL_NAME = "casa_msexplore_task"
 MSEXPLORE_PROTOCOL_VERSION = 1
-MSEXPLORE_BINARY_NAME = "msexplore"
-MSEXPLORE_BINARY_ENVVAR = "CASARS_MSEXPLORE_BIN"
-
-MSTRANSFORM_BINARY_NAME = "mstransform"
-MSTRANSFORM_BINARY_ENVVAR = "CASARS_MSTRANSFORM_BIN"
 
 IMAGER_PROTOCOL_NAME = "casa_imager_task"
 IMAGER_PROTOCOL_VERSION = 3
-IMAGER_BINARY_NAME = "casars-imager"
-IMAGER_BINARY_ENVVAR = "CASARS_IMAGER_BIN"
 
 IMAGE_ANALYSIS_PROTOCOL_NAME = "casa_image_analysis_task"
 IMAGE_ANALYSIS_PROTOCOL_VERSION = 1
-IMEXPLORE_BINARY_NAME = "imexplore"
-IMEXPLORE_BINARY_ENVVAR = "CASARS_IMEXPLORE_BIN"
-IMMOMENTS_BINARY_NAME = "immoments"
-IMMOMENTS_BINARY_ENVVAR = "CASARS_IMMOMENTS_BIN"
-IMPV_BINARY_NAME = "impv"
-IMPV_BINARY_ENVVAR = "CASARS_IMPV_BIN"
-IMSUBIMAGE_BINARY_NAME = "imsubimage"
-IMSUBIMAGE_BINARY_ENVVAR = "CASARS_IMSUBIMAGE_BIN"
-IMMATH_BINARY_NAME = "immath"
-IMMATH_BINARY_ENVVAR = "CASARS_IMMATH_BIN"
-IMPBCOR_BINARY_NAME = "impbcor"
-IMPBCOR_BINARY_ENVVAR = "CASA_RS_IMPBCOR_BIN"
-EXPORTFITS_BINARY_NAME = "exportfits"
-EXPORTFITS_BINARY_ENVVAR = "CASARS_EXPORTFITS_BIN"
-IMPORTFITS_BINARY_NAME = "importfits"
-IMPORTFITS_BINARY_ENVVAR = "CASARS_IMPORTFITS_BIN"
-
 CASARS_SUITE_ROOT_ENVVAR = "CASARS_SUITE_ROOT"
+CASARS_LAUNCH_MODE_ENVVAR = "CASARS_LAUNCH_MODE"
+CASARS_DEVELOPMENT_WORKSPACE_ENVVAR = "CASARS_DEVELOPMENT_WORKSPACE"
 
 _configured_calibrate_binary: str | None = None
 _configured_importvla_binary: str | None = None
@@ -169,6 +142,15 @@ class ProtocolInfo:
     surface_kind: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ApplicationLaunch:
+    """Launch metadata projected from the canonical provider-owned catalog."""
+
+    executable: str
+    cargo_package: str
+    override_env: str
+
+
 def configure_calibrate_binary(binary: StrPath | None) -> None:
     """Set or clear the module-wide default calibrate binary override."""
 
@@ -271,10 +253,9 @@ def resolve_calibrate_binary(binary: StrPath | None = None) -> str:
     """Resolve the calibrate binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="calibrate",
         binary=binary,
         configured_binary=_configured_calibrate_binary,
-        envvar=CALIBRATE_BINARY_ENVVAR,
-        binary_name=CALIBRATE_BINARY_NAME,
         missing_error_cls=CalibrationBinaryNotFoundError,
         description="calibrate",
     )
@@ -284,10 +265,9 @@ def resolve_importvla_binary(binary: StrPath | None = None) -> str:
     """Resolve the importvla binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="importvla",
         binary=binary,
         configured_binary=_configured_importvla_binary,
-        envvar=IMPORTVLA_BINARY_ENVVAR,
-        binary_name=IMPORTVLA_BINARY_NAME,
         missing_error_cls=ImportVlaBinaryNotFoundError,
         description="casars-importvla",
     )
@@ -297,10 +277,9 @@ def resolve_simobserve_binary(binary: StrPath | None = None) -> str:
     """Resolve the simobserve binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="simobserve",
         binary=binary,
         configured_binary=_configured_simobserve_binary,
-        envvar=SIMOBSERVE_BINARY_ENVVAR,
-        binary_name=SIMOBSERVE_BINARY_NAME,
         missing_error_cls=SimobserveBinaryNotFoundError,
         description="simobserve",
     )
@@ -310,10 +289,9 @@ def resolve_msexplore_binary(binary: StrPath | None = None) -> str:
     """Resolve the msexplore binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="msexplore",
         binary=binary,
         configured_binary=_configured_msexplore_binary,
-        envvar=MSEXPLORE_BINARY_ENVVAR,
-        binary_name=MSEXPLORE_BINARY_NAME,
         missing_error_cls=MsExploreBinaryNotFoundError,
         description="msexplore",
     )
@@ -323,10 +301,9 @@ def resolve_mstransform_binary(binary: StrPath | None = None) -> str:
     """Resolve the mstransform binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="mstransform",
         binary=binary,
         configured_binary=_configured_mstransform_binary,
-        envvar=MSTRANSFORM_BINARY_ENVVAR,
-        binary_name=MSTRANSFORM_BINARY_NAME,
         missing_error_cls=MsTransformBinaryNotFoundError,
         description="mstransform",
     )
@@ -336,10 +313,9 @@ def resolve_imager_binary(binary: StrPath | None = None) -> str:
     """Resolve the imager binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="imager",
         binary=binary,
         configured_binary=_configured_imager_binary,
-        envvar=IMAGER_BINARY_ENVVAR,
-        binary_name=IMAGER_BINARY_NAME,
         missing_error_cls=ImagerBinaryNotFoundError,
         description="casars-imager",
     )
@@ -349,10 +325,9 @@ def resolve_imexplore_binary(binary: StrPath | None = None) -> str:
     """Resolve the imexplore binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="imexplore",
         binary=binary,
         configured_binary=_configured_imexplore_binary,
-        envvar=IMEXPLORE_BINARY_ENVVAR,
-        binary_name=IMEXPLORE_BINARY_NAME,
         missing_error_cls=ImageAnalysisBinaryNotFoundError,
         description="imexplore",
     )
@@ -362,10 +337,9 @@ def resolve_immoments_binary(binary: StrPath | None = None) -> str:
     """Resolve the immoments binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="immoments",
         binary=binary,
         configured_binary=_configured_immoments_binary,
-        envvar=IMMOMENTS_BINARY_ENVVAR,
-        binary_name=IMMOMENTS_BINARY_NAME,
         missing_error_cls=ImageAnalysisBinaryNotFoundError,
         description="immoments",
     )
@@ -375,10 +349,9 @@ def resolve_impv_binary(binary: StrPath | None = None) -> str:
     """Resolve the impv binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="impv",
         binary=binary,
         configured_binary=_configured_impv_binary,
-        envvar=IMPV_BINARY_ENVVAR,
-        binary_name=IMPV_BINARY_NAME,
         missing_error_cls=ImageAnalysisBinaryNotFoundError,
         description="impv",
     )
@@ -388,10 +361,9 @@ def resolve_imsubimage_binary(binary: StrPath | None = None) -> str:
     """Resolve the imsubimage binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="imsubimage",
         binary=binary,
         configured_binary=_configured_imsubimage_binary,
-        envvar=IMSUBIMAGE_BINARY_ENVVAR,
-        binary_name=IMSUBIMAGE_BINARY_NAME,
         missing_error_cls=ImageAnalysisBinaryNotFoundError,
         description="imsubimage",
     )
@@ -401,10 +373,9 @@ def resolve_immath_binary(binary: StrPath | None = None) -> str:
     """Resolve the immath binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="immath",
         binary=binary,
         configured_binary=_configured_immath_binary,
-        envvar=IMMATH_BINARY_ENVVAR,
-        binary_name=IMMATH_BINARY_NAME,
         missing_error_cls=ImageAnalysisBinaryNotFoundError,
         description="immath",
     )
@@ -414,10 +385,9 @@ def resolve_impbcor_binary(binary: StrPath | None = None) -> str:
     """Resolve the impbcor binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="impbcor",
         binary=binary,
         configured_binary=_configured_impbcor_binary,
-        envvar=IMPBCOR_BINARY_ENVVAR,
-        binary_name=IMPBCOR_BINARY_NAME,
         missing_error_cls=ImageAnalysisBinaryNotFoundError,
         description="impbcor",
     )
@@ -427,10 +397,9 @@ def resolve_exportfits_binary(binary: StrPath | None = None) -> str:
     """Resolve the exportfits binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="exportfits",
         binary=binary,
         configured_binary=_configured_exportfits_binary,
-        envvar=EXPORTFITS_BINARY_ENVVAR,
-        binary_name=EXPORTFITS_BINARY_NAME,
         missing_error_cls=ImageAnalysisBinaryNotFoundError,
         description="exportfits",
     )
@@ -440,10 +409,9 @@ def resolve_importfits_binary(binary: StrPath | None = None) -> str:
     """Resolve the importfits binary using the documented precedence order."""
 
     return _resolve_task_binary(
+        application_id="importfits",
         binary=binary,
         configured_binary=_configured_importfits_binary,
-        envvar=IMPORTFITS_BINARY_ENVVAR,
-        binary_name=IMPORTFITS_BINARY_NAME,
         missing_error_cls=ImageAnalysisBinaryNotFoundError,
         description="importfits",
     )
@@ -1033,10 +1001,9 @@ def _run_process(
 
 def _resolve_task_binary(
     *,
+    application_id: str,
     binary: StrPath | None,
     configured_binary: str | None,
-    envvar: str,
-    binary_name: str,
     missing_error_cls: type[FileNotFoundError],
     description: str,
 ) -> str:
@@ -1055,42 +1022,78 @@ def _resolve_task_binary(
             description=description,
         )
 
-    env_binary = os.environ.get(envvar)
-    if env_binary:
-        return _require_binary(
-            env_binary,
-            source=f"${envvar}",
-            missing_error_cls=missing_error_cls,
-            description=description,
+    launch = _application_launch(application_id)
+    mode = os.environ.get(CASARS_LAUNCH_MODE_ENVVAR, "installed_suite")
+    if mode == "installed_suite":
+        env_binary = os.environ.get(launch.override_env)
+        if env_binary:
+            return _require_binary(
+                env_binary,
+                source=f"${launch.override_env}",
+                missing_error_cls=missing_error_cls,
+                description=description,
+            )
+        suite_root = Path(
+            os.environ.get(
+                CASARS_SUITE_ROOT_ENVVAR,
+                Path.home() / ".local" / "opt" / "casa-rs" / "current",
+            )
         )
-
-    env_suite_root = os.environ.get(CASARS_SUITE_ROOT_ENVVAR)
-    if env_suite_root:
         return _require_suite_binary(
-            Path(env_suite_root),
-            source=f"${CASARS_SUITE_ROOT_ENVVAR}",
-            binary_name=binary_name,
+            suite_root,
+            source="installed-suite launch mode",
+            binary_name=launch.executable,
             missing_error_cls=missing_error_cls,
             description=description,
         )
-
-    suite_binary = _find_installed_suite_binary(binary_name)
-    if suite_binary is not None:
-        return suite_binary
-
-    repo_binary = _find_repo_local_binary(binary_name)
-    if repo_binary is not None:
-        return repo_binary
-
-    path_binary = shutil.which(binary_name)
-    if path_binary is not None:
-        return path_binary
-
-    raise missing_error_cls(
-        f"could not resolve the {description} binary; pass binary=..., call "
-        f"configure(binary=...), set {envvar}, set {CASARS_SUITE_ROOT_ENVVAR}, "
-        f"install the casa-rs suite, or ensure {binary_name} is on PATH"
+    if mode == "development_workspace":
+        workspace = os.environ.get(CASARS_DEVELOPMENT_WORKSPACE_ENVVAR)
+        if not workspace:
+            raise missing_error_cls(
+                f"development-workspace launch mode requires "
+                f"{CASARS_DEVELOPMENT_WORKSPACE_ENVVAR} for {description}"
+            )
+        candidate = Path(workspace) / "target" / "debug" / _binary_name(launch.executable)
+        return _require_binary(
+            str(candidate),
+            source="development-workspace launch mode",
+            missing_error_cls=missing_error_cls,
+            description=description,
+        )
+    raise ValueError(
+        f"invalid {CASARS_LAUNCH_MODE_ENVVAR} {mode!r}; expected "
+        "'installed_suite' or 'development_workspace'"
     )
+
+
+@lru_cache(maxsize=1)
+def _application_launches() -> dict[str, ApplicationLaunch]:
+    payload = json.loads(_core.application_catalog_json())
+    applications = payload.get("applications")
+    if not isinstance(applications, list):
+        raise RuntimeError("canonical application catalog has no applications array")
+    launches: dict[str, ApplicationLaunch] = {}
+    for application in applications:
+        if not isinstance(application, dict) or not isinstance(application.get("id"), str):
+            raise RuntimeError("canonical application catalog contains an invalid entry")
+        launch = application.get("launch")
+        if not isinstance(launch, dict):
+            raise RuntimeError(f"application {application['id']!r} has no launch descriptor")
+        launches[application["id"]] = ApplicationLaunch(
+            executable=str(launch["executable"]),
+            cargo_package=str(launch["cargo_package"]),
+            override_env=str(launch["override_env"]),
+        )
+    return launches
+
+
+def _application_launch(application_id: str) -> ApplicationLaunch:
+    try:
+        return _application_launches()[application_id]
+    except KeyError as error:
+        raise RuntimeError(
+            f"canonical application catalog has no entry for {application_id!r}"
+        ) from error
 
 
 def _require_binary(
@@ -1100,12 +1103,12 @@ def _require_binary(
     missing_error_cls: type[FileNotFoundError],
     description: str,
 ) -> str:
-    resolved = shutil.which(candidate) if os.path.sep not in candidate else candidate
-    if resolved is None or not Path(resolved).exists():
+    resolved = Path(candidate).expanduser()
+    if not resolved.is_file():
         raise missing_error_cls(
             f"{source} did not resolve to an existing {description} binary: {candidate}"
         )
-    return resolved
+    return str(resolved)
 
 
 def _require_suite_binary(
@@ -1131,41 +1134,6 @@ def _binary_name(binary_name: str) -> str:
 
 def _suite_binary_path(root: Path, binary_name: str) -> Path:
     return root / "bin" / _binary_name(binary_name)
-
-
-def _find_installed_suite_binary(
-    binary_name: str = CALIBRATE_BINARY_NAME,
-    *,
-    module_file: StrPath | None = None,
-    home: Path | None = None,
-) -> str | None:
-    here = Path(module_file).resolve() if module_file is not None else Path(__file__).resolve()
-    seen: set[Path] = set()
-
-    for ancestor in here.parents:
-        candidate = _suite_binary_path(ancestor, binary_name)
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        if candidate.exists():
-            return str(candidate)
-
-    standard_root = (home or Path.home()) / ".local" / "opt" / "casa-rs" / "current"
-    standard_candidate = _suite_binary_path(standard_root, binary_name)
-    if standard_candidate not in seen and standard_candidate.exists():
-        return str(standard_candidate)
-
-    return None
-
-
-def _find_repo_local_binary(binary_name: str = CALIBRATE_BINARY_NAME) -> str | None:
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        for profile in ("debug", "release"):
-            candidate = parent / "target" / profile / _binary_name(binary_name)
-            if candidate.exists():
-                return str(candidate)
-    return None
 
 
 @lru_cache(maxsize=None)

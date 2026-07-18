@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
@@ -32,13 +33,13 @@ use casa_notebook::{
 };
 use casa_provider_contracts::{
     ParameterValue, ProviderInvocationAdaptation, RunSafetyClass, SurfaceContractBundle,
-    SurfaceKind, builtin_surface_bundle, builtin_surface_catalog,
+    SurfaceKind, builtin_application_catalog, builtin_surface_bundle, builtin_surface_catalog,
 };
 use casa_tables::{ArrayShapeContract, ColumnType, Table, TableBrowser, TableOptions};
 use casa_task_runtime::{
-    BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, ParameterSession,
-    ResolutionPatch, parse_profile, project_provider_invocation, project_ui_schema,
-    write_parameter_profile_atomic,
+    BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, OpenSessionRequest,
+    ParameterRuntime, ParameterSession, ResolutionPatch, SessionLastCoordinator,
+    TaskLastCoordinator, project_provider_invocation, write_parameter_profile_atomic,
 };
 use casa_types::measures::direction::{
     angular_increment_arcseconds, declination_increment_arcseconds, format_declination_labeled,
@@ -54,14 +55,6 @@ use casars_tablebrowser_protocol::{BrowserCommand, BrowserFocus, BrowserView, Br
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const TASK_CATALOG_JSON: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../resources/task-catalog.json"
-));
-const TASK_EXECUTION_MATRIX_JSON: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../resources/task-execution-matrix.json"
-));
 const TUTORIAL_TASK_PARAMETER_AUDIT_JSON: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../resources/tutorial-task-parameter-audit.json"
@@ -283,78 +276,6 @@ pub struct ProjectProbe {
     pub diagnostics: Vec<String>,
     pub scanned_entry_count: u64,
     pub truncated: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct FrontendTaskCatalog {
-    schema_version: u64,
-    tasks: Vec<FrontendTaskCatalogEntry>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct FrontendTaskCatalogEntry {
-    id: String,
-    category: String,
-    display_name: String,
-    binary_name: String,
-    cargo_package: String,
-    override_env: String,
-    shell_kind: String,
-    interaction: String,
-    browser_kind: Option<String>,
-    dataset_kinds: Vec<String>,
-    schema_source: String,
-    show_in_tui: bool,
-    show_in_swift: bool,
-    include_in_suite: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct FrontendTaskExecutionMatrix {
-    schema_version: u64,
-    generated_for: String,
-    scope_note: String,
-    rows: Vec<FrontendTaskExecutionMatrixRow>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct FrontendTaskExecutionMatrixRow {
-    task_id: String,
-    display_name: String,
-    category: String,
-    catalog_presence: String,
-    binary_name: String,
-    cargo_package: String,
-    surface_kind: String,
-    interaction_model: String,
-    row_disposition: String,
-    approved_closeout_scope: bool,
-    provider_contract_schema_source: String,
-    provider_protocol_name: String,
-    provider_protocol_version: String,
-    dataset_kinds: Vec<String>,
-    suite_install: String,
-    local_install: String,
-    release_install: String,
-    tui_status: String,
-    gui_status: String,
-    tui_frontend_status: String,
-    gui_frontend_status: String,
-    tui_provider_resolution_path: String,
-    gui_provider_resolution_path: String,
-    frontend_exposure: String,
-    option_source: String,
-    context_option_default_validation_source: String,
-    full_control_status: String,
-    parameter_control_coverage: String,
-    omitted_controls: Vec<String>,
-    mutation_class: String,
-    confirmation: String,
-    dry_run_preview_behavior: String,
-    backup_version_behavior: String,
-    restore_rollback_behavior: String,
-    smoke_evidence: String,
-    signoff_reference: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1554,24 +1475,44 @@ pub fn tutorial_advance_acquisition_json(request_json: String) -> FrontendResult
 }
 
 #[uniffi::export]
-pub fn task_catalog_json() -> FrontendResult<String> {
-    let catalog: FrontendTaskCatalog =
-        serde_json::from_str(TASK_CATALOG_JSON).map_err(|error| FrontendServiceError::Probe {
-            reason: format!("parse task catalog: {error}"),
-        })?;
-    serde_json::to_string(&catalog).map_err(|error| FrontendServiceError::Probe {
-        reason: format!("serialize task catalog: {error}"),
-    })
-}
-
-#[uniffi::export]
-pub fn task_execution_matrix_json() -> FrontendResult<String> {
-    let matrix: FrontendTaskExecutionMatrix = serde_json::from_str(TASK_EXECUTION_MATRIX_JSON)
-        .map_err(|error| FrontendServiceError::Probe {
-            reason: format!("parse task execution matrix: {error}"),
-        })?;
-    serde_json::to_string(&matrix).map_err(|error| FrontendServiceError::Probe {
-        reason: format!("serialize task execution matrix: {error}"),
+pub fn application_catalog_json() -> FrontendResult<String> {
+    let catalog =
+        builtin_application_catalog().map_err(|reason| FrontendServiceError::Probe { reason })?;
+    let applications = catalog
+        .applications
+        .iter()
+        .map(|application| {
+            let surface = application.surface_bundle().map_err(|reason| {
+                FrontendServiceError::Probe {
+                    reason: format!("resolve application {}: {reason}", application.id),
+                }
+            })?;
+            Ok(serde_json::json!({
+                "id": application.id,
+                "kind": application.kind,
+                "display_name": surface.as_ref().map(|bundle| bundle.surface.display_name()).unwrap_or("CASA-RS"),
+                "category": surface.as_ref().map(|bundle| bundle.surface.category()).unwrap_or("Launcher"),
+                "executable": application.launch.executable,
+                "cargo_package": application.launch.cargo_package,
+                "override_env": application.launch.override_env,
+                "protocol_family": surface.as_ref().map(|bundle| bundle.surface.provider_family()),
+                "launch_modes": application.supported_launch_modes(),
+                "shell_kind": application.shell_kind,
+                "interaction": application.interaction,
+                "browser_kind": application.browser_kind,
+                "dataset_kinds": application.dataset_kinds,
+                "show_in_tui": application.show_in_tui,
+                "show_in_swift": application.show_in_swift,
+                "include_in_suite": application.include_in_suite,
+            }))
+        })
+        .collect::<FrontendResult<Vec<_>>>()?;
+    serde_json::to_string(&serde_json::json!({
+        "schema_version": catalog.schema_version,
+        "applications": applications,
+    }))
+    .map_err(|error| FrontendServiceError::Probe {
+        reason: format!("serialize application catalog: {error}"),
     })
 }
 
@@ -1701,28 +1642,11 @@ fn parameter_session_from_source(
     source: &str,
     profile_toml: Option<&str>,
     profile_path: Option<PathBuf>,
+    workspace: PathBuf,
 ) -> FrontendResult<ParameterSession> {
     let bundle = parameter_bundle(surface_id)?;
-    if source == "defaults" {
-        if profile_toml.is_some() {
-            return Err(parameter_error(
-                "resolve parameter source",
-                "the defaults source cannot carry profile TOML",
-            ));
-        }
-        return ParameterSession::defaults(bundle)
-            .map_err(|error| parameter_error("resolve parameter defaults", error));
-    }
-
-    let profile_toml = profile_toml.ok_or_else(|| {
-        parameter_error(
-            "resolve parameter source",
-            format!("parameter source {source:?} requires profile TOML"),
-        )
-    })?;
-    let profile = parse_profile(profile_toml)
-        .map_err(|error| parameter_error("parse parameter profile", error))?;
     let source = match source {
+        "defaults" => BaseSource::Defaults,
         "file" => BaseSource::File(profile_path.unwrap_or_else(|| PathBuf::from("<memory>"))),
         "last" => BaseSource::Last,
         "last_successful" => BaseSource::LastSuccessful,
@@ -1735,8 +1659,17 @@ fn parameter_session_from_source(
             ));
         }
     };
-    ParameterSession::from_profile(bundle, source, &profile)
-        .map_err(|error| parameter_error("resolve parameter profile", error))
+    ParameterRuntime::default()
+        .open_session(OpenSessionRequest {
+            bundle,
+            workspace,
+            source,
+            profile_text: profile_toml.map(str::to_owned),
+            context_patch: ResolutionPatch::default(),
+            override_patch: ResolutionPatch::default(),
+            managed_save: true,
+        })
+        .map_err(|error| parameter_error("open parameter session", error))
 }
 
 fn parse_parameter_patch(source: &str, kind: &str) -> FrontendResult<ResolutionPatch> {
@@ -1761,17 +1694,123 @@ fn parameter_session_from_values(
     values_json: &str,
 ) -> FrontendResult<ParameterSession> {
     let values = parse_parameter_values(values_json)?;
-    let mut session = ParameterSession::defaults(parameter_bundle(surface_id)?)
-        .map_err(|error| parameter_error("resolve parameter defaults", error))?;
-    if !values.is_empty() {
-        session
-            .apply_override_patch(ResolutionPatch {
+    ParameterRuntime::default()
+        .open_session(OpenSessionRequest {
+            bundle: parameter_bundle(surface_id)?,
+            workspace: PathBuf::from("."),
+            source: BaseSource::Defaults,
+            profile_text: None,
+            context_patch: ResolutionPatch::default(),
+            override_patch: ResolutionPatch {
                 values,
                 unset: BTreeSet::new(),
-            })
-            .map_err(|error| parameter_error("resolve parameter values", error))?;
+            },
+            managed_save: false,
+        })
+        .map_err(|error| parameter_error("resolve parameter values", error))
+}
+
+/// Rust-owned session persistence lifecycle used by generated frontends.
+#[derive(uniffi::Object)]
+pub struct ParameterSessionLifecycle {
+    coordinator: SessionLastCoordinator,
+}
+
+/// Rust-owned task-attempt persistence lifecycle used by generated frontends.
+#[derive(uniffi::Object)]
+pub struct ParameterTaskLifecycle {
+    coordinator: TaskLastCoordinator,
+}
+
+#[uniffi::export]
+impl ParameterTaskLifecycle {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            coordinator: TaskLastCoordinator::new(),
+        })
     }
-    Ok(session)
+
+    /// Capture and persist the exact validated snapshot immediately before execution.
+    pub fn before_execution(
+        &self,
+        attempt_id: String,
+        surface_id: String,
+        workspace: String,
+        values_json: String,
+        enabled: bool,
+    ) -> FrontendResult<Vec<String>> {
+        let session = parameter_session_from_values(&surface_id, &values_json)?;
+        self.coordinator
+            .before_execution(attempt_id, workspace, &surface_id, enabled, &session)
+            .map_err(|error| parameter_error("record parameter task attempt", error))?;
+        Ok(self.coordinator.take_warnings())
+    }
+
+    /// Complete an attempt, promoting its captured snapshot only on success.
+    pub fn after_completion(&self, attempt_id: String, successful: bool) -> Vec<String> {
+        self.coordinator.after_completion(&attempt_id, successful);
+        self.coordinator.take_warnings()
+    }
+}
+
+#[uniffi::export]
+impl ParameterSessionLifecycle {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            coordinator: SessionLastCoordinator::new(
+                ParameterRuntime::default().session_debounce(),
+            ),
+        })
+    }
+
+    /// Record one successfully opened session root.
+    pub fn opened(
+        &self,
+        surface_id: String,
+        workspace: String,
+        values_json: String,
+        enabled: bool,
+    ) -> FrontendResult<Vec<String>> {
+        let session = parameter_session_from_values(&surface_id, &values_json)?;
+        self.coordinator
+            .opened(workspace, &surface_id, enabled, &session)
+            .map_err(|error| parameter_error("record opened parameter session", error))?;
+        Ok(self.coordinator.take_warnings())
+    }
+
+    /// Queue one backend-accepted durable session change.
+    pub fn accepted_durable_change(
+        &self,
+        surface_id: String,
+        workspace: String,
+        values_json: String,
+        enabled: bool,
+    ) -> FrontendResult<Vec<String>> {
+        let session = parameter_session_from_values(&surface_id, &values_json)?;
+        self.coordinator
+            .accepted_durable_change(workspace, &surface_id, enabled, &session)
+            .map_err(|error| parameter_error("record accepted parameter session change", error))?;
+        Ok(self.coordinator.take_warnings())
+    }
+
+    /// Flush one destination on clean session close.
+    pub fn flush(&self, surface_id: String, workspace: String) -> Vec<String> {
+        self.coordinator.flush(workspace, &surface_id);
+        self.coordinator.take_warnings()
+    }
+
+    /// Flush every destination on clean frontend shutdown.
+    pub fn flush_all(&self) -> Vec<String> {
+        self.coordinator.flush_all();
+        self.coordinator.take_warnings()
+    }
+
+    /// Drain any asynchronous persistence warnings.
+    pub fn take_warnings(&self) -> Vec<String> {
+        self.coordinator.take_warnings()
+    }
 }
 
 /// Return the validated aggregate catalog of canonical parameter concepts and surfaces.
@@ -1814,7 +1853,8 @@ pub fn parameter_surface_bundle_json(surface_id: String) -> FrontendResult<Strin
 /// Resolve the current defaults and UI state for one surface.
 #[uniffi::export]
 pub fn parameter_defaults_json(surface_id: String) -> FrontendResult<String> {
-    let session = parameter_session_from_source(&surface_id, "defaults", None, None)?;
+    let session =
+        parameter_session_from_source(&surface_id, "defaults", None, None, PathBuf::from("."))?;
     parameter_snapshot_json(&session)
 }
 
@@ -1830,6 +1870,7 @@ pub fn parameter_load_json(
         "file",
         Some(&profile_toml),
         Some(PathBuf::from(source_path)),
+        PathBuf::from("."),
     )?;
     parameter_snapshot_json(&session)
 }
@@ -1848,23 +1889,20 @@ pub fn parameter_last_json(
             format!("session surface {surface_id:?} does not have Last Successful"),
         ));
     }
-    let kind = if successful {
-        ManagedProfileKind::LastSuccessful
+    let (source, kind) = if successful {
+        ("last_successful", ManagedProfileKind::LastSuccessful)
     } else {
-        ManagedProfileKind::Last
+        ("last", ManagedProfileKind::Last)
     };
-    let Some(profile_toml) = ManagedStateStore::for_workspace(workspace)
+    let workspace = PathBuf::from(workspace);
+    let profile = ManagedStateStore::for_workspace(&workspace)
         .read(&surface_id, kind)
-        .map_err(|error| parameter_error("read managed parameter profile", error))?
-    else {
+        .map_err(|error| parameter_error("read managed parameter profile", error))?;
+    let Some(profile) = profile else {
         return Ok(None);
     };
-    let source = if successful {
-        "last_successful"
-    } else {
-        "last"
-    };
-    let session = parameter_session_from_source(&surface_id, source, Some(&profile_toml), None)?;
+    let session =
+        parameter_session_from_source(&surface_id, source, Some(&profile), None, workspace)?;
     parameter_snapshot_json(&session).map(Some)
 }
 
@@ -1878,24 +1916,35 @@ pub fn parameter_resolve_json(
     context_patch_json: String,
     override_patch_json: String,
 ) -> FrontendResult<String> {
-    let mut session = parameter_session_from_source(
-        &surface_id,
-        &base_source,
-        profile_toml.as_deref(),
-        profile_path.map(PathBuf::from),
-    )?;
     let context_patch = parse_parameter_patch(&context_patch_json, "context")?;
-    if !context_patch.values.is_empty() || !context_patch.unset.is_empty() {
-        session
-            .apply_context_patch(context_patch)
-            .map_err(|error| parameter_error("resolve parameter context", error))?;
-    }
     let override_patch = parse_parameter_patch(&override_patch_json, "override")?;
-    if !override_patch.values.is_empty() || !override_patch.unset.is_empty() {
-        session
-            .apply_override_patch(override_patch)
-            .map_err(|error| parameter_error("resolve parameter mutations", error))?;
-    }
+    let source = match base_source.as_str() {
+        "defaults" => BaseSource::Defaults,
+        "file" => BaseSource::File(
+            profile_path
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("<memory>")),
+        ),
+        "last" => BaseSource::Last,
+        "last_successful" => BaseSource::LastSuccessful,
+        other => {
+            return Err(parameter_error(
+                "resolve parameter source",
+                format!("unknown parameter source {other:?}"),
+            ));
+        }
+    };
+    let session = ParameterRuntime::default()
+        .open_session(OpenSessionRequest {
+            bundle: parameter_bundle(&surface_id)?,
+            workspace: PathBuf::from("."),
+            source,
+            profile_text: profile_toml,
+            context_patch,
+            override_patch,
+            managed_save: false,
+        })
+        .map_err(|error| parameter_error("resolve parameter session", error))?;
     parameter_snapshot_json(&session)
 }
 
@@ -1959,55 +2008,12 @@ pub fn parameter_save_json(
         .map_err(|error| parameter_error("serialize parameter save result", error))
 }
 
-/// Explicitly write Last or Last Successful for a validated resolved value set.
+/// Project a canonical task or session definition into the launcher form shape.
 #[uniffi::export]
-pub fn parameter_write_last_json(
-    surface_id: String,
-    workspace: String,
-    values_json: String,
-    successful: bool,
-) -> FrontendResult<String> {
-    let bundle = parameter_bundle(&surface_id)?;
-    if successful && bundle.surface.kind() == SurfaceKind::Session {
-        return Err(parameter_error(
-            "write managed parameter profile",
-            format!("session surface {surface_id:?} does not have Last Successful"),
-        ));
-    }
-    let profile = render_parameter_values(&surface_id, &values_json)?;
-    let kind = if successful {
-        ManagedProfileKind::LastSuccessful
-    } else {
-        ManagedProfileKind::Last
-    };
-    let outcome = ManagedStateStore::for_workspace(workspace)
-        .write(&surface_id, kind, &profile)
-        .map_err(|error| parameter_error("write managed parameter profile", error))?;
-    let result = ParameterWriteResult {
-        path: outcome.path.to_string_lossy().into_owned(),
-        bytes_written: outcome.bytes_written as u64,
-        managed_kind: Some(if successful {
-            "last_successful".to_string()
-        } else {
-            "last".to_string()
-        }),
-    };
-    serde_json::to_string(&result)
-        .map_err(|error| parameter_error("serialize parameter save result", error))
-}
-
-/// Project a canonical task or session definition into the launcher UI schema shape.
-#[uniffi::export]
-pub fn parameter_ui_schema_json(surface_id: String) -> FrontendResult<String> {
-    let schema = project_ui_schema(&parameter_bundle(&surface_id)?);
+pub fn parameter_form_json(surface_id: String) -> FrontendResult<String> {
+    let schema = casa_provider_contracts::project_ui_form(&parameter_bundle(&surface_id)?);
     serde_json::to_string(&schema)
-        .map_err(|error| parameter_error("serialize parameter UI projection", error))
-}
-
-/// Compatibility entrypoint for task launchers; delegates to the canonical projection.
-#[uniffi::export]
-pub fn task_ui_schema_json(task_id: String) -> FrontendResult<String> {
-    parameter_ui_schema_json(task_id)
+        .map_err(|error| parameter_error("serialize parameter form projection", error))
 }
 
 fn write_parameter_profile(path: &Path, contents: &str) -> FrontendResult<ParameterWriteResult> {
@@ -5679,157 +5685,24 @@ mod tests {
     }
 
     #[test]
-    fn task_catalog_json_exposes_shared_frontend_task_surface() {
-        let catalog_json = task_catalog_json().expect("task catalog");
+    fn application_catalog_json_exposes_canonical_frontend_projection() {
+        let catalog_json = application_catalog_json().expect("application catalog");
         let catalog: serde_json::Value =
-            serde_json::from_str(&catalog_json).expect("task catalog json");
-        let tasks = catalog["tasks"].as_array().expect("tasks array");
-        assert!(tasks.iter().any(|task| {
-            task["id"] == "msexplore"
-                && task["show_in_tui"] == true
-                && task["show_in_swift"] == true
-                && task["include_in_suite"] == true
-        }));
-        assert!(tasks.iter().any(|task| {
-            task["id"] == "tablebrowser"
-                && task["show_in_tui"] == true
-                && task["show_in_swift"] == true
-                && task["include_in_suite"] == false
-        }));
-        assert!(tasks.iter().any(|task| {
-            task["id"] == "split"
-                && task["binary_name"] == "mstransform"
-                && task["show_in_tui"] == true
-                && task["show_in_swift"] == true
-        }));
-        assert!(tasks.iter().any(|task| {
-            task["id"] == "applycal"
-                && task["binary_name"] == "calibrate"
-                && task["show_in_tui"] == true
-                && task["show_in_swift"] == true
-        }));
-        assert!(tasks.iter().any(|task| {
-            task["id"] == "casars"
-                && task["show_in_tui"] == false
-                && task["include_in_suite"] == true
-        }));
-    }
-
-    #[test]
-    fn task_execution_matrix_covers_catalog_and_known_inventory_gaps() {
-        let catalog_json = task_catalog_json().expect("task catalog");
-        let catalog: serde_json::Value =
-            serde_json::from_str(&catalog_json).expect("task catalog json");
-        let catalog_ids = catalog["tasks"]
+            serde_json::from_str(&catalog_json).expect("application catalog json");
+        let applications = catalog["applications"]
             .as_array()
-            .expect("catalog tasks")
-            .iter()
-            .map(|task| task["id"].as_str().expect("catalog task id"))
-            .collect::<BTreeSet<_>>();
-
-        let matrix_json = task_execution_matrix_json().expect("task execution matrix");
-        let matrix: serde_json::Value =
-            serde_json::from_str(&matrix_json).expect("task execution matrix json");
-        let rows = matrix["rows"].as_array().expect("matrix rows");
-        let matrix_ids = rows
-            .iter()
-            .map(|row| row["task_id"].as_str().expect("matrix task id"))
-            .collect::<BTreeSet<_>>();
-
-        for id in catalog_ids {
-            assert!(matrix_ids.contains(id), "matrix missing catalog task {id}");
-        }
-        let required_fields = [
-            "task_id",
-            "display_name",
-            "category",
-            "catalog_presence",
-            "binary_name",
-            "cargo_package",
-            "surface_kind",
-            "interaction_model",
-            "row_disposition",
-            "approved_closeout_scope",
-            "provider_contract_schema_source",
-            "provider_protocol_name",
-            "provider_protocol_version",
-            "dataset_kinds",
-            "suite_install",
-            "local_install",
-            "release_install",
-            "tui_status",
-            "gui_status",
-            "tui_frontend_status",
-            "gui_frontend_status",
-            "tui_provider_resolution_path",
-            "gui_provider_resolution_path",
-            "frontend_exposure",
-            "option_source",
-            "context_option_default_validation_source",
-            "full_control_status",
-            "parameter_control_coverage",
-            "omitted_controls",
-            "mutation_class",
-            "confirmation",
-            "dry_run_preview_behavior",
-            "backup_version_behavior",
-            "restore_rollback_behavior",
-            "smoke_evidence",
-            "signoff_reference",
-        ];
-        for row in rows {
-            for field in required_fields {
-                assert!(
-                    row.get(field).is_some(),
-                    "matrix row {} missing {field}",
-                    row["task_id"]
-                );
-            }
-            assert!(
-                row["omitted_controls"].is_array(),
-                "matrix row {} omitted_controls must be an array",
-                row["task_id"]
-            );
-        }
-        assert!(matrix_ids.contains("flagdata"));
-        assert!(matrix_ids.contains("split"));
-        assert!(matrix_ids.contains("simalma"));
-        assert!(rows.iter().any(|row| {
-            row["task_id"] == "mstransform"
-                && row["tui_status"] == "invokable"
-                && row["full_control_status"] == "covered"
-                && row["row_disposition"] == "implemented_now"
-                && row["tui_frontend_status"] == "full_control_verified"
-                && row["gui_frontend_status"] == "full_control_verified"
-                && row["tui_provider_resolution_path"]
-                    == "tui_registry_installed_suite_binary_or_cargo_fallback"
+            .expect("applications array");
+        assert_eq!(applications.len(), 43);
+        assert!(applications.iter().any(|application| {
+            application["id"] == "imager"
+                && application["kind"] == "task"
+                && application["display_name"] == "Imager"
+                && application["executable"] == "casars-imager"
         }));
-        assert!(rows.iter().any(|row| {
-            row["task_id"] == "imager"
-                && row["gui_status"] == "invokable"
-                && row["full_control_status"] == "covered"
-                && row["parameter_control_coverage"]
-                    == "full_approved_schema_parameter_surface_exposed_in_gui_and_tui"
-        }));
-        assert!(rows.iter().any(|row| {
-            row["task_id"] == "simalma"
-                && row["row_disposition"] == "implemented_external_casa_adapter"
-                && row["full_control_status"] == "covered_external_casa"
-                && row["provider_protocol_name"] == "casars_casa_task_adapter"
-                && row["signoff_reference"].as_str().is_some_and(|reference| {
-                    reference.contains("real scientific workflow validation is separate wave")
-                })
-        }));
-        assert!(rows.iter().any(|row| {
-            row["task_id"] == "tablebrowser"
-                && row["surface_kind"] == "session_surface"
-                && row["approved_closeout_scope"] == false
-                && row["row_disposition"] == "not_applicable_session_surface"
-                && row["omitted_controls"].as_array().is_some_and(|controls| {
-                    controls.iter().any(|control| {
-                        control == "one-shot task panel semantics not applicable to session surface"
-                    })
-                })
+        assert!(applications.iter().any(|application| {
+            application["id"] == "casars"
+                && application["kind"] == "launcher"
+                && application["include_in_suite"] == true
         }));
     }
 
@@ -5903,8 +5776,8 @@ mod tests {
     }
 
     #[test]
-    fn task_ui_schema_is_the_runtime_projection_of_the_builtin_definition() {
-        let schema_json = task_ui_schema_json("flagdata".to_string()).expect("flagdata schema");
+    fn task_form_is_the_runtime_projection_of_the_builtin_definition() {
+        let schema_json = parameter_form_json("flagdata".to_string()).expect("flagdata schema");
         let schema: serde_json::Value =
             serde_json::from_str(&schema_json).expect("flagdata schema json");
         assert_eq!(schema["schema_version"], 2);
@@ -5932,8 +5805,7 @@ mod tests {
                 .contains(&serde_json::json!("summary"))
         );
 
-        let session_json =
-            parameter_ui_schema_json("imexplore".to_string()).expect("session schema");
+        let session_json = parameter_form_json("imexplore".to_string()).expect("session schema");
         let session: serde_json::Value =
             serde_json::from_str(&session_json).expect("session schema json");
         assert_eq!(session["command_id"], "imexplore");
@@ -5960,8 +5832,7 @@ mod tests {
             ("flagdata", "mode", "flagdata.mode"),
             ("imhead", "mode", "imhead.mode"),
         ] {
-            let schema_json =
-                parameter_ui_schema_json(surface_id.to_string()).expect("UI projection");
+            let schema_json = parameter_form_json(surface_id.to_string()).expect("form projection");
             let schema: serde_json::Value =
                 serde_json::from_str(&schema_json).expect("UI projection JSON");
             let argument = schema["arguments"]
@@ -6072,13 +5943,17 @@ mod tests {
             "/../../resources/test-profiles/imager-cross-surface.toml"
         ));
         let bundle = builtin_surface_bundle("imager").expect("builtin imager surface");
-        let profile = parse_profile(profile_toml).expect("parse profile");
-        let direct = ParameterSession::from_profile(
-            bundle.clone(),
-            BaseSource::File(source_path.clone()),
-            &profile,
-        )
-        .expect("direct runtime resolution");
+        let direct = ParameterRuntime::default()
+            .open_session(OpenSessionRequest {
+                bundle: bundle.clone(),
+                workspace: PathBuf::from("."),
+                source: BaseSource::File(source_path.clone()),
+                profile_text: Some(profile_toml.to_string()),
+                context_patch: ResolutionPatch::default(),
+                override_patch: ResolutionPatch::default(),
+                managed_save: false,
+            })
+            .expect("direct runtime resolution");
 
         assert_eq!(
             direct.states()["imsize"].value,
@@ -6117,9 +5992,9 @@ mod tests {
         assert!(canonical_profile.contains("imsize = [1024, 1024]"));
         assert!(!canonical_profile.contains("cell ="));
 
-        let direct_ui = project_ui_schema(&bundle);
+        let direct_ui = casa_provider_contracts::project_ui_form(&bundle);
         let uniffi_ui_json =
-            parameter_ui_schema_json("imager".to_string()).expect("UniFFI UI projection");
+            parameter_form_json("imager".to_string()).expect("UniFFI form projection");
         let uniffi_ui: serde_json::Value =
             serde_json::from_str(&uniffi_ui_json).expect("UI projection json");
         assert_eq!(uniffi_ui, direct_ui);
@@ -6183,21 +6058,16 @@ mod tests {
         assert_eq!(loaded["states"]["niter"]["value"]["value"], 42);
 
         let workspace = temp.path().join("workspace");
-        let write_json = parameter_write_last_json(
-            "imager".to_string(),
-            workspace.to_string_lossy().into_owned(),
-            values,
-            false,
-        )
-        .expect("write Last");
-        let write: serde_json::Value = serde_json::from_str(&write_json).expect("write json");
-        assert_eq!(write["managed_kind"], "last");
-        assert!(
-            write["path"]
-                .as_str()
-                .expect("Last path")
-                .ends_with("last.toml")
-        );
+        let lifecycle = ParameterTaskLifecycle::new();
+        lifecycle
+            .before_execution(
+                "attempt-1".to_string(),
+                "imager".to_string(),
+                workspace.to_string_lossy().into_owned(),
+                values,
+                true,
+            )
+            .expect("write Last through lifecycle");
 
         let last_json = parameter_last_json(
             "imager".to_string(),
@@ -6210,6 +6080,21 @@ mod tests {
         assert_eq!(last["base_source"]["kind"], "last");
         assert_eq!(last["states"]["niter"]["value"]["value"], 42);
 
+        assert!(
+            lifecycle
+                .after_completion("attempt-1".to_string(), true)
+                .is_empty()
+        );
+        assert!(
+            parameter_last_json(
+                "imager".to_string(),
+                workspace.to_string_lossy().into_owned(),
+                true,
+            )
+            .expect("load Last Successful")
+            .is_some()
+        );
+
         let error = parameter_last_json(
             "imexplore".to_string(),
             workspace.to_string_lossy().into_owned(),
@@ -6217,6 +6102,31 @@ mod tests {
         )
         .expect_err("sessions do not have Last Successful");
         assert!(error.to_string().contains("does not have Last Successful"));
+    }
+
+    #[test]
+    fn managed_parameter_lookup_distinguishes_missing_from_corrupt() {
+        let workspace = tempfile::tempdir().unwrap();
+        assert!(
+            parameter_last_json(
+                "imager".to_string(),
+                workspace.path().to_string_lossy().into_owned(),
+                false,
+            )
+            .unwrap()
+            .is_none()
+        );
+
+        ManagedStateStore::for_workspace(workspace.path())
+            .write("imager", ManagedProfileKind::Last, "not valid profile TOML")
+            .unwrap();
+        let error = parameter_last_json(
+            "imager".to_string(),
+            workspace.path().to_string_lossy().into_owned(),
+            false,
+        )
+        .expect_err("corrupt Last must not be treated as missing");
+        assert!(error.to_string().contains("open parameter session"));
     }
 
     #[test]
