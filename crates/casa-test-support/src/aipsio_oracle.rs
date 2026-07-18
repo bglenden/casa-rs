@@ -3,8 +3,7 @@
 
 #[cfg(has_casacore_cpp)]
 use crate::oracle_ffi::*;
-#[cfg(has_casacore_cpp)]
-use crate::oracle_runtime::CasacoreOracleRuntime;
+use crate::oracle_runtime::{CasacoreOracleRuntime, OracleError, oracle_operation};
 
 use casa_aipsio::{
     AipsReader, AipsWriter, ArrayValue, ByteOrder, Complex32, Complex64, ScalarValue, TypeTag,
@@ -65,6 +64,36 @@ pub struct RustBackend;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CppBackend;
 
+/// Typed Rust-facing access to casacore's AIPSIO oracle.
+pub struct AipsIoOracle;
+
+#[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
+impl AipsIoOracle {
+    pub fn encode_value(value: &Value, byte_order: ByteOrder) -> Result<Vec<u8>, OracleError> {
+        oracle_operation!("aipsio.encode_value", {
+            cpp_encode_value(value, byte_order).map_err(|message| OracleError::CppFailure {
+                operation: "aipsio.encode_value",
+                message,
+            })
+        })
+    }
+
+    pub fn decode_value(
+        bytes: &[u8],
+        type_tag: TypeTag,
+        byte_order: ByteOrder,
+    ) -> Result<Value, OracleError> {
+        oracle_operation!("aipsio.decode_value", {
+            cpp_decode_value(bytes, type_tag, byte_order).map_err(|message| {
+                OracleError::CppFailure {
+                    operation: "aipsio.decode_value",
+                    message,
+                }
+            })
+        })
+    }
+}
+
 impl RustBackend {
     pub fn new() -> Self {
         Self
@@ -104,21 +133,14 @@ impl AipsIoBackend for RustBackend {
     }
 }
 
+#[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
 impl AipsIoBackend for CppBackend {
     fn name(&self) -> &'static str {
         "cpp"
     }
 
     fn encode_value(&self, value: &Value, byte_order: ByteOrder) -> Result<Vec<u8>, String> {
-        #[cfg(has_casacore_cpp)]
-        {
-            cpp_encode_value(value, byte_order)
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = (value, byte_order);
-            Err("casacore C++ backend unavailable".to_string())
-        }
+        AipsIoOracle::encode_value(value, byte_order).map_err(|error| error.to_string())
     }
 
     fn decode_value(
@@ -127,20 +149,12 @@ impl AipsIoBackend for CppBackend {
         type_tag: TypeTag,
         byte_order: ByteOrder,
     ) -> Result<Value, String> {
-        #[cfg(has_casacore_cpp)]
-        {
-            cpp_decode_value(bytes, type_tag, byte_order)
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = (bytes, type_tag, byte_order);
-            Err("casacore C++ backend unavailable".to_string())
-        }
+        AipsIoOracle::decode_value(bytes, type_tag, byte_order).map_err(|error| error.to_string())
     }
 }
 
 pub fn casacore_oracle_available() -> bool {
-    cfg!(has_casacore_cpp)
+    CasacoreOracleRuntime::available()
 }
 
 pub fn primitive_cross_check_values() -> Vec<Value> {
@@ -1115,12 +1129,15 @@ fn cpp_encode_value(value: &Value, byte_order: ByteOrder) -> Result<Vec<u8>, Str
         )
     };
 
-    if status != 0 {
-        let err = unsafe {
-            CasacoreOracleRuntime::cpp_error_message(out_err, casacore_cpp_aipsio_free_error)
-        };
-        return Err(err);
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "aipsio.encode",
+            status,
+            out_err,
+            casacore_cpp_aipsio_free_error,
+        )
     }
+    .map_err(|error| error.to_string())?;
 
     unsafe {
         CasacoreOracleRuntime::owned_vec(
@@ -1164,12 +1181,15 @@ fn cpp_decode_value(
         )
     };
 
-    if status != 0 {
-        let err = unsafe {
-            CasacoreOracleRuntime::cpp_error_message(out_err, casacore_cpp_aipsio_free_error)
-        };
-        return Err(err);
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "aipsio.decode",
+            status,
+            out_err,
+            casacore_cpp_aipsio_free_error,
+        )
     }
+    .map_err(|error| error.to_string())?;
 
     let payload = unsafe {
         CasacoreOracleRuntime::owned_vec(

@@ -70,15 +70,17 @@ atomically under the pack paths declared by the manifest.
 Run the focused contract and characterization suite with:
 
 ```sh
-python3 -m unittest discover -s scripts -p 'test_*.py'
+python3 -m unittest discover -s scripts/tutorial_parity -p 'test_*.py'
 ```
 
 ## Wave 7 verification
 
 All twelve manifests validate and produce dry-run plans through the shared
-runner. The characterization suite covers the full section inventory and the
-specific imhead, imstat, plot-point, beam/axis/mask, scalar/position, image,
-MeasurementSet, and FITS comparison routes.
+runner. The 18-test contract and characterization suite covers the full section
+inventory; resource and prerequisite resolution; timeout cancellation;
+atomic typed evidence, review, screenshot-manifest, and documentation updates;
+and the specific imhead, imstat, plot-point, beam/axis/mask, scalar/position,
+image, MeasurementSet, and FITS comparison routes.
 
 A real image-analysis smoke run completed CASA and native CLI `imhead` against
 the same pack at

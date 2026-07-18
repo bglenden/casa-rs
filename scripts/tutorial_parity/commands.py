@@ -18,6 +18,7 @@ class CommandResult:
     elapsed_seconds: float
     stdout: str
     stderr: str
+    timed_out: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -26,6 +27,7 @@ class CommandResult:
             "elapsed_seconds": self.elapsed_seconds,
             "stdout": self.stdout,
             "stderr": self.stderr,
+            "timed_out": self.timed_out,
         }
 
 
@@ -37,16 +39,29 @@ def run_command(
     timeout_seconds: float,
 ) -> CommandResult:
     started = time.perf_counter()
-    completed = subprocess.run(
-        argv,
-        cwd=cwd,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout_seconds,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=cwd,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        stdout = _timeout_text(error.stdout)
+        stderr = _timeout_text(error.stderr)
+        diagnostic = f"command timed out after {timeout_seconds:g} seconds"
+        return CommandResult(
+            argv=tuple(argv),
+            return_code=124,
+            elapsed_seconds=time.perf_counter() - started,
+            stdout=stdout,
+            stderr=f"{stderr.rstrip()}\n{diagnostic}".lstrip(),
+            timed_out=True,
+        )
     return CommandResult(
         argv=tuple(argv),
         return_code=completed.returncode,
@@ -54,6 +69,14 @@ def run_command(
         stdout=completed.stdout,
         stderr=completed.stderr,
     )
+
+
+def _timeout_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
 
 
 def environment_with_pythonpath(repo_root: Path, base: dict[str, str] | None = None) -> dict[str, str]:

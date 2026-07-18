@@ -73,6 +73,25 @@ impl std::error::Error for OracleError {}
 
 pub(crate) struct CasacoreOracleRuntime;
 
+macro_rules! oracle_operation {
+    ($capability:expr, $body:block) => {{
+        #[cfg(has_casacore_cpp)]
+        {
+            $crate::oracle_runtime::CasacoreOracleRuntime::require($capability)?;
+            let _oracle_guard =
+                $crate::oracle_runtime::CasacoreOracleRuntime::lock_operation($capability)?;
+            $body
+        }
+        #[cfg(not(has_casacore_cpp))]
+        {
+            $crate::oracle_runtime::CasacoreOracleRuntime::require($capability)?;
+            unreachable!("C++ oracle runtime reported an unavailable backend as available")
+        }
+    }};
+}
+
+pub(crate) use oracle_operation;
+
 impl CasacoreOracleRuntime {
     pub(crate) fn available() -> bool {
         cfg!(has_casacore_cpp)
@@ -173,6 +192,28 @@ impl CasacoreOracleRuntime {
     }
 
     #[cfg(has_casacore_cpp)]
+    pub(crate) unsafe fn cpp_status(
+        operation: &'static str,
+        status: i32,
+        error: *mut std::ffi::c_char,
+        free: unsafe extern "C" fn(*mut std::ffi::c_char),
+    ) -> Result<(), OracleError> {
+        if status == 0 {
+            if error.is_null() {
+                Ok(())
+            } else {
+                let message = unsafe { Self::cpp_error_message(error, free) };
+                Err(OracleError::InvalidOutput {
+                    operation,
+                    message: format!("success returned an error diagnostic: {message}"),
+                })
+            }
+        } else {
+            Err(unsafe { Self::cpp_error(operation, error, free) })
+        }
+    }
+
+    #[cfg(has_casacore_cpp)]
     pub(crate) unsafe fn owned_string(
         operation: &'static str,
         pointer: *mut std::ffi::c_char,
@@ -258,13 +299,36 @@ impl CasacoreOracleRuntime {
     pub(crate) fn lock_operation(
         operation: &'static str,
     ) -> Result<Option<OracleGuard>, OracleError> {
-        let domain = match operation {
-            "measures.iau2000_precession_matrix" | "measures.direction_convert_iau2000a" => {
-                Some(OracleDomain::MeasuresIau2000A)
-            }
-            _ => None,
-        };
+        let domain = Self::operation_domain(operation);
         domain.map(Self::lock).transpose()
+    }
+
+    #[cfg(any(has_casacore_cpp, test))]
+    fn operation_domain(operation: &str) -> Option<OracleDomain> {
+        if operation.starts_with("aipsio.")
+            || operation.starts_with("lattice.")
+            || operation.starts_with("measurement_set.")
+            || operation.starts_with("table.")
+            || operation.starts_with("table_measures.")
+            || operation.starts_with("table_quantum.")
+            || operation.starts_with("taql.")
+        {
+            Some(OracleDomain::Tables)
+        } else if operation.starts_with("gridder.")
+            || operation.starts_with("hogbom.")
+            || operation.starts_with("image.")
+        {
+            Some(OracleDomain::Imaging)
+        } else if operation.starts_with("quanta.") {
+            Some(OracleDomain::Quanta)
+        } else if matches!(
+            operation,
+            "measures.iau2000_precession_matrix" | "measures.direction_convert_iau2000a"
+        ) {
+            Some(OracleDomain::MeasuresIau2000A)
+        } else {
+            None
+        }
     }
 }
 
@@ -311,9 +375,32 @@ impl OracleFileLock {
     }
 }
 
+#[cfg(all(has_casacore_cpp, unix))]
+impl Drop for OracleFileLock {
+    fn drop(&mut self) {
+        unsafe {
+            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(has_casacore_cpp)]
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[cfg(has_casacore_cpp)]
+    static FREED_ERROR_POINTERS: AtomicUsize = AtomicUsize::new(0);
+
+    #[cfg(has_casacore_cpp)]
+    unsafe extern "C" fn free_test_error(pointer: *mut std::ffi::c_char) {
+        if !pointer.is_null() {
+            drop(unsafe { CString::from_raw(pointer) });
+            FREED_ERROR_POINTERS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
 
     #[test]
     fn c_string_rejects_embedded_nul_with_context() {
@@ -326,6 +413,42 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn operation_domains_are_owned_by_the_runtime() {
+        assert_eq!(
+            CasacoreOracleRuntime::operation_domain("table.table_write"),
+            Some(OracleDomain::Tables)
+        );
+        assert_eq!(
+            CasacoreOracleRuntime::operation_domain("measurement_set.digest_manifest"),
+            Some(OracleDomain::Tables)
+        );
+        assert_eq!(
+            CasacoreOracleRuntime::operation_domain("image.create_image"),
+            Some(OracleDomain::Imaging)
+        );
+        assert_eq!(
+            CasacoreOracleRuntime::operation_domain("gridder.make_dirty_image_2d"),
+            Some(OracleDomain::Imaging)
+        );
+        assert_eq!(
+            CasacoreOracleRuntime::operation_domain("quanta.convert"),
+            Some(OracleDomain::Quanta)
+        );
+        assert_eq!(
+            CasacoreOracleRuntime::operation_domain("measures.iau2000_precession_matrix"),
+            Some(OracleDomain::MeasuresIau2000A)
+        );
+        assert_eq!(
+            CasacoreOracleRuntime::operation_domain("measures.epoch_convert"),
+            None
+        );
+        assert_eq!(
+            CasacoreOracleRuntime::operation_domain("hogbom.clean_minor_cycle_2d"),
+            Some(OracleDomain::Imaging)
+        );
     }
 
     #[cfg(not(has_casacore_cpp))]
@@ -351,6 +474,27 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[cfg(has_casacore_cpp)]
+    #[test]
+    fn cpp_status_frees_each_returned_error_exactly_once() {
+        FREED_ERROR_POINTERS.store(0, Ordering::SeqCst);
+        let failure = CString::new("failure").unwrap().into_raw();
+        let error = unsafe {
+            CasacoreOracleRuntime::cpp_status("test.failure", 1, failure, free_test_error)
+        }
+        .unwrap_err();
+        assert!(matches!(error, OracleError::CppFailure { .. }));
+        assert_eq!(FREED_ERROR_POINTERS.load(Ordering::SeqCst), 1);
+
+        let unexpected = CString::new("unexpected").unwrap().into_raw();
+        let error = unsafe {
+            CasacoreOracleRuntime::cpp_status("test.success", 0, unexpected, free_test_error)
+        }
+        .unwrap_err();
+        assert!(matches!(error, OracleError::InvalidOutput { .. }));
+        assert_eq!(FREED_ERROR_POINTERS.load(Ordering::SeqCst), 2);
     }
 
     #[cfg(has_casacore_cpp)]
@@ -404,14 +548,5 @@ mod tests {
             .expect("independent domain remained available");
         drop(measures);
         worker.join().expect("worker completed");
-    }
-}
-
-#[cfg(all(has_casacore_cpp, unix))]
-impl Drop for OracleFileLock {
-    fn drop(&mut self) {
-        unsafe {
-            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
-        }
     }
 }

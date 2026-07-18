@@ -317,10 +317,10 @@ pub(crate) fn cpp_table_write_unlocked(
         }
     };
 
-    if rc != 0 {
-        let msg = unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) };
-        return Err(msg);
+    unsafe {
+        CasacoreOracleRuntime::cpp_status("table.table_write", rc, error, cpp_table_free_error)
     }
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -488,10 +488,10 @@ pub(crate) fn cpp_table_verify_unlocked(
         }
     };
 
-    if rc != 0 {
-        let msg = unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) };
-        return Err(msg);
+    unsafe {
+        CasacoreOracleRuntime::cpp_status("table.table_verify", rc, error, cpp_table_free_error)
     }
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -526,10 +526,15 @@ pub(crate) fn cpp_columns_index_time_lookups(
         )
     };
 
-    if rc != 0 {
-        let msg = unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) };
-        return Err(msg);
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "table.columns_index_time_lookups",
+            rc,
+            error,
+            cpp_table_free_error,
+        )
     }
+    .map_err(|error| error.to_string())?;
     Ok((elapsed_ns, match_count))
 }
 
@@ -559,11 +564,11 @@ pub(crate) fn cpp_vararray_bench(
             &mut error,
         )
     };
-    if rc == 0 {
-        return Ok((write_ns, read_ns, total_elems));
+    unsafe {
+        CasacoreOracleRuntime::cpp_status("table.vararray_bench", rc, error, cpp_table_free_error)
     }
-    let msg = unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) };
-    Err(msg)
+    .map_err(|error| error.to_string())?;
+    Ok((write_ns, read_ns, total_elems))
 }
 
 /// Stub for when C++ is unavailable.
@@ -613,18 +618,23 @@ pub(crate) fn cpp_set_algebra_bench(
             &mut error,
         )
     };
-    if rc == 0 {
-        return Ok(SetAlgebraBenchResult {
-            union_ns,
-            intersection_ns,
-            difference_ns,
-            union_rows,
-            intersection_rows,
-            difference_rows,
-        });
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "table.set_algebra_bench",
+            rc,
+            error,
+            cpp_table_free_error,
+        )
     }
-    let msg = unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) };
-    Err(msg)
+    .map_err(|error| error.to_string())?;
+    Ok(SetAlgebraBenchResult {
+        union_ns,
+        intersection_ns,
+        difference_ns,
+        union_rows,
+        intersection_rows,
+        difference_rows,
+    })
 }
 
 /// Stub for when C++ is unavailable.
@@ -639,11 +649,11 @@ pub(crate) fn cpp_copy_rows_bench(dir: &std::path::Path, nrows: u64) -> Result<u
     let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
 
     let rc = unsafe { ffi_copy_rows_bench(c_dir.as_ptr(), nrows, &mut ns, &mut error) };
-    if rc == 0 {
-        return Ok(ns);
+    unsafe {
+        CasacoreOracleRuntime::cpp_status("table.copy_rows_bench", rc, error, cpp_table_free_error)
     }
-    let msg = unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) };
-    Err(msg)
+    .map_err(|error| error.to_string())?;
+    Ok(ns)
 }
 
 /// Stub for when C++ is unavailable.
@@ -693,11 +703,11 @@ pub(crate) fn cpp_cell_slice_bench(
             &mut error,
         )
     };
-    if rc == 0 {
-        return Ok(CellSliceBenchResult { write_ns, slice_ns });
+    unsafe {
+        CasacoreOracleRuntime::cpp_status("table.cell_slice_bench", rc, error, cpp_table_free_error)
     }
-    let msg = unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) };
-    Err(msg)
+    .map_err(|error| error.to_string())?;
+    Ok(CellSliceBenchResult { write_ns, slice_ns })
 }
 
 /// Stub for when C++ is unavailable.
@@ -733,10 +743,15 @@ pub(crate) fn cpp_bulk_scalar_io_bench(
             &mut error,
         )
     };
-    if rc != 0 {
-        let msg = unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) };
-        return Err(msg);
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "table.bulk_scalar_io_bench",
+            rc,
+            error,
+            cpp_table_free_error,
+        )
     }
+    .map_err(|error| error.to_string())?;
     Ok(BulkScalarIoBenchResult { write_ns, read_ns })
 }
 
@@ -760,9 +775,9 @@ pub(crate) fn cpp_deep_copy_bench(
             &mut error,
         )
     };
-    if rc != 0 {
-        let msg = unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) };
-        return Err(msg);
+    unsafe {
+        CasacoreOracleRuntime::cpp_status("table.deep_copy_bench", rc, error, cpp_table_free_error)
     }
+    .map_err(|error| error.to_string())?;
     Ok(DeepCopyBenchResult { write_ns, copy_ns })
 }

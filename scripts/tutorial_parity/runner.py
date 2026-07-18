@@ -19,7 +19,7 @@ from tutorial_parity.documentation import write_documentation
 from tutorial_parity.evidence import result_document, review_document, write_json_atomic
 from tutorial_parity.model import RuntimeResources, SectionManifest
 from tutorial_parity.resources import ResourceError, resolve_resources
-from tutorial_parity.schema import ContractError, load_section
+from tutorial_parity.schema import ContractError, load_section, validate_result
 
 
 SECTIONS_ROOT = Path(__file__).resolve().parent / "sections"
@@ -116,7 +116,7 @@ def run_section(
     )
     if not dry_run:
         result_path = resources.pack_root / manifest.evidence["result"]
-        write_json_atomic(result_path, result)
+        write_json_atomic(result_path, validate_result(result, str(result_path)))
         write_json_atomic(
             resources.pack_root / manifest.evidence["review"],
             review_document(manifest_id=manifest.section_id, result_ref=manifest.evidence["result"], result=result),

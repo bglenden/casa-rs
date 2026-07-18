@@ -112,11 +112,15 @@ pub(crate) fn cpp_lattice_statistics_forced_io_bench(
         )
     };
 
-    if rc != 0 {
-        return Err(unsafe {
-            CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error)
-        });
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "lattice.statistics_forced_io_bench",
+            rc,
+            error,
+            cpp_table_free_error,
+        )
     }
+    .map_err(|error| error.to_string())?;
 
     Ok(CppLatticeStatisticsBenchResult {
         basic_ns,
@@ -167,9 +171,14 @@ pub(crate) fn cpp_lattice_statistics_forced_io_repeated_basic(
         )
     };
 
-    if rc == 0 {
-        Ok((total_ns, checksum))
-    } else {
-        Err(unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) })
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "lattice.statistics_forced_io_repeated_basic",
+            rc,
+            error,
+            cpp_table_free_error,
+        )
     }
+    .map_err(|error| error.to_string())?;
+    Ok((total_ns, checksum))
 }

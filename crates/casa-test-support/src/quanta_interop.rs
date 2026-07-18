@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Typed C++ oracle facade for the quanta module.
 
-use crate::oracle_runtime::{CasacoreOracleRuntime, OracleError};
-
-#[cfg(has_casacore_cpp)]
-use crate::oracle_runtime::OracleDomain;
+use crate::oracle_runtime::{CasacoreOracleRuntime, OracleError, oracle_operation};
 
 #[cfg(has_casacore_cpp)]
 use std::ffi::CString;
@@ -89,19 +86,10 @@ pub struct QuantaOracle;
 
 macro_rules! cpp_operation {
     ($capability:expr, $body:block) => {{
-        #[cfg(has_casacore_cpp)]
-        {
-            CasacoreOracleRuntime::require($capability)?;
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Quanta)?;
+        oracle_operation!($capability, {
             initialize();
             $body
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            Err(OracleError::Unavailable {
-                capability: $capability,
-            })
-        }
+        })
     }};
 }
 

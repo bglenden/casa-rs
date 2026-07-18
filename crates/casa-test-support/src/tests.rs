@@ -578,12 +578,12 @@ fn cpp_backend_matches_build_configuration() {
         assert!(
             encoded
                 .unwrap_err()
-                .contains("casacore C++ backend unavailable")
+                .contains("casacore C++ oracle is unavailable for aipsio.encode_value")
         );
         assert!(
             decoded
                 .unwrap_err()
-                .contains("casacore C++ backend unavailable")
+                .contains("casacore C++ oracle is unavailable for aipsio.decode_value")
         );
     }
 }

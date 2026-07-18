@@ -6,9 +6,9 @@
 
 use std::path::Path;
 
-use crate::oracle_runtime::OracleError;
 #[cfg(has_casacore_cpp)]
-use crate::oracle_runtime::{CasacoreOracleRuntime, OracleDomain};
+use crate::oracle_runtime::CasacoreOracleRuntime;
+use crate::oracle_runtime::{OracleError, oracle_operation};
 
 /// Timings for a C++ MeasurementSet create/open/read workload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,68 +96,47 @@ unsafe extern "C" {
 /// Typed Rust-facing access to the casacore MeasurementSet oracle.
 pub struct MeasurementSetOracle;
 
+#[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
 impl MeasurementSetOracle {
     /// Write the standard MeasurementSet interop fixture using C++ casacore.
     pub fn write_basic_fixture(path: &Path) -> Result<(), OracleError> {
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Tables)?;
+        oracle_operation!("measurement_set.write_basic_fixture", {
             let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
             let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
             let rc = unsafe { ffi_cpp_ms_write_basic_fixture(c_path.as_ptr(), &mut error) };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "measurement_set.write_basic_fixture",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.write_basic_fixture",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             Ok(())
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = path;
-            Err(OracleError::Unavailable {
-                capability: "measurement_set.write_basic_fixture",
-            })
-        }
+        })
     }
 
     /// Verify the standard MeasurementSet interop fixture using C++ casacore.
     pub fn verify_basic_fixture(path: &Path) -> Result<(), OracleError> {
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Tables)?;
+        oracle_operation!("measurement_set.verify_basic_fixture", {
             let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
             let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
             let rc = unsafe { ffi_cpp_ms_verify_basic_fixture(c_path.as_ptr(), &mut error) };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "measurement_set.verify_basic_fixture",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.verify_basic_fixture",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             Ok(())
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = path;
-            Err(OracleError::Unavailable {
-                capability: "measurement_set.verify_basic_fixture",
-            })
-        }
+        })
     }
 
     /// Benchmark C++ MeasurementSet create/open/read for the standard fixture.
     pub fn bench_create_open(path: &Path, nrows: u64) -> Result<MsBenchResult, OracleError> {
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Tables)?;
+        oracle_operation!("measurement_set.bench_create_open", {
             let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
             let mut create_ns = 0_u64;
             let mut open_ns = 0_u64;
@@ -173,28 +152,20 @@ impl MeasurementSetOracle {
                     &mut error,
                 )
             };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "measurement_set.bench_create_open",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.bench_create_open",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             Ok(MsBenchResult {
                 create_ns,
                 open_ns,
                 read_ns,
             })
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = (path, nrows);
-            Err(OracleError::Unavailable {
-                capability: "measurement_set.bench_create_open",
-            })
-        }
+        })
     }
 
     /// Return a stable digest manifest for a MeasurementSet opened by C++ casacore.
@@ -204,22 +175,19 @@ impl MeasurementSetOracle {
     /// any additional tables reachable through `TpTable` keyword references,
     /// returning compact per-table digests rather than a huge textual dump.
     pub fn digest_manifest(path: &Path) -> Result<String, OracleError> {
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Tables)?;
+        oracle_operation!("measurement_set.digest_manifest", {
             let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
             let mut manifest: *mut std::ffi::c_char = std::ptr::null_mut();
             let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
             let rc =
                 unsafe { ffi_cpp_ms_digest_manifest(c_path.as_ptr(), &mut manifest, &mut error) };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "measurement_set.digest_manifest",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.digest_manifest",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             unsafe {
                 CasacoreOracleRuntime::owned_string(
@@ -228,14 +196,7 @@ impl MeasurementSetOracle {
                     cpp_table_free_error,
                 )
             }
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = path;
-            Err(OracleError::Unavailable {
-                capability: "measurement_set.digest_manifest",
-            })
-        }
+        })
     }
 
     /// Return the stable digest for a single row of a named MeasurementSet table.
@@ -247,9 +208,7 @@ impl MeasurementSetOracle {
         table_label: &str,
         row: u64,
     ) -> Result<String, OracleError> {
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Tables)?;
+        oracle_operation!("measurement_set.table_row_digest", {
             let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
             let c_label =
                 CasacoreOracleRuntime::c_string("MeasurementSet table label", table_label)?;
@@ -264,14 +223,13 @@ impl MeasurementSetOracle {
                     &mut error,
                 )
             };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "measurement_set.table_row_digest",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.table_row_digest",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             unsafe {
                 CasacoreOracleRuntime::owned_string(
@@ -280,14 +238,7 @@ impl MeasurementSetOracle {
                     cpp_table_free_error,
                 )
             }
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = (path, table_label, row);
-            Err(OracleError::Unavailable {
-                capability: "measurement_set.table_row_digest",
-            })
-        }
+        })
     }
 
     /// Return a per-field digest manifest for a single row of a named MS table.
@@ -296,9 +247,7 @@ impl MeasurementSetOracle {
         table_label: &str,
         row: u64,
     ) -> Result<String, OracleError> {
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Tables)?;
+        oracle_operation!("measurement_set.table_row_field_manifest", {
             let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
             let c_label =
                 CasacoreOracleRuntime::c_string("MeasurementSet table label", table_label)?;
@@ -313,14 +262,13 @@ impl MeasurementSetOracle {
                     &mut error,
                 )
             };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "measurement_set.table_row_field_manifest",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.table_row_field_manifest",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             unsafe {
                 CasacoreOracleRuntime::owned_string(
@@ -329,14 +277,7 @@ impl MeasurementSetOracle {
                     cpp_table_free_error,
                 )
             }
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = (path, table_label, row);
-            Err(OracleError::Unavailable {
-                capability: "measurement_set.table_row_field_manifest",
-            })
-        }
+        })
     }
 
     /// Benchmark reading all rows of the MAIN table from an external MeasurementSet.
@@ -344,9 +285,7 @@ impl MeasurementSetOracle {
     /// The C++ side opens the MeasurementSet, streams the full MAIN-table row digest,
     /// and returns both the elapsed time and the resulting digest.
     pub fn bench_main_rows(path: &Path) -> Result<MsMainRowsBenchResult, OracleError> {
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Tables)?;
+        oracle_operation!("measurement_set.bench_main_rows", {
             let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
             let mut read_ns = 0_u64;
             let mut digest: *mut std::ffi::c_char = std::ptr::null_mut();
@@ -354,14 +293,13 @@ impl MeasurementSetOracle {
             let rc = unsafe {
                 ffi_cpp_ms_bench_main_rows(c_path.as_ptr(), &mut read_ns, &mut digest, &mut error)
             };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "measurement_set.bench_main_rows",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.bench_main_rows",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             let rows_digest = unsafe {
                 CasacoreOracleRuntime::owned_string(
@@ -374,22 +312,13 @@ impl MeasurementSetOracle {
                 read_ns,
                 rows_digest,
             })
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = path;
-            Err(OracleError::Unavailable {
-                capability: "measurement_set.bench_main_rows",
-            })
-        }
+        })
     }
 
     /// Benchmark opening an external MeasurementSet and then reading all rows of the
     /// MAIN table on the C++ side.
     pub fn bench_open_main_rows(path: &Path) -> Result<MsMainOpenScanBenchResult, OracleError> {
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Tables)?;
+        oracle_operation!("measurement_set.bench_open_main_rows", {
             let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
             let mut open_and_read_ns = 0_u64;
             let mut digest: *mut std::ffi::c_char = std::ptr::null_mut();
@@ -402,14 +331,13 @@ impl MeasurementSetOracle {
                     &mut error,
                 )
             };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "measurement_set.bench_open_main_rows",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.bench_open_main_rows",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             let rows_digest = unsafe {
                 CasacoreOracleRuntime::owned_string(
@@ -422,14 +350,7 @@ impl MeasurementSetOracle {
                 open_and_read_ns,
                 rows_digest,
             })
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = path;
-            Err(OracleError::Unavailable {
-                capability: "measurement_set.bench_open_main_rows",
-            })
-        }
+        })
     }
 }
 

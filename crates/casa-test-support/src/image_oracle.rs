@@ -3,29 +3,14 @@
 
 #[cfg(has_casacore_cpp)]
 use crate::image_oracle_impl::*;
-use crate::oracle_runtime::OracleError;
-#[cfg(has_casacore_cpp)]
-use crate::oracle_runtime::{CasacoreOracleRuntime, OracleDomain};
+use crate::oracle_runtime::{OracleError, oracle_operation};
 use crate::{
     Complex32, Complex64, CppImageExprBinaryOp, CppImageExprCompareOp, CppImageExprUnaryOp,
     CppMaskLogicalOp, CppRegionStatistics, CppUnsupportedRegionKind,
 };
 
 macro_rules! image_operation {
-    ($operation:expr, $body:block) => {{
-        #[cfg(has_casacore_cpp)]
-        {
-            CasacoreOracleRuntime::require($operation)?;
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Imaging)?;
-            $body
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            Err(OracleError::Unavailable {
-                capability: $operation,
-            })
-        }
-    }};
+    ($operation:expr, $body:block) => {{ oracle_operation!($operation, $body) }};
 }
 
 /// Stable Rust-facing domain facade.

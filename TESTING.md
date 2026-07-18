@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-07-17
+Last reality check: 2026-07-18
 Verification: just verify
 
 ## Test categories
@@ -25,6 +25,10 @@ Verification: just verify
 - Binary serialization changes need endian coverage.
 - Measures-data dependent tests must skip cleanly when runtime tables are unavailable.
 - C++ dependent tests must skip cleanly when `pkg-config casacore` is unavailable.
+- C++ interoperability callers use the typed facades in `casa-test-support`.
+  `CasacoreOracleRuntime` is the sole owner of backend availability, CString
+  conversion, owned C-result cleanup, and domain locks; disabled builds retain
+  the same facade surface and return `OracleError::Unavailable`.
 - Tests and scripts that use shared CASA C++ datasets must use the shared
   resolver policy: default fixtures may search `CASA_RS_TESTDATA_ROOT`,
   `../casatestdata`, and `~/SoftwareProjects/casatestdata`; long gates may also

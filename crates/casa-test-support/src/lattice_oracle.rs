@@ -4,25 +4,10 @@
 use crate::CppLatticeStatisticsBenchResult;
 #[cfg(has_casacore_cpp)]
 use crate::lattice_oracle_impl::*;
-use crate::oracle_runtime::OracleError;
-#[cfg(has_casacore_cpp)]
-use crate::oracle_runtime::{CasacoreOracleRuntime, OracleDomain};
+use crate::oracle_runtime::{OracleError, oracle_operation};
 
 macro_rules! lattice_operation {
-    ($operation:expr, $body:block) => {{
-        #[cfg(has_casacore_cpp)]
-        {
-            CasacoreOracleRuntime::require($operation)?;
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Tables)?;
-            $body
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            Err(OracleError::Unavailable {
-                capability: $operation,
-            })
-        }
-    }};
+    ($operation:expr, $body:block) => {{ oracle_operation!($operation, $body) }};
 }
 
 /// Stable Rust-facing domain facade.

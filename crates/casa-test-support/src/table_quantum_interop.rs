@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Typed oracle facade for casacore table quantum metadata.
 
-use crate::oracle_runtime::OracleError;
 #[cfg(has_casacore_cpp)]
-use crate::oracle_runtime::{CasacoreOracleRuntime, OracleDomain};
+use crate::oracle_runtime::CasacoreOracleRuntime;
+use crate::oracle_runtime::{OracleError, oracle_operation};
 
 #[cfg(has_casacore_cpp)]
 unsafe extern "C" {
@@ -31,19 +31,7 @@ unsafe extern "C" {
 }
 
 macro_rules! table_quantum_operation {
-    ($capability:expr, $body:block) => {{
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Tables)?;
-            $body
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            Err(OracleError::Unavailable {
-                capability: $capability,
-            })
-        }
-    }};
+    ($capability:expr, $body:block) => {{ oracle_operation!($capability, $body) }};
 }
 
 /// Rust-facing access to casacore table quantum operations.

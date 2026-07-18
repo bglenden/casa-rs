@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! C++ casacore `hclean` interop helpers.
 
-use crate::oracle_runtime::OracleError;
 #[cfg(has_casacore_cpp)]
-use crate::oracle_runtime::{CasacoreOracleRuntime, OracleDomain};
+use crate::oracle_runtime::CasacoreOracleRuntime;
+use crate::oracle_runtime::{OracleError, oracle_operation};
 
 /// Result of running one casacore `hclean` minor-cycle call on a single plane.
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +43,7 @@ unsafe extern "C" {
 /// Typed Rust-facing access to casacore's Hogbom oracle.
 pub struct HogbomOracle;
 
+#[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
 impl HogbomOracle {
     /// Run one casacore `hclean` minor-cycle call on a single residual/PSF plane.
     pub fn clean_minor_cycle_2d(
@@ -53,8 +54,7 @@ impl HogbomOracle {
         threshold: f32,
         cycle_niter: usize,
     ) -> Result<HogbomMinorCycle2d, OracleError> {
-        #[cfg(has_casacore_cpp)]
-        {
+        oracle_operation!("hogbom.clean_minor_cycle_2d", {
             let [nx, ny] = shape;
             if psf.len() != nx * ny || residual.len() != nx * ny {
                 return Err(OracleError::InvalidInput {
@@ -68,8 +68,6 @@ impl HogbomOracle {
                     ),
                 });
             }
-
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Imaging)?;
 
             let mut model_out = vec![0.0f32; nx * ny];
             let mut residual_out = vec![0.0f32; nx * ny];
@@ -93,14 +91,13 @@ impl HogbomOracle {
                     &mut error,
                 )
             };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "hogbom.clean_minor_cycle_2d",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "hogbom.clean_minor_cycle_2d",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             Ok(HogbomMinorCycle2d {
                 iterdone: iterdone as usize,
@@ -108,13 +105,6 @@ impl HogbomOracle {
                 model: model_out,
                 residual: residual_out,
             })
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = (psf, residual, shape, gain, threshold, cycle_niter);
-            Err(OracleError::Unavailable {
-                capability: "hogbom.clean_minor_cycle_2d",
-            })
-        }
+        })
     }
 }

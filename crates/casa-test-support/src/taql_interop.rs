@@ -13,9 +13,9 @@ use crate::oracle_ffi::{
     cpp_table_free_error, cpp_taql_free_result, cpp_taql_query as ffi_taql_query,
     cpp_taql_write_array_fixture, cpp_taql_write_simple_fixture, cpp_taql_write_varshape_fixture,
 };
-use crate::oracle_runtime::OracleError;
 #[cfg(has_casacore_cpp)]
-use crate::oracle_runtime::{CasacoreOracleRuntime, OracleDomain};
+use crate::oracle_runtime::CasacoreOracleRuntime;
+use crate::oracle_runtime::{OracleError, oracle_operation};
 
 #[cfg(has_casacore_cpp)]
 use casa_tables::TableOptions;
@@ -196,19 +196,7 @@ pub fn rust_taql_query(table: &mut Table, query: &str) -> Result<TaqlQueryResult
 pub struct TaqlOracle;
 
 macro_rules! taql_operation {
-    ($capability:expr, $body:block) => {{
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Tables)?;
-            $body
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            Err(OracleError::Unavailable {
-                capability: $capability,
-            })
-        }
-    }};
+    ($capability:expr, $body:block) => {{ oracle_operation!($capability, $body) }};
 }
 
 #[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
@@ -242,8 +230,15 @@ fn cpp_write_simple_fixture(path: &Path) -> Result<(), OracleError> {
     let c_path = CasacoreOracleRuntime::c_path("TaQL table path", path)?;
     let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
 
-    let rc = unsafe { cpp_taql_write_simple_fixture(c_path.as_ptr(), &mut error) };
-    check_cpp_result(rc, error)
+    let status = unsafe { cpp_taql_write_simple_fixture(c_path.as_ptr(), &mut error) };
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "taql.write_simple_fixture",
+            status,
+            error,
+            cpp_table_free_error,
+        )
+    }
 }
 
 /// Write the array fixture using C++ casacore.
@@ -252,8 +247,15 @@ fn cpp_write_array_fixture(path: &Path) -> Result<(), OracleError> {
     let c_path = CasacoreOracleRuntime::c_path("TaQL table path", path)?;
     let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
 
-    let rc = unsafe { cpp_taql_write_array_fixture(c_path.as_ptr(), &mut error) };
-    check_cpp_result(rc, error)
+    let status = unsafe { cpp_taql_write_array_fixture(c_path.as_ptr(), &mut error) };
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "taql.write_array_fixture",
+            status,
+            error,
+            cpp_table_free_error,
+        )
+    }
 }
 
 /// Write the variable-shape array fixture using C++ casacore.
@@ -262,8 +264,15 @@ fn cpp_write_varshape_fixture(path: &Path) -> Result<(), OracleError> {
     let c_path = CasacoreOracleRuntime::c_path("TaQL table path", path)?;
     let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
 
-    let rc = unsafe { cpp_taql_write_varshape_fixture(c_path.as_ptr(), &mut error) };
-    check_cpp_result(rc, error)
+    let status = unsafe { cpp_taql_write_varshape_fixture(c_path.as_ptr(), &mut error) };
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "taql.write_variable_shape_fixture",
+            status,
+            error,
+            cpp_table_free_error,
+        )
+    }
 }
 
 // ── C++ query execution ──
@@ -294,10 +303,8 @@ fn cpp_taql_query(table_path: &Path, query: &str) -> Result<CppTaqlQueryResult, 
         )
     };
 
-    if rc != 0 {
-        return Err(unsafe {
-            CasacoreOracleRuntime::cpp_error("taql.query", out_error, cpp_table_free_error)
-        });
+    unsafe {
+        CasacoreOracleRuntime::cpp_status("taql.query", rc, out_error, cpp_table_free_error)?;
     }
 
     let result_str = if out_result.is_null() {
@@ -664,14 +671,6 @@ fn write_cpp_fixture(kind: TaqlFixtureKind, path: &Path) -> Result<(), String> {
         TaqlFixtureKind::VarShape => TaqlOracle::write_variable_shape_fixture(path),
     }
     .map_err(|error| error.to_string())
-}
-
-#[cfg(has_casacore_cpp)]
-fn check_cpp_result(rc: i32, error: *mut std::ffi::c_char) -> Result<(), OracleError> {
-    if rc == 0 {
-        return Ok(());
-    }
-    Err(unsafe { CasacoreOracleRuntime::cpp_error("taql.fixture", error, cpp_table_free_error) })
 }
 
 /// Parse a tab-separated grid string into a `TaqlQueryResult`.

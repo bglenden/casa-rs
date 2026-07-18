@@ -3,24 +3,10 @@
 
 #[cfg(has_casacore_cpp)]
 use crate::measures_interop::*;
-#[cfg(has_casacore_cpp)]
-use crate::oracle_runtime::CasacoreOracleRuntime;
-use crate::oracle_runtime::OracleError;
+use crate::oracle_runtime::{OracleError, oracle_operation};
 
 macro_rules! measures_operation {
-    ($operation:expr, $body:block) => {{
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock_operation($operation)?;
-            $body
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            Err(OracleError::Unavailable {
-                capability: $operation,
-            })
-        }
-    }};
+    ($operation:expr, $body:block) => {{ oracle_operation!($operation, $body) }};
 }
 
 /// Rust-facing access to casacore measures operations.

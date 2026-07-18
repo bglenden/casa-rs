@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Typed facade for the casacore table oracle.
 
-use crate::oracle_runtime::OracleError;
-#[cfg(has_casacore_cpp)]
-use crate::oracle_runtime::{CasacoreOracleRuntime, OracleDomain};
+use crate::oracle_runtime::{OracleError, oracle_operation};
 #[cfg(has_casacore_cpp)]
 use crate::table_oracle_impl::*;
 use crate::{
@@ -12,20 +10,7 @@ use crate::{
 };
 
 macro_rules! table_operation {
-    ($operation:expr, $body:block) => {{
-        #[cfg(has_casacore_cpp)]
-        {
-            CasacoreOracleRuntime::require($operation)?;
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Tables)?;
-            $body
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            Err(OracleError::Unavailable {
-                capability: $operation,
-            })
-        }
-    }};
+    ($operation:expr, $body:block) => {{ oracle_operation!($operation, $body) }};
 }
 
 /// Stable Rust-facing domain facade.

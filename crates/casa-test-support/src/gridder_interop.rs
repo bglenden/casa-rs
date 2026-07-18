@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! C++ casacore `ConvolveGridder` interop helpers.
 
-use crate::oracle_runtime::OracleError;
 #[cfg(has_casacore_cpp)]
-use crate::oracle_runtime::{CasacoreOracleRuntime, OracleDomain};
+use crate::oracle_runtime::CasacoreOracleRuntime;
+use crate::oracle_runtime::{OracleError, oracle_operation};
 
 /// One nonzero cell written by C++ `ConvolveGridder::grid()` for a unit sample.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -160,6 +160,18 @@ unsafe extern "C" {
 /// Typed Rust-facing access to casacore's gridder oracle.
 pub struct GridderOracle;
 
+#[cfg(any(has_casacore_cpp, test))]
+fn gridder_sample_capacity(grid_shape: [usize; 2]) -> Result<i32, OracleError> {
+    grid_shape[0]
+        .checked_mul(grid_shape[1])
+        .and_then(|value| i32::try_from(value).ok())
+        .ok_or_else(|| OracleError::InvalidInput {
+            context: "gridder shape",
+            message: format!("grid has too many cells: {grid_shape:?}"),
+        })
+}
+
+#[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
 impl GridderOracle {
     /// Grid a single unit sample with C++ casacore `ConvolveGridder`.
     pub fn grid_unit_sample_2d(
@@ -168,14 +180,12 @@ impl GridderOracle {
         offset: [f64; 2],
         uv_lambda: [f64; 2],
     ) -> Result<GridderSamplePatch, OracleError> {
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Imaging)?;
+        oracle_operation!("gridder.grid_unit_sample_2d", {
             let mut location = [0_i32; 2];
             let mut grid_position = [0.0_f64; 2];
             let mut support = 0_i32;
             let mut sampling = 0_i32;
-            let max_points = 64_i32;
+            let max_points = gridder_sample_capacity(grid_shape)?;
             let mut x = vec![0_i32; max_points as usize];
             let mut y = vec![0_i32; max_points as usize];
             let mut re = vec![0.0_f32; max_points as usize];
@@ -205,14 +215,13 @@ impl GridderOracle {
                     &mut error,
                 )
             };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "gridder.grid_unit_sample_2d",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "gridder.grid_unit_sample_2d",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             Ok(GridderSamplePatch {
                 location,
@@ -228,14 +237,7 @@ impl GridderOracle {
                     })
                     .collect(),
             })
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = (grid_shape, scale, offset, uv_lambda);
-            Err(OracleError::Unavailable {
-                capability: "gridder.grid_unit_sample_2d",
-            })
-        }
+        })
     }
 
     /// Return a 1D correction row from C++ casacore `ConvolveGridder::correctX1D()`.
@@ -245,9 +247,7 @@ impl GridderOracle {
         offset: [f64; 2],
         locy: usize,
     ) -> Result<Vec<f32>, OracleError> {
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Imaging)?;
+        oracle_operation!("gridder.correction_row_2d", {
             let mut factor = vec![0.0_f32; grid_shape[0]];
             let mut nread = 0_i32;
             let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
@@ -266,25 +266,17 @@ impl GridderOracle {
                     &mut error,
                 )
             };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "gridder.correction_row_2d",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "gridder.correction_row_2d",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             factor.truncate(nread as usize);
             Ok(factor)
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = (grid_shape, scale, offset, locy);
-            Err(OracleError::Unavailable {
-                capability: "gridder.correction_row_2d",
-            })
-        }
+        })
     }
 
     /// Make a corrected dirty image with C++ casacore `ConvolveGridder` + `LatticeFFT`.
@@ -313,9 +305,7 @@ impl GridderOracle {
                 message: "all visibility vectors must have matching lengths".to_owned(),
             });
         }
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Imaging)?;
+        oracle_operation!("gridder.make_dirty_image_2d", {
             let mut image = vec![0.0_f32; image_shape[0] * image_shape[1]];
             let gridable_bytes = gridable
                 .iter()
@@ -344,38 +334,19 @@ impl GridderOracle {
                     &mut error,
                 )
             };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "gridder.make_dirty_image_2d",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "gridder.make_dirty_image_2d",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             Ok(GridderImage2d {
                 image_shape,
                 pixels: image,
             })
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = (
-                grid_shape,
-                image_shape,
-                scale,
-                offset,
-                u_lambda,
-                v_lambda,
-                visibility_re,
-                visibility_im,
-                weight,
-                gridable,
-            );
-            Err(OracleError::Unavailable {
-                capability: "gridder.make_dirty_image_2d",
-            })
-        }
+        })
     }
 
     /// Make a corrected residual image from visibilities and a model image with
@@ -416,9 +387,7 @@ impl GridderOracle {
                 ),
             });
         }
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Imaging)?;
+        oracle_operation!("gridder.make_model_residual_image_2d", {
             let mut image = vec![0.0_f32; image_shape[0] * image_shape[1]];
             let gridable_bytes = gridable
                 .iter()
@@ -448,39 +417,19 @@ impl GridderOracle {
                     &mut error,
                 )
             };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "gridder.make_model_residual_image_2d",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "gridder.make_model_residual_image_2d",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             Ok(GridderImage2d {
                 image_shape,
                 pixels: image,
             })
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = (
-                grid_shape,
-                image_shape,
-                scale,
-                offset,
-                u_lambda,
-                v_lambda,
-                visibility_re,
-                visibility_im,
-                weight,
-                gridable,
-                model_image,
-            );
-            Err(OracleError::Unavailable {
-                capability: "gridder.make_model_residual_image_2d",
-            })
-        }
+        })
     }
 
     /// Predict one visibility from a model image with C++ casacore `ConvolveGridder`.
@@ -503,9 +452,7 @@ impl GridderOracle {
                 ),
             });
         }
-        #[cfg(has_casacore_cpp)]
-        {
-            let _guard = CasacoreOracleRuntime::lock(OracleDomain::Imaging)?;
+        oracle_operation!("gridder.predict_visibility_2d", {
             let mut predicted_re = 0.0f32;
             let mut predicted_im = 0.0f32;
             let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
@@ -527,34 +474,19 @@ impl GridderOracle {
                     &mut error,
                 )
             };
-            if rc != 0 {
-                return Err(unsafe {
-                    CasacoreOracleRuntime::cpp_error(
-                        "gridder.predict_visibility_2d",
-                        error,
-                        cpp_table_free_error,
-                    )
-                });
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "gridder.predict_visibility_2d",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
             }
             Ok(GridderPredictedVisibility {
                 re: predicted_re,
                 im: predicted_im,
             })
-        }
-        #[cfg(not(has_casacore_cpp))]
-        {
-            let _ = (
-                grid_shape,
-                image_shape,
-                scale,
-                offset,
-                uv_lambda,
-                model_image,
-            );
-            Err(OracleError::Unavailable {
-                capability: "gridder.predict_visibility_2d",
-            })
-        }
+        })
     }
 }
 
@@ -652,5 +584,17 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn sample_capacity_tracks_grid_shape_without_a_fixed_limit() {
+        assert_eq!(gridder_sample_capacity([8, 9]).unwrap(), 72);
+        assert_eq!(gridder_sample_capacity([0, 9]).unwrap(), 0);
+    }
+
+    #[test]
+    fn sample_capacity_rejects_overflow() {
+        let error = gridder_sample_capacity([usize::MAX, 2]).unwrap_err();
+        assert!(matches!(error, OracleError::InvalidInput { .. }));
     }
 }
