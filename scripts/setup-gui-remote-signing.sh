@@ -3,6 +3,10 @@
 
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=gui-signing-config.sh
+source "$script_dir/gui-signing-config.sh"
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "remote GUI signing setup requires macOS" >&2
   exit 2
@@ -18,17 +22,7 @@ config_path="${CASA_RS_GUI_TEST_SIGNING_CONFIG:-$HOME/.config/casa-rs/gui-worker
 keychain_path="${CASA_RS_GUI_TEST_SIGNING_KEYCHAIN:-$HOME/Library/Keychains/casa-rs-gui-worker.keychain-db}"
 
 verify_configured_identity() {
-  # shellcheck disable=SC1090 -- this is the private config created below.
-  source "$config_path"
-  : "${CASA_RS_GUI_TEST_CODE_SIGN_IDENTITY:?missing code-sign identity in $config_path}"
-  : "${CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN:?missing keychain path in $config_path}"
-  : "${CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN_PASSWORD:?missing keychain password in $config_path}"
-  /usr/bin/security unlock-keychain \
-    -p "$CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN_PASSWORD" \
-    "$CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN"
-  /usr/bin/security find-identity -v -p codesigning \
-    "$CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN" |
-    /usr/bin/grep -Fq "$CASA_RS_GUI_TEST_CODE_SIGN_IDENTITY"
+  gui_load_signing_config "$config_path" && gui_verify_signing_identity
 }
 
 if [[ -f "$config_path" ]]; then
@@ -130,6 +124,8 @@ fi
   printf 'CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN_PASSWORD=%q\n' "$keychain_password"
 } >"$config_path"
 chmod 600 "$config_path"
+gui_load_signing_config "$config_path"
+gui_verify_signing_identity
 setup_complete=1
 
 echo "==> Stable GUI-worker signing identity created"

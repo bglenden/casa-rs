@@ -143,6 +143,12 @@ Use `Closes #N` only for issues that should auto-close on merge.
   behavior changes. If the UI-test target or supported macOS runner is
   unavailable, stop and record the blocker instead of silently waiving the
   gate.
+- Keep local, live, and remote native GUI journey policy in
+  `apps/casars-mac/gui-journeys.json` and execute it through
+  `apps/casars-mac/script/gui_acceptance.py`; do not add another journey shell
+  planner, selector override, timeout table, or artifact-copy list. Every
+  journey must declare its classification, preflight, disposable-project
+  lifecycle, and retained/transported evidence.
 - Batch local native GUI automation into exclusive foreground windows. Finish
   compilation before the window, announce it before focus is taken, and run
   the complete suite as one uninterrupted batch. During normal implementation
@@ -151,8 +157,8 @@ Use `Closes #N` only for issues that should auto-close on merge.
   focused XCUITest run only to diagnose a failure from the consolidated gate.
 - Native GUI testing is remote-first. When the configured logged-in Mac worker
   is reachable, do not run Xcode/XCTest GUI gates on the development Mac; use
-  `just gui-test-remote` or
-  `just notebook-roundtrip-gui-remote`. Keep its checkout clean, select the
+  `just gui-test-remote`, `just notebook-roundtrip-gui-remote`, or the matching
+  manifest-backed remote journey. Keep its checkout clean, select the
   exact pushed revision, and configure its dedicated stable signing identity
   once with `scripts/setup-gui-remote-signing.sh`. Ad-hoc signatures identify
   each rebuilt app as new code and therefore repeat macOS privacy prompts. Keep

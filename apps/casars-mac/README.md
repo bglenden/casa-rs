@@ -53,6 +53,17 @@ From the repository root, run:
 just gui-test
 ```
 
+The checked-in `gui-journeys.json` is the single contract for deterministic,
+opt-in live, and supported remote journeys. The shared
+`script/gui_acceptance.py` harness validates that contract, performs its
+declared command/Python/network preflight, builds the required Rust binaries,
+prepares its disposable project and gate receipt, runs the exact XCUITest
+selector with a named timeout class, and retains only the declared evidence.
+Each run writes a revision-bound `<journey>.evidence.json` summary alongside
+its `.xcresult`; live science journeys additionally publish their sanitized
+JSON report. The `just` targets invoke this harness directly; no parallel shell
+planner or compatibility runner is retained.
+
 The command builds the Rust frontend dylib with incremental compilation
 disabled, then uses the checked-in `CasarsMac.xcodeproj` and `CasarsMacGUI`
 scheme to launch the existing app sources under the `CasarsMacUITests` macOS UI
@@ -84,7 +95,8 @@ then runs one disposable-project XCUITest. The test sends a real answer through
 the exact CASA project MCP, cancels an in-flight turn, fully terminates and
 relaunches the app, and proves either same-backend resume or an explicit visible
 handoff before a fresh backend continues the durable conversation. Its
-retained evidence is `apps/casars-mac/.gui-test/AssistantLiveGUI.xcresult`.
+retained evidence is `apps/casars-mac/.gui-test/AssistantLiveGUI.xcresult`
+plus `assistant-live-gui.evidence.json`.
 Unlike `just gui-test`, this command intentionally contacts the subscribed
 provider and is never a default CI gate. A failure retains the disposable
 project in the UI runner container and validates its transcripts through the
@@ -108,7 +120,8 @@ failure from the consolidated gate.
 Disposable build and test output lives under `apps/casars-mac/.gui-test/`.
 The retained result bundle is
 `apps/casars-mac/.gui-test/CasarsMacUITests.xcresult`; failing workflows attach
-an app screenshot and accessibility hierarchy there. Delete `.gui-test/` to
+an app screenshot and accessibility hierarchy there, and the harness writes
+`gui-test.evidence.json` beside it. Delete `.gui-test/` to
 force a clean Xcode build. The gate was established locally with Xcode 26.2
 (17C52) on macOS 26.5.2 arm64. Pull-request CI runs the same command on the
 supported `macos-15` runner, selects Xcode 26.2 explicitly so its compiler

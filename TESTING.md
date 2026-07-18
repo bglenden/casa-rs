@@ -108,6 +108,15 @@ affected gate.
   repository root. Its disposable DerivedData and retained `.xcresult` bundle
   live under `apps/casars-mac/.gui-test/`.
 
+All native GUI journeys are declared in
+`apps/casars-mac/gui-journeys.json` and executed by the shared
+`apps/casars-mac/script/gui_acceptance.py` harness. The manifest is the owner
+of journey classification, XCUITest selector, timeout class, Rust/Python
+preflight, disposable-project policy, and retained/transported artifacts. Run
+`python3 apps/casars-mac/script/gui_acceptance.py validate` after editing it;
+the harness also writes a revision-bound `<journey>.evidence.json` summary for
+every pass or test failure.
+
 Local native GUI automation owns an exclusive foreground window. `just
 gui-test` performs all compilation first, announces a countdown, then runs the
 complete XCUITest suite in one `test-without-building` batch. Do not use the
@@ -141,10 +150,10 @@ Xcode, Developer Tools mode, SSH access, and a real logged-in console session;
 automatic login is a worker-provisioning choice rather than a repository
 requirement. The console must be unlocked when the gate starts. The runner
 holds a test-scoped `caffeinate` assertion while it owns the GUI window; it does
-not permanently disable the worker's normal screen-lock policy. For setup or
-failure diagnosis only,
-`CASA_RS_GUI_TEST_REMOTE_ONLY=TestTarget/TestClass/testMethod` selects a focused
-test without changing the normal consolidated-gate policy.
+not permanently disable the worker's normal screen-lock policy. The remote
+runner selects a named manifest journey and invokes the same harness contract
+as the local entrypoint; it does not accept a second selector or artifact
+policy. Only artifacts marked `transport` in the manifest are copied back.
 
 `just assistant-live-gui` is the opt-in real-account acceptance exception. It
 uses the installed Codex CLI's existing ChatGPT subscription, an isolated
@@ -183,7 +192,8 @@ live acceptance is not part of CI or `just gui-test`.
 same remote worker. It additionally requires the worker's Codex CLI to be
 logged into an approved ChatGPT subscription and its selected Python to provide
 NumPy and Matplotlib. On success the full artifacts remain on the worker's
-configured storage and the sanitized JSON report is copied into
+configured storage and the manifest-declared sanitized report and evidence
+summary are copied into
 `apps/casars-mac/.gui-test/remote/` locally.
 
 Run `scripts/setup-gui-remote-signing.sh` once while logged in to a dedicated

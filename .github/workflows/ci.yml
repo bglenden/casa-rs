@@ -114,7 +114,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: casars-mac-ui-tests-${{ github.run_id }}
-          path: apps/casars-mac/.gui-test/CasarsMacUITests.xcresult
+          path: |
+            apps/casars-mac/.gui-test/CasarsMacUITests.xcresult
+            apps/casars-mac/.gui-test/gui-test.evidence.json
           if-no-files-found: warn
 
   smoke:

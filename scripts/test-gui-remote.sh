@@ -4,57 +4,38 @@
 set -euo pipefail
 
 usage() {
-  cat <<'EOF'
-Usage: scripts/test-gui-remote.sh [gui-test|notebook-roundtrip-gui|tutorial-journey-gui]
-
-Run one native macOS GUI gate on a dedicated, logged-in remote Mac. The local
-HEAD must be clean and pushed to its same-named origin branch. Required setup:
-
-  CASA_RS_GUI_TEST_REMOTE=user@host
-
-Optional configuration:
-
-  CASA_RS_GUI_TEST_REMOTE_IDENTITY=/absolute/path/to/ssh-key
-  CASA_RS_GUI_TEST_REMOTE_ROOT=/absolute/path/to/remote/checkout
-  CASA_RS_GUI_TEST_REMOTE_STORAGE=/absolute/path/to/remote/build-storage
-  CASA_RS_GUI_TEST_REMOTE_DERIVED_DATA=/absolute/path/to/xcode-derived-data
-  CASA_RS_GUI_TEST_REMOTE_SIGNING_CONFIG=/absolute/path/to/signing-config
-  CASA_RS_GUI_TEST_REMOTE_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-  CASA_RS_GUI_TEST_REMOTE_PYTHON=/absolute/path/to/python
-  CASA_RS_GUI_TEST_REMOTE_CODEX=/absolute/path/to/codex
-  CASA_RS_GUI_TEST_REMOTE_ONLY=TestTarget/TestClass/testMethod
-EOF
+  printf '%s\n' \
+    'Usage: scripts/test-gui-remote.sh [gui-test|notebook-roundtrip-gui|tutorial-journey-gui]' \
+    '' \
+    'Run the selected checked-in GUI journey contract at the exact local revision.' \
+    'CASA_RS_GUI_TEST_REMOTE=user@host is required.'
 }
 
 repo_root="$(git rev-parse --show-toplevel)"
-mode="${1:-gui-test}"
+harness="$repo_root/apps/casars-mac/script/gui_acceptance.py"
+journey="${1:-gui-test}"
 remote="${CASA_RS_GUI_TEST_REMOTE:-}"
-remote_root="${CASA_RS_GUI_TEST_REMOTE_ROOT:-@HOME@/Library/Caches/casa-rs-gui-worker/source}"
-remote_storage="${CASA_RS_GUI_TEST_REMOTE_STORAGE:-/Volumes/Extra Storage (not encrypted)/casa-rs-gui-worker-state}"
-remote_derived_data="${CASA_RS_GUI_TEST_REMOTE_DERIVED_DATA:-@HOME@/Library/Developer/Xcode/DerivedData/casa-rs-gui-worker}"
-remote_signing_config="${CASA_RS_GUI_TEST_REMOTE_SIGNING_CONFIG:-@HOME@/.config/casa-rs/gui-worker-signing.env}"
-developer_dir="${CASA_RS_GUI_TEST_REMOTE_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-remote_python="${CASA_RS_GUI_TEST_REMOTE_PYTHON:-}"
-remote_codex="${CASA_RS_GUI_TEST_REMOTE_CODEX:-}"
-remote_only="${CASA_RS_GUI_TEST_REMOTE_ONLY:-}"
 
-case "$mode" in
-  gui-test | notebook-roundtrip-gui | tutorial-journey-gui) ;;
+case "$journey" in
   -h | --help)
     usage
     exit 0
     ;;
-  *)
-    usage >&2
-    exit 2
-    ;;
 esac
 
+journey_json="$(python3 "$harness" describe "$journey")" || {
+  usage >&2
+  exit 2
+}
+remote_supported="$(printf '%s' "$journey_json" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin)["remote_supported"] else "0")')"
+if [[ "$remote_supported" != "1" ]]; then
+  echo "journey does not support remote execution: $journey" >&2
+  exit 2
+fi
 if [[ -z "$remote" ]]; then
   echo "CASA_RS_GUI_TEST_REMOTE=user@host is required" >&2
   exit 2
 fi
-
 if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
   echo "remote GUI gates require a clean local checkout" >&2
   exit 2
@@ -67,70 +48,78 @@ if [[ -z "$branch" ]]; then
   exit 2
 fi
 
-ssh_args=(
-  -o BatchMode=yes
-  -o ConnectTimeout=10
-  -o ServerAliveInterval=15
-  -o ServerAliveCountMax=4
+remote_root="${CASA_RS_GUI_TEST_REMOTE_ROOT:-@HOME@/Library/Caches/casa-rs-gui-worker/source}"
+remote_storage="${CASA_RS_GUI_TEST_REMOTE_STORAGE:-/Volumes/Extra Storage (not encrypted)/casa-rs-gui-worker-state}"
+remote_derived_data="${CASA_RS_GUI_TEST_REMOTE_DERIVED_DATA:-@HOME@/Library/Developer/Xcode/DerivedData/casa-rs-gui-worker}"
+remote_signing_config="${CASA_RS_GUI_TEST_REMOTE_SIGNING_CONFIG:-@HOME@/.config/casa-rs/gui-worker-signing.env}"
+developer_dir="${CASA_RS_GUI_TEST_REMOTE_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+remote_python="${CASA_RS_GUI_TEST_REMOTE_PYTHON:-}"
+remote_codex="${CASA_RS_GUI_TEST_REMOTE_CODEX:-}"
+run_id="$(date -u +%Y%m%dT%H%M%SZ)-${revision:0:12}-$journey"
+remote_artifacts="$remote_storage/artifacts/$run_id"
+remote_target="$remote_storage/target"
+
+request="$({
+  python3 - "$journey" "$branch" "$revision" "$remote_root" "$remote_storage" \
+    "$remote_derived_data" "$remote_artifacts" "$remote_target" "$developer_dir" \
+    "$remote_python" "$remote_codex" "$remote_signing_config" <<'PY'
+import json
+import sys
+
+keys = (
+    "journey", "branch", "revision", "repo_root", "storage_root",
+    "derived_data", "artifact_root", "target_dir", "developer_dir",
+    "python", "codex", "signing_config",
 )
+print(json.dumps({"schema_version": 1, **dict(zip(keys, sys.argv[1:]))}, separators=(",", ":")))
+PY
+} | /usr/bin/base64 | /usr/bin/tr -d '\n')"
+
+ssh_args=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
 if [[ -n "${CASA_RS_GUI_TEST_REMOTE_IDENTITY:-}" ]]; then
   ssh_args+=(-i "$CASA_RS_GUI_TEST_REMOTE_IDENTITY")
 fi
 
-encode_remote_arg() {
-  printf 'x'
-  printf '%s' "$1" | /usr/bin/base64
-}
-
-run_id="$(date -u +%Y%m%dT%H%M%SZ)-${revision:0:12}-$mode"
-remote_artifacts="$remote_storage/artifacts/$run_id"
-remote_target="$remote_storage/target"
-
 echo "==> Remote GUI worker: $remote"
+echo "==> Journey: $journey"
 echo "==> Revision: $revision ($branch)"
-echo "==> Checkout: $remote_root"
-echo "==> Xcode build cache: $remote_derived_data"
-echo "==> Build cache: $remote_target"
-echo "==> Artifacts: $remote_artifacts"
-
-remote_args=(
-  "$remote_root" "$remote_storage" "$remote_derived_data" "$remote_artifacts"
-  "$remote_target" "$developer_dir" "$branch" "$revision" "$mode"
-  "$remote_python" "$remote_codex" "$remote_only" "$remote_signing_config"
-)
-encoded_remote_args=()
-for arg in "${remote_args[@]}"; do
-  encoded_remote_args+=("$(encode_remote_arg "$arg")")
-done
+echo "==> Remote artifacts: $remote_artifacts"
 
 set +e
-ssh "${ssh_args[@]}" "$remote" /bin/bash -s -- "${encoded_remote_args[@]}" <<'REMOTE_RUN'
+ssh "${ssh_args[@]}" "$remote" /bin/bash -s -- "$request" <<'REMOTE_RUN'
 set -euo pipefail
 
-decode_arg() {
-  printf '%s' "${1#x}" | /usr/bin/base64 -D
-}
+request_file="$(mktemp "${TMPDIR:-/tmp}/casa-rs-gui-request.XXXXXX.json")"
+cleanup_request() { rm -f "$request_file"; }
+trap cleanup_request EXIT
+printf '%s' "$1" | /usr/bin/base64 -D >"$request_file"
 
-expand_remote_home() {
+json_get() {
+  /usr/bin/plutil -extract "$1" raw -o - "$request_file"
+}
+expand_home() {
   case "$1" in
     @HOME@/*) printf '%s/%s' "$HOME" "${1#@HOME@/}" ;;
     *) printf '%s' "$1" ;;
   esac
 }
 
-repo_root="$(expand_remote_home "$(decode_arg "$1")")"
-storage_root="$(expand_remote_home "$(decode_arg "$2")")"
-derived_data="$(expand_remote_home "$(decode_arg "$3")")"
-artifact_root="$(expand_remote_home "$(decode_arg "$4")")"
-target_dir="$(expand_remote_home "$(decode_arg "$5")")"
-developer_dir="$(expand_remote_home "$(decode_arg "$6")")"
-branch="$(decode_arg "$7")"
-revision="$(decode_arg "$8")"
-mode="$(decode_arg "$9")"
-python_command="$(expand_remote_home "$(decode_arg "${10}")")"
-codex_command="$(expand_remote_home "$(decode_arg "${11}")")"
-only_testing="$(decode_arg "${12}")"
-signing_config="$(expand_remote_home "$(decode_arg "${13}")")"
+[[ "$(json_get schema_version)" == "1" ]] || {
+  echo "unsupported remote GUI request schema" >&2
+  exit 2
+}
+journey="$(json_get journey)"
+branch="$(json_get branch)"
+revision="$(json_get revision)"
+repo_root="$(expand_home "$(json_get repo_root)")"
+storage_root="$(expand_home "$(json_get storage_root)")"
+derived_data="$(expand_home "$(json_get derived_data)")"
+artifact_root="$(expand_home "$(json_get artifact_root)")"
+target_dir="$(expand_home "$(json_get target_dir)")"
+developer_dir="$(expand_home "$(json_get developer_dir)")"
+python_command="$(expand_home "$(json_get python)")"
+codex_command="$(expand_home "$(json_get codex)")"
+signing_config="$(expand_home "$(json_get signing_config)")"
 
 export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export DEVELOPER_DIR="$developer_dir"
@@ -151,36 +140,10 @@ git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1 || {
 }
 if ! /usr/sbin/DevToolsSecurity -status 2>&1 | /usr/bin/grep -q enabled; then
   echo "Developer Tools mode is disabled on the remote Mac" >&2
-  echo "run: sudo /usr/sbin/DevToolsSecurity -enable" >&2
   exit 2
 fi
-if ! "$developer_dir/usr/bin/xcodebuild" -checkFirstLaunchStatus; then
-  echo "Xcode license/first-launch setup is incomplete on the remote Mac" >&2
-  exit 2
-fi
-if [[ ! -f "$signing_config" ]]; then
-  echo "stable GUI-worker signing is not configured: $signing_config" >&2
-  echo "run scripts/setup-gui-remote-signing.sh once on the worker" >&2
-  exit 2
-fi
-# shellcheck disable=SC1090 -- private worker config created by the setup script.
-source "$signing_config"
-: "${CASA_RS_GUI_TEST_CODE_SIGN_IDENTITY:?missing code-sign identity in $signing_config}"
-: "${CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN:?missing keychain path in $signing_config}"
-: "${CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN_PASSWORD:?missing keychain password in $signing_config}"
-/usr/bin/security unlock-keychain \
-  -p "$CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN_PASSWORD" \
-  "$CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN"
-if ! /usr/bin/security find-identity -v -p codesigning \
-  "$CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN" |
-  /usr/bin/grep -Fq "$CASA_RS_GUI_TEST_CODE_SIGN_IDENTITY"
-then
-  echo "stable GUI-worker signing identity is unavailable" >&2
-  exit 2
-fi
-export CASA_RS_GUI_TEST_CODE_SIGN_IDENTITY
-export CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN
-unset CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN_PASSWORD
+"$developer_dir/usr/bin/xcodebuild" -checkFirstLaunchStatus
+
 checkout_changes="$(git -C "$repo_root" status --porcelain --untracked-files=all)"
 repo_target="$repo_root/target"
 if [[ -L "$repo_target" && "$repo_target" -ef "$target_dir" ]]; then
@@ -195,71 +158,66 @@ fi
 git -C "$repo_root" fetch --quiet origin "refs/heads/$branch"
 remote_revision="$(git -C "$repo_root" rev-parse FETCH_HEAD)"
 if [[ "$remote_revision" != "$revision" ]]; then
-  echo "local revision $revision is not the pushed tip of origin/$branch ($remote_revision)" >&2
+  echo "local revision is not the pushed tip of origin/$branch" >&2
   exit 2
 fi
 git -C "$repo_root" switch --quiet --detach "$revision"
 
+# shellcheck source=gui-signing-config.sh
+source "$repo_root/scripts/gui-signing-config.sh"
+gui_load_signing_config "$signing_config"
+gui_verify_signing_identity || {
+  echo "stable GUI-worker signing identity is unavailable" >&2
+  exit 2
+}
+export CASA_RS_GUI_TEST_CODE_SIGN_IDENTITY CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN
+unset CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN_PASSWORD
+
 mkdir -p "$storage_root" "$artifact_root" "$target_dir" "$derived_data"
 if [[ -e "$repo_target" || -L "$repo_target" ]]; then
   if [[ ! -L "$repo_target" || ! "$repo_target" -ef "$target_dir" ]]; then
-    echo "remote checkout target must be absent or link to $target_dir" >&2
+    echo "remote checkout target must link to $target_dir" >&2
     exit 2
   fi
 else
   ln -s "$target_dir" "$repo_target"
 fi
-cd "$repo_root"
+if [[ -n "$python_command" ]]; then export CASA_RS_GUI_TEST_PYTHON="$python_command"; fi
+if [[ -n "$codex_command" ]]; then export CASA_RS_CODEX_COMMAND="$codex_command"; fi
 
 /usr/bin/caffeinate -dimsu -w $$ >/dev/null 2>&1 &
 caffeinate_pid=$!
 stop_caffeinate() {
   kill "$caffeinate_pid" >/dev/null 2>&1 || true
   wait "$caffeinate_pid" 2>/dev/null || true
+  cleanup_request
 }
 trap stop_caffeinate EXIT
-
-if [[ -n "$python_command" ]]; then
-  export CASA_RS_GUI_TEST_PYTHON="$python_command"
-fi
-if [[ -n "$codex_command" ]]; then
-  export CASA_RS_CODEX_COMMAND="$codex_command"
-fi
-if [[ -n "$only_testing" ]]; then
-  export CASA_RS_GUI_TEST_ONLY="$only_testing"
-fi
-case "$mode" in
-  gui-test)
-    bash apps/casars-mac/script/test_gui.sh
-    ;;
-  notebook-roundtrip-gui)
-    bash apps/casars-mac/script/test_notebook_roundtrip_gui.sh
-    ;;
-  tutorial-journey-gui)
-    bash apps/casars-mac/script/test_tutorial_journey_gui.sh
-    ;;
-esac
+cd "$repo_root"
+python3 apps/casars-mac/script/gui_acceptance.py run "$journey"
 REMOTE_RUN
 status=$?
 set -e
 
 echo "==> Remote artifacts retained at $remote:$remote_artifacts"
-if [[ "$status" == "0" && ( "$mode" == "notebook-roundtrip-gui" || "$mode" == "tutorial-journey-gui" ) ]]; then
-  if [[ "$mode" == "notebook-roundtrip-gui" ]]; then
-    report_name="NotebookRoundTripGUI.report.json"
-  else
-    report_name="TutorialJourneyGUI.report.json"
-  fi
-  local_report="$repo_root/apps/casars-mac/.gui-test/remote/$report_name"
-  mkdir -p "$(dirname "$local_report")"
-  encoded_report="$(encode_remote_arg "$remote_artifacts/$report_name")"
-  ssh "${ssh_args[@]}" "$remote" /bin/bash -s -- \
-    "$encoded_report" >"$local_report" <<'REMOTE_REPORT'
+local_artifacts="$repo_root/apps/casars-mac/.gui-test/remote/$run_id"
+mkdir -p "$local_artifacts"
+while IFS= read -r artifact; do
+  local_path="$local_artifacts/$artifact"
+  remote_path="$remote_artifacts/$artifact"
+  encoded_path="$(printf '%s' "$remote_path" | /usr/bin/base64 | /usr/bin/tr -d '\n')"
+  if ssh "${ssh_args[@]}" "$remote" /bin/bash -s -- \
+    "$encoded_path" >"$local_path" <<'REMOTE_ARTIFACT'
 set -euo pipefail
-report_path="$(printf '%s' "${1#x}" | /usr/bin/base64 -D)"
-cat "$report_path"
-REMOTE_REPORT
-  echo "==> Copied sanitized report to $local_report"
-fi
+artifact_path="$(printf '%s' "$1" | /usr/bin/base64 -D)"
+test -f "$artifact_path"
+cat "$artifact_path"
+REMOTE_ARTIFACT
+  then
+    echo "==> Copied sanitized artifact: $local_path"
+  else
+    rm -f "$local_path"
+  fi
+done < <(python3 "$harness" artifacts "$journey" --transport)
 
 exit "$status"
