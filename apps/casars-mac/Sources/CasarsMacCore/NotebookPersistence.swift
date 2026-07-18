@@ -40,6 +40,51 @@ extension NotebookValue {
         })
     }
 
+    package static func foundationJSONValue(_ value: Any) -> Self? {
+        switch value {
+        case is NSNull:
+            return .null
+        case let value as Bool:
+            return .bool(value: value)
+        case let value as NSNumber:
+            return .number(value: value.doubleValue)
+        case let value as String:
+            return .string(value: value)
+        case let values as [Any]:
+            let converted = values.compactMap(Self.foundationJSONValue)
+            guard converted.count == values.count else { return nil }
+            return .array(values: converted)
+        case let values as [String: Any]:
+            var converted: [String: Self] = [:]
+            for (name, value) in values {
+                guard let entry = Self.foundationJSONValue(value) else { return nil }
+                converted[name] = entry
+            }
+            return .object(converted)
+        default:
+            return nil
+        }
+    }
+
+    package var foundationJSONValue: Any {
+        switch self {
+        case let .string(value):
+            return value
+        case let .number(value):
+            return value
+        case let .bool(value):
+            return value
+        case let .array(values):
+            return values.map(\.foundationJSONValue)
+        case let .object(entries):
+            return Dictionary(uniqueKeysWithValues: entries.map {
+                ($0.name, $0.value.foundationJSONValue)
+            })
+        case .null:
+            return NSNull()
+        }
+    }
+
     package init(parameterValue: SurfaceParameterValue) {
         switch parameterValue {
         case let .bool(value): self = .bool(value: value)

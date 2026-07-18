@@ -745,24 +745,15 @@ public struct UniFFITableBrowserClient: TableBrowserClient {
     public init() {}
 
     public func buildSnapshot(request: TableBrowserSnapshotRequest) throws -> TableBrowserSnapshot {
-        let requestData = try JSONEncoder().encode(request)
-        let requestJSON = String(decoding: requestData, as: UTF8.self)
-        let json = try CasarsFrontendServices.buildTableBrowserSnapshotFromRequestJson(requestJson: requestJSON)
-        return try JSONDecoder().decode(TableBrowserSnapshot.self, from: Data(json.utf8))
+        try CasarsFrontendServices.buildTableBrowserSnapshot(request: request)
     }
 
     public func buildCellWindow(request: TableBrowserCellWindowRequest) throws -> TableBrowserCellWindowSnapshot {
-        let requestData = try JSONEncoder().encode(request)
-        let requestJSON = String(decoding: requestData, as: UTF8.self)
-        let json = try CasarsFrontendServices.buildTableBrowserCellWindowJson(requestJson: requestJSON)
-        return try JSONDecoder().decode(TableBrowserCellWindowSnapshot.self, from: Data(json.utf8))
+        try CasarsFrontendServices.buildTableBrowserCellWindow(request: request)
     }
 
     public func buildCellValue(request: TableBrowserCellValueRequest) throws -> String {
-        let requestData = try JSONEncoder().encode(request)
-        let requestJSON = String(decoding: requestData, as: UTF8.self)
-        let json = try CasarsFrontendServices.buildTableBrowserCellValueJson(requestJson: requestJSON)
-        return try JSONDecoder().decode(String.self, from: Data(json.utf8))
+        try CasarsFrontendServices.buildTableBrowserCellValue(request: request)
     }
 }
 
@@ -2949,12 +2940,19 @@ public final class WorkbenchStore: ObservableObject {
     private static func jsonValue<T: Encodable>(_ value: T) -> JSONValue {
         let encoder = JSONEncoder()
         return (try? encoder.encode(value))
-            .flatMap { try? JSONDecoder().decode(JSONValue.self, from: $0) }
+            .flatMap { try? JSONSerialization.jsonObject(with: $0, options: .fragmentsAllowed) }
+            .flatMap(JSONValue.foundationJSONValue)
             ?? .object([:])
     }
 
     private static func decodeJSONValue<T: Decodable>(_ value: JSONValue) -> T? {
-        try? JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: value.foundationJSONValue,
+            options: .fragmentsAllowed
+        ) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(T.self, from: data)
     }
 
     private func runScientificPythonCells(_ cellIDs: ArraySlice<String>) {
@@ -6418,7 +6416,7 @@ public final class WorkbenchStore: ObservableObject {
         guard let selectedIndex = browserState.snapshot?.verticalMetrics?.selectedIndex else {
             return
         }
-        guard appendTableBrowserMove(from: selectedIndex, to: index, into: &browserState) else {
+        guard appendTableBrowserMove(from: Int(selectedIndex), to: index, into: &browserState) else {
             return
         }
         state.tableBrowsers[datasetID] = browserState
@@ -6525,7 +6523,7 @@ public final class WorkbenchStore: ObservableObject {
             completion(.failure(error))
             return
         }
-        let request = TableBrowserCellValueRequest(
+        let request = tableBrowserCellValueRequest(
             datasetPath: dataset.path,
             rowIndex: rowIndex,
             columnIndex: columnIndex
@@ -7869,10 +7867,10 @@ public final class WorkbenchStore: ObservableObject {
         let request = browserState.cellWindowRequest(datasetPath: dataset.path)
         if !force,
            browserState.cellWindow?.contains(
-               rowStart: request.rowStart,
-               rowLimit: request.rowLimit,
-               columnStart: request.columnStart,
-               columnLimit: request.columnLimit
+               rowStart: Int(request.rowStart),
+               rowLimit: Int(request.rowLimit),
+               columnStart: Int(request.columnStart),
+               columnLimit: Int(request.columnLimit)
            ) == true
         {
             return
@@ -8002,7 +8000,7 @@ public final class WorkbenchStore: ObservableObject {
             )
         }
         let linkedTable = browserState.linkedTable.trimmingCharacters(in: .whitespacesAndNewlines)
-        return TableBrowserParameters(
+        return CasarsMacCore.tableBrowserParameters(
             view: canonicalTableBrowserView(browserState.profileView),
             rowStart: max(0, browserState.cellWindowRowStart),
             rowCount: max(1, browserState.cellWindowRowLimit),
@@ -8023,7 +8021,7 @@ public final class WorkbenchStore: ObservableObject {
         if parts.count >= 3, parts[0] == "cell", let row = Int(parts[1]) {
             let column = parts.dropFirst(2).joined(separator: ":")
             if row >= 0, !column.isEmpty {
-                return .cell(row: row, column: column)
+                return .cell(row: UInt64(row), column: column)
             }
         } else if parts.count >= 2, parts[0] == "table-keyword" {
             let path = tableBrowserBookmarkPath(parts.dropFirst().joined(separator: ":"))
@@ -8068,11 +8066,11 @@ public final class WorkbenchStore: ObservableObject {
     ) -> Bool {
         let delta = targetIndex - selectedIndex
         if delta > 0 {
-            browserState.commands.append(.moveDown(steps: delta))
+            browserState.commands.append(.moveDown(steps: UInt64(delta)))
             return true
         }
         if delta < 0 {
-            browserState.commands.append(.moveUp(steps: -delta))
+            browserState.commands.append(.moveUp(steps: UInt64(-delta)))
             return true
         }
         return false

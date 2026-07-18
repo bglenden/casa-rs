@@ -322,86 +322,236 @@ pub struct ImageExplorerSnapshot {
     pub capabilities: ImageExplorerCapabilities,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct TableBrowserSnapshotRequest {
-    dataset_path: String,
-    #[serde(default = "default_table_browser_width")]
-    width: u16,
-    #[serde(default = "default_table_browser_height")]
-    height: u16,
-    #[serde(default = "default_table_browser_inspector_height")]
-    inspector_height: u16,
-    #[serde(default)]
-    selected_view: Option<String>,
-    #[serde(default)]
-    focus: Option<String>,
-    #[serde(default)]
-    commands: Vec<BrowserCommand>,
-    #[serde(default)]
-    transient_commands: Vec<BrowserCommand>,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum TableBrowserBookmark {
+    Cell { row: u64, column: String },
+    TableKeyword { path: Vec<String> },
+    ColumnKeyword { column: String, path: Vec<String> },
+    Subtable { name: String },
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct TableBrowserCellWindowRequest {
-    dataset_path: String,
-    #[serde(default)]
-    row_start: u64,
-    #[serde(default = "default_table_browser_cell_row_limit")]
-    row_limit: u64,
-    #[serde(default)]
-    column_start: u64,
-    #[serde(default = "default_table_browser_cell_column_limit")]
-    column_limit: u64,
-    #[serde(default)]
-    column_options: Vec<TableBrowserCellColumnDisplayOption>,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserParameters {
+    pub view: String,
+    pub row_start: u64,
+    pub row_count: u64,
+    pub linked_table: Option<String>,
+    pub bookmark: Option<TableBrowserBookmark>,
+    pub content_mode: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct TableBrowserCellColumnDisplayOption {
-    column_index: u64,
-    #[serde(default)]
-    array_inline_limit: u64,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum TableBrowserCommand {
+    Configure { parameters: TableBrowserParameters },
+    SetFocus { focus: String },
+    CycleView { forward: bool },
+    MoveUp { steps: u64 },
+    MoveDown { steps: u64 },
+    MoveLeft { steps: u64 },
+    MoveRight { steps: u64 },
+    PageUp { pages: u64 },
+    PageDown { pages: u64 },
+    Activate,
+    Back,
+    Escape,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct TableBrowserCellValueRequest {
-    dataset_path: String,
-    row_index: u64,
-    column_index: u64,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserSnapshotRequest {
+    pub dataset_path: String,
+    pub width: u16,
+    pub height: u16,
+    pub inspector_height: u16,
+    pub selected_view: String,
+    pub focus: String,
+    pub commands: Vec<TableBrowserCommand>,
+    pub transient_commands: Vec<TableBrowserCommand>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct TableBrowserCellWindowSnapshot {
-    table_path: String,
-    row_count: u64,
-    column_count: u64,
-    row_start: u64,
-    column_start: u64,
-    columns: Vec<TableBrowserCellWindowColumn>,
-    rows: Vec<TableBrowserCellWindowRow>,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserCapabilities {
+    pub editable: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct TableBrowserCellWindowColumn {
-    index: u64,
-    name: String,
-    header: String,
-    summary: String,
-    width: u64,
-    keywords: Vec<String>,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserBreadcrumb {
+    pub label: String,
+    pub path: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct TableBrowserCellWindowRow {
-    index: u64,
-    cells: Vec<TableBrowserCellWindowCell>,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserViewport {
+    pub width: u16,
+    pub height: u16,
+    pub inspector_height: u16,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct TableBrowserCellWindowCell {
-    column_index: u64,
-    display: String,
-    defined: bool,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserNavigationMetrics {
+    pub selected_index: u64,
+    pub total_items: u64,
+    pub viewport_items: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserValuePathSegment {
+    pub segment: String,
+    pub name: Option<String>,
+    pub flat_index: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserSelectedAddress {
+    pub kind: String,
+    pub table_path: String,
+    pub row: Option<u64>,
+    pub column: Option<String>,
+    pub keyword_path: Vec<String>,
+    pub value_path: Vec<TableBrowserValuePathSegment>,
+    pub source: Option<String>,
+    pub target_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum TableBrowserScalarValue {
+    Bool { value: bool },
+    Int { value: i64 },
+    Uint { value: u64 },
+    Float { value: f64 },
+    Complex { re: f64, im: f64 },
+    String { value: String },
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TableBrowserArrayElement {
+    pub flat_index: u64,
+    pub index: Vec<u64>,
+    pub value: TableBrowserScalarValue,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserRecordFieldSummary {
+    pub name: String,
+    pub kind: String,
+    pub summary: String,
+    pub expandable: bool,
+    pub openable: bool,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum TableBrowserValueNode {
+    Undefined,
+    Scalar {
+        value: TableBrowserScalarValue,
+    },
+    Array {
+        primitive: String,
+        shape: Vec<u64>,
+        total_elements: u64,
+        page_start: u64,
+        page_size: u64,
+        elements: Vec<TableBrowserArrayElement>,
+    },
+    Record {
+        total_fields: u64,
+        page_start: u64,
+        page_size: u64,
+        fields: Vec<TableBrowserRecordFieldSummary>,
+    },
+    TableRef {
+        path: String,
+        resolved_path: String,
+        openable: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserInspectorTrailEntry {
+    pub label: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TableBrowserInspector {
+    pub title: String,
+    pub trail: Vec<TableBrowserInspectorTrailEntry>,
+    pub node: TableBrowserValueNode,
+    pub rendered_lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TableBrowserSnapshot {
+    pub capabilities: TableBrowserCapabilities,
+    pub view: String,
+    pub focus: String,
+    pub table_path: String,
+    pub breadcrumb: Vec<TableBrowserBreadcrumb>,
+    pub viewport: TableBrowserViewport,
+    pub status_line: String,
+    pub content_lines: Vec<String>,
+    pub vertical_metrics: Option<TableBrowserNavigationMetrics>,
+    pub horizontal_metrics: Option<TableBrowserNavigationMetrics>,
+    pub selected_address: Option<TableBrowserSelectedAddress>,
+    pub inspector: Option<TableBrowserInspector>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserCellWindowRequest {
+    pub dataset_path: String,
+    pub row_start: u64,
+    pub row_limit: u64,
+    pub column_start: u64,
+    pub column_limit: u64,
+    pub column_options: Vec<TableBrowserColumnDisplayOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserColumnDisplayOption {
+    pub column_index: u64,
+    pub array_inline_limit: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserCellValueRequest {
+    pub dataset_path: String,
+    pub row_index: u64,
+    pub column_index: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserCellWindowSnapshot {
+    pub table_path: String,
+    pub row_count: u64,
+    pub column_count: u64,
+    pub row_start: u64,
+    pub column_start: u64,
+    pub columns: Vec<TableBrowserCellWindowColumn>,
+    pub rows: Vec<TableBrowserCellWindowRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserCellWindowColumn {
+    pub index: u64,
+    pub name: String,
+    pub header: String,
+    pub summary: String,
+    pub width: u64,
+    pub keywords: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserCellWindowRow {
+    pub index: u64,
+    pub cells: Vec<TableBrowserCellWindowCell>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TableBrowserCellWindowCell {
+    pub column_index: u64,
+    pub display: String,
+    pub defined: bool,
 }
 
 const fn default_image_browser_width() -> u16 {
@@ -422,26 +572,6 @@ const fn default_image_browser_plane_pixel_width() -> u16 {
 
 const fn default_image_browser_plane_pixel_height() -> u16 {
     384
-}
-
-const fn default_table_browser_width() -> u16 {
-    120
-}
-
-const fn default_table_browser_height() -> u16 {
-    32
-}
-
-const fn default_table_browser_inspector_height() -> u16 {
-    10
-}
-
-const fn default_table_browser_cell_row_limit() -> u64 {
-    1024
-}
-
-const fn default_table_browser_cell_column_limit() -> u64 {
-    24
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -4715,56 +4845,371 @@ pub fn build_image_explorer_snapshot(
     Ok(image_explorer_snapshot_projection(snapshot))
 }
 
-#[uniffi::export]
-pub fn build_table_browser_snapshot_json(
-    dataset_path: String,
-    width: u16,
-    height: u16,
-    inspector_height: u16,
-    view: Option<String>,
-) -> FrontendResult<String> {
-    let dataset_path = PathBuf::from(dataset_path);
-    if !dataset_path.exists() {
-        return Err(FrontendServiceError::InvalidPath {
-            reason: format!("{} does not exist", dataset_path.display()),
-        });
+fn table_browser_bookmark_owner(
+    bookmark: TableBrowserBookmark,
+) -> casars_tablebrowser_protocol::BrowserBookmark {
+    match bookmark {
+        TableBrowserBookmark::Cell { row, column } => {
+            casars_tablebrowser_protocol::BrowserBookmark::Cell {
+                row: row as usize,
+                column,
+            }
+        }
+        TableBrowserBookmark::TableKeyword { path } => {
+            casars_tablebrowser_protocol::BrowserBookmark::TableKeyword { path }
+        }
+        TableBrowserBookmark::ColumnKeyword { column, path } => {
+            casars_tablebrowser_protocol::BrowserBookmark::ColumnKeyword { column, path }
+        }
+        TableBrowserBookmark::Subtable { name } => {
+            casars_tablebrowser_protocol::BrowserBookmark::Subtable { name }
+        }
     }
-    let mut browser =
-        TableBrowser::open(&dataset_path).map_err(|error| FrontendServiceError::TableExplorer {
-            reason: format!("open {}: {error}", dataset_path.display()),
-        })?;
-    let viewport =
-        BrowserViewport::with_inspector_height(width.max(20), height.max(8), inspector_height);
-    if let Some(view) = view.as_deref() {
-        browser.set_view(
-            parse_table_browser_view(view)
-                .map_err(|reason| FrontendServiceError::TableExplorer { reason })?,
-        );
-    }
-    browser
-        .apply(casars_tablebrowser_protocol::BrowserCommand::GetSnapshot {
+}
+
+fn table_browser_parameters_owner(
+    parameters: TableBrowserParameters,
+) -> Result<casars_tablebrowser_protocol::BrowserParameters, String> {
+    Ok(casars_tablebrowser_protocol::BrowserParameters {
+        view: parse_table_browser_view(&parameters.view)?,
+        row_start: parameters.row_start as usize,
+        row_count: parameters.row_count as usize,
+        linked_table: parameters.linked_table,
+        bookmark: parameters.bookmark.map(table_browser_bookmark_owner),
+        content_mode: parse_table_browser_content_mode(&parameters.content_mode)?,
+    })
+}
+
+fn table_browser_command_owner(
+    command: TableBrowserCommand,
+    viewport: BrowserViewport,
+) -> Result<BrowserCommand, String> {
+    Ok(match command {
+        TableBrowserCommand::Configure { parameters } => BrowserCommand::Configure {
+            parameters: table_browser_parameters_owner(parameters)?,
+        },
+        TableBrowserCommand::SetFocus { focus } => BrowserCommand::SetFocus {
+            focus: parse_table_browser_focus(Some(&focus))?
+                .ok_or_else(|| "table browser focus cannot be empty".to_string())?,
             viewport: Some(viewport),
-        })
-        .map_err(|error| FrontendServiceError::TableExplorer {
-            reason: format!("snapshot {}: {error}", dataset_path.display()),
-        })
-        .and_then(|snapshot| {
-            serde_json::to_string(&snapshot).map_err(|error| FrontendServiceError::TableExplorer {
-                reason: format!("encode snapshot {}: {error}", dataset_path.display()),
+        },
+        TableBrowserCommand::CycleView { forward } => BrowserCommand::CycleView {
+            forward,
+            viewport: Some(viewport),
+        },
+        TableBrowserCommand::MoveUp { steps } => BrowserCommand::MoveUp {
+            steps: steps as usize,
+            viewport: Some(viewport),
+        },
+        TableBrowserCommand::MoveDown { steps } => BrowserCommand::MoveDown {
+            steps: steps as usize,
+            viewport: Some(viewport),
+        },
+        TableBrowserCommand::MoveLeft { steps } => BrowserCommand::MoveLeft {
+            steps: steps as usize,
+            viewport: Some(viewport),
+        },
+        TableBrowserCommand::MoveRight { steps } => BrowserCommand::MoveRight {
+            steps: steps as usize,
+            viewport: Some(viewport),
+        },
+        TableBrowserCommand::PageUp { pages } => BrowserCommand::PageUp {
+            pages: pages as usize,
+            viewport: Some(viewport),
+        },
+        TableBrowserCommand::PageDown { pages } => BrowserCommand::PageDown {
+            pages: pages as usize,
+            viewport: Some(viewport),
+        },
+        TableBrowserCommand::Activate => BrowserCommand::Activate {
+            viewport: Some(viewport),
+        },
+        TableBrowserCommand::Back => BrowserCommand::Back {
+            viewport: Some(viewport),
+        },
+        TableBrowserCommand::Escape => BrowserCommand::Escape {
+            viewport: Some(viewport),
+        },
+    })
+}
+
+fn table_browser_value_path_projection(
+    segment: casars_tablebrowser_protocol::ValuePathSegment,
+) -> TableBrowserValuePathSegment {
+    match segment {
+        casars_tablebrowser_protocol::ValuePathSegment::RecordField { name } => {
+            TableBrowserValuePathSegment {
+                segment: "record_field".to_string(),
+                name: Some(name),
+                flat_index: None,
+            }
+        }
+        casars_tablebrowser_protocol::ValuePathSegment::ArrayIndex { flat_index } => {
+            TableBrowserValuePathSegment {
+                segment: "array_index".to_string(),
+                name: None,
+                flat_index: Some(flat_index as u64),
+            }
+        }
+    }
+}
+
+fn table_browser_address_projection(
+    address: casars_tablebrowser_protocol::BrowserAddress,
+) -> TableBrowserSelectedAddress {
+    use casars_tablebrowser_protocol::BrowserAddress;
+    match address {
+        BrowserAddress::Column { table_path, column } => TableBrowserSelectedAddress {
+            kind: "column".to_string(),
+            table_path,
+            row: None,
+            column: Some(column),
+            keyword_path: Vec::new(),
+            value_path: Vec::new(),
+            source: None,
+            target_path: None,
+        },
+        BrowserAddress::Cell {
+            table_path,
+            row,
+            column,
+            value_path,
+        } => TableBrowserSelectedAddress {
+            kind: "cell".to_string(),
+            table_path,
+            row: Some(row as u64),
+            column: Some(column),
+            keyword_path: Vec::new(),
+            value_path: value_path
+                .into_iter()
+                .map(table_browser_value_path_projection)
+                .collect(),
+            source: None,
+            target_path: None,
+        },
+        BrowserAddress::TableKeyword {
+            table_path,
+            keyword_path,
+            value_path,
+        } => TableBrowserSelectedAddress {
+            kind: "table_keyword".to_string(),
+            table_path,
+            row: None,
+            column: None,
+            keyword_path,
+            value_path: value_path
+                .into_iter()
+                .map(table_browser_value_path_projection)
+                .collect(),
+            source: None,
+            target_path: None,
+        },
+        BrowserAddress::ColumnKeyword {
+            table_path,
+            column,
+            keyword_path,
+            value_path,
+        } => TableBrowserSelectedAddress {
+            kind: "column_keyword".to_string(),
+            table_path,
+            row: None,
+            column: Some(column),
+            keyword_path,
+            value_path: value_path
+                .into_iter()
+                .map(table_browser_value_path_projection)
+                .collect(),
+            source: None,
+            target_path: None,
+        },
+        BrowserAddress::Subtable {
+            table_path,
+            source,
+            target_path,
+        } => TableBrowserSelectedAddress {
+            kind: "subtable".to_string(),
+            table_path,
+            row: None,
+            column: None,
+            keyword_path: Vec::new(),
+            value_path: Vec::new(),
+            source: Some(source),
+            target_path: Some(target_path),
+        },
+    }
+}
+
+fn table_browser_scalar_projection(
+    value: casars_tablebrowser_protocol::BrowserScalarValue,
+) -> TableBrowserScalarValue {
+    use casars_tablebrowser_protocol::BrowserScalarValue;
+    match value {
+        BrowserScalarValue::Bool(value) => TableBrowserScalarValue::Bool { value },
+        BrowserScalarValue::UInt8(value) => TableBrowserScalarValue::Uint {
+            value: value as u64,
+        },
+        BrowserScalarValue::UInt16(value) => TableBrowserScalarValue::Uint {
+            value: value as u64,
+        },
+        BrowserScalarValue::UInt32(value) => TableBrowserScalarValue::Uint {
+            value: value as u64,
+        },
+        BrowserScalarValue::Int16(value) => TableBrowserScalarValue::Int {
+            value: value as i64,
+        },
+        BrowserScalarValue::Int32(value) => TableBrowserScalarValue::Int {
+            value: value as i64,
+        },
+        BrowserScalarValue::Int64(value) => TableBrowserScalarValue::Int { value },
+        BrowserScalarValue::Float32(value) => TableBrowserScalarValue::Float {
+            value: value as f64,
+        },
+        BrowserScalarValue::Float64(value) => TableBrowserScalarValue::Float { value },
+        BrowserScalarValue::Complex32(value) => TableBrowserScalarValue::Complex {
+            re: value.re as f64,
+            im: value.im as f64,
+        },
+        BrowserScalarValue::Complex64(value) => TableBrowserScalarValue::Complex {
+            re: value.re,
+            im: value.im,
+        },
+        BrowserScalarValue::String(value) => TableBrowserScalarValue::String { value },
+    }
+}
+
+fn table_browser_value_node_projection(
+    node: casars_tablebrowser_protocol::BrowserValueNode,
+) -> TableBrowserValueNode {
+    use casars_tablebrowser_protocol::BrowserValueNode;
+    match node {
+        BrowserValueNode::Undefined => TableBrowserValueNode::Undefined,
+        BrowserValueNode::Scalar { value } => TableBrowserValueNode::Scalar {
+            value: table_browser_scalar_projection(value),
+        },
+        BrowserValueNode::Array {
+            primitive,
+            shape,
+            total_elements,
+            page_start,
+            page_size,
+            elements,
+        } => TableBrowserValueNode::Array {
+            primitive: snake_case_debug(primitive),
+            shape: shape.into_iter().map(|value| value as u64).collect(),
+            total_elements: total_elements as u64,
+            page_start: page_start as u64,
+            page_size: page_size as u64,
+            elements: elements
+                .into_iter()
+                .map(|element| TableBrowserArrayElement {
+                    flat_index: element.flat_index as u64,
+                    index: element
+                        .index
+                        .into_iter()
+                        .map(|value| value as u64)
+                        .collect(),
+                    value: table_browser_scalar_projection(element.value),
+                    selected: element.selected,
+                })
+                .collect(),
+        },
+        BrowserValueNode::Record {
+            total_fields,
+            page_start,
+            page_size,
+            fields,
+        } => TableBrowserValueNode::Record {
+            total_fields: total_fields as u64,
+            page_start: page_start as u64,
+            page_size: page_size as u64,
+            fields: fields
+                .into_iter()
+                .map(|field| TableBrowserRecordFieldSummary {
+                    name: field.name,
+                    kind: snake_case_debug(field.kind),
+                    summary: field.summary,
+                    expandable: field.expandable,
+                    openable: field.openable,
+                    selected: field.selected,
+                })
+                .collect(),
+        },
+        BrowserValueNode::TableRef {
+            path,
+            resolved_path,
+            openable,
+        } => TableBrowserValueNode::TableRef {
+            path,
+            resolved_path,
+            openable,
+        },
+    }
+}
+
+fn table_browser_metrics_projection(
+    metrics: casars_tablebrowser_protocol::BrowserNavigationMetrics,
+) -> TableBrowserNavigationMetrics {
+    TableBrowserNavigationMetrics {
+        selected_index: metrics.selected_index as u64,
+        total_items: metrics.total_items as u64,
+        viewport_items: metrics.viewport_items as u64,
+    }
+}
+
+fn table_browser_snapshot_projection(
+    snapshot: casars_tablebrowser_protocol::BrowserSnapshot,
+) -> TableBrowserSnapshot {
+    TableBrowserSnapshot {
+        capabilities: TableBrowserCapabilities {
+            editable: snapshot.capabilities.editable,
+        },
+        view: snake_case_debug(snapshot.view),
+        focus: snake_case_debug(snapshot.focus),
+        table_path: snapshot.table_path,
+        breadcrumb: snapshot
+            .breadcrumb
+            .into_iter()
+            .map(|entry| TableBrowserBreadcrumb {
+                label: entry.label,
+                path: entry.path,
             })
-        })
+            .collect(),
+        viewport: TableBrowserViewport {
+            width: snapshot.viewport.width,
+            height: snapshot.viewport.height,
+            inspector_height: snapshot.viewport.inspector_height,
+        },
+        status_line: snapshot.status_line,
+        content_lines: snapshot.content_lines,
+        vertical_metrics: snapshot
+            .vertical_metrics
+            .map(table_browser_metrics_projection),
+        horizontal_metrics: snapshot
+            .horizontal_metrics
+            .map(table_browser_metrics_projection),
+        selected_address: snapshot
+            .selected_address
+            .map(table_browser_address_projection),
+        inspector: snapshot.inspector.map(|inspector| TableBrowserInspector {
+            title: inspector.title,
+            trail: inspector
+                .trail
+                .into_iter()
+                .map(|entry| TableBrowserInspectorTrailEntry {
+                    label: entry.label,
+                    summary: entry.summary,
+                })
+                .collect(),
+            node: table_browser_value_node_projection(inspector.node),
+            rendered_lines: inspector.rendered_lines,
+        }),
+    }
 }
 
 #[uniffi::export]
-pub fn build_table_browser_snapshot_from_request_json(
-    request_json: String,
-) -> FrontendResult<String> {
-    let request: TableBrowserSnapshotRequest =
-        serde_json::from_str(&request_json).map_err(|error| {
-            FrontendServiceError::TableExplorer {
-                reason: format!("decode table browser snapshot request: {error}"),
-            }
-        })?;
+pub fn build_table_browser_snapshot(
+    request: TableBrowserSnapshotRequest,
+) -> FrontendResult<TableBrowserSnapshot> {
     let dataset_path = PathBuf::from(&request.dataset_path);
     if !dataset_path.exists() {
         return Err(FrontendServiceError::InvalidPath {
@@ -4780,13 +5225,13 @@ pub fn build_table_browser_snapshot_from_request_json(
         request.height.max(8),
         request.inspector_height,
     );
-    if let Some(view) = request.selected_view.as_deref() {
+    if !request.selected_view.trim().is_empty() {
         browser.set_view(
-            parse_table_browser_view(view)
+            parse_table_browser_view(&request.selected_view)
                 .map_err(|reason| FrontendServiceError::TableExplorer { reason })?,
         );
     }
-    if let Some(focus) = parse_table_browser_focus(request.focus.as_deref())
+    if let Some(focus) = parse_table_browser_focus(Some(&request.focus))
         .map_err(|reason| FrontendServiceError::TableExplorer { reason })?
     {
         browser
@@ -4804,6 +5249,8 @@ pub fn build_table_browser_snapshot_from_request_json(
         .chain(request.transient_commands.iter())
         .cloned()
     {
+        let command = table_browser_command_owner(command, viewport)
+            .map_err(|reason| FrontendServiceError::TableExplorer { reason })?;
         browser
             .apply(command)
             .map_err(|error| FrontendServiceError::TableExplorer {
@@ -4817,21 +5264,13 @@ pub fn build_table_browser_snapshot_from_request_json(
         .map_err(|error| FrontendServiceError::TableExplorer {
             reason: format!("snapshot {}: {error}", dataset_path.display()),
         })
-        .and_then(|snapshot| {
-            serde_json::to_string(&snapshot).map_err(|error| FrontendServiceError::TableExplorer {
-                reason: format!("encode snapshot {}: {error}", dataset_path.display()),
-            })
-        })
+        .map(table_browser_snapshot_projection)
 }
 
 #[uniffi::export]
-pub fn build_table_browser_cell_window_json(request_json: String) -> FrontendResult<String> {
-    let request: TableBrowserCellWindowRequest =
-        serde_json::from_str(&request_json).map_err(|error| {
-            FrontendServiceError::TableExplorer {
-                reason: format!("decode table browser cell window request: {error}"),
-            }
-        })?;
+pub fn build_table_browser_cell_window(
+    request: TableBrowserCellWindowRequest,
+) -> FrontendResult<TableBrowserCellWindowSnapshot> {
     let dataset_path = PathBuf::from(&request.dataset_path);
     if !dataset_path.exists() {
         return Err(FrontendServiceError::InvalidPath {
@@ -4843,20 +5282,13 @@ pub fn build_table_browser_cell_window_json(request_json: String) -> FrontendRes
             reason: format!("open {}: {error}", dataset_path.display()),
         }
     })?;
-    let snapshot = build_table_browser_cell_window(&table, &dataset_path, &request)?;
-    serde_json::to_string(&snapshot).map_err(|error| FrontendServiceError::TableExplorer {
-        reason: format!("encode cell window {}: {error}", dataset_path.display()),
-    })
+    build_table_browser_cell_window_projection(&table, &dataset_path, &request)
 }
 
 #[uniffi::export]
-pub fn build_table_browser_cell_value_json(request_json: String) -> FrontendResult<String> {
-    let request: TableBrowserCellValueRequest =
-        serde_json::from_str(&request_json).map_err(|error| {
-            FrontendServiceError::TableExplorer {
-                reason: format!("decode table browser cell value request: {error}"),
-            }
-        })?;
+pub fn build_table_browser_cell_value(
+    request: TableBrowserCellValueRequest,
+) -> FrontendResult<String> {
     let dataset_path = PathBuf::from(&request.dataset_path);
     if !dataset_path.exists() {
         return Err(FrontendServiceError::InvalidPath {
@@ -4899,14 +5331,10 @@ pub fn build_table_browser_cell_value_json(request_json: String) -> FrontendResu
                 column_name
             ),
         })?;
-    serde_json::to_string(&format_table_browser_copy_value(value)).map_err(|error| {
-        FrontendServiceError::TableExplorer {
-            reason: format!("encode cell value {}: {error}", dataset_path.display()),
-        }
-    })
+    Ok(format_table_browser_copy_value(value))
 }
 
-fn build_table_browser_cell_window(
+fn build_table_browser_cell_window_projection(
     table: &Table,
     table_path: &Path,
     request: &TableBrowserCellWindowRequest,
@@ -5503,6 +5931,18 @@ fn parse_table_browser_focus(value: Option<&str>) -> Result<Option<BrowserFocus>
         "main" => Ok(Some(BrowserFocus::Main)),
         "inspector" => Ok(Some(BrowserFocus::Inspector)),
         other => Err(format!("unknown table browser focus {other:?}")),
+    }
+}
+
+fn parse_table_browser_content_mode(
+    value: &str,
+) -> Result<casars_tablebrowser_protocol::BrowserContentMode, String> {
+    use casars_tablebrowser_protocol::BrowserContentMode;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" => Ok(BrowserContentMode::Auto),
+        "compact" => Ok(BrowserContentMode::Compact),
+        "detailed" => Ok(BrowserContentMode::Detailed),
+        other => Err(format!("unknown table browser content mode {other:?}")),
     }
 }
 
@@ -7642,6 +8082,19 @@ mod tests {
         }
     }
 
+    fn table_browser_request(path: &Path, selected_view: &str) -> TableBrowserSnapshotRequest {
+        TableBrowserSnapshotRequest {
+            dataset_path: path.display().to_string(),
+            width: 100,
+            height: 24,
+            inspector_height: 8,
+            selected_view: selected_view.to_string(),
+            focus: "main".to_string(),
+            commands: Vec::new(),
+            transient_commands: Vec::new(),
+        }
+    }
+
     #[test]
     fn probe_measurement_set_reads_real_metadata() {
         let (_dir, ms_path) = unpack_small_ms();
@@ -8672,94 +9125,70 @@ mod tests {
     }
 
     #[test]
-    fn table_browser_snapshot_json_uses_tablebrowser_protocol() {
+    fn table_browser_snapshot_uses_typed_protocol_projection() {
         let dir = tempfile::tempdir().expect("tempdir");
         let table_path = dir.path().join("gain_table");
         make_table(&table_path);
 
-        let snapshot_json = build_table_browser_snapshot_json(
-            table_path.display().to_string(),
-            100,
-            24,
-            8,
-            Some("columns".to_string()),
-        )
-        .expect("table browser snapshot");
-        let snapshot: serde_json::Value =
-            serde_json::from_str(&snapshot_json).expect("snapshot json");
-        assert_eq!(snapshot["view"], "columns");
-        assert_eq!(snapshot["capabilities"]["editable"], false);
-        assert_eq!(snapshot["table_path"], table_path.display().to_string());
-        assert!(
-            snapshot["content_lines"]
-                .as_array()
-                .is_some_and(|lines| !lines.is_empty())
-        );
+        let snapshot = build_table_browser_snapshot(table_browser_request(&table_path, "columns"))
+            .expect("table browser snapshot");
+        assert_eq!(snapshot.view, "columns");
+        assert!(!snapshot.capabilities.editable);
+        assert_eq!(snapshot.table_path, table_path.display().to_string());
+        assert!(!snapshot.content_lines.is_empty());
     }
 
     #[test]
-    fn table_browser_request_json_replays_navigation_commands() {
+    fn table_browser_typed_request_replays_navigation_commands() {
         let dir = tempfile::tempdir().expect("tempdir");
         let table_path = dir.path().join("gain_table");
         make_table(&table_path);
 
-        let request_json = serde_json::json!({
-            "dataset_path": table_path,
-            "selected_view": "columns",
-            "focus": "main",
-            "commands": [
-                { "command": "move_down", "steps": 1 }
-            ]
-        })
-        .to_string();
-        let snapshot_json = build_table_browser_snapshot_from_request_json(request_json)
-            .expect("table browser requested snapshot");
-        let snapshot: serde_json::Value =
-            serde_json::from_str(&snapshot_json).expect("snapshot json");
-        assert_eq!(snapshot["view"], "columns");
-        assert_eq!(snapshot["focus"], "main");
+        let mut request = table_browser_request(&table_path, "columns");
+        request
+            .commands
+            .push(TableBrowserCommand::MoveDown { steps: 1 });
+        let snapshot =
+            build_table_browser_snapshot(request).expect("table browser requested snapshot");
+        assert_eq!(snapshot.view, "columns");
+        assert_eq!(snapshot.focus, "main");
         assert_eq!(
-            snapshot["vertical_metrics"]["selected_index"]
-                .as_u64()
-                .expect("selected index"),
+            snapshot
+                .vertical_metrics
+                .expect("vertical metrics")
+                .selected_index,
             1
         );
-        assert!(snapshot["selected_address"].is_object());
-        assert!(snapshot["inspector"].is_object());
+        assert!(snapshot.selected_address.is_some());
+        assert!(snapshot.inspector.is_some());
     }
 
     #[test]
-    fn table_browser_cell_window_json_returns_typed_scroll_window() {
+    fn table_browser_cell_window_returns_typed_scroll_window() {
         let dir = tempfile::tempdir().expect("tempdir");
         let table_path = dir.path().join("gain_table");
         make_table(&table_path);
 
-        let request_json = serde_json::json!({
-            "dataset_path": table_path,
-            "row_start": 0,
-            "row_limit": 4,
-            "column_start": 1,
-            "column_limit": 1
+        let window = build_table_browser_cell_window(TableBrowserCellWindowRequest {
+            dataset_path: table_path.display().to_string(),
+            row_start: 0,
+            row_limit: 4,
+            column_start: 1,
+            column_limit: 1,
+            column_options: Vec::new(),
         })
-        .to_string();
-        let window_json =
-            build_table_browser_cell_window_json(request_json).expect("table browser cell window");
-        let window: serde_json::Value =
-            serde_json::from_str(&window_json).expect("cell window json");
+        .expect("table browser cell window");
 
-        assert_eq!(window["row_count"].as_u64(), Some(1));
-        assert_eq!(window["column_count"].as_u64(), Some(2));
-        assert_eq!(window["row_start"].as_u64(), Some(0));
-        assert_eq!(window["column_start"].as_u64(), Some(1));
-        assert_eq!(window["columns"][0]["name"], "id");
-        assert_eq!(window["columns"][1]["header"], "name str");
-        assert_eq!(window["rows"][0]["index"].as_u64(), Some(0));
-        assert_eq!(
-            window["rows"][0]["cells"][0]["column_index"].as_u64(),
-            Some(1)
-        );
-        assert_eq!(window["rows"][0]["cells"][0]["display"], "\"gain\"");
-        assert_eq!(window["rows"][0]["cells"][0]["defined"], true);
+        assert_eq!(window.row_count, 1);
+        assert_eq!(window.column_count, 2);
+        assert_eq!(window.row_start, 0);
+        assert_eq!(window.column_start, 1);
+        assert_eq!(window.columns[0].name, "id");
+        assert_eq!(window.columns[1].header, "name str");
+        assert_eq!(window.rows[0].index, 0);
+        assert_eq!(window.rows[0].cells[0].column_index, 1);
+        assert_eq!(window.rows[0].cells[0].display, "\"gain\"");
+        assert!(window.rows[0].cells[0].defined);
     }
 
     #[test]
@@ -8794,41 +9223,34 @@ mod tests {
             .save(TableOptions::new(&table_path))
             .expect("save table");
 
-        let request_json = serde_json::json!({
-            "dataset_path": table_path,
-            "row_start": 0,
-            "row_limit": 1,
-            "column_start": 0,
-            "column_limit": 1,
-            "column_options": [{
-                "column_index": 0,
-                "array_inline_limit": 4
-            }]
+        let window = build_table_browser_cell_window(TableBrowserCellWindowRequest {
+            dataset_path: table_path.display().to_string(),
+            row_start: 0,
+            row_limit: 1,
+            column_start: 0,
+            column_limit: 1,
+            column_options: vec![TableBrowserColumnDisplayOption {
+                column_index: 0,
+                array_inline_limit: 4,
+            }],
         })
-        .to_string();
-        let window_json =
-            build_table_browser_cell_window_json(request_json).expect("table browser cell window");
-        let window: serde_json::Value =
-            serde_json::from_str(&window_json).expect("cell window json");
+        .expect("table browser cell window");
 
         assert_eq!(
-            window["columns"][0]["keywords"][0],
+            window.columns[0].keywords[0],
             "MEASINFO.type = \"visibility\""
         );
         assert_eq!(
-            window["rows"][0]["cells"][0]["display"],
+            window.rows[0].cells[0].display,
             "[1.0000, 2.0000, 3.0000, 4.0000]"
         );
 
-        let copy_request = serde_json::json!({
-            "dataset_path": table_path,
-            "row_index": 0,
-            "column_index": 0
+        let copy_value = build_table_browser_cell_value(TableBrowserCellValueRequest {
+            dataset_path: table_path.display().to_string(),
+            row_index: 0,
+            column_index: 0,
         })
-        .to_string();
-        let copy_json =
-            build_table_browser_cell_value_json(copy_request).expect("table browser cell value");
-        let copy_value: String = serde_json::from_str(&copy_json).expect("cell value json");
+        .expect("table browser cell value");
         assert_eq!(copy_value, "[1.0000, 2.0000, 3.0000, 4.0000]");
     }
 

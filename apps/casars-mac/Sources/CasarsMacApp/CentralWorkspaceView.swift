@@ -3223,7 +3223,7 @@ private extension Array {
     }
 }
 
-func tableBrowserAddressSummary(_ address: TableBrowserSnapshot.SelectedAddress?) -> String? {
+func tableBrowserAddressSummary(_ address: TableBrowserSelectedAddress?) -> String? {
     guard let address else {
         return nil
     }
@@ -3234,9 +3234,9 @@ func tableBrowserAddressSummary(_ address: TableBrowserSnapshot.SelectedAddress?
         let row = address.row.map(String.init) ?? "?"
         return "row \(row) \(address.column ?? "")"
     case "table_keyword":
-        return "keyword \(address.keywordPath?.joined(separator: ".") ?? "")"
+        return "keyword \(address.keywordPath.joined(separator: "."))"
     case "column_keyword":
-        return "keyword \(address.column ?? ""):\(address.keywordPath?.joined(separator: ".") ?? "")"
+        return "keyword \(address.column ?? ""):\(address.keywordPath.joined(separator: "."))"
     case "subtable":
         return "subtable \(address.targetPath ?? "")"
     default:
@@ -3265,7 +3265,7 @@ private struct TableBrowserSnapshotView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
-                if snapshot.capabilities?.editable == false {
+                if !snapshot.capabilities.editable {
                     Text("read-only")
                         .workbenchFont(.caption)
                         .foregroundStyle(.secondary)
@@ -3302,7 +3302,7 @@ private struct TableBrowserSnapshotView: View {
     }
 
     @ViewBuilder
-    private func metricsLabel(_ metrics: TableBrowserSnapshot.NavigationMetrics?, axis: String) -> some View {
+    private func metricsLabel(_ metrics: TableBrowserNavigationMetrics?, axis: String) -> some View {
         if let metrics, metrics.totalItems > 0 {
             Text("\(axis) \(metrics.selectedIndex + 1)/\(metrics.totalItems)")
                 .workbenchFont(.caption, design: .monospaced)
@@ -3328,7 +3328,7 @@ private struct TableBrowserMainPane: View {
     let copyCellValue: (_ rowIndex: Int, _ columnIndex: Int) -> Void
     let loadCellValue: (_ rowIndex: Int, _ columnIndex: Int, _ completion: @escaping (String?) -> Void) -> Void
     let openSelectedSubtable: () -> Void
-    @State private var inspectedColumn: TableBrowserCellWindowSnapshot.Column?
+    @State private var inspectedColumn: TableBrowserCellWindowColumn?
     @State private var inspectedCell: TableBrowserCellInspectorItem?
 
     var body: some View {
@@ -3337,7 +3337,7 @@ private struct TableBrowserMainPane: View {
             case "keywords":
                 TableBrowserKeyValueGrid(
                     lines: tableKeywordLines,
-                    selectedIndex: snapshot.verticalMetrics?.selectedIndex,
+                    selectedIndex: snapshot.verticalMetrics.map { Int($0.selectedIndex) },
                     selectMainItem: selectMainItem
                 )
             case "subtables":
@@ -3360,8 +3360,8 @@ private struct TableBrowserMainPane: View {
                             hiddenColumns: hiddenColumns,
                             arrayInlineLimits: arrayInlineLimits,
                             interfaceFontSize: interfaceFontSize,
-                            selectedRow: selectedCellRow ?? snapshot.verticalMetrics?.selectedIndex,
-                            selectedColumn: selectedCellColumn ?? snapshot.horizontalMetrics?.selectedIndex,
+                            selectedRow: selectedCellRow ?? snapshot.verticalMetrics.map { Int($0.selectedIndex) },
+                            selectedColumn: selectedCellColumn ?? snapshot.horizontalMetrics.map { Int($0.selectedIndex) },
                             selectCell: selectCell,
                             requestCellWindow: requestCellWindow,
                             setColumnHidden: setColumnHidden,
@@ -3494,8 +3494,8 @@ private struct TableBrowserRenderedCell: Equatable {
     }
 }
 
-extension TableBrowserCellWindowSnapshot.Column: Identifiable {
-    public var id: Int { index }
+extension TableBrowserCellWindowColumn: Identifiable {
+    public var id: UInt64 { index }
 }
 
 private struct TableBrowserCellsToolbar: View {
@@ -3515,15 +3515,16 @@ private struct TableBrowserCellsToolbar: View {
                 Divider()
                 ForEach(grid.columns) { column in
                     Button {
-                        setColumnHidden(column.index, !hiddenColumns.contains(column.index))
+                        let columnIndex = Int(column.index)
+                        setColumnHidden(columnIndex, !hiddenColumns.contains(columnIndex))
                     } label: {
                         Label(
                             column.name,
-                            systemImage: hiddenColumns.contains(column.index) ? "square" : "checkmark.square"
+                            systemImage: hiddenColumns.contains(Int(column.index)) ? "square" : "checkmark.square"
                         )
                     }
                 }
-                let hiddenOutsideWindow = hiddenColumns.subtracting(Set(grid.columns.map(\.index)))
+                let hiddenOutsideWindow = hiddenColumns.subtracting(Set(grid.columns.map { Int($0.index) }))
                 if !hiddenOutsideWindow.isEmpty {
                     Divider()
                     ForEach(hiddenOutsideWindow.sorted(), id: \.self) { columnIndex in
@@ -3551,7 +3552,7 @@ private struct TableBrowserCellsToolbar: View {
 }
 
 private struct TableBrowserColumnInspector: View {
-    let column: TableBrowserCellWindowSnapshot.Column
+    let column: TableBrowserCellWindowColumn
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -3593,7 +3594,7 @@ private struct TableBrowserColumnInspector: View {
 
 private struct TableBrowserCellInspectorItem: Identifiable {
     let rowIndex: Int
-    let column: TableBrowserCellWindowSnapshot.Column
+    let column: TableBrowserCellWindowColumn
     let value: String
 
     var id: String {
@@ -3681,7 +3682,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
     let requestCellWindow: (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void
     let setColumnHidden: (_ columnIndex: Int, _ hidden: Bool) -> Void
     let setArrayInlineLimit: (_ columnIndex: Int, _ limit: Int) -> Void
-    let inspectColumn: (TableBrowserCellWindowSnapshot.Column) -> Void
+    let inspectColumn: (TableBrowserCellWindowColumn) -> Void
     let inspectCell: (TableBrowserCellInspectorItem) -> Void
     let copyCellValue: (_ rowIndex: Int, _ columnIndex: Int) -> Void
     let loadCellValue: (_ rowIndex: Int, _ columnIndex: Int, _ completion: @escaping (String?) -> Void) -> Void
@@ -3788,7 +3789,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         var requestCellWindow: (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void
         var setColumnHidden: (_ columnIndex: Int, _ hidden: Bool) -> Void
         var setArrayInlineLimit: (_ columnIndex: Int, _ limit: Int) -> Void
-        var inspectColumn: (TableBrowserCellWindowSnapshot.Column) -> Void
+        var inspectColumn: (TableBrowserCellWindowColumn) -> Void
         var inspectCell: (TableBrowserCellInspectorItem) -> Void
         var copyCellValue: (_ rowIndex: Int, _ columnIndex: Int) -> Void
         var loadCellValue: (_ rowIndex: Int, _ columnIndex: Int, _ completion: @escaping (String?) -> Void) -> Void
@@ -3814,7 +3815,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             requestCellWindow: @escaping (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void,
             setColumnHidden: @escaping (_ columnIndex: Int, _ hidden: Bool) -> Void,
             setArrayInlineLimit: @escaping (_ columnIndex: Int, _ limit: Int) -> Void,
-            inspectColumn: @escaping (TableBrowserCellWindowSnapshot.Column) -> Void,
+            inspectColumn: @escaping (TableBrowserCellWindowColumn) -> Void,
             inspectCell: @escaping (TableBrowserCellInspectorItem) -> Void,
             copyCellValue: @escaping (_ rowIndex: Int, _ columnIndex: Int) -> Void,
             loadCellValue: @escaping (_ rowIndex: Int, _ columnIndex: Int, _ completion: @escaping (String?) -> Void) -> Void
@@ -3899,7 +3900,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             guard let tableView else {
                 return
             }
-            let displayedColumns = grid.columns.filter { !hiddenColumns.contains($0.index) }
+            let displayedColumns = grid.columns.filter { !hiddenColumns.contains(Int($0.index)) }
             let desiredIDs = ["row"] + displayedColumns.map { "column-\($0.index)" }
             guard desiredIDs != lastColumnIDs else {
                 updateColumnMetrics(tableView)
@@ -3921,7 +3922,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
                 tableColumn.title = column.header
                 tableColumn.width = columnWidth(for: column)
                 tableColumn.minWidth = 72
-                tableColumn.maxWidth = arrayInlineLimits[column.index, default: 0] > 0 ? 900 : 420
+                tableColumn.maxWidth = arrayInlineLimits[Int(column.index), default: 0] > 0 ? 900 : 420
                 tableColumn.headerToolTip = "\(column.name): \(column.summary)"
                 tableView.addTableColumn(tableColumn)
             }
@@ -3939,17 +3940,17 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             }
         }
 
-        private func columnWidth(for column: TableBrowserCellWindowSnapshot.Column) -> CGFloat {
+        private func columnWidth(for column: TableBrowserCellWindowColumn) -> CGFloat {
             let expandedWidth = maxCellTextLength(for: column)
-            let characterCount = max(column.width, expandedWidth, 8)
-            let cappedCount = arrayInlineLimits[column.index, default: 0] > 0
+            let characterCount = max(Int(column.width), expandedWidth, 8)
+            let cappedCount = arrayInlineLimits[Int(column.index), default: 0] > 0
                 ? min(characterCount, 96)
                 : min(characterCount, 40)
             return CGFloat(cappedCount) * 8.0 + 28.0
         }
 
-        private func maxCellTextLength(for column: TableBrowserCellWindowSnapshot.Column) -> Int {
-            guard arrayInlineLimits[column.index, default: 0] > 0 else {
+        private func maxCellTextLength(for column: TableBrowserCellWindowColumn) -> Int {
+            guard arrayInlineLimits[Int(column.index), default: 0] > 0 else {
                 return 0
             }
             return grid.rows
@@ -3958,7 +3959,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int {
-            grid.rowCount
+            Int(grid.rowCount)
         }
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -4163,7 +4164,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
 
             let hide = NSMenuItem(title: "Hide Column", action: #selector(hideHeaderColumn(_:)), keyEquivalent: "")
             hide.target = self
-            hide.representedObject = column.index
+            hide.representedObject = Int(column.index)
             menu.addItem(hide)
 
             menu.addItem(.separator())
@@ -4177,19 +4178,19 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         private func addArrayExpansionItem(
             _ title: String,
             limit: Int,
-            column: TableBrowserCellWindowSnapshot.Column,
+            column: TableBrowserCellWindowColumn,
             to menu: NSMenu
         ) {
             let item = NSMenuItem(title: title, action: #selector(setHeaderArrayExpansion(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = ["column": column.index, "limit": limit]
-            item.state = arrayInlineLimits[column.index, default: 0] == limit ? .on : .off
+            item.representedObject = ["column": Int(column.index), "limit": limit]
+            item.state = arrayInlineLimits[Int(column.index), default: 0] == limit ? .on : .off
             menu.addItem(item)
         }
 
         @objc private func showHeaderColumnKeywords(_ sender: NSMenuItem) {
             guard let columnIndex = sender.representedObject as? Int,
-                  let column = grid.columns.first(where: { $0.index == columnIndex })
+                  let column = grid.columns.first(where: { Int($0.index) == columnIndex })
             else {
                 return
             }
@@ -4551,7 +4552,7 @@ private struct TableBrowserSubtableGrid: View {
 }
 
 private struct TableBrowserInspectorPane: View {
-    let inspector: TableBrowserSnapshot.Inspector?
+    let inspector: TableBrowserInspector?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -4590,7 +4591,7 @@ private struct TableBrowserInspectorPane: View {
 }
 
 private struct TableBrowserTypedInspector: View {
-    let node: TableBrowserSnapshot.ValueNode
+    let node: TableBrowserValueNode
 
     var body: some View {
         switch node {
@@ -4638,7 +4639,7 @@ private struct TableBrowserTypedInspector: View {
     }
 }
 
-private extension TableBrowserSnapshot.ScalarValue {
+private extension TableBrowserScalarValue {
     var displayString: String {
         switch self {
         case let .bool(value):
@@ -4653,8 +4654,6 @@ private extension TableBrowserSnapshot.ScalarValue {
             return String(format: "%.6g%+.6gi", re, im)
         case let .string(value):
             return value
-        case let .unknown(type, display):
-            return display.isEmpty ? type : "\(type) \(display)"
         }
     }
 }

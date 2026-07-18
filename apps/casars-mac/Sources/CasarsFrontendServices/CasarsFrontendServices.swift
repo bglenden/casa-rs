@@ -10439,6 +10439,1854 @@ public func FfiConverterTypeSurfaceRunSafety_lower(_ value: SurfaceRunSafety) ->
 }
 
 
+public struct TableBrowserArrayElement {
+    public var flatIndex: UInt64
+    public var index: [UInt64]
+    public var value: TableBrowserScalarValue
+    public var selected: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(flatIndex: UInt64, index: [UInt64], value: TableBrowserScalarValue, selected: Bool) {
+        self.flatIndex = flatIndex
+        self.index = index
+        self.value = value
+        self.selected = selected
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserArrayElement: Sendable {}
+#endif
+
+
+extension TableBrowserArrayElement: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserArrayElement, rhs: TableBrowserArrayElement) -> Bool {
+        if lhs.flatIndex != rhs.flatIndex {
+            return false
+        }
+        if lhs.index != rhs.index {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        if lhs.selected != rhs.selected {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(flatIndex)
+        hasher.combine(index)
+        hasher.combine(value)
+        hasher.combine(selected)
+    }
+}
+
+extension TableBrowserArrayElement: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserArrayElement: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserArrayElement {
+        return
+            try TableBrowserArrayElement(
+                flatIndex: FfiConverterUInt64.read(from: &buf),
+                index: FfiConverterSequenceUInt64.read(from: &buf),
+                value: FfiConverterTypeTableBrowserScalarValue.read(from: &buf),
+                selected: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserArrayElement, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.flatIndex, into: &buf)
+        FfiConverterSequenceUInt64.write(value.index, into: &buf)
+        FfiConverterTypeTableBrowserScalarValue.write(value.value, into: &buf)
+        FfiConverterBool.write(value.selected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserArrayElement_lift(_ buf: RustBuffer) throws -> TableBrowserArrayElement {
+    return try FfiConverterTypeTableBrowserArrayElement.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserArrayElement_lower(_ value: TableBrowserArrayElement) -> RustBuffer {
+    return FfiConverterTypeTableBrowserArrayElement.lower(value)
+}
+
+
+public struct TableBrowserBreadcrumb {
+    public var label: String
+    public var path: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(label: String, path: String) {
+        self.label = label
+        self.path = path
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserBreadcrumb: Sendable {}
+#endif
+
+
+extension TableBrowserBreadcrumb: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserBreadcrumb, rhs: TableBrowserBreadcrumb) -> Bool {
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.path != rhs.path {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(label)
+        hasher.combine(path)
+    }
+}
+
+extension TableBrowserBreadcrumb: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserBreadcrumb: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserBreadcrumb {
+        return
+            try TableBrowserBreadcrumb(
+                label: FfiConverterString.read(from: &buf),
+                path: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserBreadcrumb, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserBreadcrumb_lift(_ buf: RustBuffer) throws -> TableBrowserBreadcrumb {
+    return try FfiConverterTypeTableBrowserBreadcrumb.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserBreadcrumb_lower(_ value: TableBrowserBreadcrumb) -> RustBuffer {
+    return FfiConverterTypeTableBrowserBreadcrumb.lower(value)
+}
+
+
+public struct TableBrowserCapabilities {
+    public var editable: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(editable: Bool) {
+        self.editable = editable
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserCapabilities: Sendable {}
+#endif
+
+
+extension TableBrowserCapabilities: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserCapabilities, rhs: TableBrowserCapabilities) -> Bool {
+        if lhs.editable != rhs.editable {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(editable)
+    }
+}
+
+extension TableBrowserCapabilities: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserCapabilities: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserCapabilities {
+        return
+            try TableBrowserCapabilities(
+                editable: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserCapabilities, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.editable, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCapabilities_lift(_ buf: RustBuffer) throws -> TableBrowserCapabilities {
+    return try FfiConverterTypeTableBrowserCapabilities.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCapabilities_lower(_ value: TableBrowserCapabilities) -> RustBuffer {
+    return FfiConverterTypeTableBrowserCapabilities.lower(value)
+}
+
+
+public struct TableBrowserCellValueRequest {
+    public var datasetPath: String
+    public var rowIndex: UInt64
+    public var columnIndex: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(datasetPath: String, rowIndex: UInt64, columnIndex: UInt64) {
+        self.datasetPath = datasetPath
+        self.rowIndex = rowIndex
+        self.columnIndex = columnIndex
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserCellValueRequest: Sendable {}
+#endif
+
+
+extension TableBrowserCellValueRequest: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserCellValueRequest, rhs: TableBrowserCellValueRequest) -> Bool {
+        if lhs.datasetPath != rhs.datasetPath {
+            return false
+        }
+        if lhs.rowIndex != rhs.rowIndex {
+            return false
+        }
+        if lhs.columnIndex != rhs.columnIndex {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(datasetPath)
+        hasher.combine(rowIndex)
+        hasher.combine(columnIndex)
+    }
+}
+
+extension TableBrowserCellValueRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserCellValueRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserCellValueRequest {
+        return
+            try TableBrowserCellValueRequest(
+                datasetPath: FfiConverterString.read(from: &buf),
+                rowIndex: FfiConverterUInt64.read(from: &buf),
+                columnIndex: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserCellValueRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.datasetPath, into: &buf)
+        FfiConverterUInt64.write(value.rowIndex, into: &buf)
+        FfiConverterUInt64.write(value.columnIndex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCellValueRequest_lift(_ buf: RustBuffer) throws -> TableBrowserCellValueRequest {
+    return try FfiConverterTypeTableBrowserCellValueRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCellValueRequest_lower(_ value: TableBrowserCellValueRequest) -> RustBuffer {
+    return FfiConverterTypeTableBrowserCellValueRequest.lower(value)
+}
+
+
+public struct TableBrowserCellWindowCell {
+    public var columnIndex: UInt64
+    public var display: String
+    public var defined: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(columnIndex: UInt64, display: String, defined: Bool) {
+        self.columnIndex = columnIndex
+        self.display = display
+        self.defined = defined
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserCellWindowCell: Sendable {}
+#endif
+
+
+extension TableBrowserCellWindowCell: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserCellWindowCell, rhs: TableBrowserCellWindowCell) -> Bool {
+        if lhs.columnIndex != rhs.columnIndex {
+            return false
+        }
+        if lhs.display != rhs.display {
+            return false
+        }
+        if lhs.defined != rhs.defined {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(columnIndex)
+        hasher.combine(display)
+        hasher.combine(defined)
+    }
+}
+
+extension TableBrowserCellWindowCell: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserCellWindowCell: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserCellWindowCell {
+        return
+            try TableBrowserCellWindowCell(
+                columnIndex: FfiConverterUInt64.read(from: &buf),
+                display: FfiConverterString.read(from: &buf),
+                defined: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserCellWindowCell, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.columnIndex, into: &buf)
+        FfiConverterString.write(value.display, into: &buf)
+        FfiConverterBool.write(value.defined, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCellWindowCell_lift(_ buf: RustBuffer) throws -> TableBrowserCellWindowCell {
+    return try FfiConverterTypeTableBrowserCellWindowCell.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCellWindowCell_lower(_ value: TableBrowserCellWindowCell) -> RustBuffer {
+    return FfiConverterTypeTableBrowserCellWindowCell.lower(value)
+}
+
+
+public struct TableBrowserCellWindowColumn {
+    public var index: UInt64
+    public var name: String
+    public var header: String
+    public var summary: String
+    public var width: UInt64
+    public var keywords: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(index: UInt64, name: String, header: String, summary: String, width: UInt64, keywords: [String]) {
+        self.index = index
+        self.name = name
+        self.header = header
+        self.summary = summary
+        self.width = width
+        self.keywords = keywords
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserCellWindowColumn: Sendable {}
+#endif
+
+
+extension TableBrowserCellWindowColumn: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserCellWindowColumn, rhs: TableBrowserCellWindowColumn) -> Bool {
+        if lhs.index != rhs.index {
+            return false
+        }
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.header != rhs.header {
+            return false
+        }
+        if lhs.summary != rhs.summary {
+            return false
+        }
+        if lhs.width != rhs.width {
+            return false
+        }
+        if lhs.keywords != rhs.keywords {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(index)
+        hasher.combine(name)
+        hasher.combine(header)
+        hasher.combine(summary)
+        hasher.combine(width)
+        hasher.combine(keywords)
+    }
+}
+
+extension TableBrowserCellWindowColumn: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserCellWindowColumn: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserCellWindowColumn {
+        return
+            try TableBrowserCellWindowColumn(
+                index: FfiConverterUInt64.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                header: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                width: FfiConverterUInt64.read(from: &buf),
+                keywords: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserCellWindowColumn, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.index, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.header, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterUInt64.write(value.width, into: &buf)
+        FfiConverterSequenceString.write(value.keywords, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCellWindowColumn_lift(_ buf: RustBuffer) throws -> TableBrowserCellWindowColumn {
+    return try FfiConverterTypeTableBrowserCellWindowColumn.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCellWindowColumn_lower(_ value: TableBrowserCellWindowColumn) -> RustBuffer {
+    return FfiConverterTypeTableBrowserCellWindowColumn.lower(value)
+}
+
+
+public struct TableBrowserCellWindowRequest {
+    public var datasetPath: String
+    public var rowStart: UInt64
+    public var rowLimit: UInt64
+    public var columnStart: UInt64
+    public var columnLimit: UInt64
+    public var columnOptions: [TableBrowserColumnDisplayOption]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(datasetPath: String, rowStart: UInt64, rowLimit: UInt64, columnStart: UInt64, columnLimit: UInt64, columnOptions: [TableBrowserColumnDisplayOption]) {
+        self.datasetPath = datasetPath
+        self.rowStart = rowStart
+        self.rowLimit = rowLimit
+        self.columnStart = columnStart
+        self.columnLimit = columnLimit
+        self.columnOptions = columnOptions
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserCellWindowRequest: Sendable {}
+#endif
+
+
+extension TableBrowserCellWindowRequest: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserCellWindowRequest, rhs: TableBrowserCellWindowRequest) -> Bool {
+        if lhs.datasetPath != rhs.datasetPath {
+            return false
+        }
+        if lhs.rowStart != rhs.rowStart {
+            return false
+        }
+        if lhs.rowLimit != rhs.rowLimit {
+            return false
+        }
+        if lhs.columnStart != rhs.columnStart {
+            return false
+        }
+        if lhs.columnLimit != rhs.columnLimit {
+            return false
+        }
+        if lhs.columnOptions != rhs.columnOptions {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(datasetPath)
+        hasher.combine(rowStart)
+        hasher.combine(rowLimit)
+        hasher.combine(columnStart)
+        hasher.combine(columnLimit)
+        hasher.combine(columnOptions)
+    }
+}
+
+extension TableBrowserCellWindowRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserCellWindowRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserCellWindowRequest {
+        return
+            try TableBrowserCellWindowRequest(
+                datasetPath: FfiConverterString.read(from: &buf),
+                rowStart: FfiConverterUInt64.read(from: &buf),
+                rowLimit: FfiConverterUInt64.read(from: &buf),
+                columnStart: FfiConverterUInt64.read(from: &buf),
+                columnLimit: FfiConverterUInt64.read(from: &buf),
+                columnOptions: FfiConverterSequenceTypeTableBrowserColumnDisplayOption.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserCellWindowRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.datasetPath, into: &buf)
+        FfiConverterUInt64.write(value.rowStart, into: &buf)
+        FfiConverterUInt64.write(value.rowLimit, into: &buf)
+        FfiConverterUInt64.write(value.columnStart, into: &buf)
+        FfiConverterUInt64.write(value.columnLimit, into: &buf)
+        FfiConverterSequenceTypeTableBrowserColumnDisplayOption.write(value.columnOptions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCellWindowRequest_lift(_ buf: RustBuffer) throws -> TableBrowserCellWindowRequest {
+    return try FfiConverterTypeTableBrowserCellWindowRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCellWindowRequest_lower(_ value: TableBrowserCellWindowRequest) -> RustBuffer {
+    return FfiConverterTypeTableBrowserCellWindowRequest.lower(value)
+}
+
+
+public struct TableBrowserCellWindowRow {
+    public var index: UInt64
+    public var cells: [TableBrowserCellWindowCell]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(index: UInt64, cells: [TableBrowserCellWindowCell]) {
+        self.index = index
+        self.cells = cells
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserCellWindowRow: Sendable {}
+#endif
+
+
+extension TableBrowserCellWindowRow: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserCellWindowRow, rhs: TableBrowserCellWindowRow) -> Bool {
+        if lhs.index != rhs.index {
+            return false
+        }
+        if lhs.cells != rhs.cells {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(index)
+        hasher.combine(cells)
+    }
+}
+
+extension TableBrowserCellWindowRow: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserCellWindowRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserCellWindowRow {
+        return
+            try TableBrowserCellWindowRow(
+                index: FfiConverterUInt64.read(from: &buf),
+                cells: FfiConverterSequenceTypeTableBrowserCellWindowCell.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserCellWindowRow, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.index, into: &buf)
+        FfiConverterSequenceTypeTableBrowserCellWindowCell.write(value.cells, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCellWindowRow_lift(_ buf: RustBuffer) throws -> TableBrowserCellWindowRow {
+    return try FfiConverterTypeTableBrowserCellWindowRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCellWindowRow_lower(_ value: TableBrowserCellWindowRow) -> RustBuffer {
+    return FfiConverterTypeTableBrowserCellWindowRow.lower(value)
+}
+
+
+public struct TableBrowserCellWindowSnapshot {
+    public var tablePath: String
+    public var rowCount: UInt64
+    public var columnCount: UInt64
+    public var rowStart: UInt64
+    public var columnStart: UInt64
+    public var columns: [TableBrowserCellWindowColumn]
+    public var rows: [TableBrowserCellWindowRow]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(tablePath: String, rowCount: UInt64, columnCount: UInt64, rowStart: UInt64, columnStart: UInt64, columns: [TableBrowserCellWindowColumn], rows: [TableBrowserCellWindowRow]) {
+        self.tablePath = tablePath
+        self.rowCount = rowCount
+        self.columnCount = columnCount
+        self.rowStart = rowStart
+        self.columnStart = columnStart
+        self.columns = columns
+        self.rows = rows
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserCellWindowSnapshot: Sendable {}
+#endif
+
+
+extension TableBrowserCellWindowSnapshot: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserCellWindowSnapshot, rhs: TableBrowserCellWindowSnapshot) -> Bool {
+        if lhs.tablePath != rhs.tablePath {
+            return false
+        }
+        if lhs.rowCount != rhs.rowCount {
+            return false
+        }
+        if lhs.columnCount != rhs.columnCount {
+            return false
+        }
+        if lhs.rowStart != rhs.rowStart {
+            return false
+        }
+        if lhs.columnStart != rhs.columnStart {
+            return false
+        }
+        if lhs.columns != rhs.columns {
+            return false
+        }
+        if lhs.rows != rhs.rows {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(tablePath)
+        hasher.combine(rowCount)
+        hasher.combine(columnCount)
+        hasher.combine(rowStart)
+        hasher.combine(columnStart)
+        hasher.combine(columns)
+        hasher.combine(rows)
+    }
+}
+
+extension TableBrowserCellWindowSnapshot: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserCellWindowSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserCellWindowSnapshot {
+        return
+            try TableBrowserCellWindowSnapshot(
+                tablePath: FfiConverterString.read(from: &buf),
+                rowCount: FfiConverterUInt64.read(from: &buf),
+                columnCount: FfiConverterUInt64.read(from: &buf),
+                rowStart: FfiConverterUInt64.read(from: &buf),
+                columnStart: FfiConverterUInt64.read(from: &buf),
+                columns: FfiConverterSequenceTypeTableBrowserCellWindowColumn.read(from: &buf),
+                rows: FfiConverterSequenceTypeTableBrowserCellWindowRow.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserCellWindowSnapshot, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.tablePath, into: &buf)
+        FfiConverterUInt64.write(value.rowCount, into: &buf)
+        FfiConverterUInt64.write(value.columnCount, into: &buf)
+        FfiConverterUInt64.write(value.rowStart, into: &buf)
+        FfiConverterUInt64.write(value.columnStart, into: &buf)
+        FfiConverterSequenceTypeTableBrowserCellWindowColumn.write(value.columns, into: &buf)
+        FfiConverterSequenceTypeTableBrowserCellWindowRow.write(value.rows, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCellWindowSnapshot_lift(_ buf: RustBuffer) throws -> TableBrowserCellWindowSnapshot {
+    return try FfiConverterTypeTableBrowserCellWindowSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCellWindowSnapshot_lower(_ value: TableBrowserCellWindowSnapshot) -> RustBuffer {
+    return FfiConverterTypeTableBrowserCellWindowSnapshot.lower(value)
+}
+
+
+public struct TableBrowserColumnDisplayOption {
+    public var columnIndex: UInt64
+    public var arrayInlineLimit: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(columnIndex: UInt64, arrayInlineLimit: UInt64) {
+        self.columnIndex = columnIndex
+        self.arrayInlineLimit = arrayInlineLimit
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserColumnDisplayOption: Sendable {}
+#endif
+
+
+extension TableBrowserColumnDisplayOption: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserColumnDisplayOption, rhs: TableBrowserColumnDisplayOption) -> Bool {
+        if lhs.columnIndex != rhs.columnIndex {
+            return false
+        }
+        if lhs.arrayInlineLimit != rhs.arrayInlineLimit {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(columnIndex)
+        hasher.combine(arrayInlineLimit)
+    }
+}
+
+extension TableBrowserColumnDisplayOption: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserColumnDisplayOption: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserColumnDisplayOption {
+        return
+            try TableBrowserColumnDisplayOption(
+                columnIndex: FfiConverterUInt64.read(from: &buf),
+                arrayInlineLimit: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserColumnDisplayOption, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.columnIndex, into: &buf)
+        FfiConverterUInt64.write(value.arrayInlineLimit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserColumnDisplayOption_lift(_ buf: RustBuffer) throws -> TableBrowserColumnDisplayOption {
+    return try FfiConverterTypeTableBrowserColumnDisplayOption.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserColumnDisplayOption_lower(_ value: TableBrowserColumnDisplayOption) -> RustBuffer {
+    return FfiConverterTypeTableBrowserColumnDisplayOption.lower(value)
+}
+
+
+public struct TableBrowserInspector {
+    public var title: String
+    public var trail: [TableBrowserInspectorTrailEntry]
+    public var node: TableBrowserValueNode
+    public var renderedLines: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(title: String, trail: [TableBrowserInspectorTrailEntry], node: TableBrowserValueNode, renderedLines: [String]) {
+        self.title = title
+        self.trail = trail
+        self.node = node
+        self.renderedLines = renderedLines
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserInspector: Sendable {}
+#endif
+
+
+extension TableBrowserInspector: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserInspector, rhs: TableBrowserInspector) -> Bool {
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.trail != rhs.trail {
+            return false
+        }
+        if lhs.node != rhs.node {
+            return false
+        }
+        if lhs.renderedLines != rhs.renderedLines {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(title)
+        hasher.combine(trail)
+        hasher.combine(node)
+        hasher.combine(renderedLines)
+    }
+}
+
+extension TableBrowserInspector: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserInspector: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserInspector {
+        return
+            try TableBrowserInspector(
+                title: FfiConverterString.read(from: &buf),
+                trail: FfiConverterSequenceTypeTableBrowserInspectorTrailEntry.read(from: &buf),
+                node: FfiConverterTypeTableBrowserValueNode.read(from: &buf),
+                renderedLines: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserInspector, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterSequenceTypeTableBrowserInspectorTrailEntry.write(value.trail, into: &buf)
+        FfiConverterTypeTableBrowserValueNode.write(value.node, into: &buf)
+        FfiConverterSequenceString.write(value.renderedLines, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserInspector_lift(_ buf: RustBuffer) throws -> TableBrowserInspector {
+    return try FfiConverterTypeTableBrowserInspector.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserInspector_lower(_ value: TableBrowserInspector) -> RustBuffer {
+    return FfiConverterTypeTableBrowserInspector.lower(value)
+}
+
+
+public struct TableBrowserInspectorTrailEntry {
+    public var label: String
+    public var summary: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(label: String, summary: String) {
+        self.label = label
+        self.summary = summary
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserInspectorTrailEntry: Sendable {}
+#endif
+
+
+extension TableBrowserInspectorTrailEntry: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserInspectorTrailEntry, rhs: TableBrowserInspectorTrailEntry) -> Bool {
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.summary != rhs.summary {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(label)
+        hasher.combine(summary)
+    }
+}
+
+extension TableBrowserInspectorTrailEntry: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserInspectorTrailEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserInspectorTrailEntry {
+        return
+            try TableBrowserInspectorTrailEntry(
+                label: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserInspectorTrailEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserInspectorTrailEntry_lift(_ buf: RustBuffer) throws -> TableBrowserInspectorTrailEntry {
+    return try FfiConverterTypeTableBrowserInspectorTrailEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserInspectorTrailEntry_lower(_ value: TableBrowserInspectorTrailEntry) -> RustBuffer {
+    return FfiConverterTypeTableBrowserInspectorTrailEntry.lower(value)
+}
+
+
+public struct TableBrowserNavigationMetrics {
+    public var selectedIndex: UInt64
+    public var totalItems: UInt64
+    public var viewportItems: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(selectedIndex: UInt64, totalItems: UInt64, viewportItems: UInt64) {
+        self.selectedIndex = selectedIndex
+        self.totalItems = totalItems
+        self.viewportItems = viewportItems
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserNavigationMetrics: Sendable {}
+#endif
+
+
+extension TableBrowserNavigationMetrics: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserNavigationMetrics, rhs: TableBrowserNavigationMetrics) -> Bool {
+        if lhs.selectedIndex != rhs.selectedIndex {
+            return false
+        }
+        if lhs.totalItems != rhs.totalItems {
+            return false
+        }
+        if lhs.viewportItems != rhs.viewportItems {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(selectedIndex)
+        hasher.combine(totalItems)
+        hasher.combine(viewportItems)
+    }
+}
+
+extension TableBrowserNavigationMetrics: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserNavigationMetrics: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserNavigationMetrics {
+        return
+            try TableBrowserNavigationMetrics(
+                selectedIndex: FfiConverterUInt64.read(from: &buf),
+                totalItems: FfiConverterUInt64.read(from: &buf),
+                viewportItems: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserNavigationMetrics, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.selectedIndex, into: &buf)
+        FfiConverterUInt64.write(value.totalItems, into: &buf)
+        FfiConverterUInt64.write(value.viewportItems, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserNavigationMetrics_lift(_ buf: RustBuffer) throws -> TableBrowserNavigationMetrics {
+    return try FfiConverterTypeTableBrowserNavigationMetrics.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserNavigationMetrics_lower(_ value: TableBrowserNavigationMetrics) -> RustBuffer {
+    return FfiConverterTypeTableBrowserNavigationMetrics.lower(value)
+}
+
+
+public struct TableBrowserParameters {
+    public var view: String
+    public var rowStart: UInt64
+    public var rowCount: UInt64
+    public var linkedTable: String?
+    public var bookmark: TableBrowserBookmark?
+    public var contentMode: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(view: String, rowStart: UInt64, rowCount: UInt64, linkedTable: String?, bookmark: TableBrowserBookmark?, contentMode: String) {
+        self.view = view
+        self.rowStart = rowStart
+        self.rowCount = rowCount
+        self.linkedTable = linkedTable
+        self.bookmark = bookmark
+        self.contentMode = contentMode
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserParameters: Sendable {}
+#endif
+
+
+extension TableBrowserParameters: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserParameters, rhs: TableBrowserParameters) -> Bool {
+        if lhs.view != rhs.view {
+            return false
+        }
+        if lhs.rowStart != rhs.rowStart {
+            return false
+        }
+        if lhs.rowCount != rhs.rowCount {
+            return false
+        }
+        if lhs.linkedTable != rhs.linkedTable {
+            return false
+        }
+        if lhs.bookmark != rhs.bookmark {
+            return false
+        }
+        if lhs.contentMode != rhs.contentMode {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(view)
+        hasher.combine(rowStart)
+        hasher.combine(rowCount)
+        hasher.combine(linkedTable)
+        hasher.combine(bookmark)
+        hasher.combine(contentMode)
+    }
+}
+
+extension TableBrowserParameters: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserParameters: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserParameters {
+        return
+            try TableBrowserParameters(
+                view: FfiConverterString.read(from: &buf),
+                rowStart: FfiConverterUInt64.read(from: &buf),
+                rowCount: FfiConverterUInt64.read(from: &buf),
+                linkedTable: FfiConverterOptionString.read(from: &buf),
+                bookmark: FfiConverterOptionTypeTableBrowserBookmark.read(from: &buf),
+                contentMode: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserParameters, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.view, into: &buf)
+        FfiConverterUInt64.write(value.rowStart, into: &buf)
+        FfiConverterUInt64.write(value.rowCount, into: &buf)
+        FfiConverterOptionString.write(value.linkedTable, into: &buf)
+        FfiConverterOptionTypeTableBrowserBookmark.write(value.bookmark, into: &buf)
+        FfiConverterString.write(value.contentMode, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserParameters_lift(_ buf: RustBuffer) throws -> TableBrowserParameters {
+    return try FfiConverterTypeTableBrowserParameters.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserParameters_lower(_ value: TableBrowserParameters) -> RustBuffer {
+    return FfiConverterTypeTableBrowserParameters.lower(value)
+}
+
+
+public struct TableBrowserRecordFieldSummary {
+    public var name: String
+    public var kind: String
+    public var summary: String
+    public var expandable: Bool
+    public var openable: Bool
+    public var selected: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, kind: String, summary: String, expandable: Bool, openable: Bool, selected: Bool) {
+        self.name = name
+        self.kind = kind
+        self.summary = summary
+        self.expandable = expandable
+        self.openable = openable
+        self.selected = selected
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserRecordFieldSummary: Sendable {}
+#endif
+
+
+extension TableBrowserRecordFieldSummary: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserRecordFieldSummary, rhs: TableBrowserRecordFieldSummary) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.summary != rhs.summary {
+            return false
+        }
+        if lhs.expandable != rhs.expandable {
+            return false
+        }
+        if lhs.openable != rhs.openable {
+            return false
+        }
+        if lhs.selected != rhs.selected {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(kind)
+        hasher.combine(summary)
+        hasher.combine(expandable)
+        hasher.combine(openable)
+        hasher.combine(selected)
+    }
+}
+
+extension TableBrowserRecordFieldSummary: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserRecordFieldSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserRecordFieldSummary {
+        return
+            try TableBrowserRecordFieldSummary(
+                name: FfiConverterString.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                expandable: FfiConverterBool.read(from: &buf),
+                openable: FfiConverterBool.read(from: &buf),
+                selected: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserRecordFieldSummary, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterBool.write(value.expandable, into: &buf)
+        FfiConverterBool.write(value.openable, into: &buf)
+        FfiConverterBool.write(value.selected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserRecordFieldSummary_lift(_ buf: RustBuffer) throws -> TableBrowserRecordFieldSummary {
+    return try FfiConverterTypeTableBrowserRecordFieldSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserRecordFieldSummary_lower(_ value: TableBrowserRecordFieldSummary) -> RustBuffer {
+    return FfiConverterTypeTableBrowserRecordFieldSummary.lower(value)
+}
+
+
+public struct TableBrowserSelectedAddress {
+    public var kind: String
+    public var tablePath: String
+    public var row: UInt64?
+    public var column: String?
+    public var keywordPath: [String]
+    public var valuePath: [TableBrowserValuePathSegment]
+    public var source: String?
+    public var targetPath: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: String, tablePath: String, row: UInt64?, column: String?, keywordPath: [String], valuePath: [TableBrowserValuePathSegment], source: String?, targetPath: String?) {
+        self.kind = kind
+        self.tablePath = tablePath
+        self.row = row
+        self.column = column
+        self.keywordPath = keywordPath
+        self.valuePath = valuePath
+        self.source = source
+        self.targetPath = targetPath
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserSelectedAddress: Sendable {}
+#endif
+
+
+extension TableBrowserSelectedAddress: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserSelectedAddress, rhs: TableBrowserSelectedAddress) -> Bool {
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.tablePath != rhs.tablePath {
+            return false
+        }
+        if lhs.row != rhs.row {
+            return false
+        }
+        if lhs.column != rhs.column {
+            return false
+        }
+        if lhs.keywordPath != rhs.keywordPath {
+            return false
+        }
+        if lhs.valuePath != rhs.valuePath {
+            return false
+        }
+        if lhs.source != rhs.source {
+            return false
+        }
+        if lhs.targetPath != rhs.targetPath {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(tablePath)
+        hasher.combine(row)
+        hasher.combine(column)
+        hasher.combine(keywordPath)
+        hasher.combine(valuePath)
+        hasher.combine(source)
+        hasher.combine(targetPath)
+    }
+}
+
+extension TableBrowserSelectedAddress: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserSelectedAddress: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserSelectedAddress {
+        return
+            try TableBrowserSelectedAddress(
+                kind: FfiConverterString.read(from: &buf),
+                tablePath: FfiConverterString.read(from: &buf),
+                row: FfiConverterOptionUInt64.read(from: &buf),
+                column: FfiConverterOptionString.read(from: &buf),
+                keywordPath: FfiConverterSequenceString.read(from: &buf),
+                valuePath: FfiConverterSequenceTypeTableBrowserValuePathSegment.read(from: &buf),
+                source: FfiConverterOptionString.read(from: &buf),
+                targetPath: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserSelectedAddress, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.tablePath, into: &buf)
+        FfiConverterOptionUInt64.write(value.row, into: &buf)
+        FfiConverterOptionString.write(value.column, into: &buf)
+        FfiConverterSequenceString.write(value.keywordPath, into: &buf)
+        FfiConverterSequenceTypeTableBrowserValuePathSegment.write(value.valuePath, into: &buf)
+        FfiConverterOptionString.write(value.source, into: &buf)
+        FfiConverterOptionString.write(value.targetPath, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserSelectedAddress_lift(_ buf: RustBuffer) throws -> TableBrowserSelectedAddress {
+    return try FfiConverterTypeTableBrowserSelectedAddress.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserSelectedAddress_lower(_ value: TableBrowserSelectedAddress) -> RustBuffer {
+    return FfiConverterTypeTableBrowserSelectedAddress.lower(value)
+}
+
+
+public struct TableBrowserSnapshot {
+    public var capabilities: TableBrowserCapabilities
+    public var view: String
+    public var focus: String
+    public var tablePath: String
+    public var breadcrumb: [TableBrowserBreadcrumb]
+    public var viewport: TableBrowserViewport
+    public var statusLine: String
+    public var contentLines: [String]
+    public var verticalMetrics: TableBrowserNavigationMetrics?
+    public var horizontalMetrics: TableBrowserNavigationMetrics?
+    public var selectedAddress: TableBrowserSelectedAddress?
+    public var inspector: TableBrowserInspector?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(capabilities: TableBrowserCapabilities, view: String, focus: String, tablePath: String, breadcrumb: [TableBrowserBreadcrumb], viewport: TableBrowserViewport, statusLine: String, contentLines: [String], verticalMetrics: TableBrowserNavigationMetrics?, horizontalMetrics: TableBrowserNavigationMetrics?, selectedAddress: TableBrowserSelectedAddress?, inspector: TableBrowserInspector?) {
+        self.capabilities = capabilities
+        self.view = view
+        self.focus = focus
+        self.tablePath = tablePath
+        self.breadcrumb = breadcrumb
+        self.viewport = viewport
+        self.statusLine = statusLine
+        self.contentLines = contentLines
+        self.verticalMetrics = verticalMetrics
+        self.horizontalMetrics = horizontalMetrics
+        self.selectedAddress = selectedAddress
+        self.inspector = inspector
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserSnapshot: Sendable {}
+#endif
+
+
+extension TableBrowserSnapshot: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserSnapshot, rhs: TableBrowserSnapshot) -> Bool {
+        if lhs.capabilities != rhs.capabilities {
+            return false
+        }
+        if lhs.view != rhs.view {
+            return false
+        }
+        if lhs.focus != rhs.focus {
+            return false
+        }
+        if lhs.tablePath != rhs.tablePath {
+            return false
+        }
+        if lhs.breadcrumb != rhs.breadcrumb {
+            return false
+        }
+        if lhs.viewport != rhs.viewport {
+            return false
+        }
+        if lhs.statusLine != rhs.statusLine {
+            return false
+        }
+        if lhs.contentLines != rhs.contentLines {
+            return false
+        }
+        if lhs.verticalMetrics != rhs.verticalMetrics {
+            return false
+        }
+        if lhs.horizontalMetrics != rhs.horizontalMetrics {
+            return false
+        }
+        if lhs.selectedAddress != rhs.selectedAddress {
+            return false
+        }
+        if lhs.inspector != rhs.inspector {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(capabilities)
+        hasher.combine(view)
+        hasher.combine(focus)
+        hasher.combine(tablePath)
+        hasher.combine(breadcrumb)
+        hasher.combine(viewport)
+        hasher.combine(statusLine)
+        hasher.combine(contentLines)
+        hasher.combine(verticalMetrics)
+        hasher.combine(horizontalMetrics)
+        hasher.combine(selectedAddress)
+        hasher.combine(inspector)
+    }
+}
+
+extension TableBrowserSnapshot: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserSnapshot {
+        return
+            try TableBrowserSnapshot(
+                capabilities: FfiConverterTypeTableBrowserCapabilities.read(from: &buf),
+                view: FfiConverterString.read(from: &buf),
+                focus: FfiConverterString.read(from: &buf),
+                tablePath: FfiConverterString.read(from: &buf),
+                breadcrumb: FfiConverterSequenceTypeTableBrowserBreadcrumb.read(from: &buf),
+                viewport: FfiConverterTypeTableBrowserViewport.read(from: &buf),
+                statusLine: FfiConverterString.read(from: &buf),
+                contentLines: FfiConverterSequenceString.read(from: &buf),
+                verticalMetrics: FfiConverterOptionTypeTableBrowserNavigationMetrics.read(from: &buf),
+                horizontalMetrics: FfiConverterOptionTypeTableBrowserNavigationMetrics.read(from: &buf),
+                selectedAddress: FfiConverterOptionTypeTableBrowserSelectedAddress.read(from: &buf),
+                inspector: FfiConverterOptionTypeTableBrowserInspector.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserSnapshot, into buf: inout [UInt8]) {
+        FfiConverterTypeTableBrowserCapabilities.write(value.capabilities, into: &buf)
+        FfiConverterString.write(value.view, into: &buf)
+        FfiConverterString.write(value.focus, into: &buf)
+        FfiConverterString.write(value.tablePath, into: &buf)
+        FfiConverterSequenceTypeTableBrowserBreadcrumb.write(value.breadcrumb, into: &buf)
+        FfiConverterTypeTableBrowserViewport.write(value.viewport, into: &buf)
+        FfiConverterString.write(value.statusLine, into: &buf)
+        FfiConverterSequenceString.write(value.contentLines, into: &buf)
+        FfiConverterOptionTypeTableBrowserNavigationMetrics.write(value.verticalMetrics, into: &buf)
+        FfiConverterOptionTypeTableBrowserNavigationMetrics.write(value.horizontalMetrics, into: &buf)
+        FfiConverterOptionTypeTableBrowserSelectedAddress.write(value.selectedAddress, into: &buf)
+        FfiConverterOptionTypeTableBrowserInspector.write(value.inspector, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserSnapshot_lift(_ buf: RustBuffer) throws -> TableBrowserSnapshot {
+    return try FfiConverterTypeTableBrowserSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserSnapshot_lower(_ value: TableBrowserSnapshot) -> RustBuffer {
+    return FfiConverterTypeTableBrowserSnapshot.lower(value)
+}
+
+
+public struct TableBrowserSnapshotRequest {
+    public var datasetPath: String
+    public var width: UInt16
+    public var height: UInt16
+    public var inspectorHeight: UInt16
+    public var selectedView: String
+    public var focus: String
+    public var commands: [TableBrowserCommand]
+    public var transientCommands: [TableBrowserCommand]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(datasetPath: String, width: UInt16, height: UInt16, inspectorHeight: UInt16, selectedView: String, focus: String, commands: [TableBrowserCommand], transientCommands: [TableBrowserCommand]) {
+        self.datasetPath = datasetPath
+        self.width = width
+        self.height = height
+        self.inspectorHeight = inspectorHeight
+        self.selectedView = selectedView
+        self.focus = focus
+        self.commands = commands
+        self.transientCommands = transientCommands
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserSnapshotRequest: Sendable {}
+#endif
+
+
+extension TableBrowserSnapshotRequest: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserSnapshotRequest, rhs: TableBrowserSnapshotRequest) -> Bool {
+        if lhs.datasetPath != rhs.datasetPath {
+            return false
+        }
+        if lhs.width != rhs.width {
+            return false
+        }
+        if lhs.height != rhs.height {
+            return false
+        }
+        if lhs.inspectorHeight != rhs.inspectorHeight {
+            return false
+        }
+        if lhs.selectedView != rhs.selectedView {
+            return false
+        }
+        if lhs.focus != rhs.focus {
+            return false
+        }
+        if lhs.commands != rhs.commands {
+            return false
+        }
+        if lhs.transientCommands != rhs.transientCommands {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(datasetPath)
+        hasher.combine(width)
+        hasher.combine(height)
+        hasher.combine(inspectorHeight)
+        hasher.combine(selectedView)
+        hasher.combine(focus)
+        hasher.combine(commands)
+        hasher.combine(transientCommands)
+    }
+}
+
+extension TableBrowserSnapshotRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserSnapshotRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserSnapshotRequest {
+        return
+            try TableBrowserSnapshotRequest(
+                datasetPath: FfiConverterString.read(from: &buf),
+                width: FfiConverterUInt16.read(from: &buf),
+                height: FfiConverterUInt16.read(from: &buf),
+                inspectorHeight: FfiConverterUInt16.read(from: &buf),
+                selectedView: FfiConverterString.read(from: &buf),
+                focus: FfiConverterString.read(from: &buf),
+                commands: FfiConverterSequenceTypeTableBrowserCommand.read(from: &buf),
+                transientCommands: FfiConverterSequenceTypeTableBrowserCommand.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserSnapshotRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.datasetPath, into: &buf)
+        FfiConverterUInt16.write(value.width, into: &buf)
+        FfiConverterUInt16.write(value.height, into: &buf)
+        FfiConverterUInt16.write(value.inspectorHeight, into: &buf)
+        FfiConverterString.write(value.selectedView, into: &buf)
+        FfiConverterString.write(value.focus, into: &buf)
+        FfiConverterSequenceTypeTableBrowserCommand.write(value.commands, into: &buf)
+        FfiConverterSequenceTypeTableBrowserCommand.write(value.transientCommands, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserSnapshotRequest_lift(_ buf: RustBuffer) throws -> TableBrowserSnapshotRequest {
+    return try FfiConverterTypeTableBrowserSnapshotRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserSnapshotRequest_lower(_ value: TableBrowserSnapshotRequest) -> RustBuffer {
+    return FfiConverterTypeTableBrowserSnapshotRequest.lower(value)
+}
+
+
+public struct TableBrowserValuePathSegment {
+    public var segment: String
+    public var name: String?
+    public var flatIndex: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(segment: String, name: String?, flatIndex: UInt64?) {
+        self.segment = segment
+        self.name = name
+        self.flatIndex = flatIndex
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserValuePathSegment: Sendable {}
+#endif
+
+
+extension TableBrowserValuePathSegment: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserValuePathSegment, rhs: TableBrowserValuePathSegment) -> Bool {
+        if lhs.segment != rhs.segment {
+            return false
+        }
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.flatIndex != rhs.flatIndex {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(segment)
+        hasher.combine(name)
+        hasher.combine(flatIndex)
+    }
+}
+
+extension TableBrowserValuePathSegment: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserValuePathSegment: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserValuePathSegment {
+        return
+            try TableBrowserValuePathSegment(
+                segment: FfiConverterString.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                flatIndex: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserValuePathSegment, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.segment, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionUInt64.write(value.flatIndex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserValuePathSegment_lift(_ buf: RustBuffer) throws -> TableBrowserValuePathSegment {
+    return try FfiConverterTypeTableBrowserValuePathSegment.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserValuePathSegment_lower(_ value: TableBrowserValuePathSegment) -> RustBuffer {
+    return FfiConverterTypeTableBrowserValuePathSegment.lower(value)
+}
+
+
+public struct TableBrowserViewport {
+    public var width: UInt16
+    public var height: UInt16
+    public var inspectorHeight: UInt16
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(width: UInt16, height: UInt16, inspectorHeight: UInt16) {
+        self.width = width
+        self.height = height
+        self.inspectorHeight = inspectorHeight
+    }
+}
+
+#if compiler(>=6)
+extension TableBrowserViewport: Sendable {}
+#endif
+
+
+extension TableBrowserViewport: Equatable, Hashable {
+    public static func ==(lhs: TableBrowserViewport, rhs: TableBrowserViewport) -> Bool {
+        if lhs.width != rhs.width {
+            return false
+        }
+        if lhs.height != rhs.height {
+            return false
+        }
+        if lhs.inspectorHeight != rhs.inspectorHeight {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(width)
+        hasher.combine(height)
+        hasher.combine(inspectorHeight)
+    }
+}
+
+extension TableBrowserViewport: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserViewport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserViewport {
+        return
+            try TableBrowserViewport(
+                width: FfiConverterUInt16.read(from: &buf),
+                height: FfiConverterUInt16.read(from: &buf),
+                inspectorHeight: FfiConverterUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableBrowserViewport, into buf: inout [UInt8]) {
+        FfiConverterUInt16.write(value.width, into: &buf)
+        FfiConverterUInt16.write(value.height, into: &buf)
+        FfiConverterUInt16.write(value.inspectorHeight, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserViewport_lift(_ buf: RustBuffer) throws -> TableBrowserViewport {
+    return try FfiConverterTypeTableBrowserViewport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserViewport_lower(_ value: TableBrowserViewport) -> RustBuffer {
+    return FfiConverterTypeTableBrowserViewport.lower(value)
+}
+
+
 public struct TaskCompletionProduct {
     public var id: String
     public var role: TaskProductRole
@@ -13457,6 +15305,509 @@ extension SurfaceRunSafetyClass: CaseIterable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum TableBrowserBookmark {
+
+    case cell(row: UInt64, column: String
+    )
+    case tableKeyword(path: [String]
+    )
+    case columnKeyword(column: String, path: [String]
+    )
+    case subtable(name: String
+    )
+}
+
+
+#if compiler(>=6)
+extension TableBrowserBookmark: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserBookmark: FfiConverterRustBuffer {
+    typealias SwiftType = TableBrowserBookmark
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserBookmark {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .cell(row: try FfiConverterUInt64.read(from: &buf), column: try FfiConverterString.read(from: &buf)
+        )
+
+        case 2: return .tableKeyword(path: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 3: return .columnKeyword(column: try FfiConverterString.read(from: &buf), path: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 4: return .subtable(name: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TableBrowserBookmark, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .cell(row,column):
+            writeInt(&buf, Int32(1))
+            FfiConverterUInt64.write(row, into: &buf)
+            FfiConverterString.write(column, into: &buf)
+
+
+        case let .tableKeyword(path):
+            writeInt(&buf, Int32(2))
+            FfiConverterSequenceString.write(path, into: &buf)
+
+
+        case let .columnKeyword(column,path):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(column, into: &buf)
+            FfiConverterSequenceString.write(path, into: &buf)
+
+
+        case let .subtable(name):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(name, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserBookmark_lift(_ buf: RustBuffer) throws -> TableBrowserBookmark {
+    return try FfiConverterTypeTableBrowserBookmark.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserBookmark_lower(_ value: TableBrowserBookmark) -> RustBuffer {
+    return FfiConverterTypeTableBrowserBookmark.lower(value)
+}
+
+
+extension TableBrowserBookmark: Equatable, Hashable {}
+
+extension TableBrowserBookmark: Codable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum TableBrowserCommand {
+
+    case configure(parameters: TableBrowserParameters
+    )
+    case setFocus(focus: String
+    )
+    case cycleView(forward: Bool
+    )
+    case moveUp(steps: UInt64
+    )
+    case moveDown(steps: UInt64
+    )
+    case moveLeft(steps: UInt64
+    )
+    case moveRight(steps: UInt64
+    )
+    case pageUp(pages: UInt64
+    )
+    case pageDown(pages: UInt64
+    )
+    case activate
+    case back
+    case escape
+}
+
+
+#if compiler(>=6)
+extension TableBrowserCommand: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserCommand: FfiConverterRustBuffer {
+    typealias SwiftType = TableBrowserCommand
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserCommand {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .configure(parameters: try FfiConverterTypeTableBrowserParameters.read(from: &buf)
+        )
+
+        case 2: return .setFocus(focus: try FfiConverterString.read(from: &buf)
+        )
+
+        case 3: return .cycleView(forward: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 4: return .moveUp(steps: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 5: return .moveDown(steps: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 6: return .moveLeft(steps: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 7: return .moveRight(steps: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 8: return .pageUp(pages: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 9: return .pageDown(pages: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 10: return .activate
+
+        case 11: return .back
+
+        case 12: return .escape
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TableBrowserCommand, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .configure(parameters):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeTableBrowserParameters.write(parameters, into: &buf)
+
+
+        case let .setFocus(focus):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(focus, into: &buf)
+
+
+        case let .cycleView(forward):
+            writeInt(&buf, Int32(3))
+            FfiConverterBool.write(forward, into: &buf)
+
+
+        case let .moveUp(steps):
+            writeInt(&buf, Int32(4))
+            FfiConverterUInt64.write(steps, into: &buf)
+
+
+        case let .moveDown(steps):
+            writeInt(&buf, Int32(5))
+            FfiConverterUInt64.write(steps, into: &buf)
+
+
+        case let .moveLeft(steps):
+            writeInt(&buf, Int32(6))
+            FfiConverterUInt64.write(steps, into: &buf)
+
+
+        case let .moveRight(steps):
+            writeInt(&buf, Int32(7))
+            FfiConverterUInt64.write(steps, into: &buf)
+
+
+        case let .pageUp(pages):
+            writeInt(&buf, Int32(8))
+            FfiConverterUInt64.write(pages, into: &buf)
+
+
+        case let .pageDown(pages):
+            writeInt(&buf, Int32(9))
+            FfiConverterUInt64.write(pages, into: &buf)
+
+
+        case .activate:
+            writeInt(&buf, Int32(10))
+
+
+        case .back:
+            writeInt(&buf, Int32(11))
+
+
+        case .escape:
+            writeInt(&buf, Int32(12))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCommand_lift(_ buf: RustBuffer) throws -> TableBrowserCommand {
+    return try FfiConverterTypeTableBrowserCommand.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserCommand_lower(_ value: TableBrowserCommand) -> RustBuffer {
+    return FfiConverterTypeTableBrowserCommand.lower(value)
+}
+
+
+extension TableBrowserCommand: Equatable, Hashable {}
+
+extension TableBrowserCommand: Codable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum TableBrowserScalarValue {
+
+    case bool(value: Bool
+    )
+    case int(value: Int64
+    )
+    case uint(value: UInt64
+    )
+    case float(value: Double
+    )
+    case complex(re: Double, im: Double
+    )
+    case string(value: String
+    )
+}
+
+
+#if compiler(>=6)
+extension TableBrowserScalarValue: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserScalarValue: FfiConverterRustBuffer {
+    typealias SwiftType = TableBrowserScalarValue
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserScalarValue {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .bool(value: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 2: return .int(value: try FfiConverterInt64.read(from: &buf)
+        )
+
+        case 3: return .uint(value: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 4: return .float(value: try FfiConverterDouble.read(from: &buf)
+        )
+
+        case 5: return .complex(re: try FfiConverterDouble.read(from: &buf), im: try FfiConverterDouble.read(from: &buf)
+        )
+
+        case 6: return .string(value: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TableBrowserScalarValue, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .bool(value):
+            writeInt(&buf, Int32(1))
+            FfiConverterBool.write(value, into: &buf)
+
+
+        case let .int(value):
+            writeInt(&buf, Int32(2))
+            FfiConverterInt64.write(value, into: &buf)
+
+
+        case let .uint(value):
+            writeInt(&buf, Int32(3))
+            FfiConverterUInt64.write(value, into: &buf)
+
+
+        case let .float(value):
+            writeInt(&buf, Int32(4))
+            FfiConverterDouble.write(value, into: &buf)
+
+
+        case let .complex(re,im):
+            writeInt(&buf, Int32(5))
+            FfiConverterDouble.write(re, into: &buf)
+            FfiConverterDouble.write(im, into: &buf)
+
+
+        case let .string(value):
+            writeInt(&buf, Int32(6))
+            FfiConverterString.write(value, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserScalarValue_lift(_ buf: RustBuffer) throws -> TableBrowserScalarValue {
+    return try FfiConverterTypeTableBrowserScalarValue.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserScalarValue_lower(_ value: TableBrowserScalarValue) -> RustBuffer {
+    return FfiConverterTypeTableBrowserScalarValue.lower(value)
+}
+
+
+extension TableBrowserScalarValue: Equatable, Hashable {}
+
+extension TableBrowserScalarValue: Codable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum TableBrowserValueNode {
+
+    case undefined
+    case scalar(value: TableBrowserScalarValue
+    )
+    case array(primitive: String, shape: [UInt64], totalElements: UInt64, pageStart: UInt64, pageSize: UInt64, elements: [TableBrowserArrayElement]
+    )
+    case record(totalFields: UInt64, pageStart: UInt64, pageSize: UInt64, fields: [TableBrowserRecordFieldSummary]
+    )
+    case tableRef(path: String, resolvedPath: String, openable: Bool
+    )
+}
+
+
+#if compiler(>=6)
+extension TableBrowserValueNode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableBrowserValueNode: FfiConverterRustBuffer {
+    typealias SwiftType = TableBrowserValueNode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableBrowserValueNode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .undefined
+
+        case 2: return .scalar(value: try FfiConverterTypeTableBrowserScalarValue.read(from: &buf)
+        )
+
+        case 3: return .array(primitive: try FfiConverterString.read(from: &buf), shape: try FfiConverterSequenceUInt64.read(from: &buf), totalElements: try FfiConverterUInt64.read(from: &buf), pageStart: try FfiConverterUInt64.read(from: &buf), pageSize: try FfiConverterUInt64.read(from: &buf), elements: try FfiConverterSequenceTypeTableBrowserArrayElement.read(from: &buf)
+        )
+
+        case 4: return .record(totalFields: try FfiConverterUInt64.read(from: &buf), pageStart: try FfiConverterUInt64.read(from: &buf), pageSize: try FfiConverterUInt64.read(from: &buf), fields: try FfiConverterSequenceTypeTableBrowserRecordFieldSummary.read(from: &buf)
+        )
+
+        case 5: return .tableRef(path: try FfiConverterString.read(from: &buf), resolvedPath: try FfiConverterString.read(from: &buf), openable: try FfiConverterBool.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TableBrowserValueNode, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .undefined:
+            writeInt(&buf, Int32(1))
+
+
+        case let .scalar(value):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeTableBrowserScalarValue.write(value, into: &buf)
+
+
+        case let .array(primitive,shape,totalElements,pageStart,pageSize,elements):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(primitive, into: &buf)
+            FfiConverterSequenceUInt64.write(shape, into: &buf)
+            FfiConverterUInt64.write(totalElements, into: &buf)
+            FfiConverterUInt64.write(pageStart, into: &buf)
+            FfiConverterUInt64.write(pageSize, into: &buf)
+            FfiConverterSequenceTypeTableBrowserArrayElement.write(elements, into: &buf)
+
+
+        case let .record(totalFields,pageStart,pageSize,fields):
+            writeInt(&buf, Int32(4))
+            FfiConverterUInt64.write(totalFields, into: &buf)
+            FfiConverterUInt64.write(pageStart, into: &buf)
+            FfiConverterUInt64.write(pageSize, into: &buf)
+            FfiConverterSequenceTypeTableBrowserRecordFieldSummary.write(fields, into: &buf)
+
+
+        case let .tableRef(path,resolvedPath,openable):
+            writeInt(&buf, Int32(5))
+            FfiConverterString.write(path, into: &buf)
+            FfiConverterString.write(resolvedPath, into: &buf)
+            FfiConverterBool.write(openable, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserValueNode_lift(_ buf: RustBuffer) throws -> TableBrowserValueNode {
+    return try FfiConverterTypeTableBrowserValueNode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableBrowserValueNode_lower(_ value: TableBrowserValueNode) -> RustBuffer {
+    return FfiConverterTypeTableBrowserValueNode.lower(value)
+}
+
+
+extension TableBrowserValueNode: Equatable, Hashable {}
+
+extension TableBrowserValueNode: Codable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum TaskProductKind {
 
     case measurementSet
@@ -14113,6 +16464,78 @@ fileprivate struct FfiConverterOptionTypeSurfaceParameterSnapshot: FfiConverterR
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeTableBrowserInspector: FfiConverterRustBuffer {
+    typealias SwiftType = TableBrowserInspector?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTableBrowserInspector.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTableBrowserInspector.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeTableBrowserNavigationMetrics: FfiConverterRustBuffer {
+    typealias SwiftType = TableBrowserNavigationMetrics?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTableBrowserNavigationMetrics.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTableBrowserNavigationMetrics.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeTableBrowserSelectedAddress: FfiConverterRustBuffer {
+    typealias SwiftType = TableBrowserSelectedAddress?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTableBrowserSelectedAddress.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTableBrowserSelectedAddress.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeTaskUIManagedOutput: FfiConverterRustBuffer {
     typealias SwiftType = TaskUiManagedOutput?
 
@@ -14201,6 +16624,30 @@ fileprivate struct FfiConverterOptionTypeSurfaceParameterValue: FfiConverterRust
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeSurfaceParameterValue.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeTableBrowserBookmark: FfiConverterRustBuffer {
+    typealias SwiftType = TableBrowserBookmark?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTableBrowserBookmark.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTableBrowserBookmark.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -15107,6 +17554,231 @@ fileprivate struct FfiConverterSequenceTypeSurfaceParameterTypeField: FfiConvert
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeTableBrowserArrayElement: FfiConverterRustBuffer {
+    typealias SwiftType = [TableBrowserArrayElement]
+
+    public static func write(_ value: [TableBrowserArrayElement], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableBrowserArrayElement.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableBrowserArrayElement] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableBrowserArrayElement]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableBrowserArrayElement.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTableBrowserBreadcrumb: FfiConverterRustBuffer {
+    typealias SwiftType = [TableBrowserBreadcrumb]
+
+    public static func write(_ value: [TableBrowserBreadcrumb], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableBrowserBreadcrumb.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableBrowserBreadcrumb] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableBrowserBreadcrumb]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableBrowserBreadcrumb.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTableBrowserCellWindowCell: FfiConverterRustBuffer {
+    typealias SwiftType = [TableBrowserCellWindowCell]
+
+    public static func write(_ value: [TableBrowserCellWindowCell], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableBrowserCellWindowCell.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableBrowserCellWindowCell] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableBrowserCellWindowCell]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableBrowserCellWindowCell.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTableBrowserCellWindowColumn: FfiConverterRustBuffer {
+    typealias SwiftType = [TableBrowserCellWindowColumn]
+
+    public static func write(_ value: [TableBrowserCellWindowColumn], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableBrowserCellWindowColumn.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableBrowserCellWindowColumn] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableBrowserCellWindowColumn]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableBrowserCellWindowColumn.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTableBrowserCellWindowRow: FfiConverterRustBuffer {
+    typealias SwiftType = [TableBrowserCellWindowRow]
+
+    public static func write(_ value: [TableBrowserCellWindowRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableBrowserCellWindowRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableBrowserCellWindowRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableBrowserCellWindowRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableBrowserCellWindowRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTableBrowserColumnDisplayOption: FfiConverterRustBuffer {
+    typealias SwiftType = [TableBrowserColumnDisplayOption]
+
+    public static func write(_ value: [TableBrowserColumnDisplayOption], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableBrowserColumnDisplayOption.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableBrowserColumnDisplayOption] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableBrowserColumnDisplayOption]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableBrowserColumnDisplayOption.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTableBrowserInspectorTrailEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [TableBrowserInspectorTrailEntry]
+
+    public static func write(_ value: [TableBrowserInspectorTrailEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableBrowserInspectorTrailEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableBrowserInspectorTrailEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableBrowserInspectorTrailEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableBrowserInspectorTrailEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTableBrowserRecordFieldSummary: FfiConverterRustBuffer {
+    typealias SwiftType = [TableBrowserRecordFieldSummary]
+
+    public static func write(_ value: [TableBrowserRecordFieldSummary], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableBrowserRecordFieldSummary.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableBrowserRecordFieldSummary] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableBrowserRecordFieldSummary]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableBrowserRecordFieldSummary.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTableBrowserValuePathSegment: FfiConverterRustBuffer {
+    typealias SwiftType = [TableBrowserValuePathSegment]
+
+    public static func write(_ value: [TableBrowserValuePathSegment], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableBrowserValuePathSegment.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableBrowserValuePathSegment] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableBrowserValuePathSegment]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableBrowserValuePathSegment.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeTaskCompletionProduct: FfiConverterRustBuffer {
     typealias SwiftType = [TaskCompletionProduct]
 
@@ -15324,6 +17996,31 @@ fileprivate struct FfiConverterSequenceTypeSurfaceRunSafetyClass: FfiConverterRu
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeSurfaceRunSafetyClass.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTableBrowserCommand: FfiConverterRustBuffer {
+    typealias SwiftType = [TableBrowserCommand]
+
+    public static func write(_ value: [TableBrowserCommand], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableBrowserCommand.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableBrowserCommand] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableBrowserCommand]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableBrowserCommand.read(from: &buf))
         }
         return seq
     }
@@ -15557,35 +18254,24 @@ public func buildMeasurementSetSummary(request: MeasurementSetSummaryRequest)thr
     )
 })
 }
-public func buildTableBrowserCellValueJson(requestJson: String)throws  -> String  {
+public func buildTableBrowserCellValue(request: TableBrowserCellValueRequest)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_build_table_browser_cell_value_json(
-        FfiConverterString.lower(requestJson),$0
+    uniffi_casars_frontend_services_fn_func_build_table_browser_cell_value(
+        FfiConverterTypeTableBrowserCellValueRequest_lower(request),$0
     )
 })
 }
-public func buildTableBrowserCellWindowJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_build_table_browser_cell_window_json(
-        FfiConverterString.lower(requestJson),$0
+public func buildTableBrowserCellWindow(request: TableBrowserCellWindowRequest)throws  -> TableBrowserCellWindowSnapshot  {
+    return try  FfiConverterTypeTableBrowserCellWindowSnapshot_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_build_table_browser_cell_window(
+        FfiConverterTypeTableBrowserCellWindowRequest_lower(request),$0
     )
 })
 }
-public func buildTableBrowserSnapshotFromRequestJson(requestJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_build_table_browser_snapshot_from_request_json(
-        FfiConverterString.lower(requestJson),$0
-    )
-})
-}
-public func buildTableBrowserSnapshotJson(datasetPath: String, width: UInt16, height: UInt16, inspectorHeight: UInt16, view: String?)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
-    uniffi_casars_frontend_services_fn_func_build_table_browser_snapshot_json(
-        FfiConverterString.lower(datasetPath),
-        FfiConverterUInt16.lower(width),
-        FfiConverterUInt16.lower(height),
-        FfiConverterUInt16.lower(inspectorHeight),
-        FfiConverterOptionString.lower(view),$0
+public func buildTableBrowserSnapshot(request: TableBrowserSnapshotRequest)throws  -> TableBrowserSnapshot  {
+    return try  FfiConverterTypeTableBrowserSnapshot_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_build_table_browser_snapshot(
+        FfiConverterTypeTableBrowserSnapshotRequest_lower(request),$0
     )
 })
 }
@@ -15998,16 +18684,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_build_measurement_set_summary() != 55295) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_build_table_browser_cell_value_json() != 53999) {
+    if (uniffi_casars_frontend_services_checksum_func_build_table_browser_cell_value() != 34874) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_build_table_browser_cell_window_json() != 22457) {
+    if (uniffi_casars_frontend_services_checksum_func_build_table_browser_cell_window() != 3751) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_build_table_browser_snapshot_from_request_json() != 44113) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_casars_frontend_services_checksum_func_build_table_browser_snapshot_json() != 45866) {
+    if (uniffi_casars_frontend_services_checksum_func_build_table_browser_snapshot() != 14034) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_notebook_begin_recording() != 45172) {

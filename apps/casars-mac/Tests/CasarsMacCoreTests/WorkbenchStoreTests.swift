@@ -2298,9 +2298,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(parameters.linkedTable, "ANTENNA")
         XCTAssertEqual(parameters.bookmark, .tableKeyword(path: ["OBSERVATION", "TIME_RANGE"]))
         XCTAssertEqual(parameters.contentMode, "detailed")
-        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any]
-        let commands = try XCTUnwrap(encoded?["commands"] as? [[String: Any]])
-        XCTAssertEqual(commands.first?["command"] as? String, "configure")
+        XCTAssertEqual(request.commands, [.configure(parameters: parameters)])
     }
 
     func testMeasurementSetExplorerUsesCanonicalMsexploreDraft() throws {
@@ -4041,7 +4039,7 @@ final class WorkbenchStoreTests: XCTestCase {
         )
         var snapshot = makeTableBrowserSnapshot(path: msDataset.path)
         snapshot.view = "subtables"
-        snapshot.selectedAddress = TableBrowserSnapshot.SelectedAddress(
+        snapshot.selectedAddress = tableBrowserSelectedAddress(
             kind: "subtable",
             tablePath: msDataset.path,
             row: nil,
@@ -6002,20 +6000,20 @@ private final class StubTableBrowserClient: TableBrowserClient {
         var viewIndex = views.firstIndex(of: request.selectedView) ?? 0
         var row = 0
         var column = "DATA"
-        var configuredAddress: TableBrowserSnapshot.SelectedAddress?
+        var configuredAddress: TableBrowserSelectedAddress?
         for command in request.commands {
             switch command {
             case .configure(let parameters):
                 viewIndex = views.firstIndex(of: parameters.view) ?? 0
-                row = parameters.rowStart
+                row = Int(parameters.rowStart)
                 if let linkedTable = parameters.linkedTable {
                     nextSnapshot.tablePath = "\(request.datasetPath)/\(linkedTable)"
                 }
                 switch parameters.bookmark {
                 case .cell(let bookmarkRow, let bookmarkColumn):
-                    row = bookmarkRow
+                    row = Int(bookmarkRow)
                     column = bookmarkColumn
-                    configuredAddress = TableBrowserSnapshot.SelectedAddress(
+                    configuredAddress = tableBrowserSelectedAddress(
                         kind: "cell",
                         tablePath: nextSnapshot.tablePath,
                         row: bookmarkRow,
@@ -6026,7 +6024,7 @@ private final class StubTableBrowserClient: TableBrowserClient {
                         targetPath: nil
                     )
                 case .tableKeyword(let path):
-                    configuredAddress = TableBrowserSnapshot.SelectedAddress(
+                    configuredAddress = tableBrowserSelectedAddress(
                         kind: "table_keyword",
                         tablePath: nextSnapshot.tablePath,
                         row: nil,
@@ -6037,7 +6035,7 @@ private final class StubTableBrowserClient: TableBrowserClient {
                         targetPath: nil
                     )
                 case .columnKeyword(let owner, let path):
-                    configuredAddress = TableBrowserSnapshot.SelectedAddress(
+                    configuredAddress = tableBrowserSelectedAddress(
                         kind: "column_keyword",
                         tablePath: nextSnapshot.tablePath,
                         row: nil,
@@ -6048,7 +6046,7 @@ private final class StubTableBrowserClient: TableBrowserClient {
                         targetPath: nil
                     )
                 case .subtable(let name):
-                    configuredAddress = TableBrowserSnapshot.SelectedAddress(
+                    configuredAddress = tableBrowserSelectedAddress(
                         kind: "subtable",
                         tablePath: nextSnapshot.tablePath,
                         row: nil,
@@ -6064,8 +6062,8 @@ private final class StubTableBrowserClient: TableBrowserClient {
             case .cycleView(let forward):
                 viewIndex = (viewIndex + (forward ? 1 : views.count - 1)) % views.count
                 row = 0
-            case .moveDown(let steps): row += steps
-            case .moveUp(let steps): row = max(0, row - steps)
+            case .moveDown(let steps): row += Int(steps)
+            case .moveUp(let steps): row = max(0, row - Int(steps))
             case .moveRight: column = "DATA"
             case .moveLeft: column = "TIME"
             case .activate:
@@ -6082,10 +6080,10 @@ private final class StubTableBrowserClient: TableBrowserClient {
         } else {
             switch nextSnapshot.view {
         case "cells":
-            nextSnapshot.selectedAddress = TableBrowserSnapshot.SelectedAddress(
+            nextSnapshot.selectedAddress = tableBrowserSelectedAddress(
                 kind: "cell",
                 tablePath: request.datasetPath,
-                row: row,
+                row: UInt64(row),
                 column: column,
                 keywordPath: nil,
                 valuePath: nil,
@@ -6093,7 +6091,7 @@ private final class StubTableBrowserClient: TableBrowserClient {
                 targetPath: nil
             )
         case "subtables":
-            nextSnapshot.selectedAddress = TableBrowserSnapshot.SelectedAddress(
+            nextSnapshot.selectedAddress = tableBrowserSelectedAddress(
                 kind: "subtable",
                 tablePath: request.datasetPath,
                 row: nil,
@@ -6235,12 +6233,12 @@ private func makeImageExplorerSnapshot(nonDisplayIndex: Int = 0) -> ImageExplore
 
 private func makeTableBrowserSnapshot(path: String) -> TableBrowserSnapshot {
     TableBrowserSnapshot(
-        capabilities: TableBrowserSnapshot.Capabilities(editable: false),
+        capabilities: TableBrowserCapabilities(editable: false),
         view: "cells",
         focus: "main",
         tablePath: path,
-        breadcrumb: [TableBrowserSnapshot.Breadcrumb(label: "MAIN", path: path)],
-        viewport: TableBrowserSnapshot.Viewport(width: 180, height: 48, inspectorHeight: 12),
+        breadcrumb: [TableBrowserBreadcrumb(label: "MAIN", path: path)],
+        viewport: TableBrowserViewport(width: 180, height: 48, inspectorHeight: 12),
         statusLine: "Browsing \(path).",
         contentLines: [
             "Cells  row=1/12  col=1/3  focus=Main",
@@ -6248,17 +6246,17 @@ private func makeTableBrowserSnapshot(path: String) -> TableBrowserSnapshot {
             ">  0 | 0.0 | >[1+0i, ...]< | false |",
             "   1 | 1.0 | [1+1i, ...] | false |"
         ],
-        verticalMetrics: TableBrowserSnapshot.NavigationMetrics(
+        verticalMetrics: TableBrowserNavigationMetrics(
             selectedIndex: 0,
             totalItems: 12,
             viewportItems: 46
         ),
-        horizontalMetrics: TableBrowserSnapshot.NavigationMetrics(
+        horizontalMetrics: TableBrowserNavigationMetrics(
             selectedIndex: 1,
             totalItems: 3,
             viewportItems: 3
         ),
-        selectedAddress: TableBrowserSnapshot.SelectedAddress(
+        selectedAddress: tableBrowserSelectedAddress(
             kind: "column",
             tablePath: path,
             row: nil,
@@ -6268,7 +6266,7 @@ private func makeTableBrowserSnapshot(path: String) -> TableBrowserSnapshot {
             source: nil,
             targetPath: nil
         ),
-        inspector: TableBrowserSnapshot.Inspector(
+        inspector: TableBrowserInspector(
             title: "Column DATA",
             trail: [],
             node: .array(
@@ -6292,20 +6290,20 @@ private func makeTableBrowserCellWindow(path: String) -> TableBrowserCellWindowS
         rowStart: 0,
         columnStart: 0,
         columns: [
-            TableBrowserCellWindowSnapshot.Column(index: 0, name: "TIME", header: "TIME<f64>[s]", summary: "Scalar Float64", width: 14),
-            TableBrowserCellWindowSnapshot.Column(index: 1, name: "DATA", header: "DATA<c64[4x2]>", summary: "Array<Complex64> fixed", width: 20),
-            TableBrowserCellWindowSnapshot.Column(index: 2, name: "FLAG", header: "FLAG<bool>", summary: "Scalar Bool", width: 10)
+            TableBrowserCellWindowColumn(index: 0, name: "TIME", header: "TIME<f64>[s]", summary: "Scalar Float64", width: 14, keywords: []),
+            TableBrowserCellWindowColumn(index: 1, name: "DATA", header: "DATA<c64[4x2]>", summary: "Array<Complex64> fixed", width: 20, keywords: []),
+            TableBrowserCellWindowColumn(index: 2, name: "FLAG", header: "FLAG<bool>", summary: "Scalar Bool", width: 10, keywords: [])
         ],
         rows: [
-            TableBrowserCellWindowSnapshot.Row(index: 0, cells: [
-                TableBrowserCellWindowSnapshot.Cell(columnIndex: 0, display: "0.0", defined: true),
-                TableBrowserCellWindowSnapshot.Cell(columnIndex: 1, display: "[1+0i, ...]", defined: true),
-                TableBrowserCellWindowSnapshot.Cell(columnIndex: 2, display: "false", defined: true)
+            TableBrowserCellWindowRow(index: 0, cells: [
+                TableBrowserCellWindowCell(columnIndex: 0, display: "0.0", defined: true),
+                TableBrowserCellWindowCell(columnIndex: 1, display: "[1+0i, ...]", defined: true),
+                TableBrowserCellWindowCell(columnIndex: 2, display: "false", defined: true)
             ]),
-            TableBrowserCellWindowSnapshot.Row(index: 1, cells: [
-                TableBrowserCellWindowSnapshot.Cell(columnIndex: 0, display: "1.0", defined: true),
-                TableBrowserCellWindowSnapshot.Cell(columnIndex: 1, display: "[1+1i, ...]", defined: true),
-                TableBrowserCellWindowSnapshot.Cell(columnIndex: 2, display: "false", defined: true)
+            TableBrowserCellWindowRow(index: 1, cells: [
+                TableBrowserCellWindowCell(columnIndex: 0, display: "1.0", defined: true),
+                TableBrowserCellWindowCell(columnIndex: 1, display: "[1+1i, ...]", defined: true),
+                TableBrowserCellWindowCell(columnIndex: 2, display: "false", defined: true)
             ])
         ]
     )
