@@ -3859,10 +3859,16 @@ public final class WorkbenchStore: ObservableObject {
 
     package func toggleAssistantContext(_ contextID: String) {
         guard var discussion = state.assistantDiscussion,
-              let index = discussion.contexts.firstIndex(where: { $0.id == contextID })
+              discussion.contexts.contains(where: { $0.id == contextID })
         else { return }
-        discussion.contexts[index].selected.toggle()
-        let selected = discussion.contexts.filter(\.selected).map(\.id)
+        if discussion.selectedContextIDs.contains(contextID) {
+            discussion.selectedContextIDs.remove(contextID)
+        } else {
+            discussion.selectedContextIDs.insert(contextID)
+        }
+        let selected = discussion.contexts
+            .filter { discussion.selectedContextIDs.contains($0.id) }
+            .map(\.id)
         state.assistantDiscussion = discussion
         updateActiveAssistantConversation { $0.selectedContextIds = selected }
         persistActiveAssistantConversation()
@@ -3871,7 +3877,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func refreshAssistantDiscussionContexts() {
-        state.assistantDiscussion?.contexts = assistantOpenTabContexts()
+        refreshAssistantContextItems()
         writeAssistantContextProjection()
     }
 
@@ -3924,18 +3930,12 @@ public final class WorkbenchStore: ObservableObject {
                 )
                 diagnostics = result.diagnostics
                 diagnostics.append(Self.assistantCorpusMetrics(result.metrics))
-                let reportJSON = try self.assistantPersistenceClient.indexCorpus(
+                let report = try self.assistantPersistenceClient.indexCorpus(
                     projectRoot: projectRoot,
                     documents: result.documents,
                     removeMissingLayers: result.refreshedLayers,
                     projectSources: result.projectSources,
                     failedProjectSources: result.failedProjectSources
-                )
-                let decoder = JSONDecoder()
-                decoder.keyDecodingStrategy = .convertFromSnakeCase
-                let report = try decoder.decode(
-                    AssistantCorpusIndexReportState.self,
-                    from: Data(reportJSON.utf8)
                 )
                 DispatchQueue.main.async {
                     if self.state.project.rootPath == projectRoot {
@@ -3993,7 +3993,7 @@ public final class WorkbenchStore: ObservableObject {
                 message,
                 conversationID: conversation.id
             )
-            let pin = try assistantPersistenceClient.createPin(AssistantCreatePinEnvelope(
+            let pin = try assistantPersistenceClient.createPin(AssistantCreatePinRequest(
                 conversationId: conversation.id,
                 notebookId: notebook.id,
                 messageId: message.id,
@@ -4063,8 +4063,8 @@ public final class WorkbenchStore: ObservableObject {
         assistantPendingCitations = []
         assistantPendingActivities = []
         assistantPendingTaskSuggestions = []
-        state.assistantDiscussion?.contexts = assistantOpenTabContexts()
-        let selectedContexts = state.assistantDiscussion?.contexts.filter(\.selected).map(\.id) ?? []
+        refreshAssistantContextItems()
+        let selectedContexts = state.assistantDiscussion?.selectedContexts.map(\.id) ?? []
         updateActiveAssistantConversation { $0.selectedContextIds = selectedContexts }
         persistActiveAssistantConversation()
         writeAssistantContextProjection()
@@ -4469,7 +4469,7 @@ public final class WorkbenchStore: ObservableObject {
                 agentId: "codex_app_server",
                 model: conversation?.profile.model,
                 citations: assistantPendingCitations,
-                usedContext: state.assistantDiscussion?.contexts.filter(\.selected) ?? [],
+                usedContext: state.assistantDiscussion?.selectedContexts ?? [],
                 activities: assistantPendingActivities,
                 taskSuggestions: assistantPendingTaskSuggestions,
                 pins: []
@@ -4621,13 +4621,26 @@ public final class WorkbenchStore: ObservableObject {
             }
             items.append(item)
         }
-        let previous = Dictionary(
-            uniqueKeysWithValues: (state.assistantDiscussion?.contexts ?? []).map { ($0.id, $0.selected) }
-        )
-        for index in items.indices {
-            items[index].selected = previous[items[index].id] ?? true
-        }
         return items
+    }
+
+    private func refreshAssistantContextItems() {
+        guard var discussion = state.assistantDiscussion else { return }
+        let previousIDs = Set(discussion.contexts.map(\.id))
+        let items = assistantOpenTabContexts()
+        let availableIDs = Set(items.map(\.id))
+        if previousIDs.isEmpty {
+            let persistedIDs = Set(discussion.activeConversation?.selectedContextIds ?? [])
+            discussion.selectedContextIDs = persistedIDs.isEmpty
+                ? availableIDs
+                : persistedIDs.intersection(availableIDs)
+        } else {
+            let retainedIDs = discussion.selectedContextIDs.intersection(availableIDs)
+            let newIDs = availableIDs.subtracting(previousIDs)
+            discussion.selectedContextIDs = retainedIDs.union(newIDs)
+        }
+        discussion.contexts = items
+        state.assistantDiscussion = discussion
     }
 
     private func assistantDatasetContext(datasetID: String?, tabKind: WorkbenchTabKind) -> String {
@@ -4689,8 +4702,7 @@ public final class WorkbenchStore: ObservableObject {
             contentSha256: SHA256.hash(data: Data(bounded.utf8))
                 .map { String(format: "%02x", $0) }
                 .joined(),
-            untrustedEvidence: true,
-            selected: true
+            untrustedEvidence: true
         )
     }
 
@@ -4727,7 +4739,7 @@ public final class WorkbenchStore: ObservableObject {
         guard state.hasProject, state.project.rootPath.hasPrefix("/") else { return }
         let root = URL(fileURLWithPath: state.project.rootPath, isDirectory: true)
         let path = root.appendingPathComponent(".casa-rs/assistant-context.json")
-        let selected = state.assistantDiscussion?.contexts.filter(\.selected) ?? []
+        let selected = state.assistantDiscussion?.selectedContexts ?? []
         let receipts = (state.scientificNotebooks?.notebooks ?? []).map { notebook in
             [
                 "notebook_id": notebook.id,

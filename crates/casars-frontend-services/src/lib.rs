@@ -22,16 +22,16 @@ use casa_ms::{
     VisibilityDataColumn, build_msexplore_payload_from_spec,
 };
 use casa_notebook::{
-    ASSISTANT_PROFILE_VERSION, ASSISTANT_TRANSCRIPT_SCHEMA_VERSION, AssistantAttachment,
-    AssistantMessageId, AssistantPinReference, AssistantSessionProfile, AssistantStore,
-    AttemptHandle, CORPUS_SCHEMA_VERSION, CellId, ConflictResolution, ConversationId,
-    ConversationTranscript, CorpusDocumentInput, CorpusIndex, CorpusLayer, ExecutionInput,
-    ExecutionReceipt, ExecutionStatus, ExportMode, NotebookDocument, NotebookId, NotebookStore,
-    ProjectCorpusSource, PythonEnvironmentIdentity, PythonExecutionAuthority, PythonExecutionInput,
-    ReceiptFinalization, RecordingPolicy, RecordingRequest, RunId, SaveResult,
-    SaveVisualizationRequest, TaskCellIntent, Timestamp, TutorialAcquisitionApproval,
-    TutorialProject, TutorialTemplate, VisualizationRenderMetadata, VisualizationReopenIntent,
-    VisualizationSnapshot,
+    ASSISTANT_PROFILE_VERSION, ASSISTANT_TRANSCRIPT_SCHEMA_VERSION, AssistantActivity,
+    AssistantAttachment, AssistantCitation, AssistantContextItem, AssistantPinReference,
+    AssistantPythonProvenance, AssistantSessionProfile, AssistantStore, AssistantTaskSuggestion,
+    AttemptHandle, CORPUS_SCHEMA_VERSION, CellId, ConflictResolution, ConversationTranscript,
+    CorpusDocumentInput, CorpusIndex, CorpusLayer, ExecutionInput, ExecutionReceipt,
+    ExecutionStatus, ExportMode, NotebookDocument, NotebookId, NotebookStore, ProjectCorpusSource,
+    PythonEnvironmentIdentity, PythonExecutionAuthority, PythonExecutionInput, ReceiptFinalization,
+    RecordingPolicy, RecordingRequest, RunId, SaveResult, SaveVisualizationRequest, TaskCellIntent,
+    Timestamp, TutorialAcquisitionApproval, TutorialProject, TutorialTemplate,
+    VisualizationRenderMetadata, VisualizationReopenIntent, VisualizationSnapshot,
 };
 use casa_provider_contracts::{
     ParameterValue, ProviderInvocationAdaptation, RunProductKind, RunProductRole, RunSafetyClass,
@@ -1689,65 +1689,252 @@ pub struct NotebookExportRequest {
     pub mode: NotebookExportMode,
 }
 
-#[derive(Debug, Deserialize)]
-struct AssistantCreateConversationRequest {
-    project_root: String,
-    title: String,
-    primary_attachment: AssistantAttachment,
-    profile: AssistantSessionProfile,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AssistantAuthorityState {
+    Explore,
+    Work,
+    FullAccess,
 }
 
-#[derive(Debug, Deserialize)]
-struct AssistantConversationRequest {
-    project_root: String,
-    conversation_id: ConversationId,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantPythonProvenanceState {
+    pub selected_command: String,
+    pub resolved_path: String,
+    pub implementation: String,
+    pub version: String,
+    pub environment_label: String,
+    pub casa_rs_version: Option<String>,
+    pub packages: HashMap<String, String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct AssistantSaveConversationRequest {
-    project_root: String,
-    transcript: ConversationTranscript,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantSessionProfileState {
+    pub profile_version: u32,
+    pub backend_id: String,
+    pub authority: AssistantAuthorityState,
+    pub model: String,
+    pub effort: String,
+    pub agent_command: String,
+    pub python_command: String,
+    pub python_provenance: Option<AssistantPythonProvenanceState>,
 }
 
-#[derive(Debug, Deserialize)]
-struct AssistantCreatePinRequest {
-    conversation_id: ConversationId,
-    notebook_id: NotebookId,
-    message_id: AssistantMessageId,
-    representation: String,
-    snapshot_content: String,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantBackendSessionState {
+    pub backend_id: String,
+    pub session_id: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct AssistantCorpusIndexRequest {
-    project_root: String,
-    documents: Vec<CorpusDocumentInput>,
-    #[serde(default)]
-    remove_missing_layers: BTreeSet<CorpusLayer>,
-    #[serde(default)]
-    project_sources: Option<Vec<ProjectCorpusSource>>,
-    #[serde(default)]
-    failed_project_sources: BTreeSet<PathBuf>,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantAttachmentState {
+    pub kind: String,
+    pub identifier: String,
+    pub label: String,
+    pub primary: bool,
 }
 
-#[derive(Debug, Deserialize)]
-struct AssistantProjectCorpusPlanRequest {
-    project_root: String,
-    sources: Vec<ProjectCorpusSource>,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantCitationState {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub locator: String,
+    pub excerpt: String,
+    pub source_path: Option<String>,
+    pub page: Option<u32>,
+    pub section: Option<String>,
+    pub line_start: Option<u32>,
+    pub line_end: Option<u32>,
+    pub release: Option<String>,
+    pub commit: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct AssistantCorpusSearchRequest {
-    project_root: String,
-    query: String,
-    #[serde(default = "default_assistant_corpus_search_limit")]
-    limit: usize,
-    #[serde(default)]
-    layers: BTreeSet<CorpusLayer>,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantContextItemState {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub summary: String,
+    pub excerpt: String,
+    pub byte_count: u64,
+    pub content_sha256: String,
+    pub untrusted_evidence: bool,
 }
 
-const fn default_assistant_corpus_search_limit() -> usize {
-    8
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantActivityState {
+    pub id: String,
+    pub label: String,
+    pub state: String,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AssistantTaskSuggestionState {
+    pub id: String,
+    pub task_id: String,
+    pub parameters: HashMap<String, String>,
+    pub validated_patch: Option<SurfaceParameterPatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantPinState {
+    pub id: String,
+    pub conversation_id: String,
+    pub notebook_id: String,
+    pub message_id: String,
+    pub representation: String,
+    pub destination: String,
+    pub snapshot_content: String,
+    pub created_at: u64,
+    pub content_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AssistantMessageState {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub created_at: u64,
+    pub agent_id: Option<String>,
+    pub model: Option<String>,
+    pub citations: Vec<AssistantCitationState>,
+    pub used_context: Vec<AssistantContextItemState>,
+    pub activities: Vec<AssistantActivityState>,
+    pub task_suggestions: Vec<AssistantTaskSuggestionState>,
+    pub pins: Vec<AssistantPinState>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AssistantConversationState {
+    pub schema_version: u32,
+    pub id: String,
+    pub title: String,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub profile: AssistantSessionProfileState,
+    pub backend_session: Option<AssistantBackendSessionState>,
+    pub attachments: Vec<AssistantAttachmentState>,
+    pub messages: Vec<AssistantMessageState>,
+    pub draft: String,
+    pub selected_context_ids: Vec<String>,
+    pub scroll_anchor_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantCreateConversationRequest {
+    pub project_root: String,
+    pub title: String,
+    pub primary_attachment: AssistantAttachmentState,
+    pub profile: AssistantSessionProfileState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantConversationRequest {
+    pub project_root: String,
+    pub conversation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AssistantSaveConversationRequest {
+    pub project_root: String,
+    pub transcript: AssistantConversationState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantCreatePinRequest {
+    pub conversation_id: String,
+    pub notebook_id: String,
+    pub message_id: String,
+    pub representation: String,
+    pub snapshot_content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
+pub struct AssistantCorpusCitationRequest {
+    pub label: String,
+    pub locator: String,
+    pub source_path: Option<String>,
+    pub page: Option<u32>,
+    pub section: Option<String>,
+    pub line_start: Option<u32>,
+    pub line_end: Option<u32>,
+    pub release: Option<String>,
+    pub commit: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantCorpusDocumentRequest {
+    pub id: String,
+    pub layer: String,
+    pub title: String,
+    pub source_identity: String,
+    pub content: String,
+    pub citation: AssistantCorpusCitationRequest,
+    pub redistribution_cleared: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantProjectCorpusSourceRequest {
+    pub relative_path: String,
+    pub file_type: String,
+    pub size_bytes: u64,
+    pub modified_unix_ns: i64,
+    pub status_changed_unix_ns: i64,
+    pub file_identity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantCorpusIndexRequest {
+    pub project_root: String,
+    pub documents: Vec<AssistantCorpusDocumentRequest>,
+    pub remove_missing_layers: Vec<String>,
+    pub project_sources: Option<Vec<AssistantProjectCorpusSourceRequest>>,
+    pub failed_project_sources: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantCorpusIndexReportState {
+    pub schema_version: u32,
+    pub retrieval_engine: String,
+    pub indexed_documents: u64,
+    pub unchanged_documents: u64,
+    pub removed_documents: u64,
+    pub chunk_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantProjectCorpusPlanRequest {
+    pub project_root: String,
+    pub sources: Vec<AssistantProjectCorpusSourceRequest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantProjectCorpusPlanState {
+    pub schema_version: u32,
+    pub extract_paths: Vec<String>,
+    pub unchanged_paths: Vec<String>,
+    pub removed_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantCorpusSearchRequest {
+    pub project_root: String,
+    pub query: String,
+    pub limit: u64,
+    pub layers: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, uniffi::Record)]
+pub struct AssistantCorpusSearchHitState {
+    pub chunk_id: String,
+    pub document_id: String,
+    pub layer: String,
+    pub title: String,
+    pub text: String,
+    pub score: f32,
+    pub citation: AssistantCorpusCitationRequest,
+    pub untrusted_evidence: bool,
 }
 
 // Protocol-plane bounds keep one MCP request/result finite. They do not cap
@@ -1755,15 +1942,15 @@ const fn default_assistant_corpus_search_limit() -> usize {
 const MAX_ASSISTANT_CORPUS_QUERY_BYTES: usize = 4_096;
 const MAX_ASSISTANT_CORPUS_SEARCH_RESULTS: usize = 32;
 
-#[derive(Debug, Serialize)]
-struct AssistantProtocolProjection {
-    profile_version: u32,
-    transcript_schema_version: u32,
-    corpus_schema_version: u32,
-    retrieval_engine: &'static str,
-    backend_session_binding: &'static str,
-    authority_presets: Vec<&'static str>,
-    project_mcp_tools: Vec<&'static str>,
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AssistantProtocolProjection {
+    pub profile_version: u32,
+    pub transcript_schema_version: u32,
+    pub corpus_schema_version: u32,
+    pub retrieval_engine: String,
+    pub backend_session_binding: String,
+    pub authority_presets: Vec<String>,
+    pub project_mcp_tools: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2665,14 +2852,17 @@ pub fn notebook_export(request: NotebookExportRequest) -> FrontendResult<()> {
 
 /// Describe the versioned agent-neutral persistence and project-MCP boundary.
 #[uniffi::export]
-pub fn assistant_protocol_info_json() -> FrontendResult<String> {
-    serde_json::to_string(&AssistantProtocolProjection {
+pub fn assistant_protocol_info() -> AssistantProtocolProjection {
+    AssistantProtocolProjection {
         profile_version: ASSISTANT_PROFILE_VERSION,
         transcript_schema_version: ASSISTANT_TRANSCRIPT_SCHEMA_VERSION,
         corpus_schema_version: CORPUS_SCHEMA_VERSION,
-        retrieval_engine: "sqlite_fts5_unicode61",
-        backend_session_binding: "opaque_adapter_session_id",
-        authority_presets: vec!["explore", "work", "full_access"],
+        retrieval_engine: "sqlite_fts5_unicode61".to_string(),
+        backend_session_binding: "opaque_adapter_session_id".to_string(),
+        authority_presets: vec!["explore", "work", "full_access"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
         project_mcp_tools: vec![
             "corpus.search",
             "source.search",
@@ -2681,9 +2871,11 @@ pub fn assistant_protocol_info_json() -> FrontendResult<String> {
             "data.describe",
             "web.fetch",
             "web.search",
-        ],
-    })
-    .map_err(|error| assistant_error("serialize assistant protocol information", error))
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    }
 }
 
 /// Parse one trusted `task.suggest` MCP result into the generated application contract.
@@ -2714,114 +2906,619 @@ pub fn assistant_task_suggestion(
     })
 }
 
+fn assistant_authority_owner(
+    authority: AssistantAuthorityState,
+) -> casa_notebook::AssistantAuthorityPreset {
+    match authority {
+        AssistantAuthorityState::Explore => casa_notebook::AssistantAuthorityPreset::Explore,
+        AssistantAuthorityState::Work => casa_notebook::AssistantAuthorityPreset::Work,
+        AssistantAuthorityState::FullAccess => casa_notebook::AssistantAuthorityPreset::FullAccess,
+    }
+}
+
+fn assistant_authority_projection(
+    authority: casa_notebook::AssistantAuthorityPreset,
+) -> AssistantAuthorityState {
+    match authority {
+        casa_notebook::AssistantAuthorityPreset::Explore => AssistantAuthorityState::Explore,
+        casa_notebook::AssistantAuthorityPreset::Work => AssistantAuthorityState::Work,
+        casa_notebook::AssistantAuthorityPreset::FullAccess => AssistantAuthorityState::FullAccess,
+    }
+}
+
+fn assistant_python_owner(value: AssistantPythonProvenanceState) -> AssistantPythonProvenance {
+    AssistantPythonProvenance {
+        selected_command: value.selected_command,
+        resolved_path: PathBuf::from(value.resolved_path),
+        implementation: value.implementation,
+        version: value.version,
+        environment_label: value.environment_label,
+        casa_rs_version: value.casa_rs_version,
+        packages: value.packages.into_iter().collect(),
+    }
+}
+
+fn assistant_python_projection(value: AssistantPythonProvenance) -> AssistantPythonProvenanceState {
+    AssistantPythonProvenanceState {
+        selected_command: value.selected_command,
+        resolved_path: value.resolved_path.display().to_string(),
+        implementation: value.implementation,
+        version: value.version,
+        environment_label: value.environment_label,
+        casa_rs_version: value.casa_rs_version,
+        packages: value.packages.into_iter().collect(),
+    }
+}
+
+fn assistant_profile_owner(value: AssistantSessionProfileState) -> AssistantSessionProfile {
+    AssistantSessionProfile {
+        profile_version: value.profile_version,
+        backend_id: value.backend_id,
+        authority: assistant_authority_owner(value.authority),
+        model: value.model,
+        effort: value.effort,
+        agent_command: value.agent_command,
+        python_command: value.python_command,
+        python_provenance: value.python_provenance.map(assistant_python_owner),
+    }
+}
+
+fn assistant_profile_projection(value: AssistantSessionProfile) -> AssistantSessionProfileState {
+    AssistantSessionProfileState {
+        profile_version: value.profile_version,
+        backend_id: value.backend_id,
+        authority: assistant_authority_projection(value.authority),
+        model: value.model,
+        effort: value.effort,
+        agent_command: value.agent_command,
+        python_command: value.python_command,
+        python_provenance: value.python_provenance.map(assistant_python_projection),
+    }
+}
+
+fn assistant_attachment_owner(
+    value: AssistantAttachmentState,
+) -> FrontendResult<AssistantAttachment> {
+    Ok(AssistantAttachment {
+        kind: serde_json::from_value(serde_json::Value::String(value.kind))
+            .map_err(|error| assistant_error("parse assistant attachment kind", error))?,
+        identifier: value.identifier,
+        label: value.label,
+        primary: value.primary,
+    })
+}
+
+fn assistant_attachment_projection(value: AssistantAttachment) -> AssistantAttachmentState {
+    AssistantAttachmentState {
+        kind: snake_case_debug(value.kind),
+        identifier: value.identifier,
+        label: value.label,
+        primary: value.primary,
+    }
+}
+
+fn assistant_citation_owner(value: AssistantCitationState) -> FrontendResult<AssistantCitation> {
+    Ok(AssistantCitation {
+        id: value.id,
+        kind: serde_json::from_value(serde_json::Value::String(value.kind))
+            .map_err(|error| assistant_error("parse assistant citation kind", error))?,
+        label: value.label,
+        locator: value.locator,
+        excerpt: value.excerpt,
+        source_path: value.source_path.map(PathBuf::from),
+        page: value.page,
+        section: value.section,
+        line_start: value.line_start,
+        line_end: value.line_end,
+        release: value.release,
+        commit: value.commit,
+    })
+}
+
+fn assistant_citation_projection(value: AssistantCitation) -> AssistantCitationState {
+    AssistantCitationState {
+        id: value.id,
+        kind: snake_case_debug(value.kind),
+        label: value.label,
+        locator: value.locator,
+        excerpt: value.excerpt,
+        source_path: value.source_path.map(|path| path.display().to_string()),
+        page: value.page,
+        section: value.section,
+        line_start: value.line_start,
+        line_end: value.line_end,
+        release: value.release,
+        commit: value.commit,
+    }
+}
+
+fn assistant_context_owner(
+    value: AssistantContextItemState,
+) -> FrontendResult<AssistantContextItem> {
+    Ok(AssistantContextItem {
+        id: value.id,
+        kind: serde_json::from_value(serde_json::Value::String(value.kind))
+            .map_err(|error| assistant_error("parse assistant context kind", error))?,
+        label: value.label,
+        summary: value.summary,
+        excerpt: value.excerpt,
+        byte_count: value.byte_count,
+        content_sha256: value.content_sha256,
+        untrusted_evidence: value.untrusted_evidence,
+    })
+}
+
+fn assistant_context_projection(value: AssistantContextItem) -> AssistantContextItemState {
+    AssistantContextItemState {
+        id: value.id,
+        kind: snake_case_debug(value.kind),
+        label: value.label,
+        summary: value.summary,
+        excerpt: value.excerpt,
+        byte_count: value.byte_count,
+        content_sha256: value.content_sha256,
+        untrusted_evidence: value.untrusted_evidence,
+    }
+}
+
+fn assistant_activity_owner(value: AssistantActivityState) -> FrontendResult<AssistantActivity> {
+    Ok(AssistantActivity {
+        id: value.id,
+        label: value.label,
+        state: serde_json::from_value(serde_json::Value::String(value.state))
+            .map_err(|error| assistant_error("parse assistant activity state", error))?,
+        summary: value.summary,
+    })
+}
+
+fn assistant_activity_projection(value: AssistantActivity) -> AssistantActivityState {
+    AssistantActivityState {
+        id: value.id,
+        label: value.label,
+        state: snake_case_debug(value.state),
+        summary: value.summary,
+    }
+}
+
+fn assistant_suggestion_owner(value: AssistantTaskSuggestionState) -> AssistantTaskSuggestion {
+    AssistantTaskSuggestion {
+        id: value.id,
+        task_id: value.task_id,
+        parameters: value.parameters.into_iter().collect(),
+    }
+}
+
+fn assistant_suggestion_projection(value: AssistantTaskSuggestion) -> AssistantTaskSuggestionState {
+    AssistantTaskSuggestionState {
+        id: value.id,
+        task_id: value.task_id,
+        parameters: value.parameters.into_iter().collect(),
+        validated_patch: None,
+    }
+}
+
+fn assistant_pin_owner(value: AssistantPinState) -> FrontendResult<AssistantPinReference> {
+    Ok(AssistantPinReference {
+        id: value
+            .id
+            .parse()
+            .map_err(|error| assistant_error("parse assistant pin ID", error))?,
+        conversation_id: value
+            .conversation_id
+            .parse()
+            .map_err(|error| assistant_error("parse assistant pin conversation ID", error))?,
+        notebook_id: value
+            .notebook_id
+            .parse()
+            .map_err(|error| assistant_error("parse assistant pin notebook ID", error))?,
+        message_id: value
+            .message_id
+            .parse()
+            .map_err(|error| assistant_error("parse assistant pin message ID", error))?,
+        representation: value.representation,
+        destination: value.destination,
+        snapshot_content: value.snapshot_content,
+        created_at: Timestamp(value.created_at),
+        content_sha256: value.content_sha256,
+    })
+}
+
+fn assistant_pin_projection(value: AssistantPinReference) -> AssistantPinState {
+    AssistantPinState {
+        id: value.id.to_string(),
+        conversation_id: value.conversation_id.to_string(),
+        notebook_id: value.notebook_id.to_string(),
+        message_id: value.message_id.to_string(),
+        representation: value.representation,
+        destination: value.destination,
+        snapshot_content: value.snapshot_content,
+        created_at: value.created_at.0,
+        content_sha256: value.content_sha256,
+    }
+}
+
+fn assistant_message_owner(
+    value: AssistantMessageState,
+) -> FrontendResult<casa_notebook::AssistantMessage> {
+    Ok(casa_notebook::AssistantMessage {
+        id: value
+            .id
+            .parse()
+            .map_err(|error| assistant_error("parse assistant message ID", error))?,
+        role: serde_json::from_value(serde_json::Value::String(value.role))
+            .map_err(|error| assistant_error("parse assistant message role", error))?,
+        content: value.content,
+        created_at: Timestamp(value.created_at),
+        agent_id: value.agent_id,
+        model: value.model,
+        citations: value
+            .citations
+            .into_iter()
+            .map(assistant_citation_owner)
+            .collect::<FrontendResult<Vec<_>>>()?,
+        used_context: value
+            .used_context
+            .into_iter()
+            .map(assistant_context_owner)
+            .collect::<FrontendResult<Vec<_>>>()?,
+        activities: value
+            .activities
+            .into_iter()
+            .map(assistant_activity_owner)
+            .collect::<FrontendResult<Vec<_>>>()?,
+        task_suggestions: value
+            .task_suggestions
+            .into_iter()
+            .map(assistant_suggestion_owner)
+            .collect(),
+        pins: value
+            .pins
+            .into_iter()
+            .map(assistant_pin_owner)
+            .collect::<FrontendResult<Vec<_>>>()?,
+    })
+}
+
+fn assistant_message_projection(value: casa_notebook::AssistantMessage) -> AssistantMessageState {
+    AssistantMessageState {
+        id: value.id.to_string(),
+        role: snake_case_debug(value.role),
+        content: value.content,
+        created_at: value.created_at.0,
+        agent_id: value.agent_id,
+        model: value.model,
+        citations: value
+            .citations
+            .into_iter()
+            .map(assistant_citation_projection)
+            .collect(),
+        used_context: value
+            .used_context
+            .into_iter()
+            .map(assistant_context_projection)
+            .collect(),
+        activities: value
+            .activities
+            .into_iter()
+            .map(assistant_activity_projection)
+            .collect(),
+        task_suggestions: value
+            .task_suggestions
+            .into_iter()
+            .map(assistant_suggestion_projection)
+            .collect(),
+        pins: value
+            .pins
+            .into_iter()
+            .map(assistant_pin_projection)
+            .collect(),
+    }
+}
+
+fn assistant_transcript_owner(
+    value: AssistantConversationState,
+) -> FrontendResult<ConversationTranscript> {
+    Ok(ConversationTranscript {
+        schema_version: value.schema_version,
+        id: value
+            .id
+            .parse()
+            .map_err(|error| assistant_error("parse assistant conversation ID", error))?,
+        title: value.title,
+        created_at: Timestamp(value.created_at),
+        updated_at: Timestamp(value.updated_at),
+        profile: assistant_profile_owner(value.profile),
+        backend_session: value.backend_session.map(|session| {
+            casa_notebook::AssistantBackendSession {
+                backend_id: session.backend_id,
+                session_id: session.session_id,
+            }
+        }),
+        attachments: value
+            .attachments
+            .into_iter()
+            .map(assistant_attachment_owner)
+            .collect::<FrontendResult<Vec<_>>>()?,
+        messages: value
+            .messages
+            .into_iter()
+            .map(assistant_message_owner)
+            .collect::<FrontendResult<Vec<_>>>()?,
+        draft: value.draft,
+        selected_context_ids: value.selected_context_ids,
+        scroll_anchor_message_id: value
+            .scroll_anchor_message_id
+            .map(|id| id.parse())
+            .transpose()
+            .map_err(|error| assistant_error("parse assistant scroll anchor", error))?,
+    })
+}
+
+fn assistant_transcript_projection(value: ConversationTranscript) -> AssistantConversationState {
+    AssistantConversationState {
+        schema_version: value.schema_version,
+        id: value.id.to_string(),
+        title: value.title,
+        created_at: value.created_at.0,
+        updated_at: value.updated_at.0,
+        profile: assistant_profile_projection(value.profile),
+        backend_session: value
+            .backend_session
+            .map(|session| AssistantBackendSessionState {
+                backend_id: session.backend_id,
+                session_id: session.session_id,
+            }),
+        attachments: value
+            .attachments
+            .into_iter()
+            .map(assistant_attachment_projection)
+            .collect(),
+        messages: value
+            .messages
+            .into_iter()
+            .map(assistant_message_projection)
+            .collect(),
+        draft: value.draft,
+        selected_context_ids: value.selected_context_ids,
+        scroll_anchor_message_id: value.scroll_anchor_message_id.map(|id| id.to_string()),
+    }
+}
+
+fn assistant_corpus_layer(value: &str) -> FrontendResult<CorpusLayer> {
+    serde_json::from_value(serde_json::Value::String(value.to_string()))
+        .map_err(|error| corpus_error("parse corpus layer", error))
+}
+
+fn assistant_corpus_citation_owner(
+    value: AssistantCorpusCitationRequest,
+) -> casa_notebook::CorpusCitation {
+    casa_notebook::CorpusCitation {
+        label: value.label,
+        locator: value.locator,
+        source_path: value.source_path.map(PathBuf::from),
+        page: value.page,
+        section: value.section,
+        line_start: value.line_start,
+        line_end: value.line_end,
+        release: value.release,
+        commit: value.commit,
+    }
+}
+
+fn assistant_corpus_citation_projection(
+    value: casa_notebook::CorpusCitation,
+) -> AssistantCorpusCitationRequest {
+    AssistantCorpusCitationRequest {
+        label: value.label,
+        locator: value.locator,
+        source_path: value.source_path.map(|path| path.display().to_string()),
+        page: value.page,
+        section: value.section,
+        line_start: value.line_start,
+        line_end: value.line_end,
+        release: value.release,
+        commit: value.commit,
+    }
+}
+
+fn assistant_project_source_owner(
+    value: AssistantProjectCorpusSourceRequest,
+) -> ProjectCorpusSource {
+    ProjectCorpusSource {
+        relative_path: PathBuf::from(value.relative_path),
+        file_type: value.file_type,
+        size_bytes: value.size_bytes,
+        modified_unix_ns: value.modified_unix_ns,
+        status_changed_unix_ns: value.status_changed_unix_ns,
+        file_identity: value.file_identity,
+    }
+}
+
 /// Construct one immutable notebook pin snapshot with transcript provenance.
 #[uniffi::export]
-pub fn assistant_create_pin_json(request_json: String) -> FrontendResult<String> {
-    let request: AssistantCreatePinRequest = serde_json::from_str(&request_json)
-        .map_err(|error| assistant_error("parse assistant pin request", error))?;
+pub fn assistant_create_pin(
+    request: AssistantCreatePinRequest,
+) -> FrontendResult<AssistantPinState> {
     let pin = AssistantPinReference::new(
-        request.conversation_id,
-        request.notebook_id,
-        request.message_id,
+        request
+            .conversation_id
+            .parse()
+            .map_err(|error| assistant_error("parse assistant pin conversation ID", error))?,
+        request
+            .notebook_id
+            .parse()
+            .map_err(|error| assistant_error("parse assistant pin notebook ID", error))?,
+        request
+            .message_id
+            .parse()
+            .map_err(|error| assistant_error("parse assistant pin message ID", error))?,
         request.representation,
         request.snapshot_content,
     );
-    serde_json::to_string(&pin).map_err(|error| assistant_error("serialize assistant pin", error))
+    Ok(assistant_pin_projection(pin))
 }
 
 /// List the provider-neutral visible conversations persisted for one project.
 #[uniffi::export]
-pub fn assistant_conversations_json(project_root: String) -> FrontendResult<String> {
+pub fn assistant_conversations(
+    project_root: String,
+) -> FrontendResult<Vec<AssistantConversationState>> {
     let store = AssistantStore::open(&project_root)
         .map_err(|error| assistant_error("open assistant project", error))?;
     let conversations = store
         .list_conversations()
         .map_err(|error| assistant_error("list assistant conversations", error))?;
-    serde_json::to_string(&conversations)
-        .map_err(|error| assistant_error("serialize assistant conversations", error))
+    Ok(conversations
+        .into_iter()
+        .map(assistant_transcript_projection)
+        .collect())
 }
 
 /// Create one persistent conversation attached primarily to a task or notebook.
 #[uniffi::export]
-pub fn assistant_create_conversation_json(request_json: String) -> FrontendResult<String> {
-    let request: AssistantCreateConversationRequest = serde_json::from_str(&request_json)
-        .map_err(|error| assistant_error("parse assistant create request", error))?;
+pub fn assistant_create_conversation(
+    request: AssistantCreateConversationRequest,
+) -> FrontendResult<AssistantConversationState> {
     let store = AssistantStore::open(&request.project_root)
         .map_err(|error| assistant_error("open assistant project", error))?;
     let conversation = store
-        .create_conversation(request.title, request.primary_attachment, request.profile)
+        .create_conversation(
+            request.title,
+            assistant_attachment_owner(request.primary_attachment)?,
+            assistant_profile_owner(request.profile),
+        )
         .map_err(|error| assistant_error("create assistant conversation", error))?;
-    serde_json::to_string(&conversation)
-        .map_err(|error| assistant_error("serialize assistant conversation", error))
+    Ok(assistant_transcript_projection(conversation))
 }
 
 /// Load one persistent visible transcript without provider-specific envelopes.
 #[uniffi::export]
-pub fn assistant_load_conversation_json(request_json: String) -> FrontendResult<String> {
-    let request: AssistantConversationRequest = serde_json::from_str(&request_json)
-        .map_err(|error| assistant_error("parse assistant load request", error))?;
+pub fn assistant_load_conversation(
+    request: AssistantConversationRequest,
+) -> FrontendResult<AssistantConversationState> {
     let store = AssistantStore::open(&request.project_root)
         .map_err(|error| assistant_error("open assistant project", error))?;
     let conversation = store
-        .load_conversation(request.conversation_id)
+        .load_conversation(
+            request
+                .conversation_id
+                .parse()
+                .map_err(|error| assistant_error("parse assistant conversation ID", error))?,
+        )
         .map_err(|error| assistant_error("load assistant conversation", error))?;
-    serde_json::to_string(&conversation)
-        .map_err(|error| assistant_error("serialize assistant conversation", error))
+    Ok(assistant_transcript_projection(conversation))
 }
 
 /// Atomically save one provider-neutral visible transcript.
 #[uniffi::export]
-pub fn assistant_save_conversation_json(request_json: String) -> FrontendResult<()> {
-    let request: AssistantSaveConversationRequest = serde_json::from_str(&request_json)
-        .map_err(|error| assistant_error("parse assistant save request", error))?;
+pub fn assistant_save_conversation(
+    request: AssistantSaveConversationRequest,
+) -> FrontendResult<()> {
     let store = AssistantStore::open(&request.project_root)
         .map_err(|error| assistant_error("open assistant project", error))?;
     store
-        .save_conversation(&request.transcript)
+        .save_conversation(&assistant_transcript_owner(request.transcript)?)
         .map_err(|error| assistant_error("save assistant conversation", error))
 }
 
 /// Incrementally index trusted host-supplied corpus documents.
 #[uniffi::export]
-pub fn assistant_corpus_index_json(request_json: String) -> FrontendResult<String> {
-    let request: AssistantCorpusIndexRequest = serde_json::from_str(&request_json)
-        .map_err(|error| corpus_error("parse corpus index request", error))?;
+pub fn assistant_corpus_index(
+    request: AssistantCorpusIndexRequest,
+) -> FrontendResult<AssistantCorpusIndexReportState> {
+    let documents = request
+        .documents
+        .into_iter()
+        .map(|document| {
+            Ok(CorpusDocumentInput {
+                id: document.id,
+                layer: assistant_corpus_layer(&document.layer)?,
+                title: document.title,
+                source_identity: document.source_identity,
+                content: document.content,
+                citation: assistant_corpus_citation_owner(document.citation),
+                redistribution_cleared: document.redistribution_cleared,
+            })
+        })
+        .collect::<FrontendResult<Vec<_>>>()?;
+    let remove_missing_layers = request
+        .remove_missing_layers
+        .iter()
+        .map(|layer| assistant_corpus_layer(layer))
+        .collect::<FrontendResult<BTreeSet<_>>>()?;
     let index = CorpusIndex::open(&request.project_root)
         .map_err(|error| corpus_error("open corpus index", error))?;
     let report = if let Some(project_sources) = request.project_sources {
+        let project_sources = project_sources
+            .into_iter()
+            .map(assistant_project_source_owner)
+            .collect::<Vec<_>>();
+        let failed_project_sources = request
+            .failed_project_sources
+            .into_iter()
+            .map(PathBuf::from)
+            .collect::<BTreeSet<_>>();
         index.index_documents_with_project_sources(
-            &request.documents,
-            &request.remove_missing_layers,
+            &documents,
+            &remove_missing_layers,
             &project_sources,
-            &request.failed_project_sources,
+            &failed_project_sources,
         )
     } else {
-        index.index_documents(&request.documents, &request.remove_missing_layers)
+        index.index_documents(&documents, &remove_missing_layers)
     }
     .map_err(|error| corpus_error("index corpus documents", error))?;
-    serde_json::to_string(&report)
-        .map_err(|error| corpus_error("serialize corpus index report", error))
+    Ok(AssistantCorpusIndexReportState {
+        schema_version: report.schema_version,
+        retrieval_engine: report.retrieval_engine,
+        indexed_documents: report.indexed_documents as u64,
+        unchanged_documents: report.unchanged_documents as u64,
+        removed_documents: report.removed_documents as u64,
+        chunk_count: report.chunk_count as u64,
+    })
 }
 
 /// Plan project-document extraction using metadata only.
 #[uniffi::export]
-pub fn assistant_project_corpus_plan_json(request_json: String) -> FrontendResult<String> {
-    let request: AssistantProjectCorpusPlanRequest = serde_json::from_str(&request_json)
-        .map_err(|error| corpus_error("parse project corpus plan request", error))?;
+pub fn assistant_project_corpus_plan(
+    request: AssistantProjectCorpusPlanRequest,
+) -> FrontendResult<AssistantProjectCorpusPlanState> {
     let index = CorpusIndex::open(&request.project_root)
         .map_err(|error| corpus_error("open corpus index", error))?;
     let plan = index
-        .plan_project_sources(&request.sources)
+        .plan_project_sources(
+            &request
+                .sources
+                .into_iter()
+                .map(assistant_project_source_owner)
+                .collect::<Vec<_>>(),
+        )
         .map_err(|error| corpus_error("plan project corpus extraction", error))?;
-    serde_json::to_string(&plan)
-        .map_err(|error| corpus_error("serialize project corpus plan", error))
+    Ok(AssistantProjectCorpusPlanState {
+        schema_version: plan.schema_version,
+        extract_paths: plan
+            .extract_paths
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+        unchanged_paths: plan
+            .unchanged_paths
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+        removed_paths: plan
+            .removed_paths
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+    })
 }
 
 /// Execute the bounded `corpus.search` operation exposed through project MCP.
 #[uniffi::export]
-pub fn assistant_corpus_search_json(request_json: String) -> FrontendResult<String> {
-    let request: AssistantCorpusSearchRequest = serde_json::from_str(&request_json)
-        .map_err(|error| corpus_error("parse corpus search request", error))?;
+pub fn assistant_corpus_search(
+    request: AssistantCorpusSearchRequest,
+) -> FrontendResult<Vec<AssistantCorpusSearchHitState>> {
     if request.query.len() > MAX_ASSISTANT_CORPUS_QUERY_BYTES {
         return Err(corpus_error(
             "validate corpus search request",
@@ -2830,15 +3527,31 @@ pub fn assistant_corpus_search_json(request_json: String) -> FrontendResult<Stri
     }
     let index = CorpusIndex::open(&request.project_root)
         .map_err(|error| corpus_error("open corpus index", error))?;
+    let layers = request
+        .layers
+        .iter()
+        .map(|layer| assistant_corpus_layer(layer))
+        .collect::<FrontendResult<BTreeSet<_>>>()?;
     let hits = index
         .search_layers(
             &request.query,
-            request.limit.min(MAX_ASSISTANT_CORPUS_SEARCH_RESULTS),
-            &request.layers,
+            (request.limit as usize).min(MAX_ASSISTANT_CORPUS_SEARCH_RESULTS),
+            &layers,
         )
         .map_err(|error| corpus_error("search corpus", error))?;
-    serde_json::to_string(&hits)
-        .map_err(|error| corpus_error("serialize corpus search results", error))
+    Ok(hits
+        .into_iter()
+        .map(|hit| AssistantCorpusSearchHitState {
+            chunk_id: hit.chunk_id,
+            document_id: hit.document_id,
+            layer: snake_case_debug(hit.layer),
+            title: hit.title,
+            text: hit.text,
+            score: hit.score,
+            citation: assistant_corpus_citation_projection(hit.citation),
+            untrusted_evidence: hit.untrusted_evidence,
+        })
+        .collect())
 }
 
 fn tutorial_template_projection(template: &TutorialTemplate) -> TutorialTemplateProjection<'_> {
@@ -9378,114 +10091,102 @@ mod tests {
     }
 
     #[test]
-    fn assistant_json_bridge_persists_provider_neutral_conversations() {
+    fn assistant_typed_bridge_persists_provider_neutral_conversations() {
         let project = tempfile::tempdir().expect("project");
         let project_root = project.path().canonicalize().expect("canonical project");
-        let created_json = assistant_create_conversation_json(
-            serde_json::json!({
-                "project_root": project_root,
-                "title": "Calibration discussion",
-                "primary_attachment": {
-                    "kind": "notebook",
-                    "identifier": "Analysis.md",
-                    "label": "Analysis",
-                    "primary": false
-                },
-                "profile": {
-                    "profile_version": 1,
-                    "backend_id": "codex_app_server",
-                    "authority": "work",
-                    "model": "gpt-test",
-                    "effort": "medium",
-                    "agent_command": "codex",
-                    "python_command": "python3"
-                }
-            })
-            .to_string(),
-        )
+        let mut created = assistant_create_conversation(AssistantCreateConversationRequest {
+            project_root: project_root.display().to_string(),
+            title: "Calibration discussion".to_owned(),
+            primary_attachment: AssistantAttachmentState {
+                kind: "notebook".to_owned(),
+                identifier: "Analysis.md".to_owned(),
+                label: "Analysis".to_owned(),
+                primary: false,
+            },
+            profile: AssistantSessionProfileState {
+                profile_version: 1,
+                backend_id: "codex_app_server".to_owned(),
+                authority: AssistantAuthorityState::Work,
+                model: "gpt-test".to_owned(),
+                effort: "medium".to_owned(),
+                agent_command: "codex".to_owned(),
+                python_command: "python3".to_owned(),
+                python_provenance: None,
+            },
+        })
         .expect("create assistant conversation");
-        let mut created: serde_json::Value = serde_json::from_str(&created_json).unwrap();
-        assert_eq!(created["attachments"][0]["primary"], true);
-        created["draft"] = serde_json::Value::String("continue here".to_owned());
+        assert!(created.attachments[0].primary);
+        created.draft = "continue here".to_owned();
 
-        assistant_save_conversation_json(
-            serde_json::json!({
-                "project_root": project_root,
-                "transcript": created
-            })
-            .to_string(),
-        )
+        assistant_save_conversation(AssistantSaveConversationRequest {
+            project_root: project_root.display().to_string(),
+            transcript: created,
+        })
         .expect("save assistant conversation");
 
-        let conversations_json = assistant_conversations_json(project_root.display().to_string())
+        let conversations = assistant_conversations(project_root.display().to_string())
             .expect("list assistant conversations");
-        let conversations: serde_json::Value = serde_json::from_str(&conversations_json).unwrap();
-        assert_eq!(conversations[0]["draft"], "continue here");
-        assert_eq!(
-            conversations[0]["profile"]["backend_id"],
-            "codex_app_server"
-        );
-        assert!(conversations[0].get("provider_envelope").is_none());
+        assert_eq!(conversations[0].draft, "continue here");
+        assert_eq!(conversations[0].profile.backend_id, "codex_app_server");
 
-        let protocol_json = assistant_protocol_info_json().expect("assistant protocol info");
-        let protocol: serde_json::Value = serde_json::from_str(&protocol_json).unwrap();
-        assert_eq!(protocol["retrieval_engine"], "sqlite_fts5_unicode61");
-        assert_eq!(protocol["authority_presets"][1], "work");
-        assert_eq!(protocol["project_mcp_tools"][0], "corpus.search");
+        let protocol = assistant_protocol_info();
+        assert_eq!(protocol.retrieval_engine, "sqlite_fts5_unicode61");
+        assert_eq!(protocol.authority_presets[1], "work");
+        assert_eq!(protocol.project_mcp_tools[0], "corpus.search");
     }
 
     #[test]
     fn assistant_corpus_bridge_exposes_bounded_cited_search_not_sql() {
         let project = tempfile::tempdir().expect("project");
         let project_root = project.path().canonicalize().expect("canonical project");
-        let report_json = assistant_corpus_index_json(
-            serde_json::json!({
-                "project_root": project_root,
-                "documents": [{
-                    "id": "rao:calibration",
-                    "layer": "baseline",
-                    "title": "Interferometric calibration",
-                    "source_identity": "rao/calibration.md",
-                    "content": "A complex gain calibrator constrains antenna based amplitudes and phases.",
-                    "citation": {
-                        "label": "Calibration guide",
-                        "locator": "section 4",
-                        "source_path": "rao/calibration.md",
-                        "section": "Complex gains"
-                    },
-                    "redistribution_cleared": true
-                }],
-                "remove_missing_layers": ["baseline"]
-            })
-            .to_string(),
-        )
+        let report = assistant_corpus_index(AssistantCorpusIndexRequest {
+            project_root: project_root.display().to_string(),
+            documents: vec![AssistantCorpusDocumentRequest {
+                id: "rao:calibration".to_owned(),
+                layer: "baseline".to_owned(),
+                title: "Interferometric calibration".to_owned(),
+                source_identity: "rao/calibration.md".to_owned(),
+                content:
+                    "A complex gain calibrator constrains antenna based amplitudes and phases."
+                        .to_owned(),
+                citation: AssistantCorpusCitationRequest {
+                    label: "Calibration guide".to_owned(),
+                    locator: "section 4".to_owned(),
+                    source_path: Some("rao/calibration.md".to_owned()),
+                    page: None,
+                    section: Some("Complex gains".to_owned()),
+                    line_start: None,
+                    line_end: None,
+                    release: None,
+                    commit: None,
+                },
+                redistribution_cleared: true,
+            }],
+            remove_missing_layers: vec!["baseline".to_owned()],
+            project_sources: None,
+            failed_project_sources: Vec::new(),
+        })
         .expect("index assistant corpus");
-        let report: serde_json::Value = serde_json::from_str(&report_json).unwrap();
-        assert_eq!(report["indexed_documents"], 1);
+        assert_eq!(report.indexed_documents, 1);
 
-        let hits_json = assistant_corpus_search_json(
-            serde_json::json!({
-                "project_root": project_root,
-                "query": "antenna gain phase calibration",
-                "limit": 1000
-            })
-            .to_string(),
-        )
+        let hits = assistant_corpus_search(AssistantCorpusSearchRequest {
+            project_root: project_root.display().to_string(),
+            query: "antenna gain phase calibration".to_owned(),
+            limit: 1000,
+            layers: Vec::new(),
+        })
         .expect("search assistant corpus");
-        let hits: serde_json::Value = serde_json::from_str(&hits_json).unwrap();
-        assert_eq!(hits.as_array().unwrap().len(), 1);
-        assert_eq!(hits[0]["citation"]["section"], "Complex gains");
-        assert_eq!(hits[0]["untrusted_evidence"], true);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].citation.section.as_deref(), Some("Complex gains"));
+        assert!(hits[0].untrusted_evidence);
 
         let oversized = "x".repeat(MAX_ASSISTANT_CORPUS_QUERY_BYTES + 1);
-        let error = assistant_corpus_search_json(
-            serde_json::json!({
-                "project_root": project_root,
-                "query": oversized,
-                "limit": 1
-            })
-            .to_string(),
-        )
+        let error = assistant_corpus_search(AssistantCorpusSearchRequest {
+            project_root: project_root.display().to_string(),
+            query: oversized,
+            limit: 1,
+            layers: Vec::new(),
+        })
         .expect_err("oversized query must fail closed");
         assert!(error.to_string().contains("host limit"));
     }

@@ -1,6 +1,67 @@
 import CasarsFrontendServices
 import Foundation
 
+extension AssistantAuthorityState: Identifiable {
+    public var id: String {
+        switch self {
+        case .explore: "explore"
+        case .work: "work"
+        case .fullAccess: "full_access"
+        }
+    }
+
+    package var label: String {
+        switch self {
+        case .explore: "Explore"
+        case .work: "Work"
+        case .fullAccess: "Full access"
+        }
+    }
+
+    package var codexSettings: (sandbox: String, approvalPolicy: String) {
+        switch self {
+        case .explore: ("read-only", "never")
+        case .work: ("workspace-write", "on-request")
+        case .fullAccess: ("danger-full-access", "never")
+        }
+    }
+}
+
+extension AssistantSessionProfileState {
+    package init() {
+        self.init(
+            profileVersion: 1,
+            backendId: "codex_app_server",
+            authority: .work,
+            model: "",
+            effort: "medium",
+            agentCommand: "codex",
+            pythonCommand: "python3",
+            pythonProvenance: nil
+        )
+    }
+}
+
+extension AssistantAttachmentState: Identifiable {
+    public var id: String { "\(kind):\(identifier)" }
+}
+
+extension AssistantCitationState: Identifiable {}
+
+extension AssistantContextItemState: Identifiable {}
+
+extension AssistantActivityState: Identifiable {}
+
+extension AssistantTaskSuggestionState: Identifiable {
+    package init(id: String, taskId: String, parameters: [String: String]) {
+        self.init(id: id, taskId: taskId, parameters: parameters, validatedPatch: nil)
+    }
+}
+
+extension AssistantPinState: Identifiable {}
+extension AssistantMessageState: Identifiable {}
+extension AssistantConversationState: Identifiable {}
+
 package enum AssistantDiscussionPresentation: String, Codable, Equatable {
     case closed
     case drawer
@@ -14,28 +75,6 @@ package enum AssistantDiscussionActivity: String, Codable, Equatable {
     case streaming
     case completed
     case restartRequired
-}
-
-package enum AssistantAuthorityState: String, Codable, Equatable, CaseIterable, Identifiable {
-    case explore
-    case work
-    case fullAccess
-
-    package var id: String { rawValue }
-    package var label: String {
-        switch self {
-        case .explore: "Explore"
-        case .work: "Work"
-        case .fullAccess: "Full access"
-        }
-    }
-    package var codexSettings: (sandbox: String, approvalPolicy: String) {
-        switch self {
-        case .explore: ("read-only", "never")
-        case .work: ("workspace-write", "on-request")
-        case .fullAccess: ("danger-full-access", "never")
-        }
-    }
 }
 
 package struct AssistantModelState: Codable, Equatable, Identifiable {
@@ -57,86 +96,6 @@ package struct AssistantUsageState: Codable, Equatable {
     package var secondaryPercentUsed: Double? = nil
     package var primaryResetAt: UInt64? = nil
     package var secondaryResetAt: UInt64? = nil
-}
-
-package struct AssistantSessionProfileState: Codable, Equatable {
-    package var profileVersion: UInt32 = 1
-    package var backendId = "codex_app_server"
-    package var authority: AssistantAuthorityState = .work
-    package var model = ""
-    package var effort = "medium"
-    package var agentCommand = "codex"
-    package var pythonCommand = "python3"
-    package var pythonProvenance: AssistantPythonProvenanceState? = nil
-}
-
-package struct AssistantPythonProvenanceState: Codable, Equatable {
-    package var selectedCommand: String
-    package var resolvedPath: String
-    package var implementation: String
-    package var version: String
-    package var environmentLabel: String
-    package var casaRsVersion: String?
-    package var packages: [String: String]
-}
-
-package struct AssistantBackendSessionState: Codable, Equatable {
-    package var backendId: String
-    package var sessionId: String
-}
-
-package struct AssistantAttachmentState: Codable, Equatable, Identifiable {
-    package var kind: String
-    package var identifier: String
-    package var label: String
-    package var primary: Bool
-    package var id: String { "\(kind):\(identifier)" }
-}
-
-package struct AssistantCitationState: Codable, Equatable, Identifiable {
-    package var id: String
-    package var kind: String
-    package var label: String
-    package var locator: String
-    package var excerpt: String
-    package var sourcePath: String?
-    package var page: UInt32?
-    package var section: String?
-    package var lineStart: UInt32?
-    package var lineEnd: UInt32?
-    package var release: String?
-    package var commit: String?
-}
-
-package struct AssistantContextItemState: Codable, Equatable, Identifiable {
-    package var id: String
-    package var kind: String
-    package var label: String
-    package var summary: String
-    package var excerpt: String
-    package var byteCount: UInt64
-    package var contentSha256: String
-    package var untrustedEvidence: Bool
-    package var selected: Bool = true
-
-    private enum CodingKeys: String, CodingKey {
-        case id, kind, label, summary, excerpt, byteCount, contentSha256, untrustedEvidence, selected
-    }
-}
-
-extension AssistantContextItemState {
-    package init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decode(String.self, forKey: .id)
-        kind = try values.decode(String.self, forKey: .kind)
-        label = try values.decode(String.self, forKey: .label)
-        summary = try values.decode(String.self, forKey: .summary)
-        excerpt = try values.decode(String.self, forKey: .excerpt)
-        byteCount = try values.decode(UInt64.self, forKey: .byteCount)
-        contentSha256 = try values.decode(String.self, forKey: .contentSha256)
-        untrustedEvidence = try values.decode(Bool.self, forKey: .untrustedEvidence)
-        selected = try values.decodeIfPresent(Bool.self, forKey: .selected) ?? true
-    }
 }
 
 /// Deterministically shares one bounded context window across every open tab.
@@ -174,61 +133,6 @@ package enum AssistantContextBudgetPolicy {
     }
 }
 
-package struct AssistantActivityState: Codable, Equatable, Identifiable {
-    package var id: String
-    package var label: String
-    package var state: String
-    package var summary: String?
-}
-
-package struct AssistantTaskSuggestionState: Codable, Equatable, Identifiable {
-    package var id: String
-    package var taskId: String
-    package var parameters: [String: String]
-    package var validatedPatch: SurfaceParameterPatch? = nil
-}
-
-package struct AssistantPinState: Codable, Equatable, Identifiable {
-    package var id: String
-    package var conversationId: String
-    package var notebookId: String
-    package var messageId: String
-    package var representation: String
-    package var destination: String
-    package var snapshotContent: String
-    package var createdAt: UInt64
-    package var contentSha256: String
-}
-
-package struct AssistantMessageState: Codable, Equatable, Identifiable {
-    package var id: String
-    package var role: String
-    package var content: String
-    package var createdAt: UInt64
-    package var agentId: String?
-    package var model: String?
-    package var citations: [AssistantCitationState]
-    package var usedContext: [AssistantContextItemState]
-    package var activities: [AssistantActivityState]
-    package var taskSuggestions: [AssistantTaskSuggestionState]
-    package var pins: [AssistantPinState]
-}
-
-package struct AssistantConversationState: Codable, Equatable, Identifiable {
-    package var schemaVersion: UInt32
-    package var id: String
-    package var title: String
-    package var createdAt: UInt64
-    package var updatedAt: UInt64
-    package var profile: AssistantSessionProfileState
-    package var backendSession: AssistantBackendSessionState?
-    package var attachments: [AssistantAttachmentState]
-    package var messages: [AssistantMessageState]
-    package var draft: String
-    package var selectedContextIds: [String]
-    package var scrollAnchorMessageId: String?
-}
-
 package struct AssistantApprovalRequestState: Codable, Equatable, Identifiable {
     package var id: String
     package var method: String
@@ -242,6 +146,7 @@ package struct AssistantDiscussionState: Codable, Equatable {
     package var activeConversationID: String?
     package var models: [AssistantModelState] = []
     package var contexts: [AssistantContextItemState] = []
+    package var selectedContextIDs: Set<String> = []
     package var account = AssistantAccountState(email: nil, plan: nil, requiresLogin: true)
     package var usage = AssistantUsageState()
     package var streamingText = ""
@@ -261,31 +166,10 @@ package struct AssistantDiscussionState: Codable, Equatable {
     package var activeConversation: AssistantConversationState? {
         conversations.first { $0.id == activeConversationID }
     }
-}
 
-package struct AssistantCorpusIndexReportState: Codable, Equatable {
-    package var schemaVersion: UInt32
-    package var retrievalEngine: String
-    package var indexedDocuments: Int
-    package var unchangedDocuments: Int
-    package var removedDocuments: Int
-    package var chunkCount: Int
-}
-
-package struct AssistantProjectCorpusSourceRequest: Codable, Equatable {
-    package var relativePath: String
-    package var fileType: String
-    package var sizeBytes: UInt64
-    package var modifiedUnixNs: Int64
-    package var statusChangedUnixNs: Int64
-    package var fileIdentity: String
-}
-
-package struct AssistantProjectCorpusPlanState: Codable, Equatable {
-    package var schemaVersion: UInt32
-    package var extractPaths: [String]
-    package var unchangedPaths: [String]
-    package var removedPaths: [String]
+    package var selectedContexts: [AssistantContextItemState] {
+        contexts.filter { selectedContextIDs.contains($0.id) }
+    }
 }
 
 package struct AssistantCorpusRefreshMetricsState: Codable, Equatable {
@@ -293,39 +177,6 @@ package struct AssistantCorpusRefreshMetricsState: Codable, Equatable {
     package var projectContentReads = 0
     package var projectPDFExtractions = 0
     package var projectOCRCalls = 0
-}
-
-package struct AssistantCorpusDocumentRequest: Encodable {
-    package var id: String
-    package var layer: String
-    package var title: String
-    package var sourceIdentity: String
-    package var content: String
-    package var citation: AssistantCorpusCitationRequest
-    package var redistributionCleared: Bool
-}
-
-package struct AssistantCorpusCitationRequest: Codable, Equatable {
-    package var label: String
-    package var locator: String
-    package var sourcePath: String?
-    package var page: UInt32?
-    package var section: String?
-    package var lineStart: UInt32?
-    package var lineEnd: UInt32?
-    package var release: String?
-    package var commit: String?
-}
-
-package struct AssistantCorpusSearchHitState: Codable, Equatable {
-    package var chunkId: String
-    package var documentId: String
-    package var layer: String
-    package var title: String
-    package var text: String
-    package var score: Float
-    package var citation: AssistantCorpusCitationRequest
-    package var untrustedEvidence: Bool
 }
 
 package protocol AssistantPersistenceClient {
@@ -343,13 +194,13 @@ package protocol AssistantPersistenceClient {
         removeMissingLayers: Set<String>,
         projectSources: [AssistantProjectCorpusSourceRequest]?,
         failedProjectSources: Set<String>
-    ) throws -> String
+    ) throws -> AssistantCorpusIndexReportState
     func projectCorpusPlan(
         projectRoot: String,
         sources: [AssistantProjectCorpusSourceRequest]
     ) throws -> AssistantProjectCorpusPlanState
     func searchCorpus(projectRoot: String, query: String, limit: Int) throws -> [AssistantCorpusSearchHitState]
-    func createPin(_ request: AssistantCreatePinEnvelope) throws -> AssistantPinState
+    func createPin(_ request: AssistantCreatePinRequest) throws -> AssistantPinState
 }
 
 extension AssistantPersistenceClient {
@@ -357,7 +208,7 @@ extension AssistantPersistenceClient {
         projectRoot: String,
         documents: [AssistantCorpusDocumentRequest],
         removeMissingLayers: Set<String>
-    ) throws -> String {
+    ) throws -> AssistantCorpusIndexReportState {
         try indexCorpus(
             projectRoot: projectRoot,
             documents: documents,
@@ -369,19 +220,10 @@ extension AssistantPersistenceClient {
 }
 
 package struct UniFFIAssistantPersistenceClient: AssistantPersistenceClient {
-    private let encoder: JSONEncoder
-    private let decoder: JSONDecoder
-
-    package init() {
-        encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-    }
+    package init() {}
 
     package func conversations(projectRoot: String) throws -> [AssistantConversationState] {
-        let json = try CasarsFrontendServices.assistantConversationsJson(projectRoot: projectRoot)
-        return try decoder.decode([AssistantConversationState].self, from: Data(json.utf8))
+        try CasarsFrontendServices.assistantConversations(projectRoot: projectRoot)
     }
 
     package func createConversation(
@@ -390,23 +232,20 @@ package struct UniFFIAssistantPersistenceClient: AssistantPersistenceClient {
         attachment: AssistantAttachmentState,
         profile: AssistantSessionProfileState
     ) throws -> AssistantConversationState {
-        let request = AssistantCreateConversationEnvelope(
+        let request = AssistantCreateConversationRequest(
             projectRoot: projectRoot,
             title: title,
             primaryAttachment: attachment,
             profile: profile
         )
-        let json = try CasarsFrontendServices.assistantCreateConversationJson(
-            requestJson: String(decoding: try encoder.encode(request), as: UTF8.self)
-        )
-        return try decoder.decode(AssistantConversationState.self, from: Data(json.utf8))
+        return try CasarsFrontendServices.assistantCreateConversation(request: request)
     }
 
     package func saveConversation(projectRoot: String, transcript: AssistantConversationState) throws {
-        let request = AssistantSaveConversationEnvelope(projectRoot: projectRoot, transcript: transcript)
-        try CasarsFrontendServices.assistantSaveConversationJson(
-            requestJson: String(decoding: try encoder.encode(request), as: UTF8.self)
-        )
+        try CasarsFrontendServices.assistantSaveConversation(request: AssistantSaveConversationRequest(
+            projectRoot: projectRoot,
+            transcript: transcript
+        ))
     }
 
     package func indexCorpus(
@@ -415,31 +254,26 @@ package struct UniFFIAssistantPersistenceClient: AssistantPersistenceClient {
         removeMissingLayers: Set<String>,
         projectSources: [AssistantProjectCorpusSourceRequest]?,
         failedProjectSources: Set<String>
-    ) throws -> String {
-        let request = AssistantCorpusIndexEnvelope(
+    ) throws -> AssistantCorpusIndexReportState {
+        let request = AssistantCorpusIndexRequest(
             projectRoot: projectRoot,
             documents: documents,
-            removeMissingLayers: removeMissingLayers,
+            removeMissingLayers: removeMissingLayers.sorted(),
             projectSources: projectSources,
-            failedProjectSources: failedProjectSources
+            failedProjectSources: failedProjectSources.sorted()
         )
-        return try CasarsFrontendServices.assistantCorpusIndexJson(
-            requestJson: String(decoding: try encoder.encode(request), as: UTF8.self)
-        )
+        return try CasarsFrontendServices.assistantCorpusIndex(request: request)
     }
 
     package func projectCorpusPlan(
         projectRoot: String,
         sources: [AssistantProjectCorpusSourceRequest]
     ) throws -> AssistantProjectCorpusPlanState {
-        let request = AssistantProjectCorpusPlanEnvelope(
+        let request = AssistantProjectCorpusPlanRequest(
             projectRoot: projectRoot,
             sources: sources
         )
-        let json = try CasarsFrontendServices.assistantProjectCorpusPlanJson(
-            requestJson: String(decoding: try encoder.encode(request), as: UTF8.self)
-        )
-        return try decoder.decode(AssistantProjectCorpusPlanState.self, from: Data(json.utf8))
+        return try CasarsFrontendServices.assistantProjectCorpusPlan(request: request)
     }
 
     package func searchCorpus(
@@ -447,56 +281,16 @@ package struct UniFFIAssistantPersistenceClient: AssistantPersistenceClient {
         query: String,
         limit: Int
     ) throws -> [AssistantCorpusSearchHitState] {
-        let request = AssistantCorpusSearchEnvelope(projectRoot: projectRoot, query: query, limit: limit)
-        let json = try CasarsFrontendServices.assistantCorpusSearchJson(
-            requestJson: String(decoding: try encoder.encode(request), as: UTF8.self)
+        let request = AssistantCorpusSearchRequest(
+            projectRoot: projectRoot,
+            query: query,
+            limit: UInt64(limit),
+            layers: []
         )
-        return try decoder.decode([AssistantCorpusSearchHitState].self, from: Data(json.utf8))
+        return try CasarsFrontendServices.assistantCorpusSearch(request: request)
     }
 
-    package func createPin(_ request: AssistantCreatePinEnvelope) throws -> AssistantPinState {
-        let json = try CasarsFrontendServices.assistantCreatePinJson(
-            requestJson: String(decoding: try encoder.encode(request), as: UTF8.self)
-        )
-        return try decoder.decode(AssistantPinState.self, from: Data(json.utf8))
+    package func createPin(_ request: AssistantCreatePinRequest) throws -> AssistantPinState {
+        try CasarsFrontendServices.assistantCreatePin(request: request)
     }
-}
-
-private struct AssistantCreateConversationEnvelope: Encodable {
-    var projectRoot: String
-    var title: String
-    var primaryAttachment: AssistantAttachmentState
-    var profile: AssistantSessionProfileState
-}
-
-private struct AssistantSaveConversationEnvelope: Encodable {
-    var projectRoot: String
-    var transcript: AssistantConversationState
-}
-
-private struct AssistantCorpusIndexEnvelope: Encodable {
-    var projectRoot: String
-    var documents: [AssistantCorpusDocumentRequest]
-    var removeMissingLayers: Set<String>
-    var projectSources: [AssistantProjectCorpusSourceRequest]?
-    var failedProjectSources: Set<String>
-}
-
-private struct AssistantProjectCorpusPlanEnvelope: Encodable {
-    var projectRoot: String
-    var sources: [AssistantProjectCorpusSourceRequest]
-}
-
-private struct AssistantCorpusSearchEnvelope: Encodable {
-    var projectRoot: String
-    var query: String
-    var limit: Int
-}
-
-package struct AssistantCreatePinEnvelope: Encodable {
-    package var conversationId: String
-    package var notebookId: String
-    package var messageId: String
-    package var representation: String
-    package var snapshotContent: String
 }

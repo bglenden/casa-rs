@@ -333,7 +333,7 @@ struct AssistantDiscussionView: View {
                 VStack(alignment: .leading, spacing: 7) {
                     ForEach(discussion.contexts) { context in
                         Toggle(isOn: Binding(
-                            get: { context.selected },
+                            get: { discussion.selectedContextIDs.contains(context.id) },
                             set: { _ in store.toggleAssistantContext(context.id) }
                         )) {
                             VStack(alignment: .leading, spacing: 1) {
@@ -352,7 +352,7 @@ struct AssistantDiscussionView: View {
                 }
                 .padding(.top, 6)
             } label: {
-                Text("Context: \(discussion.contexts.filter(\.selected).count) project items")
+                Text("Context: \(discussion.selectedContexts.count) project items")
                     .workbenchFont(.caption)
             }
 

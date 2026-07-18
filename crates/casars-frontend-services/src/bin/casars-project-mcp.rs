@@ -16,7 +16,14 @@ use casa_provider_contracts::{builtin_surface_bundle, project_ui_form};
 use casa_task_runtime::{
     BaseSource, OpenSessionRequest, ParameterRuntime, ResolutionPatch, parse_parameter_text,
 };
-use casars_frontend_services::{application_catalog, assistant_corpus_search_json};
+#[cfg(test)]
+use casars_frontend_services::{
+    AssistantCorpusCitationRequest, AssistantCorpusDocumentRequest, AssistantCorpusIndexRequest,
+    assistant_corpus_index,
+};
+use casars_frontend_services::{
+    AssistantCorpusSearchRequest, application_catalog, assistant_corpus_search,
+};
 use serde_json::{Value, json};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -197,20 +204,19 @@ fn call_tool(project_root: &Path, nonce: &str, request: &Value) -> Result<Value,
         "corpus.search" | "source.search" => {
             let query = arguments.get("query").and_then(Value::as_str).unwrap_or("");
             let limit = arguments.get("limit").and_then(Value::as_u64).unwrap_or(8);
-            let output = assistant_corpus_search_json(
-                json!({
-                    "project_root": project_root,
-                    "query": query,
-                    "limit": limit,
-                    "layers": if name == "source.search" {
-                        json!(["release_source", "live_source"])
-                    } else {
-                        json!([])
-                    }
-                })
-                .to_string(),
-            )
+            let hits = assistant_corpus_search(AssistantCorpusSearchRequest {
+                project_root: project_root.display().to_string(),
+                query: query.to_string(),
+                limit,
+                layers: if name == "source.search" {
+                    vec!["release_source".to_string(), "live_source".to_string()]
+                } else {
+                    Vec::new()
+                },
+            })
             .map_err(frontend_error)?;
+            let output = serde_json::to_string(&hits)
+                .map_err(|error| (-32000, format!("serialize corpus hits: {error}")))?;
             if name == "source.search" {
                 source_hits_only(&output, limit as usize)?
             } else {
@@ -505,44 +511,53 @@ mod tests {
     fn exact_nonce_tools_retrieve_scientific_and_source_citations() {
         let project = tempfile::tempdir().expect("project");
         let project_root = project.path().canonicalize().expect("canonical project");
-        casars_frontend_services::assistant_corpus_index_json(
-            json!({
-                "project_root": project_root,
-                "documents": [
-                    {
-                        "id": "baseline:primer",
-                        "layer": "baseline",
-                        "title": "Radio primer",
-                        "source_identity": "baseline/primer.md",
-                        "content": "Briggs weighting trades sensitivity against angular resolution.",
-                        "citation": {
-                            "label": "Radio primer",
-                            "locator": "baseline/primer.md, Imaging",
-                            "source_path": "baseline/primer.md",
-                            "section": "Imaging",
-                            "release": "1.0.0"
-                        },
-                        "redistribution_cleared": true
+        assistant_corpus_index(AssistantCorpusIndexRequest {
+            project_root: project_root.display().to_string(),
+            documents: vec![
+                AssistantCorpusDocumentRequest {
+                    id: "baseline:primer".to_owned(),
+                    layer: "baseline".to_owned(),
+                    title: "Radio primer".to_owned(),
+                    source_identity: "baseline/primer.md".to_owned(),
+                    content: "Briggs weighting trades sensitivity against angular resolution."
+                        .to_owned(),
+                    citation: AssistantCorpusCitationRequest {
+                        label: "Radio primer".to_owned(),
+                        locator: "baseline/primer.md, Imaging".to_owned(),
+                        source_path: Some("baseline/primer.md".to_owned()),
+                        page: None,
+                        section: Some("Imaging".to_owned()),
+                        line_start: None,
+                        line_end: None,
+                        release: Some("1.0.0".to_owned()),
+                        commit: None,
                     },
-                    {
-                        "id": "source:corpus",
-                        "layer": "live_source",
-                        "title": "corpus.rs",
-                        "source_identity": "crates/casa-notebook/src/corpus.rs@abc123",
-                        "content": "pub const CORPUS_SCHEMA_VERSION: u32 = 2;",
-                        "citation": {
-                            "label": "corpus.rs",
-                            "locator": "crates/casa-notebook/src/corpus.rs",
-                            "source_path": "crates/casa-notebook/src/corpus.rs",
-                            "commit": "abc123"
-                        },
-                        "redistribution_cleared": true
-                    }
-                ],
-                "remove_missing_layers": ["baseline", "live_source"]
-            })
-            .to_string(),
-        )
+                    redistribution_cleared: true,
+                },
+                AssistantCorpusDocumentRequest {
+                    id: "source:corpus".to_owned(),
+                    layer: "live_source".to_owned(),
+                    title: "corpus.rs".to_owned(),
+                    source_identity: "crates/casa-notebook/src/corpus.rs@abc123".to_owned(),
+                    content: "pub const CORPUS_SCHEMA_VERSION: u32 = 2;".to_owned(),
+                    citation: AssistantCorpusCitationRequest {
+                        label: "corpus.rs".to_owned(),
+                        locator: "crates/casa-notebook/src/corpus.rs".to_owned(),
+                        source_path: Some("crates/casa-notebook/src/corpus.rs".to_owned()),
+                        page: None,
+                        section: None,
+                        line_start: None,
+                        line_end: None,
+                        release: None,
+                        commit: Some("abc123".to_owned()),
+                    },
+                    redistribution_cleared: true,
+                },
+            ],
+            remove_missing_layers: vec!["baseline".to_owned(), "live_source".to_owned()],
+            project_sources: None,
+            failed_project_sources: Vec::new(),
+        })
         .expect("index corpus");
         let nonce = "abcdefghijklmnopqrstuvwx";
 

@@ -6,14 +6,14 @@ import CasarsFrontendServices
 import XCTest
 
 final class AssistantDiscussionTests: XCTestCase {
-    func testPersistedUsedContextDefaultsMissingTransientSelectionToSelected() throws {
+    func testGeneratedContextContractDecodesPersistedOwnerShapeWithoutTransientSelection() throws {
         let data = Data(#"{"id":"context-1","kind":"notebook","label":"Analysis","summary":"Open notebook","excerpt":"notes","byte_count":5,"content_sha256":"hash","untrusted_evidence":false}"#.utf8)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
 
         let context = try decoder.decode(AssistantContextItemState.self, from: data)
 
-        XCTAssertTrue(context.selected)
+        XCTAssertEqual(context.id, "context-1")
         XCTAssertEqual(context.byteCount, 5)
     }
 
@@ -660,13 +660,13 @@ final class AssistantDiscussionTests: XCTestCase {
             first.documents.filter { $0.citation.sourcePath == "documents/paper.pdf" }.map(\.citation.page),
             [1, 2]
         )
-        let firstReport = try decodeCorpusReport(client.indexCorpus(
+        let firstReport = try client.indexCorpus(
             projectRoot: project.path,
             documents: first.documents,
             removeMissingLayers: first.refreshedLayers,
             projectSources: first.projectSources,
             failedProjectSources: first.failedProjectSources
-        ))
+        )
         XCTAssertGreaterThan(firstReport.indexedDocuments, 0)
         let pageTwo = try XCTUnwrap(
             client.searchCorpus(projectRoot: project.path, query: "quadrature zephyr", limit: 4).first
@@ -679,13 +679,13 @@ final class AssistantDiscussionTests: XCTestCase {
             projectRoot: project.path,
             environment: environment
         )
-        let changedReport = try decodeCorpusReport(client.indexCorpus(
+        let changedReport = try client.indexCorpus(
             projectRoot: project.path,
             documents: changed.documents,
             removeMissingLayers: changed.refreshedLayers,
             projectSources: changed.projectSources,
             failedProjectSources: changed.failedProjectSources
-        ))
+        )
         XCTAssertGreaterThanOrEqual(changedReport.indexedDocuments, 1)
         XCTAssertGreaterThanOrEqual(changedReport.removedDocuments, 1)
         XCTAssertTrue(try client.searchCorpus(
@@ -704,13 +704,13 @@ final class AssistantDiscussionTests: XCTestCase {
             projectRoot: project.path,
             environment: environment
         )
-        let removedReport = try decodeCorpusReport(client.indexCorpus(
+        let removedReport = try client.indexCorpus(
             projectRoot: project.path,
             documents: removed.documents,
             removeMissingLayers: removed.refreshedLayers,
             projectSources: removed.projectSources,
             failedProjectSources: removed.failedProjectSources
-        ))
+        )
         XCTAssertGreaterThanOrEqual(removedReport.removedDocuments, 1)
         XCTAssertTrue(try client.searchCorpus(
             projectRoot: project.path,
@@ -743,13 +743,13 @@ final class AssistantDiscussionTests: XCTestCase {
         XCTAssertEqual(pages.map(\.citation.page), Array(1 ... 9).map(UInt32.init))
 
         let client = UniFFIAssistantPersistenceClient()
-        let report = try decodeCorpusReport(client.indexCorpus(
+        let report = try client.indexCorpus(
             projectRoot: project.path,
             documents: result.documents,
             removeMissingLayers: result.refreshedLayers,
             projectSources: result.projectSources,
             failedProjectSources: result.failedProjectSources
-        ))
+        )
         let hits = try client.searchCorpus(
             projectRoot: project.path,
             query: "3000 hours factor 169 14-fold",
@@ -801,7 +801,7 @@ final class AssistantDiscussionTests: XCTestCase {
         let conversationID = UUID().uuidString.lowercased()
         let notebookID = UUID().uuidString.lowercased()
         let messageID = UUID().uuidString.lowercased()
-        let pin = try client.createPin(AssistantCreatePinEnvelope(
+        let pin = try client.createPin(AssistantCreatePinRequest(
             conversationId: conversationID,
             notebookId: notebookID,
             messageId: messageID,
@@ -1618,12 +1618,6 @@ final class AssistantDiscussionTests: XCTestCase {
             context.endPDFPage()
         }
         context.closePDF()
-    }
-
-    private func decodeCorpusReport(_ json: String) throws -> AssistantCorpusIndexReportState {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try decoder.decode(AssistantCorpusIndexReportState.self, from: Data(json.utf8))
     }
 
     private func collectAllCorpus(

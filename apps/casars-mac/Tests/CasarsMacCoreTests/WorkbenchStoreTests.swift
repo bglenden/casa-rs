@@ -30,8 +30,7 @@ final class WorkbenchStoreTests: XCTestCase {
                 excerpt: "previous",
                 byteCount: 8,
                 contentSha256: "old",
-                untrustedEvidence: true,
-                selected: false
+                untrustedEvidence: true
             ),
             AssistantContextItemState(
                 id: "task:task-b",
@@ -41,10 +40,10 @@ final class WorkbenchStoreTests: XCTestCase {
                 excerpt: "previous",
                 byteCount: 8,
                 contentSha256: "old",
-                untrustedEvidence: true,
-                selected: true
+                untrustedEvidence: true
             ),
         ]
+        discussion.selectedContextIDs = ["task:task-b"]
         var state = EmptyWorkbench.makeState()
         state.tabs = [
             WorkbenchTab(id: "task-a", title: "First", kind: .task, taskID: "imager"),
@@ -64,8 +63,8 @@ final class WorkbenchStoreTests: XCTestCase {
         let secondContext = try XCTUnwrap(contexts.first { $0.id == "task:task-b" })
         XCTAssertTrue(firstContext.excerpt.contains("robust = 0.25"))
         XCTAssertTrue(secondContext.excerpt.contains("robust = -1.0"))
-        XCTAssertFalse(firstContext.selected)
-        XCTAssertTrue(secondContext.selected)
+        XCTAssertFalse(store.state.assistantDiscussion?.selectedContextIDs.contains(firstContext.id) ?? true)
+        XCTAssertTrue(store.state.assistantDiscussion?.selectedContextIDs.contains(secondContext.id) ?? false)
     }
 
     func testAssistantSendRefreshesTheBoundedMCPProjectionFromCurrentTabs() throws {
@@ -111,9 +110,9 @@ final class WorkbenchStoreTests: XCTestCase {
             excerpt: "robust = 0.0",
             byteCount: 12,
             contentSha256: "old",
-            untrustedEvidence: true,
-            selected: true
+            untrustedEvidence: true
         )]
+        discussion.selectedContextIDs = ["task:task-a"]
 
         var state = EmptyWorkbench.makeState()
         state.project.rootPath = project.path
