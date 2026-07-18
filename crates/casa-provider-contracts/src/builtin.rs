@@ -465,7 +465,7 @@ mod tests {
         );
 
         let surface = catalog.surface("importvla").unwrap();
-        assert_eq!(surface.contract_version(), 2);
+        assert_eq!(surface.contract_version(), 3);
         let archivefiles = surface
             .bindings()
             .iter()

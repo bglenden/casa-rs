@@ -4,7 +4,7 @@
     {
       "kind": "task",
       "id": "msexplore",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "MSExplore",
       "category": "MeasurementSet",
       "summary": "explore and export common MeasurementSet plotms-style plots",
@@ -3607,13 +3607,19 @@
             }
           ],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "calibrate",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Calibrate",
       "category": "Calibration",
       "summary": "apply, inspect, and solve CASA-style calibration workflows",
@@ -7531,13 +7537,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "importvla",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "ImportVLA",
       "category": "Import",
       "summary": "scan or import old VLA export archives from disk",
@@ -8197,13 +8209,19 @@
             }
           ],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -11654,13 +11672,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "simobserve",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "SimObserve",
       "category": "Simulation",
       "summary": "Generate a CASA-compatible synthetic VLA MeasurementSet",
@@ -14016,13 +14040,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "session",
       "id": "tablebrowser",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Table Browser",
       "category": "Tables",
       "summary": "browse arbitrary casacore tables",
@@ -14400,13 +14430,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "session",
       "id": "imexplore",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "ImExplore",
       "category": "Images",
       "summary": "browse persistent casacore images",
@@ -15291,13 +15327,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imhead",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Header",
       "category": "Images",
       "summary": "Inspect or update CASA image header metadata.",
@@ -15530,13 +15572,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imstat",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Statistics",
       "category": "Images",
       "summary": "Compute CASA image statistics over optional pixel, region, and channel selections.",
@@ -15753,13 +15801,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "immoments",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Moments",
       "category": "Images",
       "summary": "Create CASA-style image moment maps",
@@ -16153,13 +16207,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "exportfits",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Export FITS",
       "category": "Images",
       "summary": "Export CASA images to FITS",
@@ -16404,13 +16464,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "mstransform",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "MSTransform",
       "category": "MeasurementSet",
       "summary": "Materialize a selected MeasurementSet into a new output MS.",
@@ -17008,13 +17074,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "split",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Split",
       "category": "MeasurementSet",
       "summary": "Create a selected MeasurementSet subset, equivalent to CASA split.",
@@ -17609,13 +17681,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "uvcontsub",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "UV Continuum Subtraction",
       "category": "MeasurementSet",
       "summary": "Subtract continuum emission from a MeasurementSet.",
@@ -18581,13 +18659,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "applycal",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Applycal",
       "category": "Calibration",
       "summary": "Apply one or more calibration tables to a MeasurementSet.",
@@ -19751,13 +19835,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "gaincal",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Gaincal",
       "category": "Calibration",
       "summary": "Solve antenna gain calibration for a MeasurementSet.",
@@ -21263,13 +21353,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "bandpass",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Bandpass",
       "category": "Calibration",
       "summary": "Solve bandpass calibration for a MeasurementSet.",
@@ -22625,13 +22721,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "fluxscale",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Fluxscale",
       "category": "Calibration",
       "summary": "Scale gain solutions using reference calibrator fields.",
@@ -23194,13 +23296,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "gencal",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Gencal",
       "category": "Calibration",
       "summary": "Generate a calibration table such as antpos, gceff, or opac.",
@@ -23767,13 +23875,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "plotms",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "PlotMS",
       "category": "Plotting",
       "summary": "Plot MeasurementSet visibility data with CASA plotms-style selections and axes.",
@@ -27373,13 +27487,19 @@
             }
           ],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "plotcal",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "PlotCal",
       "category": "Plotting",
       "summary": "Plot calibration tables and corrected-data diagnostics.",
@@ -28173,13 +28293,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "flagdata",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Flag Data",
       "category": "Flagging",
       "summary": "Run native CASA-style MeasurementSet flagging.",
@@ -29127,13 +29253,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "flagmanager",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Flag Manager",
       "category": "Flagging",
       "summary": "Manage MeasurementSet flag-version snapshots.",
@@ -29476,13 +29608,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imcollapse",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Collapse",
       "category": "Images",
       "summary": "Collapse image axes using CASA imcollapse.",
@@ -30085,13 +30223,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imfit",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Fit",
       "category": "Images",
       "summary": "Fit Gaussian components using CASA imfit.",
@@ -31293,13 +31437,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "impbcor",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Primary Beam Correction",
       "category": "Images",
       "summary": "Apply primary-beam correction to a CASA image",
@@ -31944,13 +32094,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "widebandpbcor",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Wideband PB Correction",
       "category": "Images",
       "summary": "Apply wideband primary-beam correction using CASA widebandpbcor.",
@@ -32537,13 +32693,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imcontsub",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Continuum Subtraction",
       "category": "Images",
       "summary": "Subtract image-cube continuum using CASA imcontsub.",
@@ -32989,13 +33151,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "impv",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Position Velocity",
       "category": "Images",
       "summary": "Extract a CASA-style position-velocity image",
@@ -33384,13 +33552,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imsubimage",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Subimage",
       "category": "Images",
       "summary": "Extract a CASA-style image section",
@@ -33682,13 +33856,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "immath",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Math",
       "category": "Images",
       "summary": "Evaluate tutorial image arithmetic expressions",
@@ -33931,13 +34111,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imregrid",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Regrid",
       "category": "Images",
       "summary": "Regrid a CASA image onto a template image",
@@ -34242,13 +34428,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "feather",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Feather",
       "category": "Images",
       "summary": "Combine high-resolution and low-resolution images in the Fourier domain",
@@ -34527,13 +34719,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "importfits",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Import FITS",
       "category": "Images",
       "summary": "Import a FITS primary image into a CASA image",
@@ -34725,13 +34923,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "concat",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Concat",
       "category": "MeasurementSet",
       "summary": "Concatenate MeasurementSets using CASA concat.",
@@ -35225,13 +35429,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "statwt",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "StatWT",
       "category": "MeasurementSet",
       "summary": "Compute and write visibility weights using CASA statwt.",
@@ -36552,13 +36762,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "hanningsmooth",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Hanning Smooth",
       "category": "MeasurementSet",
       "summary": "Hanning smooth channel data using CASA hanningsmooth.",
@@ -37404,13 +37620,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "clearcal",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Clearcal",
       "category": "Calibration",
       "summary": "Reset calibration columns using CASA clearcal.",
@@ -37696,13 +37918,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "delmod",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Delmod",
       "category": "Calibration",
       "summary": "Delete MeasurementSet model data using CASA delmod.",
@@ -37940,13 +38168,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "ft",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "FT",
       "category": "Calibration",
       "summary": "Insert model visibilities using CASA ft.",
@@ -38434,13 +38668,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "simanalyze",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "SimAnalyze",
       "category": "Simulation",
       "summary": "Image and analyze simulated observations using CASA simanalyze.",
@@ -40136,13 +40376,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "simalma",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "SimALMA",
       "category": "Simulation",
       "summary": "Run ALMA simulation workflows using CASA simalma.",
@@ -41755,6 +42001,12 @@
         {
           "from_contract": 1,
           "to_contract": 2,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
           "steps": [],
           "changed_defaults": []
         }

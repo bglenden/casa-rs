@@ -29,11 +29,13 @@ Managed state normally lives at:
 resolution. Session surfaces use only `last.toml`. An explicit source profile
 is never overwritten without an explicit save.
 
-## Provider protocol compatibility
+## Task-runner compatibility
 
-Python task launch metadata comes from the provider-owned application catalog.
-An explicit `binary=` argument or module `configure(binary=...)` value selects
-that exact file. Otherwise `CASARS_LAUNCH_MODE` selects exactly one policy:
+Python has one task transport: every generated `casars.tasks.<task>` callable
+delegates to `casars run`, which resolves the provider through the canonical
+application catalog and `casa-task-runtime`. An explicit `binary=` argument
+selects the exact `casars` runner file. Otherwise `CASARS_LAUNCH_MODE` selects
+exactly one policy:
 
 - `installed_suite` (the default) uses the catalog entry's override variable,
   or the single path `<CASARS_SUITE_ROOT>/bin/<executable>`. Without an explicit
@@ -41,19 +43,11 @@ that exact file. Otherwise `CASARS_LAUNCH_MODE` selects exactly one policy:
 - `development_workspace` uses the single path
   `<CASARS_DEVELOPMENT_WORKSPACE>/target/debug/<executable>`.
 
-A missing file is an error in the selected mode. Python does not inspect the
+A missing runner is an error in the selected mode. Python does not inspect the
 current directory, package ancestors, neighboring build profiles, or `PATH`,
-and it never switches launch modes automatically.
-
-Before the first task execution for a resolved binary, the wrapper requires a matching protocol descriptor from `calibrate --protocol-info`.
-
-The current protocol contract is:
-
-- protocol name: `casa_calibration_task`
-- protocol version: `1`
-- surface kind: `task`
-
-If the binary reports a different protocol name or version, the Python wrapper raises immediately instead of attempting a best-effort invocation. This is the guard against version skew between the Python package and the task binary.
+and it never switches launch modes automatically. The runner validates the
+provider contract and invocation before execution; Python does not maintain a
+second protocol descriptor, provider schema, or compatibility handshake.
 
 Release tags also build and publish Python package artifacts separately from the
 Rust binaries:
@@ -65,7 +59,8 @@ Rust binaries:
 That means Python package compatibility has two layers:
 
 1. package-version compatibility with the published wheel or sdist
-2. runtime protocol compatibility with the resolved `calibrate` binary
+2. runtime contract compatibility with the resolved `casars` suite and its
+   catalog-owned providers
 
 The `casars.data` surface has its own narrower stability boundary in v1:
 

@@ -2435,6 +2435,33 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertFalse(summary.contains("/data/project/input.ms"))
     }
 
+    func testTypedTaskCompletionRejectsMalformedManagedResult() {
+        XCTAssertThrowsError(
+            try CasarsFrontendServices.taskCompletion(
+                surfaceId: "imager",
+                stdout: "{not-json}",
+                workspace: FileManager.default.temporaryDirectory.path,
+                values: []
+            )
+        ) { error in
+            guard case let FrontendServiceError.TaskCompletion(reason) = error else {
+                return XCTFail("expected typed task-completion error, got \(error)")
+            }
+            XCTAssertTrue(reason.contains("unknown managed result"))
+        }
+    }
+
+    func testTypedTaskCompletionDoesNotFabricateOptionalMissingProduct() throws {
+        let completion = try CasarsFrontendServices.taskCompletion(
+            surfaceId: "gaincal",
+            stdout: #"{"kind":"solve_gain","report":{}}"#,
+            workspace: FileManager.default.temporaryDirectory.path,
+            values: [TaskParameterValue(name: "output", value: "none")]
+        )
+
+        XCTAssertTrue(completion.products.isEmpty)
+    }
+
     func testGenericTaskRegistersRelativeOutputProductUnderProjectRoot() throws {
         let schema = try CasarsFrontendServices.taskUiSchema(surfaceId: "immoments")
         let rootURL = FileManager.default.temporaryDirectory
