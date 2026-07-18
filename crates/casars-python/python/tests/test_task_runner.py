@@ -24,7 +24,7 @@ Path(os.environ["FAKE_CASARS_LOG"]).write_text(json.dumps({
     "cwd": os.getcwd(),
     "profile": profile_path.read_text(encoding="utf-8"),
 }), encoding="utf-8")
-print("runner stdout")
+print(os.environ.get("FAKE_CASARS_STDOUT", "runner stdout"))
 print("runner stderr", file=sys.stderr)
 raise SystemExit(int(os.environ.get("FAKE_CASARS_EXIT", "0")))
 """,
@@ -81,6 +81,9 @@ def test_run_uses_canonical_profile_and_forwards_runtime_controls(
     assert completion.stderr == "runner stderr\n"
     assert completion.parameters_toml == recorded["profile"]
     assert completion.workspace == tmp_path
+    assert completion.result is not None
+    assert completion.result.surface_id == "flagmanager"
+    assert completion.products == ()
     assert not Path(completion.command[4]).exists()
     assert parameters["comment"] == "none"
 
@@ -174,4 +177,38 @@ def test_run_rejects_session_parameters_and_ambiguous_sources(tmp_path: Path) ->
             profile=path,
             base_source="last",
             workspace=tmp_path,
+        )
+
+
+def test_generated_surface_returns_rust_typed_products(tmp_path: Path) -> None:
+    binary = _fake_casars(tmp_path / "casars")
+    output = tmp_path / "selected.ms"
+    output.mkdir()
+
+    completion = tasks.split(
+        vis="input.ms",
+        outputvis=output,
+        workspace=tmp_path,
+        binary=binary,
+        env={"FAKE_CASARS_LOG": str(tmp_path / "invocation.json")},
+    )
+
+    assert completion.result is not None
+    assert completion.result.surface_id == "split"
+    assert len(completion.products) == 1
+    assert completion.products[0].path == str(output)
+    assert completion.products[0].exists is True
+
+
+def test_successful_process_with_malformed_managed_result_is_rejected(
+    tmp_path: Path,
+) -> None:
+    binary = _fake_casars(tmp_path / "casars")
+    with pytest.raises(tasks.TaskResultError, match="successful but invalid result"):
+        tasks.imager(
+            vis="input.ms",
+            imagename="dirty",
+            workspace=tmp_path,
+            binary=binary,
+            env={"FAKE_CASARS_LOG": str(tmp_path / "invocation.json")},
         )

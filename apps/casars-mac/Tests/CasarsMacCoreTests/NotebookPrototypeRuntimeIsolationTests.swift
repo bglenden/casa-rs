@@ -1,4 +1,5 @@
 import Foundation
+import CasarsFrontendServices
 import XCTest
 @testable import CasarsMacCore
 
@@ -216,7 +217,7 @@ private final class PrototypeBoundaryRecorder:
     ) throws -> TaskExecution {
         try fail("process")
     }
-    func loadTaskUISchema(taskID: String) throws -> TaskUISchema { try fail("schema") }
+    func loadTaskUISchema(taskID: String) throws -> TaskUiSchema { try fail("schema") }
     func loadBundle(surfaceID: String) throws -> SurfaceParameterBundle { try fail("parameter.bundle") }
     func defaults(surfaceID: String) throws -> SurfaceParameterSnapshot { try fail("parameter.defaults") }
     func last(surfaceID: String, workspace: String, successful: Bool) throws -> SurfaceParameterSnapshot? {

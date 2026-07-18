@@ -6,6 +6,7 @@
 //! Python, and providers to resolve the same self-contained surface bundle.
 
 mod cli;
+mod completion;
 mod diagnostic;
 mod invocation;
 mod normalize;
@@ -18,6 +19,10 @@ mod storage;
 pub use cli::{
     TaskCliAction, TaskCliError, TaskCliHost, parse_task_cli_action, read_task_request,
     task_cli_machine_help,
+};
+pub use completion::{
+    RunProductReference, TaskCompletion, TaskCompletionError, TaskOutputValue,
+    decode_task_completion,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLevel, SourceLocation};
 pub use invocation::{

@@ -220,6 +220,7 @@ struct PythonNotebookPrototypeView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.secondary.opacity(0.045))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .accessibilityIdentifier("pythonPrototype.sourcePreview.\(cell.id)")
             }
         }
         .padding(13)

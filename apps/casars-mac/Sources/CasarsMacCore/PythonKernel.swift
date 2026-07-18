@@ -1,4 +1,5 @@
 import CryptoKit
+import CasarsFrontendServices
 import Darwin
 import Foundation
 
@@ -9,13 +10,6 @@ package enum NotebookPythonKernelStatus: String, Codable, Equatable {
     case running
     case interrupting
     case restartRequired
-}
-
-package struct NotebookPythonOutputEvent: Identifiable, Codable, Equatable {
-    package var id: String { "\(order)-\(channel)" }
-    package var order: Int
-    package var channel: String
-    package var text: String
 }
 
 package struct NotebookPythonArtifact: Codable, Equatable {
@@ -243,7 +237,7 @@ package final class PersistentPythonKernel {
             else { return }
             lock.withLock {
                 outputs[executionID, default: []].append(NotebookPythonOutputEvent(
-                    order: order,
+                    order: Int64(order),
                     channel: channel,
                     text: text
                 ))
@@ -478,7 +472,7 @@ package extension NotebookPythonEnvironmentIdentity {
             version: version,
             casaRsVersion: casaRsVersion,
             packages: packages,
-            fingerprintSHA256: fingerprint
+            fingerprintSha256: fingerprint
         )
     }
 }

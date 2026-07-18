@@ -271,10 +271,14 @@ package enum PrototypePythonFixtureAdapter {
                 id: "python-cell-summary",
                 title: "Inspect the calibrated MeasurementSet",
                 source: """
-                from casars import msexplore
+                import json
+                from casars import tasks
 
-                summary = msexplore.summary("data/twhya_calibrated.ms")
-                print(f"{summary.rows:,} rows · {summary.spws} spectral windows")
+                completion = tasks.msexplore(
+                    vis="data/twhya_calibrated.ms", format="json"
+                )
+                summary = json.loads(completion.stdout)
+                print(f"{summary['row_count']:,} rows · {summary['spectral_window_count']} spectral windows")
                 """,
                 owner: .user,
                 behavior: .standard
@@ -283,11 +287,14 @@ package enum PrototypePythonFixtureAdapter {
                 id: "python-cell-plot",
                 title: "Amplitude versus UV distance",
                 source: """
-                data = msexplore.data(
+                from casars import data
+
+                plot = data.measurement_set_plot(
                     "data/twhya_calibrated.ms",
-                    x="uvdist", y="amplitude", field="TW Hya"
+                    preset="amplitude_vs_uv_distance",
+                    selection={"field": "TW Hya"},
                 )
-                fig, ax = data.plot(marker=".", alpha=0.35)
+                fig, ax = data.plot_matplotlib(plot)
                 ax.set_title("TW Hya · calibrated visibilities")
                 """,
                 owner: .user,

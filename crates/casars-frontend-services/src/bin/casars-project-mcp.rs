@@ -12,13 +12,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use casa_provider_contracts::builtin_surface_bundle;
+use casa_provider_contracts::{builtin_surface_bundle, project_ui_form};
 use casa_task_runtime::{
     BaseSource, OpenSessionRequest, ParameterRuntime, ResolutionPatch, parse_parameter_text,
 };
+#[cfg(test)]
 use casars_frontend_services::{
-    application_catalog_json, assistant_corpus_search_json, parameter_form_json,
-    parameter_surface_bundle_json,
+    AssistantCorpusCitationRequest, AssistantCorpusDocumentRequest, AssistantCorpusIndexRequest,
+    assistant_corpus_index,
+};
+use casars_frontend_services::{
+    AssistantCorpusSearchRequest, application_catalog, assistant_corpus_search,
 };
 use serde_json::{Value, json};
 
@@ -200,20 +204,19 @@ fn call_tool(project_root: &Path, nonce: &str, request: &Value) -> Result<Value,
         "corpus.search" | "source.search" => {
             let query = arguments.get("query").and_then(Value::as_str).unwrap_or("");
             let limit = arguments.get("limit").and_then(Value::as_u64).unwrap_or(8);
-            let output = assistant_corpus_search_json(
-                json!({
-                    "project_root": project_root,
-                    "query": query,
-                    "limit": limit,
-                    "layers": if name == "source.search" {
-                        json!(["release_source", "live_source"])
-                    } else {
-                        json!([])
-                    }
-                })
-                .to_string(),
-            )
+            let hits = assistant_corpus_search(AssistantCorpusSearchRequest {
+                project_root: project_root.display().to_string(),
+                query: query.to_string(),
+                limit,
+                layers: if name == "source.search" {
+                    vec!["release_source".to_string(), "live_source".to_string()]
+                } else {
+                    Vec::new()
+                },
+            })
             .map_err(frontend_error)?;
+            let output = serde_json::to_string(&hits)
+                .map_err(|error| (-32000, format!("serialize corpus hits: {error}")))?;
             if name == "source.search" {
                 source_hits_only(&output, limit as usize)?
             } else {
@@ -231,7 +234,7 @@ fn call_tool(project_root: &Path, nonce: &str, request: &Value) -> Result<Value,
                 .ok_or_else(|| (-32602, "task.schema requires task_id".to_owned()))?;
             task_schema_for_agent(task_id)?
         }
-        "task.catalog" => application_catalog_json().map_err(frontend_error)?,
+        "task.catalog" => task_catalog_for_agent()?,
         "task.suggest" => {
             let task_id = arguments
                 .get("task_id")
@@ -286,48 +289,53 @@ fn call_tool(project_root: &Path, nonce: &str, request: &Value) -> Result<Value,
 }
 
 fn task_schema_for_agent(task_id: &str) -> Result<String, (i64, String)> {
-    let mut schema: Value =
-        serde_json::from_str(&parameter_form_json(task_id.to_owned()).map_err(frontend_error)?)
-            .map_err(|error| (-32003, format!("parse task schema: {error}")))?;
-    let bundle: Value = serde_json::from_str(
-        &parameter_surface_bundle_json(task_id.to_owned()).map_err(frontend_error)?,
-    )
-    .map_err(|error| (-32003, format!("parse task bundle: {error}")))?;
-    let concepts = bundle["catalog"]["concepts"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|concept| {
-            Some((
-                (
-                    concept.get("id")?.as_str()?.to_owned(),
-                    concept.get("semantic_revision")?.as_u64()?,
-                ),
-                concept.get("value_domain")?.clone(),
+    let bundle = builtin_surface_bundle(task_id).map_err(frontend_error)?;
+    let mut schema = project_ui_form(&bundle);
+    let concepts = bundle
+        .catalog
+        .concepts
+        .iter()
+        .map(|concept| {
+            serde_json::to_value(&concept.value_domain)
+                .map(|value_domain| {
+                    (
+                        (
+                            concept.id.as_str().to_owned(),
+                            u64::from(concept.semantic_revision.0),
+                        ),
+                        value_domain,
+                    )
+                })
+                .map_err(|error| (-32003, format!("project task value domain: {error}")))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
+    let predicates = bundle
+        .surface
+        .bindings()
+        .iter()
+        .map(|binding| {
+            let active_when = serde_json::to_value(&binding.active_when)
+                .map_err(|error| (-32003, format!("project active predicate: {error}")))?;
+            let required_when = serde_json::to_value(&binding.required_when)
+                .map_err(|error| (-32003, format!("project required predicate: {error}")))?;
+            let value_domain = concepts
+                .get(&(
+                    binding.concept.id.as_str().to_owned(),
+                    u64::from(binding.concept.semantic_revision.0),
+                ))
+                .cloned()
+                .ok_or_else(|| {
+                    (
+                        -32003,
+                        format!("task contract omits value domain for {}", binding.name),
+                    )
+                })?;
+            Ok((
+                binding.name.clone(),
+                (active_when, required_when, value_domain),
             ))
         })
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let predicates = bundle["surface"]
-        .get("bindings")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|binding| {
-            Some((
-                binding.get("name")?.as_str()?.to_owned(),
-                (
-                    binding.get("active_when")?.clone(),
-                    binding.get("required_when")?.clone(),
-                    concepts
-                        .get(&(
-                            binding.get("concept")?.get("id")?.as_str()?.to_owned(),
-                            binding.get("concept")?.get("semantic_revision")?.as_u64()?,
-                        ))?
-                        .clone(),
-                ),
-            ))
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
+        .collect::<Result<std::collections::BTreeMap<_, _>, (i64, String)>>()?;
     for argument in schema
         .get_mut("arguments")
         .and_then(Value::as_array_mut)
@@ -345,6 +353,12 @@ fn task_schema_for_agent(task_id: &str) -> Result<String, (i64, String)> {
     }
     serde_json::to_string(&schema)
         .map_err(|error| (-32003, format!("serialize task schema: {error}")))
+}
+
+fn task_catalog_for_agent() -> Result<String, (i64, String)> {
+    let catalog = application_catalog().map_err(frontend_error)?;
+    serde_json::to_string(&catalog)
+        .map_err(|error| (-32003, format!("serialize task catalog: {error}")))
 }
 
 fn validate_task_suggestion(
@@ -497,44 +511,53 @@ mod tests {
     fn exact_nonce_tools_retrieve_scientific_and_source_citations() {
         let project = tempfile::tempdir().expect("project");
         let project_root = project.path().canonicalize().expect("canonical project");
-        casars_frontend_services::assistant_corpus_index_json(
-            json!({
-                "project_root": project_root,
-                "documents": [
-                    {
-                        "id": "baseline:primer",
-                        "layer": "baseline",
-                        "title": "Radio primer",
-                        "source_identity": "baseline/primer.md",
-                        "content": "Briggs weighting trades sensitivity against angular resolution.",
-                        "citation": {
-                            "label": "Radio primer",
-                            "locator": "baseline/primer.md, Imaging",
-                            "source_path": "baseline/primer.md",
-                            "section": "Imaging",
-                            "release": "1.0.0"
-                        },
-                        "redistribution_cleared": true
+        assistant_corpus_index(AssistantCorpusIndexRequest {
+            project_root: project_root.display().to_string(),
+            documents: vec![
+                AssistantCorpusDocumentRequest {
+                    id: "baseline:primer".to_owned(),
+                    layer: "baseline".to_owned(),
+                    title: "Radio primer".to_owned(),
+                    source_identity: "baseline/primer.md".to_owned(),
+                    content: "Briggs weighting trades sensitivity against angular resolution."
+                        .to_owned(),
+                    citation: AssistantCorpusCitationRequest {
+                        label: "Radio primer".to_owned(),
+                        locator: "baseline/primer.md, Imaging".to_owned(),
+                        source_path: Some("baseline/primer.md".to_owned()),
+                        page: None,
+                        section: Some("Imaging".to_owned()),
+                        line_start: None,
+                        line_end: None,
+                        release: Some("1.0.0".to_owned()),
+                        commit: None,
                     },
-                    {
-                        "id": "source:corpus",
-                        "layer": "live_source",
-                        "title": "corpus.rs",
-                        "source_identity": "crates/casa-notebook/src/corpus.rs@abc123",
-                        "content": "pub const CORPUS_SCHEMA_VERSION: u32 = 2;",
-                        "citation": {
-                            "label": "corpus.rs",
-                            "locator": "crates/casa-notebook/src/corpus.rs",
-                            "source_path": "crates/casa-notebook/src/corpus.rs",
-                            "commit": "abc123"
-                        },
-                        "redistribution_cleared": true
-                    }
-                ],
-                "remove_missing_layers": ["baseline", "live_source"]
-            })
-            .to_string(),
-        )
+                    redistribution_cleared: true,
+                },
+                AssistantCorpusDocumentRequest {
+                    id: "source:corpus".to_owned(),
+                    layer: "live_source".to_owned(),
+                    title: "corpus.rs".to_owned(),
+                    source_identity: "crates/casa-notebook/src/corpus.rs@abc123".to_owned(),
+                    content: "pub const CORPUS_SCHEMA_VERSION: u32 = 2;".to_owned(),
+                    citation: AssistantCorpusCitationRequest {
+                        label: "corpus.rs".to_owned(),
+                        locator: "crates/casa-notebook/src/corpus.rs".to_owned(),
+                        source_path: Some("crates/casa-notebook/src/corpus.rs".to_owned()),
+                        page: None,
+                        section: None,
+                        line_start: None,
+                        line_end: None,
+                        release: None,
+                        commit: Some("abc123".to_owned()),
+                    },
+                    redistribution_cleared: true,
+                },
+            ],
+            remove_missing_layers: vec!["baseline".to_owned(), "live_source".to_owned()],
+            project_sources: None,
+            failed_project_sources: Vec::new(),
+        })
         .expect("index corpus");
         let nonce = "abcdefghijklmnopqrstuvwx";
 
@@ -587,7 +610,7 @@ mod tests {
 
     #[test]
     fn task_catalog_is_the_canonical_application_catalog() {
-        let value: Value = serde_json::from_str(&application_catalog_json().unwrap()).unwrap();
+        let value: Value = serde_json::from_str(&task_catalog_for_agent().unwrap()).unwrap();
         assert!(
             value["applications"]
                 .as_array()

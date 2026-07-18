@@ -1,7 +1,14 @@
 import Foundation
+import CasarsFrontendServices
 
 public protocol TaskExecution {
     func cancel()
+}
+
+public extension SurfaceProviderInvocation {
+    init(args: [String]) {
+        self.init(args: args, stdin: nil)
+    }
 }
 
 public struct GenericTaskRequest: Equatable {
@@ -29,32 +36,25 @@ public struct GenericTaskRequest: Equatable {
     }
 }
 
-public struct SurfaceProviderInvocation: Codable, Equatable, Sendable {
-    public var args: [String]
-    public var stdin: String?
-
-    public init(args: [String], stdin: String? = nil) {
-        self.args = args
-        self.stdin = stdin
-    }
-}
-
 public struct GenericTaskResult: Equatable {
     public var taskID: String
     public var arguments: [String]
     public var stdout: String
     public var stderr: String
+    public var completion: TaskCompletionProjection
 
     public init(
         taskID: String,
         arguments: [String],
         stdout: String,
-        stderr: String
+        stderr: String,
+        completion: TaskCompletionProjection
     ) {
         self.taskID = taskID
         self.arguments = arguments
         self.stdout = stdout
         self.stderr = stderr
+        self.completion = completion
     }
 }
 
@@ -137,94 +137,6 @@ private final class ImagerProgressJSONLTailer {
             if case .progress(let snapshot) = record {
                 eventHandler(.progress(snapshot))
             }
-        }
-    }
-}
-
-public struct ManagedImagingArtifact: Codable, Equatable, Identifiable {
-    public var kind: String
-    public var label: String
-    public var path: String
-    public var exists: Bool
-    public var previewPngPath: String?
-    public var previewPngExists: Bool
-
-    public var id: String { path }
-
-    enum CodingKeys: String, CodingKey {
-        case kind
-        case label
-        case path
-        case exists
-        case previewPngPath = "preview_png_path"
-        case previewPngExists = "preview_png_exists"
-    }
-}
-
-public struct ManagedImagingRequest: Codable, Equatable {
-    public var measurementSet: String
-    public var imagename: String
-    public var spectralMode: String
-    public var weighting: String
-    public var deconvolver: String
-    public var imsize: Int
-    public var cellArcsec: Double
-    public var dirtyOnly: Bool
-    public var outputChannels: Int
-
-    enum CodingKeys: String, CodingKey {
-        case measurementSet = "measurement_set"
-        case imagename
-        case spectralMode = "spectral_mode"
-        case weighting
-        case deconvolver
-        case imsize
-        case cellArcsec = "cell_arcsec"
-        case dirtyOnly = "dirty_only"
-        case outputChannels = "output_channels"
-    }
-}
-
-public struct ManagedImagingRun: Codable, Equatable {
-    public var warnings: [String]
-    public var griddedSamples: UInt64
-    public var majorCycles: UInt64
-    public var minorIterations: UInt64
-    public var channels: [ManagedImagingChannelRun]
-
-    public var summary: String {
-        "\(griddedSamples) gridded samples, \(majorCycles) major cycles, \(minorIterations) minor iterations"
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case warnings
-        case griddedSamples = "gridded_samples"
-        case majorCycles = "major_cycles"
-        case minorIterations = "minor_iterations"
-        case channels
-    }
-}
-
-public struct ManagedImagingChannelRun: Codable, Equatable {
-    public var channelIndex: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case channelIndex = "channel_index"
-    }
-}
-
-public struct ManagedImagingOutput: Codable, Equatable {
-    public var request: ManagedImagingRequest
-    public var run: ManagedImagingRun
-    public var artifacts: [ManagedImagingArtifact]
-
-    public var outputPaths: [String] {
-        artifacts.flatMap { artifact -> [String] in
-            var values = [artifact.path]
-            if let preview = artifact.previewPngPath {
-                values.append(preview)
-            }
-            return values
         }
     }
 }
@@ -334,11 +246,16 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                 if execution.isCancelled {
                     eventHandler(.cancelled(GenericTaskFailure(message: "Task was cancelled.", diagnostics: [stderr].filter { !$0.isEmpty })))
                 } else if output.exitCode == 0 {
+                    let completion = try Self.decodeCompletion(
+                        for: executionRequest,
+                        stdout: output.stdout
+                    )
                     eventHandler(.succeeded(GenericTaskResult(
                         taskID: executionRequest.task.id,
                         arguments: arguments,
                         stdout: output.stdout,
-                        stderr: stderr
+                        stderr: stderr,
+                        completion: completion
                     )))
                 } else {
                     eventHandler(.failed(GenericTaskFailure(
@@ -351,6 +268,23 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
             }
         }
         return execution
+    }
+
+    static func decodeCompletion(
+        for request: GenericTaskRequest,
+        stdout: String
+    ) throws -> TaskCompletionProjection {
+        let workspace = request.workingDirectoryPath
+            ?? FileManager.default.currentDirectoryPath
+        let values = request.parameterValues
+            .map { TaskParameterValue(name: $0.key, value: $0.value.displayText) }
+            .sorted { $0.name < $1.name }
+        return try CasarsFrontendServices.taskCompletion(
+            surfaceId: request.task.id,
+            stdout: stdout,
+            workspace: workspace,
+            values: values
+        )
     }
 
     static func createOutputParentDirectories(for request: GenericTaskRequest) throws {

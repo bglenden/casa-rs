@@ -1,4 +1,5 @@
 import Foundation
+import CasarsFrontendServices
 
 public enum DockMode: String, CaseIterable, Codable, Equatable, Identifiable {
     case datasets
@@ -334,254 +335,6 @@ public enum TaskRunState: String, Codable, Equatable {
     case cancelled
 }
 
-public struct ApplicationCatalogEnvelope: Codable, Equatable {
-    public var schemaVersion: UInt64
-    public var applications: [ApplicationCatalogEntry]
-
-    enum CodingKeys: String, CodingKey {
-        case schemaVersion = "schema_version"
-        case applications
-    }
-}
-
-public struct ApplicationCatalogEntry: Codable, Equatable, Identifiable {
-    public var id: String
-    public var kind: String
-    public var category: String
-    public var displayName: String
-    public var executable: String
-    public var cargoPackage: String
-    public var overrideEnv: String
-    public var shellKind: String
-    public var interaction: String
-    public var browserKind: String?
-    public var datasetKinds: [String]
-    public var showInTUI: Bool
-    public var showInSwift: Bool
-    public var includeInSuite: Bool
-
-    public init(
-        id: String,
-        kind: String = "task",
-        category: String,
-        displayName: String,
-        executable: String,
-        cargoPackage: String,
-        overrideEnv: String,
-        shellKind: String,
-        interaction: String,
-        browserKind: String?,
-        datasetKinds: [String],
-        showInTUI: Bool,
-        showInSwift: Bool,
-        includeInSuite: Bool
-    ) {
-        self.id = id
-        self.kind = kind
-        self.category = category
-        self.displayName = displayName
-        self.executable = executable
-        self.cargoPackage = cargoPackage
-        self.overrideEnv = overrideEnv
-        self.shellKind = shellKind
-        self.interaction = interaction
-        self.browserKind = browserKind
-        self.datasetKinds = datasetKinds
-        self.showInTUI = showInTUI
-        self.showInSwift = showInSwift
-        self.includeInSuite = includeInSuite
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case kind
-        case category
-        case displayName = "display_name"
-        case executable
-        case cargoPackage = "cargo_package"
-        case overrideEnv = "override_env"
-        case shellKind = "shell_kind"
-        case interaction
-        case browserKind = "browser_kind"
-        case datasetKinds = "dataset_kinds"
-        case showInTUI = "show_in_tui"
-        case showInSwift = "show_in_swift"
-        case includeInSuite = "include_in_suite"
-    }
-}
-
-public struct TaskContextOptionsEnvelope: Codable, Equatable {
-    public var schemaVersion: UInt64
-    public var datasetPath: String
-    public var datasetKind: String
-    public var fields: [String]
-    public var spectralWindows: [String]
-    public var scans: [String]
-    public var arrays: [String]
-    public var observations: [String]
-    public var antennas: [String]
-    public var intents: [String]
-    public var feeds: [String]
-    public var correlations: [String]
-    public var columns: [String]
-    public var dataColumns: [String]
-    public var subtables: [String]
-    public var shape: [UInt64]
-    public var defaults: [String: String]
-    public var diagnostics: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case schemaVersion = "schema_version"
-        case datasetPath = "dataset_path"
-        case datasetKind = "dataset_kind"
-        case fields
-        case spectralWindows = "spectral_windows"
-        case scans
-        case arrays
-        case observations
-        case antennas
-        case intents
-        case feeds
-        case correlations
-        case columns
-        case dataColumns = "data_columns"
-        case subtables
-        case shape
-        case defaults
-        case diagnostics
-    }
-}
-
-public struct TaskUISchema: Codable, Equatable {
-    public var schemaVersion: UInt64
-    public var commandID: String
-    public var invocationName: String
-    public var displayName: String
-    public var category: String
-    public var summary: String
-    public var usage: String
-    public var arguments: [TaskUIArgument]
-    public var managedOutput: TaskUIManagedOutput?
-
-    enum CodingKeys: String, CodingKey {
-        case schemaVersion = "schema_version"
-        case commandID = "command_id"
-        case invocationName = "invocation_name"
-        case displayName = "display_name"
-        case category
-        case summary
-        case usage
-        case arguments
-        case managedOutput = "managed_output"
-    }
-}
-
-public struct TaskUIManagedOutput: Codable, Equatable {
-    public var renderer: String
-    public var stdoutFormat: String
-    public var injectArguments: [TaskUIInjectedArgument]
-    public var rawStdoutAvailable: Bool
-    public var rawStderrAvailable: Bool
-
-    enum CodingKeys: String, CodingKey {
-        case renderer
-        case stdoutFormat = "stdout_format"
-        case injectArguments = "inject_arguments"
-        case rawStdoutAvailable = "raw_stdout_available"
-        case rawStderrAvailable = "raw_stderr_available"
-    }
-}
-
-public struct TaskUIInjectedArgument: Codable, Equatable {
-    public var flag: String
-    public var value: String?
-}
-
-public struct TaskUIArgument: Codable, Equatable, Identifiable {
-    public var id: String
-    public var label: String
-    public var order: Int
-    public var parser: TaskUIArgumentParser
-    public var valueKind: String
-    public var required: Bool
-    public var `default`: String?
-    public var help: String
-    public var group: String
-    public var parameterType: String?
-    public var conceptID: String?
-    public var conceptRevision: UInt64?
-    public var unitDimension: String?
-    public var contextRole: String?
-    public var advanced: Bool
-    public var hiddenInTUI: Bool
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case label
-        case order
-        case parser
-        case valueKind = "value_kind"
-        case required
-        case `default`
-        case help
-        case group
-        case parameterType = "parameter_type"
-        case conceptID = "concept_id"
-        case conceptRevision = "concept_revision"
-        case unitDimension = "unit_dimension"
-        case contextRole = "context_role"
-        case advanced
-        case hiddenInTUI = "hidden_in_tui"
-    }
-
-}
-
-public struct TaskUIArgumentParser: Codable, Equatable {
-    public var kind: String
-    public var flags: [String]?
-    public var metavar: String?
-    public var choices: [String]?
-    public var trueFlags: [String]?
-    public var falseFlags: [String]?
-    public var action: String?
-    public var positionalMetavar: String?
-
-    enum CodingKeys: String, CodingKey {
-        case kind
-        case flags
-        case metavar
-        case choices
-        case trueFlags = "true_flags"
-        case falseFlags = "false_flags"
-        case action
-        case positionalMetavar = "positional_metavar"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        kind = try container.decode(String.self, forKey: .kind)
-        flags = try container.decodeIfPresent([String].self, forKey: .flags)
-        metavar = try container.decodeIfPresent(String.self, forKey: .metavar)
-        choices = try container.decodeIfPresent([String].self, forKey: .choices)
-        trueFlags = try container.decodeIfPresent([String].self, forKey: .trueFlags)
-        falseFlags = try container.decodeIfPresent([String].self, forKey: .falseFlags)
-        action = try container.decodeIfPresent(String.self, forKey: .action)
-        positionalMetavar = try container.decodeIfPresent(String.self, forKey: .positionalMetavar)
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(kind, forKey: .kind)
-        try container.encodeIfPresent(flags, forKey: .flags)
-        try container.encodeIfPresent(metavar, forKey: .metavar)
-        try container.encodeIfPresent(choices, forKey: .choices)
-        try container.encodeIfPresent(trueFlags, forKey: .trueFlags)
-        try container.encodeIfPresent(falseFlags, forKey: .falseFlags)
-        try container.encodeIfPresent(action, forKey: .action)
-        try container.encodeIfPresent(positionalMetavar, forKey: .positionalMetavar)
-    }
-}
-
 public struct TaskParameters: Codable, Equatable {
     public var taskName: String
     public var selectedField: String
@@ -615,6 +368,7 @@ public struct TaskRun: Codable, Equatable {
     public var outputPaths: [String]
     public var requestSummary: String?
     public var imagerProgress: ImagerProgressSnapshot?
+    public var rawOutput: String?
 
     public init(
         runID: String? = nil,
@@ -626,7 +380,8 @@ public struct TaskRun: Codable, Equatable {
         diagnostics: [String] = [],
         outputPaths: [String] = [],
         requestSummary: String? = nil,
-        imagerProgress: ImagerProgressSnapshot? = nil
+        imagerProgress: ImagerProgressSnapshot? = nil,
+        rawOutput: String? = nil
     ) {
         self.runID = runID
         self.state = state
@@ -638,6 +393,7 @@ public struct TaskRun: Codable, Equatable {
         self.outputPaths = outputPaths
         self.requestSummary = requestSummary
         self.imagerProgress = imagerProgress
+        self.rawOutput = rawOutput
     }
 }
 
@@ -650,6 +406,7 @@ public struct RunProductReference: Identifiable, Codable, Equatable {
     public var exists: Bool
     public var previewPngPath: String?
     public var previewPngExists: Bool
+    public var diagnostic: String?
 
     public init(
         id: String,
@@ -659,7 +416,8 @@ public struct RunProductReference: Identifiable, Codable, Equatable {
         datasetID: String?,
         exists: Bool,
         previewPngPath: String?,
-        previewPngExists: Bool
+        previewPngExists: Bool,
+        diagnostic: String? = nil
     ) {
         self.id = id
         self.artifactKind = artifactKind
@@ -669,6 +427,7 @@ public struct RunProductReference: Identifiable, Codable, Equatable {
         self.exists = exists
         self.previewPngPath = previewPngPath
         self.previewPngExists = previewPngExists
+        self.diagnostic = diagnostic
     }
 }
 
@@ -1182,42 +941,24 @@ public enum ExplorerSessionStatus: String, Codable, Equatable {
     case failed
 }
 
-public struct ImageExplorerParameters: Codable, Equatable {
-    public var blc: String
-    public var trc: String
-    public var inc: String
-    public var stretch: String
-    public var autoscale: String
-    public var clipLow: String
-    public var clipHigh: String
-
-    public init(
-        blc: String = "",
-        trc: String = "",
-        inc: String = "",
-        stretch: String = "percentile99",
-        autoscale: String = "per_plane",
-        clipLow: String = "",
-        clipHigh: String = ""
-    ) {
-        self.blc = blc
-        self.trc = trc
-        self.inc = inc
-        self.stretch = stretch
-        self.autoscale = autoscale
-        self.clipLow = clipLow
-        self.clipHigh = clipHigh
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case blc
-        case trc
-        case inc
-        case stretch
-        case autoscale
-        case clipLow = "clip_low"
-        case clipHigh = "clip_high"
-    }
+public func imageExplorerParameters(
+    blc: String = "",
+    trc: String = "",
+    inc: String = "",
+    stretch: String = "percentile99",
+    autoscale: String = "per_plane",
+    clipLow: String = "",
+    clipHigh: String = ""
+) -> ImageExplorerParameters {
+    CasarsFrontendServices.ImageExplorerParameters(
+        blc: blc,
+        trc: trc,
+        inc: inc,
+        stretch: stretch,
+        autoscale: autoscale,
+        clipLow: clipLow,
+        clipHigh: clipHigh
+    )
 }
 
 public enum ImageExplorerColorMap: String, CaseIterable, Codable, Equatable, Identifiable {
@@ -1307,26 +1048,13 @@ private func interpolateImagePlaneChannel(_ start: UInt8, _ end: UInt8, fraction
     return UInt8(clamping: startValue + (delta * fraction + 128) / 256)
 }
 
-public struct ImageExplorerSnapshotRequest: Codable, Equatable {
-    public var datasetPath: String
-    public var selectedView: String
-    public var focus: String
-    public var planeContentMode: String
-    public var parameters: ImageExplorerParameters
-    public var cursorX: Int?
-    public var cursorY: Int?
-    public var selectedProfileAxis: Int?
-    public var nonDisplayIndices: [Int]
-    public var commands: [ImageExplorerCommand]
-    public var transientCommands: [ImageExplorerCommand]
-    public var includeProfile: Bool
-
+extension ImageExplorerSnapshotRequest {
     public init(
         datasetPath: String,
         selectedView: String = "plane",
         focus: String = "content",
         planeContentMode: String = "raster",
-        parameters: ImageExplorerParameters = ImageExplorerParameters(),
+        parameters: ImageExplorerParameters = imageExplorerParameters(),
         cursorX: Int? = nil,
         cursorY: Int? = nil,
         selectedProfileAxis: Int? = nil,
@@ -1335,97 +1063,24 @@ public struct ImageExplorerSnapshotRequest: Codable, Equatable {
         transientCommands: [ImageExplorerCommand] = [],
         includeProfile: Bool = true
     ) {
-        self.datasetPath = datasetPath
-        self.selectedView = selectedView
-        self.focus = focus
-        self.planeContentMode = planeContentMode
-        self.parameters = parameters
-        self.cursorX = cursorX
-        self.cursorY = cursorY
-        self.selectedProfileAxis = selectedProfileAxis
-        self.nonDisplayIndices = nonDisplayIndices
-        self.commands = commands
-        self.transientCommands = transientCommands
-        self.includeProfile = includeProfile
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case datasetPath = "dataset_path"
-        case selectedView = "active_view"
-        case focus
-        case planeContentMode = "plane_content_mode"
-        case parameters
-        case cursorX = "cursor_x"
-        case cursorY = "cursor_y"
-        case selectedProfileAxis = "selected_profile_axis"
-        case nonDisplayIndices = "non_display_indices"
-        case commands
-        case transientCommands = "transient_commands"
-        case includeProfile = "include_profile"
+        self.init(
+            datasetPath: datasetPath,
+            selectedView: selectedView,
+            focus: focus,
+            planeContentMode: planeContentMode,
+            parameters: parameters,
+            cursorX: cursorX.map(UInt64.init),
+            cursorY: cursorY.map(UInt64.init),
+            selectedProfileAxis: selectedProfileAxis.map(UInt64.init),
+            nonDisplayIndices: nonDisplayIndices.map(UInt64.init),
+            commands: commands,
+            transientCommands: transientCommands,
+            includeProfile: includeProfile
+        )
     }
 }
 
-public enum ImageExplorerRegionReference: Codable, Equatable {
-    case none
-    case definition(name: String)
-    case file(path: String)
-    case expression(expression: String)
-
-    private enum CodingKeys: String, CodingKey {
-        case kind
-        case name
-        case path
-        case expression
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        switch try container.decode(String.self, forKey: .kind) {
-        case "none":
-            self = .none
-        case "definition":
-            self = .definition(name: try container.decode(String.self, forKey: .name))
-        case "file":
-            self = .file(path: try container.decode(String.self, forKey: .path))
-        case "expression":
-            self = .expression(expression: try container.decode(String.self, forKey: .expression))
-        case let kind:
-            throw DecodingError.dataCorruptedError(
-                forKey: .kind,
-                in: container,
-                debugDescription: "unknown image region reference kind \(kind)"
-            )
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        switch self {
-        case .none:
-            try container.encode("none", forKey: .kind)
-        case .definition(let name):
-            try container.encode("definition", forKey: .kind)
-            try container.encode(name, forKey: .name)
-        case .file(let path):
-            try container.encode("file", forKey: .kind)
-            try container.encode(path, forKey: .path)
-        case .expression(let expression):
-            try container.encode("expression", forKey: .kind)
-            try container.encode(expression, forKey: .expression)
-        }
-    }
-}
-
-public struct ImageExplorerCommand: Codable, Equatable {
-    public var command: String
-    public var x: Int?
-    public var y: Int?
-    public var name: String?
-    public var newName: String?
-    public var setDefault: Bool?
-    public var path: String?
-    public var region: ImageExplorerRegionReference?
-
+extension ImageExplorerCommand {
     public init(
         command: String,
         x: Int? = nil,
@@ -1436,14 +1091,16 @@ public struct ImageExplorerCommand: Codable, Equatable {
         path: String? = nil,
         region: ImageExplorerRegionReference? = nil
     ) {
-        self.command = command
-        self.x = x
-        self.y = y
-        self.name = name
-        self.newName = newName
-        self.setDefault = setDefault
-        self.path = path
-        self.region = region
+        self.init(
+            command: command,
+            x: x.map(UInt64.init),
+            y: y.map(UInt64.init),
+            name: name,
+            newName: newName,
+            setDefault: setDefault,
+            path: path,
+            region: region
+        )
     }
 
     public static let startRegionShape = ImageExplorerCommand(command: "start_region_shape")
@@ -1484,316 +1141,6 @@ public struct ImageExplorerCommand: Codable, Equatable {
     public static func setSelectionReference(_ region: ImageExplorerRegionReference) -> ImageExplorerCommand {
         ImageExplorerCommand(command: "set_selection_references", region: region)
     }
-
-    enum CodingKeys: String, CodingKey {
-        case command
-        case x
-        case y
-        case name
-        case newName = "new_name"
-        case setDefault = "set_default"
-        case path
-        case region
-    }
-}
-
-public struct ImageExplorerSnapshot: Codable, Equatable {
-    public struct AxisValue: Codable, Equatable {
-        public var name: String
-        public var unit: String
-        public var value: Double
-    }
-
-    public struct Capabilities: Codable, Equatable {
-        public var renderablePlane: Bool
-        public var worldCoordsAvailable: Bool
-        public var pixelOnlyMode: Bool
-        public var nonDisplayAxisSelectors: Bool
-        public var maskPresent: Bool
-        public var complexUnsupported: Bool?
-
-        enum CodingKeys: String, CodingKey {
-            case renderablePlane = "renderable_plane"
-            case worldCoordsAvailable = "world_coords_available"
-            case pixelOnlyMode = "pixel_only_mode"
-            case nonDisplayAxisSelectors = "non_display_axis_selectors"
-            case maskPresent = "mask_present"
-            case complexUnsupported = "complex_unsupported"
-        }
-    }
-
-    public struct Plane: Codable, Equatable {
-        public var width: Int
-        public var height: Int
-        public var pixelsU8: [UInt8]
-        public var clipMin: Double
-        public var clipMax: Double
-        public var dataMin: Double
-        public var dataMax: Double
-        public var valueUnit: String
-        public var histogramBins: [UInt32]?
-        public var maskedOrNonFiniteCount: Int
-        public var noFiniteValues: Bool?
-
-        enum CodingKeys: String, CodingKey {
-            case width
-            case height
-            case pixelsU8 = "pixels_u8"
-            case clipMin = "clip_min"
-            case clipMax = "clip_max"
-            case dataMin = "data_min"
-            case dataMax = "data_max"
-            case valueUnit = "value_unit"
-            case histogramBins = "histogram_bins"
-            case maskedOrNonFiniteCount = "masked_or_non_finite_count"
-            case noFiniteValues = "no_finite_values"
-        }
-    }
-
-    public struct Profile: Codable, Equatable {
-        public struct Sample: Codable, Equatable {
-            public var sampleIndex: Int
-            public var pixelIndex: Int
-            public var value: Double
-            public var masked: Bool?
-            public var finite: Bool
-            public var worldAxis: AxisValue?
-
-            enum CodingKeys: String, CodingKey {
-                case sampleIndex = "sample_index"
-                case pixelIndex = "pixel_index"
-                case value
-                case masked
-                case finite
-                case worldAxis = "world_axis"
-            }
-        }
-
-        public var axis: Int
-        public var axisName: String
-        public var axisUnit: String
-        public var valueUnit: String
-        public var coordType: String?
-        public var selectedSampleIndex: Int?
-        public var samples: [Sample]
-
-        enum CodingKeys: String, CodingKey {
-            case axis
-            case axisName = "axis_name"
-            case axisUnit = "axis_unit"
-            case valueUnit = "value_unit"
-            case coordType = "coord_type"
-            case selectedSampleIndex = "selected_sample_index"
-            case samples
-        }
-    }
-
-    public struct Region: Codable, Equatable {
-        public struct OverlayVertex: Codable, Equatable {
-            public var sampledX: Double
-            public var sampledY: Double
-
-            enum CodingKeys: String, CodingKey {
-                case sampledX = "sampled_x"
-                case sampledY = "sampled_y"
-            }
-        }
-
-        public struct OverlayShape: Codable, Equatable {
-            public var vertices: [OverlayVertex]
-            public var closed: Bool
-        }
-
-        public struct Stats: Codable, Equatable {
-            public var pixelCount: Int
-            public var median: Double
-            public var min: Double
-            public var max: Double
-            public var mean: Double
-            public var sigma: Double
-            public var rms: Double
-            public var sum: Double
-            public var valueUnit: String
-
-            enum CodingKeys: String, CodingKey {
-                case pixelCount = "pixel_count"
-                case median
-                case min
-                case max
-                case mean
-                case sigma
-                case rms
-                case sum
-                case valueUnit = "value_unit"
-            }
-        }
-
-        public var label: String
-        public var shapeCount: Int
-        public var closedShapeCount: Int
-        public var editing: Bool
-        public var activeShapeVertices: Int?
-        public var overlayShapes: [OverlayShape]?
-        public var stats: Stats?
-
-        enum CodingKeys: String, CodingKey {
-            case label
-            case shapeCount = "shape_count"
-            case closedShapeCount = "closed_shape_count"
-            case editing
-            case activeShapeVertices = "active_shape_vertices"
-            case overlayShapes = "overlay_shapes"
-            case stats
-        }
-    }
-
-    public struct Navigation: Codable, Equatable {
-        public var selectedIndex: Int
-        public var totalItems: Int
-        public var viewportItems: Int
-
-        enum CodingKeys: String, CodingKey {
-            case selectedIndex = "selected_index"
-            case totalItems = "total_items"
-            case viewportItems = "viewport_items"
-        }
-    }
-
-    public struct DisplayAxis: Codable, Equatable {
-        public var axis: Int
-        public var name: String
-        public var unit: String
-        public var blc: Int
-        public var trc: Int
-        public var inc: Int
-        public var sampledLen: Int
-        public var worldIncrement: Double?
-
-        enum CodingKeys: String, CodingKey {
-            case axis
-            case name
-            case unit
-            case blc
-            case trc
-            case inc
-            case sampledLen = "sampled_len"
-            case worldIncrement = "world_increment"
-        }
-    }
-
-    public struct PlaneCursor: Codable, Equatable {
-        public var sampledX: Int
-        public var sampledY: Int
-        public var pixelX: Int
-        public var pixelY: Int
-
-        enum CodingKeys: String, CodingKey {
-            case sampledX = "sampled_x"
-            case sampledY = "sampled_y"
-            case pixelX = "pixel_x"
-            case pixelY = "pixel_y"
-        }
-    }
-
-    public struct NonDisplayAxis: Codable, Equatable, Identifiable {
-        public var axis: Int
-        public var label: String
-        public var index: Int
-        public var length: Int
-        public var pixel: Int
-
-        public var id: Int { axis }
-    }
-
-    public struct Probe: Codable, Equatable {
-        public var pixelIndices: [Int]
-        public var pixelAxes: [AxisValue]
-        public var value: Double
-        public var masked: Bool
-        public var finite: Bool
-        public var worldAxes: [AxisValue]
-
-        enum CodingKeys: String, CodingKey {
-            case pixelIndices = "pixel_indices"
-            case pixelAxes = "pixel_axes"
-            case value
-            case masked
-            case finite
-            case worldAxes = "world_axes"
-        }
-    }
-
-    public struct BackendTiming: Codable, Equatable {
-        public var planeCacheResult: String
-        public var cachedPlaneLookupNs: UInt64
-        public var planeExtractNs: UInt64
-        public var statCollectionNs: UInt64
-        public var histogramNs: UInt64
-        public var rasterizeNs: UInt64
-        public var totalPlaneNs: UInt64
-        public var profileCacheHits: UInt64?
-        public var profileCacheMisses: UInt64?
-        public var profileExtractTotalNs: UInt64?
-
-        enum CodingKeys: String, CodingKey {
-            case planeCacheResult = "plane_cache_result"
-            case cachedPlaneLookupNs = "cached_plane_lookup_ns"
-            case planeExtractNs = "plane_extract_ns"
-            case statCollectionNs = "stat_collection_ns"
-            case histogramNs = "histogram_ns"
-            case rasterizeNs = "rasterize_ns"
-            case totalPlaneNs = "total_plane_ns"
-            case profileCacheHits = "profile_cache_hits"
-            case profileCacheMisses = "profile_cache_misses"
-            case profileExtractTotalNs = "profile_extract_total_ns"
-        }
-    }
-
-    public var statusLine: String
-    public var activeView: String
-    public var focus: String?
-    public var shape: [Int]
-    public var parameters: ImageExplorerParameters?
-    public var inspectorLines: [String]
-    public var contentLines: [String]
-    public var navigation: Navigation?
-    public var plane: Plane?
-    public var probe: Probe?
-    public var profile: Profile?
-    public var displayAxes: [DisplayAxis]?
-    public var planeCursor: PlaneCursor?
-    public var nonDisplayAxes: [NonDisplayAxis]?
-    public var region: Region?
-    public var savedRegionNames: [String]
-    public var activeRegionDefinitionName: String?
-    public var maskNames: [String]
-    public var defaultMaskName: String?
-    public var backendTiming: BackendTiming?
-    public var capabilities: Capabilities
-
-    enum CodingKeys: String, CodingKey {
-        case statusLine = "status_line"
-        case activeView = "active_view"
-        case focus
-        case shape
-        case parameters
-        case inspectorLines = "inspector_lines"
-        case contentLines = "content_lines"
-        case navigation
-        case plane
-        case probe
-        case profile
-        case displayAxes = "display_axes"
-        case planeCursor = "plane_cursor"
-        case nonDisplayAxes = "non_display_axes"
-        case region
-        case savedRegionNames = "saved_region_names"
-        case activeRegionDefinitionName = "active_region_definition_name"
-        case maskNames = "mask_names"
-        case defaultMaskName = "default_mask_name"
-        case backendTiming = "backend_timing"
-        case capabilities
-    }
 }
 
 public struct ImageExplorerSessionState: Codable, Equatable {
@@ -1802,7 +1149,7 @@ public struct ImageExplorerSessionState: Codable, Equatable {
     public var focus: String = "content"
     public var planeContentMode: String = "raster"
     public var planeColorMap: ImageExplorerColorMap = .grayscale
-    public var parameters: ImageExplorerParameters = ImageExplorerParameters()
+    public var parameters: ImageExplorerParameters = imageExplorerParameters()
     public var cursorX: Int?
     public var cursorY: Int?
     public var selectedProfileAxis: Int?
@@ -1844,401 +1191,130 @@ public struct ImageExplorerSessionState: Codable, Equatable {
     }
 }
 
-public struct TableBrowserSnapshot: Codable, Equatable {
-    public struct Breadcrumb: Codable, Equatable {
-        public var label: String
-        public var path: String
-    }
-
-    public struct Capabilities: Codable, Equatable {
-        public var editable: Bool
-    }
-
-    public struct Viewport: Codable, Equatable {
-        public var width: Int
-        public var height: Int
-        public var inspectorHeight: Int
-
-        enum CodingKeys: String, CodingKey {
-            case width
-            case height
-            case inspectorHeight = "inspector_height"
-        }
-    }
-
-    public struct NavigationMetrics: Codable, Equatable {
-        public var selectedIndex: Int
-        public var totalItems: Int
-        public var viewportItems: Int
-
-        enum CodingKeys: String, CodingKey {
-            case selectedIndex = "selected_index"
-            case totalItems = "total_items"
-            case viewportItems = "viewport_items"
-        }
-    }
-
-    public struct SelectedAddress: Codable, Equatable {
-        public var kind: String
-        public var tablePath: String?
-        public var row: Int?
-        public var column: String?
-        public var keywordPath: [String]?
-        public var valuePath: [ValuePathSegment]?
-        public var source: String?
-        public var targetPath: String?
-
-        enum CodingKeys: String, CodingKey {
-            case kind
-            case tablePath = "table_path"
-            case row
-            case column
-            case keywordPath = "keyword_path"
-            case valuePath = "value_path"
-            case source
-            case targetPath = "target_path"
-        }
-    }
-
-    public struct ValuePathSegment: Codable, Equatable {
-        public var segment: String
-        public var name: String?
-        public var flatIndex: Int?
-
-        enum CodingKeys: String, CodingKey {
-            case segment
-            case name
-            case flatIndex = "flat_index"
-        }
-    }
-
-    public enum ScalarValue: Codable, Equatable {
-        case bool(Bool)
-        case int(Int64)
-        case uint(UInt64)
-        case float(Double)
-        case complex(re: Double, im: Double)
-        case string(String)
-        case unknown(type: String, display: String)
-
-        enum CodingKeys: String, CodingKey {
-            case type
-            case value
-        }
-
-        enum ComplexCodingKeys: String, CodingKey {
-            case re
-            case im
-        }
-
-        public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            let type = try container.decode(String.self, forKey: .type)
-            switch type {
-            case "bool":
-                self = .bool(try container.decode(Bool.self, forKey: .value))
-            case "uint8", "uint16", "uint32":
-                self = .uint(try container.decode(UInt64.self, forKey: .value))
-            case "int16", "int32", "int64":
-                self = .int(try container.decode(Int64.self, forKey: .value))
-            case "float32", "float64":
-                self = .float(try container.decode(Double.self, forKey: .value))
-            case "complex32", "complex64":
-                let complex = try container.nestedContainer(keyedBy: ComplexCodingKeys.self, forKey: .value)
-                self = .complex(
-                    re: try complex.decode(Double.self, forKey: .re),
-                    im: try complex.decode(Double.self, forKey: .im)
-                )
-            case "string":
-                self = .string(try container.decode(String.self, forKey: .value))
-            default:
-                let display = (try? container.decode(String.self, forKey: .value)) ?? ""
-                self = .unknown(type: type, display: display)
-            }
-        }
-
-        public func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            switch self {
-            case let .bool(value):
-                try container.encode("bool", forKey: .type)
-                try container.encode(value, forKey: .value)
-            case let .int(value):
-                try container.encode("int64", forKey: .type)
-                try container.encode(value, forKey: .value)
-            case let .uint(value):
-                try container.encode("uint32", forKey: .type)
-                try container.encode(value, forKey: .value)
-            case let .float(value):
-                try container.encode("float64", forKey: .type)
-                try container.encode(value, forKey: .value)
-            case let .complex(re, im):
-                try container.encode("complex64", forKey: .type)
-                var complex = container.nestedContainer(keyedBy: ComplexCodingKeys.self, forKey: .value)
-                try complex.encode(re, forKey: .re)
-                try complex.encode(im, forKey: .im)
-            case let .string(value):
-                try container.encode("string", forKey: .type)
-                try container.encode(value, forKey: .value)
-            case let .unknown(type, display):
-                try container.encode(type, forKey: .type)
-                try container.encode(display, forKey: .value)
-            }
-        }
-    }
-
-    public struct ArrayElement: Codable, Equatable {
-        public var flatIndex: Int
-        public var index: [Int]
-        public var value: ScalarValue
-        public var selected: Bool
-
-        enum CodingKeys: String, CodingKey {
-            case flatIndex = "flat_index"
-            case index
-            case value
-            case selected
-        }
-    }
-
-    public struct RecordFieldSummary: Codable, Equatable {
-        public var name: String
-        public var kind: String
-        public var summary: String
-        public var expandable: Bool
-        public var openable: Bool
-        public var selected: Bool
-    }
-
-    public enum ValueNode: Codable, Equatable {
-        case undefined
-        case scalar(value: ScalarValue)
-        case array(primitive: String, shape: [Int], totalElements: Int, pageStart: Int, pageSize: Int, elements: [ArrayElement])
-        case record(totalFields: Int, pageStart: Int, pageSize: Int, fields: [RecordFieldSummary])
-        case tableRef(path: String, resolvedPath: String, openable: Bool)
-
-        enum CodingKeys: String, CodingKey {
-            case kind
-            case value
-            case primitive
-            case shape
-            case totalElements = "total_elements"
-            case pageStart = "page_start"
-            case pageSize = "page_size"
-            case elements
-            case totalFields = "total_fields"
-            case fields
-            case path
-            case resolvedPath = "resolved_path"
-            case openable
-        }
-
-        public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            let kind = try container.decode(String.self, forKey: .kind)
-            switch kind {
-            case "undefined":
-                self = .undefined
-            case "scalar":
-                self = .scalar(value: try container.decode(ScalarValue.self, forKey: .value))
-            case "array":
-                self = .array(
-                    primitive: try container.decode(String.self, forKey: .primitive),
-                    shape: try container.decode([Int].self, forKey: .shape),
-                    totalElements: try container.decode(Int.self, forKey: .totalElements),
-                    pageStart: try container.decode(Int.self, forKey: .pageStart),
-                    pageSize: try container.decode(Int.self, forKey: .pageSize),
-                    elements: try container.decode([ArrayElement].self, forKey: .elements)
-                )
-            case "record":
-                self = .record(
-                    totalFields: try container.decode(Int.self, forKey: .totalFields),
-                    pageStart: try container.decode(Int.self, forKey: .pageStart),
-                    pageSize: try container.decode(Int.self, forKey: .pageSize),
-                    fields: try container.decode([RecordFieldSummary].self, forKey: .fields)
-                )
-            case "table_ref":
-                self = .tableRef(
-                    path: try container.decode(String.self, forKey: .path),
-                    resolvedPath: try container.decode(String.self, forKey: .resolvedPath),
-                    openable: try container.decode(Bool.self, forKey: .openable)
-                )
-            default:
-                self = .undefined
-            }
-        }
-
-        public func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            switch self {
-            case .undefined:
-                try container.encode("undefined", forKey: .kind)
-            case let .scalar(value):
-                try container.encode("scalar", forKey: .kind)
-                try container.encode(value, forKey: .value)
-            case let .array(primitive, shape, totalElements, pageStart, pageSize, elements):
-                try container.encode("array", forKey: .kind)
-                try container.encode(primitive, forKey: .primitive)
-                try container.encode(shape, forKey: .shape)
-                try container.encode(totalElements, forKey: .totalElements)
-                try container.encode(pageStart, forKey: .pageStart)
-                try container.encode(pageSize, forKey: .pageSize)
-                try container.encode(elements, forKey: .elements)
-            case let .record(totalFields, pageStart, pageSize, fields):
-                try container.encode("record", forKey: .kind)
-                try container.encode(totalFields, forKey: .totalFields)
-                try container.encode(pageStart, forKey: .pageStart)
-                try container.encode(pageSize, forKey: .pageSize)
-                try container.encode(fields, forKey: .fields)
-            case let .tableRef(path, resolvedPath, openable):
-                try container.encode("table_ref", forKey: .kind)
-                try container.encode(path, forKey: .path)
-                try container.encode(resolvedPath, forKey: .resolvedPath)
-                try container.encode(openable, forKey: .openable)
-            }
-        }
-    }
-
-    public struct InspectorTrailEntry: Codable, Equatable {
-        public var label: String
-        public var summary: String
-    }
-
-    public struct Inspector: Codable, Equatable {
-        public var title: String
-        public var trail: [InspectorTrailEntry]
-        public var node: ValueNode
-        public var renderedLines: [String]
-
-        enum CodingKeys: String, CodingKey {
-            case title
-            case trail
-            case node
-            case renderedLines = "rendered_lines"
-        }
-    }
-
-    public var capabilities: Capabilities?
-    public var view: String
-    public var focus: String
-    public var tablePath: String
-    public var breadcrumb: [Breadcrumb]
-    public var viewport: Viewport?
-    public var statusLine: String
-    public var contentLines: [String]
-    public var verticalMetrics: NavigationMetrics?
-    public var horizontalMetrics: NavigationMetrics?
-    public var selectedAddress: SelectedAddress?
-    public var inspector: Inspector?
-
-    enum CodingKeys: String, CodingKey {
-        case capabilities
-        case view
-        case focus
-        case tablePath = "table_path"
-        case breadcrumb
-        case viewport
-        case statusLine = "status_line"
-        case contentLines = "content_lines"
-        case verticalMetrics = "vertical_metrics"
-        case horizontalMetrics = "horizontal_metrics"
-        case selectedAddress = "selected_address"
-        case inspector
-    }
+public func tableBrowserParameters(
+    view: String,
+    rowStart: Int,
+    rowCount: Int,
+    linkedTable: String? = nil,
+    bookmark: TableBrowserBookmark? = nil,
+    contentMode: String
+) -> TableBrowserParameters {
+    CasarsFrontendServices.TableBrowserParameters(
+        view: view,
+        rowStart: UInt64(max(rowStart, 0)),
+        rowCount: UInt64(max(rowCount, 0)),
+        linkedTable: linkedTable,
+        bookmark: bookmark,
+        contentMode: contentMode
+    )
 }
 
-public struct TableBrowserCellWindowSnapshot: Codable, Equatable {
-    public struct Column: Codable, Equatable {
-        public var index: Int
-        public var name: String
-        public var header: String
-        public var summary: String
-        public var width: Int
-        public var keywords: [String]
+public func tableBrowserSnapshotRequest(
+    datasetPath: String,
+    width: Int,
+    height: Int,
+    inspectorHeight: Int,
+    selectedView: String,
+    focus: String,
+    commands: [TableBrowserCommand],
+    transientCommands: [TableBrowserCommand]
+) -> TableBrowserSnapshotRequest {
+    CasarsFrontendServices.TableBrowserSnapshotRequest(
+        datasetPath: datasetPath,
+        width: UInt16(clamping: width),
+        height: UInt16(clamping: height),
+        inspectorHeight: UInt16(clamping: inspectorHeight),
+        selectedView: selectedView,
+        focus: focus,
+        commands: commands,
+        transientCommands: transientCommands
+    )
+}
 
-        enum CodingKeys: String, CodingKey {
-            case index
-            case name
-            case header
-            case summary
-            case width
-            case keywords
-        }
+public func tableBrowserCellWindowRequest(
+    datasetPath: String,
+    rowStart: Int,
+    rowLimit: Int,
+    columnStart: Int,
+    columnLimit: Int,
+    columnOptions: [TableBrowserColumnDisplayOption] = []
+) -> TableBrowserCellWindowRequest {
+    CasarsFrontendServices.TableBrowserCellWindowRequest(
+        datasetPath: datasetPath,
+        rowStart: UInt64(max(rowStart, 0)),
+        rowLimit: UInt64(max(rowLimit, 0)),
+        columnStart: UInt64(max(columnStart, 0)),
+        columnLimit: UInt64(max(columnLimit, 0)),
+        columnOptions: columnOptions
+    )
+}
 
-        public init(
-            index: Int,
-            name: String,
-            header: String,
-            summary: String,
-            width: Int,
-            keywords: [String] = []
-        ) {
-            self.index = index
-            self.name = name
-            self.header = header
-            self.summary = summary
-            self.width = width
-            self.keywords = keywords
-        }
+public func tableBrowserColumnDisplayOption(
+    columnIndex: Int,
+    arrayInlineLimit: Int
+) -> TableBrowserColumnDisplayOption {
+    CasarsFrontendServices.TableBrowserColumnDisplayOption(
+        columnIndex: UInt64(max(columnIndex, 0)),
+        arrayInlineLimit: UInt64(max(arrayInlineLimit, 0))
+    )
+}
 
-        public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            index = try container.decode(Int.self, forKey: .index)
-            name = try container.decode(String.self, forKey: .name)
-            header = try container.decode(String.self, forKey: .header)
-            summary = try container.decode(String.self, forKey: .summary)
-            width = try container.decode(Int.self, forKey: .width)
-            keywords = try container.decodeIfPresent([String].self, forKey: .keywords) ?? []
-        }
+public func tableBrowserCellValueRequest(
+    datasetPath: String,
+    rowIndex: Int,
+    columnIndex: Int
+) -> TableBrowserCellValueRequest {
+    CasarsFrontendServices.TableBrowserCellValueRequest(
+        datasetPath: datasetPath,
+        rowIndex: UInt64(max(rowIndex, 0)),
+        columnIndex: UInt64(max(columnIndex, 0))
+    )
+}
+
+public func tableBrowserSelectedAddress(
+    kind: String,
+    tablePath: String,
+    row: UInt64?,
+    column: String?,
+    keywordPath: [String]? = nil,
+    valuePath: [TableBrowserValuePathSegment]? = nil,
+    source: String?,
+    targetPath: String?
+) -> TableBrowserSelectedAddress {
+    CasarsFrontendServices.TableBrowserSelectedAddress(
+        kind: kind,
+        tablePath: tablePath,
+        row: row,
+        column: column,
+        keywordPath: keywordPath ?? [],
+        valuePath: valuePath ?? [],
+        source: source,
+        targetPath: targetPath
+    )
+}
+
+public extension TableBrowserCellWindowSnapshot {
+    func row(_ index: Int) -> TableBrowserCellWindowRow? {
+        rows.first { Int($0.index) == index }
     }
 
-    public struct Row: Codable, Equatable {
-        public var index: Int
-        public var cells: [Cell]
+    func cell(row rowIndex: Int, column columnIndex: Int) -> TableBrowserCellWindowCell? {
+        row(rowIndex)?.cells.first { Int($0.columnIndex) == columnIndex }
     }
 
-    public struct Cell: Codable, Equatable {
-        public var columnIndex: Int
-        public var display: String
-        public var defined: Bool
-
-        enum CodingKeys: String, CodingKey {
-            case columnIndex = "column_index"
-            case display
-            case defined
-        }
-    }
-
-    public var tablePath: String
-    public var rowCount: Int
-    public var columnCount: Int
-    public var rowStart: Int
-    public var columnStart: Int
-    public var columns: [Column]
-    public var rows: [Row]
-
-    enum CodingKeys: String, CodingKey {
-        case tablePath = "table_path"
-        case rowCount = "row_count"
-        case columnCount = "column_count"
-        case rowStart = "row_start"
-        case columnStart = "column_start"
-        case columns
-        case rows
-    }
-
-    public func row(_ index: Int) -> Row? {
-        rows.first { $0.index == index }
-    }
-
-    public func cell(row rowIndex: Int, column columnIndex: Int) -> Cell? {
-        row(rowIndex)?.cells.first { $0.columnIndex == columnIndex }
-    }
-
-    public func contains(rowStart requestedRowStart: Int, rowLimit: Int, columnStart requestedColumnStart: Int, columnLimit: Int) -> Bool {
+    func contains(
+        rowStart requestedRowStart: Int,
+        rowLimit: Int,
+        columnStart requestedColumnStart: Int,
+        columnLimit: Int
+    ) -> Bool {
         guard rowLimit > 0, columnLimit > 0 else {
             return true
         }
+        let rowCount = Int(self.rowCount)
+        let columnCount = Int(self.columnCount)
+        let rowStart = Int(self.rowStart)
+        let columnStart = Int(self.columnStart)
         let requestedRowEnd = min(requestedRowStart + rowLimit, rowCount)
         let requestedColumnEnd = min(requestedColumnStart + columnLimit, columnCount)
         let rowEnd = rowStart + rows.count
@@ -2247,242 +1323,6 @@ public struct TableBrowserCellWindowSnapshot: Codable, Equatable {
             && requestedRowEnd <= rowEnd
             && requestedColumnStart >= columnStart
             && requestedColumnEnd <= columnEnd
-    }
-}
-
-public enum TableBrowserBookmark: Codable, Equatable {
-    case cell(row: Int, column: String)
-    case tableKeyword(path: [String])
-    case columnKeyword(column: String, path: [String])
-    case subtable(name: String)
-
-    private enum CodingKeys: String, CodingKey {
-        case kind
-        case row
-        case column
-        case path
-        case name
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        switch try container.decode(String.self, forKey: .kind) {
-        case "cell":
-            self = .cell(
-                row: try container.decode(Int.self, forKey: .row),
-                column: try container.decode(String.self, forKey: .column)
-            )
-        case "table_keyword":
-            self = .tableKeyword(path: try container.decode([String].self, forKey: .path))
-        case "column_keyword":
-            self = .columnKeyword(
-                column: try container.decode(String.self, forKey: .column),
-                path: try container.decode([String].self, forKey: .path)
-            )
-        case "subtable":
-            self = .subtable(name: try container.decode(String.self, forKey: .name))
-        case let kind:
-            throw DecodingError.dataCorruptedError(
-                forKey: .kind,
-                in: container,
-                debugDescription: "unknown table browser bookmark kind \(kind)"
-            )
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        switch self {
-        case .cell(let row, let column):
-            try container.encode("cell", forKey: .kind)
-            try container.encode(row, forKey: .row)
-            try container.encode(column, forKey: .column)
-        case .tableKeyword(let path):
-            try container.encode("table_keyword", forKey: .kind)
-            try container.encode(path, forKey: .path)
-        case .columnKeyword(let column, let path):
-            try container.encode("column_keyword", forKey: .kind)
-            try container.encode(column, forKey: .column)
-            try container.encode(path, forKey: .path)
-        case .subtable(let name):
-            try container.encode("subtable", forKey: .kind)
-            try container.encode(name, forKey: .name)
-        }
-    }
-}
-
-public struct TableBrowserParameters: Codable, Equatable {
-    public var view: String
-    public var rowStart: Int
-    public var rowCount: Int
-    public var linkedTable: String?
-    public var bookmark: TableBrowserBookmark?
-    public var contentMode: String
-
-    enum CodingKeys: String, CodingKey {
-        case view
-        case rowStart = "row_start"
-        case rowCount = "row_count"
-        case linkedTable = "linked_table"
-        case bookmark
-        case contentMode = "content_mode"
-    }
-}
-
-public enum TableBrowserCommand: Codable, Equatable {
-    case configure(parameters: TableBrowserParameters)
-    case setFocus(String)
-    case cycleView(forward: Bool)
-    case moveUp(steps: Int)
-    case moveDown(steps: Int)
-    case moveLeft(steps: Int)
-    case moveRight(steps: Int)
-    case pageUp(pages: Int)
-    case pageDown(pages: Int)
-    case activate
-    case back
-    case escape
-
-    enum CodingKeys: String, CodingKey {
-        case command
-        case parameters
-        case focus
-        case forward
-        case steps
-        case pages
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        switch try container.decode(String.self, forKey: .command) {
-        case "configure":
-            self = .configure(parameters: try container.decode(TableBrowserParameters.self, forKey: .parameters))
-        case "set_focus":
-            self = .setFocus(try container.decode(String.self, forKey: .focus))
-        case "cycle_view":
-            self = .cycleView(forward: try container.decode(Bool.self, forKey: .forward))
-        case "move_up":
-            self = .moveUp(steps: try container.decode(Int.self, forKey: .steps))
-        case "move_down":
-            self = .moveDown(steps: try container.decode(Int.self, forKey: .steps))
-        case "move_left":
-            self = .moveLeft(steps: try container.decode(Int.self, forKey: .steps))
-        case "move_right":
-            self = .moveRight(steps: try container.decode(Int.self, forKey: .steps))
-        case "page_up":
-            self = .pageUp(pages: try container.decode(Int.self, forKey: .pages))
-        case "page_down":
-            self = .pageDown(pages: try container.decode(Int.self, forKey: .pages))
-        case "activate":
-            self = .activate
-        case "back":
-            self = .back
-        case "escape":
-            self = .escape
-        default:
-            self = .escape
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        switch self {
-        case .configure(let parameters):
-            try container.encode("configure", forKey: .command)
-            try container.encode(parameters, forKey: .parameters)
-        case let .setFocus(focus):
-            try container.encode("set_focus", forKey: .command)
-            try container.encode(focus, forKey: .focus)
-        case let .cycleView(forward):
-            try container.encode("cycle_view", forKey: .command)
-            try container.encode(forward, forKey: .forward)
-        case let .moveUp(steps):
-            try container.encode("move_up", forKey: .command)
-            try container.encode(steps, forKey: .steps)
-        case let .moveDown(steps):
-            try container.encode("move_down", forKey: .command)
-            try container.encode(steps, forKey: .steps)
-        case let .moveLeft(steps):
-            try container.encode("move_left", forKey: .command)
-            try container.encode(steps, forKey: .steps)
-        case let .moveRight(steps):
-            try container.encode("move_right", forKey: .command)
-            try container.encode(steps, forKey: .steps)
-        case let .pageUp(pages):
-            try container.encode("page_up", forKey: .command)
-            try container.encode(pages, forKey: .pages)
-        case let .pageDown(pages):
-            try container.encode("page_down", forKey: .command)
-            try container.encode(pages, forKey: .pages)
-        case .activate:
-            try container.encode("activate", forKey: .command)
-        case .back:
-            try container.encode("back", forKey: .command)
-        case .escape:
-            try container.encode("escape", forKey: .command)
-        }
-    }
-}
-
-public struct TableBrowserSnapshotRequest: Codable, Equatable {
-    public var datasetPath: String
-    public var width: Int
-    public var height: Int
-    public var inspectorHeight: Int
-    public var selectedView: String
-    public var focus: String
-    public var commands: [TableBrowserCommand]
-    public var transientCommands: [TableBrowserCommand]
-
-    enum CodingKeys: String, CodingKey {
-        case datasetPath = "dataset_path"
-        case width
-        case height
-        case inspectorHeight = "inspector_height"
-        case selectedView = "selected_view"
-        case focus
-        case commands
-        case transientCommands = "transient_commands"
-    }
-}
-
-public struct TableBrowserCellWindowRequest: Codable, Equatable {
-    public var datasetPath: String
-    public var rowStart: Int
-    public var rowLimit: Int
-    public var columnStart: Int
-    public var columnLimit: Int
-    public var columnOptions: [TableBrowserColumnDisplayOption] = []
-
-    enum CodingKeys: String, CodingKey {
-        case datasetPath = "dataset_path"
-        case rowStart = "row_start"
-        case rowLimit = "row_limit"
-        case columnStart = "column_start"
-        case columnLimit = "column_limit"
-        case columnOptions = "column_options"
-    }
-}
-
-public struct TableBrowserColumnDisplayOption: Codable, Equatable {
-    public var columnIndex: Int
-    public var arrayInlineLimit: Int
-
-    enum CodingKeys: String, CodingKey {
-        case columnIndex = "column_index"
-        case arrayInlineLimit = "array_inline_limit"
-    }
-}
-
-public struct TableBrowserCellValueRequest: Codable, Equatable {
-    public var datasetPath: String
-    public var rowIndex: Int
-    public var columnIndex: Int
-
-    enum CodingKeys: String, CodingKey {
-        case datasetPath = "dataset_path"
-        case rowIndex = "row_index"
-        case columnIndex = "column_index"
     }
 }
 
@@ -2610,7 +1450,7 @@ public struct TableBrowserSessionState: Codable, Equatable {
     }
 
     public func snapshotRequest(datasetPath: String) -> TableBrowserSnapshotRequest {
-        TableBrowserSnapshotRequest(
+        tableBrowserSnapshotRequest(
             datasetPath: datasetPath,
             width: 180,
             height: 48,
@@ -2626,10 +1466,10 @@ public struct TableBrowserSessionState: Codable, Equatable {
         let columnOptions = cellColumnArrayInlineLimits
             .filter { _, limit in limit > 0 }
             .map { columnIndex, limit in
-                TableBrowserColumnDisplayOption(columnIndex: columnIndex, arrayInlineLimit: limit)
+                tableBrowserColumnDisplayOption(columnIndex: columnIndex, arrayInlineLimit: limit)
             }
             .sorted { $0.columnIndex < $1.columnIndex }
-        return TableBrowserCellWindowRequest(
+        return tableBrowserCellWindowRequest(
             datasetPath: datasetPath,
             rowStart: cellWindowRowStart,
             rowLimit: cellWindowRowLimit,
@@ -2753,7 +1593,7 @@ public struct WorkbenchState: Codable, Equatable {
     /// Production provider-neutral conversations persisted by `casa-notebook`.
     package var assistantDiscussion: AssistantDiscussionState?
     public var activeTaskID: String
-    public var taskUISchemas: [String: TaskUISchema]
+    public var taskUISchemas: [String: TaskUiSchema]
     public var parameterSessions: [String: SurfaceParameterSession]
     public var genericTaskConfirmations: [String: Bool]
     public var notebookRecordingBypassTabs: Set<String>
@@ -2787,7 +1627,7 @@ public struct WorkbenchState: Codable, Equatable {
         runProductGroups: [RunProductGroup] = [],
         applicationCatalog: [ApplicationCatalogEntry] = [],
         activeTaskID: String = "imager",
-        taskUISchemas: [String: TaskUISchema] = [:],
+        taskUISchemas: [String: TaskUiSchema] = [:],
         parameterSessions: [String: SurfaceParameterSession] = [:],
         genericTaskConfirmations: [String: Bool] = [:],
         notebookRecordingBypassTabs: Set<String> = [],
@@ -2845,7 +1685,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var genericTaskValues: [String: [String: String]] {
         var valuesBySurface: [String: [String: String]] = [:]
         for (_, session) in orderedParameterSessionsForProjection {
-            valuesBySurface[session.snapshot.surfaceID] = session.snapshot.states.compactMapValues { state in
+            valuesBySurface[session.snapshot.surfaceId] = session.snapshot.states.compactMapValues { state in
                 guard state.value?.boolValue == nil else { return nil }
                 return state.value?.displayText
             }
@@ -2857,7 +1697,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var genericTaskToggles: [String: [String: Bool]] {
         var togglesBySurface: [String: [String: Bool]] = [:]
         for (_, session) in orderedParameterSessionsForProjection {
-            togglesBySurface[session.snapshot.surfaceID] = session.snapshot.states.compactMapValues {
+            togglesBySurface[session.snapshot.surfaceId] = session.snapshot.states.compactMapValues {
                 $0.value?.boolValue
             }
         }
@@ -3046,8 +1886,8 @@ package struct DebugAssistantDiscussionSnapshot: Codable, Equatable {
         messageCount = state.activeConversation?.messages.count ?? 0
         provider = state.activeConversation?.profile.backendId
         model = state.activeConversation?.profile.model
-        selectedContextIDs = state.contexts.filter(\.selected).map(\.id)
-        estimatedEgressBytes = state.contexts.filter(\.selected).reduce(0) {
+        selectedContextIDs = state.selectedContexts.map(\.id)
+        estimatedEgressBytes = state.selectedContexts.reduce(0) {
             $0 + $1.byteCount
         }
         corpusStatus = state.corpusStatus
@@ -3373,6 +2213,7 @@ public struct DebugRunProductReferenceSnapshot: Codable, Equatable {
     public var exists: Bool
     public var previewPngPath: String?
     public var previewPngExists: Bool
+    public var diagnostic: String?
 
     public init(product: RunProductReference) {
         id = product.id
@@ -3383,6 +2224,7 @@ public struct DebugRunProductReferenceSnapshot: Codable, Equatable {
         exists = product.exists
         previewPngPath = product.previewPngPath
         previewPngExists = product.previewPngExists
+        diagnostic = product.diagnostic
     }
 }
 
@@ -3535,7 +2377,7 @@ public struct DebugImageExplorerSnapshot: Codable, Equatable {
         movieAxis = state.movieAxis
         movieFramesPerSecond = state.movieFramesPerSecond
         activeView = state.snapshot?.activeView
-        shape = state.snapshot?.shape ?? []
+        shape = state.snapshot?.shape.map(Int.init) ?? []
         if let plane = state.snapshot?.plane {
             planeSize = "\(plane.width)x\(plane.height)"
         } else {

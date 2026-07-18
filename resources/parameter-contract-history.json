@@ -1984,6 +1984,11 @@
       "fingerprint": "29d0a2ee905527d99919b289f26193004f758a141de3585901f955cf0297b18c"
     },
     {
+      "id": "applycal",
+      "contract_version": 3,
+      "fingerprint": "66065f9b24304ac390dbe36e4d3deb4926507660ff19a37ad9acdc5cbf882dac"
+    },
+    {
       "id": "bandpass",
       "contract_version": 1,
       "fingerprint": "32e706780607d535fba5d6e430bea0e6e191554796bc60d9cb250acc41ff28b5"
@@ -1992,6 +1997,11 @@
       "id": "bandpass",
       "contract_version": 2,
       "fingerprint": "88d175c4b0fc6694b4494f59d7f876f5543e97e738669e198319184b7e1fca11"
+    },
+    {
+      "id": "bandpass",
+      "contract_version": 3,
+      "fingerprint": "c9540166b007d82058ccdc2ec5d2be90431500298ce1f2aada28c8d6566b5787"
     },
     {
       "id": "calibrate",
@@ -2004,6 +2014,11 @@
       "fingerprint": "57ae8eb7c8e84066ca21b0f66b6e83eb5e6f098cec36557a40a15399c2267997"
     },
     {
+      "id": "calibrate",
+      "contract_version": 3,
+      "fingerprint": "45e166e01d0570205eaf4fb90efc2fff5fea9fb8cb8b37de261bd9eaa8821b95"
+    },
+    {
       "id": "clearcal",
       "contract_version": 1,
       "fingerprint": "5c00940ae32a554810ed4cd8a85d70bd5f0afc3670e698dd13c12c5e71518e62"
@@ -2012,6 +2027,11 @@
       "id": "clearcal",
       "contract_version": 2,
       "fingerprint": "5408bc16324b6447f8e10b46c9bc1b89ad2fbf9c435b94ecac06c02f4100d832"
+    },
+    {
+      "id": "clearcal",
+      "contract_version": 3,
+      "fingerprint": "0ff952a371e8521fee3a4a7cf7afebb4e10889302a4ceba99ae1c63489051565"
     },
     {
       "id": "concat",
@@ -2024,6 +2044,11 @@
       "fingerprint": "3c2a8a4abc314d569c865fc6c2b03b88797b973288a4433d63fce77e860ce5cc"
     },
     {
+      "id": "concat",
+      "contract_version": 3,
+      "fingerprint": "66a45afb8e0d0a40a5c9e7351db1f1d959b88cb7600e58b84f5d76e5bdf17bac"
+    },
+    {
       "id": "delmod",
       "contract_version": 1,
       "fingerprint": "66615cc9fa5a71a6cbb740dc6edddf1f3b10347a8f2c4ee2b7364a14ea0efe78"
@@ -2032,6 +2057,11 @@
       "id": "delmod",
       "contract_version": 2,
       "fingerprint": "7e5756c6aae9b80b54a673c145a83c7891772e1af10a5928ed1eb3b8d4dc3aa7"
+    },
+    {
+      "id": "delmod",
+      "contract_version": 3,
+      "fingerprint": "df8c3c68a96dd5c0cb8966ecb58b4965def600cf91e907de7571d32da35b703f"
     },
     {
       "id": "exportfits",
@@ -2044,6 +2074,11 @@
       "fingerprint": "38280c454bf99ecdd44f94970386eefdda0c4adbaf37df832acbd2253d6ba747"
     },
     {
+      "id": "exportfits",
+      "contract_version": 3,
+      "fingerprint": "a573d3f00f481736cc47ad233909735bc9799114d356094e114592e3f5aac973"
+    },
+    {
       "id": "feather",
       "contract_version": 1,
       "fingerprint": "47eca72ff00a63886a0a1c32e774a79ebb264c8757f0198ae709d231d33867df"
@@ -2052,6 +2087,11 @@
       "id": "feather",
       "contract_version": 2,
       "fingerprint": "48dc13c04a24c54b933a1f26e07da696f5e432da7451040c29fc532840f996cd"
+    },
+    {
+      "id": "feather",
+      "contract_version": 3,
+      "fingerprint": "551b3e949a74cac8a4a0495cc60edaa5fb319d7cf6704c75370413365bf2fff8"
     },
     {
       "id": "flagdata",
@@ -2064,6 +2104,11 @@
       "fingerprint": "185d6615e5ca43fff37408b8695be4285f34094be9581561d1ac260736c01458"
     },
     {
+      "id": "flagdata",
+      "contract_version": 3,
+      "fingerprint": "653069db5112454c3965ad03e999f679506e2d026906e1f349b70dece2358f6e"
+    },
+    {
       "id": "flagmanager",
       "contract_version": 1,
       "fingerprint": "56e7413e8f36ff58291502c0cdd10b47d22cf4d768deea9057243c30fe27d272"
@@ -2072,6 +2117,11 @@
       "id": "flagmanager",
       "contract_version": 2,
       "fingerprint": "76491b0749b513b36f8c2f855189b103c149c3c09f053e904c20b764927b50dd"
+    },
+    {
+      "id": "flagmanager",
+      "contract_version": 3,
+      "fingerprint": "9f2bd764c1d33a329058249837a45214601e5c692a7790efccbf71013a37ad92"
     },
     {
       "id": "fluxscale",
@@ -2084,6 +2134,11 @@
       "fingerprint": "cf2379aa121d688e993fbb289ab9225806e857c1576d60cac16dbd26543f109d"
     },
     {
+      "id": "fluxscale",
+      "contract_version": 3,
+      "fingerprint": "5b1eb398f70f2a61d73e4807fff4552c9f85219042e38a4b2723d2c8a9e86d70"
+    },
+    {
       "id": "ft",
       "contract_version": 1,
       "fingerprint": "9684895bb362df6d0375ae7e4d54e077bf0efc22d5ae21db34476903909a7f2e"
@@ -2092,6 +2147,11 @@
       "id": "ft",
       "contract_version": 2,
       "fingerprint": "3e587619f47c48cdbc8a6b4b35173596a393b606bd53d97b5af20a626797e5b2"
+    },
+    {
+      "id": "ft",
+      "contract_version": 3,
+      "fingerprint": "a4c71d1d9b458744a6991f613d6ad42c5755418ccd9e0658df16a6b035b886e9"
     },
     {
       "id": "gaincal",
@@ -2104,6 +2164,11 @@
       "fingerprint": "efe4d8a5dd85c1dc07dae48addff7aff8303d10160e5cebae9977eb75af00356"
     },
     {
+      "id": "gaincal",
+      "contract_version": 3,
+      "fingerprint": "ba3d14986b8637892091129cb974a1e23f03688029854acbe3b1eb47aef9e40b"
+    },
+    {
       "id": "gencal",
       "contract_version": 1,
       "fingerprint": "a77ef8bb565b7257ff3a0c0484e72e730fe0f2f431a111bb3d789241d2d2b29b"
@@ -2114,6 +2179,11 @@
       "fingerprint": "db31e81154de630a6ea77b8a4c0ec7713680d80ffc8abf41d806c327e37bfc56"
     },
     {
+      "id": "gencal",
+      "contract_version": 3,
+      "fingerprint": "4296630f83b570a82f11c2d81be02db91a740682ef3ec694ed1592a188c7dfc1"
+    },
+    {
       "id": "hanningsmooth",
       "contract_version": 1,
       "fingerprint": "b20d2f628f1952be6cb1617226e46513b6e615d2db00e69869e1bfde67a1db43"
@@ -2122,6 +2192,11 @@
       "id": "hanningsmooth",
       "contract_version": 2,
       "fingerprint": "d15e153f6ade574087da8f052c0b5c0648f3fcd9aaf98c42798dfeae01df6bcb"
+    },
+    {
+      "id": "hanningsmooth",
+      "contract_version": 3,
+      "fingerprint": "bd2ddf8f3079951a39b65e6479053f585009cc0f4ccf121e2bcb289bb1281bf2"
     },
     {
       "id": "imager",
@@ -2139,6 +2214,11 @@
       "fingerprint": "888499951d86ef5a45d65bcd586944a142b4f314c8b6ce76653d59205027b593"
     },
     {
+      "id": "imager",
+      "contract_version": 4,
+      "fingerprint": "f42e5df67b8bd506836e8229eab9a7b89106775fe7c1af76b1361ecca30caea9"
+    },
+    {
       "id": "imcollapse",
       "contract_version": 1,
       "fingerprint": "9d4b4bfa43e8f9f7a7e1037756abf26d99c48762d28ddb60b4caea69cc44978d"
@@ -2147,6 +2227,11 @@
       "id": "imcollapse",
       "contract_version": 2,
       "fingerprint": "853e344b47afc2bf29f9cf81c5c2a3f99cd02a9873500f4050bd71afd8f9351b"
+    },
+    {
+      "id": "imcollapse",
+      "contract_version": 3,
+      "fingerprint": "12917664bc232d7bbc12c36db37cf6440c36df1a46b6b40676375219a0f30388"
     },
     {
       "id": "imcontsub",
@@ -2159,6 +2244,11 @@
       "fingerprint": "1ef7fdfafcfd9ba5ab58da164b822e622ce8b30a18c7c1ec45a7abcb07bef32c"
     },
     {
+      "id": "imcontsub",
+      "contract_version": 3,
+      "fingerprint": "a69dfb16a2705543585c42bddfa92c2faf8f56dd2438024afb572e77c55634e8"
+    },
+    {
       "id": "imexplore",
       "contract_version": 1,
       "fingerprint": "d9f5acbd00f1e1f68ce63ef267041db5585bd9766afd79d0a103d51fde020916"
@@ -2167,6 +2257,11 @@
       "id": "imexplore",
       "contract_version": 2,
       "fingerprint": "c1ed64d7f30062ce9c8d9201460b29c1fad07a0e4f1f6b531e473ea2ad8b6aed"
+    },
+    {
+      "id": "imexplore",
+      "contract_version": 3,
+      "fingerprint": "fa700f6631a432ab0b8ed8d77d3fda1896902121289555e980070e805d5efa13"
     },
     {
       "id": "imfit",
@@ -2179,6 +2274,11 @@
       "fingerprint": "0130ef858d63693be3384c5f4b426688fd465a1b1567b7e5de3f4394a17022d5"
     },
     {
+      "id": "imfit",
+      "contract_version": 3,
+      "fingerprint": "bd2a1fbea82a17c9d7323065ee448cd24418a5a9cfdb350424e45274f69e0f27"
+    },
+    {
       "id": "imhead",
       "contract_version": 1,
       "fingerprint": "78fb282f1f4f28be219a1a74c52cdfd83c46d4609f601e849ba2b015f647b878"
@@ -2187,6 +2287,11 @@
       "id": "imhead",
       "contract_version": 2,
       "fingerprint": "18142dc0a7fd0f8df43ffd63c2fc5eb5ee6eb9562fdf93350d59f0750cc80327"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 3,
+      "fingerprint": "d28fed61abe54c6532840a51d9c1039df424232677cf6f5017562d83110c0c71"
     },
     {
       "id": "immath",
@@ -2199,6 +2304,11 @@
       "fingerprint": "0d651e3bfa06952a2e828139a9ef41dd6b7669df2eba9fc057a9b142641ab566"
     },
     {
+      "id": "immath",
+      "contract_version": 3,
+      "fingerprint": "90f47022f0b2259c79d99c2cfb11d70ef666571ab0bf60c3f0111890d3279310"
+    },
+    {
       "id": "immoments",
       "contract_version": 1,
       "fingerprint": "e3f4d0138822b0f0873ab71fb0eb57fb06056ac7185c84f91f82ef2dbb08024c"
@@ -2207,6 +2317,11 @@
       "id": "immoments",
       "contract_version": 2,
       "fingerprint": "042bee8f0c3dba6f448860511202516c0ff58f68900e74d4fd3159e681765cd0"
+    },
+    {
+      "id": "immoments",
+      "contract_version": 3,
+      "fingerprint": "282aa3464da8bea809828cc971311a36624ff4fefd60e68f144436edf1de0ec4"
     },
     {
       "id": "impbcor",
@@ -2219,6 +2334,11 @@
       "fingerprint": "e7f083361bd37484b94331243c631bdd8c047c641e00a3037907da6dc9c3dc73"
     },
     {
+      "id": "impbcor",
+      "contract_version": 3,
+      "fingerprint": "f44e440d61624bc072c2c4296cae2e6b650f02240029b5f534fc935a47b46376"
+    },
+    {
       "id": "importfits",
       "contract_version": 1,
       "fingerprint": "43c43e3ada233fefede08d5b50e90f7c266f8be39742b40c0cf93008b5ae99c4"
@@ -2227,6 +2347,11 @@
       "id": "importfits",
       "contract_version": 2,
       "fingerprint": "2dd4ed4d9df3344a903cb5528c3e750e2765a52e556436ef52aacf24c7fa035f"
+    },
+    {
+      "id": "importfits",
+      "contract_version": 3,
+      "fingerprint": "362ad601fc86632d152062a210c6935912b44183bf5ebc5bc1b6688272b915b4"
     },
     {
       "id": "importvla",
@@ -2239,6 +2364,11 @@
       "fingerprint": "b59bf9f58a5288bd53a62cc2d6b49517658ee7016d4f2f4de91b050306dde023"
     },
     {
+      "id": "importvla",
+      "contract_version": 3,
+      "fingerprint": "d3a8341ca510d9d48fdf541903683cd426767d095d622e338d7333054e627e14"
+    },
+    {
       "id": "impv",
       "contract_version": 1,
       "fingerprint": "543dd6674ae9be514cc7a6768cf79d8e30517048374b7d0875efddfb7c6e2062"
@@ -2247,6 +2377,11 @@
       "id": "impv",
       "contract_version": 2,
       "fingerprint": "f570dcb74e9aac50f4acad454ae4fd33fe213a90066f40a2159275028a02024c"
+    },
+    {
+      "id": "impv",
+      "contract_version": 3,
+      "fingerprint": "619dc8ed0b20dbb5b9b18c53341c35cc2bd3f9ee63760b2d5f221a4c3a217853"
     },
     {
       "id": "imregrid",
@@ -2259,6 +2394,11 @@
       "fingerprint": "af14ab306947476953248f537921bca69d8817f90e28a5f4cfa8b389ca8e4579"
     },
     {
+      "id": "imregrid",
+      "contract_version": 3,
+      "fingerprint": "92a8e570c25c5955f5ef89baa6a924ac1ee4167d0494657d344694988516784d"
+    },
+    {
       "id": "imstat",
       "contract_version": 1,
       "fingerprint": "53869dd4bf07ac400ee0585676204ab27fbc11679a0f648145480b928a852ac5"
@@ -2269,6 +2409,11 @@
       "fingerprint": "449534a50808e24e006fccb7e0e2acadcdf5a90c278de00acbcbc0c0aee1c7c5"
     },
     {
+      "id": "imstat",
+      "contract_version": 3,
+      "fingerprint": "e2d8aff1f7a7a19b41ca184bf9973a6ae86183058a068cd8f74532de9a0e8109"
+    },
+    {
       "id": "imsubimage",
       "contract_version": 1,
       "fingerprint": "4e252cf576d38aaad7997efc1deb2cd390a5171535d867f411078f8cf2978cb9"
@@ -2277,6 +2422,11 @@
       "id": "imsubimage",
       "contract_version": 2,
       "fingerprint": "a11feca68586961167b25daeb5770ac2060d0a13b013e2bd9a2703f68969ceb7"
+    },
+    {
+      "id": "imsubimage",
+      "contract_version": 3,
+      "fingerprint": "81f1d08beafd2140ea3c7a22ae77fae827a68a291318380ce1a51a79cf1989f7"
     },
     {
       "id": "msexplore",
@@ -2294,6 +2444,11 @@
       "fingerprint": "c52ff2c88b62799f1d09f8dee440e50b417841dfa59339fc3eebe9bacc306b80"
     },
     {
+      "id": "msexplore",
+      "contract_version": 4,
+      "fingerprint": "3bb073d15a0180f66280bd82d48ad0843312ed70054c814a5632367332695614"
+    },
+    {
       "id": "mstransform",
       "contract_version": 1,
       "fingerprint": "15638e976f8274dfffb535362848375bb7c40079481a2e8d5daa41942502e8be"
@@ -2304,6 +2459,11 @@
       "fingerprint": "31f4e824874dbb6286acf826190ee9e160897dd89c2dfe976c9f65cc20d9c5e8"
     },
     {
+      "id": "mstransform",
+      "contract_version": 3,
+      "fingerprint": "2505fcb391a73daf2df1436b875ce7022c38ee122115a15765888bb9861de82f"
+    },
+    {
       "id": "plotcal",
       "contract_version": 1,
       "fingerprint": "31662e934318b7ec4c326c13fa89662d3bc886a018763dba3ce19dc204a8a444"
@@ -2312,6 +2472,11 @@
       "id": "plotcal",
       "contract_version": 2,
       "fingerprint": "cdefec9ed487a14c9a3fd4087c26acf730eb350db7706bcdb5e55215729717c8"
+    },
+    {
+      "id": "plotcal",
+      "contract_version": 3,
+      "fingerprint": "271973e482c9f80cfd7e5257a70fff82243ac9e05aa0e290b16621fd7d76e074"
     },
     {
       "id": "plotms",
@@ -2329,6 +2494,11 @@
       "fingerprint": "027147a799148c2e5e58fa93bdee46dcd57ee9aa48630c33d9ebe57119c0a725"
     },
     {
+      "id": "plotms",
+      "contract_version": 4,
+      "fingerprint": "b15bc38ccf08d83d735e73801aa101ebb5ede79317e2b6b827db0b2c2f6e0fe2"
+    },
+    {
       "id": "simalma",
       "contract_version": 1,
       "fingerprint": "78ad517260c156a4b75aedf4cd93f4f215fe9bdf496286eb7612cfdb8c5bd3d5"
@@ -2337,6 +2507,11 @@
       "id": "simalma",
       "contract_version": 2,
       "fingerprint": "b5586874f619e6f48c2a327a3061ddd76623480bf447713fd1bc26b3fc60579f"
+    },
+    {
+      "id": "simalma",
+      "contract_version": 3,
+      "fingerprint": "bbda0ca63037ae43286e8800fd1a580aa710fbecbc4c63e11f29777bf75dd7f5"
     },
     {
       "id": "simanalyze",
@@ -2349,6 +2524,11 @@
       "fingerprint": "165829b58ef90688fdd99f8a4e300abbc35b5ff7a4e3899b171a3bb7011e7acd"
     },
     {
+      "id": "simanalyze",
+      "contract_version": 3,
+      "fingerprint": "0410ae497b1292bbd2d129b1cf4e82c99dde459db0cec5dcc38a7ef7b611fa92"
+    },
+    {
       "id": "simobserve",
       "contract_version": 1,
       "fingerprint": "54f55733f60b631fa8d1521ff7adc0ca1d9a765a1aae1303d545b38318f57ece"
@@ -2357,6 +2537,11 @@
       "id": "simobserve",
       "contract_version": 2,
       "fingerprint": "407d21acfde6c742672af8bf28791caf87540e6d54d73aa774eaef39bc0bedd4"
+    },
+    {
+      "id": "simobserve",
+      "contract_version": 3,
+      "fingerprint": "8d23de0f9ea89994491bbb24d76783b506a86e72f41e1867398d27a43630e87d"
     },
     {
       "id": "split",
@@ -2369,6 +2554,11 @@
       "fingerprint": "3cde9a9b4d72aa62acf71056358bd92a7d6d5fd51e93c40b61ca68520ac50497"
     },
     {
+      "id": "split",
+      "contract_version": 3,
+      "fingerprint": "bdcee51d409ec13277428a4e3a7d89ede7201bd74182e037bd03226a6bebe1b3"
+    },
+    {
       "id": "statwt",
       "contract_version": 1,
       "fingerprint": "af3cb198335ed13f22a6787ee87a882f3e2111eb805b52d8e09691eb77cee6c9"
@@ -2377,6 +2567,11 @@
       "id": "statwt",
       "contract_version": 2,
       "fingerprint": "83afbd1825de7620197fccad124c8b8c9384fd438e0a606a5fdabedad220d891"
+    },
+    {
+      "id": "statwt",
+      "contract_version": 3,
+      "fingerprint": "03d201f85e669d93bb9e283c16eabdbcbc730461506c7868e6891e464b9300f5"
     },
     {
       "id": "tablebrowser",
@@ -2389,6 +2584,11 @@
       "fingerprint": "27ab9cfad4324be43881ad9d990ea8f35f207cb17bf700f555079c8e248803de"
     },
     {
+      "id": "tablebrowser",
+      "contract_version": 3,
+      "fingerprint": "f18817125afa0bee6722cd38b716753e0ef9b46f8f89d0278a2692da996f4842"
+    },
+    {
       "id": "uvcontsub",
       "contract_version": 1,
       "fingerprint": "2435bfb0428d488b10bff6339d782f63e2b03af7b9eb1b7e585c3080985c363e"
@@ -2399,6 +2599,11 @@
       "fingerprint": "4b69f0dc128ba90e548724555cc7829fc29ac3a8cb6513f4226f4dcd4c7e9e82"
     },
     {
+      "id": "uvcontsub",
+      "contract_version": 3,
+      "fingerprint": "79966d3f95fc990da3951480a0d79b25338afa167532dc12b24a5fe808d1658a"
+    },
+    {
       "id": "widebandpbcor",
       "contract_version": 1,
       "fingerprint": "73a31feddbb6c168effdb1faff2e4bfbc1e2359be029f65f5e52d8dd434353be"
@@ -2407,6 +2612,11 @@
       "id": "widebandpbcor",
       "contract_version": 2,
       "fingerprint": "5e125a49c8acc78cd391ee625c11a6231665033523aaca728bd9cd927dad4f02"
+    },
+    {
+      "id": "widebandpbcor",
+      "contract_version": 3,
+      "fingerprint": "e72e767a4c0a1919c83c4a2eb6bdc0eb0e19bda606d42fd38967dbfbe566172b"
     }
   ]
 }

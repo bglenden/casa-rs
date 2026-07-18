@@ -1,4 +1,5 @@
 import CasarsMacCore
+import CasarsFrontendServices
 import AppKit
 import Foundation
 import SwiftUI
@@ -883,10 +884,10 @@ private struct ImageExplorerControlsView: View {
         self.datasetID = datasetID
         self.explorerState = explorerState
         self.snapshot = snapshot
-        let parameters = explorerState?.parameters ?? snapshot?.parameters ?? ImageExplorerParameters()
+        let parameters = explorerState?.parameters ?? snapshot?.parameters ?? imageExplorerParameters()
         _parameters = State(initialValue: parameters)
-        _cursorXText = State(initialValue: String(explorerState?.cursorX ?? snapshot?.planeCursor?.pixelX ?? 0))
-        _cursorYText = State(initialValue: String(explorerState?.cursorY ?? snapshot?.planeCursor?.pixelY ?? 0))
+        _cursorXText = State(initialValue: String(explorerState?.cursorX ?? snapshot?.planeCursor.map { Int($0.pixelX) } ?? 0))
+        _cursorYText = State(initialValue: String(explorerState?.cursorY ?? snapshot?.planeCursor.map { Int($0.pixelY) } ?? 0))
         _regionBoxText = State(initialValue: Self.defaultRegionBoxText(snapshot: snapshot))
         _regionLoadText = State(initialValue: Self.defaultRegionLoadText(store: store, imageDatasetID: datasetID))
         _movieFPSText = State(initialValue: Self.formatMovieFramesPerSecond(explorerState?.movieFramesPerSecond ?? 6.0))
@@ -902,7 +903,7 @@ private struct ImageExplorerControlsView: View {
                     controlsSection("Display") {
                         displayParameterControls
                     }
-                    if snapshot?.nonDisplayAxes?.isEmpty == false {
+                    if snapshot?.nonDisplayAxes.isEmpty == false {
                         controlsSection("Linked axes") {
                             movieControls
                             nonDisplayAxisControls
@@ -916,8 +917,8 @@ private struct ImageExplorerControlsView: View {
         }
         .workbenchFont(.caption)
         .onChange(of: snapshot?.planeCursor) { cursor in
-            cursorXText = String(cursor?.pixelX ?? explorerState?.cursorX ?? 0)
-            cursorYText = String(cursor?.pixelY ?? explorerState?.cursorY ?? 0)
+            cursorXText = String(cursor.map { Int($0.pixelX) } ?? explorerState?.cursorX ?? 0)
+            cursorYText = String(cursor.map { Int($0.pixelY) } ?? explorerState?.cursorY ?? 0)
         }
         .onChange(of: explorerState?.parameters) { nextParameters in
             if let nextParameters {
@@ -998,7 +999,7 @@ private struct ImageExplorerControlsView: View {
             TextField("High", text: $parameters.clipHigh)
                 .frame(width: 72)
             Button {
-                store.setImageExplorerParameters(parameters, datasetID: datasetID)
+                store.setimageExplorerParameters(parameters, datasetID: datasetID)
             } label: {
                 Label("Apply", systemImage: "slider.horizontal.3")
             }
@@ -1084,23 +1085,23 @@ private struct ImageExplorerControlsView: View {
     private var nonDisplayAxisControls: some View {
         if let axes = snapshot?.nonDisplayAxes, !axes.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(axes) { axis in
+                ForEach(axes, id: \.axis) { axis in
                     nonDisplayAxisControl(axis)
                 }
             }
         }
     }
 
-    private func nonDisplayAxisControl(_ axis: ImageExplorerSnapshot.NonDisplayAxis) -> some View {
+    private func nonDisplayAxisControl(_ axis: ImageExplorerNonDisplayAxis) -> some View {
         HStack(spacing: 4) {
             Button {
-                toggleMovie(axis: axis.axis)
+                toggleMovie(axis: Int(axis.axis))
             } label: {
-                Image(systemName: isMoviePlaying(axis: axis.axis) ? "pause.fill" : "play.fill")
+                Image(systemName: isMoviePlaying(axis: Int(axis.axis)) ? "pause.fill" : "play.fill")
             }
-            .help(isMoviePlaying(axis: axis.axis) ? "Pause movie playback" : "Play this axis as a movie")
+            .help(isMoviePlaying(axis: Int(axis.axis)) ? "Pause movie playback" : "Play this axis as a movie")
             Button {
-                store.stepImageExplorerNonDisplayAxis(axis: axis.axis, delta: -1, datasetID: datasetID)
+                store.stepImageExplorerNonDisplayAxis(axis: Int(axis.axis), delta: -1, datasetID: datasetID)
             } label: {
                 Image(systemName: "chevron.left")
             }
@@ -1108,12 +1109,12 @@ private struct ImageExplorerControlsView: View {
                 .workbenchFont(.caption)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button {
-                store.stepImageExplorerNonDisplayAxis(axis: axis.axis, delta: 1, datasetID: datasetID)
+                store.stepImageExplorerNonDisplayAxis(axis: Int(axis.axis), delta: 1, datasetID: datasetID)
             } label: {
                 Image(systemName: "chevron.right")
             }
             Button {
-                store.setImageExplorerSelectedProfileAxis(axis.axis, datasetID: datasetID)
+                store.setImageExplorerSelectedProfileAxis(Int(axis.axis), datasetID: datasetID)
             } label: {
                 Image(systemName: "waveform.path.ecg")
             }
@@ -1143,12 +1144,12 @@ private struct ImageExplorerControlsView: View {
         movieFPSText = Self.formatMovieFramesPerSecond(framesPerSecond)
     }
 
-    private func movieStatusText(axes: [ImageExplorerSnapshot.NonDisplayAxis]) -> String {
+    private func movieStatusText(axes: [ImageExplorerNonDisplayAxis]) -> String {
         guard explorerState?.moviePlaying == true else {
             return "Stopped"
         }
-        let axisID = explorerState?.movieAxis ?? axes.first?.axis
-        let axis = axes.first { $0.axis == axisID }
+        let axisID = explorerState?.movieAxis ?? axes.first.map { Int($0.axis) }
+        let axis = axes.first { Int($0.axis) == axisID }
         let label = axis?.label ?? "Axis \(axisID ?? 0)"
         let index = (axis?.index ?? 0) + 1
         let length = axis?.length ?? 1
@@ -1401,7 +1402,7 @@ private struct ImageExplorerControlsView: View {
     }
 
     private var hasActiveRegionShapes: Bool {
-        (snapshot?.region?.overlayShapes?.isEmpty == false)
+        (snapshot?.region?.overlayShapes.isEmpty == false)
     }
 
     private var imageAttachedRegionControls: some View {
@@ -1442,7 +1443,7 @@ private struct ImageExplorerControlsView: View {
         guard let region = snapshot?.region else {
             return "No active region loaded."
         }
-        let vertices = region.overlayShapes?.reduce(0) { $0 + $1.vertices.count } ?? 0
+        let vertices = region.overlayShapes.reduce(0) { $0 + $1.vertices.count }
         let persistence = activeRegionIsSaved ? "Saved region" : "Unsaved region"
         if let stats = region.stats {
             return "\(persistence): \(region.label), \(region.closedShapeCount) shape(s), \(vertices) vertices, \(stats.pixelCount) pixels."
@@ -1465,8 +1466,8 @@ private struct ImageExplorerControlsView: View {
 
     private func currentCursor() -> (x: Int, y: Int) {
         (
-            Int(cursorXText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? snapshot?.planeCursor?.pixelX ?? 0,
-            Int(cursorYText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? snapshot?.planeCursor?.pixelY ?? 0
+            Int(cursorXText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? snapshot?.planeCursor.map { Int($0.pixelX) } ?? 0,
+            Int(cursorYText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? snapshot?.planeCursor.map { Int($0.pixelY) } ?? 0
         )
     }
 
@@ -1684,14 +1685,14 @@ private struct ImageExplorerSnapshotView: View {
     }
 
     private var quickMovieAxis: Int? {
-        let axes = snapshot.nonDisplayAxes ?? []
-        if let movieAxis = explorerState?.movieAxis, axes.contains(where: { $0.axis == movieAxis }) {
+        let axes = snapshot.nonDisplayAxes
+        if let movieAxis = explorerState?.movieAxis, axes.contains(where: { Int($0.axis) == movieAxis }) {
             return movieAxis
         }
-        if let profileAxis = explorerState?.selectedProfileAxis, axes.contains(where: { $0.axis == profileAxis }) {
+        if let profileAxis = explorerState?.selectedProfileAxis, axes.contains(where: { Int($0.axis) == profileAxis }) {
             return profileAxis
         }
-        return axes.first?.axis
+        return axes.first.map { Int($0.axis) }
     }
 
     private func startQuickMovie() {
@@ -1708,10 +1709,10 @@ private struct ImageExplorerSnapshotView: View {
 
     private var controlSummary: String {
         let mode = explorerState?.planeContentMode ?? "raster"
-        let axes = snapshot.nonDisplayAxes ?? []
+        let axes = snapshot.nonDisplayAxes
         if explorerState?.moviePlaying == true {
-            let axisID = explorerState?.movieAxis ?? axes.first?.axis
-            let axis = axes.first { $0.axis == axisID }
+            let axisID = explorerState?.movieAxis ?? axes.first.map { Int($0.axis) }
+            let axis = axes.first { Int($0.axis) == axisID }
             let label = axis?.label ?? "axis \(axisID ?? 0)"
             return "\(mode), movie \(label)"
         }
@@ -1739,9 +1740,9 @@ private struct ImageExplorerImageWorkspaceView: View {
                         plane: plane,
                         cursor: snapshot.planeCursor,
                         region: snapshot.region,
-                        displayAxes: snapshot.displayAxes ?? [],
+                        displayAxes: snapshot.displayAxes,
                         probe: snapshot.probe,
-                        nonDisplayAxes: snapshot.nonDisplayAxes ?? [],
+                        nonDisplayAxes: snapshot.nonDisplayAxes,
                         regionTool: regionTool,
                         regionIsSaved: regionIsSaved,
                         colorMap: colorMap
@@ -1787,7 +1788,7 @@ private struct ImageExplorerImageWorkspaceView: View {
     private var rasterRenderIdentity: String {
         let regionIdentity: String
         if let region = snapshot.region {
-            let vertices = region.overlayShapes?.reduce(0) { $0 + $1.vertices.count } ?? 0
+            let vertices = region.overlayShapes.reduce(0) { $0 + $1.vertices.count }
             regionIdentity = "\(region.label)-\(region.shapeCount)-\(region.closedShapeCount)-\(vertices)"
         } else {
             regionIdentity = "no-region"
@@ -1868,7 +1869,7 @@ private final class KeyCaptureNSView: NSView {
 }
 
 private struct ImageProfilePanelView: View {
-    let profile: ImageExplorerSnapshot.Profile
+    let profile: ImageExplorerProfile
     let onSampleSelect: (Int, Int) -> Void
     @Environment(\.workbenchFontSize) private var workbenchFontSize
 
@@ -1889,7 +1890,7 @@ private struct ImageProfilePanelView: View {
                         DragGesture(minimumDistance: 0)
                             .onEnded { value in
                                 if let sampleIndex = sampleIndex(at: value.location, size: geometry.size, reservedRightGutter: reservedRightGutter) {
-                                    onSampleSelect(profile.axis, sampleIndex)
+                                    onSampleSelect(Int(profile.axis), sampleIndex)
                                 }
                             }
                     )
@@ -1911,10 +1912,10 @@ private struct ImageProfilePanelView: View {
             drawLength: plotRect.width,
             sampledLength: profile.samples.count
         )
-        return profile.samples[slot].sampleIndex
+        return Int(profile.samples[slot].sampleIndex)
     }
 
-    private func profilePlotDocument(_ profile: ImageExplorerSnapshot.Profile) -> WorkbenchPlotDocument {
+    private func profilePlotDocument(_ profile: ImageExplorerProfile) -> WorkbenchPlotDocument {
         let xAxisPresentation = profileXAxisPresentation(profile)
         let points = profile.samples
             .filter { $0.finite && $0.masked != true }
@@ -1970,7 +1971,7 @@ private struct ImageProfilePanelView: View {
         )
     }
 
-    private func profileXAxisPresentation(_ profile: ImageExplorerSnapshot.Profile) -> ProfileXAxisPresentation {
+    private func profileXAxisPresentation(_ profile: ImageExplorerProfile) -> ProfileXAxisPresentation {
         let worldValues = profile.samples.compactMap { $0.worldAxis?.value }.filter { $0.isFinite }
         let worldUnit = profile.samples.compactMap { $0.worldAxis?.unit }.first
         let unit = worldUnit ?? profile.axisUnit
@@ -2002,7 +2003,7 @@ private struct ProfileXAxisPresentation {
     let scale: Double
     let unit: String
 
-    func value(for sample: ImageExplorerSnapshot.Profile.Sample) -> Double {
+    func value(for sample: ImageExplorerProfileSample) -> Double {
         guard let worldValue = sample.worldAxis?.value else {
             return Double(sample.sampleIndex)
         }
@@ -2046,12 +2047,12 @@ private struct ImagePlaneRegionDrag {
 }
 
 private struct ImagePlaneRasterView: View {
-    let plane: ImageExplorerSnapshot.Plane
-    let cursor: ImageExplorerSnapshot.PlaneCursor?
-    let region: ImageExplorerSnapshot.Region?
-    let displayAxes: [ImageExplorerSnapshot.DisplayAxis]
-    let probe: ImageExplorerSnapshot.Probe?
-    let nonDisplayAxes: [ImageExplorerSnapshot.NonDisplayAxis]
+    let plane: ImageExplorerPlane
+    let cursor: ImageExplorerPlaneCursor?
+    let region: ImageExplorerRegion?
+    let displayAxes: [ImageExplorerDisplayAxis]
+    let probe: ImageExplorerProbe?
+    let nonDisplayAxes: [ImageExplorerNonDisplayAxis]
     let regionTool: String
     let regionIsSaved: Bool
     let colorMap: ImageExplorerColorMap
@@ -2235,7 +2236,7 @@ private struct ImagePlaneRasterView: View {
 
     private func deleteSelectedRegionShape() -> Bool {
         guard let selectedRegionShapeIndex,
-              region?.overlayShapes?.indices.contains(selectedRegionShapeIndex) == true
+              region?.overlayShapes.indices.contains(selectedRegionShapeIndex) == true
         else {
             return false
         }
@@ -2338,7 +2339,8 @@ private struct ImagePlaneRasterView: View {
         }
         context.stroke(wedgePath, with: .color(Color.secondary.opacity(0.65)), lineWidth: 1)
 
-        if let histogramRect = layout.histogramRect, let bins = plane.histogramBins, !bins.isEmpty {
+        if let histogramRect = layout.histogramRect, !plane.histogramBins.isEmpty {
+            let bins = plane.histogramBins
             drawHistogram(bins: bins, in: &context, rect: histogramRect)
         }
         drawScaleTicks(in: &context, layout: layout)
@@ -2407,7 +2409,7 @@ private struct ImagePlaneRasterView: View {
     private func drawPlaneOverlays(in context: inout GraphicsContext, layout: ImagePlaneViewportGeometry) {
         if let region {
             let regionColor = regionIsSaved ? Color.green : Color.yellow
-            for (shapeIndex, shape) in (region.overlayShapes ?? []).enumerated() {
+            for (shapeIndex, shape) in region.overlayShapes.enumerated() {
                 let points = shape.vertices.map { overlayPoint($0.sampledX, $0.sampledY, rect: layout.imageRect) }
                 strokeRegionPath(points: points, closed: shape.closed, color: regionColor.opacity(0.85), in: &context)
                 if selectedRegionShapeIndex == shapeIndex {
@@ -2526,8 +2528,8 @@ private struct ImagePlaneRasterView: View {
             return pixel
         }
         return (
-            x: Int((Double(pixel.x - xAxis.blc) / Double(max(xAxis.inc, 1))).rounded()),
-            y: Int((Double(pixel.y - yAxis.blc) / Double(max(yAxis.inc, 1))).rounded())
+            x: Int((Double(pixel.x - Int(xAxis.blc)) / Double(max(Int(xAxis.inc), 1))).rounded()),
+            y: Int((Double(pixel.y - Int(yAxis.blc)) / Double(max(Int(yAxis.inc), 1))).rounded())
         )
     }
 
@@ -2630,7 +2632,7 @@ private struct ImagePlaneRasterView: View {
     }
 
     private func activeOpenShapeVertices() -> [(x: Int, y: Int)]? {
-        guard let shape = region?.overlayShapes?.last(where: { !$0.closed }) else { return nil }
+        guard let shape = region?.overlayShapes.last(where: { !$0.closed }) else { return nil }
         return shape.vertices.map { sourcePixel(sampledX: $0.sampledX, sampledY: $0.sampledY) }
     }
 
@@ -2661,8 +2663,8 @@ private struct ImagePlaneRasterView: View {
 
     private func clampSourcePixel(_ pixel: (x: Int, y: Int)) -> (x: Int, y: Int) {
         (
-            x: min(max(pixel.x, 0), max(plane.width - 1, 0)),
-            y: min(max(pixel.y, 0), max(plane.height - 1, 0))
+            x: min(max(pixel.x, 0), max(Int(plane.width) - 1, 0)),
+            y: min(max(pixel.y, 0), max(Int(plane.height) - 1, 0))
         )
     }
 
@@ -2673,8 +2675,8 @@ private struct ImagePlaneRasterView: View {
             return (sampledXInt, sampledYInt)
         }
         return (
-            xAxis.blc + sampledXInt * max(xAxis.inc, 1),
-            yAxis.blc + sampledYInt * max(yAxis.inc, 1)
+            Int(xAxis.blc) + sampledXInt * max(Int(xAxis.inc), 1),
+            Int(yAxis.blc) + sampledYInt * max(Int(yAxis.inc), 1)
         )
     }
 
@@ -2749,33 +2751,33 @@ private struct ImagePlaneRasterView: View {
                 imageClickSampleIndex(
                     relative: location.x - layout.imageRect.minX,
                     drawLength: layout.imageRect.width,
-                    sampledLength: plane.width
+                    sampledLength: Int(plane.width)
                 ),
                 imageClickSampleIndex(
                     relative: location.y - layout.imageRect.minY,
                     drawLength: layout.imageRect.height,
-                    sampledLength: plane.height
+                    sampledLength: Int(plane.height)
                 )
             )
         }
         let sampledX = imageClickSampleIndex(
             relative: location.x - layout.imageRect.minX,
             drawLength: layout.imageRect.width,
-            sampledLength: xAxis.sampledLen
+            sampledLength: Int(xAxis.sampledLen)
         )
         let sampledY = imageClickSampleIndex(
             relative: location.y - layout.imageRect.minY,
             drawLength: layout.imageRect.height,
-            sampledLength: yAxis.sampledLen
+            sampledLength: Int(yAxis.sampledLen)
         )
         return (
-            xAxis.blc + sampledX * max(xAxis.inc, 1),
-            yAxis.blc + sampledY * max(yAxis.inc, 1)
+            Int(xAxis.blc) + sampledX * max(Int(xAxis.inc), 1),
+            Int(yAxis.blc) + sampledY * max(Int(yAxis.inc), 1)
         )
     }
 
     private func axisTicks(
-        axis: ImageExplorerSnapshot.DisplayAxis,
+        axis: ImageExplorerDisplayAxis,
         length: CGFloat,
         reverse: Bool
     ) -> [ImagePlaneAxisTick] {
@@ -2789,7 +2791,7 @@ private struct ImagePlaneRasterView: View {
         }
         indices = Array(NSOrderedSet(array: indices).compactMap { $0 as? Int })
         return indices.map { sampleIndex in
-            let pixel = axis.blc + sampleIndex * max(axis.inc, 1)
+            let pixel = Int(axis.blc) + sampleIndex * max(Int(axis.inc), 1)
             let fraction = maxIndex == 0 ? 0.5 : CGFloat(sampleIndex) / CGFloat(maxIndex)
             let position = reverse ? (1 - fraction) * length : fraction * length
             return ImagePlaneAxisTick(
@@ -2799,7 +2801,7 @@ private struct ImagePlaneRasterView: View {
         }
     }
 
-    private func axisTickLabel(axis: ImageExplorerSnapshot.DisplayAxis, pixel: Int) -> String {
+    private func axisTickLabel(axis: ImageExplorerDisplayAxis, pixel: Int) -> String {
         guard let value = axisWorldValue(axis: axis, pixel: pixel) else {
             return "\(pixel)"
         }
@@ -2815,19 +2817,20 @@ private struct ImagePlaneRasterView: View {
         return axis.unit.isEmpty ? trimFloatText(value) : "\(trimFloatText(value)) \(axis.unit)"
     }
 
-    private func axisWorldValue(axis: ImageExplorerSnapshot.DisplayAxis, pixel: Int) -> Double? {
+    private func axisWorldValue(axis: ImageExplorerDisplayAxis, pixel: Int) -> Double? {
+        let axisIndex = Int(axis.axis)
         guard let increment = axis.worldIncrement,
               let probe,
-              probe.worldAxes.indices.contains(axis.axis),
-              probe.pixelIndices.indices.contains(axis.axis) else {
+              probe.worldAxes.indices.contains(axisIndex),
+              probe.pixelIndices.indices.contains(axisIndex) else {
             return nil
         }
-        let probeWorld = probe.worldAxes[axis.axis].value
-        let probePixel = Double(probe.pixelIndices[axis.axis])
+        let probeWorld = probe.worldAxes[axisIndex].value
+        let probePixel = Double(probe.pixelIndices[axisIndex])
         return probeWorld + (Double(pixel) - probePixel) * increment
     }
 
-    private func axisTitle(_ axis: ImageExplorerSnapshot.DisplayAxis) -> String {
+    private func axisTitle(_ axis: ImageExplorerDisplayAxis) -> String {
         if isRightAscensionAxis(axis.name) {
             return "Right Ascension"
         }
@@ -2892,23 +2895,25 @@ private struct ImagePlaneRasterView: View {
             image = nil
             return
         }
+        let width = Int(plane.width)
+        let height = Int(plane.height)
         let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil,
-            pixelsWide: plane.width,
-            pixelsHigh: plane.height,
+            pixelsWide: width,
+            pixelsHigh: height,
             bitsPerSample: 8,
             samplesPerPixel: 4,
             hasAlpha: true,
             isPlanar: false,
             colorSpaceName: .deviceRGB,
-            bytesPerRow: plane.width * 4,
+            bytesPerRow: width * 4,
             bitsPerPixel: 32
         )
         guard let data = bitmap?.bitmapData else {
             image = nil
             return
         }
-        for index in 0..<(plane.width * plane.height) {
+        for index in 0..<(width * height) {
             let value = plane.pixelsU8[index]
             let color = imagePlaneRGB(value, colorMap: colorMap)
             let offset = index * 4
@@ -2917,7 +2922,7 @@ private struct ImagePlaneRasterView: View {
             data[offset + 2] = color.blue
             data[offset + 3] = 255
         }
-        let output = NSImage(size: NSSize(width: plane.width, height: plane.height))
+        let output = NSImage(size: NSSize(width: width, height: height))
         if let bitmap {
             output.addRepresentation(bitmap)
         }
@@ -3028,8 +3033,8 @@ private struct ImagePlaneViewportGeometry {
 
     init(
         size: CGSize,
-        plane: ImageExplorerSnapshot.Plane,
-        displayAxes: [ImageExplorerSnapshot.DisplayAxis],
+        plane: ImageExplorerPlane,
+        displayAxes: [ImageExplorerDisplayAxis],
         characterSize: Double
     ) {
         let showAxisAnnotations = displayAxes.count >= 2 && size.width >= 320 && size.height >= 220
@@ -3089,8 +3094,8 @@ private struct ImagePlaneViewportGeometry {
     }
 
     private static func displayAspectRatio(
-        displayAxes: [ImageExplorerSnapshot.DisplayAxis],
-        plane: ImageExplorerSnapshot.Plane
+        displayAxes: [ImageExplorerDisplayAxis],
+        plane: ImageExplorerPlane
     ) -> CGFloat {
         guard let x = displayAxes.first, let y = displayAxes[safe: 1] else {
             return CGFloat(max(plane.width, 1)) / CGFloat(max(plane.height, 1))
@@ -3218,7 +3223,7 @@ private extension Array {
     }
 }
 
-func tableBrowserAddressSummary(_ address: TableBrowserSnapshot.SelectedAddress?) -> String? {
+func tableBrowserAddressSummary(_ address: TableBrowserSelectedAddress?) -> String? {
     guard let address else {
         return nil
     }
@@ -3229,9 +3234,9 @@ func tableBrowserAddressSummary(_ address: TableBrowserSnapshot.SelectedAddress?
         let row = address.row.map(String.init) ?? "?"
         return "row \(row) \(address.column ?? "")"
     case "table_keyword":
-        return "keyword \(address.keywordPath?.joined(separator: ".") ?? "")"
+        return "keyword \(address.keywordPath.joined(separator: "."))"
     case "column_keyword":
-        return "keyword \(address.column ?? ""):\(address.keywordPath?.joined(separator: ".") ?? "")"
+        return "keyword \(address.column ?? ""):\(address.keywordPath.joined(separator: "."))"
     case "subtable":
         return "subtable \(address.targetPath ?? "")"
     default:
@@ -3260,7 +3265,7 @@ private struct TableBrowserSnapshotView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
-                if snapshot.capabilities?.editable == false {
+                if !snapshot.capabilities.editable {
                     Text("read-only")
                         .workbenchFont(.caption)
                         .foregroundStyle(.secondary)
@@ -3297,7 +3302,7 @@ private struct TableBrowserSnapshotView: View {
     }
 
     @ViewBuilder
-    private func metricsLabel(_ metrics: TableBrowserSnapshot.NavigationMetrics?, axis: String) -> some View {
+    private func metricsLabel(_ metrics: TableBrowserNavigationMetrics?, axis: String) -> some View {
         if let metrics, metrics.totalItems > 0 {
             Text("\(axis) \(metrics.selectedIndex + 1)/\(metrics.totalItems)")
                 .workbenchFont(.caption, design: .monospaced)
@@ -3323,7 +3328,7 @@ private struct TableBrowserMainPane: View {
     let copyCellValue: (_ rowIndex: Int, _ columnIndex: Int) -> Void
     let loadCellValue: (_ rowIndex: Int, _ columnIndex: Int, _ completion: @escaping (String?) -> Void) -> Void
     let openSelectedSubtable: () -> Void
-    @State private var inspectedColumn: TableBrowserCellWindowSnapshot.Column?
+    @State private var inspectedColumn: TableBrowserCellWindowColumn?
     @State private var inspectedCell: TableBrowserCellInspectorItem?
 
     var body: some View {
@@ -3332,7 +3337,7 @@ private struct TableBrowserMainPane: View {
             case "keywords":
                 TableBrowserKeyValueGrid(
                     lines: tableKeywordLines,
-                    selectedIndex: snapshot.verticalMetrics?.selectedIndex,
+                    selectedIndex: snapshot.verticalMetrics.map { Int($0.selectedIndex) },
                     selectMainItem: selectMainItem
                 )
             case "subtables":
@@ -3355,8 +3360,8 @@ private struct TableBrowserMainPane: View {
                             hiddenColumns: hiddenColumns,
                             arrayInlineLimits: arrayInlineLimits,
                             interfaceFontSize: interfaceFontSize,
-                            selectedRow: selectedCellRow ?? snapshot.verticalMetrics?.selectedIndex,
-                            selectedColumn: selectedCellColumn ?? snapshot.horizontalMetrics?.selectedIndex,
+                            selectedRow: selectedCellRow ?? snapshot.verticalMetrics.map { Int($0.selectedIndex) },
+                            selectedColumn: selectedCellColumn ?? snapshot.horizontalMetrics.map { Int($0.selectedIndex) },
                             selectCell: selectCell,
                             requestCellWindow: requestCellWindow,
                             setColumnHidden: setColumnHidden,
@@ -3489,8 +3494,8 @@ private struct TableBrowserRenderedCell: Equatable {
     }
 }
 
-extension TableBrowserCellWindowSnapshot.Column: Identifiable {
-    public var id: Int { index }
+extension TableBrowserCellWindowColumn: Identifiable {
+    public var id: UInt64 { index }
 }
 
 private struct TableBrowserCellsToolbar: View {
@@ -3510,15 +3515,16 @@ private struct TableBrowserCellsToolbar: View {
                 Divider()
                 ForEach(grid.columns) { column in
                     Button {
-                        setColumnHidden(column.index, !hiddenColumns.contains(column.index))
+                        let columnIndex = Int(column.index)
+                        setColumnHidden(columnIndex, !hiddenColumns.contains(columnIndex))
                     } label: {
                         Label(
                             column.name,
-                            systemImage: hiddenColumns.contains(column.index) ? "square" : "checkmark.square"
+                            systemImage: hiddenColumns.contains(Int(column.index)) ? "square" : "checkmark.square"
                         )
                     }
                 }
-                let hiddenOutsideWindow = hiddenColumns.subtracting(Set(grid.columns.map(\.index)))
+                let hiddenOutsideWindow = hiddenColumns.subtracting(Set(grid.columns.map { Int($0.index) }))
                 if !hiddenOutsideWindow.isEmpty {
                     Divider()
                     ForEach(hiddenOutsideWindow.sorted(), id: \.self) { columnIndex in
@@ -3546,7 +3552,7 @@ private struct TableBrowserCellsToolbar: View {
 }
 
 private struct TableBrowserColumnInspector: View {
-    let column: TableBrowserCellWindowSnapshot.Column
+    let column: TableBrowserCellWindowColumn
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -3588,7 +3594,7 @@ private struct TableBrowserColumnInspector: View {
 
 private struct TableBrowserCellInspectorItem: Identifiable {
     let rowIndex: Int
-    let column: TableBrowserCellWindowSnapshot.Column
+    let column: TableBrowserCellWindowColumn
     let value: String
 
     var id: String {
@@ -3676,7 +3682,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
     let requestCellWindow: (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void
     let setColumnHidden: (_ columnIndex: Int, _ hidden: Bool) -> Void
     let setArrayInlineLimit: (_ columnIndex: Int, _ limit: Int) -> Void
-    let inspectColumn: (TableBrowserCellWindowSnapshot.Column) -> Void
+    let inspectColumn: (TableBrowserCellWindowColumn) -> Void
     let inspectCell: (TableBrowserCellInspectorItem) -> Void
     let copyCellValue: (_ rowIndex: Int, _ columnIndex: Int) -> Void
     let loadCellValue: (_ rowIndex: Int, _ columnIndex: Int, _ completion: @escaping (String?) -> Void) -> Void
@@ -3783,7 +3789,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         var requestCellWindow: (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void
         var setColumnHidden: (_ columnIndex: Int, _ hidden: Bool) -> Void
         var setArrayInlineLimit: (_ columnIndex: Int, _ limit: Int) -> Void
-        var inspectColumn: (TableBrowserCellWindowSnapshot.Column) -> Void
+        var inspectColumn: (TableBrowserCellWindowColumn) -> Void
         var inspectCell: (TableBrowserCellInspectorItem) -> Void
         var copyCellValue: (_ rowIndex: Int, _ columnIndex: Int) -> Void
         var loadCellValue: (_ rowIndex: Int, _ columnIndex: Int, _ completion: @escaping (String?) -> Void) -> Void
@@ -3809,7 +3815,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             requestCellWindow: @escaping (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void,
             setColumnHidden: @escaping (_ columnIndex: Int, _ hidden: Bool) -> Void,
             setArrayInlineLimit: @escaping (_ columnIndex: Int, _ limit: Int) -> Void,
-            inspectColumn: @escaping (TableBrowserCellWindowSnapshot.Column) -> Void,
+            inspectColumn: @escaping (TableBrowserCellWindowColumn) -> Void,
             inspectCell: @escaping (TableBrowserCellInspectorItem) -> Void,
             copyCellValue: @escaping (_ rowIndex: Int, _ columnIndex: Int) -> Void,
             loadCellValue: @escaping (_ rowIndex: Int, _ columnIndex: Int, _ completion: @escaping (String?) -> Void) -> Void
@@ -3894,7 +3900,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             guard let tableView else {
                 return
             }
-            let displayedColumns = grid.columns.filter { !hiddenColumns.contains($0.index) }
+            let displayedColumns = grid.columns.filter { !hiddenColumns.contains(Int($0.index)) }
             let desiredIDs = ["row"] + displayedColumns.map { "column-\($0.index)" }
             guard desiredIDs != lastColumnIDs else {
                 updateColumnMetrics(tableView)
@@ -3916,7 +3922,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
                 tableColumn.title = column.header
                 tableColumn.width = columnWidth(for: column)
                 tableColumn.minWidth = 72
-                tableColumn.maxWidth = arrayInlineLimits[column.index, default: 0] > 0 ? 900 : 420
+                tableColumn.maxWidth = arrayInlineLimits[Int(column.index), default: 0] > 0 ? 900 : 420
                 tableColumn.headerToolTip = "\(column.name): \(column.summary)"
                 tableView.addTableColumn(tableColumn)
             }
@@ -3934,17 +3940,17 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             }
         }
 
-        private func columnWidth(for column: TableBrowserCellWindowSnapshot.Column) -> CGFloat {
+        private func columnWidth(for column: TableBrowserCellWindowColumn) -> CGFloat {
             let expandedWidth = maxCellTextLength(for: column)
-            let characterCount = max(column.width, expandedWidth, 8)
-            let cappedCount = arrayInlineLimits[column.index, default: 0] > 0
+            let characterCount = max(Int(column.width), expandedWidth, 8)
+            let cappedCount = arrayInlineLimits[Int(column.index), default: 0] > 0
                 ? min(characterCount, 96)
                 : min(characterCount, 40)
             return CGFloat(cappedCount) * 8.0 + 28.0
         }
 
-        private func maxCellTextLength(for column: TableBrowserCellWindowSnapshot.Column) -> Int {
-            guard arrayInlineLimits[column.index, default: 0] > 0 else {
+        private func maxCellTextLength(for column: TableBrowserCellWindowColumn) -> Int {
+            guard arrayInlineLimits[Int(column.index), default: 0] > 0 else {
                 return 0
             }
             return grid.rows
@@ -3953,7 +3959,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int {
-            grid.rowCount
+            Int(grid.rowCount)
         }
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -4158,7 +4164,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
 
             let hide = NSMenuItem(title: "Hide Column", action: #selector(hideHeaderColumn(_:)), keyEquivalent: "")
             hide.target = self
-            hide.representedObject = column.index
+            hide.representedObject = Int(column.index)
             menu.addItem(hide)
 
             menu.addItem(.separator())
@@ -4172,19 +4178,19 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         private func addArrayExpansionItem(
             _ title: String,
             limit: Int,
-            column: TableBrowserCellWindowSnapshot.Column,
+            column: TableBrowserCellWindowColumn,
             to menu: NSMenu
         ) {
             let item = NSMenuItem(title: title, action: #selector(setHeaderArrayExpansion(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = ["column": column.index, "limit": limit]
-            item.state = arrayInlineLimits[column.index, default: 0] == limit ? .on : .off
+            item.representedObject = ["column": Int(column.index), "limit": limit]
+            item.state = arrayInlineLimits[Int(column.index), default: 0] == limit ? .on : .off
             menu.addItem(item)
         }
 
         @objc private func showHeaderColumnKeywords(_ sender: NSMenuItem) {
             guard let columnIndex = sender.representedObject as? Int,
-                  let column = grid.columns.first(where: { $0.index == columnIndex })
+                  let column = grid.columns.first(where: { Int($0.index) == columnIndex })
             else {
                 return
             }
@@ -4546,7 +4552,7 @@ private struct TableBrowserSubtableGrid: View {
 }
 
 private struct TableBrowserInspectorPane: View {
-    let inspector: TableBrowserSnapshot.Inspector?
+    let inspector: TableBrowserInspector?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -4585,7 +4591,7 @@ private struct TableBrowserInspectorPane: View {
 }
 
 private struct TableBrowserTypedInspector: View {
-    let node: TableBrowserSnapshot.ValueNode
+    let node: TableBrowserValueNode
 
     var body: some View {
         switch node {
@@ -4633,7 +4639,7 @@ private struct TableBrowserTypedInspector: View {
     }
 }
 
-private extension TableBrowserSnapshot.ScalarValue {
+private extension TableBrowserScalarValue {
     var displayString: String {
         switch self {
         case let .bool(value):
@@ -4648,8 +4654,6 @@ private extension TableBrowserSnapshot.ScalarValue {
             return String(format: "%.6g%+.6gi", re, im)
         case let .string(value):
             return value
-        case let .unknown(type, display):
-            return display.isEmpty ? type : "\(type) \(display)"
         }
     }
 }
@@ -8014,7 +8018,7 @@ private struct RuntimeProgressView: View {
 
 private struct TaskParameterGroup: Identifiable {
     let name: String
-    var arguments: [TaskUIArgument]
+    var arguments: [TaskUiArgument]
     var id: String { name }
 }
 
@@ -8037,7 +8041,7 @@ struct GenericTaskPanel: View {
         store.state.applicationCatalog.first { $0.id == activeTaskID }
     }
 
-    private var schema: TaskUISchema? {
+    private var schema: TaskUiSchema? {
         store.state.taskUISchemas[activeTaskID]
     }
 
@@ -8178,7 +8182,7 @@ struct GenericTaskPanel: View {
         !showingTaskList && activeTaskID == "imager" && store.state.taskRun.imagerProgress != nil
     }
 
-    private func genericParameterBlock(schema: TaskUISchema) -> some View {
+    private func genericParameterBlock(schema: TaskUiSchema) -> some View {
         let groups = parameterGroups(for: schema)
         let hiddenAdvancedCount = schema.arguments
             .filter {
@@ -8211,7 +8215,7 @@ struct GenericTaskPanel: View {
                             .foregroundStyle(.secondary)
                     }
                     LazyVGrid(columns: parameterGridColumns, alignment: .leading, spacing: 8) {
-                        ForEach(group.arguments) { argument in
+                        ForEach(group.arguments, id: \.id) { argument in
                             genericControl(argument: argument)
                         }
                     }
@@ -8221,7 +8225,7 @@ struct GenericTaskPanel: View {
         .taskCard()
     }
 
-    private func parameterGroups(for schema: TaskUISchema) -> [TaskParameterGroup] {
+    private func parameterGroups(for schema: TaskUiSchema) -> [TaskParameterGroup] {
         let arguments = schema.arguments
             .filter { shouldShowArgument($0) }
             .sorted { parameterOrder(for: $0) < parameterOrder(for: $1) }
@@ -8239,7 +8243,7 @@ struct GenericTaskPanel: View {
         return groups
     }
 
-    private func shouldShowArgument(_ argument: TaskUIArgument) -> Bool {
+    private func shouldShowArgument(_ argument: TaskUiArgument) -> Bool {
         guard let session = store.parameterSession(surfaceID: activeTaskID, instanceID: tabID),
               let binding = session.bundle.surface.bindings.first(where: { $0.name == argument.id }),
               binding.projections.presentation.hidden == false,
@@ -8252,11 +8256,11 @@ struct GenericTaskPanel: View {
             || shouldRevealAdvancedArgument(argument)
     }
 
-    private func shouldRevealAdvancedArgument(_ argument: TaskUIArgument) -> Bool {
+    private func shouldRevealAdvancedArgument(_ argument: TaskUiArgument) -> Bool {
         hasNonDefaultGenericValue(argument)
     }
 
-    private func hasNonDefaultGenericValue(_ argument: TaskUIArgument) -> Bool {
+    private func hasNonDefaultGenericValue(_ argument: TaskUiArgument) -> Bool {
         store.parameterOrigin(surfaceID: activeTaskID, instanceID: tabID, name: argument.id) != "default"
     }
 
@@ -8412,7 +8416,7 @@ struct GenericTaskPanel: View {
                     .workbenchFont(.headline)
                 Toggle("Confirm catalog-declared run risks", isOn: confirmed)
                     .accessibilityIdentifier("task.safety.confirm")
-                Text(safety.classes.joined(separator: ", "))
+                Text(safety.classes.map(\.protocolValue).joined(separator: ", "))
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -8421,7 +8425,7 @@ struct GenericTaskPanel: View {
     }
 
     @ViewBuilder
-    private func genericControl(argument: TaskUIArgument) -> some View {
+    private func genericControl(argument: TaskUiArgument) -> some View {
         let taskID = activeTaskID
         let value = Binding(
             get: { store.parameterText(surfaceID: taskID, instanceID: tabID, name: argument.id) },
@@ -8561,7 +8565,7 @@ struct GenericTaskPanel: View {
     private func genericChannelSelectionControl(
         label: String,
         value: Binding<String>,
-        argument: TaskUIArgument
+        argument: TaskUiArgument
     ) -> some View {
         let limit = genericImageChannelLimit()
         let isValid = isValidGenericChannelSelection(value.wrappedValue, channelLimit: limit)
@@ -8775,11 +8779,11 @@ struct GenericTaskPanel: View {
             }
     }
 
-    private func isChannelSelectionArgument(_ argument: TaskUIArgument) -> Bool {
+    private func isChannelSelectionArgument(_ argument: TaskUiArgument) -> Bool {
         parameterConcept(for: argument)?.id == "image.selection.chans"
     }
 
-    private func prompt(for argument: TaskUIArgument) -> String {
+    private func prompt(for argument: TaskUiArgument) -> String {
         if let example = parameterConcept(for: argument)?.documentation.examples.first,
            !example.isEmpty {
             return example
@@ -8792,7 +8796,7 @@ struct GenericTaskPanel: View {
         return displayLabel(for: argument)
     }
 
-    private func helpText(for argument: TaskUIArgument) -> String {
+    private func helpText(for argument: TaskUiArgument) -> String {
         guard let concept = parameterConcept(for: argument) else { return argument.help }
         return [concept.documentation.summary, concept.documentation.details, parameterBinding(for: argument)?.surfaceNote]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -8820,7 +8824,7 @@ struct GenericTaskPanel: View {
             return concept.valueDomain.resourceKind == "image" && concept.semanticRole == "input_data"
         }
         if let argument = imageArgument {
-            let value = store.parameterText(surfaceID: schema.commandID, instanceID: tabID, name: argument.id)
+            let value = store.parameterText(surfaceID: schema.commandId, instanceID: tabID, name: argument.id)
             if !value.isEmpty, let dataset = imageDataset(matching: value) {
                 return dataset
             }
@@ -8838,7 +8842,7 @@ struct GenericTaskPanel: View {
         }
     }
 
-    private func choices(for argument: TaskUIArgument) -> [String] {
+    private func choices(for argument: TaskUiArgument) -> [String] {
         let concept = parameterConcept(for: argument)
         let binding = parameterBinding(for: argument)
         switch concept?.valueDomain.resourceKind {
@@ -8925,7 +8929,7 @@ struct GenericTaskPanel: View {
         return []
     }
 
-    private func datasetPathChoices(for argument: TaskUIArgument) -> [DatasetPathChoice] {
+    private func datasetPathChoices(for argument: TaskUiArgument) -> [DatasetPathChoice] {
         choices(for: argument).map { path in
             DatasetPathChoice(name: displayPath(path), path: storedPathValue(fromDisplayedPath: path))
         }
@@ -8943,7 +8947,7 @@ struct GenericTaskPanel: View {
         }
     }
 
-    private func displayLabel(for argument: TaskUIArgument) -> String {
+    private func displayLabel(for argument: TaskUiArgument) -> String {
         let label = (parameterBinding(for: argument)?.projections.presentation.label ?? argument.label)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if !label.isEmpty {
@@ -8957,22 +8961,22 @@ struct GenericTaskPanel: View {
             .joined(separator: " ")
     }
 
-    private func isPathArgument(_ argument: TaskUIArgument) -> Bool {
+    private func isPathArgument(_ argument: TaskUiArgument) -> Bool {
         parameterConcept(for: argument)?.valueDomain.isPathLike == true
     }
 
-    private func isRegionArgument(_ argument: TaskUIArgument) -> Bool {
+    private func isRegionArgument(_ argument: TaskUiArgument) -> Bool {
         parameterBinding(for: argument)?.contextRole == "region_reference"
     }
 
-    private func canBrowse(argument: TaskUIArgument) -> Bool {
+    private func canBrowse(argument: TaskUiArgument) -> Bool {
         guard isPathArgument(argument) else {
             return false
         }
         return true
     }
 
-    private func pathIntent(for argument: TaskUIArgument) -> TaskParameterPathIntent {
+    private func pathIntent(for argument: TaskUiArgument) -> TaskParameterPathIntent {
         let concept = parameterConcept(for: argument)
         return TaskParameterPathIntent(
             resourceKind: concept?.valueDomain.resourceKind,
@@ -8997,7 +9001,7 @@ struct GenericTaskPanel: View {
         )
     }
 
-    private func pathDisplayBinding(rawValue: Binding<String>, argument: TaskUIArgument) -> Binding<String> {
+    private func pathDisplayBinding(rawValue: Binding<String>, argument: TaskUiArgument) -> Binding<String> {
         guard isRegionArgument(argument) else {
             return pathValueBinding(rawValue: rawValue)
         }
@@ -9011,20 +9015,20 @@ struct GenericTaskPanel: View {
         )
     }
 
-    private func parameterBinding(for argument: TaskUIArgument) -> SurfaceParameterBinding? {
+    private func parameterBinding(for argument: TaskUiArgument) -> SurfaceParameterBinding? {
         store.parameterSession(surfaceID: activeTaskID, instanceID: tabID)?
             .bundle.surface.bindings.first { $0.name == argument.id }
     }
 
-    private func parameterConcept(for argument: TaskUIArgument) -> SurfaceParameterConcept? {
+    private func parameterConcept(for argument: TaskUiArgument) -> SurfaceParameterConcept? {
         store.parameterSession(surfaceID: activeTaskID, instanceID: tabID)?.bundle.concept(for: argument.id)
     }
 
-    private func parameterOrder(for argument: TaskUIArgument) -> Int {
-        parameterBinding(for: argument)?.order ?? argument.order
+    private func parameterOrder(for argument: TaskUiArgument) -> Int {
+        parameterBinding(for: argument).map { Int($0.order) } ?? Int(argument.order)
     }
 
-    private func isBooleanArgument(_ argument: TaskUIArgument) -> Bool {
+    private func isBooleanArgument(_ argument: TaskUiArgument) -> Bool {
         parameterConcept(for: argument)?.valueDomain == .bool
     }
 
@@ -9449,7 +9453,7 @@ struct ApplicationCatalogBlock: View {
                     .foregroundStyle(.secondary)
             }
 
-            ForEach(taskRows) { task in
+            ForEach(taskRows, id: \.id) { task in
                 Button {
                     selectTask?(task.id)
                 } label: {

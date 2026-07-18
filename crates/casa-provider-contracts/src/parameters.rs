@@ -707,16 +707,123 @@ pub struct SurfaceMigration {
     pub changed_defaults: Vec<String>,
 }
 
-/// Surface-level provider routing and derived managed-output presentation.
+/// Machine-readable stdout format produced by a managed task invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedOutputFormat {
+    Json,
+}
+
+/// Rust-owned decoder for one structured task result family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum ManagedResultDecoder {
+    #[serde(rename = "measurementset-summary-v1")]
+    MeasurementSetSummaryV1,
+    #[serde(rename = "calibration-report-v1")]
+    CalibrationReportV1,
+    #[serde(rename = "imager-run-v1")]
+    ImagerRunV1,
+}
+
+/// One argument injected to select a provider's managed result representation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ManagedOutputArgument {
+    pub flag: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+}
+
+/// Typed contract for a provider's structured task result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ManagedOutputContract {
+    pub decoder: ManagedResultDecoder,
+    pub stdout_format: ManagedOutputFormat,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inject_arguments: Vec<ManagedOutputArgument>,
+    pub raw_stdout_available: bool,
+    pub raw_stderr_available: bool,
+}
+
+/// Stable semantic role of a produced task resource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunProductRole {
+    Primary,
+    Auxiliary,
+    Preview,
+}
+
+/// Declared resource kind before an exact domain probe supplies dataset metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunProductKind {
+    MeasurementSet,
+    CasaImage,
+    CasaTable,
+    FitsImage,
+    File,
+}
+
+/// Cardinality of one declared product binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunProductCardinality {
+    One,
+    Many,
+}
+
+/// Exact source of a product path. Consumers never search arbitrary result keys.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RunProductSource {
+    Parameter { parameter: String },
+    DecodedArtifacts,
+}
+
+/// One product descriptor owned by the canonical surface contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RunProductDescriptor {
+    pub id: String,
+    pub role: RunProductRole,
+    pub resource_kind: RunProductKind,
+    pub source: RunProductSource,
+    pub cardinality: RunProductCardinality,
+    pub optional: bool,
+    pub probe_supported: bool,
+}
+
+/// Explicit product classification for every surface.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SurfaceProductContract {
+    #[default]
+    NoProducts,
+    Declared {
+        products: Vec<RunProductDescriptor>,
+    },
+}
+
+impl SurfaceProductContract {
+    pub fn descriptors(&self) -> &[RunProductDescriptor] {
+        match self {
+            Self::NoProducts => &[],
+            Self::Declared { products } => products,
+        }
+    }
+}
+
+/// Surface-level provider routing, managed result decoding, and product semantics.
 /// Executable selection itself remains inventory/runtime state, never profile data.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SurfaceExecutionProjection {
     #[serde(default)]
     pub invocation_name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fixed_args: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub managed_output: Option<serde_json::Value>,
+    pub managed_output: Option<ManagedOutputContract>,
+    #[serde(default)]
+    pub products: SurfaceProductContract,
 }
 
 /// Fully projected provider invocation, including an optional private stdin

@@ -53,7 +53,7 @@ Implemented as the #167-owned slice, not as a #196 sub-ticket:
 - `--minpercentchange`
 - `--no-fastnoise`
 - canonical JSON task request fields `use_mask` and `auto_mask`
-- Python `casars.tasks.imager.mfs(..., use_mask=..., auto_mask=...)`
+- Python `casars.tasks.imager(..., usemask=..., ...)`
 - CASA-style cube clean masks with shape `(nx, ny, 1, nchan)`, so generated or supplied masks can differ by output channel
 - `.mask` product writing for effective clean masks, including channel-specific cube masks
 

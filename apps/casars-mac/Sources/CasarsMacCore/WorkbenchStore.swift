@@ -60,10 +60,7 @@ public struct UniFFIApplicationCatalogClient: ApplicationCatalogClient {
     public init() {}
 
     public func loadApplicationCatalog() throws -> [ApplicationCatalogEntry] {
-        let json = try CasarsFrontendServices.applicationCatalogJson()
-        let data = Data(json.utf8)
-        let envelope = try JSONDecoder().decode(ApplicationCatalogEnvelope.self, from: data)
-        return envelope.applications.filter(\.showInSwift)
+        try CasarsFrontendServices.applicationCatalog().applications.filter(\.showInSwift)
     }
 }
 
@@ -163,7 +160,7 @@ private struct NotebookPrototypeDeniedProductionClient:
         try denied("task process")
     }
 
-    func loadTaskUISchema(taskID: String) throws -> TaskUISchema {
+    func loadTaskUISchema(taskID: String) throws -> TaskUiSchema {
         try denied("task schema")
     }
 
@@ -273,23 +270,19 @@ public struct UniFFITaskContextOptionsClient: TaskContextOptionsClient {
     public init() {}
 
     public func loadTaskContextOptions(datasetPath: String) throws -> TaskContextOptionsEnvelope {
-        let json = try CasarsFrontendServices.taskContextOptionsJson(datasetPath: datasetPath)
-        let data = Data(json.utf8)
-        return try JSONDecoder().decode(TaskContextOptionsEnvelope.self, from: data)
+        try CasarsFrontendServices.taskContextOptions(datasetPath: datasetPath)
     }
 }
 
 public protocol TaskUISchemaClient {
-    func loadTaskUISchema(taskID: String) throws -> TaskUISchema
+    func loadTaskUISchema(taskID: String) throws -> TaskUiSchema
 }
 
 public struct UniFFITaskUISchemaClient: TaskUISchemaClient {
     public init() {}
 
-    public func loadTaskUISchema(taskID: String) throws -> TaskUISchema {
-        let json = try CasarsFrontendServices.parameterFormJson(surfaceId: taskID)
-        let data = Data(json.utf8)
-        return try JSONDecoder().decode(TaskUISchema.self, from: data)
+    public func loadTaskUISchema(taskID: String) throws -> TaskUiSchema {
+        try CasarsFrontendServices.taskUiSchema(surfaceId: taskID)
     }
 }
 
@@ -738,10 +731,7 @@ public struct UniFFIImageExplorerClient: ImageExplorerClient {
     public init() {}
 
     public func buildSnapshot(request: ImageExplorerSnapshotRequest) throws -> ImageExplorerSnapshot {
-        let requestData = try JSONEncoder().encode(request)
-        let requestJSON = String(decoding: requestData, as: UTF8.self)
-        let json = try CasarsFrontendServices.buildImageExplorerSnapshotFromRequestJson(requestJson: requestJSON)
-        return try JSONDecoder().decode(ImageExplorerSnapshot.self, from: Data(json.utf8))
+        try CasarsFrontendServices.buildImageExplorerSnapshot(request: request)
     }
 }
 
@@ -755,24 +745,15 @@ public struct UniFFITableBrowserClient: TableBrowserClient {
     public init() {}
 
     public func buildSnapshot(request: TableBrowserSnapshotRequest) throws -> TableBrowserSnapshot {
-        let requestData = try JSONEncoder().encode(request)
-        let requestJSON = String(decoding: requestData, as: UTF8.self)
-        let json = try CasarsFrontendServices.buildTableBrowserSnapshotFromRequestJson(requestJson: requestJSON)
-        return try JSONDecoder().decode(TableBrowserSnapshot.self, from: Data(json.utf8))
+        try CasarsFrontendServices.buildTableBrowserSnapshot(request: request)
     }
 
     public func buildCellWindow(request: TableBrowserCellWindowRequest) throws -> TableBrowserCellWindowSnapshot {
-        let requestData = try JSONEncoder().encode(request)
-        let requestJSON = String(decoding: requestData, as: UTF8.self)
-        let json = try CasarsFrontendServices.buildTableBrowserCellWindowJson(requestJson: requestJSON)
-        return try JSONDecoder().decode(TableBrowserCellWindowSnapshot.self, from: Data(json.utf8))
+        try CasarsFrontendServices.buildTableBrowserCellWindow(request: request)
     }
 
     public func buildCellValue(request: TableBrowserCellValueRequest) throws -> String {
-        let requestData = try JSONEncoder().encode(request)
-        let requestJSON = String(decoding: requestData, as: UTF8.self)
-        let json = try CasarsFrontendServices.buildTableBrowserCellValueJson(requestJson: requestJSON)
-        return try JSONDecoder().decode(String.self, from: Data(json.utf8))
+        try CasarsFrontendServices.buildTableBrowserCellValue(request: request)
     }
 }
 
@@ -1313,37 +1294,26 @@ public final class WorkbenchStore: ObservableObject {
         let standardizedPath = Self.standardizedDatasetPath(path)
         let url = URL(fileURLWithPath: standardizedPath)
         let rootPath = url.deletingLastPathComponent().path
-        var dataset = DatasetSummary(
-            id: standardizedPath,
-            name: url.lastPathComponent,
-            path: standardizedPath,
-            kind: .measurementSet,
-            size: "external MeasurementSet",
-            units: "Jy, Hz, seconds",
-            columns: ["UVW", "DATA", "FLAG"],
-            dataColumns: ["DATA"],
-            notes: "Opened directly as an imager input without probing the full project tree.",
-            diagnostics: [
-                "Project tree probe skipped for launch; task request uses exact-path metadata when available."
-            ]
-        )
+        let dataset: DatasetSummary
         do {
-            if var probed = try probeClient.probePath(path: standardizedPath),
-               probed.kind == .measurementSet {
-                probed.notes += " Opened directly as an imager input; parent project probe skipped."
-                probed.diagnostics.append(
-                    "Direct launch used exact MeasurementSet probe only; parent folder refresh is disabled."
+            guard var probed = try probeClient.probePath(path: standardizedPath),
+                  probed.kind == .measurementSet
+            else {
+                state.lastErrors.append(
+                    "Exact MeasurementSet probe did not recognize \(standardizedPath); the dataset was not opened."
                 )
-                dataset = probed
-            } else {
-                dataset.diagnostics.append(
-                    "Exact MeasurementSet probe did not recognize the path; using direct-launch placeholder metadata."
-                )
+                return
             }
-        } catch {
-            dataset.diagnostics.append(
-                "Exact MeasurementSet probe failed; using direct-launch placeholder metadata: \(error)"
+            probed.notes += " Opened directly as an imager input; parent project probe skipped."
+            probed.diagnostics.append(
+                "Direct launch used exact MeasurementSet probe only; parent folder refresh is disabled."
             )
+            dataset = probed
+        } catch {
+            state.lastErrors.append(
+                "Exact MeasurementSet probe failed for \(standardizedPath); the dataset was not opened: \(error)"
+            )
+            return
         }
         state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
         state.applicationCatalog = applicationCatalog
@@ -1841,19 +1811,36 @@ public final class WorkbenchStore: ObservableObject {
 
     public func openRunProduct(runID: String, productID: String) {
         guard !rejectPrototypeProductionAction("Run products") else { return }
-        guard let group = state.runProductGroups.first(where: { $0.runID == runID }) else {
+        guard let groupIndex = state.runProductGroups.firstIndex(where: { $0.runID == runID }) else {
             state.lastErrors.append("Unknown run \(runID)")
             return
         }
-        guard let product = group.products.first(where: { $0.id == productID }) else {
+        guard let productIndex = state.runProductGroups[groupIndex].products.firstIndex(where: { $0.id == productID }) else {
             state.lastErrors.append("Unknown product \(productID)")
             return
         }
+        var product = state.runProductGroups[groupIndex].products[productIndex]
+        if product.datasetID == nil {
+            do {
+                if let dataset = try probeClient.probePath(path: product.path) {
+                    if !state.project.datasets.contains(where: { $0.id == dataset.id }) {
+                        state.project.datasets.append(dataset)
+                    }
+                    product.datasetID = dataset.id
+                    product.diagnostic = nil
+                    state.runProductGroups[groupIndex].products[productIndex] = product
+                }
+            } catch {
+                product.diagnostic = "Retry probe failed: \(error)"
+                state.runProductGroups[groupIndex].products[productIndex] = product
+            }
+        }
         guard let datasetID = product.datasetID else {
-            state.lastErrors.append("Product \(product.label) is not a recognized dataset")
+            state.lastErrors.append(
+                product.diagnostic ?? "Product \(product.label) is not a recognized dataset"
+            )
             return
         }
-
         openDatasetExplorer(datasetID)
     }
 
@@ -2286,7 +2273,7 @@ public final class WorkbenchStore: ObservableObject {
         for sessionKey in closingSessionKeys {
             if let session = state.parameterSessions[sessionKey] {
                 state.lastErrors.append(contentsOf: sessionParameterLifecycleClient.flush(
-                    surfaceID: session.snapshot.surfaceID,
+                    surfaceID: session.snapshot.surfaceId,
                     workspace: session.workspace
                 ))
             }
@@ -2843,10 +2830,10 @@ public final class WorkbenchStore: ObservableObject {
                 explorer.focus = request.focus
                 explorer.planeContentMode = request.planeContentMode
                 explorer.parameters = request.parameters
-                explorer.cursorX = request.cursorX
-                explorer.cursorY = request.cursorY
-                explorer.selectedProfileAxis = request.selectedProfileAxis
-                explorer.nonDisplayIndices = request.nonDisplayIndices
+                explorer.cursorX = request.cursorX.map(Int.init)
+                explorer.cursorY = request.cursorY.map(Int.init)
+                explorer.selectedProfileAxis = request.selectedProfileAxis.map(Int.init)
+                explorer.nonDisplayIndices = request.nonDisplayIndices.map(Int.init)
                 state.imageExplorers[source] = explorer
                 refreshImageExplorer(datasetID: source)
             }
@@ -2894,7 +2881,7 @@ public final class WorkbenchStore: ObservableObject {
                         surface: surface,
                         contractVersion: 1,
                         parameters: parameters,
-                        profileTOML: nil
+                        profileToml: nil
                     ),
                     render: NotebookVisualizationRenderMetadata(
                         renderer: renderer,
@@ -2919,22 +2906,22 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private static func imagePlanePNG(
-        _ plane: ImageExplorerSnapshot.Plane,
+        _ plane: ImageExplorerPlane,
         colorMap: ImageExplorerColorMap
     ) -> Data? {
         guard plane.width > 0,
               plane.height > 0,
-              plane.pixelsU8.count == plane.width * plane.height,
+              plane.pixelsU8.count == Int(plane.width * plane.height),
               let bitmap = NSBitmapImageRep(
                 bitmapDataPlanes: nil,
-                pixelsWide: plane.width,
-                pixelsHigh: plane.height,
+                pixelsWide: Int(plane.width),
+                pixelsHigh: Int(plane.height),
                 bitsPerSample: 8,
                 samplesPerPixel: 4,
                 hasAlpha: true,
                 isPlanar: false,
                 colorSpaceName: .deviceRGB,
-                bytesPerRow: plane.width * 4,
+                bytesPerRow: Int(plane.width) * 4,
                 bitsPerPixel: 32
               ),
               let bytes = bitmap.bitmapData
@@ -2953,12 +2940,19 @@ public final class WorkbenchStore: ObservableObject {
     private static func jsonValue<T: Encodable>(_ value: T) -> JSONValue {
         let encoder = JSONEncoder()
         return (try? encoder.encode(value))
-            .flatMap { try? JSONDecoder().decode(JSONValue.self, from: $0) }
+            .flatMap { try? JSONSerialization.jsonObject(with: $0, options: .fragmentsAllowed) }
+            .flatMap(JSONValue.foundationJSONValue)
             ?? .object([:])
     }
 
     private static func decodeJSONValue<T: Decodable>(_ value: JSONValue) -> T? {
-        try? JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: value.foundationJSONValue,
+            options: .fragmentsAllowed
+        ) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(T.self, from: data)
     }
 
     private func runScientificPythonCells(_ cellIDs: ArraySlice<String>) {
@@ -3021,7 +3015,7 @@ public final class WorkbenchStore: ObservableObject {
             kind: "python",
             details: NotebookPythonExecutionInput(
                 source: source,
-                sourceSHA256: sourceHash,
+                sourceSha256: sourceHash,
                 authority: "user",
                 inputReferences: inputs,
                 environment: environment
@@ -3030,7 +3024,7 @@ public final class WorkbenchStore: ObservableObject {
         do {
             let result = try notebookPersistenceClient.beginRecording(request: NotebookBeginRecordingRequest(
                 projectRoot: project.projectRoot,
-                policy: "record",
+                policy: .record,
                 request: NotebookRecordingRequest(
                     initiatingSurface: "macos_gui",
                     operationId: "python.execute",
@@ -3128,8 +3122,8 @@ public final class WorkbenchStore: ObservableObject {
                     products: [],
                     artifacts: artifacts,
                     diagnostics: execution.diagnostic.map { [$0] } ?? [],
-                    stdout: Array(execution.outputs.filter { $0.channel == "stdout" }.map(\.text).joined().utf8),
-                    stderr: Array(execution.outputs.filter { $0.channel == "stderr" }.map(\.text).joined().utf8),
+                    stdout: Data(execution.outputs.filter { $0.channel == "stdout" }.map(\.text).joined().utf8),
+                    stderr: Data(execution.outputs.filter { $0.channel == "stderr" }.map(\.text).joined().utf8),
                     casaLog: nil
                 )
             ))
@@ -3865,10 +3859,16 @@ public final class WorkbenchStore: ObservableObject {
 
     package func toggleAssistantContext(_ contextID: String) {
         guard var discussion = state.assistantDiscussion,
-              let index = discussion.contexts.firstIndex(where: { $0.id == contextID })
+              discussion.contexts.contains(where: { $0.id == contextID })
         else { return }
-        discussion.contexts[index].selected.toggle()
-        let selected = discussion.contexts.filter(\.selected).map(\.id)
+        if discussion.selectedContextIDs.contains(contextID) {
+            discussion.selectedContextIDs.remove(contextID)
+        } else {
+            discussion.selectedContextIDs.insert(contextID)
+        }
+        let selected = discussion.contexts
+            .filter { discussion.selectedContextIDs.contains($0.id) }
+            .map(\.id)
         state.assistantDiscussion = discussion
         updateActiveAssistantConversation { $0.selectedContextIds = selected }
         persistActiveAssistantConversation()
@@ -3877,7 +3877,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func refreshAssistantDiscussionContexts() {
-        state.assistantDiscussion?.contexts = assistantOpenTabContexts()
+        refreshAssistantContextItems()
         writeAssistantContextProjection()
     }
 
@@ -3930,18 +3930,12 @@ public final class WorkbenchStore: ObservableObject {
                 )
                 diagnostics = result.diagnostics
                 diagnostics.append(Self.assistantCorpusMetrics(result.metrics))
-                let reportJSON = try self.assistantPersistenceClient.indexCorpus(
+                let report = try self.assistantPersistenceClient.indexCorpus(
                     projectRoot: projectRoot,
                     documents: result.documents,
                     removeMissingLayers: result.refreshedLayers,
                     projectSources: result.projectSources,
                     failedProjectSources: result.failedProjectSources
-                )
-                let decoder = JSONDecoder()
-                decoder.keyDecodingStrategy = .convertFromSnakeCase
-                let report = try decoder.decode(
-                    AssistantCorpusIndexReportState.self,
-                    from: Data(reportJSON.utf8)
                 )
                 DispatchQueue.main.async {
                     if self.state.project.rootPath == projectRoot {
@@ -3999,7 +3993,7 @@ public final class WorkbenchStore: ObservableObject {
                 message,
                 conversationID: conversation.id
             )
-            let pin = try assistantPersistenceClient.createPin(AssistantCreatePinEnvelope(
+            let pin = try assistantPersistenceClient.createPin(AssistantCreatePinRequest(
                 conversationId: conversation.id,
                 notebookId: notebook.id,
                 messageId: message.id,
@@ -4069,8 +4063,8 @@ public final class WorkbenchStore: ObservableObject {
         assistantPendingCitations = []
         assistantPendingActivities = []
         assistantPendingTaskSuggestions = []
-        state.assistantDiscussion?.contexts = assistantOpenTabContexts()
-        let selectedContexts = state.assistantDiscussion?.contexts.filter(\.selected).map(\.id) ?? []
+        refreshAssistantContextItems()
+        let selectedContexts = state.assistantDiscussion?.selectedContexts.map(\.id) ?? []
         updateActiveAssistantConversation { $0.selectedContextIds = selectedContexts }
         persistActiveAssistantConversation()
         writeAssistantContextProjection()
@@ -4387,14 +4381,17 @@ public final class WorkbenchStore: ObservableObject {
               let content = result["content"] as? [[String: Any]]
         else { return }
         for block in content where block["type"] as? String == "text" {
-            guard let text = block["text"] as? String,
-                  let data = text.data(using: .utf8),
+            guard let text = block["text"] as? String else { continue }
+            if tool == "task.suggest",
+               let suggestion = try? CasarsFrontendServices.assistantTaskSuggestion(toolOutput: text) {
+                appendAssistantTaskSuggestion(suggestion, id: itemID)
+                continue
+            }
+            guard let data = text.data(using: .utf8),
                   let value = try? JSONSerialization.jsonObject(with: data)
             else { continue }
             if let hits = value as? [[String: Any]] {
                 for hit in hits { appendAssistantCitation(hit) }
-            } else if tool == "task.suggest", let suggestion = value as? [String: Any] {
-                appendAssistantTaskSuggestion(suggestion, id: itemID)
             }
         }
     }
@@ -4403,20 +4400,15 @@ public final class WorkbenchStore: ObservableObject {
         "casa_rs_\(assistantProjectNonce.prefix(12))"
     }
 
-    private func appendAssistantTaskSuggestion(_ value: [String: Any], id: String) {
-        guard value["kind"] as? String == "task_suggestion",
-              let taskID = value["task_id"] as? String,
-              let parameters = value["parameters"] as? [String: String],
-              let patchObject = value["validated_patch"],
-              JSONSerialization.isValidJSONObject(patchObject),
-              let patchData = try? JSONSerialization.data(withJSONObject: patchObject),
-              let validatedPatch = try? JSONDecoder().decode(SurfaceParameterPatch.self, from: patchData)
-        else { return }
+    private func appendAssistantTaskSuggestion(
+        _ value: AssistantTaskSuggestionProjection,
+        id: String
+    ) {
         let suggestion = AssistantTaskSuggestionState(
             id: id,
-            taskId: taskID,
-            parameters: parameters,
-            validatedPatch: validatedPatch
+            taskId: value.taskId,
+            parameters: value.parameters,
+            validatedPatch: value.validatedPatch
         )
         if let index = assistantPendingTaskSuggestions.firstIndex(where: { $0.id == id }) {
             assistantPendingTaskSuggestions[index] = suggestion
@@ -4477,7 +4469,7 @@ public final class WorkbenchStore: ObservableObject {
                 agentId: "codex_app_server",
                 model: conversation?.profile.model,
                 citations: assistantPendingCitations,
-                usedContext: state.assistantDiscussion?.contexts.filter(\.selected) ?? [],
+                usedContext: state.assistantDiscussion?.selectedContexts ?? [],
                 activities: assistantPendingActivities,
                 taskSuggestions: assistantPendingTaskSuggestions,
                 pins: []
@@ -4629,13 +4621,26 @@ public final class WorkbenchStore: ObservableObject {
             }
             items.append(item)
         }
-        let previous = Dictionary(
-            uniqueKeysWithValues: (state.assistantDiscussion?.contexts ?? []).map { ($0.id, $0.selected) }
-        )
-        for index in items.indices {
-            items[index].selected = previous[items[index].id] ?? true
-        }
         return items
+    }
+
+    private func refreshAssistantContextItems() {
+        guard var discussion = state.assistantDiscussion else { return }
+        let previousIDs = Set(discussion.contexts.map(\.id))
+        let items = assistantOpenTabContexts()
+        let availableIDs = Set(items.map(\.id))
+        if previousIDs.isEmpty {
+            let persistedIDs = Set(discussion.activeConversation?.selectedContextIds ?? [])
+            discussion.selectedContextIDs = persistedIDs.isEmpty
+                ? availableIDs
+                : persistedIDs.intersection(availableIDs)
+        } else {
+            let retainedIDs = discussion.selectedContextIDs.intersection(availableIDs)
+            let newIDs = availableIDs.subtracting(previousIDs)
+            discussion.selectedContextIDs = retainedIDs.union(newIDs)
+        }
+        discussion.contexts = items
+        state.assistantDiscussion = discussion
     }
 
     private func assistantDatasetContext(datasetID: String?, tabKind: WorkbenchTabKind) -> String {
@@ -4697,8 +4702,7 @@ public final class WorkbenchStore: ObservableObject {
             contentSha256: SHA256.hash(data: Data(bounded.utf8))
                 .map { String(format: "%02x", $0) }
                 .joined(),
-            untrustedEvidence: true,
-            selected: true
+            untrustedEvidence: true
         )
     }
 
@@ -4735,7 +4739,7 @@ public final class WorkbenchStore: ObservableObject {
         guard state.hasProject, state.project.rootPath.hasPrefix("/") else { return }
         let root = URL(fileURLWithPath: state.project.rootPath, isDirectory: true)
         let path = root.appendingPathComponent(".casa-rs/assistant-context.json")
-        let selected = state.assistantDiscussion?.contexts.filter(\.selected) ?? []
+        let selected = state.assistantDiscussion?.selectedContexts ?? []
         let receipts = (state.scientificNotebooks?.notebooks ?? []).map { notebook in
             [
                 "notebook_id": notebook.id,
@@ -5603,12 +5607,10 @@ public final class WorkbenchStore: ObservableObject {
         explorerState.status = .ready
         explorerState.lastError = nil
         explorerState.snapshot = snapshot
-        explorerState.cursorX = snapshot.planeCursor?.pixelX ?? explorerState.cursorX
-        explorerState.cursorY = snapshot.planeCursor?.pixelY ?? explorerState.cursorY
-        explorerState.nonDisplayIndices = snapshot.nonDisplayAxes?.map(\.index) ?? explorerState.nonDisplayIndices
-        if let parameters = snapshot.parameters {
-            explorerState.parameters = parameters
-        }
+        explorerState.cursorX = snapshot.planeCursor.map { Int($0.pixelX) } ?? explorerState.cursorX
+        explorerState.cursorY = snapshot.planeCursor.map { Int($0.pixelY) } ?? explorerState.cursorY
+        explorerState.nonDisplayIndices = snapshot.nonDisplayAxes.map { Int($0.index) }
+        explorerState.parameters = snapshot.parameters
         explorerState.transientCommands = []
     }
 
@@ -5722,7 +5724,7 @@ public final class WorkbenchStore: ObservableObject {
         refreshImageExplorer(datasetID: datasetID)
     }
 
-    public func setImageExplorerParameters(_ parameters: ImageExplorerParameters, datasetID: String) {
+    public func setimageExplorerParameters(_ parameters: ImageExplorerParameters, datasetID: String) {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.parameters = parameters
         for (name, value) in [
@@ -5766,7 +5768,7 @@ public final class WorkbenchStore: ObservableObject {
         parameters.stretch = "manual"
         parameters.clipLow = Self.formatImageExplorerClipValue(low)
         parameters.clipHigh = Self.formatImageExplorerClipValue(high)
-        setImageExplorerParameters(parameters, datasetID: datasetID)
+        setimageExplorerParameters(parameters, datasetID: datasetID)
     }
 
     public func setImageExplorerCursor(x: Int?, y: Int?, datasetID: String) {
@@ -5781,13 +5783,13 @@ public final class WorkbenchStore: ObservableObject {
         var explorerState = imageExplorerState(datasetID: datasetID)
         var indices = explorerState.nonDisplayIndices
         let snapshotAxes = explorerState.snapshot?.nonDisplayAxes ?? []
-        let axisPosition = snapshotAxes.firstIndex { $0.axis == axis }
+        let axisPosition = snapshotAxes.firstIndex { Int($0.axis) == axis }
         let snapshotAxis = axisPosition.map { snapshotAxes[$0] }
-        let currentIndex = snapshotAxis?.index
+        let currentIndex = snapshotAxis.map { Int($0.index) }
             ?? axisPosition.flatMap { indices[safe: $0] }
             ?? indices[safe: axis]
             ?? 0
-        let length = max(snapshotAxis?.length ?? currentIndex + 1, 1)
+        let length = max(snapshotAxis.map { Int($0.length) } ?? currentIndex + 1, 1)
         let nextIndex = min(max(currentIndex + delta, 0), length - 1)
         if let axisPosition {
             indices = normalizedNonDisplayIndices(from: indices, axes: snapshotAxes)
@@ -5810,9 +5812,9 @@ public final class WorkbenchStore: ObservableObject {
         var explorerState = imageExplorerState(datasetID: datasetID)
         var indices = explorerState.nonDisplayIndices
         let snapshotAxes = explorerState.snapshot?.nonDisplayAxes ?? []
-        let axisPosition = snapshotAxes.firstIndex { $0.axis == axis }
+        let axisPosition = snapshotAxes.firstIndex { Int($0.axis) == axis }
         let snapshotAxis = axisPosition.map { snapshotAxes[$0] }
-        let length = max(snapshotAxis?.length ?? index + 1, 1)
+        let length = max(snapshotAxis.map { Int($0.length) } ?? index + 1, 1)
         let nextIndex = min(max(index, 0), length - 1)
         if let axisPosition {
             indices = normalizedNonDisplayIndices(from: indices, axes: snapshotAxes)
@@ -5897,7 +5899,7 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
         let axis = explorerState.movieAxis
-            ?? explorerState.snapshot?.nonDisplayAxes?.first?.axis
+            ?? explorerState.snapshot?.nonDisplayAxes.first.map { Int($0.axis) }
             ?? explorerState.nonDisplayIndices.indices.first
         guard let axis else {
             explorerState.moviePlaying = false
@@ -5907,13 +5909,13 @@ public final class WorkbenchStore: ObservableObject {
 
         var indices = explorerState.nonDisplayIndices
         let snapshotAxes = explorerState.snapshot?.nonDisplayAxes ?? []
-        let axisPosition = snapshotAxes.firstIndex { $0.axis == axis }
+        let axisPosition = snapshotAxes.firstIndex { Int($0.axis) == axis }
         let snapshotAxis = axisPosition.map { snapshotAxes[$0] }
-        let currentIndex = snapshotAxis?.index
+        let currentIndex = snapshotAxis.map { Int($0.index) }
             ?? axisPosition.flatMap { indices[safe: $0] }
             ?? indices[safe: axis]
             ?? 0
-        let length = max(snapshotAxis?.length ?? currentIndex + 1, 1)
+        let length = max(snapshotAxis.map { Int($0.length) } ?? currentIndex + 1, 1)
         let proposedIndex = currentIndex + 1
         let nextIndex: Int
         if proposedIndex >= length {
@@ -6043,17 +6045,16 @@ public final class WorkbenchStore: ObservableObject {
         let explorerState = imageExplorerState(datasetID: datasetID)
         guard let snapshot = explorerState.snapshot,
               let region = snapshot.region,
-              let overlayShapes = region.overlayShapes,
-              overlayShapes.indices.contains(index)
+              region.overlayShapes.indices.contains(index)
         else {
             state.lastErrors.append("No region shape is available to delete.")
             return
         }
-        let remainingShapes = overlayShapes.enumerated().compactMap { shapeIndex, shape -> [(x: Int, y: Int)]? in
+        let remainingShapes = region.overlayShapes.enumerated().compactMap { shapeIndex, shape -> [(x: Int, y: Int)]? in
             guard shapeIndex != index, shape.closed, shape.vertices.count >= 3 else {
                 return nil
             }
-            return shape.vertices.map { Self.sourcePixel(for: $0, displayAxes: snapshot.displayAxes ?? []) }
+            return shape.vertices.map { Self.sourcePixel(for: $0, displayAxes: snapshot.displayAxes) }
         }
         if remainingShapes.isEmpty {
             clearImageExplorerRegionCommands(datasetID: datasetID)
@@ -6074,15 +6075,15 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private static func sourcePixel(
-        for vertex: ImageExplorerSnapshot.Region.OverlayVertex,
-        displayAxes: [ImageExplorerSnapshot.DisplayAxis]
+        for vertex: ImageExplorerRegionOverlayVertex,
+        displayAxes: [ImageExplorerDisplayAxis]
     ) -> (x: Int, y: Int) {
         guard let xAxis = displayAxes.first, let yAxis = displayAxes[safe: 1] else {
             return (Int(vertex.sampledX.rounded()), Int(vertex.sampledY.rounded()))
         }
         return (
-            x: xAxis.blc + Int((vertex.sampledX * Double(max(xAxis.inc, 1))).rounded()),
-            y: yAxis.blc + Int((vertex.sampledY * Double(max(yAxis.inc, 1))).rounded())
+            x: Int(xAxis.blc) + Int((vertex.sampledX * Double(max(xAxis.inc, 1))).rounded()),
+            y: Int(yAxis.blc) + Int((vertex.sampledY * Double(max(yAxis.inc, 1))).rounded())
         )
     }
 
@@ -6427,7 +6428,7 @@ public final class WorkbenchStore: ObservableObject {
         guard let selectedIndex = browserState.snapshot?.verticalMetrics?.selectedIndex else {
             return
         }
-        guard appendTableBrowserMove(from: selectedIndex, to: index, into: &browserState) else {
+        guard appendTableBrowserMove(from: Int(selectedIndex), to: index, into: &browserState) else {
             return
         }
         state.tableBrowsers[datasetID] = browserState
@@ -6534,7 +6535,7 @@ public final class WorkbenchStore: ObservableObject {
             completion(.failure(error))
             return
         }
-        let request = TableBrowserCellValueRequest(
+        let request = tableBrowserCellValueRequest(
             datasetPath: dataset.path,
             rowIndex: rowIndex,
             columnIndex: columnIndex
@@ -6675,7 +6676,7 @@ public final class WorkbenchStore: ObservableObject {
         let normalized = concept.valueDomain.isPathLike && !Self.isInlineRegionSyntax(value)
             ? projectRelativePath(value)
             : value
-        session.overridePatch.unset.remove(argumentID)
+        session.overridePatch.removeUnset(argumentID)
         session.overridePatch.values[argumentID] = concept.valueDomain.value(from: normalized)
         session.draftText[argumentID] = normalized
         resolveParameterSession(&session, editedParameters: [argumentID])
@@ -6698,7 +6699,7 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("Parameter session for \(resolvedTaskID) is unavailable")
             return
         }
-        session.overridePatch.unset.remove(argumentID)
+        session.overridePatch.removeUnset(argumentID)
         session.overridePatch.values[argumentID] = .bool(value)
         session.draftText.removeValue(forKey: argumentID)
         resolveParameterSession(&session, editedParameters: [argumentID])
@@ -6725,7 +6726,7 @@ public final class WorkbenchStore: ObservableObject {
         let sessionKey = parameterSessionKey(surfaceID: resolvedSurfaceID, instanceID: instanceID)
         guard var session = state.parameterSessions[sessionKey] else { return }
         session.overridePatch.values.removeValue(forKey: name)
-        session.overridePatch.unset.insert(name)
+        session.overridePatch.insertUnset(name)
         session.draftText.removeValue(forKey: name)
         resolveParameterSession(&session, editedParameters: [name])
         state.parameterSessions[sessionKey] = session
@@ -6822,7 +6823,7 @@ public final class WorkbenchStore: ObservableObject {
                     return
                 }
                 snapshot = loaded
-                baseTOML = loaded.profileTOML
+                baseTOML = loaded.profileToml
                 basePath = nil
             case .file:
                 guard let profilePath else {
@@ -7185,7 +7186,7 @@ public final class WorkbenchStore: ObservableObject {
         do {
             let result = try notebookPersistenceClient.beginRecording(request: NotebookBeginRecordingRequest(
                 projectRoot: state.project.rootPath,
-                policy: bypass ? "bypass_once" : "record",
+                policy: bypass ? .bypassOnce : .record,
                 request: NotebookRecordingRequest(
                     initiatingSurface: "gui",
                     operationId: taskID,
@@ -7196,7 +7197,7 @@ public final class WorkbenchStore: ObservableObject {
                     providerContractVersion: UInt32(clamping: session.bundle.surface.contractVersion),
                     resolvedParameters: resolvedParameters,
                     runSafety: NotebookRunSafetyRecord(
-                        classification: runSafety.classes.joined(separator: ","),
+                        classification: runSafety.classes.map(\.protocolValue).joined(separator: ","),
                         affectedPaths: outputPaths
                     ),
                     approvals: approvals
@@ -7226,7 +7227,7 @@ public final class WorkbenchStore: ObservableObject {
         do {
             let result = try notebookPersistenceClient.beginRecording(request: NotebookBeginRecordingRequest(
                 projectRoot: state.project.rootPath,
-                policy: bypass ? "bypass_once" : "record",
+                policy: bypass ? .bypassOnce : .record,
                 request: NotebookRecordingRequest(
                     initiatingSurface: "gui",
                     operationId: operationID,
@@ -7279,8 +7280,8 @@ public final class WorkbenchStore: ObservableObject {
                     },
                     artifacts: [],
                     diagnostics: diagnostics,
-                    stdout: [],
-                    stderr: [],
+                    stdout: Data(),
+                    stderr: Data(),
                     casaLog: Self.configuredCasaLogPath
                 )
             ))
@@ -7313,8 +7314,8 @@ public final class WorkbenchStore: ObservableObject {
                     },
                     artifacts: [],
                     diagnostics: diagnostics,
-                    stdout: Array(stdout.utf8),
-                    stderr: Array(stderr.utf8),
+                    stdout: Data(stdout.utf8),
+                    stderr: Data(stderr.utf8),
                     casaLog: Self.configuredCasaLogPath
                 )
             ))
@@ -7878,10 +7879,10 @@ public final class WorkbenchStore: ObservableObject {
         let request = browserState.cellWindowRequest(datasetPath: dataset.path)
         if !force,
            browserState.cellWindow?.contains(
-               rowStart: request.rowStart,
-               rowLimit: request.rowLimit,
-               columnStart: request.columnStart,
-               columnLimit: request.columnLimit
+               rowStart: Int(request.rowStart),
+               rowLimit: Int(request.rowLimit),
+               columnStart: Int(request.columnStart),
+               columnLimit: Int(request.columnLimit)
            ) == true
         {
             return
@@ -8011,7 +8012,7 @@ public final class WorkbenchStore: ObservableObject {
             )
         }
         let linkedTable = browserState.linkedTable.trimmingCharacters(in: .whitespacesAndNewlines)
-        return TableBrowserParameters(
+        return CasarsMacCore.tableBrowserParameters(
             view: canonicalTableBrowserView(browserState.profileView),
             rowStart: max(0, browserState.cellWindowRowStart),
             rowCount: max(1, browserState.cellWindowRowLimit),
@@ -8032,7 +8033,7 @@ public final class WorkbenchStore: ObservableObject {
         if parts.count >= 3, parts[0] == "cell", let row = Int(parts[1]) {
             let column = parts.dropFirst(2).joined(separator: ":")
             if row >= 0, !column.isEmpty {
-                return .cell(row: row, column: column)
+                return .cell(row: UInt64(row), column: column)
             }
         } else if parts.count >= 2, parts[0] == "table-keyword" {
             let path = tableBrowserBookmarkPath(parts.dropFirst().joined(separator: ":"))
@@ -8077,11 +8078,11 @@ public final class WorkbenchStore: ObservableObject {
     ) -> Bool {
         let delta = targetIndex - selectedIndex
         if delta > 0 {
-            browserState.commands.append(.moveDown(steps: delta))
+            browserState.commands.append(.moveDown(steps: UInt64(delta)))
             return true
         }
         if delta < 0 {
-            browserState.commands.append(.moveUp(steps: -delta))
+            browserState.commands.append(.moveUp(steps: UInt64(-delta)))
             return true
         }
         return false
@@ -8175,7 +8176,7 @@ public final class WorkbenchStore: ObservableObject {
                     bundle: bundle,
                     snapshot: snapshot,
                     selectedSource: .last,
-                    baseProfileTOML: snapshot.profileTOML,
+                    baseProfileTOML: snapshot.profileToml,
                     baseProfilePath: nil,
                     workspace: workspace
                 )
@@ -8225,7 +8226,9 @@ public final class WorkbenchStore: ObservableObject {
                 level: "error",
                 code: "draft_resolution_failed",
                 message: message,
-                parameter: unresolvedParameters.count == 1 ? unresolvedParameters[0] : nil
+                parameter: unresolvedParameters.count == 1 ? unresolvedParameters[0] : nil,
+                location: nil,
+                suggestions: []
             ))
             session.snapshot.dirty = true
             state.lastErrors.append("Resolve parameters for \(session.bundle.surface.id): \(error)")
@@ -8247,23 +8250,23 @@ public final class WorkbenchStore: ObservableObject {
         for (name, text) in textValues {
             guard let concept = session.bundle.concept(for: name) else { continue }
             if preserveOverrides, session.overridePatch.values[name] != nil { continue }
-            session.contextPatch.unset.remove(name)
+            session.contextPatch.removeUnset(name)
             session.contextPatch.values[name] = concept.valueDomain.value(from: text)
             editedParameters.insert(name)
             if !preserveOverrides {
                 session.overridePatch.values.removeValue(forKey: name)
-                session.overridePatch.unset.remove(name)
+                session.overridePatch.removeUnset(name)
             }
         }
         for (name, value) in boolValues {
             guard session.bundle.concept(for: name) != nil else { continue }
             if preserveOverrides, session.overridePatch.values[name] != nil { continue }
-            session.contextPatch.unset.remove(name)
+            session.contextPatch.removeUnset(name)
             session.contextPatch.values[name] = .bool(value)
             editedParameters.insert(name)
             if !preserveOverrides {
                 session.overridePatch.values.removeValue(forKey: name)
-                session.overridePatch.unset.remove(name)
+                session.overridePatch.removeUnset(name)
             }
         }
         resolveParameterSession(&session, editedParameters: editedParameters)
@@ -8376,7 +8379,7 @@ public final class WorkbenchStore: ObservableObject {
         loadParameterSessionIfNeeded(surfaceID, instanceID: instanceID)
         let sessionKey = parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)
         guard var session = state.parameterSessions[sessionKey] else { return }
-        session.overridePatch.unset.remove(name)
+        session.overridePatch.removeUnset(name)
         session.overridePatch.values[name] = value
         resolveParameterSession(&session, editedParameters: [name])
         state.parameterSessions[sessionKey] = session
@@ -8408,7 +8411,7 @@ public final class WorkbenchStore: ObservableObject {
         else { return }
         do {
             state.lastErrors.append(contentsOf: try sessionParameterLifecycleClient.acceptedDurableChange(
-                surfaceID: session.snapshot.surfaceID,
+                surfaceID: session.snapshot.surfaceId,
                 workspace: session.workspace,
                 values: session.values,
                 enabled: session.saveLast
@@ -8621,7 +8624,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func activeTaskOutput() -> String? {
-        let output = state.taskRun.diagnostics.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let output = state.taskRun.rawOutput?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !output.isEmpty else {
             return nil
         }
@@ -8787,7 +8790,7 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("The resolved imexplore contract is missing a presentation parameter.")
             return nil
         }
-        let parameters = ImageExplorerParameters(
+        let parameters = imageExplorerParameters(
             blc: blc,
             trc: trc,
             inc: inc,
@@ -8857,16 +8860,16 @@ public final class WorkbenchStore: ObservableObject {
         guard let selector = normalizedImageExplorerAxisSelector(selector ?? "") else {
             return nil
         }
-        let selected = snapshot.nonDisplayAxes?.first { axis in
-            if let index = Int(selector), axis.axis == index {
+        let selected = snapshot.nonDisplayAxes.first { axis in
+            if let index = UInt64(selector), axis.axis == index {
                 return true
             }
             return axis.label.caseInsensitiveCompare(selector) == .orderedSame
         }
         guard let selected else {
-            let available = snapshot.nonDisplayAxes?
+            let available = snapshot.nonDisplayAxes
                 .map { "\($0.label) (\($0.axis))" }
-                .joined(separator: ", ") ?? "none"
+                .joined(separator: ", ")
             throw NSError(
                 domain: "CasarsMac.ImageExplorerProfile",
                 code: 1,
@@ -8876,7 +8879,7 @@ public final class WorkbenchStore: ObservableObject {
                 ]
             )
         }
-        return selected.axis
+        return Int(selected.axis)
     }
 
     private static func parseImageExplorerRegionReference(
@@ -9051,10 +9054,10 @@ public final class WorkbenchStore: ObservableObject {
 
     private func normalizedNonDisplayIndices(
         from indices: [Int],
-        axes: [ImageExplorerSnapshot.NonDisplayAxis]
+        axes: [ImageExplorerNonDisplayAxis]
     ) -> [Int] {
         axes.enumerated().map { position, axis in
-            indices[safe: position] ?? axis.index
+            indices[safe: position] ?? Int(axis.index)
         }
     }
 
@@ -9316,7 +9319,7 @@ public final class WorkbenchStore: ObservableObject {
                     job.logLines.append(result.stderr)
                 }
                 state.jobs[runID] = job
-                let managedImagerResult = decodeManagedImagerResult(result)
+                let completion = result.completion
                 if state.taskRun.runID == runID {
                     let progressSnapshot = terminalImagerProgressSnapshot(
                         taskID: result.taskID,
@@ -9324,50 +9327,32 @@ public final class WorkbenchStore: ObservableObject {
                         taskState: .succeeded,
                         progress: 1.0
                     )
-                    if let managedImagerResult {
-                        state.taskRun = TaskRun(
-                            runID: runID,
-                            state: .succeeded,
-                            progress: 1.0,
-                            logLines: [
-                                "\(result.taskID) completed.",
-                                "Arguments: \(result.arguments.joined(separator: " "))",
-                                managedImagerResult.run.summary
-                            ],
-                            warnings: result.stderr.isEmpty ? [] : [result.stderr],
-                            products: managedImagerResult.artifacts.map(\.path),
-                            diagnostics: managedImagerResult.run.warnings,
-                            outputPaths: managedImagerResult.outputPaths,
-                            requestSummary: state.taskRun.requestSummary,
-                            imagerProgress: progressSnapshot
-                        )
-                    } else {
-                        let genericProducts = genericTaskProducts(from: result)
-                        let outputPaths = genericProducts.map(\.path)
-                        state.taskRun = TaskRun(
-                            runID: runID,
-                            state: .succeeded,
-                            progress: 1.0,
-                            logLines: ["\(result.taskID) completed.", "Arguments: \(result.arguments.joined(separator: " "))"],
-                            warnings: result.stderr.isEmpty ? [] : [result.stderr],
-                            products: genericProducts.map(\.path),
-                            diagnostics: result.stdout.isEmpty ? [] : [result.stdout],
-                            outputPaths: outputPaths,
-                            requestSummary: state.taskRun.requestSummary,
-                            imagerProgress: progressSnapshot
-                        )
-                    }
+                    state.taskRun = TaskRun(
+                        runID: runID,
+                        state: .succeeded,
+                        progress: 1.0,
+                        logLines: [
+                            "\(result.taskID) completed.",
+                            "Arguments: \(result.arguments.joined(separator: " "))",
+                            completion.summary
+                        ],
+                        warnings: result.stderr.isEmpty ? [] : [result.stderr],
+                        products: completion.products.map(\.path),
+                        diagnostics: completion.diagnostics + completion.products.compactMap(\.diagnostic),
+                        outputPaths: completion.products.map(\.path),
+                        requestSummary: state.taskRun.requestSummary,
+                        imagerProgress: progressSnapshot,
+                        rawOutput: result.stdout
+                    )
                 }
-                let affectedPaths: [String]
-                if let managedImagerResult {
-                    let products = appendProducedDatasets(from: managedImagerResult)
-                    recordRunProductGroup(from: managedImagerResult, products: products)
-                    affectedPaths = managedImagerResult.outputPaths
-                } else {
-                    let products = appendProducedDatasets(from: genericTaskProducts(from: result), runID: runID)
-                    recordGenericRunProductGroup(runID: runID, taskID: result.taskID, products: products)
-                    affectedPaths = products.map(\.path)
-                }
+                let products = ingestTaskProducts(completion.products)
+                recordTaskProductGroup(
+                    runID: runID,
+                    taskID: result.taskID,
+                    products: products,
+                    diagnostics: completion.diagnostics + products.compactMap(\.diagnostic)
+                )
+                let affectedPaths = completion.products.filter(\.exists).map(\.path)
                 state.history.append(ProcessingHistoryEvent(
                     id: "hist-run-\(state.history.count + 1)",
                     timestamp: currentTimestamp(),
@@ -9442,29 +9427,55 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
-    private func decodeManagedImagerResult(_ result: GenericTaskResult) -> ManagedImagingOutput? {
-        guard result.taskID == "imager",
-              !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            return nil
+    private func recordTaskProductGroup(
+        runID: String,
+        taskID: String,
+        products: [RunProductReference],
+        diagnostics: [String]
+    ) {
+        guard !products.isEmpty else { return }
+        let group = RunProductGroup(
+            id: "products-\(runID)",
+            runID: runID,
+            title: "\(taskID) products",
+            sourceDatasetID: state.selectedDatasetID ?? "",
+            sourcePath: state.selectedDataset?.path ?? "",
+            products: products,
+            diagnostics: diagnostics
+        )
+        if let index = state.runProductGroups.firstIndex(where: { $0.runID == runID }) {
+            state.runProductGroups[index] = group
+        } else {
+            state.runProductGroups.append(group)
         }
-        guard let output = try? JSONDecoder().decode(ManagedImagingOutput.self, from: Data(result.stdout.utf8)) else {
-            return nil
-        }
-        return resolvedManagedImagingOutput(output)
     }
 
-    private func resolvedManagedImagingOutput(_ output: ManagedImagingOutput) -> ManagedImagingOutput {
-        var resolved = output
-        resolved.artifacts = output.artifacts.map { artifact in
-            var artifact = artifact
-            artifact.path = resolvedTaskPathString(artifact.path)
-            if let previewPath = artifact.previewPngPath {
-                artifact.previewPngPath = resolvedTaskPathString(previewPath)
+    private func ingestTaskProducts(
+        _ completionProducts: [CasarsFrontendServices.TaskCompletionProduct]
+    ) -> [RunProductReference] {
+        var products: [RunProductReference] = []
+        for product in completionProducts {
+            var datasetID = state.project.datasets.first(where: { $0.path == product.path })?.id
+            if datasetID == nil, let probe = product.dataset {
+                let dataset = DatasetSummary(probe: probe)
+                state.project.datasets.append(dataset)
+                datasetID = dataset.id
             }
-            return artifact
+            products.append(
+                RunProductReference(
+                    id: product.id,
+                    artifactKind: String(describing: product.resourceKind),
+                    label: product.label,
+                    path: product.path,
+                    datasetID: datasetID,
+                    exists: product.exists,
+                    previewPngPath: product.previewPath,
+                    previewPngExists: product.previewExists,
+                    diagnostic: product.diagnostic
+                )
+            )
         }
-        return resolved
+        return products
     }
 
     private func resolvedTaskPathString(_ path: String) -> String {
@@ -9474,208 +9485,15 @@ public final class WorkbenchStore: ObservableObject {
         if expanded.hasPrefix("/") {
             return URL(fileURLWithPath: expanded).standardizedFileURL.path
         }
-        let root = state.project.rootPath.isEmpty ? FileManager.default.currentDirectoryPath : state.project.rootPath
+        let root = state.project.rootPath.isEmpty
+            ? FileManager.default.currentDirectoryPath
+            : state.project.rootPath
         return URL(
             fileURLWithPath: expanded,
             relativeTo: URL(fileURLWithPath: root, isDirectory: true)
         )
         .standardizedFileURL
         .path
-    }
-
-    private func genericTaskProducts(from result: GenericTaskResult) -> [ManagedImagingArtifact] {
-        guard let data = result.stdout.data(using: .utf8),
-              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let taskResult = payload["result"] as? [String: Any]
-        else {
-            return []
-        }
-        return genericTaskProductKeys(taskID: result.taskID)
-            .compactMap { key -> ManagedImagingArtifact? in
-                guard let outputPath = taskResult[key] as? String, !outputPath.isEmpty else {
-                    return nil
-                }
-                let outputURL = URL(
-                    fileURLWithPath: outputPath,
-                    relativeTo: URL(fileURLWithPath: state.project.rootPath, isDirectory: true)
-                ).standardizedFileURL
-                let path = outputURL.path
-                return ManagedImagingArtifact(
-                    kind: genericTaskProductKind(taskID: result.taskID, key: key, path: path),
-                    label: URL(fileURLWithPath: path).lastPathComponent,
-                    path: path,
-                    exists: FileManager.default.fileExists(atPath: path),
-                    previewPngPath: nil,
-                    previewPngExists: false
-                )
-            }
-    }
-
-    private func genericTaskProductKeys(taskID: String) -> [String] {
-        switch taskID {
-        case "exportfits":
-            return ["fitsimage"]
-        case "importfits":
-            return ["imagename"]
-        case "immoments", "impv", "imsubimage", "immath":
-            return ["outfile"]
-        case "imregrid":
-            return ["output"]
-        case "feather":
-            return ["imagename"]
-        case "simobserve":
-            return ["output_ms", "manifest_path"]
-        default:
-            return ["outfile"]
-        }
-    }
-
-    private func genericTaskProductKind(taskID: String, key: String, path: String) -> String {
-        if taskID == "simobserve" && key == "output_ms" {
-            return "measurement-set"
-        }
-        if taskID == "simobserve" && key == "manifest_path" {
-            return "json"
-        }
-        if taskID == "exportfits" || ["fits", "fit", "fts"].contains(URL(fileURLWithPath: path).pathExtension.lowercased()) {
-            return "fits"
-        }
-        if key == "imagename" || key == "outfile" || key == "output" {
-            return "casa-image"
-        }
-        return "run-product"
-    }
-
-    private func appendProducedDatasets(from artifacts: [ManagedImagingArtifact], runID: String) -> [RunProductReference] {
-        var products: [RunProductReference] = []
-        for artifact in artifacts where artifact.exists {
-            if let existing = state.project.datasets.first(where: { $0.path == artifact.path }) {
-                products.append(runProductReference(artifact: artifact, datasetID: existing.id))
-                continue
-            }
-            if let probed = try? probeClient.probePath(path: artifact.path) {
-                state.project.datasets.append(probed)
-                products.append(runProductReference(artifact: artifact, datasetID: probed.id))
-                continue
-            }
-            let fallback = DatasetSummary(
-                id: artifact.path,
-                name: URL(fileURLWithPath: artifact.path).lastPathComponent,
-                path: artifact.path,
-                kind: fallbackDatasetKind(for: artifact),
-                size: "Unprobed \(artifact.kind) product",
-                units: fallbackDatasetUnits(for: artifact),
-                notes: "Produced by \(runID).",
-                diagnostics: []
-            )
-            state.project.datasets.append(fallback)
-            products.append(runProductReference(artifact: artifact, datasetID: fallback.id))
-        }
-        return products
-    }
-
-    private func recordGenericRunProductGroup(runID: String, taskID: String, products: [RunProductReference]) {
-        guard !products.isEmpty else { return }
-        let group = RunProductGroup(
-            id: "products-\(runID)",
-            runID: runID,
-            title: "\(taskID) products",
-            sourceDatasetID: state.selectedDatasetID ?? "",
-            sourcePath: state.selectedDataset?.path ?? "",
-            products: products,
-            diagnostics: []
-        )
-        if let index = state.runProductGroups.firstIndex(where: { $0.runID == runID }) {
-            state.runProductGroups[index] = group
-        } else {
-            state.runProductGroups.append(group)
-        }
-    }
-
-    private func appendProducedDatasets(from result: ManagedImagingOutput) -> [RunProductReference] {
-        var products: [RunProductReference] = []
-        for artifact in result.artifacts where artifact.exists {
-            if let existing = state.project.datasets.first(where: { $0.path == artifact.path }) {
-                products.append(runProductReference(artifact: artifact, datasetID: existing.id))
-                continue
-            }
-            if let probed = try? probeClient.probePath(path: artifact.path) {
-                state.project.datasets.append(probed)
-                products.append(runProductReference(artifact: artifact, datasetID: probed.id))
-                continue
-            }
-            let fallback = DatasetSummary(
-                id: artifact.path,
-                name: URL(fileURLWithPath: artifact.path).lastPathComponent,
-                path: artifact.path,
-                kind: fallbackDatasetKind(for: artifact),
-                size: "Unprobed \(artifact.kind) product",
-                units: fallbackDatasetUnits(for: artifact),
-                notes: "Produced by imager from \(result.request.measurementSet).",
-                diagnostics: artifact.previewPngExists
-                    ? ["preview: \(artifact.previewPngPath ?? "")"]
-                    : []
-            )
-            state.project.datasets.append(fallback)
-            products.append(runProductReference(artifact: artifact, datasetID: fallback.id))
-        }
-        return products
-    }
-
-    private func recordRunProductGroup(from result: ManagedImagingOutput, products: [RunProductReference]) {
-        guard let runID = state.taskRun.runID else { return }
-        let group = RunProductGroup(
-            id: "products-\(runID)",
-            runID: runID,
-            title: "Imager products",
-            sourceDatasetID: state.selectedDatasetID ?? "",
-            sourcePath: result.request.measurementSet,
-            products: products,
-            diagnostics: result.run.warnings
-        )
-        if let index = state.runProductGroups.firstIndex(where: { $0.runID == runID }) {
-            state.runProductGroups[index] = group
-        } else {
-            state.runProductGroups.append(group)
-        }
-    }
-
-    private func runProductReference(artifact: ManagedImagingArtifact, datasetID: String?) -> RunProductReference {
-        RunProductReference(
-            id: artifact.path,
-            artifactKind: artifact.kind,
-            label: artifact.label,
-            path: artifact.path,
-            datasetID: datasetID,
-            exists: artifact.exists,
-            previewPngPath: artifact.previewPngPath,
-            previewPngExists: artifact.previewPngExists
-        )
-    }
-
-    private func fallbackDatasetKind(for artifact: ManagedImagingArtifact) -> DatasetKind {
-        let kind = artifact.kind.lowercased()
-        if kind.contains("table") {
-            return .table
-        }
-        if kind.contains("ms") || kind.contains("measurement") {
-            return .measurementSet
-        }
-        if kind.contains("fits") || kind.contains("output") {
-            return .runProduct
-        }
-        return .imageCube
-    }
-
-    private func fallbackDatasetUnits(for artifact: ManagedImagingArtifact) -> String {
-        let kind = artifact.kind.lowercased()
-        if kind.contains("image") {
-            return "CASA image"
-        }
-        if kind.contains("table") {
-            return "CASA table"
-        }
-        return artifact.kind
     }
 
     private func currentTimestamp() -> String {
@@ -9747,7 +9565,7 @@ public final class WorkbenchStore: ObservableObject {
             "max_points": .integer(Int64(plotState.maxPlotPoints)),
         ]
         for (name, value) in values where session.bundle.concept(for: name) != nil {
-            session.overridePatch.unset.remove(name)
+            session.overridePatch.removeUnset(name)
             session.overridePatch.values[name] = value
         }
         resolveParameterSession(&session)
@@ -10135,7 +9953,7 @@ extension WorkbenchPlotLayer {
                 sourceSampleCount: payload.sourceSampleCount,
                 displaySampleCount: max(points.count, pointCloud?.count ?? 0, intervals.count),
                 pointBudget: layerKind == .line ? 100_000 : denseScatterPointThreshold,
-                strategy: WorkbenchPlotPayloadStrategy(payloadStrategy: payload.payloadStrategy, fallback: pointCloud == nil ? .inlineDisplayPoints : .viewportLevelOfDetail),
+                strategy: WorkbenchPlotPayloadStrategy(payloadStrategy: payload.payloadStrategy),
                 sourceDescription: payload.provenanceSummary,
                 provenanceKey: payload.colorGroup
             )
@@ -10190,18 +10008,12 @@ extension WorkbenchPlotLayerKind {
 }
 
 extension WorkbenchPlotPayloadStrategy {
-    init(payloadStrategy: String, fallback: WorkbenchPlotPayloadStrategy) {
+    init(payloadStrategy: CasarsFrontendServices.PlotPayloadStrategy) {
         switch payloadStrategy {
-        case "point_cloud":
+        case .pointCloud:
             self = .viewportLevelOfDetail
-        case "intervals":
+        case .intervals:
             self = .inlineDisplayPoints
-        case "single_pixel_point_raster":
-            self = .singlePixelPointRaster
-        case "density_grid":
-            self = .densityGrid
-        default:
-            self = fallback
         }
     }
 }

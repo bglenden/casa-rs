@@ -9,10 +9,10 @@
 - `casars.parameters` is the accepted common API for typed task and session
   profiles described by ADR-0006.
 
-The generic `casars.tasks.run()` entry point accepts every catalog task. The
-package also retains specialized calibration, imaging, MeasurementSet
-inspection, VLA import, split, image-analysis, simulation, and simulation
-analysis helpers where a protocol-specific result API is useful.
+The generic `casars.tasks.run()` entry point accepts every catalog task. Every
+task is also exposed exactly once as `casars.tasks.<task>` through a generated
+CASA-named function. These functions share the Rust-owned parameter and result
+contracts and run through the canonical `casars` launcher.
 
 `casars.data` is stateful and file-backed. It is intended for interoperability
 with the Python ecosystem through NumPy-native reads and writes. For images,
@@ -43,11 +43,17 @@ the other common source types. The resulting `TaskParameters` supports mapping
 updates, reset, reload, sparse TOML save, and run. Rust remains the sole parser,
 normalizer, validator, migration engine, and sparse renderer.
 
-`casars.tasks.catalog` is generated from the 40 task definitions and supplies
-one CASA-named keyword wrapper and typing stub per task. The corresponding
+`casars.tasks` is generated from the 40 task definitions and supplies one
+CASA-named keyword wrapper and typing stub per task. The corresponding
 session conveniences are `casars.sessions.imexplore(...)` and
 `casars.sessions.tablebrowser(...)`. Their signatures deliberately use an
 unset sentinel instead of copying catalog defaults into Python.
+
+Generated UniFFI owns task, parameter, session, and result transport. PyO3 is
+retained only for the `casars.data.Image` and `casars.data.Table` NumPy object
+layer; the wheel still ships one native `_core` library rather than two
+competing application bindings. Numeric MeasurementSet plot documents are
+available as `casars.data.measurement_set_plot(...)`.
 
 Session profiles for `imexplore` and `tablebrowser` use the same load, validate,
 and save model. `casars.sessions.open(...)` and `SessionParameters.open()` apply

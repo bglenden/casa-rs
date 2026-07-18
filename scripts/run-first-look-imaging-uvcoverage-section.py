@@ -259,7 +259,7 @@ CASA source page: {guide_url}
 | --- | --- | --- |
 | CASA | `plotms` | `vis="twhya_calibrated.ms"`, `xaxis="u"`, `yaxis="v"`, `avgchannel="10000"`, `avgspw=False`, `avgtime="1e9"`, `avgscan=False`, `coloraxis="field"` |
 | CLI | `msexplore` | `--preset uv_coverage --avgchannel 10000 --avgtime 1e9 --color-by field --plot-output {cli_png} --plot-width 1200 --plot-height 1200 --overwrite twhya_calibrated.ms` |
-| Python | `casars.tasks.msexplore.plot` | `measurement_set="twhya_calibrated.ms"`, `output_path="{python_png}"`, `preset="uv_coverage"`, `avgchannel=10000`, `avgtime=1e9`, `avgspw=False`, `avgscan=False`, `color_by="Field"`, `width=1200`, `height=1200` |
+| Python | `casars.tasks.msexplore` | `vis="twhya_calibrated.ms"`, `plot_output="{python_png}"`, `preset="uv_coverage"`, `avgchannel=10000`, `avgtime=1e9`, `avgspw=False`, `avgscan=False`, `color_by="field"`, `plot_width=1200`, `plot_height=1200` |
 | TUI | `MSExplore > Plots` | `Preset=UV Coverage`, `MeasurementSet=twhya_calibrated.ms`, `Average channels=10000`, `Average time=1e9`, `Average SPW=false`, `Average scan=false`, `Color by=Field` |
 | GUI | `MeasurementSet Explorer > Plots` | `Preset=UV Coverage`, `MeasurementSet=twhya_calibrated.ms`, `Average channels=10000`, `Average time=1e9`, `Average SPW=false`, `Average scan=false`, `Color by=Field` |
 
@@ -337,7 +337,7 @@ iframe {{ width: 100%; height: 720px; border: 1px solid #ddd; background: #10121
 <tr><th>Surface</th><th>Task</th><th>Parameters</th></tr>
 <tr><td>CASA</td><td><code>plotms</code></td><td><code>vis=twhya_calibrated.ms</code>, <code>xaxis=u</code>, <code>yaxis=v</code>, <code>avgchannel=10000</code>, <code>avgspw=False</code>, <code>avgtime=1e9</code>, <code>avgscan=False</code>, <code>coloraxis=field</code></td></tr>
 <tr><td>CLI</td><td><code>msexplore</code></td><td><code>--preset uv_coverage --avgchannel 10000 --avgtime 1e9 --color-by field --plot-output {cli_png} --plot-width 1200 --plot-height 1200 --overwrite twhya_calibrated.ms</code></td></tr>
-<tr><td>Python</td><td><code>casars.tasks.msexplore.plot</code></td><td><code>preset=uv_coverage</code>, <code>avgchannel=10000</code>, <code>avgtime=1e9</code>, <code>avgspw=False</code>, <code>avgscan=False</code>, <code>color_by=Field</code>, <code>width=1200</code>, <code>height=1200</code></td></tr>
+<tr><td>Python</td><td><code>casars.tasks.msexplore</code></td><td><code>preset=uv_coverage</code>, <code>avgchannel=10000</code>, <code>avgtime=1e9</code>, <code>avgspw=False</code>, <code>avgscan=False</code>, <code>color_by=field</code>, <code>plot_width=1200</code>, <code>plot_height=1200</code></td></tr>
 <tr><td>TUI</td><td><code>MSExplore &gt; Plots</code></td><td><code>Preset=UV Coverage</code>, <code>Average channels=10000</code>, <code>Average time=1e9</code>, <code>Color by=Field</code>. The regression capture runs under <code>TERM=xterm-ghostty</code> in a GhosttyKit offscreen macOS surface and writes the PNG from Ghostty's renderer layer.</td></tr>
 <tr><td>GUI</td><td><code>MeasurementSet Explorer &gt; Plots</code></td><td><code>Preset=UV Coverage</code>, <code>Average channels=10000</code>, <code>Average time=1e9</code>, <code>Color by=Field</code></td></tr>
 </table>
@@ -420,7 +420,7 @@ def write_review_record(pack_root: Path) -> None:
             },
             "python": {
                 "provider_kind": "native-rust",
-                "task_id": "msexplore.plot",
+                "task_id": "msexplore",
                 "parameters": {
                     "measurement_set": MS_PATH,
                     "output_path": ".casa-rs/workspace/native/02-uv-coverage/python-msexplore-uv-coverage.png",
@@ -583,25 +583,26 @@ def main() -> None:
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT / "crates" / "casars-python" / "python") + os.pathsep + env.get("PYTHONPATH", "")
+    env["CASARS_MSEXPLORE_BIN"] = str(args.msexplore_binary)
     python_code = (
-        "from casars.tasks import msexplore; "
-        "msexplore.plot("
-        f"{MS_PATH!r}, {str(python_png.relative_to(pack_root))!r}, "
+        "from casars import tasks; "
+        "tasks.msexplore("
+        f"vis={MS_PATH!r}, plot_output={str(python_png.relative_to(pack_root))!r}, "
         "preset='uv_coverage', avgchannel=10000, avgtime=1e9, "
-        "avgspw=False, avgscan=False, color_by='Field', width=1200, height=1200, "
-        f"binary={str(args.msexplore_binary)!r})"
+        "avgspw=False, avgscan=False, color_by='field', plot_width=1200, plot_height=1200, "
+        f"binary={str(args.casars_binary)!r})"
     )
     python_run = run_command(["python", "-c", python_code], cwd=pack_root, env=env)
     require_success("Python msexplore UV coverage", python_run)
-    runs.append({"surface": "python", "task": "msexplore.plot", "elapsed_seconds": python_run["elapsed_seconds"]})
+    runs.append({"surface": "python", "task": "msexplore", "elapsed_seconds": python_run["elapsed_seconds"]})
 
     python_txt_code = (
-        "from casars.tasks import msexplore; "
-        "msexplore.plot("
-        f"{MS_PATH!r}, {str(python_txt.relative_to(pack_root))!r}, "
+        "from casars import tasks; "
+        "tasks.msexplore("
+        f"vis={MS_PATH!r}, plot_output={str(python_txt.relative_to(pack_root))!r}, "
         "preset='uv_coverage', avgchannel=10000, avgtime=1e9, "
-        "avgspw=False, avgscan=False, color_by='Field', format='txt', width=1200, height=1200, "
-        f"binary={str(args.msexplore_binary)!r})"
+        "avgspw=False, avgscan=False, color_by='field', plot_format='txt', plot_width=1200, plot_height=1200, "
+        f"binary={str(args.casars_binary)!r})"
     )
     python_txt_run = run_command(["python", "-c", python_txt_code], cwd=pack_root, env=env)
     require_success("Python msexplore UV coverage manifest", python_txt_run)

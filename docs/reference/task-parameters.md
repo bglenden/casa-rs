@@ -16,55 +16,55 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
-| [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 3 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
-| [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 2 | <code>calibration</code> | 51 | apply, inspect, and solve CASA-style calibration workflows |
-| [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 2 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 3 | <code>imager</code> | 67 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
-| [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 2 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
-| [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 2 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
-| [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 2 | <code>image_browser</code> | 17 | browse persistent casacore images |
-| [Image Header](#surface-imhead)<br><code>imhead</code> | task | 2 | <code>image_analysis</code> | 4 | Inspect or update CASA image header metadata. |
-| [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 2 | <code>image_analysis</code> | 4 | Compute CASA image statistics over optional pixel, region, and channel selections. |
-| [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 2 | <code>image_analysis</code> | 7 | Create CASA-style image moment maps |
-| [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 2 | <code>image_analysis</code> | 4 | Export CASA images to FITS |
-| [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 2 | <code>mstransform</code> | 11 | Materialize a selected MeasurementSet into a new output MS. |
-| [Split](#surface-split)<br><code>split</code> | task | 2 | <code>mstransform</code> | 11 | Create a selected MeasurementSet subset, equivalent to CASA split. |
-| [UV Continuum Subtraction](#surface-uvcontsub)<br><code>uvcontsub</code> | task | 2 | <code>calibration</code> | 17 | Subtract continuum emission from a MeasurementSet. |
-| [Applycal](#surface-applycal)<br><code>applycal</code> | task | 2 | <code>calibration</code> | 21 | Apply one or more calibration tables to a MeasurementSet. |
-| [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 2 | <code>calibration</code> | 28 | Solve antenna gain calibration for a MeasurementSet. |
-| [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 2 | <code>calibration</code> | 25 | Solve bandpass calibration for a MeasurementSet. |
-| [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 2 | <code>calibration</code> | 10 | Scale gain solutions using reference calibrator fields. |
-| [Gencal](#surface-gencal)<br><code>gencal</code> | task | 2 | <code>calibration</code> | 10 | Generate a calibration table such as antpos, gceff, or opac. |
-| [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 3 | <code>msexplore</code> | 68 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
-| [PlotCal](#surface-plotcal)<br><code>plotcal</code> | task | 2 | <code>casa_task_adapter</code> | 15 | Plot calibration tables and corrected-data diagnostics. |
-| [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 2 | <code>flagdata</code> | 18 | Run native CASA-style MeasurementSet flagging. |
-| [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 2 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
-| [Image Collapse](#surface-imcollapse)<br><code>imcollapse</code> | task | 2 | <code>casa_task_adapter</code> | 11 | Collapse image axes using CASA imcollapse. |
-| [Image Fit](#surface-imfit)<br><code>imfit</code> | task | 2 | <code>casa_task_adapter</code> | 23 | Fit Gaussian components using CASA imfit. |
-| [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 2 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA image |
-| [Wideband PB Correction](#surface-widebandpbcor)<br><code>widebandpbcor</code> | task | 2 | <code>casa_task_adapter</code> | 11 | Apply wideband primary-beam correction using CASA widebandpbcor. |
-| [Image Continuum Subtraction](#surface-imcontsub)<br><code>imcontsub</code> | task | 2 | <code>casa_task_adapter</code> | 8 | Subtract image-cube continuum using CASA imcontsub. |
-| [Position Velocity](#surface-impv)<br><code>impv</code> | task | 2 | <code>image_analysis</code> | 7 | Extract a CASA-style position-velocity image |
-| [Subimage](#surface-imsubimage)<br><code>imsubimage</code> | task | 2 | <code>image_analysis</code> | 5 | Extract a CASA-style image section |
-| [Image Math](#surface-immath)<br><code>immath</code> | task | 2 | <code>image_analysis</code> | 4 | Evaluate tutorial image arithmetic expressions |
-| [Image Regrid](#surface-imregrid)<br><code>imregrid</code> | task | 2 | <code>image_analysis</code> | 5 | Regrid a CASA image onto a template image |
-| [Feather](#surface-feather)<br><code>feather</code> | task | 2 | <code>image_analysis</code> | 5 | Combine high-resolution and low-resolution images in the Fourier domain |
-| [Import FITS](#surface-importfits)<br><code>importfits</code> | task | 2 | <code>image_analysis</code> | 3 | Import a FITS primary image into a CASA image |
-| [Concat](#surface-concat)<br><code>concat</code> | task | 2 | <code>casa_task_adapter</code> | 9 | Concatenate MeasurementSets using CASA concat. |
-| [StatWT](#surface-statwt)<br><code>statwt</code> | task | 2 | <code>casa_task_adapter</code> | 25 | Compute and write visibility weights using CASA statwt. |
-| [Hanning Smooth](#surface-hanningsmooth)<br><code>hanningsmooth</code> | task | 2 | <code>casa_task_adapter</code> | 16 | Hanning smooth channel data using CASA hanningsmooth. |
-| [Clearcal](#surface-clearcal)<br><code>clearcal</code> | task | 2 | <code>casa_task_adapter</code> | 5 | Reset calibration columns using CASA clearcal. |
-| [Delmod](#surface-delmod)<br><code>delmod</code> | task | 2 | <code>casa_task_adapter</code> | 4 | Delete MeasurementSet model data using CASA delmod. |
-| [FT](#surface-ft)<br><code>ft</code> | task | 2 | <code>casa_task_adapter</code> | 9 | Insert model visibilities using CASA ft. |
-| [SimAnalyze](#surface-simanalyze)<br><code>simanalyze</code> | task | 2 | <code>casa_task_adapter</code> | 32 | Image and analyze simulated observations using CASA simanalyze. |
-| [SimALMA](#surface-simalma)<br><code>simalma</code> | task | 2 | <code>casa_task_adapter</code> | 31 | Run ALMA simulation workflows using CASA simalma. |
+| [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
+| [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 3 | <code>calibration</code> | 51 | apply, inspect, and solve CASA-style calibration workflows |
+| [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 4 | <code>imager</code> | 67 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 3 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
+| [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
+| [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
+| [Image Header](#surface-imhead)<br><code>imhead</code> | task | 3 | <code>image_analysis</code> | 4 | Inspect or update CASA image header metadata. |
+| [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 3 | <code>image_analysis</code> | 4 | Compute CASA image statistics over optional pixel, region, and channel selections. |
+| [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 3 | <code>image_analysis</code> | 7 | Create CASA-style image moment maps |
+| [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 3 | <code>image_analysis</code> | 4 | Export CASA images to FITS |
+| [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 3 | <code>mstransform</code> | 11 | Materialize a selected MeasurementSet into a new output MS. |
+| [Split](#surface-split)<br><code>split</code> | task | 3 | <code>mstransform</code> | 11 | Create a selected MeasurementSet subset, equivalent to CASA split. |
+| [UV Continuum Subtraction](#surface-uvcontsub)<br><code>uvcontsub</code> | task | 3 | <code>calibration</code> | 17 | Subtract continuum emission from a MeasurementSet. |
+| [Applycal](#surface-applycal)<br><code>applycal</code> | task | 3 | <code>calibration</code> | 21 | Apply one or more calibration tables to a MeasurementSet. |
+| [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 3 | <code>calibration</code> | 28 | Solve antenna gain calibration for a MeasurementSet. |
+| [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 3 | <code>calibration</code> | 25 | Solve bandpass calibration for a MeasurementSet. |
+| [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 3 | <code>calibration</code> | 10 | Scale gain solutions using reference calibrator fields. |
+| [Gencal](#surface-gencal)<br><code>gencal</code> | task | 3 | <code>calibration</code> | 10 | Generate a calibration table such as antpos, gceff, or opac. |
+| [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 4 | <code>msexplore</code> | 68 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
+| [PlotCal](#surface-plotcal)<br><code>plotcal</code> | task | 3 | <code>casa_task_adapter</code> | 15 | Plot calibration tables and corrected-data diagnostics. |
+| [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 3 | <code>flagdata</code> | 18 | Run native CASA-style MeasurementSet flagging. |
+| [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 3 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
+| [Image Collapse](#surface-imcollapse)<br><code>imcollapse</code> | task | 3 | <code>casa_task_adapter</code> | 11 | Collapse image axes using CASA imcollapse. |
+| [Image Fit](#surface-imfit)<br><code>imfit</code> | task | 3 | <code>casa_task_adapter</code> | 23 | Fit Gaussian components using CASA imfit. |
+| [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 3 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA image |
+| [Wideband PB Correction](#surface-widebandpbcor)<br><code>widebandpbcor</code> | task | 3 | <code>casa_task_adapter</code> | 11 | Apply wideband primary-beam correction using CASA widebandpbcor. |
+| [Image Continuum Subtraction](#surface-imcontsub)<br><code>imcontsub</code> | task | 3 | <code>casa_task_adapter</code> | 8 | Subtract image-cube continuum using CASA imcontsub. |
+| [Position Velocity](#surface-impv)<br><code>impv</code> | task | 3 | <code>image_analysis</code> | 7 | Extract a CASA-style position-velocity image |
+| [Subimage](#surface-imsubimage)<br><code>imsubimage</code> | task | 3 | <code>image_analysis</code> | 5 | Extract a CASA-style image section |
+| [Image Math](#surface-immath)<br><code>immath</code> | task | 3 | <code>image_analysis</code> | 4 | Evaluate tutorial image arithmetic expressions |
+| [Image Regrid](#surface-imregrid)<br><code>imregrid</code> | task | 3 | <code>image_analysis</code> | 5 | Regrid a CASA image onto a template image |
+| [Feather](#surface-feather)<br><code>feather</code> | task | 3 | <code>image_analysis</code> | 5 | Combine high-resolution and low-resolution images in the Fourier domain |
+| [Import FITS](#surface-importfits)<br><code>importfits</code> | task | 3 | <code>image_analysis</code> | 3 | Import a FITS primary image into a CASA image |
+| [Concat](#surface-concat)<br><code>concat</code> | task | 3 | <code>casa_task_adapter</code> | 9 | Concatenate MeasurementSets using CASA concat. |
+| [StatWT](#surface-statwt)<br><code>statwt</code> | task | 3 | <code>casa_task_adapter</code> | 25 | Compute and write visibility weights using CASA statwt. |
+| [Hanning Smooth](#surface-hanningsmooth)<br><code>hanningsmooth</code> | task | 3 | <code>casa_task_adapter</code> | 16 | Hanning smooth channel data using CASA hanningsmooth. |
+| [Clearcal](#surface-clearcal)<br><code>clearcal</code> | task | 3 | <code>casa_task_adapter</code> | 5 | Reset calibration columns using CASA clearcal. |
+| [Delmod](#surface-delmod)<br><code>delmod</code> | task | 3 | <code>casa_task_adapter</code> | 4 | Delete MeasurementSet model data using CASA delmod. |
+| [FT](#surface-ft)<br><code>ft</code> | task | 3 | <code>casa_task_adapter</code> | 9 | Insert model visibilities using CASA ft. |
+| [SimAnalyze](#surface-simanalyze)<br><code>simanalyze</code> | task | 3 | <code>casa_task_adapter</code> | 32 | Image and analyze simulated observations using CASA simanalyze. |
+| [SimALMA](#surface-simalma)<br><code>simalma</code> | task | 3 | <code>casa_task_adapter</code> | 31 | Run ALMA simulation workflows using CASA simalma. |
 
 <a id="surface-msexplore"></a>
 
 ## MSExplore (<code>msexplore</code>)
 
 - Kind: `task`
-- Contract version: `3`
+- Contract version: `4`
 - Category: MeasurementSet
 - Provider family: `msexplore`
 - Summary: explore and export common MeasurementSet plotms-style plots
@@ -145,7 +145,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Calibrate (<code>calibrate</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: apply, inspect, and solve CASA-style calibration workflows
@@ -209,7 +209,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## ImportVLA (<code>importvla</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Import
 - Provider family: `importvla`
 - Summary: scan or import old VLA export archives from disk
@@ -234,7 +234,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `3`
+- Contract version: `4`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -314,7 +314,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## SimObserve (<code>simobserve</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Simulation
 - Provider family: `simobserve`
 - Summary: Generate a CASA-compatible synthetic VLA MeasurementSet
@@ -370,7 +370,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Table Browser (<code>tablebrowser</code>)
 
 - Kind: `session`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Tables
 - Provider family: `table_browser`
 - Summary: browse arbitrary casacore tables
@@ -390,7 +390,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## ImExplore (<code>imexplore</code>)
 
 - Kind: `session`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `image_browser`
 - Summary: browse persistent casacore images
@@ -420,7 +420,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Image Header (<code>imhead</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Inspect or update CASA image header metadata.
@@ -437,7 +437,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Image Statistics (<code>imstat</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Compute CASA image statistics over optional pixel, region, and channel selections.
@@ -454,7 +454,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Image Moments (<code>immoments</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Create CASA-style image moment maps
@@ -474,7 +474,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Export FITS (<code>exportfits</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Export CASA images to FITS
@@ -491,7 +491,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## MSTransform (<code>mstransform</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: MeasurementSet
 - Provider family: `mstransform`
 - Summary: Materialize a selected MeasurementSet into a new output MS.
@@ -515,7 +515,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Split (<code>split</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: MeasurementSet
 - Provider family: `mstransform`
 - Summary: Create a selected MeasurementSet subset, equivalent to CASA split.
@@ -539,7 +539,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## UV Continuum Subtraction (<code>uvcontsub</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: MeasurementSet
 - Provider family: `calibration`
 - Summary: Subtract continuum emission from a MeasurementSet.
@@ -569,7 +569,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Applycal (<code>applycal</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Apply one or more calibration tables to a MeasurementSet.
@@ -603,7 +603,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Gaincal (<code>gaincal</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Solve antenna gain calibration for a MeasurementSet.
@@ -644,7 +644,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Bandpass (<code>bandpass</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Solve bandpass calibration for a MeasurementSet.
@@ -682,7 +682,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Fluxscale (<code>fluxscale</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Scale gain solutions using reference calibrator fields.
@@ -705,7 +705,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Gencal (<code>gencal</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Generate a calibration table such as antpos, gceff, or opac.
@@ -728,7 +728,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## PlotMS (<code>plotms</code>)
 
 - Kind: `task`
-- Contract version: `3`
+- Contract version: `4`
 - Category: Plotting
 - Provider family: `msexplore`
 - Summary: Plot MeasurementSet visibility data with CASA plotms-style selections and axes.
@@ -809,7 +809,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## PlotCal (<code>plotcal</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Plotting
 - Provider family: `casa_task_adapter`
 - Summary: Plot calibration tables and corrected-data diagnostics.
@@ -837,7 +837,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Flag Data (<code>flagdata</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Flagging
 - Provider family: `flagdata`
 - Summary: Run native CASA-style MeasurementSet flagging.
@@ -868,7 +868,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Flag Manager (<code>flagmanager</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Flagging
 - Provider family: `flagmanager`
 - Summary: Manage MeasurementSet flag-version snapshots.
@@ -887,7 +887,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Image Collapse (<code>imcollapse</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `casa_task_adapter`
 - Summary: Collapse image axes using CASA imcollapse.
@@ -911,7 +911,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Image Fit (<code>imfit</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `casa_task_adapter`
 - Summary: Fit Gaussian components using CASA imfit.
@@ -947,7 +947,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Primary Beam Correction (<code>impbcor</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Apply primary-beam correction to a CASA image
@@ -972,7 +972,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Wideband PB Correction (<code>widebandpbcor</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `casa_task_adapter`
 - Summary: Apply wideband primary-beam correction using CASA widebandpbcor.
@@ -996,7 +996,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Image Continuum Subtraction (<code>imcontsub</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `casa_task_adapter`
 - Summary: Subtract image-cube continuum using CASA imcontsub.
@@ -1017,7 +1017,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Position Velocity (<code>impv</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Extract a CASA-style position-velocity image
@@ -1037,7 +1037,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Subimage (<code>imsubimage</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Extract a CASA-style image section
@@ -1055,7 +1055,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Image Math (<code>immath</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Evaluate tutorial image arithmetic expressions
@@ -1072,7 +1072,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Image Regrid (<code>imregrid</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Regrid a CASA image onto a template image
@@ -1090,7 +1090,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Feather (<code>feather</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Combine high-resolution and low-resolution images in the Fourier domain
@@ -1108,7 +1108,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Import FITS (<code>importfits</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Import a FITS primary image into a CASA image
@@ -1124,7 +1124,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Concat (<code>concat</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: MeasurementSet
 - Provider family: `casa_task_adapter`
 - Summary: Concatenate MeasurementSets using CASA concat.
@@ -1146,7 +1146,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## StatWT (<code>statwt</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: MeasurementSet
 - Provider family: `casa_task_adapter`
 - Summary: Compute and write visibility weights using CASA statwt.
@@ -1184,7 +1184,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Hanning Smooth (<code>hanningsmooth</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: MeasurementSet
 - Provider family: `casa_task_adapter`
 - Summary: Hanning smooth channel data using CASA hanningsmooth.
@@ -1213,7 +1213,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Clearcal (<code>clearcal</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Calibration
 - Provider family: `casa_task_adapter`
 - Summary: Reset calibration columns using CASA clearcal.
@@ -1231,7 +1231,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Delmod (<code>delmod</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Calibration
 - Provider family: `casa_task_adapter`
 - Summary: Delete MeasurementSet model data using CASA delmod.
@@ -1248,7 +1248,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## FT (<code>ft</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Calibration
 - Provider family: `casa_task_adapter`
 - Summary: Insert model visibilities using CASA ft.
@@ -1270,7 +1270,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## SimAnalyze (<code>simanalyze</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Simulation
 - Provider family: `casa_task_adapter`
 - Summary: Image and analyze simulated observations using CASA simanalyze.
@@ -1315,7 +1315,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## SimALMA (<code>simalma</code>)
 
 - Kind: `task`
-- Contract version: `2`
+- Contract version: `3`
 - Category: Simulation
 - Provider family: `casa_task_adapter`
 - Summary: Run ALMA simulation workflows using CASA simalma.

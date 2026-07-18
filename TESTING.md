@@ -91,6 +91,7 @@ only documentation, planning, or workflow-policy changes. Do not rerun a gate
 solely because review started; if executable changes intervened, rerun only the
 affected gate.
 - Native macOS GUI prototype and frontend services:
+  `scripts/generate-frontend-bindings.sh --check`,
   `cargo test -p casa-notebook --test wave1_contract`,
   `cargo test -p casars-frontend-services`,
   `cargo test -p casars-imager dirty_imaging_json_request_accepts_gui_selection_fields`,

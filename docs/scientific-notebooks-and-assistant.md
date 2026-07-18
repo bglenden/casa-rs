@@ -196,9 +196,9 @@ paths remain available under **Details**. A failed run is therefore a compact
 status row until expanded instead of displacing the surrounding notes.
 
 Python-native explorer data does not round-trip through screenshots. Use
-`casars.tasks.msexplore.data(...)` for the shared Rust `casa-ms` numeric plot
-document (NumPy series and point provenance), then
-`msexplore.plot_matplotlib(...)` for editable figure/axes objects. Use
+`casars.data.measurement_set_plot(...)` for the shared Rust `casa-ms` numeric
+plot document (NumPy series and point provenance), then
+`casars.data.plot_matplotlib(...)` for editable figure/axes objects. Use
 `casars.imexplore.data(...)` for image planes, masks, coordinate/WCS records,
 beam metadata, and overlays, then `casars.imexplore.imshow(...)` for editable
 Matplotlib/WCSAxes objects. The optional dependencies are installed with

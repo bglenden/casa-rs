@@ -156,7 +156,7 @@ CASA source page: {CASA_GUIDE_URL}
 | --- | --- | --- |
 | CASA | `plotms` | `vis="twhya_calibrated.ms"`, `xaxis="uvdist"`, `yaxis="amp"`, `avgchannel="10000"`, `avgspw=False`, `avgtime="1e9"`, `avgscan=False`, `coloraxis="field"`, Page tab `Iteration Axis=Field`, export range `all` |
 | CLI | `msexplore` | `--preset amplitude_vs_uv_distance --avgchannel 10000 --avgtime 1e9 --color-by field --iteraxis field --plot-output {cli_png} --plot-width 1600 --plot-height 1200 --overwrite twhya_calibrated.ms` |
-| Python | `casars.tasks.msexplore.plot` | `measurement_set="twhya_calibrated.ms"`, `output_path="{python_png}"`, `preset="amplitude_vs_uv_distance"`, `avgchannel=10000`, `avgtime=1e9`, `color_by="Field"`, `iteraxis="field"`, `width=1600`, `height=1200` |
+| Python | `casars.tasks.msexplore` | `vis="twhya_calibrated.ms"`, `plot_output="{python_png}"`, `preset="amplitude_vs_uv_distance"`, `avgchannel=10000`, `avgtime=1e9`, `color_by="field"`, `iteraxis="field"`, `plot_width=1600`, `plot_height=1200` |
 | TUI | `MSExplore > Views` | `Preset=Amplitude vs UV Distance`, `Average channels=10000`, `Average time=1e9`, `Color by=Field`, `Iterate by=Field` |
 | GUI | `MeasurementSet Explorer > Plots > Selections` | `Plot=Amplitude vs UV Distance`, `Avg channel=10000`, `Avg time=1e9`, `Iterate by=Field`, `Generate` |
 
@@ -226,7 +226,7 @@ img {{ max-width: 100%; border: 1px solid #ddd; }}
 <tr><th>Surface</th><th>Task</th><th>Parameters</th></tr>
 <tr><td>CASA</td><td><code>plotms</code></td><td><code>vis=twhya_calibrated.ms</code>, <code>xaxis=uvdist</code>, <code>yaxis=amp</code>, <code>avgchannel=10000</code>, <code>avgtime=1e9</code>, <code>avgscan=False</code>, <code>avgspw=False</code>, <code>coloraxis=field</code>, <code>iteraxis=field</code>, <code>exprange=all</code></td></tr>
 <tr><td>CLI</td><td><code>msexplore</code></td><td><code>--preset amplitude_vs_uv_distance --avgchannel 10000 --avgtime 1e9 --color-by field --iteraxis field --plot-output {cli_png} --plot-width 1600 --plot-height 1200 --overwrite twhya_calibrated.ms</code></td></tr>
-<tr><td>Python</td><td><code>casars.tasks.msexplore.plot</code></td><td><code>preset=amplitude_vs_uv_distance</code>, <code>avgchannel=10000</code>, <code>avgtime=1e9</code>, <code>color_by=Field</code>, <code>iteraxis=field</code>, <code>width=1600</code>, <code>height=1200</code></td></tr>
+<tr><td>Python</td><td><code>casars.tasks.msexplore</code></td><td><code>preset=amplitude_vs_uv_distance</code>, <code>avgchannel=10000</code>, <code>avgtime=1e9</code>, <code>color_by=field</code>, <code>iteraxis=field</code>, <code>plot_width=1600</code>, <code>plot_height=1200</code></td></tr>
 <tr><td>TUI</td><td><code>MSExplore &gt; Views</code></td><td><code>Preset=Amplitude vs UV Distance</code>, <code>Avg channel=10000</code>, <code>Avg time=1e9</code>, <code>Color by=Field</code>, <code>Iterate by=Field</code></td></tr>
 <tr><td>GUI</td><td><code>MeasurementSet Explorer &gt; Plots</code></td><td><code>Plot=Amplitude vs UV Distance</code>, <code>Avg channel=10000</code>, <code>Avg time=1e9</code>, <code>Iterate by=Field</code></td></tr>
 </table>
@@ -341,25 +341,26 @@ def main() -> None:
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT / "crates" / "casars-python" / "python") + os.pathsep + env.get("PYTHONPATH", "")
+    env["CASARS_MSEXPLORE_BIN"] = str(args.msexplore_binary)
     python_code = (
-        "from casars.tasks import msexplore; "
-        "msexplore.plot("
-        f"{MS_PATH!r}, {str(python_png.relative_to(pack_root))!r}, "
+        "from casars import tasks; "
+        "tasks.msexplore("
+        f"vis={MS_PATH!r}, plot_output={str(python_png.relative_to(pack_root))!r}, "
         "preset='amplitude_vs_uv_distance', avgchannel=10000, avgtime=1e9, "
-        "color_by='Field', iteraxis='field', width=1600, height=1200, "
-        f"binary={str(args.msexplore_binary)!r})"
+        "color_by='field', iteraxis='field', plot_width=1600, plot_height=1200, "
+        f"binary={str(args.casars_binary)!r})"
     )
     python_run = run_command(["python", "-c", python_code], cwd=pack_root, env=env)
     require_success("Python msexplore amplitude vs UV distance", python_run)
-    runs.append({"surface": "python", "task": "msexplore.plot", "elapsed_seconds": python_run["elapsed_seconds"]})
+    runs.append({"surface": "python", "task": "msexplore", "elapsed_seconds": python_run["elapsed_seconds"]})
 
     python_txt_code = (
-        "from casars.tasks import msexplore; "
-        "msexplore.plot("
-        f"{MS_PATH!r}, {str(python_txt.relative_to(pack_root))!r}, "
+        "from casars import tasks; "
+        "tasks.msexplore("
+        f"vis={MS_PATH!r}, plot_output={str(python_txt.relative_to(pack_root))!r}, "
         "preset='amplitude_vs_uv_distance', avgchannel=10000, avgtime=1e9, "
-        "color_by='Field', iteraxis='field', format='txt', width=1600, height=1200, "
-        f"binary={str(args.msexplore_binary)!r})"
+        "color_by='field', iteraxis='field', plot_format='txt', plot_width=1600, plot_height=1200, "
+        f"binary={str(args.casars_binary)!r})"
     )
     python_txt_run = run_command(["python", "-c", python_txt_code], cwd=pack_root, env=env)
     require_success("Python msexplore amplitude vs UV distance manifest", python_txt_run)

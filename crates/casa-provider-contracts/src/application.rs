@@ -326,7 +326,7 @@ mod tests {
                 "casars",
                 "casars-casa-task",
                 "casars-imager",
-                "casars-importvla",
+                "importvla",
                 "exportfits",
                 "feather",
                 "flagdata",

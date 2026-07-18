@@ -358,8 +358,9 @@ authoritative types, aliases, or defaults.
 Python should remain ergonomic and typed, but its wrappers and docs should be
 checked against the canonical schema bundle so signatures and enums cannot drift.
 
-For task surfaces, Python can invoke a task binary or other provider transport.
-For object surfaces, Python can bind directly in-process.
+For task surfaces, generated Python callables invoke the canonical `casars run`
+transport; Python does not host a second provider protocol engine. For object
+surfaces, Python can bind directly in-process.
 
 `casars.parameters` exposes the common typed profile session, while generated
 task-specific wrappers delegate through the same runtime. Python must not keep

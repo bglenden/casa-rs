@@ -34,9 +34,9 @@ origins and validation diagnostics. Saving writes only required values and
 differences from current defaults. Surface definitions and defaults are read
 from the same Rust catalog used by the other frontends.
 
-Task-specific protocol functions remain public where they expose specialized
-results; the catalog-driven generic runner is the uniform path for all tasks.
-Generated CASA-named conveniences live in `casars.tasks.catalog`; session
+The catalog-driven generic runner and generated CASA-named functions are the
+only public task path. Generated conveniences live directly in `casars.tasks`;
+session
 conveniences are `casars.sessions.imexplore` and
 `casars.sessions.tablebrowser`. Their checked `.pyi` files are regenerated from
 `crates/casa-provider-contracts/resources/parameter-surfaces.json`.
@@ -45,6 +45,6 @@ conveniences are `casars.sessions.imexplore` and
 
 ::: casars.data
 
-## `casars.tasks.calibrate`
+## `casars.tasks`
 
-::: casars.tasks.calibrate
+::: casars.tasks

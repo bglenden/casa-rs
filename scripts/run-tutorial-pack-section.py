@@ -268,15 +268,19 @@ def run_cli(pack_root: Path, image_path: Path, imexplore: Path, section: dict[st
     return payload, result
 
 
-def run_python(pack_root: Path, image_path: Path, imexplore: Path, section: dict[str, Any]) -> tuple[dict[str, Any], CommandResult]:
+def run_python(pack_root: Path, image_path: Path, imexplore: Path, casars: Path, section: dict[str, Any]) -> tuple[dict[str, Any], CommandResult]:
     script = (
         "import json,sys;"
         f"sys.path.insert(0,{str(REPO_ROOT / 'crates/casars-python/python')!r});"
-        "from casars.tasks import image_analysis;"
-        f"result=image_analysis.imhead({str(image_path)!r}, mode='summary', binary={str(imexplore)!r});"
-        "print(json.dumps(result, indent=2, sort_keys=True))"
+        "from casars import tasks;"
+        f"result=tasks.imhead(imagename={str(image_path)!r}, mode='summary', binary={str(casars)!r});"
+        "print(json.dumps(json.loads(result.stdout), indent=2, sort_keys=True))"
     )
-    result = run_command([sys.executable, "-c", script], cwd=REPO_ROOT)
+    result = run_command(
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT,
+        env={"CASARS_IMEXPLORE_BIN": str(imexplore)},
+    )
     payload = json.loads(result.stdout)
     write_json(output_path(pack_root, step(section, "python")), payload)
     return payload, result
@@ -340,21 +344,25 @@ def run_invalid_cli(imexplore: Path, invalid_path: Path) -> dict[str, Any]:
     return error_contract_record("cli", result)
 
 
-def run_invalid_python(imexplore: Path, invalid_path: Path) -> dict[str, Any]:
+def run_invalid_python(imexplore: Path, casars: Path, invalid_path: Path) -> dict[str, Any]:
     script = "\n".join(
         [
             "import sys",
             f"sys.path.insert(0, {str(REPO_ROOT / 'crates/casars-python/python')!r})",
-            "from casars.tasks import image_analysis",
+            "from casars import tasks",
             "try:",
-            f"    image_analysis.imhead({str(invalid_path)!r}, mode='summary', binary={str(imexplore)!r})",
+            f"    tasks.imhead(imagename={str(invalid_path)!r}, mode='summary', binary={str(casars)!r})",
             "except Exception as error:",
             "    print(f'{type(error).__name__}: {error}')",
             "    raise SystemExit(42)",
             "raise SystemExit('expected imhead to fail for invalid image')",
         ]
     )
-    result = run_command_probe([sys.executable, "-c", script], cwd=REPO_ROOT)
+    result = run_command_probe(
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT,
+        env={"CASARS_IMEXPLORE_BIN": str(imexplore)},
+    )
     return error_contract_record("python", result)
 
 
@@ -1101,7 +1109,7 @@ def render_surface_evidence(
         ),
         surface_card(
             "Python",
-            "casars.tasks.image_analysis.imhead('twhya_cont.image', mode='summary')",
+            "casars.tasks.imhead(imagename='twhya_cont.image', mode='summary')",
             {"imagename": "twhya_cont.image", "mode": "summary", "binary": "target/debug/imexplore"},
             ".casa-rs/workspace/native/01-imhead-continuum-header/python-imhead.json",
             python_payload,
@@ -1324,7 +1332,7 @@ validated image metadata in the Inspector for staged tutorial inputs.
     <tr><th>Interface</th><th>How to execute</th><th>Parameters set</th></tr>
     <tr><td>CASA</td><td><code>imhead(...)</code></td><td><code>imagename='twhya_cont.image'</code>, <code>mode='summary'</code></td></tr>
     <tr><td>CLI</td><td><code>imexplore imhead twhya_cont.image --json --mode summary</code></td><td><code>image_path</code>, <code>json=true</code>, <code>mode=summary</code></td></tr>
-    <tr><td>Python</td><td><code>casars.tasks.image_analysis.imhead(...)</code></td><td><code>imagename</code>, <code>mode='summary'</code>, native binary path</td></tr>
+    <tr><td>Python</td><td><code>casars.tasks.imhead(...)</code></td><td><code>imagename</code>, <code>mode='summary'</code>, canonical runner path</td></tr>
     <tr><td>TUI</td><td><code>casars imhead twhya_cont.image --json --mode summary</code></td><td><code>Image Path</code>, <code>JSON=on</code>, <code>Mode=summary</code>. Visual capture backend: <code>{html.escape(str(tui_backend))}</code></td></tr>
     <tr><td>GUI</td><td>Learner path: select <code>twhya_cont.image</code> and read the Inspector. Regression path: open section task, run <code>Image Header</code>.</td><td>Inspector shows <code>Size</code>, <code>Units</code>, <code>Shape</code>, and <code>Image details</code>. Task run uses <code>image_path={html.escape(str(gui_params.get('image_path', '')))}</code>, <code>mode={html.escape(str(gui_params.get('mode', '')))}</code>, <code>json={html.escape(str(gui_toggles.get('json')))}</code></td></tr>
   </table>
@@ -1517,7 +1525,7 @@ def main() -> None:
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     native_cli, cli_result = run_cli(pack_root, image_path, imexplore, section)
-    native_python, python_result = run_python(pack_root, image_path, imexplore, section)
+    native_python, python_result = run_python(pack_root, image_path, imexplore, casars, section)
     if args.skip_gui:
         native_gui = native_cli
         gui_result = CommandResult(argv=[], elapsed_seconds=0.0, stdout="{}", stderr="")
@@ -1547,7 +1555,7 @@ def main() -> None:
     invalid_path = ensure_invalid_image_fixture(pack_root, section["id"])
     invalid_checks = [
         run_invalid_cli(imexplore, invalid_path),
-        run_invalid_python(imexplore, invalid_path),
+        run_invalid_python(imexplore, casars, invalid_path),
     ]
     if args.skip_gui:
         invalid_checks.append(
@@ -1701,7 +1709,7 @@ def main() -> None:
             cards["python"],
             title="casa-rs Python imhead",
             subtitle="Python wrapper using the native Rust provider",
-            command="image_analysis.imhead('twhya_cont.image', mode='summary', binary='target/debug/imexplore')",
+            command="tasks.imhead(imagename='twhya_cont.image', mode='summary', binary='target/debug/casars')",
             parameters={"imagename": "twhya_cont.image", "mode": "summary", "binary": "target/debug/imexplore"},
             output_lines=compact_output_lines(native_python),
         )

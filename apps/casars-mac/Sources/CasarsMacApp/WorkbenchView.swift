@@ -1495,11 +1495,11 @@ struct InspectorView: View {
         }
 
         if let profile = snapshot.profile {
-            let selected = profile.selectedSampleIndex.map { "sample \($0)" } ?? "\(profile.samples.count) samples"
+            let selected = "sample \(profile.selectedSampleIndex)"
             rows.append(InspectorDynamicLine(label: "Profile", value: "\(profile.axisName), \(selected)"))
         }
 
-        for axis in snapshot.nonDisplayAxes ?? [] {
+        for axis in snapshot.nonDisplayAxes {
             rows.append(InspectorDynamicLine(
                 label: axis.label,
                 value: "index \(axis.index + 1)/\(axis.length), pixel \(axis.pixel)"
@@ -1735,7 +1735,7 @@ private func formatShape(_ shape: [UInt64]) -> String {
     shape.isEmpty ? "Unknown" : shape.map(String.init).joined(separator: " x ")
 }
 
-private func formatImageAxisValue(_ axis: ImageExplorerSnapshot.AxisValue) -> String {
+private func formatImageAxisValue(_ axis: ImageExplorerAxisValue) -> String {
     if isImageRightAscensionAxis(axis.name) {
         return formatImageRightAscension(axis.value)
     }

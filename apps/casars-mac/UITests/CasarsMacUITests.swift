@@ -3308,6 +3308,9 @@ final class CasarsMacUITests: XCTestCase {
         if identifier.hasPrefix("notebookVisualization.revisionCount.") {
             return true
         }
+        if identifier.hasPrefix("pythonPrototype.sourcePreview.") {
+            return true
+        }
         guard let value = issue.element?.value as? String else { return false }
         return value == "Persistent per-notebook kernel · interaction prototype"
             // macOS 15 reports these opaque black-on-near-white text layers as
@@ -3319,7 +3322,6 @@ final class CasarsMacUITests: XCTestCase {
             || value == "TW Hya · continuum image"
             || value == "Code"
             || value == "88d14db8cc92074d"
-            || value.hasPrefix("from casars import msexplore\n")
     }
 }
 

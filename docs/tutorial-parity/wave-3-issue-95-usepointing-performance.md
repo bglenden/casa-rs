@@ -20,7 +20,7 @@ The public surfaces are:
 - CLI: `--usepointing` and `--use-pointing`
 - JSON task contract: `use_pointing: bool`, default `false`
 - UI schema: `usepointing` advanced toggle, default `false`
-- Python helper: `casars.tasks.imager.mfs(..., use_pointing=False)`
+- Python helper: `casars.tasks.imager(..., usepointing=False)`
 
 When `usepointing=true`, casa-rs preserves the previous POINTING-based antenna
 direction resolution. When it is `false`, POINTING data is ignored for row

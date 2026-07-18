@@ -174,27 +174,28 @@ print("JSON_RESULT_END")
 """
 
 
-def python_surface_code(python_prefix: str, imager_binary: str) -> str:
+def python_surface_code(python_prefix: str, casars_binary: str) -> str:
     return f"""
 import json
-from casars.tasks import imager
+from casars import tasks
 
-result = imager.mfs(
-    {MS_PATH!r},
-    {python_prefix!r},
-    image_size=250,
-    cell_arcsec=0.1,
-    field_ids=[3],
-    phasecenter_field=3,
+result = tasks.imager(
+    vis={MS_PATH!r},
+    imagename={python_prefix!r},
+    imsize=250,
+    cell="0.1arcsec",
+    field="3",
+    phasecenter_field="3",
+    specmode="mfs",
     weighting="briggs",
     robust=0.5,
     deconvolver="hogbom",
     niter=0,
-    threshold_jy=0.0,
+    threshold="0Jy",
     dirty_only=True,
-    binary={imager_binary!r},
+    binary={casars_binary!r},
 )
-print(json.dumps(result, indent=2, sort_keys=True))
+print(json.dumps(json.loads(result.stdout), indent=2, sort_keys=True))
 """
 
 
@@ -437,7 +438,7 @@ CASA source page: {CASA_GUIDE_URL}
 | --- | --- | --- |
 | CASA | `tclean` | `vis="twhya_calibrated.ms"`, `imagename="phase_cal"`, `field="3"`, `specmode="mfs"`, `deconvolver="hogbom"`, `gridder="standard"`, `imsize=[250,250]`, `cell=["0.1arcsec"]`, `weighting="briggs"`, `threshold="0.0mJy"`, tutorial `interactive=True`; regression `niter=0`, `interactive=False` |
 | CLI | `casars-imager` | `--ms twhya_calibrated.ms --imagename .casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.cli --imsize 250 --cell-arcsec 0.1 --field 3 --phasecenter-field 3 --specmode mfs --deconvolver hogbom --weighting briggs --robust 0.5 --threshold-jy 0.0 --niter 0 --dirty-only` |
-| Python | `casars.tasks.imager.mfs` | `measurement_set="twhya_calibrated.ms"`, `image_name=".casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.python"`, `image_size=250`, `cell_arcsec=0.1`, `field_ids=[3]`, `phasecenter_field=3`, `weighting="briggs"`, `robust=0.5`, `deconvolver="hogbom"`, `niter=0`, `threshold_jy=0.0`, `dirty_only=True` |
+| Python | `casars.tasks.imager` | `vis="twhya_calibrated.ms"`, `imagename=".casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.python"`, `imsize=250`, `cell="0.1arcsec"`, `field="3"`, `phasecenter_field="3"`, `weighting="briggs"`, `robust=0.5`, `deconvolver="hogbom"`, `niter=0`, `threshold="0Jy"`, `dirty_only=True` |
 | TUI | `Tasks > Image > Imager` | Same parameter values as CLI; screenshot evidence is pending for this task-driven section. |
 | GUI | `Tasks > Imager` and `Image Explorer` | Same parameter values as CLI; parameter and dirty-image screenshots are captured below. |
 
@@ -516,7 +517,7 @@ img {{ max-width: 100%; border: 1px solid #ddd; }}
 <tr><th>Surface</th><th>Task</th><th>Parameters</th></tr>
 <tr><td>CASA</td><td><code>tclean</code></td><td><code>vis=twhya_calibrated.ms</code>, <code>imagename=phase_cal</code>, <code>field=3</code>, <code>specmode=mfs</code>, <code>deconvolver=hogbom</code>, <code>gridder=standard</code>, <code>imsize=[250,250]</code>, <code>cell=["0.1arcsec"]</code>, <code>weighting=briggs</code>, <code>threshold=0.0mJy</code>, tutorial <code>interactive=True</code>; regression <code>niter=0</code>, <code>interactive=False</code></td></tr>
 <tr><td>CLI</td><td><code>casars-imager</code></td><td><code>--ms twhya_calibrated.ms --imagename .casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.cli --imsize 250 --cell-arcsec 0.1 --field 3 --phasecenter-field 3 --specmode mfs --deconvolver hogbom --weighting briggs --robust 0.5 --threshold-jy 0.0 --niter 0 --dirty-only</code></td></tr>
-<tr><td>Python</td><td><code>casars.tasks.imager.mfs</code></td><td><code>measurement_set=twhya_calibrated.ms</code>, <code>image_name=.casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.python</code>, <code>image_size=250</code>, <code>cell_arcsec=0.1</code>, <code>field_ids=[3]</code>, <code>phasecenter_field=3</code>, <code>weighting=briggs</code>, <code>robust=0.5</code>, <code>niter=0</code>, <code>dirty_only=True</code></td></tr>
+<tr><td>Python</td><td><code>casars.tasks.imager</code></td><td><code>vis=twhya_calibrated.ms</code>, <code>imagename=.casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.python</code>, <code>imsize=250</code>, <code>cell=0.1arcsec</code>, <code>field=3</code>, <code>phasecenter_field=3</code>, <code>weighting=briggs</code>, <code>robust=0.5</code>, <code>niter=0</code>, <code>dirty_only=True</code></td></tr>
 <tr><td>TUI</td><td><code>Tasks &gt; Imager</code></td><td>Same values as CLI. Automated parameter-screenshot evidence is pending for this task-driven section.</td></tr>
 <tr><td>GUI</td><td><code>Tasks &gt; Imager</code> and <code>Image Explorer</code></td><td>Same values as CLI. Parameter and dirty-image screenshots are captured below.</td></tr>
 </table>
@@ -611,6 +612,7 @@ def main() -> None:
     parser.add_argument("--pack-root", type=Path, default=DEFAULT_PACK_ROOT)
     parser.add_argument("--casa-python", type=Path, default=DEFAULT_CASA_PYTHON)
     parser.add_argument("--imager-binary", type=Path, default=REPO_ROOT / "target" / "release" / "casars-imager")
+    parser.add_argument("--casars-binary", type=Path, default=REPO_ROOT / "target" / "debug" / "casars")
     parser.add_argument("--gui-app-binary", type=Path, default=DEFAULT_GUI_APP_BINARY)
     parser.add_argument("--skip-gui-capture", action="store_true")
     args = parser.parse_args()
@@ -685,8 +687,9 @@ def main() -> None:
 
     python_env = os.environ.copy()
     python_env["PYTHONPATH"] = str(REPO_ROOT / "crates" / "casars-python" / "python") + os.pathsep + python_env.get("PYTHONPATH", "")
+    python_env["CASARS_IMAGER_BIN"] = str(args.imager_binary)
     python_run = run_command(
-        ["python", "-c", python_surface_code(str(python_prefix.relative_to(pack_root)), str(args.imager_binary))],
+        ["python", "-c", python_surface_code(str(python_prefix.relative_to(pack_root)), str(args.casars_binary))],
         cwd=pack_root,
         env=python_env,
         timeout_seconds=600,

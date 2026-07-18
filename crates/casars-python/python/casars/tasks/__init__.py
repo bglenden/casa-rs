@@ -1,39 +1,56 @@
-"""Task entry points for casa-rs."""
+"""Generated CASA-named task entry points for casa-rs."""
 
-from . import calibrate
-from . import catalog
-from . import imager
-from . import image_analysis
-from . import importvla
-from . import msexplore
-from . import profiles
-from . import split
-from . import simulation_analysis
-from . import simobserve
+from ._catalog import (
+    TASK_SURFACES,
+    msexplore,
+    calibrate,
+    importvla,
+    imager,
+    simobserve,
+    imhead,
+    imstat,
+    immoments,
+    exportfits,
+    mstransform,
+    split,
+    uvcontsub,
+    applycal,
+    gaincal,
+    bandpass,
+    fluxscale,
+    gencal,
+    plotms,
+    plotcal,
+    flagdata,
+    flagmanager,
+    imcollapse,
+    imfit,
+    impbcor,
+    widebandpbcor,
+    imcontsub,
+    impv,
+    imsubimage,
+    immath,
+    imregrid,
+    feather,
+    importfits,
+    concat,
+    statwt,
+    hanningsmooth,
+    clearcal,
+    delmod,
+    ft,
+    simanalyze,
+    simalma,
+)
 from ._runner import (
     CasarsBinaryNotFoundError,
     TaskBaseSource,
     TaskCompletion,
     TaskExecutionError,
     TaskInvocationError,
+    TaskResultError,
     run,
 )
 
-__all__ = [
-    "CasarsBinaryNotFoundError",
-    "TaskBaseSource",
-    "TaskCompletion",
-    "TaskExecutionError",
-    "TaskInvocationError",
-    "calibrate",
-    "catalog",
-    "imager",
-    "image_analysis",
-    "importvla",
-    "msexplore",
-    "profiles",
-    "split",
-    "simulation_analysis",
-    "simobserve",
-    "run",
-]
+__all__ = ['CasarsBinaryNotFoundError', 'TaskBaseSource', 'TaskCompletion', 'TaskExecutionError', 'TaskInvocationError', 'TaskResultError', 'TASK_SURFACES', 'run', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'uvcontsub', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'imcollapse', 'imfit', 'impbcor', 'widebandpbcor', 'imcontsub', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'concat', 'statwt', 'hanningsmooth', 'clearcal', 'delmod', 'ft', 'simanalyze', 'simalma']

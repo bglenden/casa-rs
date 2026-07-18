@@ -137,16 +137,16 @@ print("JSON_RESULT_END")
 def python_surface_code(imagename: str, pbimage: str, outfile: str, binary: str) -> str:
     return f"""
 import json
-from casars.tasks import image_analysis
+from casars import tasks
 
-result = image_analysis.impbcor(
-    {imagename!r},
-    {pbimage!r},
-    {outfile!r},
+result = tasks.impbcor(
+    imagename={imagename!r},
+    pbimage={pbimage!r},
+    outfile={outfile!r},
     overwrite=True,
     binary={binary!r},
 )
-print(json.dumps(result, indent=2, sort_keys=True))
+print(json.dumps(json.loads(result.stdout), indent=2, sort_keys=True))
 """
 
 
@@ -358,7 +358,7 @@ CASA source page: {CASA_GUIDE_URL}
 | --- | --- | --- |
 | CASA | `impbcor` | `imagename=".casa-rs/workspace/oracle/07-science-target-auto-clean/twhya_cont_auto.casa.image"`, `pbimage=".casa-rs/workspace/oracle/07-science-target-auto-clean/twhya_cont_auto.casa.pb"`, `outfile=".casa-rs/workspace/oracle/08-primary-beam-correction/twhya_cont_auto.pbcor.casa.image"`, `overwrite=True` |
 | CLI | `impbcor` | `--imagename .casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.cli.image --pbimage .casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.cli.pb --outfile .casa-rs/workspace/native/08-primary-beam-correction/twhya_cont_auto.pbcor.cli.image --overwrite` |
-| Python | `casars.tasks.image_analysis.impbcor` | Same image, PB, output, and overwrite values as CLI. |
+| Python | `casars.tasks.impbcor` | Same image, PB, output, and overwrite values as CLI. |
 | TUI | `casars impbcor` | Same image, PB, output, and overwrite values as CLI; captured through the TUI harness. |
 | GUI | `Tasks > Primary Beam Correction` | Same image, PB, output, and overwrite values as CLI; the result is opened in Image Explorer. |
 
@@ -425,7 +425,7 @@ img {{ max-width: 100%; border: 1px solid #ddd; }}
 <tr><th>Surface</th><th>Task</th><th>Parameters</th></tr>
 <tr><td>CASA</td><td><code>impbcor</code></td><td><code>imagename=twhya_cont_auto.casa.image</code>, <code>pbimage=twhya_cont_auto.casa.pb</code>, <code>overwrite=True</code></td></tr>
 <tr><td>CLI</td><td><code>impbcor</code></td><td><code>--imagename ...cli.image --pbimage ...cli.pb --outfile ...pbcor.cli.image --overwrite</code></td></tr>
-<tr><td>Python</td><td><code>casars.tasks.image_analysis.impbcor</code></td><td>Same image, PB, output, and overwrite values as CLI.</td></tr>
+<tr><td>Python</td><td><code>casars.tasks.impbcor</code></td><td>Same image, PB, output, and overwrite values as CLI.</td></tr>
 <tr><td>TUI</td><td><code>casars impbcor</code></td><td>Same image, PB, output, and overwrite values as CLI.</td></tr>
 <tr><td>GUI</td><td><code>Tasks &gt; Primary Beam Correction</code></td><td>Same image, PB, output, and overwrite values as CLI.</td></tr>
 </table>
@@ -547,6 +547,7 @@ def run_section(args: argparse.Namespace) -> dict[str, Any]:
 
     python_env = os.environ.copy()
     python_env["PYTHONPATH"] = str(REPO_ROOT / "crates" / "casars-python" / "python") + os.pathsep + python_env.get("PYTHONPATH", "")
+    python_env["CASA_RS_IMPBCOR_BIN"] = str(impbcor_binary)
     python_run = run_command(
         [
             str(python),
@@ -555,7 +556,7 @@ def run_section(args: argparse.Namespace) -> dict[str, Any]:
                 str(inputs["python"][0].relative_to(pack_root)),
                 str(inputs["python"][1].relative_to(pack_root)),
                 str(outputs["python"].relative_to(pack_root)),
-                str(impbcor_binary),
+                str(args.casars_binary),
             ),
         ],
         cwd=pack_root,

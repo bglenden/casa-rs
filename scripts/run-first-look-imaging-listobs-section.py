@@ -127,7 +127,7 @@ casa-rs equivalent task: `msexplore` summary mode.
 | --- | --- | --- |
 | CASA | `listobs` | `vis="twhya_calibrated.ms"`, `listfile=".casa-rs/workspace/oracle/01-listobs-calibrated-ms/casa-listobs.txt"`, `overwrite=True` |
 | CLI | `msexplore` | `--format json --output .casa-rs/workspace/native/01-listobs-calibrated-ms/cli-msexplore-listobs.json --overwrite twhya_calibrated.ms` |
-| Python | `casars.tasks.msexplore.summary` | `measurement_set="twhya_calibrated.ms"`, `format="json"`, `output_path=".casa-rs/workspace/native/01-listobs-calibrated-ms/python-msexplore-listobs.json"`, `overwrite=True` |
+| Python | `casars.tasks.msexplore` | `vis="twhya_calibrated.ms"`, `format="json"`, `output=".casa-rs/workspace/native/01-listobs-calibrated-ms/python-msexplore-listobs.json"`, `overwrite=True` |
 | TUI | `Measurement Sets > MSExplore` | `MeasurementSet Path=twhya_calibrated.ms`, `Output Format=json`, `Output Path=.casa-rs/workspace/native/01-listobs-calibrated-ms/tui-msexplore-listobs.json`, `Overwrite Output=true` |
 | GUI | `Tasks > MSExplore` | `MeasurementSet Path=twhya_calibrated.ms`, `Output Format=json`, `Output Path=.casa-rs/workspace/native/01-listobs-calibrated-ms/gui-msexplore-listobs.json`, `Overwrite Output=true` |
 
@@ -178,7 +178,7 @@ pre {{ background: #f6f6f6; border: 1px solid #ddd; padding: 1rem; overflow: aut
 <tr><th>Surface</th><th>Task</th><th>Parameters</th></tr>
 <tr><td>CASA</td><td><code>listobs</code></td><td><code>vis=twhya_calibrated.ms</code>, <code>listfile=.casa-rs/workspace/oracle/01-listobs-calibrated-ms/casa-listobs.txt</code>, <code>overwrite=True</code></td></tr>
 <tr><td>CLI</td><td><code>msexplore</code></td><td><code>--format json --output .casa-rs/workspace/native/01-listobs-calibrated-ms/cli-msexplore-listobs.json --overwrite twhya_calibrated.ms</code></td></tr>
-<tr><td>Python</td><td><code>casars.tasks.msexplore.summary</code></td><td><code>measurement_set=twhya_calibrated.ms</code>, <code>format=json</code>, <code>output_path=.casa-rs/workspace/native/01-listobs-calibrated-ms/python-msexplore-listobs.json</code>, <code>overwrite=True</code></td></tr>
+<tr><td>Python</td><td><code>casars.tasks.msexplore</code></td><td><code>vis=twhya_calibrated.ms</code>, <code>format=json</code>, <code>output=.casa-rs/workspace/native/01-listobs-calibrated-ms/python-msexplore-listobs.json</code>, <code>overwrite=True</code></td></tr>
 <tr><td>TUI</td><td><code>Measurement Sets &gt; MSExplore</code></td><td><code>MeasurementSet Path=twhya_calibrated.ms</code>, <code>Output Format=json</code>, <code>Output Path=.casa-rs/workspace/native/01-listobs-calibrated-ms/tui-msexplore-listobs.json</code>, <code>Overwrite Output=true</code></td></tr>
 <tr><td>GUI</td><td><code>Tasks &gt; MSExplore</code></td><td><code>MeasurementSet Path=twhya_calibrated.ms</code>, <code>Output Format=json</code>, <code>Output Path=.casa-rs/workspace/native/01-listobs-calibrated-ms/gui-msexplore-listobs.json</code>, <code>Overwrite Output=true</code></td></tr>
 </table>
@@ -208,6 +208,11 @@ def main() -> None:
         "--msexplore-binary",
         type=Path,
         default=REPO_ROOT / "target" / "release" / "msexplore",
+    )
+    parser.add_argument(
+        "--casars-binary",
+        type=Path,
+        default=REPO_ROOT / "target" / "debug" / "casars",
     )
     parser.add_argument("--casa-python", type=Path, default=DEFAULT_CASA_PYTHON)
     args = parser.parse_args()
@@ -258,16 +263,17 @@ def main() -> None:
     env = os.environ.copy()
     python_path = str(REPO_ROOT / "crates" / "casars-python" / "python")
     env["PYTHONPATH"] = python_path + os.pathsep + env.get("PYTHONPATH", "")
+    env["CASARS_MSEXPLORE_BIN"] = str(args.msexplore_binary)
     python_run = run_command(
         [
             str(args.casa_python),
             "-c",
             (
-                "from casars.tasks import msexplore; "
-                "msexplore.summary('twhya_calibrated.ms', format='json', "
-                "output_path='.casa-rs/workspace/native/01-listobs-calibrated-ms/python-msexplore-listobs.json', "
+                "from casars import tasks; "
+                "tasks.msexplore(vis='twhya_calibrated.ms', format='json', "
+                "output='.casa-rs/workspace/native/01-listobs-calibrated-ms/python-msexplore-listobs.json', "
                 "overwrite=True, binary='"
-                + str(args.msexplore_binary)
+                + str(args.casars_binary)
                 + "')"
             ),
         ],
@@ -317,7 +323,7 @@ def main() -> None:
             "section_id": SECTION_ID,
             "native_provider": "native-rust",
             "native_binary": str(args.msexplore_binary),
-            "python_wrapper": "casars.tasks.msexplore.summary",
+            "python_wrapper": "casars.tasks.msexplore",
             "oracle_provider": "casa-oracle",
             "oracle_python": str(args.casa_python),
         },

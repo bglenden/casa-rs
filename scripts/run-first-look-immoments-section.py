@@ -130,20 +130,23 @@ def run_cli(pack_root: Path, immoments: Path, imexplore: Path) -> dict[str, Any]
     return payload
 
 
-def run_python(pack_root: Path, immoments: Path) -> dict[str, Any]:
+def run_python(pack_root: Path, immoments: Path, casars: Path) -> dict[str, Any]:
     outfile = OUTDIR / "twhya_n2hp.python.mom0"
-    env = {"PYTHONPATH": str(REPO_ROOT / "crates/casars-python/python")}
+    env = {
+        "PYTHONPATH": str(REPO_ROOT / "crates/casars-python/python"),
+        "CASARS_IMMOMENTS_BIN": str(immoments),
+    }
     script = "\n".join(
         [
             "import json",
-            "from casars.tasks import image_analysis",
+            "from casars import tasks",
             (
-                "result = image_analysis.immoments("
-                "'twhya_n2hp.image', "
-                f"outfile={str(outfile)!r}, moments=0, chans='4~12', includepix=[0.03, 100.0], "
-                f"overwrite=True, binary={str(immoments)!r})"
+                "result = tasks.immoments("
+                "imagename='twhya_n2hp.image', "
+                f"outfile={str(outfile)!r}, moments='0', chans='4~12', includepix='0.03,100.0', "
+                f"overwrite=True, binary={str(casars)!r})"
             ),
-            "print(json.dumps(result, indent=2, sort_keys=True))",
+            "print(json.dumps(json.loads(result.stdout), indent=2, sort_keys=True))",
         ]
     )
     result = run_command(["python3", "-c", script], cwd=pack_root, env=env)
@@ -406,7 +409,7 @@ def write_review_record(pack_root: Path, moment_range: dict[str, Any]) -> dict[s
                     "includepix": [0.03, 100.0],
                     "overwrite": True,
                 },
-                "command_template": "casars.tasks.image_analysis.immoments('twhya_n2hp.image', outfile='...', moments=0, chans='4~12', includepix=[0.03, 100.0], overwrite=True)",
+                "command_template": "casars.tasks.immoments(imagename='twhya_n2hp.image', outfile='...', moments='0', chans='4~12', includepix='0.03,100.0', overwrite=True)",
             },
             "tui": {
                 "provider_kind": "native-rust",
@@ -538,7 +541,7 @@ The staged input is expected to have default mask `mask0`, matching the CASA Gui
 | --- | --- | --- |
 | GUI | Open the tutorial pack, select section 03, open `Images > Image Moments`, fill the task panel, and press Run after confirming the task may create products. | Image: `twhya_n2hp.image`; Output: `.casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.gui.mom0`; Moment: `0`; Channels: `4~12`; Include Pixels: `0.03,100`; Overwrite: on. |
 | TUI | `casars immoments` opens the Image Moments form. Use the same field values as the GUI, then press `r` to run and confirm if prompted. | Same text fields as GUI. |
-| Python | Call `casars.tasks.image_analysis.immoments(...)`. | `imagename='twhya_n2hp.image'`, `outfile='.casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.python.mom0'`, `moments=0`, `chans='4~12'`, `includepix=[0.03, 100.0]`, `overwrite=True`. |
+| Python | Call `casars.tasks.immoments(...)`. | `imagename='twhya_n2hp.image'`, `outfile='.casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.python.mom0'`, `moments='0'`, `chans='4~12'`, `includepix='0.03,100.0'`, `overwrite=True`. |
 | Command line | Run the task binary from the pack root. | `immoments twhya_n2hp.image --outfile .casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.cli.mom0 --moments 0 --chans 4~12 --includepix 0.03,100 --overwrite`. |
 
 ## Visible Evidence
@@ -567,7 +570,7 @@ The staged input is expected to have default mask `mask0`, matching the CASA Gui
 <table><tr><th>Surface</th><th>Execution</th><th>Parameters</th></tr>
 <tr><td>GUI</td><td>Open section 03, Images &gt; Image Moments, press Run and confirm.</td><td>Image <code>twhya_n2hp.image</code>; Output <code>.casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.gui.mom0</code>; Moment <code>0</code>; Channels <code>4~12</code>; Include Pixels <code>0.03,100</code>; Overwrite on.</td></tr>
 <tr><td>TUI</td><td><code>casars immoments</code>, fill the Image Moments form, press <code>r</code>, confirm if prompted.</td><td>Same fields as GUI.</td></tr>
-<tr><td>Python</td><td><code>casars.tasks.image_analysis.immoments(...)</code></td><td><code>imagename='twhya_n2hp.image'</code>, <code>outfile='...python.mom0'</code>, <code>moments=0</code>, <code>chans='4~12'</code>, <code>includepix=[0.03, 100.0]</code>, <code>overwrite=True</code>.</td></tr>
+<tr><td>Python</td><td><code>casars.tasks.immoments(...)</code></td><td><code>imagename='twhya_n2hp.image'</code>, <code>outfile='...python.mom0'</code>, <code>moments='0'</code>, <code>chans='4~12'</code>, <code>includepix='0.03,100.0'</code>, <code>overwrite=True</code>.</td></tr>
 <tr><td>Command line</td><td>Run from pack root.</td><td><code>immoments twhya_n2hp.image --outfile .casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.cli.mom0 --moments 0 --chans 4~12 --includepix 0.03,100 --overwrite</code></td></tr>
 </table>
 <h2>Observable Result</h2>
@@ -596,12 +599,13 @@ def main() -> None:
     pack_root = args.pack.expanduser().resolve()
     immoments = REPO_ROOT / "target/debug/immoments"
     imexplore = REPO_ROOT / "target/debug/imexplore"
-    if not immoments.exists() or not imexplore.exists():
-        raise SystemExit("run `cargo build -p casa-images --bin immoments --bin imexplore` first")
+    casars = REPO_ROOT / "target/debug/casars"
+    if not immoments.exists() or not imexplore.exists() or not casars.exists():
+        raise SystemExit("run `cargo build -p casa-images --bin immoments --bin imexplore` and `cargo build -p casars` first")
 
     casa = run_oracle(pack_root, args.casa_python)
     run_cli(pack_root, immoments, imexplore)
-    run_python(pack_root, immoments)
+    run_python(pack_root, immoments, casars)
     moment_range = run_moment_range_parity(pack_root, args.casa_python, immoments)
     comparison = run_figures_and_comparison(pack_root, args.casa_python)
     review = write_review_record(pack_root, moment_range)

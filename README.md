@@ -492,7 +492,7 @@ The installer-managed suite layout is:
   bin/
     casars
     calibrate
-    casars-importvla
+    importvla
     msexplore
     casars-imager
     imexplore

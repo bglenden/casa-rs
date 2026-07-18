@@ -10626,7 +10626,7 @@ fn start_run_with_default_imager_launcher(app: &mut AppState) {
 
 fn start_run_with_default_importvla_launcher(app: &mut AppState) {
     with_test_env_lock(|| {
-        if let Some(path) = test_workspace_binary("casars-importvla") {
+        if let Some(path) = test_workspace_binary("importvla") {
             set_importvla_launcher_bin(&path);
         } else {
             clear_importvla_launcher_bin();

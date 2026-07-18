@@ -4,7 +4,7 @@
     {
       "kind": "task",
       "id": "msexplore",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "MSExplore",
       "category": "MeasurementSet",
       "summary": "explore and export common MeasurementSet plotms-style plots",
@@ -21,8 +21,49 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "measurementset-summary-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "measurementset-summary-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            },
+            {
+              "id": "plot_output",
+              "role": "auxiliary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "plot_output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            },
+            {
+              "id": "flag_output",
+              "role": "auxiliary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "flag_output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -3566,13 +3607,19 @@
             }
           ],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "calibrate",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Calibrate",
       "category": "Calibration",
       "summary": "apply, inspect, and solve CASA-style calibration workflows",
@@ -3593,8 +3640,37 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outputvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outputvis"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            },
+            {
+              "id": "output",
+              "role": "auxiliary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -7461,13 +7537,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "importvla",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "ImportVLA",
       "category": "Import",
       "summary": "scan or import old VLA export archives from disk",
@@ -7475,7 +7557,24 @@
       "execution": {
         "invocation_name": "importvla",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "vis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "vis"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -8110,13 +8209,19 @@
             }
           ],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -8133,8 +8238,24 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "imager-run-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "imager-run-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "imager-artifacts",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "decoded_artifacts"
+              },
+              "cardinality": "many",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -11551,13 +11672,19 @@
           "to_contract": 3,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "simobserve",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "SimObserve",
       "category": "Simulation",
       "summary": "Generate a CASA-compatible synthetic VLA MeasurementSet",
@@ -11565,7 +11692,24 @@
       "execution": {
         "invocation_name": "simobserve",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output_ms",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output_ms"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -13896,13 +14040,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "session",
       "id": "tablebrowser",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Table Browser",
       "category": "Tables",
       "summary": "browse arbitrary casacore tables",
@@ -13910,7 +14060,10 @@
       "execution": {
         "invocation_name": "tablebrowser",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "bindings": [
         {
@@ -14277,13 +14430,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "session",
       "id": "imexplore",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "ImExplore",
       "category": "Images",
       "summary": "browse persistent casacore images",
@@ -14291,7 +14450,10 @@
       "execution": {
         "invocation_name": "imexplore",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "bindings": [
         {
@@ -15165,13 +15327,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imhead",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Header",
       "category": "Images",
       "summary": "Inspect or update CASA image header metadata.",
@@ -15181,7 +15349,10 @@
         "fixed_args": [
           "imhead"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -15401,13 +15572,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imstat",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Statistics",
       "category": "Images",
       "summary": "Compute CASA image statistics over optional pixel, region, and channel selections.",
@@ -15417,7 +15594,10 @@
         "fixed_args": [
           "imstat"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "bindings": [
         {
@@ -15621,13 +15801,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "immoments",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Moments",
       "category": "Images",
       "summary": "Create CASA-style image moment maps",
@@ -15635,7 +15821,24 @@
       "execution": {
         "invocation_name": "immoments",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -16004,13 +16207,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "exportfits",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Export FITS",
       "category": "Images",
       "summary": "Export CASA images to FITS",
@@ -16018,7 +16227,24 @@
       "execution": {
         "invocation_name": "exportfits",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "fitsimage",
+              "role": "primary",
+              "resource_kind": "fits_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "fitsimage"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": false
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -16238,13 +16464,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "mstransform",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "MSTransform",
       "category": "MeasurementSet",
       "summary": "Materialize a selected MeasurementSet into a new output MS.",
@@ -16252,7 +16484,24 @@
       "execution": {
         "invocation_name": "mstransform",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outputvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outputvis"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -16825,13 +17074,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "split",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Split",
       "category": "MeasurementSet",
       "summary": "Create a selected MeasurementSet subset, equivalent to CASA split.",
@@ -16839,7 +17094,24 @@
       "execution": {
         "invocation_name": "mstransform",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outputvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outputvis"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -17409,13 +17681,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "uvcontsub",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "UV Continuum Subtraction",
       "category": "MeasurementSet",
       "summary": "Subtract continuum emission from a MeasurementSet.",
@@ -17439,8 +17717,37 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outputvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outputvis"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            },
+            {
+              "id": "output",
+              "role": "auxiliary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -18352,13 +18659,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "applycal",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Applycal",
       "category": "Calibration",
       "summary": "Apply one or more calibration tables to a MeasurementSet.",
@@ -18382,8 +18695,25 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -19505,13 +19835,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "gaincal",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Gaincal",
       "category": "Calibration",
       "summary": "Solve antenna gain calibration for a MeasurementSet.",
@@ -19535,8 +19871,25 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -21000,13 +21353,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "bandpass",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Bandpass",
       "category": "Calibration",
       "summary": "Solve bandpass calibration for a MeasurementSet.",
@@ -21030,8 +21389,25 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -22345,13 +22721,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "fluxscale",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Fluxscale",
       "category": "Calibration",
       "summary": "Scale gain solutions using reference calibrator fields.",
@@ -22375,8 +22757,25 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -22897,13 +23296,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "gencal",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Gencal",
       "category": "Calibration",
       "summary": "Generate a calibration table such as antpos, gceff, or opac.",
@@ -22927,8 +23332,25 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "calibration-report-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "calibration-report-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -23453,13 +23875,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "plotms",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "PlotMS",
       "category": "Plotting",
       "summary": "Plot MeasurementSet visibility data with CASA plotms-style selections and axes.",
@@ -23476,8 +23904,49 @@
           ],
           "raw_stderr_available": true,
           "raw_stdout_available": true,
-          "renderer": "measurementset-summary-v1",
-          "stdout_format": "json"
+          "stdout_format": "json",
+          "decoder": "measurementset-summary-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            },
+            {
+              "id": "plot_output",
+              "role": "auxiliary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "plot_output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            },
+            {
+              "id": "flag_output",
+              "role": "auxiliary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "flag_output"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
         }
       },
       "safety_rules": [
@@ -27018,13 +27487,19 @@
             }
           ],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "plotcal",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "PlotCal",
       "category": "Plotting",
       "summary": "Plot calibration tables and corrected-data diagnostics.",
@@ -27035,7 +27510,10 @@
           "--task",
           "plotcal"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "bindings": [
         {
@@ -27815,13 +28293,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "flagdata",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Flag Data",
       "category": "Flagging",
       "summary": "Run native CASA-style MeasurementSet flagging.",
@@ -27829,7 +28313,10 @@
       "execution": {
         "invocation_name": "flagdata",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -28766,13 +29253,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "flagmanager",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Flag Manager",
       "category": "Flagging",
       "summary": "Manage MeasurementSet flag-version snapshots.",
@@ -28780,7 +29273,10 @@
       "execution": {
         "invocation_name": "flagmanager",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -29112,13 +29608,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imcollapse",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Collapse",
       "category": "Images",
       "summary": "Collapse image axes using CASA imcollapse.",
@@ -29129,7 +29631,24 @@
           "--task",
           "imcollapse"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -29704,13 +30223,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imfit",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Fit",
       "category": "Images",
       "summary": "Fit Gaussian components using CASA imfit.",
@@ -29721,7 +30246,10 @@
           "--task",
           "imfit"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -30909,13 +31437,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "impbcor",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Primary Beam Correction",
       "category": "Images",
       "summary": "Apply primary-beam correction to a CASA image",
@@ -30923,7 +31457,24 @@
       "execution": {
         "invocation_name": "impbcor",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -31543,13 +32094,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "widebandpbcor",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Wideband PB Correction",
       "category": "Images",
       "summary": "Apply wideband primary-beam correction using CASA widebandpbcor.",
@@ -31560,7 +32117,10 @@
           "--task",
           "widebandpbcor"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -32133,13 +32693,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imcontsub",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Continuum Subtraction",
       "category": "Images",
       "summary": "Subtract image-cube continuum using CASA imcontsub.",
@@ -32150,7 +32716,36 @@
           "--task",
           "imcontsub"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "linefile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "linefile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            },
+            {
+              "id": "contfile",
+              "role": "auxiliary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "contfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -32556,13 +33151,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "impv",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Position Velocity",
       "category": "Images",
       "summary": "Extract a CASA-style position-velocity image",
@@ -32570,7 +33171,24 @@
       "execution": {
         "invocation_name": "impv",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -32934,13 +33552,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imsubimage",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Subimage",
       "category": "Images",
       "summary": "Extract a CASA-style image section",
@@ -32948,7 +33572,24 @@
       "execution": {
         "invocation_name": "imsubimage",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -33215,13 +33856,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "immath",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Math",
       "category": "Images",
       "summary": "Evaluate tutorial image arithmetic expressions",
@@ -33229,7 +33876,24 @@
       "execution": {
         "invocation_name": "immath",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -33447,13 +34111,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "imregrid",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Image Regrid",
       "category": "Images",
       "summary": "Regrid a CASA image onto a template image",
@@ -33461,7 +34131,24 @@
       "execution": {
         "invocation_name": "imregrid",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "output",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "output"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -33741,13 +34428,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "feather",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Feather",
       "category": "Images",
       "summary": "Combine high-resolution and low-resolution images in the Fourier domain",
@@ -33755,7 +34448,10 @@
       "execution": {
         "invocation_name": "feather",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -34023,13 +34719,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "importfits",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Import FITS",
       "category": "Images",
       "summary": "Import a FITS primary image into a CASA image",
@@ -34037,7 +34739,24 @@
       "execution": {
         "invocation_name": "importfits",
         "fixed_args": [],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "imagename",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "imagename"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -34204,13 +34923,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "concat",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Concat",
       "category": "MeasurementSet",
       "summary": "Concatenate MeasurementSets using CASA concat.",
@@ -34221,7 +34946,24 @@
           "--task",
           "concat"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "concatvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "concatvis"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -34687,13 +35429,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "statwt",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "StatWT",
       "category": "MeasurementSet",
       "summary": "Compute and write visibility weights using CASA statwt.",
@@ -34704,7 +35452,10 @@
           "--task",
           "statwt"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -36011,13 +36762,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "hanningsmooth",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Hanning Smooth",
       "category": "MeasurementSet",
       "summary": "Hanning smooth channel data using CASA hanningsmooth.",
@@ -36028,7 +36785,24 @@
           "--task",
           "hanningsmooth"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outputvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outputvis"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -36846,13 +37620,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "clearcal",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Clearcal",
       "category": "Calibration",
       "summary": "Reset calibration columns using CASA clearcal.",
@@ -36863,7 +37643,10 @@
           "--task",
           "clearcal"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -37135,13 +37918,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "delmod",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "Delmod",
       "category": "Calibration",
       "summary": "Delete MeasurementSet model data using CASA delmod.",
@@ -37152,7 +37941,10 @@
           "--task",
           "delmod"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -37376,13 +38168,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "ft",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "FT",
       "category": "Calibration",
       "summary": "Insert model visibilities using CASA ft.",
@@ -37393,7 +38191,10 @@
           "--task",
           "ft"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -37867,13 +38668,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "simanalyze",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "SimAnalyze",
       "category": "Simulation",
       "summary": "Image and analyze simulated observations using CASA simanalyze.",
@@ -37884,7 +38691,24 @@
           "--task",
           "simanalyze"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "imagename",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "parameter",
+                "parameter": "imagename"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
       },
       "safety_rules": [
         {
@@ -39552,13 +40376,19 @@
           "to_contract": 2,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
     {
       "kind": "task",
       "id": "simalma",
-      "contract_version": 2,
+      "contract_version": 3,
       "display_name": "SimALMA",
       "category": "Simulation",
       "summary": "Run ALMA simulation workflows using CASA simalma.",
@@ -39569,7 +40399,10 @@
           "--task",
           "simalma"
         ],
-        "managed_output": null
+        "managed_output": null,
+        "products": {
+          "kind": "no_products"
+        }
       },
       "safety_rules": [
         {
@@ -41168,6 +42001,12 @@
         {
           "from_contract": 1,
           "to_contract": 2,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 2,
+          "to_contract": 3,
           "steps": [],
           "changed_defaults": []
         }

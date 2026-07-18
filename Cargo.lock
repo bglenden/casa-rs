@@ -899,6 +899,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.18",
+ "toml 0.8.23",
  "uniffi",
  "uniffi_bindgen",
 ]
@@ -942,25 +943,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "casars-importvla"
-version = "0.25.0"
-dependencies = [
- "casa-logging",
- "casa-vla",
- "tracing",
-]
-
-[[package]]
 name = "casars-python"
 version = "0.25.0"
 dependencies = [
  "casa-coordinates",
  "casa-images",
- "casa-ms",
  "casa-provider-contracts",
  "casa-tables",
- "casa-task-runtime",
  "casa-types",
+ "casars-frontend-services",
  "ndarray",
  "numpy",
  "pyo3",
