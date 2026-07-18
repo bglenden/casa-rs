@@ -1,7 +1,7 @@
 # Documentation Index
 
 Truth class: current descriptive
-Last reality check: 2026-04-19
+Last reality check: 2026-07-18
 Verification: just docs-check
 
 This directory holds stable project documentation.
@@ -56,6 +56,14 @@ This directory holds stable project documentation.
   [`tutorial-parity/imperformance-wave-1-stage-instrumentation.md`](tutorial-parity/imperformance-wave-1-stage-instrumentation.md)
 - ImPerformance Wave 1 baseline matrix:
   [`tutorial-parity/imperformance-wave-1-baseline-matrix.md`](tutorial-parity/imperformance-wave-1-baseline-matrix.md)
+
+## Agent And Developer Reference
+
+- [`agent-reference.md`](agent-reference.md)
+  - situational workstation, CASA/C++, shared-data, release, install, and TUI
+    evidence guidance kept out of the always-loaded root `AGENTS.md`
+- [`apps/casars-mac/AGENTS.md`](https://github.com/bglenden/casa-rs/blob/main/apps/casars-mac/AGENTS.md)
+  - scoped native macOS workbench contract
 
 ## Planning And Program Reference
 

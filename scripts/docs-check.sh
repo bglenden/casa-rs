@@ -11,6 +11,8 @@ required_headers=(
   "ARCHITECTURE.md:Truth class: current descriptive"
   "TESTING.md:Truth class: normative"
   "docs/README.md:Truth class: current descriptive"
+  "docs/agent-reference.md:Truth class: normative"
+  "apps/casars-mac/AGENTS.md:Truth class: normative"
   "docs/Planning/Phase 2 - Table fillout/README.md:Truth class: historical"
   "docs/Planning/Phase 2 - Table fillout/WAVE_TEMPLATE.md:Truth class: historical"
   "docs/Planning/Phase 3 - Quanta Measures Coordinates/README.md:Truth class: historical"
