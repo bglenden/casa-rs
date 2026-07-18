@@ -6389,7 +6389,7 @@ mod tests {
             trace_casa_composite_padded_len(geometry.image_shape[0], 1.3),
             trace_casa_composite_padded_len(geometry.image_shape[1], 1.3),
         ];
-        let cpp = casa_test_support::gridder_interop::cpp_convolve_gridder_predict_visibility_2d(
+        let cpp = casa_test_support::gridder_interop::GridderOracle::predict_visibility_2d(
             grid_shape,
             geometry.image_shape,
             [

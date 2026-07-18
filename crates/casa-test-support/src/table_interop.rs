@@ -6,7 +6,7 @@ use casa_types::{RecordValue, Value};
 
 use crate::CppTableFixture;
 #[cfg(has_casacore_cpp)]
-use crate::{CasacoreGlobalStateDomain, lock_casacore_global_state};
+use crate::oracle_runtime::{CasacoreOracleRuntime, OracleDomain};
 
 /// Which storage manager to use for the fixture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,7 +278,8 @@ fn run_rc_with_endian(
     let dir = tempfile::tempdir().expect("create temp dir");
     let table_path = dir.path().join("rc_endian_table");
     #[cfg(has_casacore_cpp)]
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
+    let _guard =
+        CasacoreOracleRuntime::lock(OracleDomain::Tables).expect("lock table oracle runtime");
 
     let table = match build_table_from_fixture(fixture) {
         Ok(t) => t,
@@ -351,7 +352,8 @@ fn run_cc(cpp_fix: CppTableFixture) -> MatrixCellResult {
     let dir = tempfile::tempdir().expect("create temp dir for CC");
     let table_path = dir.path().join("cc_table");
     #[cfg(has_casacore_cpp)]
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
+    let _guard =
+        CasacoreOracleRuntime::lock(OracleDomain::Tables).expect("lock table oracle runtime");
 
     let write_result = {
         #[cfg(has_casacore_cpp)]
@@ -403,7 +405,8 @@ fn run_cr(
     let dir = tempfile::tempdir().expect("create temp dir for CR");
     let table_path = dir.path().join("cr_table");
     #[cfg(has_casacore_cpp)]
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
+    let _guard =
+        CasacoreOracleRuntime::lock(OracleDomain::Tables).expect("lock table oracle runtime");
 
     let write_result = {
         #[cfg(has_casacore_cpp)]
@@ -445,7 +448,8 @@ fn run_rc(
     let dir = tempfile::tempdir().expect("create temp dir for RC");
     let table_path = dir.path().join("rc_table");
     #[cfg(has_casacore_cpp)]
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
+    let _guard =
+        CasacoreOracleRuntime::lock(OracleDomain::Tables).expect("lock table oracle runtime");
 
     let table = match build_table_from_fixture(fixture) {
         Ok(t) => t,

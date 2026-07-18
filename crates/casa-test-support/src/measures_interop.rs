@@ -2,7 +2,7 @@
 //! FFI wrappers for the C++ measures shim.
 
 #[cfg(has_casacore_cpp)]
-use crate::{CasacoreGlobalStateDomain, lock_casacore_global_state};
+use crate::oracle_runtime::{CasacoreOracleRuntime, OracleDomain};
 #[cfg(has_casacore_cpp)]
 use std::ffi::CString;
 
@@ -984,7 +984,8 @@ pub fn cpp_igrf_value(
 /// Get C++ casacore's IAU 2000 bias-precession matrix at a given TT MJD epoch.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_iau2000_precession_matrix(epoch_mjd_tt: f64) -> Result<[[f64; 3]; 3], String> {
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::MeasuresIau2000A);
+    let _guard = CasacoreOracleRuntime::lock(OracleDomain::MeasuresIau2000A)
+        .expect("lock measures oracle runtime");
     let mut mat = [0.0f64; 9];
     let rc = unsafe { measures_shim_iau2000_precession_matrix(epoch_mjd_tt, mat.as_mut_ptr()) };
     if rc == 0 {
@@ -1011,7 +1012,8 @@ pub fn cpp_direction_convert_iau2000a(
     obs_lat: f64,
     obs_h: f64,
 ) -> Result<(f64, f64), String> {
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::MeasuresIau2000A);
+    let _guard = CasacoreOracleRuntime::lock(OracleDomain::MeasuresIau2000A)
+        .expect("lock measures oracle runtime");
     let c_in = CString::new(ref_in).unwrap();
     let c_out = CString::new(ref_out).unwrap();
     let mut lon_out: f64 = 0.0;

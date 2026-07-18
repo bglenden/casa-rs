@@ -16,11 +16,11 @@ use casa_imaging::{
 };
 use casa_ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
+use casa_test_support::gridder_interop::GridderOracle;
+use casa_test_support::hogbom_interop::HogbomOracle;
 use casa_test_support::{
     CasaTestDataTier, casa_source_root, casacore_source_root, casatestdata_path_for_tier,
     discover_casa_python, git_head_commit,
-    gridder_interop::cpp_convolve_gridder_make_dirty_image_2d,
-    hogbom_interop::cpp_hogbom_clean_minor_cycle_2d,
 };
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, ScalarValue};
@@ -5995,7 +5995,7 @@ fn hogbom_cube_nsigma_late_block_inputs_track_casa_minor_cycle_snapshots() {
             casa_threshold,
             clean.minor_cycle_length,
         );
-        let cpp_replay = match cpp_hogbom_clean_minor_cycle_2d(
+        let cpp_replay = match HogbomOracle::clean_minor_cycle_2d(
             &casa_psf_flat,
             &casa_residual_flat,
             [case.imsize, case.imsize],
@@ -6004,7 +6004,7 @@ fn hogbom_cube_nsigma_late_block_inputs_track_casa_minor_cycle_snapshots() {
             clean.minor_cycle_length,
         ) {
             Ok(result) => Some(result),
-            Err(error) if error == "casacore C++ backend unavailable" => None,
+            Err(casa_test_support::OracleError::Unavailable { .. }) => None,
             Err(error) => panic!("run CASA snapshot hclean interop: {error}"),
         };
         eprintln!(
@@ -6957,7 +6957,7 @@ fn hogbom_cube_nsigma_block0_channel9_casa_regridded_ms_isolates_spectral_seam()
     };
     let grid_shape = [padded_len(case.imsize), padded_len(case.imsize)];
     let make_cpp_dirty = |grid_shape: [usize; 2]| {
-        cpp_convolve_gridder_make_dirty_image_2d(
+        GridderOracle::make_dirty_image_2d(
             grid_shape,
             [case.imsize, case.imsize],
             [
@@ -6993,7 +6993,7 @@ fn hogbom_cube_nsigma_block0_channel9_casa_regridded_ms_isolates_spectral_seam()
     };
     let cpp_dirty = match make_cpp_dirty(grid_shape) {
         Ok(image) => image,
-        Err(error) if error == "casacore C++ backend unavailable" => {
+        Err(casa_test_support::OracleError::Unavailable { .. }) => {
             eprintln!(
                 "cube nsigma block0 channel9 CASA-regridded cubedata parity: casacore C++ gridder shim unavailable"
             );
@@ -7006,7 +7006,7 @@ fn hogbom_cube_nsigma_block0_channel9_casa_regridded_ms_isolates_spectral_seam()
     let cpp_stats = plane_difference_stats(&cpp_dirty_plane, &casa_residual_plane);
     let cpp_no_padding = match make_cpp_dirty([case.imsize, case.imsize]) {
         Ok(image) => image,
-        Err(error) if error == "casacore C++ backend unavailable" => {
+        Err(casa_test_support::OracleError::Unavailable { .. }) => {
             eprintln!(
                 "cube nsigma block0 channel9 CASA-regridded cubedata parity: casacore C++ gridder shim unavailable"
             );

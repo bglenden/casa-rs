@@ -3453,10 +3453,7 @@ fn grdsf(nu: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use casa_test_support::gridder_interop::{
-        cpp_convolve_gridder_correction_row_2d, cpp_convolve_gridder_grid_unit_sample_2d,
-        cpp_convolve_gridder_predict_visibility_2d,
-    };
+    use casa_test_support::gridder_interop::GridderOracle;
     use ndarray::Array2;
     use num_complex::{Complex32, Complex64};
     use serial_test::serial;
@@ -4084,7 +4081,7 @@ mod tests {
         }
         rust_cells.sort_by_key(|cell| (cell.1, cell.0));
 
-        let Ok(cpp_patch) = cpp_convolve_gridder_grid_unit_sample_2d(
+        let Ok(cpp_patch) = GridderOracle::grid_unit_sample_2d(
             gridder.grid_shape(),
             [
                 gridder.grid_shape()[0] as f64 * geometry.cell_size_rad[0],
@@ -4137,7 +4134,7 @@ mod tests {
         let gridder = StandardGridder::new(geometry).unwrap();
         let correction = gridder.correction_image();
         let locy = gridder.grid_shape()[1] / 2 + 7;
-        let Ok(cpp_row) = cpp_convolve_gridder_correction_row_2d(
+        let Ok(cpp_row) = GridderOracle::correction_row_2d(
             gridder.grid_shape(),
             [
                 gridder.grid_shape()[0] as f64 * geometry.cell_size_rad[0],
@@ -4214,7 +4211,7 @@ mod tests {
 
         for &(u, v, value) in &samples {
             assert!(gridder.grid_sample(&mut rust_grid, u, v, value));
-            let Ok(cpp_patch) = cpp_convolve_gridder_grid_unit_sample_2d(
+            let Ok(cpp_patch) = GridderOracle::grid_unit_sample_2d(
                 gridder.grid_shape(),
                 [
                     gridder.grid_shape()[0] as f64 * geometry.cell_size_rad[0],
@@ -4285,7 +4282,7 @@ mod tests {
                 .plan_sample(u, v)
                 .expect("sample should lie on grid");
             let rust = gridder.degrid_sample_product_planned(&model_grid, &plan.positive);
-            let Ok(cpp) = cpp_convolve_gridder_predict_visibility_2d(
+            let Ok(cpp) = GridderOracle::predict_visibility_2d(
                 gridder.grid_shape(),
                 geometry.image_shape,
                 [
@@ -4351,7 +4348,7 @@ mod tests {
                 .plan_sample(u, v)
                 .expect("sample should lie on grid");
             let rust = gridder.degrid_sample_product_planned(&model_grid, &plan.positive);
-            let Ok(cpp) = cpp_convolve_gridder_predict_visibility_2d(
+            let Ok(cpp) = GridderOracle::predict_visibility_2d(
                 gridder.grid_shape(),
                 geometry.image_shape,
                 [

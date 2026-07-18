@@ -3,20 +3,20 @@ pub mod gridder_interop;
 pub mod hogbom_interop;
 pub mod measures_interop;
 pub mod ms_interop;
+mod oracle_runtime;
 pub mod quanta_interop;
 pub mod table_interop;
 pub mod table_measures_interop;
 pub mod table_quantum_interop;
 pub mod taql_interop;
 
+pub use oracle_runtime::OracleError;
+#[cfg(has_casacore_cpp)]
+use oracle_runtime::{CasacoreOracleRuntime, OracleDomain, OracleGuard};
 #[cfg(has_casacore_cpp)]
 use std::ffi::CStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-#[cfg(has_casacore_cpp)]
-use std::sync::{Mutex, MutexGuard, OnceLock};
-#[cfg(all(has_casacore_cpp, unix))]
-use std::{fs::OpenOptions, os::fd::AsRawFd};
 
 use casa_aipsio::{
     AipsReader, AipsWriter, ArrayValue, ByteOrder, Complex32, Complex64, ScalarValue, TypeTag,
@@ -26,97 +26,6 @@ use casa_aipsio::{
 use casa_aipsio::{PrimitiveType, ValueRank};
 use ndarray::{ArrayD, IxDyn};
 use thiserror::Error;
-
-/// Process-global casacore state domains used by the C++ interop shims.
-///
-/// Some casacore APIs are configured through process-wide static state rather
-/// than per-call objects. Cargo also runs integration-test binaries in parallel,
-/// so table-oriented shims need cross-process serialization as well as the usual
-/// in-process mutex.
-#[cfg(has_casacore_cpp)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum CasacoreGlobalStateDomain {
-    /// IAU 2000 / 2000A mode toggles driven by `AipsrcValue` and `MeasTable`.
-    MeasuresIau2000A,
-    /// Imaging/gridder interop shims that exercise casacore FFT and gridding state.
-    ImagingInterop,
-    /// Table-oriented C++ shims that exercise shared casacore table state.
-    Tables,
-}
-
-#[cfg(has_casacore_cpp)]
-pub(crate) struct CasacoreGlobalStateGuard {
-    _mutex: MutexGuard<'static, ()>,
-    #[cfg(all(has_casacore_cpp, unix))]
-    _file_lock: Option<CasacoreGlobalFileLock>,
-}
-
-#[cfg(all(has_casacore_cpp, unix))]
-struct CasacoreGlobalFileLock {
-    file: std::fs::File,
-}
-
-#[cfg(all(has_casacore_cpp, unix))]
-impl Drop for CasacoreGlobalFileLock {
-    fn drop(&mut self) {
-        unsafe {
-            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
-        }
-    }
-}
-
-#[cfg(all(has_casacore_cpp, unix))]
-fn lock_casacore_global_file(domain: CasacoreGlobalStateDomain) -> CasacoreGlobalFileLock {
-    let suffix = match domain {
-        CasacoreGlobalStateDomain::MeasuresIau2000A => "measures-iau2000a",
-        CasacoreGlobalStateDomain::ImagingInterop => "imaging-interop",
-        CasacoreGlobalStateDomain::Tables => "tables",
-    };
-    let path = std::env::temp_dir().join(format!("casa-rs-casa-test-support-{suffix}.lock"));
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&path)
-        .unwrap_or_else(|err| panic!("open global casacore lock {}: {err}", path.display()));
-    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-    if rc != 0 {
-        let err = std::io::Error::last_os_error();
-        panic!("lock global casacore file {}: {err}", path.display());
-    }
-    CasacoreGlobalFileLock { file }
-}
-
-#[cfg(has_casacore_cpp)]
-pub(crate) fn lock_casacore_global_state(
-    domain: CasacoreGlobalStateDomain,
-) -> CasacoreGlobalStateGuard {
-    let mutex = match domain {
-        CasacoreGlobalStateDomain::MeasuresIau2000A => {
-            static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-            LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
-        }
-        CasacoreGlobalStateDomain::ImagingInterop => {
-            static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-            LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
-        }
-        CasacoreGlobalStateDomain::Tables => {
-            static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-            LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
-        }
-    };
-    CasacoreGlobalStateGuard {
-        _mutex: mutex,
-        #[cfg(all(has_casacore_cpp, unix))]
-        _file_lock: match domain {
-            CasacoreGlobalStateDomain::Tables | CasacoreGlobalStateDomain::ImagingInterop => {
-                Some(lock_casacore_global_file(domain))
-            }
-            CasacoreGlobalStateDomain::MeasuresIau2000A => None,
-        },
-    }
-}
 
 /// Shared CASA dataset tier used by test-data discovery and gate preflights.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3691,7 +3600,8 @@ pub enum CppTableFixture {
 /// Write a table fixture using C++ casacore. Returns an error string on failure.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_table_write(fixture: CppTableFixture, path: &std::path::Path) -> Result<(), String> {
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
+    let _guard =
+        CasacoreOracleRuntime::lock(OracleDomain::Tables).expect("lock table oracle runtime");
     cpp_table_write_unlocked(fixture, path)
 }
 
@@ -3867,7 +3777,8 @@ pub(crate) fn cpp_table_write_unlocked(
 /// Verify a table fixture using C++ casacore. Returns an error string on failure.
 #[cfg(has_casacore_cpp)]
 pub fn cpp_table_verify(fixture: CppTableFixture, path: &std::path::Path) -> Result<(), String> {
-    let _guard = lock_casacore_global_state(CasacoreGlobalStateDomain::Tables);
+    let _guard =
+        CasacoreOracleRuntime::lock(OracleDomain::Tables).expect("lock table oracle runtime");
     cpp_table_verify_unlocked(fixture, path)
 }
 
@@ -4058,8 +3969,8 @@ pub(crate) fn cpp_table_verify_unlocked(
 ///
 /// Use this alongside the Rust `ColumnsIndex` to compare performance.
 #[cfg(has_casacore_cpp)]
-fn lock_cpp_table_ffi() -> CasacoreGlobalStateGuard {
-    lock_casacore_global_state(CasacoreGlobalStateDomain::Tables)
+fn lock_cpp_table_ffi() -> OracleGuard {
+    CasacoreOracleRuntime::lock(OracleDomain::Tables).expect("lock table oracle runtime")
 }
 
 #[cfg(has_casacore_cpp)]
@@ -4468,8 +4379,8 @@ fn take_cpp_error_message(error: *mut std::ffi::c_char) -> String {
 }
 
 #[cfg(has_casacore_cpp)]
-fn lock_cpp_image_ffi() -> CasacoreGlobalStateGuard {
-    lock_casacore_global_state(CasacoreGlobalStateDomain::Tables)
+fn lock_cpp_image_ffi() -> OracleGuard {
+    CasacoreOracleRuntime::lock(OracleDomain::Tables).expect("lock image oracle runtime")
 }
 
 /// Creates a C++ `PagedImage<Float>` with the given shape, data, and units.
@@ -6170,8 +6081,8 @@ unsafe extern "C" {
 }
 
 #[cfg(has_casacore_cpp)]
-fn lock_cpp_lattice_ffi() -> CasacoreGlobalStateGuard {
-    lock_casacore_global_state(CasacoreGlobalStateDomain::Tables)
+fn lock_cpp_lattice_ffi() -> OracleGuard {
+    CasacoreOracleRuntime::lock(OracleDomain::Tables).expect("lock lattice oracle runtime")
 }
 
 /// Run the C++ forced-I/O paged-lattice statistics benchmark.
