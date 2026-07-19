@@ -1459,9 +1459,16 @@ fn report_cube_progress(stage: &str, completed: usize, channels: usize, started:
     }
 }
 
-fn mark_cube_plane(plane: &mut ArrayD<f32>, channel: usize) {
-    plane[[0, 0, 0, 0]] = channel as f32 + 0.25;
-    plane[[1023, 1023, 0, 0]] = -(channel as f32 + 0.5);
+fn fill_cube_plane(plane: &mut ArrayD<f32>, base_pattern: &[u32], channel: usize) {
+    let channel_mask = (channel as u32).wrapping_mul(0x9e37_79b9).rotate_left(13) ^ 0xa511_e9b3;
+    for (value, &base) in plane
+        .as_slice_memory_order_mut()
+        .unwrap()
+        .iter_mut()
+        .zip(base_pattern)
+    {
+        *value = f32::from_bits(base ^ channel_mask);
+    }
 }
 
 fn cube_plane_bytes(plane: &ArrayD<f32>) -> &[u8] {
@@ -1480,19 +1487,16 @@ fn full_spectral_cube_plane_io_tracks_raw_disk_speed() {
         .unwrap_or(12_800);
     let plane_shape = [1024, 1024, 1, 1];
     let shape = vec![1024, 1024, 1, channels];
-    let mut random_state = 0x4d59_5df4_d0f3_3173_u64;
-    let mut plane = ArrayD::from_shape_vec(
-        IxDyn(&plane_shape).f(),
-        (0..plane_shape.iter().product())
-            .map(|_| {
-                random_state ^= random_state << 13;
-                random_state ^= random_state >> 7;
-                random_state ^= random_state << 17;
-                f32::from_bits((random_state as u32 & 0x007f_ffff) | 0x3f00_0000)
-            })
-            .collect(),
-    )
-    .unwrap();
+    let mut pattern_state = 0x4d59_5df4_u32;
+    let base_pattern = (0..plane_shape.iter().product())
+        .map(|_| {
+            pattern_state = pattern_state
+                .wrapping_mul(1_664_525)
+                .wrapping_add(1_013_904_223);
+            pattern_state
+        })
+        .collect::<Vec<_>>();
+    let mut plane = ArrayD::from_elem(IxDyn(&plane_shape).f(), 0.0f32);
     let plane_bytes = cube_plane_bytes(&plane).len();
     let total_bytes = plane_bytes * channels;
     let benchmark_root = std::env::var_os("CASA_RS_CUBE_PERF_DIR")
@@ -1509,14 +1513,19 @@ fn full_spectral_cube_plane_io_tracks_raw_disk_speed() {
 
     let raw_path = directory.path().join("raw-cube.bin");
     let raw_write_start = Instant::now();
+    let mut raw_write_io = Duration::ZERO;
     let mut raw = File::create(&raw_path).unwrap();
     for channel in 0..channels {
-        mark_cube_plane(&mut plane, channel);
+        fill_cube_plane(&mut plane, &base_pattern, channel);
+        let io_start = Instant::now();
         raw.write_all(cube_plane_bytes(&plane)).unwrap();
+        raw_write_io += io_start.elapsed();
         report_cube_progress("raw write", channel + 1, channels, raw_write_start);
     }
+    let sync_start = Instant::now();
     raw.sync_all().unwrap();
-    let raw_write_seconds = raw_write_start.elapsed().as_secs_f64();
+    raw_write_io += sync_start.elapsed();
+    let raw_write_seconds = raw_write_io.as_secs_f64();
     drop(raw);
 
     let image_path = directory.path().join("spectral-cube.image");
@@ -1529,14 +1538,19 @@ fn full_spectral_cube_plane_io_tracks_raw_disk_speed() {
     )
     .unwrap();
     let image_write_start = Instant::now();
+    let mut image_write_io = Duration::ZERO;
     for channel in 0..channels {
-        mark_cube_plane(&mut plane, channel);
+        fill_cube_plane(&mut plane, &base_pattern, channel);
+        let io_start = Instant::now();
         image.put_slice(&plane, &[0, 0, 0, channel]).unwrap();
+        image_write_io += io_start.elapsed();
         report_cube_progress("image write", channel + 1, channels, image_write_start);
     }
+    let sync_start = Instant::now();
     image.save().unwrap();
     sync_file_tree(&image_path);
-    let image_write_seconds = image_write_start.elapsed().as_secs_f64();
+    image_write_io += sync_start.elapsed();
+    let image_write_seconds = image_write_io.as_secs_f64();
     assert_eq!(
         image.tiled_io_stats().unwrap().direct_tile_write_tiles,
         channels
@@ -1552,7 +1566,7 @@ fn full_spectral_cube_plane_io_tracks_raw_disk_speed() {
         let io_start = Instant::now();
         raw.read_exact(&mut raw_plane).unwrap();
         raw_read_io += io_start.elapsed();
-        mark_cube_plane(&mut plane, channel);
+        fill_cube_plane(&mut plane, &base_pattern, channel);
         assert!(
             raw_plane == cube_plane_bytes(&plane),
             "raw pixel pattern mismatch in channel {channel}"
@@ -1568,9 +1582,9 @@ fn full_spectral_cube_plane_io_tracks_raw_disk_speed() {
         let io_start = Instant::now();
         let read = image.get_slice(&[0, 0, 0, channel], &plane_shape).unwrap();
         image_read_io += io_start.elapsed();
-        mark_cube_plane(&mut plane, channel);
+        fill_cube_plane(&mut plane, &base_pattern, channel);
         assert!(
-            read.as_slice_memory_order().unwrap() == plane.as_slice_memory_order().unwrap(),
+            cube_plane_bytes(&read) == cube_plane_bytes(&plane),
             "image pixel pattern mismatch in channel {channel}"
         );
         report_cube_progress("image read", channel + 1, channels, image_read_start);
@@ -1605,6 +1619,7 @@ fn full_spectral_cube_plane_io_tracks_raw_disk_speed() {
         image_read_mib,
         read_fraction * 100.0,
     );
+    eprintln!("timed I/O excludes deterministic pattern generation and verification");
     assert!(
         write_fraction >= 0.60,
         "image plane write throughput is only {:.0}% of raw disk",
