@@ -195,8 +195,19 @@ pub use write_session::{
 };
 
 pub(crate) fn open_measures_runtime()
--> MsResult<std::sync::Arc<casa_measures_data::MeasuresRuntime>> {
-    casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
-        .map(std::sync::Arc::new)
-        .map_err(|error| MsError::MeasuresRuntime(error.to_string()))
+-> MsResult<std::sync::Arc<dyn casa_types::measures::MeasuresProvider>> {
+    #[cfg(test)]
+    {
+        Ok(casa_test_support::deterministic_measures_provider())
+    }
+    #[cfg(not(test))]
+    {
+        casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+            .map(|runtime| {
+                let runtime: std::sync::Arc<dyn casa_types::measures::MeasuresProvider> =
+                    std::sync::Arc::new(runtime);
+                runtime
+            })
+            .map_err(|error| MsError::MeasuresRuntime(error.to_string()))
+    }
 }
