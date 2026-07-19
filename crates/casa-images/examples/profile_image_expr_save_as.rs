@@ -128,7 +128,12 @@ fn build_paged_source(
 }
 
 fn build_snapshot_source(shape: &[usize]) -> TempImage<f32> {
-    let mut image = TempImage::<f32>::new(shape.to_vec(), CoordinateSystem::new()).unwrap();
+    let mut image = TempImage::<f32>::new(
+        shape.to_vec(),
+        CoordinateSystem::new(),
+        casa_lattices::TempStoragePolicy::Memory,
+    )
+    .unwrap();
     let data = ArrayD::from_shape_fn(IxDyn(shape), |idx| {
         (idx[0] + idx[1] * shape[0] + idx[2] * shape[0] * shape[1]) as f32
     });

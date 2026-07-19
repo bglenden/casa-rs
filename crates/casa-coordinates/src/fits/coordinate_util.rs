@@ -36,7 +36,7 @@ use casa_types::measures::frequency::FrequencyRef;
 
 use super::header::{FitsHeader, FitsValue};
 use crate::CoordinateSystem;
-use crate::coordinate::{Coordinate, CoordinateType};
+use crate::coordinate::{CoordinateModel, CoordinateType};
 use crate::direction::DirectionCoordinate;
 use crate::error::CoordinateError;
 use crate::linear::LinearCoordinate;
@@ -134,14 +134,14 @@ pub fn to_fits_header(cs: &CoordinateSystem, shape: &[usize]) -> FitsHeader {
 /// via the known field accessors on [`DirectionCoordinate`]. Because we
 /// cannot downcast a `&dyn Coordinate` directly (the trait is not `Any`), we
 /// reconstruct the needed info from the trait methods and the record.
-fn emit_direction(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
+fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     let crval = coord.reference_value();
     let crpix = coord.reference_pixel();
     let cdelt = coord.increment();
 
     // We need projection, direction_ref, longpole, latpole, pc.
     // Extract from the record representation.
-    let rec = coord.to_record();
+    let rec = coord.component_record();
 
     // Projection name
     let proj_name = match rec.get("projection") {
@@ -247,7 +247,7 @@ fn emit_direction(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
 }
 
 /// Emits FITS keywords for a [`SpectralCoordinate`].
-fn emit_spectral(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
+fn emit_spectral(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     let crval = coord.reference_value();
     let crpix = coord.reference_pixel();
     let cdelt = coord.increment();
@@ -263,7 +263,7 @@ fn emit_spectral(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
     );
 
     // Frequency reference and rest frequency from record
-    let rec = coord.to_record();
+    let rec = coord.component_record();
     if let Some(casa_types::Value::Scalar(casa_types::ScalarValue::String(fref))) =
         rec.get("frequency_ref")
     {
@@ -283,7 +283,7 @@ fn emit_spectral(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
 }
 
 /// Emits FITS keywords for a [`StokesCoordinate`].
-fn emit_stokes(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
+fn emit_stokes(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     let crval = coord.reference_value();
     let crpix = coord.reference_pixel();
     let cdelt = coord.increment();
@@ -296,7 +296,7 @@ fn emit_stokes(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
 }
 
 /// Emits FITS keywords for a [`LinearCoordinate`] (or tabular treated as linear).
-fn emit_linear(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
+fn emit_linear(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     let crval = coord.reference_value();
     let crpix = coord.reference_pixel();
     let cdelt = coord.increment();

@@ -86,7 +86,7 @@
 //! use casa_images::expr_parser::{parse_image_expr, HashMapResolver};
 //! use casa_lattices::LatticeMut;
 //!
-//! let mut a = TempImage::<f32>::new(vec![4, 4], CoordinateSystem::new()).unwrap();
+//! let mut a = TempImage::<f32>::new(vec![4, 4], CoordinateSystem::new(), casa_lattices::TempStoragePolicy::Memory).unwrap();
 //! a.set(2.0).unwrap();
 //!
 //! let mut images = HashMap::new();
@@ -1478,7 +1478,12 @@ mod tests {
     use casa_coordinates::CoordinateSystem;
 
     fn make_test_image(shape: Vec<usize>, value: f32) -> TempImage<f32> {
-        let mut img = TempImage::<f32>::new(shape, CoordinateSystem::new()).unwrap();
+        let mut img = TempImage::<f32>::new(
+            shape,
+            CoordinateSystem::new(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         img.set(value).unwrap();
         img
     }

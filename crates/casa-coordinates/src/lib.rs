@@ -75,7 +75,7 @@ pub mod stokes;
 pub mod tabular;
 
 // Re-export public types at crate root for convenience.
-pub use coordinate::{Coordinate, CoordinateType};
+pub use coordinate::{Coordinate, CoordinateModel, CoordinateType};
 pub use coordinate_system::CoordinateSystem;
 pub use direction::DirectionCoordinate;
 pub use error::CoordinateError;

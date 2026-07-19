@@ -23,7 +23,7 @@
 //! use casa_images::TempImage;
 //! use casa_lattices::{Lattice, LatticeMut};
 //!
-//! let mut img = TempImage::<f32>::new(vec![8, 8], CoordinateSystem::new()).unwrap();
+//! let mut img = TempImage::<f32>::new(vec![8, 8], CoordinateSystem::new(), casa_lattices::TempStoragePolicy::Memory).unwrap();
 //! assert!(!img.is_persistent());
 //! img.set(3.14).unwrap();
 //! assert_eq!(img.get_at(&[0, 0]).unwrap(), 3.14);
@@ -35,7 +35,8 @@ use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_lattices::{
-    Lattice, LatticeError, LatticeMut, TempLattice, TraversalCacheHint, TraversalCacheScope,
+    Lattice, LatticeError, LatticeMut, TempLattice, TempStoragePolicy, TraversalCacheHint,
+    TraversalCacheScope,
 };
 use casa_types::{ArrayD, RecordValue};
 
@@ -53,9 +54,8 @@ use crate::subimage::{SubImage, SubImageMut};
 /// materialized via [`save_as`](Self::save_as) or
 /// [`into_paged`](Self::into_paged).
 ///
-/// Small images (below the default 256 Ki element threshold) live entirely
-/// in memory.  Larger ones use a scratch [`PagedArray`](casa_lattices::PagedArray)
-/// that auto-manages its own temporary file.
+/// The caller chooses memory, scratch paging, or a byte-budgeted automatic
+/// policy through [`TempStoragePolicy`].
 pub struct TempImage<T: ImagePixel> {
     lattice: TempLattice<T>,
     coords: CoordinateSystem,
@@ -70,24 +70,13 @@ pub struct TempImage<T: ImagePixel> {
 // ---- Constructors -----------------------------------------------------------
 
 impl<T: ImagePixel> TempImage<T> {
-    /// Creates a new temporary image with the default memory threshold.
-    ///
-    /// Images with fewer than 256 Ki elements stay in memory; larger ones
-    /// use scratch-disk storage.
-    pub fn new(shape: Vec<usize>, coords: CoordinateSystem) -> Result<Self, ImageError> {
-        Self::with_threshold(shape, coords, None)
-    }
-
-    /// Creates a new temporary image with an explicit memory threshold.
-    ///
-    /// If `max_memory_elements` is `Some(n)`, images with more than `n`
-    /// elements will use scratch-disk storage.
-    pub fn with_threshold(
+    /// Creates a temporary image with an explicit byte-aware storage policy.
+    pub fn new(
         shape: Vec<usize>,
         coords: CoordinateSystem,
-        max_memory_elements: Option<usize>,
+        policy: TempStoragePolicy,
     ) -> Result<Self, ImageError> {
-        let lattice = TempLattice::new(shape, max_memory_elements)?;
+        let lattice = TempLattice::new(shape, policy)?;
         Ok(Self {
             lattice,
             coords,
@@ -694,13 +683,12 @@ impl<T: ImagePixel> std::fmt::Debug for TempImage<T> {
 mod tests {
     use super::*;
     use casa_coordinates::CoordinateSystem;
-    use casa_lattices::{Lattice, LatticeMut};
+    use casa_lattices::{Lattice, LatticeIterExt, LatticeMut, TraversalSpec};
     use casa_types::{Complex32, Complex64, RecordValue, ScalarValue, Value};
     use ndarray::IxDyn;
 
     use crate::beam::{GaussianBeam, ImageBeamSet};
     use crate::image_info::ImageType;
-    use crate::iterator::{ImageIter, ImageIterMut};
 
     fn cs() -> CoordinateSystem {
         CoordinateSystem::new()
@@ -708,7 +696,8 @@ mod tests {
 
     #[test]
     fn construction_memory() {
-        let img = TempImage::<f32>::new(vec![4, 4], cs()).unwrap();
+        let img = TempImage::<f32>::new(vec![4, 4], cs(), casa_lattices::TempStoragePolicy::Memory)
+            .unwrap();
         assert!(img.is_in_memory());
         assert!(!img.is_persistent());
         assert!(img.is_writable());
@@ -722,14 +711,23 @@ mod tests {
 
     #[test]
     fn construction_paged() {
-        let img = TempImage::<f32>::with_threshold(vec![4, 4], cs(), Some(1)).unwrap();
+        let img = TempImage::<f32>::new(
+            vec![4, 4],
+            cs(),
+            casa_lattices::TempStoragePolicy::Paged {
+                scratch: casa_lattices::ScratchSpace::SystemTemp,
+            },
+        )
+        .unwrap();
         assert!(!img.is_in_memory());
         assert!(img.is_paged());
     }
 
     #[test]
     fn pixel_access() {
-        let mut img = TempImage::<f32>::new(vec![3, 3], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![3, 3], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         img.set(5.0).unwrap();
         assert_eq!(img.get_at(&[1, 1]).unwrap(), 5.0);
 
@@ -743,7 +741,9 @@ mod tests {
 
     #[test]
     fn pixel_slice() {
-        let mut img = TempImage::<f64>::new(vec![4, 4], cs()).unwrap();
+        let mut img =
+            TempImage::<f64>::new(vec![4, 4], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         let ramp = ArrayD::from_shape_fn(IxDyn(&[4, 4]), |idx| (idx[0] * 4 + idx[1]) as f64);
         img.put_slice(&ramp, &[0, 0]).unwrap();
 
@@ -754,7 +754,9 @@ mod tests {
 
     #[test]
     fn metadata_round_trip() {
-        let mut img = TempImage::<f32>::new(vec![2, 2], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![2, 2], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         img.set_units("Jy/beam").unwrap();
         assert_eq!(img.units(), "Jy/beam");
 
@@ -787,7 +789,9 @@ mod tests {
 
     #[test]
     fn mask_operations() {
-        let mut img = TempImage::<f32>::new(vec![3, 3], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![3, 3], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
 
         // No masks initially.
         assert!(!img.has_pixel_mask());
@@ -822,7 +826,9 @@ mod tests {
 
     #[test]
     fn mask_default_validation() {
-        let mut img = TempImage::<f32>::new(vec![2, 2], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![2, 2], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         assert!(img.set_default_mask("missing").is_err());
 
         img.make_mask("m1", false, true).unwrap();
@@ -835,7 +841,9 @@ mod tests {
 
     #[test]
     fn history_operations() {
-        let mut img = TempImage::<f32>::new(vec![2, 2], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![2, 2], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         assert!(img.history().unwrap().is_empty());
 
         img.add_history("created").unwrap();
@@ -851,7 +859,9 @@ mod tests {
 
     #[test]
     fn save_as_materializes_correctly() {
-        let mut img = TempImage::<f32>::new(vec![4, 4], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![4, 4], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         img.set(2.5).unwrap();
         img.set_units("K").unwrap();
         img.make_mask("mymask", true, true).unwrap();
@@ -873,7 +883,9 @@ mod tests {
 
     #[test]
     fn into_paged_consumes() {
-        let mut img = TempImage::<f64>::new(vec![2, 2], cs()).unwrap();
+        let mut img =
+            TempImage::<f64>::new(vec![2, 2], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         img.set(1.0).unwrap();
 
         let dir = tempfile::tempdir().unwrap();
@@ -884,7 +896,9 @@ mod tests {
 
     #[test]
     fn subimage_integration() {
-        let mut img = TempImage::<f32>::new(vec![4, 4], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![4, 4], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         img.set(0.0).unwrap();
         {
             let mut sub = img.sub_image_mut(vec![1, 1], vec![2, 2]).unwrap();
@@ -899,7 +913,9 @@ mod tests {
 
     #[test]
     fn image_expr_integration() {
-        let mut img = TempImage::<f32>::new(vec![3, 3], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![3, 3], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         img.set(2.0).unwrap();
 
         let expr = img.expr().unwrap().multiply_scalar(3.0);
@@ -908,10 +924,13 @@ mod tests {
 
     #[test]
     fn image_iter_integration() {
-        let mut img = TempImage::<f32>::new(vec![4, 4], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![4, 4], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         img.set(1.0).unwrap();
 
-        let chunks: Vec<_> = ImageIter::new(&img, vec![2, 2])
+        let chunks: Vec<_> = img
+            .traverse(TraversalSpec::chunks(vec![2, 2]))
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(chunks.len(), 4);
@@ -920,45 +939,54 @@ mod tests {
 
     #[test]
     fn image_iter_mut_integration() {
-        let mut img = TempImage::<f32>::new(vec![4, 4], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![4, 4], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         img.set(1.0).unwrap();
 
-        let mut iter = ImageIterMut::new(&mut img, vec![4, 4]);
-        while let Some(Ok(mut chunk)) = iter.next_chunk() {
-            chunk.data.mapv_inplace(|v| v * 2.0);
-            iter.flush_chunk(&chunk).unwrap();
-        }
+        img.for_each_chunk_mut(TraversalSpec::chunks(vec![4, 4]), |data, _| {
+            data.mapv_inplace(|value| value * 2.0);
+            Ok(())
+        })
+        .unwrap();
         assert_eq!(img.get_at(&[0, 0]).unwrap(), 2.0);
     }
 
     #[test]
     fn all_pixel_types() {
         // f32
-        let mut img = TempImage::<f32>::new(vec![2], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![2], cs(), casa_lattices::TempStoragePolicy::Memory).unwrap();
         img.set(1.5).unwrap();
         assert_eq!(img.get_at(&[0]).unwrap(), 1.5f32);
 
         // f64
-        let mut img = TempImage::<f64>::new(vec![2], cs()).unwrap();
+        let mut img =
+            TempImage::<f64>::new(vec![2], cs(), casa_lattices::TempStoragePolicy::Memory).unwrap();
         img.set(2.5).unwrap();
         assert_eq!(img.get_at(&[0]).unwrap(), 2.5f64);
 
         // Complex32
         let c32 = Complex32::new(1.0, -2.0);
-        let mut img = TempImage::<Complex32>::new(vec![2], cs()).unwrap();
+        let mut img =
+            TempImage::<Complex32>::new(vec![2], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         img.set(c32).unwrap();
         assert_eq!(img.get_at(&[0]).unwrap(), c32);
 
         // Complex64
         let c64 = Complex64::new(3.0, -4.0);
-        let mut img = TempImage::<Complex64>::new(vec![2], cs()).unwrap();
+        let mut img =
+            TempImage::<Complex64>::new(vec![2], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         img.set(c64).unwrap();
         assert_eq!(img.get_at(&[0]).unwrap(), c64);
     }
 
     #[test]
     fn lattice_trait_properties() {
-        let img = TempImage::<f32>::new(vec![4, 4], cs()).unwrap();
+        let img = TempImage::<f32>::new(vec![4, 4], cs(), casa_lattices::TempStoragePolicy::Memory)
+            .unwrap();
         assert!(!<TempImage<f32> as Lattice<f32>>::is_persistent(&img));
         assert!(<TempImage<f32> as Lattice<f32>>::is_writable(&img));
     }
@@ -966,13 +994,22 @@ mod tests {
     #[test]
     fn temp_close_reopen() {
         // Memory-backed: temp_close is a no-op.
-        let mut img = TempImage::<f32>::new(vec![4, 4], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![4, 4], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         img.set(5.0).unwrap();
         img.temp_close().unwrap();
         assert_eq!(img.get_at(&[0, 0]).unwrap(), 5.0);
 
         // Paged-backed: temp_close releases, reopen restores.
-        let mut img = TempImage::<f32>::with_threshold(vec![4, 4], cs(), Some(1)).unwrap();
+        let mut img = TempImage::<f32>::new(
+            vec![4, 4],
+            cs(),
+            casa_lattices::TempStoragePolicy::Paged {
+                scratch: casa_lattices::ScratchSpace::SystemTemp,
+            },
+        )
+        .unwrap();
         img.set(7.0).unwrap();
         img.temp_close().unwrap();
 
@@ -987,7 +1024,8 @@ mod tests {
 
     #[test]
     fn debug_impl() {
-        let img = TempImage::<f32>::new(vec![3, 3], cs()).unwrap();
+        let img = TempImage::<f32>::new(vec![3, 3], cs(), casa_lattices::TempStoragePolicy::Memory)
+            .unwrap();
         let debug = format!("{img:?}");
         assert!(debug.contains("TempImage"));
         assert!(debug.contains("shape"));
@@ -995,14 +1033,18 @@ mod tests {
 
     #[test]
     fn mask_shape_validation() {
-        let mut img = TempImage::<f32>::new(vec![3, 3], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![3, 3], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         let wrong = ArrayD::from_elem(IxDyn(&[2, 2]), true);
         assert!(img.put_mask("bad", &wrong).is_err());
     }
 
     #[test]
     fn image_interface_trait() {
-        let mut img = TempImage::<f32>::new(vec![2, 2], cs()).unwrap();
+        let mut img =
+            TempImage::<f32>::new(vec![2, 2], cs(), casa_lattices::TempStoragePolicy::Memory)
+                .unwrap();
         img.set(1.0).unwrap();
         img.set_units("Jy").unwrap();
 

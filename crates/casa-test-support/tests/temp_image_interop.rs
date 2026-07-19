@@ -39,7 +39,14 @@ fn rc_rust_temp_image_materializes_cpp_reads_metadata() {
         vec!["m".into(), "m".into()],
     )));
 
-    let mut img = TempImage::<f32>::with_threshold(shape.clone(), coords, Some(1)).unwrap();
+    let mut img = TempImage::<f32>::new(
+        shape.clone(),
+        coords,
+        casa_lattices::TempStoragePolicy::Paged {
+            scratch: casa_lattices::ScratchSpace::SystemTemp,
+        },
+    )
+    .unwrap();
     img.put_slice(&f32_array(&shape, data.clone()), &[0, 0])
         .unwrap();
     img.set_units("K").unwrap();

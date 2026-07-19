@@ -5,10 +5,8 @@
 //! metadata, iterates in chunks, and exercises mask operations.
 
 use casa_coordinates::CoordinateSystem;
-use casa_images::{
-    GaussianBeam, Image, ImageBeamSet, ImageChunk, ImageInfo, ImageIter, ImageIterMut, ImageType,
-    TempImage,
-};
+use casa_images::{GaussianBeam, Image, ImageBeamSet, ImageInfo, ImageType, TempImage};
+use casa_lattices::{LatticeIterExt, LatticeMut, TraversalSpec};
 use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
@@ -95,15 +93,14 @@ fn main() {
     );
     println!("Reopened and verified metadata");
 
-    // 6. Iterate chunks with ImageIter.
+    // 6. Iterate chunks with the canonical traversal model.
     let mut chunk_sum = 0.0f64;
     let mut chunk_count = 0usize;
-    for chunk_result in ImageIter::new(&img2, vec![16, 16]) {
-        let ImageChunk {
-            data,
-            origin,
-            shape: cs,
-        } = chunk_result.expect("chunk");
+    for chunk_result in img2.traverse(TraversalSpec::chunks(vec![16, 16])) {
+        let chunk = chunk_result.expect("chunk");
+        let data = chunk.data;
+        let origin = chunk.cursor.position;
+        let cs = chunk.cursor.shape;
         chunk_sum += data.sum() as f64;
         chunk_count += 1;
         if chunk_count <= 2 {
@@ -157,19 +154,24 @@ fn main() {
 
     // 10. Mutable iteration: scale all pixels by 0.5.
     let mut img4 = Image::open(&img_path).expect("reopen for mut iter");
-    let mut iter = ImageIterMut::new(&mut img4, vec![32, 32]);
-    while let Some(Ok(mut chunk)) = iter.next_chunk() {
-        chunk.data.mapv_inplace(|v| v * 0.5);
-        iter.flush_chunk(&chunk).expect("flush_chunk");
-    }
+    img4.for_each_chunk_mut(TraversalSpec::chunks(vec![32, 32]), |data, _| {
+        data.mapv_inplace(|value| value * 0.5);
+        Ok(())
+    })
+    .expect("scale chunks");
     let scaled = img4.get().expect("get after scale");
     assert_eq!(scaled[[0, 0]], 0.0);
     assert!((scaled[[63, 63]] - 2047.5).abs() < 0.01);
-    println!("Scaled all pixels by 0.5 via ImageIterMut");
+    println!("Scaled all pixels by 0.5 via TraversalSpec");
 
     // 11. TempImage lifecycle.
     println!("\n--- TempImage ---");
-    let mut tmp = TempImage::<f32>::new(vec![8, 8], CoordinateSystem::new()).unwrap();
+    let mut tmp = TempImage::<f32>::new(
+        vec![8, 8],
+        CoordinateSystem::new(),
+        casa_lattices::TempStoragePolicy::Memory,
+    )
+    .unwrap();
     println!(
         "TempImage: shape={:?}, in_memory={}, persistent={}, type={}",
         tmp.shape(),

@@ -900,7 +900,12 @@ fn open_imgexpr_with_missing_source_errors() {
 /// Rust save_expr requires an expression string to be set.
 #[test]
 fn save_expr_without_string_errors() {
-    let img = casa_images::TempImage::<f32>::new(vec![4, 4], CoordinateSystem::new()).unwrap();
+    let img = casa_images::TempImage::<f32>::new(
+        vec![4, 4],
+        CoordinateSystem::new(),
+        casa_lattices::TempStoragePolicy::Memory,
+    )
+    .unwrap();
     let expr = ImageExpr::from_image(&img).unwrap();
     // Programmatic expression — no expr_string set.
     let dir = tempfile::tempdir().unwrap();

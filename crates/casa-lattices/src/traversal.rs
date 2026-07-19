@@ -687,10 +687,13 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_iter_lines_still_cover_all_pixels() {
+    fn line_traversal_still_covers_all_pixels() {
         let data = ArrayD::from_shape_fn(IxDyn(&[4, 3]), |idx| (idx[0] * 3 + idx[1]) as f64);
         let lat = ArrayLattice::new(data);
-        let total: f64 = lat.iter_lines(0).flat_map(|line| line.into_iter()).sum();
+        let total: f64 = lat
+            .traverse(TraversalSpec::lines(0))
+            .map(|line| line.unwrap().data.sum())
+            .sum();
         assert_eq!(total, (0..12).sum::<i32>() as f64);
     }
 

@@ -35162,9 +35162,9 @@ mod tests {
         assert_eq!(coords.n_coordinates(), 3);
         assert_eq!(coords.n_pixel_axes(), 4);
         let record = coords.to_record();
-        assert!(record.get("coordinate0").is_some());
-        assert!(record.get("coordinate1").is_some());
-        assert!(record.get("coordinate2").is_some());
+        assert!(record.get("direction0").is_some());
+        assert!(record.get("stokes1").is_some());
+        assert!(record.get("spectral2").is_some());
     }
 
     #[test]

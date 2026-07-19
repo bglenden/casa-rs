@@ -309,10 +309,6 @@ impl Coordinate for LinearCoordinate {
 
         rec
     }
-
-    fn clone_box(&self) -> Box<dyn Coordinate> {
-        Box::new(self.clone())
-    }
 }
 
 /// Inverts a square matrix using Gauss-Jordan elimination with partial pivoting.
@@ -492,14 +488,6 @@ mod tests {
         assert!(rec.get("cdelt").is_some());
         assert!(rec.get("crpix").is_some());
         assert!(rec.get("pc").is_some());
-    }
-
-    #[test]
-    fn clone_box_works() {
-        let coord = LinearCoordinate::new(1, vec![], vec![]);
-        let boxed: Box<dyn Coordinate> = Box::new(coord);
-        let cloned = boxed.clone_box();
-        assert_eq!(cloned.coordinate_type(), CoordinateType::Linear);
     }
 
     #[test]

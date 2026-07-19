@@ -561,10 +561,6 @@ impl Coordinate for SpectralCoordinate {
 
         rec
     }
-
-    fn clone_box(&self) -> Box<dyn Coordinate> {
-        Box::new(self.clone())
-    }
 }
 
 impl SpectralCoordinate {
@@ -750,14 +746,6 @@ mod tests {
         assert!(rec.get("frequency_ref").is_some());
         assert!(rec.get("restfreq").is_some());
         assert!(rec.get("crval").is_some());
-    }
-
-    #[test]
-    fn clone_box_works() {
-        let coord = SpectralCoordinate::new(FrequencyRef::TOPO, 1e9, 1e6, 0.0, 0.0);
-        let boxed: Box<dyn Coordinate> = Box::new(coord);
-        let cloned = boxed.clone_box();
-        assert_eq!(cloned.coordinate_type(), CoordinateType::Spectral);
     }
 
     #[test]

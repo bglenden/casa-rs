@@ -8,11 +8,11 @@
 //!
 //! Corresponds to C++ `TabularCoordinate`.
 
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
-use crate::record_utils::{get_optional_string, get_required_vec_f64};
+use crate::record_utils::{get_optional_string, get_optional_vec_string, get_required_vec_f64};
 
 /// A one-axis coordinate defined by a pair of lookup tables.
 ///
@@ -75,8 +75,12 @@ impl TabularCoordinate {
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
         let pixel_values = get_required_vec_f64(rec, "pixelvalues")?;
         let world_values = get_required_vec_f64(rec, "worldvalues")?;
-        let name = get_optional_string(rec, "name").unwrap_or_else(|| "Tabular".into());
-        let unit = get_optional_string(rec, "unit").unwrap_or_default();
+        let name = get_optional_string(rec, "name")
+            .or_else(|| get_optional_vec_string(rec, "axes").and_then(|v| v.into_iter().next()))
+            .unwrap_or_else(|| "Tabular".into());
+        let unit = get_optional_string(rec, "unit")
+            .or_else(|| get_optional_vec_string(rec, "units").and_then(|v| v.into_iter().next()))
+            .unwrap_or_default();
         if pixel_values.len() != world_values.len() || pixel_values.len() < 2 {
             return Err(CoordinateError::InvalidRecord(
                 "tabular coordinate requires matching pixel/world tables with at least 2 entries"
@@ -223,8 +227,44 @@ impl Coordinate for TabularCoordinate {
         rec
     }
 
-    fn clone_box(&self) -> Box<dyn Coordinate> {
-        Box::new(self.clone())
+    fn to_casa_record(&self) -> RecordValue {
+        let mut rec = RecordValue::default();
+        rec.upsert(
+            "crval",
+            Value::Array(ArrayValue::from_f64_vec(self.reference_value())),
+        );
+        rec.upsert(
+            "crpix",
+            Value::Array(ArrayValue::from_f64_vec(self.reference_pixel())),
+        );
+        rec.upsert(
+            "cdelt",
+            Value::Array(ArrayValue::from_f64_vec(self.increment())),
+        );
+        rec.upsert(
+            "pc",
+            Value::Array(ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[1, 1]), vec![1.0])
+                    .expect("1x1 tabular pc matrix"),
+            )),
+        );
+        rec.upsert(
+            "axes",
+            Value::Array(ArrayValue::from_string_vec(self.axis_names())),
+        );
+        rec.upsert(
+            "units",
+            Value::Array(ArrayValue::from_string_vec(self.axis_units())),
+        );
+        rec.upsert(
+            "pixelvalues",
+            Value::Array(ArrayValue::from_f64_vec(self.pixel_values.clone())),
+        );
+        rec.upsert(
+            "worldvalues",
+            Value::Array(ArrayValue::from_f64_vec(self.world_values.clone())),
+        );
+        rec
     }
 }
 
@@ -321,14 +361,6 @@ mod tests {
         assert!(rec.get("pixelvalues").is_some());
         assert!(rec.get("worldvalues").is_some());
         assert!(rec.get("name").is_some());
-    }
-
-    #[test]
-    fn clone_box_works() {
-        let coord = make_linear_tab();
-        let boxed: Box<dyn Coordinate> = Box::new(coord);
-        let cloned = boxed.clone_box();
-        assert_eq!(cloned.coordinate_type(), CoordinateType::Tabular);
     }
 
     #[test]

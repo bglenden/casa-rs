@@ -653,10 +653,6 @@ impl Coordinate for DirectionCoordinate {
         );
         rec
     }
-
-    fn clone_box(&self) -> Box<dyn Coordinate> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]
@@ -795,14 +791,6 @@ mod tests {
         let rec = coord.to_record();
         assert!(rec.get("projection").is_some());
         assert!(rec.get("direction_ref").is_some());
-    }
-
-    #[test]
-    fn clone_box_preserves_type() {
-        let coord = make_sin_coord();
-        let boxed: Box<dyn Coordinate> = Box::new(coord);
-        let cloned = boxed.clone_box();
-        assert_eq!(cloned.coordinate_type(), CoordinateType::Direction);
     }
 
     #[test]

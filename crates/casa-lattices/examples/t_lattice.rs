@@ -11,8 +11,8 @@
 
 use casa_lattices::{
     ArrayLattice, LCBox, LCComplement, LCDifference, LCEllipsoid, LCIntersection, LCRegion,
-    LCUnion, Lattice, LatticeIter, LatticeIterExt, LatticeIterMut, LatticeMut, LatticeStepper,
-    PagedArray, SubLattice, SubLatticeMut, TempLattice, TileStepper, TiledLineStepper, TiledShape,
+    LCUnion, Lattice, LatticeIterExt, LatticeMut, PagedArray, ScratchSpace, SubLattice,
+    SubLatticeMut, TempLattice, TempStoragePolicy, TiledShape, TraversalSpec,
 };
 use ndarray::{ArrayD, IxDyn};
 
@@ -86,7 +86,7 @@ fn paged_array_demo() {
     let path = dir.path().join("demo_paged.table");
 
     // Create on disk.
-    let ts = TiledShape::new(vec![16, 16]);
+    let ts = TiledShape::new(vec![16, 16], 8).unwrap();
     let mut pa = PagedArray::<f64>::create(ts, &path).unwrap();
     println!(
         "Created PagedArray: shape={:?}, tile_shape={:?}",
@@ -110,7 +110,7 @@ fn paged_array_demo() {
     println!("  Reopened and verified: [0,0]=0, [15,15]=255");
 
     // Scratch (non-persistent) array.
-    let ts = TiledShape::new(vec![8, 8]);
+    let ts = TiledShape::new(vec![8, 8], 4).unwrap();
     let mut scratch = PagedArray::<i32>::new_scratch(ts).unwrap();
     scratch.set(42).unwrap();
     assert!(!scratch.is_persistent());
@@ -129,58 +129,52 @@ fn iteration_demo() {
     let lat = ArrayLattice::new(data.clone());
     let total: f64 = data.iter().sum();
 
-    // LatticeStepper + LatticeIter
-    let stepper = LatticeStepper::new(vec![12, 8], vec![4, 4], None);
-    let chunks: Vec<_> = LatticeIter::new(&lat, stepper).collect();
-    let chunk_sum: f64 = chunks.iter().flat_map(|c| c.iter()).sum();
+    let chunks: Vec<_> = lat
+        .traverse(TraversalSpec::chunks(vec![4, 4]))
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let chunk_sum: f64 = chunks.iter().map(|chunk| chunk.data.sum()).sum();
     assert_eq!(chunks.len(), 6); // 3×2 chunks
     assert_eq!(chunk_sum, total);
     println!(
-        "  LatticeStepper: {} chunks (4x4), sum={:.0} (matches total)",
+        "  TraversalSpec chunks: {} chunks (4x4), sum={:.0} (matches total)",
         chunks.len(),
         chunk_sum
     );
 
-    // TiledLineStepper + iter_lines (convenience)
-    let line_sum: f64 = lat.iter_lines(0).flat_map(|l| l.into_iter()).sum();
+    let line_sum: f64 = lat
+        .traverse(TraversalSpec::lines(0))
+        .map(|line| line.unwrap().data.sum())
+        .sum();
     assert_eq!(line_sum, total);
     println!("  iter_lines(axis=0): sum matches total");
 
-    // TileStepper + iter_tiles (convenience)
-    let tile_sum: f64 = lat.iter_tiles().flat_map(|t| t.into_iter()).sum();
+    let tile_sum: f64 = lat
+        .traverse(TraversalSpec::tiles())
+        .map(|tile| tile.unwrap().data.sum())
+        .sum();
     assert_eq!(tile_sum, total);
     println!("  iter_tiles: sum matches total");
 
-    // iter_chunks (convenience)
     let chunk_sum: f64 = lat
-        .iter_chunks(vec![6, 4])
-        .flat_map(|c| c.into_iter())
+        .traverse(TraversalSpec::chunks(vec![6, 4]))
+        .map(|chunk| chunk.unwrap().data.sum())
         .sum();
     assert_eq!(chunk_sum, total);
     println!("  iter_chunks([6,4]): sum matches total");
 
-    // Explicit TiledLineStepper
-    let tls = TiledLineStepper::new(vec![12, 8], vec![4, 4], 1);
-    let line_count = LatticeIter::new(&lat, tls).count();
-    println!("  TiledLineStepper(axis=1): {line_count} lines");
-
-    // Explicit TileStepper
-    let ts = TileStepper::new(vec![12, 8], vec![4, 4]);
-    let tile_count = LatticeIter::new(&lat, ts).count();
-    println!("  TileStepper(4x4): {tile_count} tiles");
-
     // Mutable iteration: scale all values by 0.5
     let mut lat_mut = ArrayLattice::new(data);
-    let stepper = LatticeStepper::new(vec![12, 8], vec![6, 4], None);
-    let mut iter = LatticeIterMut::new(&mut lat_mut, stepper);
-    while let Some(mut chunk) = iter.next_chunk() {
-        chunk.data.mapv_inplace(|v| v * 0.5);
-        chunk.write_back(&mut iter).unwrap();
-    }
-    let result = iter.lattice().get().unwrap();
+    lat_mut
+        .for_each_chunk_mut(TraversalSpec::chunks(vec![6, 4]), |data, _| {
+            data.mapv_inplace(|value| value * 0.5);
+            Ok(())
+        })
+        .unwrap();
+    let result = lat_mut.get().unwrap();
     assert_eq!(result[IxDyn(&[0, 0])], 0.0);
     assert!((result[IxDyn(&[11, 7])] - 47.5).abs() < 0.01);
-    println!("  LatticeIterMut: scaled all values by 0.5");
+    println!("  TraversalSpec mutable chunks: scaled all values by 0.5");
 }
 
 // -----------------------------------------------------------------------
@@ -191,7 +185,7 @@ fn temp_lattice_demo() {
     println!("\n=== TempLattice ===");
 
     // Small: in-memory.
-    let mut small = TempLattice::<f64>::new(vec![4, 4], None).unwrap();
+    let mut small = TempLattice::<f64>::new(vec![4, 4], TempStoragePolicy::Memory).unwrap();
     assert!(small.is_in_memory());
     assert!(!small.is_paged());
     small.set(3.125).unwrap();
@@ -203,7 +197,13 @@ fn temp_lattice_demo() {
     );
 
     // Large: paged (force with low threshold).
-    let mut large = TempLattice::<f64>::new(vec![10, 10], Some(10)).unwrap();
+    let mut large = TempLattice::<f64>::new(
+        vec![10, 10],
+        TempStoragePolicy::Paged {
+            scratch: ScratchSpace::SystemTemp,
+        },
+    )
+    .unwrap();
     assert!(!large.is_in_memory());
     assert!(large.is_paged());
     large.set(2.5).unwrap();

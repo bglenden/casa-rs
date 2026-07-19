@@ -38,8 +38,8 @@
 use std::time::Instant;
 
 use casa_lattices::{
-    ArrayLattice, Lattice, LatticeMut, LatticeStatistics, Statistic, TempLattice, array_fractile,
-    array_madfm, array_median, near_f32, near_tol,
+    ArrayLattice, Lattice, LatticeMut, LatticeStatistics, ScratchSpace, Statistic, TempLattice,
+    TempStoragePolicy, array_fractile, array_madfm, array_median, near_f32, near_tol,
 };
 use ndarray::{ArrayD, ArrayViewD, IxDyn};
 
@@ -445,17 +445,18 @@ fn demo_performance() {
         q3_arr[IxDyn(&[0])],
     );
 
-    let mut paged = TempLattice::<f32>::new(perf_shape.clone(), Some(1)).unwrap();
+    let mut paged = TempLattice::<f32>::new(
+        perf_shape.clone(),
+        TempStoragePolicy::Paged {
+            scratch: ScratchSpace::SystemTemp,
+        },
+    )
+    .unwrap();
     assert!(paged.is_paged(), "performance temp lattice should be paged");
     paged.put_slice(&data, &vec![0; perf_shape.len()]).unwrap();
-    let paged_tile_shape = match &paged {
-        TempLattice::Paged { array, .. } => array.tile_shape().to_vec(),
-        TempLattice::Memory(_) => unreachable!("forced paged temp lattice stayed in memory"),
-    };
     let paged_cursor_shape = paged.nice_cursor_shape();
-    println!(
-        "  TempLattice paged mode: tile_shape={paged_tile_shape:?}, cursor_shape={paged_cursor_shape:?}"
-    );
+    let paged_tile_shape = paged_cursor_shape.clone();
+    println!("  TempLattice paged mode: cursor_shape={paged_cursor_shape:?}");
 
     let mut paged_stats = LatticeStatistics::new(&paged);
     paged_stats.set_axes(axes.to_vec());

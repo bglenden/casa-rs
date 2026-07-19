@@ -3469,7 +3469,12 @@ mod tests {
     }
 
     fn make_persistent_image<T: ImageExprValue>(shape: Vec<usize>) -> crate::TempImage<T> {
-        crate::TempImage::new(shape, CoordinateSystem::new()).unwrap()
+        crate::TempImage::new(
+            shape,
+            CoordinateSystem::new(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -3643,7 +3648,12 @@ mod tests {
     fn compiled_save_as_carries_propagated_default_mask() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("masked_expr.image");
-        let mut image = crate::TempImage::<f32>::new(vec![2, 2], CoordinateSystem::new()).unwrap();
+        let mut image = crate::TempImage::<f32>::new(
+            vec![2, 2],
+            CoordinateSystem::new(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         image
             .put_slice(
                 &ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 3.0, 4.0]).unwrap(),
@@ -3681,7 +3691,12 @@ mod tests {
     fn borrowed_save_as_materializes_cpp_compatible_masked_image() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("borrowed_expr.image");
-        let mut image = crate::TempImage::<f32>::new(vec![2, 2], CoordinateSystem::new()).unwrap();
+        let mut image = crate::TempImage::<f32>::new(
+            vec![2, 2],
+            CoordinateSystem::new(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         image
             .put_slice(
                 &ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 3.0, 4.0]).unwrap(),

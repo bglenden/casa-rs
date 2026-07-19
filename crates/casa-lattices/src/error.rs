@@ -70,6 +70,10 @@ pub enum LatticeError {
         axis: usize,
     },
 
+    /// A byte-aware physical tile layout could not be planned.
+    #[error("invalid tile layout: {0}")]
+    TileLayout(String),
+
     /// A traversal specification is invalid for the target lattice.
     #[error("invalid traversal: {0}")]
     InvalidTraversal(String),

@@ -308,10 +308,6 @@ impl Coordinate for StokesCoordinate {
         );
         rec
     }
-
-    fn clone_box(&self) -> Box<dyn Coordinate> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]
@@ -486,14 +482,6 @@ mod tests {
                 1.0
             ])))
         );
-    }
-
-    #[test]
-    fn clone_box_works() {
-        let coord = make_iquv();
-        let boxed: Box<dyn Coordinate> = Box::new(coord);
-        let cloned = boxed.clone_box();
-        assert_eq!(cloned.coordinate_type(), CoordinateType::Stokes);
     }
 
     #[test]

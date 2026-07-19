@@ -9,14 +9,15 @@
 //! cargo run --example t_temp_lattice -p casa-lattices
 //! ```
 
-use casa_lattices::{Lattice, LatticeMut, TempLattice};
+use casa_lattices::{Lattice, LatticeMut, TempLattice, TempStoragePolicy};
 use ndarray::{ArrayD, IxDyn};
 
 fn main() {
     println!("=== TempLattice<f32> Demo ===\n");
 
     // 1. Create a 32x32 in-memory TempLattice<f32>.
-    let mut lat = TempLattice::<f32>::new(vec![32, 32], None).expect("create TempLattice");
+    let mut lat = TempLattice::<f32>::new(vec![32, 32], TempStoragePolicy::Memory)
+        .expect("create TempLattice");
     println!(
         "Created TempLattice: shape={:?}, ndim={}, nelements={}, in_memory={}",
         lat.shape(),

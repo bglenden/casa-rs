@@ -6,7 +6,8 @@ use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
 use casa_tables::{
-    ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema, TilePixel, TiledFileIO,
+    ColumnSchema, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerKind, Table, TableOptions,
+    TableSchema, TilePixel, TiledArrayStorage,
 };
 use casa_types::{Complex32, Complex64, PrimitiveType, RecordField, RecordValue, Value};
 use ndarray::{ArrayD, IxDyn};
@@ -42,7 +43,7 @@ const COLUMN_NAME: &str = "PagedArray";
 /// use casa_lattices::{PagedArray, TiledShape, Lattice, LatticeMut};
 ///
 /// // Create a new 64x64 PagedArray on disk:
-/// let ts = TiledShape::new(vec![64, 64]);
+/// let ts = TiledShape::new(vec![64, 64], std::mem::size_of::<f64>()).unwrap();
 /// let mut pa = PagedArray::<f64>::create(ts, "/tmp/test_paged.table").unwrap();
 /// pa.set(1.0).unwrap();
 ///
@@ -59,7 +60,7 @@ pub struct PagedArray<T: LatticeElement> {
     /// This mirrors C++ `PagedArray`'s direct slice access through the tiled
     /// array accessor instead of materializing the entire lattice for each
     /// unit-stride slice operation.
-    tiled_io: RefCell<Option<TiledFileIO>>,
+    tiled_io: RefCell<Option<TiledArrayStorage>>,
     shape: Vec<usize>,
     tile_shape: Vec<usize>,
     max_cache_bytes: Cell<usize>,
@@ -94,6 +95,12 @@ impl<T: LatticeElement> PagedArray<T> {
         matches!(
             T::PRIMITIVE_TYPE,
             PrimitiveType::Bool
+                | PrimitiveType::UInt8
+                | PrimitiveType::Int16
+                | PrimitiveType::UInt16
+                | PrimitiveType::Int32
+                | PrimitiveType::UInt32
+                | PrimitiveType::Int64
                 | PrimitiveType::Float32
                 | PrimitiveType::Float64
                 | PrimitiveType::Complex32
@@ -101,12 +108,12 @@ impl<T: LatticeElement> PagedArray<T> {
         )
     }
 
-    fn open_tiled_io(path: &Path, max_cache_bytes: usize) -> Result<TiledFileIO, LatticeError> {
-        if max_cache_bytes == 0 {
-            TiledFileIO::open(path, 0).map_err(tiled_io_err)
-        } else {
-            TiledFileIO::open_with_cache_limit(path, 0, max_cache_bytes).map_err(tiled_io_err)
-        }
+    fn open_tiled_io(
+        path: &Path,
+        max_cache_bytes: usize,
+    ) -> Result<TiledArrayStorage, LatticeError> {
+        TiledArrayStorage::open_for_pixel_type(path, 0, T::PRIMITIVE_TYPE, max_cache_bytes)
+            .map_err(tiled_io_err)
     }
 
     fn element_size_bytes() -> usize {
@@ -163,13 +170,31 @@ impl<T: LatticeElement> PagedArray<T> {
     }
 
     fn tiled_get_slice(
-        tio: &mut TiledFileIO,
+        tio: &mut TiledArrayStorage,
         start: &[usize],
         shape: &[usize],
     ) -> Result<ArrayD<T>, LatticeError> {
         match T::PRIMITIVE_TYPE {
             PrimitiveType::Bool => {
                 Self::cast_tiled_array(tio.get_slice::<bool>(start, shape).map_err(tiled_io_err)?)
+            }
+            PrimitiveType::UInt8 => {
+                Self::cast_tiled_array(tio.get_slice::<u8>(start, shape).map_err(tiled_io_err)?)
+            }
+            PrimitiveType::Int16 => {
+                Self::cast_tiled_array(tio.get_slice::<i16>(start, shape).map_err(tiled_io_err)?)
+            }
+            PrimitiveType::UInt16 => {
+                Self::cast_tiled_array(tio.get_slice::<u16>(start, shape).map_err(tiled_io_err)?)
+            }
+            PrimitiveType::Int32 => {
+                Self::cast_tiled_array(tio.get_slice::<i32>(start, shape).map_err(tiled_io_err)?)
+            }
+            PrimitiveType::UInt32 => {
+                Self::cast_tiled_array(tio.get_slice::<u32>(start, shape).map_err(tiled_io_err)?)
+            }
+            PrimitiveType::Int64 => {
+                Self::cast_tiled_array(tio.get_slice::<i64>(start, shape).map_err(tiled_io_err)?)
             }
             PrimitiveType::Float32 => {
                 Self::cast_tiled_array(tio.get_slice::<f32>(start, shape).map_err(tiled_io_err)?)
@@ -191,10 +216,28 @@ impl<T: LatticeElement> PagedArray<T> {
         }
     }
 
-    fn tiled_get_all(tio: &mut TiledFileIO) -> Result<ArrayD<T>, LatticeError> {
+    fn tiled_get_all(tio: &mut TiledArrayStorage) -> Result<ArrayD<T>, LatticeError> {
         match T::PRIMITIVE_TYPE {
             PrimitiveType::Bool => {
                 Self::cast_tiled_array(tio.get_all::<bool>().map_err(tiled_io_err)?)
+            }
+            PrimitiveType::UInt8 => {
+                Self::cast_tiled_array(tio.get_all::<u8>().map_err(tiled_io_err)?)
+            }
+            PrimitiveType::Int16 => {
+                Self::cast_tiled_array(tio.get_all::<i16>().map_err(tiled_io_err)?)
+            }
+            PrimitiveType::UInt16 => {
+                Self::cast_tiled_array(tio.get_all::<u16>().map_err(tiled_io_err)?)
+            }
+            PrimitiveType::Int32 => {
+                Self::cast_tiled_array(tio.get_all::<i32>().map_err(tiled_io_err)?)
+            }
+            PrimitiveType::UInt32 => {
+                Self::cast_tiled_array(tio.get_all::<u32>().map_err(tiled_io_err)?)
+            }
+            PrimitiveType::Int64 => {
+                Self::cast_tiled_array(tio.get_all::<i64>().map_err(tiled_io_err)?)
             }
             PrimitiveType::Float32 => {
                 Self::cast_tiled_array(tio.get_all::<f32>().map_err(tiled_io_err)?)
@@ -215,12 +258,18 @@ impl<T: LatticeElement> PagedArray<T> {
     }
 
     fn tiled_put_slice(
-        tio: &mut TiledFileIO,
+        tio: &mut TiledArrayStorage,
         data: &ArrayD<T>,
         start: &[usize],
     ) -> Result<(), LatticeError> {
         match T::PRIMITIVE_TYPE {
             PrimitiveType::Bool => Self::tiled_put_slice_typed::<bool>(tio, data, start),
+            PrimitiveType::UInt8 => Self::tiled_put_slice_typed::<u8>(tio, data, start),
+            PrimitiveType::Int16 => Self::tiled_put_slice_typed::<i16>(tio, data, start),
+            PrimitiveType::UInt16 => Self::tiled_put_slice_typed::<u16>(tio, data, start),
+            PrimitiveType::Int32 => Self::tiled_put_slice_typed::<i32>(tio, data, start),
+            PrimitiveType::UInt32 => Self::tiled_put_slice_typed::<u32>(tio, data, start),
+            PrimitiveType::Int64 => Self::tiled_put_slice_typed::<i64>(tio, data, start),
             PrimitiveType::Float32 => Self::tiled_put_slice_typed::<f32>(tio, data, start),
             PrimitiveType::Float64 => Self::tiled_put_slice_typed::<f64>(tio, data, start),
             PrimitiveType::Complex32 => Self::tiled_put_slice_typed::<Complex32>(tio, data, start),
@@ -232,7 +281,7 @@ impl<T: LatticeElement> PagedArray<T> {
     }
 
     fn tiled_put_slice_typed<U: 'static + Clone + TilePixel>(
-        tio: &mut TiledFileIO,
+        tio: &mut TiledArrayStorage,
         data: &ArrayD<T>,
         start: &[usize],
     ) -> Result<(), LatticeError> {
@@ -241,16 +290,23 @@ impl<T: LatticeElement> PagedArray<T> {
             .ok_or_else(|| {
                 LatticeError::Table("internal PagedArray tiled type mismatch".to_string())
             })?;
-        let fortran_view = typed.t();
-        if let Some(slice) = fortran_view.as_slice() {
+        if let Some(slice) = typed.as_slice() {
+            tio.put_slice_c_order::<U>(slice, start, typed.shape())
+                .map_err(tiled_io_err)?;
+            return Ok(());
+        }
+        if let Some(slice) = typed.as_slice_memory_order() {
             tio.put_slice_fortran::<U>(slice, start, typed.shape())
                 .map_err(tiled_io_err)?;
             return Ok(());
         }
         let contiguous = typed.as_standard_layout();
-        let slice = contiguous.as_slice().expect("contiguous C-order data");
-        tio.put_slice_c_order::<U>(slice, start, typed.shape())
-            .map_err(tiled_io_err)
+        tio.put_slice_c_order::<U>(
+            contiguous.as_slice().expect("contiguous C-order data"),
+            start,
+            typed.shape(),
+        )
+        .map_err(tiled_io_err)
     }
 
     /// Creates a new `PagedArray` at the given path with the specified shape.
@@ -260,20 +316,21 @@ impl<T: LatticeElement> PagedArray<T> {
     pub fn create(tiled_shape: TiledShape, path: impl AsRef<Path>) -> Result<Self, LatticeError> {
         let path = path.as_ref();
         let shape = tiled_shape.shape().to_vec();
-        let tile_shape = tiled_shape.tile_shape();
+        let tile_shape = tiled_shape.tile_shape().to_vec();
         let ndim = shape.len();
 
-        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        let schema = TableSchema::new(vec![ColumnSchema::array_variable(
             COLUMN_NAME,
             T::PRIMITIVE_TYPE,
-            shape.clone(),
+            Some(ndim),
         )])
         .map_err(|e| LatticeError::Table(e.to_string()))?;
 
         let mut table = Table::with_schema(schema);
 
-        // Add one row with a default-filled array.
-        let data = ArrayD::from_elem(IxDyn(&shape), T::default_value());
+        // The row is only a schema placeholder. The typed tiled seam below
+        // installs the real cube shape without allocating the full lattice.
+        let data = ArrayD::from_elem(IxDyn(&tile_shape), T::default_value());
         let array_value = value_bridge::to_array_value(&data);
         let row = RecordValue::new(vec![RecordField::new(
             COLUMN_NAME,
@@ -294,9 +351,24 @@ impl<T: LatticeElement> PagedArray<T> {
             .map_err(table_err)?;
 
         let tiled_io = if Self::supports_tiled_io() {
-            Some(Self::open_tiled_io(path, 0)?)
+            Some(
+                TiledArrayStorage::create_for_pixel_type(
+                    path,
+                    &shape,
+                    &tile_shape,
+                    T::PRIMITIVE_TYPE,
+                    cfg!(target_endian = "big"),
+                    0,
+                    COLUMN_NAME,
+                    DEFAULT_TILED_ARRAY_CACHE_BYTES,
+                )
+                .map_err(tiled_io_err)?,
+            )
         } else {
-            None
+            return Err(LatticeError::Table(format!(
+                "PagedArray does not support tiled storage for {:?}",
+                T::PRIMITIVE_TYPE
+            )));
         };
 
         Ok(Self {
@@ -304,7 +376,7 @@ impl<T: LatticeElement> PagedArray<T> {
             tiled_io: RefCell::new(tiled_io),
             shape,
             tile_shape,
-            max_cache_bytes: Cell::new(0),
+            max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
             path: Some(path.to_path_buf()),
             _phantom: std::marker::PhantomData,
         })
@@ -316,7 +388,7 @@ impl<T: LatticeElement> PagedArray<T> {
     /// `PagedArray(shape)` with no path argument.
     pub fn new_scratch(tiled_shape: TiledShape) -> Result<Self, LatticeError> {
         let shape = tiled_shape.shape().to_vec();
-        let tile_shape = tiled_shape.tile_shape();
+        let tile_shape = tiled_shape.tile_shape().to_vec();
 
         let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
             COLUMN_NAME,
@@ -351,50 +423,30 @@ impl<T: LatticeElement> PagedArray<T> {
     /// The table must have been created by a `PagedArray` (Rust or C++),
     /// with a single column named `"PagedArray"`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, LatticeError> {
-        Self::open_with_cache(path, 0)
+        Self::open_with_cache(path, DEFAULT_TILED_ARRAY_CACHE_BYTES)
     }
 
     /// Opens an existing `PagedArray` from disk with an explicit cache size.
     ///
-    /// A `max_cache_bytes` value of `0` keeps the existing "no explicit limit"
-    /// behavior, while non-zero values allow slice-heavy callers to force the
-    /// bounded LRU path instead of fully warming the backing tiled payload.
+    /// A `max_cache_bytes` value of `0` disables tile retention. Use [`Self::open`]
+    /// for the repository's fixed 64 MiB default.
     pub fn open_with_cache(
         path: impl AsRef<Path>,
         max_cache_bytes: usize,
     ) -> Result<Self, LatticeError> {
         let path = path.as_ref();
-        let table = Table::open(TableOptions::new(path)).map_err(table_err)?;
-
-        // Read the shape from the cell.
-        let cell = table
-            .cell_accessor(0, COLUMN_NAME)
-            .map_err(table_err)?
-            .value()
-            .map_err(table_err)?
-            .ok_or_else(|| {
-                LatticeError::Table("PagedArray column not found or no rows".to_string())
-            })?;
-
-        let shape = match cell {
-            Value::Array(av) => av.shape().to_vec(),
-            _ => {
-                return Err(LatticeError::Table(
-                    "PagedArray column is not an array".to_string(),
-                ));
-            }
-        };
-
         let tiled_io = if Self::supports_tiled_io() {
             Some(Self::open_tiled_io(path, max_cache_bytes)?)
         } else {
-            None
+            return Err(LatticeError::Table(format!(
+                "PagedArray does not support tiled storage for {:?}",
+                T::PRIMITIVE_TYPE
+            )));
         };
-        let (shape, tile_shape) = if let Some(ref tio) = tiled_io {
-            (tio.cube_shape().to_vec(), tio.tile_shape().to_vec())
-        } else {
-            (shape.clone(), TiledShape::default_tile_shape(&shape))
-        };
+        let tio = tiled_io.as_ref().expect("supported tiled PagedArray");
+        let shape = tio.cube_shape().to_vec();
+        let tile_shape = tio.tile_shape().to_vec();
+        let table = Table::open_metadata_only(TableOptions::new(path)).map_err(table_err)?;
 
         Ok(Self {
             table: RefCell::new(Some(table)),
@@ -419,8 +471,7 @@ impl<T: LatticeElement> PagedArray<T> {
 
     /// Returns the configured maximum tile-cache size in pixels.
     ///
-    /// A value of `0` means "no explicit maximum", matching C++ casacore's
-    /// `PagedArray::maximumCacheSize()` convention.
+    /// Persistent arrays always report their effective bounded cache.
     pub fn maximum_cache_size_pixels(&self) -> usize {
         let elem_size = Self::element_size_bytes();
         let max_cache_bytes = self.max_cache_bytes.get();
@@ -433,8 +484,7 @@ impl<T: LatticeElement> PagedArray<T> {
 
     /// Sets the maximum tile-cache size in pixels.
     ///
-    /// A value of `0` removes the explicit limit. Persistent arrays reopen
-    /// their tiled I/O handle so subsequent reads use the new cache policy.
+    /// A value of `0` disables tile retention.
     ///
     /// Mirrors C++ `PagedArray::setMaximumCacheSize`.
     pub fn set_maximum_cache_size_pixels(
@@ -453,8 +503,7 @@ impl<T: LatticeElement> PagedArray<T> {
 
     /// Sets the cache size to hold approximately `how_many_tiles` tiles.
     ///
-    /// A value of `0` removes the explicit maximum. Persistent arrays reopen
-    /// their tiled I/O handle so subsequent reads use the new cache policy.
+    /// A value of `0` disables tile retention.
     ///
     /// Mirrors C++ `PagedArray::setCacheSizeInTiles`.
     pub fn set_cache_size_in_tiles(&mut self, how_many_tiles: usize) -> Result<(), LatticeError> {
@@ -648,10 +697,43 @@ impl<T: LatticeElement> Lattice<T> for PagedArray<T> {
         }
 
         let is_unit_stride = stride.iter().all(|&s| s == 1);
-        if self.path.is_some() && is_unit_stride {
+        if self.path.is_some() {
             self.auto_reopen_tiled_io()?;
             if let Some(ref mut tio) = *self.tiled_io.borrow_mut() {
-                return Self::tiled_get_slice(tio, start, shape);
+                if is_unit_stride {
+                    return Self::tiled_get_slice(tio, start, shape);
+                }
+                let bounding_shape = shape
+                    .iter()
+                    .zip(stride.iter())
+                    .map(|(&count, &step)| {
+                        if step == 0 {
+                            return Err(LatticeError::InvalidTraversal(
+                                "slice stride must be positive".into(),
+                            ));
+                        }
+                        count
+                            .saturating_sub(1)
+                            .checked_mul(step)
+                            .and_then(|extent| extent.checked_add(usize::from(count > 0)))
+                            .ok_or_else(|| {
+                                LatticeError::InvalidTraversal(
+                                    "strided slice extent overflow".into(),
+                                )
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let bounding = Self::tiled_get_slice(tio, start, &bounding_shape)?;
+                let slice_info: Vec<ndarray::SliceInfoElem> = bounding_shape
+                    .iter()
+                    .zip(stride.iter())
+                    .map(|(&extent, &step)| ndarray::SliceInfoElem::Slice {
+                        start: 0,
+                        end: Some(extent as isize),
+                        step: step as isize,
+                    })
+                    .collect();
+                return Ok(bounding.slice(slice_info.as_slice()).to_owned());
             }
         }
 
@@ -802,9 +884,23 @@ impl<T: LatticeElement> LatticeMut<T> for PagedArray<T> {
     }
 
     fn set(&mut self, value: T) -> Result<(), LatticeError> {
-        let data = ArrayD::from_elem(IxDyn(&self.shape), value);
-        let start = vec![0; self.shape.len()];
-        self.put_slice(&data, &start)
+        if self.tiled_io.borrow().is_some() {
+            let cursors = crate::TraversalCursorIter::new(
+                self.shape.clone(),
+                self.tile_shape.clone(),
+                crate::TraversalSpec::tiles(),
+            );
+            for cursor in cursors {
+                let cursor = cursor?;
+                let data = ArrayD::from_elem(IxDyn(&cursor.shape), value.clone());
+                self.put_slice(&data, &cursor.position)?;
+            }
+            Ok(())
+        } else {
+            let data = ArrayD::from_elem(IxDyn(&self.shape), value);
+            let start = vec![0; self.shape.len()];
+            self.put_slice(&data, &start)
+        }
     }
 }
 
@@ -827,7 +923,7 @@ mod tests {
 
     #[test]
     fn scratch_create_and_access() {
-        let ts = TiledShape::new(vec![4, 4]);
+        let ts = TiledShape::new(vec![4, 4], 8).unwrap();
         let mut pa = PagedArray::<f64>::new_scratch(ts).unwrap();
 
         assert_eq!(pa.shape(), &[4, 4]);
@@ -844,7 +940,7 @@ mod tests {
 
     #[test]
     fn scratch_set_all() {
-        let ts = TiledShape::new(vec![3, 3]);
+        let ts = TiledShape::new(vec![3, 3], 4).unwrap();
         let mut pa = PagedArray::<i32>::new_scratch(ts).unwrap();
         pa.set(42).unwrap();
         let data = pa.get().unwrap();
@@ -853,7 +949,7 @@ mod tests {
 
     #[test]
     fn scratch_get_slice() {
-        let ts = TiledShape::new(vec![4, 4]);
+        let ts = TiledShape::new(vec![4, 4], 8).unwrap();
         let mut pa = PagedArray::<f64>::new_scratch(ts).unwrap();
 
         let data = ArrayD::from_shape_fn(IxDyn(&[4, 4]), |idx| (idx[0] * 4 + idx[1]) as f64);
@@ -871,7 +967,7 @@ mod tests {
         let path = dir.path().join("test_paged.table");
 
         {
-            let ts = TiledShape::new(vec![8, 8]);
+            let ts = TiledShape::new(vec![8, 8], 8).unwrap();
             let mut pa = PagedArray::<f64>::create(ts, &path).unwrap();
             pa.set(2.5).unwrap();
             pa.flush().unwrap();
@@ -903,12 +999,13 @@ mod tests {
 
     #[test]
     fn multiple_types() {
-        let ts = TiledShape::new(vec![4]);
-        let mut pa_f32 = PagedArray::<f32>::new_scratch(ts.clone()).unwrap();
+        let mut pa_f32 =
+            PagedArray::<f32>::new_scratch(TiledShape::new(vec![4], 4).unwrap()).unwrap();
         pa_f32.set(1.5f32).unwrap();
         assert_eq!(pa_f32.get_at(&[0]).unwrap(), 1.5f32);
 
-        let mut pa_i64 = PagedArray::<i64>::new_scratch(ts).unwrap();
+        let mut pa_i64 =
+            PagedArray::<i64>::new_scratch(TiledShape::new(vec![4], 8).unwrap()).unwrap();
         pa_i64.set(100i64).unwrap();
         assert_eq!(pa_i64.get_at(&[0]).unwrap(), 100i64);
     }
@@ -917,7 +1014,7 @@ mod tests {
     fn temp_close_and_reopen_persistent() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("close_reopen.table");
-        let ts = TiledShape::new(vec![4, 4]);
+        let ts = TiledShape::new(vec![4, 4], 8).unwrap();
         let mut pa = PagedArray::<f64>::create(ts, &path).unwrap();
         pa.set(7.5).unwrap();
         pa.flush().unwrap();
@@ -937,7 +1034,7 @@ mod tests {
     fn temp_close_read_auto_reopens() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("auto_reopen.table");
-        let ts = TiledShape::new(vec![4, 4]);
+        let ts = TiledShape::new(vec![4, 4], 8).unwrap();
         let mut pa = PagedArray::<f64>::create(ts, &path).unwrap();
         pa.set(3.0).unwrap();
         pa.flush().unwrap();
@@ -1024,7 +1121,10 @@ mod tests {
         let ts = TiledShape::with_tile_shape(vec![16, 16, 16], vec![8, 4, 2]).unwrap();
         let mut pa = PagedArray::<f32>::create(ts, &path).unwrap();
 
-        assert_eq!(pa.maximum_cache_size_pixels(), 0);
+        assert_eq!(
+            pa.maximum_cache_size_pixels(),
+            DEFAULT_TILED_ARRAY_CACHE_BYTES / std::mem::size_of::<f32>()
+        );
         pa.set_cache_size_in_tiles(3).unwrap();
         assert_eq!(pa.maximum_cache_size_pixels(), 3 * 8 * 4 * 2);
 
@@ -1053,7 +1153,7 @@ mod tests {
 
     #[test]
     fn temp_close_scratch_is_noop() {
-        let ts = TiledShape::new(vec![4]);
+        let ts = TiledShape::new(vec![4], 4).unwrap();
         let mut pa = PagedArray::<f32>::new_scratch(ts).unwrap();
         pa.set(1.0).unwrap();
         pa.temp_close().unwrap();

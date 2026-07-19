@@ -1102,7 +1102,9 @@ where
     let array = ArrayD::from_shape_vec(IxDyn(&shape).f(), data).map_err(|error| {
         ImageError::InvalidMetadata(format!("invalid FITS image shape: {error}"))
     })?;
-    let tile_shape = TiledShape::new(shape.clone()).tile_shape();
+    let tile_shape = TiledShape::new(shape.clone(), T::ELEM_SIZE)?
+        .tile_shape()
+        .to_vec();
     let mut image =
         PagedImage::<T>::create_with_tile_shape(shape.clone(), tile_shape, coordinates, imagename)?;
     image.put_slice(&array, &vec![0; shape.len()])?;
@@ -2100,7 +2102,14 @@ where
     )?;
     let out_shape = output_data.shape().to_vec();
     let legacy_coordinates = image.table().keywords().get("coords").cloned();
-    let mut output = TempImage::<f32>::new(out_shape.clone(), image.coordinates().clone())?;
+    let mut output = TempImage::<f32>::new(
+        out_shape.clone(),
+        image.coordinates().clone(),
+        casa_lattices::TempStoragePolicy::Auto {
+            memory_budget_bytes: 64 * 1024 * 1024,
+            scratch: casa_lattices::ScratchSpace::SystemTemp,
+        },
+    )?;
     output.set_units(moment_units(image.units(), request.moments))?;
     output.set_image_info(&collapsed_image_info(image)?)?;
     output.set_misc_info(image.misc_info())?;
@@ -2288,7 +2297,14 @@ where
     let mask = image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
     let output_coordinates = subimage_coordinates(image.coordinates(), &selection.start)?;
     let legacy_coordinates = legacy_subimage_coordinates(image, &selection.start);
-    let mut output = TempImage::<T>::new(selection.shape.clone(), output_coordinates)?;
+    let mut output = TempImage::<T>::new(
+        selection.shape.clone(),
+        output_coordinates,
+        casa_lattices::TempStoragePolicy::Auto {
+            memory_budget_bytes: 64 * 1024 * 1024,
+            scratch: casa_lattices::ScratchSpace::SystemTemp,
+        },
+    )?;
     output.set_units(image.units())?;
     output.set_image_info(&image.image_info()?)?;
     output.set_misc_info(image.misc_info())?;
@@ -2489,7 +2505,14 @@ where
             *valid = *valid && *mask;
         });
     }
-    let mut output = TempImage::<T>::new(shape.clone(), lhs.coordinates().clone())?;
+    let mut output = TempImage::<T>::new(
+        shape.clone(),
+        lhs.coordinates().clone(),
+        casa_lattices::TempStoragePolicy::Auto {
+            memory_budget_bytes: 64 * 1024 * 1024,
+            scratch: casa_lattices::ScratchSpace::SystemTemp,
+        },
+    )?;
     let legacy_coordinates = lhs.table().keywords().get("coords").cloned();
     output.set_units(lhs.units())?;
     output.set_image_info(&lhs.image_info()?)?;
@@ -2584,7 +2607,14 @@ where
             *valid = *valid && *mask;
         });
     }
-    let mut output = TempImage::<T>::new(shape.clone(), image.coordinates().clone())?;
+    let mut output = TempImage::<T>::new(
+        shape.clone(),
+        image.coordinates().clone(),
+        casa_lattices::TempStoragePolicy::Auto {
+            memory_budget_bytes: 64 * 1024 * 1024,
+            scratch: casa_lattices::ScratchSpace::SystemTemp,
+        },
+    )?;
     let legacy_coordinates = image.table().keywords().get("coords").cloned();
     output.set_units(image.units())?;
     output.set_image_info(&image.image_info()?)?;
@@ -2648,7 +2678,14 @@ where
             *valid = *valid && *mask;
         });
     }
-    let mut output = TempImage::<T>::new(shape.clone(), image.coordinates().clone())?;
+    let mut output = TempImage::<T>::new(
+        shape.clone(),
+        image.coordinates().clone(),
+        casa_lattices::TempStoragePolicy::Auto {
+            memory_budget_bytes: 64 * 1024 * 1024,
+            scratch: casa_lattices::ScratchSpace::SystemTemp,
+        },
+    )?;
     let legacy_coordinates = image.table().keywords().get("coords").cloned();
     output.set_units(image.units())?;
     output.set_image_info(&image.image_info()?)?;
@@ -2897,7 +2934,14 @@ fn save_regridded_image<T>(
 where
     T: ImagePixel + Into<f64> + From<f32> + Copy,
 {
-    let mut output = TempImage::<T>::new(output_shape.clone(), template.coordinates().clone())?;
+    let mut output = TempImage::<T>::new(
+        output_shape.clone(),
+        template.coordinates().clone(),
+        casa_lattices::TempStoragePolicy::Auto {
+            memory_budget_bytes: 64 * 1024 * 1024,
+            scratch: casa_lattices::ScratchSpace::SystemTemp,
+        },
+    )?;
     let legacy_coordinates = template.table().keywords().get("coords").cloned();
     output.set_units(input.units())?;
     output.set_image_info(&input.image_info()?)?;
@@ -2995,7 +3039,14 @@ fn feather_typed(
         .for_each(|out, valid| {
             *out = *out && *valid;
         });
-    let mut output = TempImage::<f32>::new(high_shape.clone(), high.coordinates().clone())?;
+    let mut output = TempImage::<f32>::new(
+        high_shape.clone(),
+        high.coordinates().clone(),
+        casa_lattices::TempStoragePolicy::Auto {
+            memory_budget_bytes: 64 * 1024 * 1024,
+            scratch: casa_lattices::ScratchSpace::SystemTemp,
+        },
+    )?;
     let legacy_coordinates = high.table().keywords().get("coords").cloned();
     output.set_units(high.units())?;
     output.set_image_info(&high.image_info()?)?;
@@ -3629,7 +3680,14 @@ where
             }
         }
     }
-    let mut output = TempImage::<f32>::new(output_shape.clone(), image.coordinates().clone())?;
+    let mut output = TempImage::<f32>::new(
+        output_shape.clone(),
+        image.coordinates().clone(),
+        casa_lattices::TempStoragePolicy::Auto {
+            memory_budget_bytes: 64 * 1024 * 1024,
+            scratch: casa_lattices::ScratchSpace::SystemTemp,
+        },
+    )?;
     output.set_units(image.units())?;
     output.set_image_info(&collapsed_image_info(image)?)?;
     output.set_misc_info(image.misc_info())?;
@@ -4049,7 +4107,7 @@ fn integrated_scale_factor<T: ImagePixel>(
 fn coordinate_for_axis(
     coords: &CoordinateSystem,
     axis: usize,
-) -> Option<&dyn casa_coordinates::Coordinate> {
+) -> Option<&casa_coordinates::CoordinateModel> {
     let mut offset = 0;
     for idx in 0..coords.n_coordinates() {
         let coord = coords.coordinate(idx);
@@ -4065,8 +4123,8 @@ fn coordinate_for_axis(
 fn spectral_rest_frequency(coords: &CoordinateSystem) -> Option<f64> {
     for idx in 0..coords.n_coordinates() {
         let coord = coords.coordinate(idx);
-        if coord.coordinate_type() == CoordinateType::Spectral {
-            let record = coord.to_record();
+        if let casa_coordinates::CoordinateModel::Spectral(spectral) = coord {
+            let record = casa_coordinates::Coordinate::to_record(spectral.as_ref());
             match record.get("restfreq") {
                 Some(Value::Scalar(ScalarValue::Float64(value))) => return Some(*value),
                 Some(Value::Scalar(ScalarValue::Float32(value))) => return Some(f64::from(*value)),
@@ -4225,7 +4283,7 @@ fn casa_fits_export_layout(
     let mut reordered = CoordinateSystem::new().with_obs_info(coordinates.obs_info().clone());
     let mut axis_order = Vec::new();
     for (_, coordinate_index, axes) in &blocks {
-        reordered.add_coordinate(coordinates.coordinate(*coordinate_index).clone_box());
+        reordered.add_coordinate(coordinates.coordinate(*coordinate_index).clone());
         axis_order.extend(axes.iter().copied());
     }
     let shape = axis_order

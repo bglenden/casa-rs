@@ -6,12 +6,16 @@
 
 #![cfg(feature = "cpp-interop-tests")]
 
-use casa_coordinates::{CoordinateSystem, DirectionCoordinate, Projection, ProjectionType};
+use casa_coordinates::{
+    CoordinateSystem, DirectionCoordinate, LinearCoordinate, Projection, ProjectionType,
+    SpectralCoordinate, StokesCoordinate, StokesType, TabularCoordinate,
+};
 use casa_images::{Image, OpenedImageView, PagedImage};
 use casa_test_support::{
     CppUnsupportedRegionKind, ImageOracle, casacore_oracle_available, discover_casa_python,
 };
 use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{Complex32, Complex64};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use std::process::Command;
@@ -301,6 +305,50 @@ fn rc_rust_direction_image_cpp_read_2d() {
     let cpp_data = ImageOracle::read_image_data(&path, data.len()).unwrap();
     assert_eq!(cpp_data, data);
     assert_eq!(ImageOracle::read_image_units(&path).unwrap(), "Jy/beam");
+}
+
+#[test]
+fn rc_rust_all_coordinate_models_cpp_read() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping rc_rust_all_coordinate_models_cpp_read: C++ casacore not available");
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rc_all_coordinates.image");
+    let shape = vec![4, 4, 2, 1, 3, 4];
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        [0.0, std::f64::consts::FRAC_PI_4],
+        [-1.0e-4, 1.0e-4],
+        [2.0, 2.0],
+    ));
+    coordinates.add_coordinate(LinearCoordinate::new(
+        1,
+        vec!["TIME".into()],
+        vec!["s".into()],
+    ));
+    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    coordinates.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        1.42e9,
+        1.0e6,
+        0.0,
+        1.42040575e9,
+    ));
+    coordinates.add_coordinate(TabularCoordinate::new(
+        vec![0.0, 1.0, 2.0, 3.0],
+        vec![10.0, 20.0, 30.0, 40.0],
+        "CUSTOM",
+        "m",
+    ));
+
+    let mut image = Image::create(shape, coordinates, &path).unwrap();
+    image.save().unwrap();
+
+    assert_eq!(ImageOracle::read_image_coordinate_count(&path).unwrap(), 5);
 }
 
 #[test]

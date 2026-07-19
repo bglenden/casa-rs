@@ -2599,7 +2599,23 @@ fn build_coordinate_summary_lines(coords: &CoordinateSystem, shape: &[usize]) ->
         let reference_values = coord.reference_value();
         let reference_pixels = coord.reference_pixel();
         let increments = coord.increment();
-        let record = coord.to_record();
+        let record = match coord {
+            casa_coordinates::CoordinateModel::Linear(value) => {
+                casa_coordinates::Coordinate::to_record(value)
+            }
+            casa_coordinates::CoordinateModel::Direction(value) => {
+                casa_coordinates::Coordinate::to_record(value)
+            }
+            casa_coordinates::CoordinateModel::Spectral(value) => {
+                casa_coordinates::Coordinate::to_record(value.as_ref())
+            }
+            casa_coordinates::CoordinateModel::Stokes(value) => {
+                casa_coordinates::Coordinate::to_record(value)
+            }
+            casa_coordinates::CoordinateModel::Tabular(value) => {
+                casa_coordinates::Coordinate::to_record(value)
+            }
+        };
 
         if !lines.is_empty() {
             lines.push(String::new());

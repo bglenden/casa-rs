@@ -11,7 +11,7 @@ use casa_lattices::execution::{
     try_map_traversal_cursors_ordered_with_strategy,
 };
 use casa_lattices::{ExecutionPolicy, Lattice, LatticeError, TraversalCursorIter, TraversalSpec};
-use casa_tables::{TilePixel, TiledFileIO};
+use casa_tables::{TilePixel, TiledArrayStorage};
 use casa_types::{ArrayD, RecordValue};
 use ndarray::{IxDyn, Zip};
 
@@ -58,7 +58,7 @@ impl<T: ImageExprValue> CompiledImageArena<T> {
 
 struct CompiledEvalContext<T: ImageExprValue> {
     opened_sources: Vec<Option<PagedImage<T>>>,
-    opened_tiled_sources: Vec<Option<TiledFileIO>>,
+    opened_tiled_sources: Vec<Option<TiledArrayStorage>>,
     cached_source_slices: Vec<Option<CachedSourceSlice<T>>>,
 }
 
@@ -82,7 +82,7 @@ impl<T: ImageExprValue> CompiledEvalContext<T> {
         &'a mut self,
         arena: &CompiledImageArena<T>,
         source_id: usize,
-    ) -> Result<&'a mut TiledFileIO, LatticeError>
+    ) -> Result<&'a mut TiledArrayStorage, LatticeError>
     where
         T: TilePixel,
     {
@@ -93,8 +93,10 @@ impl<T: ImageExprValue> CompiledEvalContext<T> {
                     "compiled paged source expected persistent image".to_string(),
                 ));
             };
-            let tiled_io = TiledFileIO::open_with_cache_limit(path.as_path(), 1, *cache_bytes)
-                .or_else(|_| TiledFileIO::open_with_cache_limit(path.as_path(), 0, *cache_bytes))
+            let tiled_io = TiledArrayStorage::open_with_cache::<T>(path.as_path(), 1, *cache_bytes)
+                .or_else(|_| {
+                    TiledArrayStorage::open_with_cache::<T>(path.as_path(), 0, *cache_bytes)
+                })
                 .map_err(|e| LatticeError::Table(e.to_string()))?;
             self.opened_tiled_sources[source_id] = Some(tiled_io);
         }
@@ -1190,7 +1192,7 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     /// use casa_images::{ImageExpr, TempImage};
     /// use casa_lattices::{ExecutionPolicy, LatticeMut};
     ///
-    /// let mut image = TempImage::<f32>::new(vec![16, 16], CoordinateSystem::new()).unwrap();
+    /// let mut image = TempImage::<f32>::new(vec![16, 16], CoordinateSystem::new(), casa_lattices::TempStoragePolicy::Memory).unwrap();
     /// image.set(2.0).unwrap();
     ///
     /// let mut compiled = ImageExpr::from_image(&image)
@@ -1651,7 +1653,12 @@ mod tests {
     }
 
     fn make_temp_image(shape: Vec<usize>, values: Vec<f32>) -> TempImage<f32> {
-        let mut image = TempImage::<f32>::new(shape.clone(), make_coords()).unwrap();
+        let mut image = TempImage::<f32>::new(
+            shape.clone(),
+            make_coords(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         image
             .put_slice(
                 &ArrayD::from_shape_vec(IxDyn(&shape), values).unwrap(),
@@ -1966,7 +1973,12 @@ mod tests {
     fn compiled_save_as_preserves_metadata_and_mask() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("compiled.image");
-        let mut image = TempImage::<f32>::new(vec![2, 2], make_coords()).unwrap();
+        let mut image = TempImage::<f32>::new(
+            vec![2, 2],
+            make_coords(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         image
             .put_slice(
                 &ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 3.0, 4.0]).unwrap(),
