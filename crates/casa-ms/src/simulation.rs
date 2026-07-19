@@ -2514,7 +2514,7 @@ struct FitsModelDirectionWcs {
 }
 
 impl FitsModelDirectionWcs {
-    fn coordinate(&self) -> &dyn Coordinate {
+    fn coordinate(&self) -> &casa_coordinates::CoordinateModel {
         self.coordinate_system.coordinate(self.coordinate_index)
     }
 }
@@ -2952,13 +2952,12 @@ fn apply_simulator_primary_beam_power(
     let Some(raw_increments) = model.direction_increment_rad else {
         return pixels;
     };
-    let imported_coordinate;
-    let pb_coordinate: &dyn Coordinate =
+    let (pointing_pixel, increments) =
         if let Some(reference_direction_rad) = model.reference_direction_rad {
             // CASA simobserve imports the FITS model into a casacore image and
             // recenters the direction coordinate on the image center before
             // PBMath applies the primary beam.
-            imported_coordinate = DirectionCoordinate::new(
+            let imported_coordinate = DirectionCoordinate::new(
                 DirectionRef::J2000,
                 Projection::new(ProjectionType::SIN),
                 reference_direction_rad,
@@ -2970,14 +2969,16 @@ fn apply_simulator_primary_beam_power(
             )
             .with_longpole(std::f64::consts::PI)
             .with_latpole(reference_direction_rad[1]);
-            &imported_coordinate
+            let Ok(pointing_pixel) = imported_coordinate.to_pixel(&pointing_direction_rad) else {
+                return pixels;
+            };
+            (pointing_pixel, imported_coordinate.increment())
         } else {
-            coordinate
+            let Ok(pointing_pixel) = coordinate.to_pixel(&pointing_direction_rad) else {
+                return pixels;
+            };
+            (pointing_pixel, coordinate.increment())
         };
-    let Ok(pointing_pixel) = pb_coordinate.to_pixel(&pointing_direction_rad) else {
-        return pixels;
-    };
-    let increments = pb_coordinate.increment();
     if pointing_pixel.len() < 2 || increments.len() < 2 {
         return pixels;
     }
@@ -5702,13 +5703,13 @@ mod tests {
         pixels[(3, 3)] = 1.0;
         pixels[(4, 3)] = 1.0;
         let mut coordinate_system = CoordinateSystem::new();
-        coordinate_system.add_coordinate(Box::new(casa_coordinates::DirectionCoordinate::new(
+        coordinate_system.add_coordinate(casa_coordinates::DirectionCoordinate::new(
             DirectionRef::J2000,
             casa_coordinates::Projection::new(casa_coordinates::ProjectionType::SIN),
             [1.25, -0.3],
             [-1.0e-3, 1.0e-3],
             [1.0, 1.0],
-        )));
+        ));
         let model = FitsModelImage {
             pixels,
             channel_planes: Vec::new(),

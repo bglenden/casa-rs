@@ -4124,12 +4124,7 @@ fn spectral_rest_frequency(coords: &CoordinateSystem) -> Option<f64> {
     for idx in 0..coords.n_coordinates() {
         let coord = coords.coordinate(idx);
         if let casa_coordinates::CoordinateModel::Spectral(spectral) = coord {
-            let record = casa_coordinates::Coordinate::to_record(spectral.as_ref());
-            match record.get("restfreq") {
-                Some(Value::Scalar(ScalarValue::Float64(value))) => return Some(*value),
-                Some(Value::Scalar(ScalarValue::Float32(value))) => return Some(f64::from(*value)),
-                _ => {}
-            }
+            return Some(spectral.rest_frequency());
         }
     }
     None
@@ -4391,21 +4386,21 @@ mod tests {
     #[test]
     fn casa_fits_export_layout_places_spectral_before_stokes() {
         let mut coordinates = CoordinateSystem::new();
-        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+        coordinates.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [1.0, 0.5],
             [-1.0e-6, 1.0e-6],
             [4.0, 5.0],
-        )));
-        coordinates.add_coordinate(Box::new(StokesCoordinate::new(vec![StokesType::I])));
-        coordinates.add_coordinate(Box::new(SpectralCoordinate::new(
+        ));
+        coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+        coordinates.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
             372.0e9,
             1.0e6,
             0.0,
             372.0e9,
-        )));
+        ));
 
         let layout = casa_fits_export_layout(&coordinates, &[10, 11, 1, 7]);
         assert_eq!(layout.axis_order, vec![0, 1, 3, 2]);
@@ -4960,24 +4955,21 @@ mod tests {
         let second_fits = temp.path().join("second.fits");
 
         let mut coordinates = CoordinateSystem::new();
-        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+        coordinates.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [1.2, -0.4],
             [-2.0e-6, 3.0e-6],
             [1.0, 0.0],
-        )));
-        coordinates.add_coordinate(Box::new(StokesCoordinate::new(vec![
-            StokesType::I,
-            StokesType::Q,
-        ])));
-        coordinates.add_coordinate(Box::new(SpectralCoordinate::new(
+        ));
+        coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I, StokesType::Q]));
+        coordinates.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
             372.0e9,
             2.0e6,
             2.0,
             372.0e9,
-        )));
+        ));
 
         let shape = vec![3, 2, 2, 5];
         let mut source =
@@ -5086,20 +5078,20 @@ mod tests {
         let rest_frequency = 372.0e9;
         let frequency_increment = -620_000.0;
         let mut coordinates = CoordinateSystem::new();
-        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+        coordinates.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [1.2, -0.4],
             [-2.0e-6, 3.0e-6],
             [0.0, 0.0],
-        )));
-        coordinates.add_coordinate(Box::new(SpectralCoordinate::new(
+        ));
+        coordinates.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
             rest_frequency,
             frequency_increment,
             0.0,
             rest_frequency,
-        )));
+        ));
         let shape = vec![2, 2, 3];
         let mut image =
             PagedImage::<f32>::create(shape.clone(), coordinates, &source_path).unwrap();
@@ -5176,20 +5168,20 @@ mod tests {
 
     fn create_spectral_test_image(path: &Path) {
         let mut coordinates = CoordinateSystem::new();
-        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+        coordinates.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [1.2, -0.4],
             [-2.0e-6, 3.0e-6],
             [0.0, 0.0],
-        )));
-        coordinates.add_coordinate(Box::new(SpectralCoordinate::new(
+        ));
+        coordinates.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
             372.0e9,
             2.0e6,
             0.0,
             372.0e9,
-        )));
+        ));
         let shape = vec![2, 2, 3];
         let mut image = PagedImage::<f32>::create(shape.clone(), coordinates, path).unwrap();
         let data = ArrayD::from_shape_vec(
@@ -5217,20 +5209,20 @@ mod tests {
 
     fn create_spectral_mask_image(path: &Path) {
         let mut coordinates = CoordinateSystem::new();
-        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+        coordinates.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [1.2, -0.4],
             [-2.0e-6, 3.0e-6],
             [0.0, 0.0],
-        )));
-        coordinates.add_coordinate(Box::new(SpectralCoordinate::new(
+        ));
+        coordinates.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
             372.0e9,
             2.0e6,
             0.0,
             372.0e9,
-        )));
+        ));
         let shape = vec![2, 2, 3];
         let mut image = PagedImage::<f32>::create(shape.clone(), coordinates, path).unwrap();
         let mut data = ArrayD::<f32>::ones(IxDyn(&shape).f());
@@ -5243,20 +5235,20 @@ mod tests {
 
     fn create_double_spectral_test_image(path: &Path) {
         let mut coordinates = CoordinateSystem::new();
-        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+        coordinates.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [0.0, 0.0],
             [-1.0e-6, 1.0e-6],
             [0.0, 0.0],
-        )));
-        coordinates.add_coordinate(Box::new(SpectralCoordinate::new(
+        ));
+        coordinates.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
             115.0e9,
             1.0e6,
             0.0,
             115.0e9,
-        )));
+        ));
         let shape = vec![2, 2, 2];
         let mut image = PagedImage::<f64>::create(shape.clone(), coordinates, path).unwrap();
         let data = ArrayD::from_shape_vec(
@@ -5316,13 +5308,13 @@ mod tests {
 
     fn direction_coordinates() -> CoordinateSystem {
         let mut coordinates = CoordinateSystem::new();
-        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+        coordinates.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [1.2, -0.4],
             [-2.0e-6, 3.0e-6],
             [0.0, 0.0],
-        )));
+        ));
         coordinates
     }
 

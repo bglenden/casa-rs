@@ -18288,22 +18288,22 @@ pub fn build_image_coordinate_system(
 ) -> CoordinateSystem {
     let cell_rad = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
     let mut coords = CoordinateSystem::new();
-    coords.add_coordinate(Box::new(DirectionCoordinate::new(
+    coords.add_coordinate(DirectionCoordinate::new(
         direction_ref,
         Projection::new(ProjectionType::SIN),
         phase_center,
         [-cell_rad, cell_rad],
         [imsize as f64 / 2.0, imsize as f64 / 2.0],
-    )));
-    coords.add_coordinate(Box::new(StokesCoordinate::new(vec![plane_to_stokes_type(
+    ));
+    coords.add_coordinate(StokesCoordinate::new(vec![plane_to_stokes_type(
         plane_stokes,
-    )])));
-    coords.add_coordinate(Box::new(build_image_spectral_coordinate(
+    )]));
+    coords.add_coordinate(build_image_spectral_coordinate(
         freq_ref,
         channel_frequencies_hz,
         spectral_delta_hz,
         requested_rest_frequency_hz,
-    )));
+    ));
     coords
 }
 
@@ -35196,13 +35196,13 @@ mod tests {
     fn pb_test_coordinate_system(cell_arcsec: f64) -> CoordinateSystem {
         let cell_rad = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
         let mut coords = CoordinateSystem::new();
-        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+        coords.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [1.0, 0.5],
             [-cell_rad, cell_rad],
             [2.0, 2.0],
-        )));
+        ));
         coords
     }
 

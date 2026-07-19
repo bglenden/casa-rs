@@ -57,13 +57,13 @@ fn ramp_data_complex64(shape: &[usize]) -> Vec<Complex64> {
 
 fn direction_coords() -> CoordinateSystem {
     let mut coords = CoordinateSystem::new();
-    coords.add_coordinate(Box::new(DirectionCoordinate::new(
+    coords.add_coordinate(DirectionCoordinate::new(
         DirectionRef::J2000,
         Projection::new(ProjectionType::SIN),
         [0.0, std::f64::consts::FRAC_PI_4],
         [-1.0e-4, 1.0e-4],
         [8.0, 8.0],
-    )));
+    ));
     coords
 }
 

@@ -147,21 +147,21 @@ fn iteration_demo() {
         .map(|line| line.unwrap().data.sum())
         .sum();
     assert_eq!(line_sum, total);
-    println!("  iter_lines(axis=0): sum matches total");
+    println!("  TraversalSpec::lines(axis=0): sum matches total");
 
     let tile_sum: f64 = lat
         .traverse(TraversalSpec::tiles())
         .map(|tile| tile.unwrap().data.sum())
         .sum();
     assert_eq!(tile_sum, total);
-    println!("  iter_tiles: sum matches total");
+    println!("  TraversalSpec::tiles: sum matches total");
 
     let chunk_sum: f64 = lat
         .traverse(TraversalSpec::chunks(vec![6, 4]))
         .map(|chunk| chunk.unwrap().data.sum())
         .sum();
     assert_eq!(chunk_sum, total);
-    println!("  iter_chunks([6,4]): sum matches total");
+    println!("  TraversalSpec::chunks([6,4]): sum matches total");
 
     // Mutable iteration: scale all values by 0.5
     let mut lat_mut = ArrayLattice::new(data);

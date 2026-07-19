@@ -27,13 +27,13 @@ fn main() {
         vec!["Right Ascension".into(), "Declination".into()],
         vec!["rad".into(), "rad".into()],
     );
-    cs.add_coordinate(Box::new(spatial));
+    cs.add_coordinate(spatial);
 
     let spectral = SpectralCoordinate::new(FrequencyRef::LSRK, 1.42e9, 1e6, 0.0, 1.42040575e9);
-    cs.add_coordinate(Box::new(spectral));
+    cs.add_coordinate(spectral);
 
     let stokes = StokesCoordinate::new(vec![StokesType::I, StokesType::Q]);
-    cs.add_coordinate(Box::new(stokes));
+    cs.add_coordinate(stokes);
 
     // 2. Create a 16x16x8x2 image (RA x Dec x Freq x Stokes).
     let shape = vec![16, 16, 8, 2];

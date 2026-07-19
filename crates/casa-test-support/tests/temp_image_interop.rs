@@ -33,11 +33,11 @@ fn rc_rust_temp_image_materializes_cpp_reads_metadata() {
     let mask = vec![true, false, true, true];
 
     let mut coords = CoordinateSystem::new();
-    coords.add_coordinate(Box::new(LinearCoordinate::new(
+    coords.add_coordinate(LinearCoordinate::new(
         2,
         vec!["X".into(), "Y".into()],
         vec!["m".into(), "m".into()],
-    )));
+    ));
 
     let mut img = TempImage::<f32>::new(
         shape.clone(),

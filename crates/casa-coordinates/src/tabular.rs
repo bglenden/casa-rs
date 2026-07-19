@@ -8,7 +8,7 @@
 //!
 //! Corresponds to C++ `TabularCoordinate`.
 
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, RecordValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
@@ -195,39 +195,10 @@ impl Coordinate for TabularCoordinate {
     fn axis_units(&self) -> Vec<String> {
         vec![self.unit.clone()]
     }
+}
 
-    fn to_record(&self) -> RecordValue {
-        let mut rec = RecordValue::default();
-
-        rec.upsert(
-            "coordinate_type",
-            Value::Scalar(ScalarValue::String("Tabular".into())),
-        );
-        rec.upsert(
-            "pixelvalues",
-            Value::Array(casa_types::ArrayValue::from_f64_vec(
-                self.pixel_values.clone(),
-            )),
-        );
-        rec.upsert(
-            "worldvalues",
-            Value::Array(casa_types::ArrayValue::from_f64_vec(
-                self.world_values.clone(),
-            )),
-        );
-        rec.upsert(
-            "name",
-            Value::Scalar(ScalarValue::String(self.name.clone())),
-        );
-        rec.upsert(
-            "unit",
-            Value::Scalar(ScalarValue::String(self.unit.clone())),
-        );
-
-        rec
-    }
-
-    fn to_casa_record(&self) -> RecordValue {
+impl TabularCoordinate {
+    pub(crate) fn to_record(&self) -> RecordValue {
         let mut rec = RecordValue::default();
         rec.upsert(
             "crval",
@@ -360,7 +331,7 @@ mod tests {
         let rec = coord.to_record();
         assert!(rec.get("pixelvalues").is_some());
         assert!(rec.get("worldvalues").is_some());
-        assert!(rec.get("name").is_some());
+        assert!(rec.get("axes").is_some());
     }
 
     #[test]

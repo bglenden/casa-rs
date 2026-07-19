@@ -2800,32 +2800,32 @@ mod tests {
 
     fn cube_coords() -> CoordinateSystem {
         let mut coords = CoordinateSystem::new();
-        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+        coords.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [0.0, std::f64::consts::FRAC_PI_4],
             [-1e-4, 1e-4],
             [1.0, 1.0],
-        )));
-        coords.add_coordinate(Box::new(SpectralCoordinate::new(
+        ));
+        coords.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
             1.42e9,
             1.0e6,
             0.0,
             1.42040575e9,
-        )));
+        ));
         coords
     }
 
     fn direction_coords() -> CoordinateSystem {
         let mut coords = CoordinateSystem::new();
-        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+        coords.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [0.0, std::f64::consts::FRAC_PI_4],
             [-1e-4, 1e-4],
             [1.0, 1.0],
-        )));
+        ));
         coords
     }
 

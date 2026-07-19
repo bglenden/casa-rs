@@ -266,8 +266,10 @@ impl Coordinate for LinearCoordinate {
     fn axis_units(&self) -> Vec<String> {
         self.units.clone()
     }
+}
 
-    fn to_record(&self) -> RecordValue {
+impl LinearCoordinate {
+    pub(crate) fn to_record(&self) -> RecordValue {
         let mut rec = RecordValue::default();
         let n = self.n_axes();
 

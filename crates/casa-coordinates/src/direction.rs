@@ -546,57 +546,10 @@ impl Coordinate for DirectionCoordinate {
     fn axis_units(&self) -> Vec<String> {
         vec!["rad".into(), "rad".into()]
     }
+}
 
-    fn to_record(&self) -> RecordValue {
-        let mut rec = RecordValue::default();
-
-        rec.upsert(
-            "coordinate_type",
-            Value::Scalar(ScalarValue::String("Direction".into())),
-        );
-        rec.upsert(
-            "direction_ref",
-            Value::Scalar(ScalarValue::String(format!("{:?}", self.direction_ref))),
-        );
-        rec.upsert(
-            "projection",
-            Value::Scalar(ScalarValue::String(self.projection.name().into())),
-        );
-        if !self.projection.parameters().is_empty() {
-            rec.upsert(
-                "projection_parameters",
-                Value::Array(casa_types::ArrayValue::from_f64_vec(
-                    self.projection.parameters().to_vec(),
-                )),
-            );
-        }
-        rec.upsert(
-            "crval",
-            Value::Array(casa_types::ArrayValue::from_f64_vec(self.crval.to_vec())),
-        );
-        rec.upsert(
-            "cdelt",
-            Value::Array(casa_types::ArrayValue::from_f64_vec(self.cdelt.to_vec())),
-        );
-        rec.upsert(
-            "crpix",
-            Value::Array(casa_types::ArrayValue::from_f64_vec(self.crpix.to_vec())),
-        );
-        let pc_flat: Vec<f64> = self.pc.iter().copied().collect();
-        rec.upsert(
-            "pc",
-            Value::Array(casa_types::ArrayValue::from_f64_vec(pc_flat)),
-        );
-        rec.upsert(
-            "longpole",
-            Value::Scalar(ScalarValue::Float64(self.longpole)),
-        );
-        rec.upsert("latpole", Value::Scalar(ScalarValue::Float64(self.latpole)));
-
-        rec
-    }
-
-    fn to_casa_record(&self) -> RecordValue {
+impl DirectionCoordinate {
+    pub(crate) fn to_record(&self) -> RecordValue {
         let mut rec = RecordValue::default();
         rec.upsert(
             "system",
@@ -790,7 +743,7 @@ mod tests {
         let coord = make_sin_coord();
         let rec = coord.to_record();
         assert!(rec.get("projection").is_some());
-        assert!(rec.get("direction_ref").is_some());
+        assert!(rec.get("system").is_some());
     }
 
     #[test]
@@ -874,7 +827,7 @@ mod tests {
     #[test]
     fn casa_record_serialization_uses_legacy_fields() {
         let coord = make_sin_coord().with_longpole(PI).with_latpole(FRAC_PI_2);
-        let rec = coord.to_casa_record();
+        let rec = coord.to_record();
         assert_eq!(
             rec.get("system"),
             Some(&Value::Scalar(ScalarValue::String("J2000".into())))

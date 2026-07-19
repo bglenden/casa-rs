@@ -57,68 +57,62 @@ pub enum CoordinateModel {
     Tabular(TabularCoordinate),
 }
 
-impl CoordinateModel {
-    fn coordinate(&self) -> &dyn Coordinate {
-        match self {
-            Self::Linear(value) => value,
-            Self::Direction(value) => value,
-            Self::Spectral(value) => value.as_ref(),
-            Self::Stokes(value) => value,
-            Self::Tabular(value) => value,
+macro_rules! dispatch_coordinate {
+    ($coordinate:expr, $method:ident $(, $argument:expr)*) => {
+        match $coordinate {
+            CoordinateModel::Linear(value) => value.$method($($argument),*),
+            CoordinateModel::Direction(value) => value.$method($($argument),*),
+            CoordinateModel::Spectral(value) => value.$method($($argument),*),
+            CoordinateModel::Stokes(value) => value.$method($($argument),*),
+            CoordinateModel::Tabular(value) => value.$method($($argument),*),
         }
-    }
+    };
+}
 
+impl CoordinateModel {
     pub fn coordinate_type(&self) -> CoordinateType {
-        self.coordinate().coordinate_type()
+        dispatch_coordinate!(self, coordinate_type)
     }
 
     pub fn n_pixel_axes(&self) -> usize {
-        self.coordinate().n_pixel_axes()
+        dispatch_coordinate!(self, n_pixel_axes)
     }
 
     pub fn n_world_axes(&self) -> usize {
-        self.coordinate().n_world_axes()
+        dispatch_coordinate!(self, n_world_axes)
     }
 
     pub fn to_world(&self, pixel: &[f64]) -> Result<Vec<f64>, CoordinateError> {
-        self.coordinate().to_world(pixel)
+        dispatch_coordinate!(self, to_world, pixel)
     }
 
     pub fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
-        self.coordinate().to_pixel(world)
+        dispatch_coordinate!(self, to_pixel, world)
     }
 
     pub fn reference_value(&self) -> Vec<f64> {
-        self.coordinate().reference_value()
+        dispatch_coordinate!(self, reference_value)
     }
 
     pub fn reference_pixel(&self) -> Vec<f64> {
-        self.coordinate().reference_pixel()
+        dispatch_coordinate!(self, reference_pixel)
     }
 
     pub fn increment(&self) -> Vec<f64> {
-        self.coordinate().increment()
+        dispatch_coordinate!(self, increment)
     }
 
     pub fn axis_names(&self) -> Vec<String> {
-        self.coordinate().axis_names()
+        dispatch_coordinate!(self, axis_names)
     }
 
     pub fn axis_units(&self) -> Vec<String> {
-        self.coordinate().axis_units()
+        dispatch_coordinate!(self, axis_units)
     }
 
     /// Serializes this coordinate in the canonical casacore field layout.
     pub fn to_record(&self) -> RecordValue {
-        self.coordinate().to_casa_record()
-    }
-
-    pub(crate) fn component_record(&self) -> RecordValue {
-        self.coordinate().to_record()
-    }
-
-    pub(crate) fn to_casa_record(&self) -> RecordValue {
-        self.to_record()
+        dispatch_coordinate!(self, to_record)
     }
 }
 
@@ -127,12 +121,6 @@ macro_rules! coordinate_model_from {
         impl From<$type> for CoordinateModel {
             fn from(value: $type) -> Self {
                 Self::$variant(value)
-            }
-        }
-
-        impl From<Box<$type>> for CoordinateModel {
-            fn from(value: Box<$type>) -> Self {
-                Self::$variant(*value)
             }
         }
     };
@@ -149,61 +137,15 @@ impl From<SpectralCoordinate> for CoordinateModel {
     }
 }
 
-impl From<Box<SpectralCoordinate>> for CoordinateModel {
-    fn from(value: Box<SpectralCoordinate>) -> Self {
-        Self::Spectral(value)
-    }
+mod sealed {
+    pub trait Sealed {}
 }
 
-impl Coordinate for CoordinateModel {
-    fn coordinate_type(&self) -> CoordinateType {
-        CoordinateModel::coordinate_type(self)
-    }
-
-    fn n_pixel_axes(&self) -> usize {
-        CoordinateModel::n_pixel_axes(self)
-    }
-
-    fn n_world_axes(&self) -> usize {
-        CoordinateModel::n_world_axes(self)
-    }
-
-    fn to_world(&self, pixel: &[f64]) -> Result<Vec<f64>, CoordinateError> {
-        CoordinateModel::to_world(self, pixel)
-    }
-
-    fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
-        CoordinateModel::to_pixel(self, world)
-    }
-
-    fn reference_value(&self) -> Vec<f64> {
-        CoordinateModel::reference_value(self)
-    }
-
-    fn reference_pixel(&self) -> Vec<f64> {
-        CoordinateModel::reference_pixel(self)
-    }
-
-    fn increment(&self) -> Vec<f64> {
-        CoordinateModel::increment(self)
-    }
-
-    fn axis_names(&self) -> Vec<String> {
-        CoordinateModel::axis_names(self)
-    }
-
-    fn axis_units(&self) -> Vec<String> {
-        CoordinateModel::axis_units(self)
-    }
-
-    fn to_record(&self) -> RecordValue {
-        self.to_casa_record()
-    }
-
-    fn to_casa_record(&self) -> RecordValue {
-        CoordinateModel::to_casa_record(self)
-    }
-}
+impl sealed::Sealed for LinearCoordinate {}
+impl sealed::Sealed for DirectionCoordinate {}
+impl sealed::Sealed for SpectralCoordinate {}
+impl sealed::Sealed for StokesCoordinate {}
+impl sealed::Sealed for TabularCoordinate {}
 
 /// The interface shared by all coordinate types.
 ///
@@ -215,7 +157,7 @@ impl Coordinate for CoordinateModel {
 ///
 /// The pixel-to-world and world-to-pixel methods follow the conventions of
 /// C++ `Coordinate::toWorld` and `Coordinate::toPixel`.
-pub trait Coordinate: fmt::Debug + Send + Sync {
+pub trait Coordinate: sealed::Sealed + fmt::Debug + Send + Sync {
     /// Returns the kind of this coordinate.
     fn coordinate_type(&self) -> CoordinateType;
 
@@ -249,19 +191,6 @@ pub trait Coordinate: fmt::Debug + Send + Sync {
 
     /// Returns the axis unit strings (one per world axis).
     fn axis_units(&self) -> Vec<String>;
-
-    /// Serializes this coordinate to a casacore-compatible record.
-    fn to_record(&self) -> RecordValue;
-
-    /// Serializes this coordinate using the legacy casacore
-    /// `Coordinate::save()` field layout.
-    ///
-    /// Most coordinates can reuse [`Coordinate::to_record`]. Coordinate types
-    /// with a materially different legacy layout, such as direction
-    /// coordinates, can override this.
-    fn to_casa_record(&self) -> RecordValue {
-        self.to_record()
-    }
 }
 
 #[cfg(test)]

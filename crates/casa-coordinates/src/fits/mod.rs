@@ -31,11 +31,11 @@
 //!     [0.0, std::f64::consts::FRAC_PI_4],
 //!     [-1e-4, 1e-4], [512.0, 512.0],
 //! );
-//! cs.add_coordinate(Box::new(dir));
+//! cs.add_coordinate(dir);
 //! let spec = SpectralCoordinate::new(FrequencyRef::LSRK, 1.42e9, 1e6, 0.0, 1.42040575e9);
-//! cs.add_coordinate(Box::new(spec));
+//! cs.add_coordinate(spec);
 //! let stokes = StokesCoordinate::new(vec![StokesType::I, StokesType::V]);
-//! cs.add_coordinate(Box::new(stokes));
+//! cs.add_coordinate(stokes);
 //!
 //! // Convert to FITS header
 //! let shape = [1024, 1024, 256, 2];

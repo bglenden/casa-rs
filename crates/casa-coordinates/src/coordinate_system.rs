@@ -168,7 +168,7 @@ impl CoordinateSystem {
             };
             rec.upsert(
                 format!("{basename}{index}"),
-                Value::Record(coord.to_casa_record()),
+                Value::Record(coord.to_record()),
             );
 
             let n_world = coord.n_world_axes() as i32;
@@ -318,7 +318,6 @@ fn parse_coordinate_record(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coordinate::Coordinate;
     use crate::direction::DirectionCoordinate;
     use crate::linear::LinearCoordinate;
     use crate::projection::{Projection, ProjectionType};
@@ -785,11 +784,11 @@ mod tests {
             vec!["Right Ascension".into(), "Declination".into()],
             vec!["rad".into(), "rad".into()],
         );
-        cs.add_coordinate(Box::new(dir));
+        cs.add_coordinate(dir);
 
         // Spectral
         let spec = SpectralCoordinate::new(FrequencyRef::LSRK, 1.42e9, 1e6, 0.0, 1.42e9);
-        cs.add_coordinate(Box::new(spec));
+        cs.add_coordinate(spec);
 
         // Stokes
         let stokes = StokesCoordinate::new(vec![
@@ -798,7 +797,7 @@ mod tests {
             StokesType::U,
             StokesType::V,
         ]);
-        cs.add_coordinate(Box::new(stokes));
+        cs.add_coordinate(stokes);
 
         cs
     }
@@ -951,24 +950,21 @@ mod tests {
             [-1e-4, 1e-4],
             [256.0, 256.0],
         );
-        cs.add_coordinate(Box::new(dir));
-        cs.add_coordinate(Box::new(SpectralCoordinate::new(
+        cs.add_coordinate(dir);
+        cs.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
             1.42e9,
             1.0e6,
             0.0,
             1.42040575e9,
-        )));
-        cs.add_coordinate(Box::new(StokesCoordinate::new(vec![
-            StokesType::I,
-            StokesType::Q,
-        ])));
-        cs.add_coordinate(Box::new(TabularCoordinate::new(
+        ));
+        cs.add_coordinate(StokesCoordinate::new(vec![StokesType::I, StokesType::Q]));
+        cs.add_coordinate(TabularCoordinate::new(
             vec![0.0, 1.0, 2.0],
             vec![100.0, 200.0, 300.0],
             "Velocity",
             "km/s",
-        )));
+        ));
 
         let restored = CoordinateSystem::from_record(&cs.to_record()).unwrap();
 

@@ -10226,20 +10226,20 @@ mod tests {
         let path = dir.path().join("restored.image");
         let mut coords = CoordinateSystem::new();
         let cell_rad = (0.1_f64 / 3600.0).to_radians();
-        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+        coords.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [1.0, -0.5],
             [-cell_rad, cell_rad],
             [1.5, 1.5],
-        )));
-        coords.add_coordinate(Box::new(SpectralCoordinate::new(
+        ));
+        coords.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
             100.0e9,
             2.0e6,
             2.0,
             100.0e9,
-        )));
+        ));
         let mut image =
             PagedImage::<f32>::create(vec![4, 4, 5], coords, &path).expect("create image");
         image.set_units("Jy/beam").expect("set units");
