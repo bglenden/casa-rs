@@ -31,11 +31,11 @@
 <a href=#31 id=31 data-nosnippet>31</a>//!     [0.0, std::f64::consts::FRAC_PI_4],
 <a href=#32 id=32 data-nosnippet>32</a>//!     [-1e-4, 1e-4], [512.0, 512.0],
 <a href=#33 id=33 data-nosnippet>33</a>//! );
-<a href=#34 id=34 data-nosnippet>34</a>//! cs.add_coordinate(Box::new(dir));
+<a href=#34 id=34 data-nosnippet>34</a>//! cs.add_coordinate(dir);
 <a href=#35 id=35 data-nosnippet>35</a>//! let spec = SpectralCoordinate::new(FrequencyRef::LSRK, 1.42e9, 1e6, 0.0, 1.42040575e9);
-<a href=#36 id=36 data-nosnippet>36</a>//! cs.add_coordinate(Box::new(spec));
+<a href=#36 id=36 data-nosnippet>36</a>//! cs.add_coordinate(spec);
 <a href=#37 id=37 data-nosnippet>37</a>//! let stokes = StokesCoordinate::new(vec![StokesType::I, StokesType::V]);
-<a href=#38 id=38 data-nosnippet>38</a>//! cs.add_coordinate(Box::new(stokes));
+<a href=#38 id=38 data-nosnippet>38</a>//! cs.add_coordinate(stokes);
 <a href=#39 id=39 data-nosnippet>39</a>//!
 <a href=#40 id=40 data-nosnippet>40</a>//! // Convert to FITS header
 <a href=#41 id=41 data-nosnippet>41</a>//! let shape = [1024, 1024, 256, 2];

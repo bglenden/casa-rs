@@ -70,12 +70,16 @@
 <a href=#70 id=70 data-nosnippet>70</a>        </span>axis: usize,
 <a href=#71 id=71 data-nosnippet>71</a>    },
 <a href=#72 id=72 data-nosnippet>72</a>
-<a href=#73 id=73 data-nosnippet>73</a>    <span class="doccomment">/// A traversal specification is invalid for the target lattice.
-<a href=#74 id=74 data-nosnippet>74</a>    </span><span class="attr">#[error(<span class="string">"invalid traversal: {0}"</span>)]
-<a href=#75 id=75 data-nosnippet>75</a>    </span>InvalidTraversal(String),
+<a href=#73 id=73 data-nosnippet>73</a>    <span class="doccomment">/// A byte-aware physical tile layout could not be planned.
+<a href=#74 id=74 data-nosnippet>74</a>    </span><span class="attr">#[error(<span class="string">"invalid tile layout: {0}"</span>)]
+<a href=#75 id=75 data-nosnippet>75</a>    </span>TileLayout(String),
 <a href=#76 id=76 data-nosnippet>76</a>
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// A table-level error (propagated from `casa-tables`).
-<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="attr">#[error(<span class="string">"table error: {0}"</span>)]
-<a href=#79 id=79 data-nosnippet>79</a>    </span>Table(String),
-<a href=#80 id=80 data-nosnippet>80</a>}
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// A traversal specification is invalid for the target lattice.
+<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="attr">#[error(<span class="string">"invalid traversal: {0}"</span>)]
+<a href=#79 id=79 data-nosnippet>79</a>    </span>InvalidTraversal(String),
+<a href=#80 id=80 data-nosnippet>80</a>
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// A table-level error (propagated from `casa-tables`).
+<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="attr">#[error(<span class="string">"table error: {0}"</span>)]
+<a href=#83 id=83 data-nosnippet>83</a>    </span>Table(String),
+<a href=#84 id=84 data-nosnippet>84</a>}
 </code></pre></div></section></main></body></html>

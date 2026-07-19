@@ -546,374 +546,315 @@
 <a href=#546 id=546 data-nosnippet>546</a>    <span class="kw">fn </span>axis_units(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;String&gt; {
 <a href=#547 id=547 data-nosnippet>547</a>        <span class="macro">vec!</span>[<span class="string">"rad"</span>.into(), <span class="string">"rad"</span>.into()]
 <a href=#548 id=548 data-nosnippet>548</a>    }
-<a href=#549 id=549 data-nosnippet>549</a>
-<a href=#550 id=550 data-nosnippet>550</a>    <span class="kw">fn </span>to_record(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RecordValue {
-<a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">let </span><span class="kw-2">mut </span>rec = RecordValue::default();
-<a href=#552 id=552 data-nosnippet>552</a>
-<a href=#553 id=553 data-nosnippet>553</a>        rec.upsert(
-<a href=#554 id=554 data-nosnippet>554</a>            <span class="string">"coordinate_type"</span>,
-<a href=#555 id=555 data-nosnippet>555</a>            Value::Scalar(ScalarValue::String(<span class="string">"Direction"</span>.into())),
-<a href=#556 id=556 data-nosnippet>556</a>        );
-<a href=#557 id=557 data-nosnippet>557</a>        rec.upsert(
-<a href=#558 id=558 data-nosnippet>558</a>            <span class="string">"direction_ref"</span>,
-<a href=#559 id=559 data-nosnippet>559</a>            Value::Scalar(ScalarValue::String(<span class="macro">format!</span>(<span class="string">"{:?}"</span>, <span class="self">self</span>.direction_ref))),
-<a href=#560 id=560 data-nosnippet>560</a>        );
-<a href=#561 id=561 data-nosnippet>561</a>        rec.upsert(
-<a href=#562 id=562 data-nosnippet>562</a>            <span class="string">"projection"</span>,
-<a href=#563 id=563 data-nosnippet>563</a>            Value::Scalar(ScalarValue::String(<span class="self">self</span>.projection.name().into())),
-<a href=#564 id=564 data-nosnippet>564</a>        );
-<a href=#565 id=565 data-nosnippet>565</a>        <span class="kw">if </span>!<span class="self">self</span>.projection.parameters().is_empty() {
-<a href=#566 id=566 data-nosnippet>566</a>            rec.upsert(
-<a href=#567 id=567 data-nosnippet>567</a>                <span class="string">"projection_parameters"</span>,
-<a href=#568 id=568 data-nosnippet>568</a>                Value::Array(casa_types::ArrayValue::from_f64_vec(
-<a href=#569 id=569 data-nosnippet>569</a>                    <span class="self">self</span>.projection.parameters().to_vec(),
-<a href=#570 id=570 data-nosnippet>570</a>                )),
-<a href=#571 id=571 data-nosnippet>571</a>            );
-<a href=#572 id=572 data-nosnippet>572</a>        }
-<a href=#573 id=573 data-nosnippet>573</a>        rec.upsert(
-<a href=#574 id=574 data-nosnippet>574</a>            <span class="string">"crval"</span>,
-<a href=#575 id=575 data-nosnippet>575</a>            Value::Array(casa_types::ArrayValue::from_f64_vec(<span class="self">self</span>.crval.to_vec())),
-<a href=#576 id=576 data-nosnippet>576</a>        );
-<a href=#577 id=577 data-nosnippet>577</a>        rec.upsert(
-<a href=#578 id=578 data-nosnippet>578</a>            <span class="string">"cdelt"</span>,
-<a href=#579 id=579 data-nosnippet>579</a>            Value::Array(casa_types::ArrayValue::from_f64_vec(<span class="self">self</span>.cdelt.to_vec())),
-<a href=#580 id=580 data-nosnippet>580</a>        );
-<a href=#581 id=581 data-nosnippet>581</a>        rec.upsert(
-<a href=#582 id=582 data-nosnippet>582</a>            <span class="string">"crpix"</span>,
-<a href=#583 id=583 data-nosnippet>583</a>            Value::Array(casa_types::ArrayValue::from_f64_vec(<span class="self">self</span>.crpix.to_vec())),
-<a href=#584 id=584 data-nosnippet>584</a>        );
-<a href=#585 id=585 data-nosnippet>585</a>        <span class="kw">let </span>pc_flat: Vec&lt;f64&gt; = <span class="self">self</span>.pc.iter().copied().collect();
-<a href=#586 id=586 data-nosnippet>586</a>        rec.upsert(
-<a href=#587 id=587 data-nosnippet>587</a>            <span class="string">"pc"</span>,
-<a href=#588 id=588 data-nosnippet>588</a>            Value::Array(casa_types::ArrayValue::from_f64_vec(pc_flat)),
-<a href=#589 id=589 data-nosnippet>589</a>        );
-<a href=#590 id=590 data-nosnippet>590</a>        rec.upsert(
-<a href=#591 id=591 data-nosnippet>591</a>            <span class="string">"longpole"</span>,
-<a href=#592 id=592 data-nosnippet>592</a>            Value::Scalar(ScalarValue::Float64(<span class="self">self</span>.longpole)),
-<a href=#593 id=593 data-nosnippet>593</a>        );
-<a href=#594 id=594 data-nosnippet>594</a>        rec.upsert(<span class="string">"latpole"</span>, Value::Scalar(ScalarValue::Float64(<span class="self">self</span>.latpole)));
-<a href=#595 id=595 data-nosnippet>595</a>
-<a href=#596 id=596 data-nosnippet>596</a>        rec
-<a href=#597 id=597 data-nosnippet>597</a>    }
-<a href=#598 id=598 data-nosnippet>598</a>
-<a href=#599 id=599 data-nosnippet>599</a>    <span class="kw">fn </span>to_casa_record(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RecordValue {
-<a href=#600 id=600 data-nosnippet>600</a>        <span class="kw">let </span><span class="kw-2">mut </span>rec = RecordValue::default();
-<a href=#601 id=601 data-nosnippet>601</a>        rec.upsert(
-<a href=#602 id=602 data-nosnippet>602</a>            <span class="string">"system"</span>,
-<a href=#603 id=603 data-nosnippet>603</a>            Value::Scalar(ScalarValue::String(<span class="macro">format!</span>(<span class="string">"{:?}"</span>, <span class="self">self</span>.direction_ref))),
-<a href=#604 id=604 data-nosnippet>604</a>        );
-<a href=#605 id=605 data-nosnippet>605</a>        rec.upsert(
-<a href=#606 id=606 data-nosnippet>606</a>            <span class="string">"projection"</span>,
-<a href=#607 id=607 data-nosnippet>607</a>            Value::Scalar(ScalarValue::String(<span class="self">self</span>.projection.name().into())),
-<a href=#608 id=608 data-nosnippet>608</a>        );
-<a href=#609 id=609 data-nosnippet>609</a>        rec.upsert(
-<a href=#610 id=610 data-nosnippet>610</a>            <span class="string">"projection_parameters"</span>,
-<a href=#611 id=611 data-nosnippet>611</a>            Value::Array(ArrayValue::from_f64_vec(
-<a href=#612 id=612 data-nosnippet>612</a>                <span class="self">self</span>.projection.parameters().to_vec(),
-<a href=#613 id=613 data-nosnippet>613</a>            )),
-<a href=#614 id=614 data-nosnippet>614</a>        );
-<a href=#615 id=615 data-nosnippet>615</a>        rec.upsert(
-<a href=#616 id=616 data-nosnippet>616</a>            <span class="string">"crval"</span>,
-<a href=#617 id=617 data-nosnippet>617</a>            Value::Array(ArrayValue::from_f64_vec(<span class="self">self</span>.crval.to_vec())),
-<a href=#618 id=618 data-nosnippet>618</a>        );
-<a href=#619 id=619 data-nosnippet>619</a>        rec.upsert(
-<a href=#620 id=620 data-nosnippet>620</a>            <span class="string">"crpix"</span>,
-<a href=#621 id=621 data-nosnippet>621</a>            Value::Array(ArrayValue::from_f64_vec(<span class="self">self</span>.crpix.to_vec())),
-<a href=#622 id=622 data-nosnippet>622</a>        );
-<a href=#623 id=623 data-nosnippet>623</a>        rec.upsert(
-<a href=#624 id=624 data-nosnippet>624</a>            <span class="string">"cdelt"</span>,
-<a href=#625 id=625 data-nosnippet>625</a>            Value::Array(ArrayValue::from_f64_vec(<span class="self">self</span>.cdelt.to_vec())),
-<a href=#626 id=626 data-nosnippet>626</a>        );
-<a href=#627 id=627 data-nosnippet>627</a>        rec.upsert(
-<a href=#628 id=628 data-nosnippet>628</a>            <span class="string">"pc"</span>,
-<a href=#629 id=629 data-nosnippet>629</a>            Value::Array(ArrayValue::Float64(
-<a href=#630 id=630 data-nosnippet>630</a>                ArrayD::from_shape_vec(IxDyn(<span class="kw-2">&amp;</span>[<span class="number">2</span>, <span class="number">2</span>]), <span class="self">self</span>.pc.iter().copied().collect())
-<a href=#631 id=631 data-nosnippet>631</a>                    .expect(<span class="string">"2x2 direction pc matrix"</span>),
-<a href=#632 id=632 data-nosnippet>632</a>            )),
-<a href=#633 id=633 data-nosnippet>633</a>        );
-<a href=#634 id=634 data-nosnippet>634</a>        rec.upsert(
-<a href=#635 id=635 data-nosnippet>635</a>            <span class="string">"axes"</span>,
-<a href=#636 id=636 data-nosnippet>636</a>            Value::Array(ArrayValue::from_string_vec(<span class="self">self</span>.axis_names())),
+<a href=#549 id=549 data-nosnippet>549</a>}
+<a href=#550 id=550 data-nosnippet>550</a>
+<a href=#551 id=551 data-nosnippet>551</a><span class="kw">impl </span>DirectionCoordinate {
+<a href=#552 id=552 data-nosnippet>552</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>to_record(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RecordValue {
+<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">let </span><span class="kw-2">mut </span>rec = RecordValue::default();
+<a href=#554 id=554 data-nosnippet>554</a>        rec.upsert(
+<a href=#555 id=555 data-nosnippet>555</a>            <span class="string">"system"</span>,
+<a href=#556 id=556 data-nosnippet>556</a>            Value::Scalar(ScalarValue::String(<span class="macro">format!</span>(<span class="string">"{:?}"</span>, <span class="self">self</span>.direction_ref))),
+<a href=#557 id=557 data-nosnippet>557</a>        );
+<a href=#558 id=558 data-nosnippet>558</a>        rec.upsert(
+<a href=#559 id=559 data-nosnippet>559</a>            <span class="string">"projection"</span>,
+<a href=#560 id=560 data-nosnippet>560</a>            Value::Scalar(ScalarValue::String(<span class="self">self</span>.projection.name().into())),
+<a href=#561 id=561 data-nosnippet>561</a>        );
+<a href=#562 id=562 data-nosnippet>562</a>        rec.upsert(
+<a href=#563 id=563 data-nosnippet>563</a>            <span class="string">"projection_parameters"</span>,
+<a href=#564 id=564 data-nosnippet>564</a>            Value::Array(ArrayValue::from_f64_vec(
+<a href=#565 id=565 data-nosnippet>565</a>                <span class="self">self</span>.projection.parameters().to_vec(),
+<a href=#566 id=566 data-nosnippet>566</a>            )),
+<a href=#567 id=567 data-nosnippet>567</a>        );
+<a href=#568 id=568 data-nosnippet>568</a>        rec.upsert(
+<a href=#569 id=569 data-nosnippet>569</a>            <span class="string">"crval"</span>,
+<a href=#570 id=570 data-nosnippet>570</a>            Value::Array(ArrayValue::from_f64_vec(<span class="self">self</span>.crval.to_vec())),
+<a href=#571 id=571 data-nosnippet>571</a>        );
+<a href=#572 id=572 data-nosnippet>572</a>        rec.upsert(
+<a href=#573 id=573 data-nosnippet>573</a>            <span class="string">"crpix"</span>,
+<a href=#574 id=574 data-nosnippet>574</a>            Value::Array(ArrayValue::from_f64_vec(<span class="self">self</span>.crpix.to_vec())),
+<a href=#575 id=575 data-nosnippet>575</a>        );
+<a href=#576 id=576 data-nosnippet>576</a>        rec.upsert(
+<a href=#577 id=577 data-nosnippet>577</a>            <span class="string">"cdelt"</span>,
+<a href=#578 id=578 data-nosnippet>578</a>            Value::Array(ArrayValue::from_f64_vec(<span class="self">self</span>.cdelt.to_vec())),
+<a href=#579 id=579 data-nosnippet>579</a>        );
+<a href=#580 id=580 data-nosnippet>580</a>        rec.upsert(
+<a href=#581 id=581 data-nosnippet>581</a>            <span class="string">"pc"</span>,
+<a href=#582 id=582 data-nosnippet>582</a>            Value::Array(ArrayValue::Float64(
+<a href=#583 id=583 data-nosnippet>583</a>                ArrayD::from_shape_vec(IxDyn(<span class="kw-2">&amp;</span>[<span class="number">2</span>, <span class="number">2</span>]), <span class="self">self</span>.pc.iter().copied().collect())
+<a href=#584 id=584 data-nosnippet>584</a>                    .expect(<span class="string">"2x2 direction pc matrix"</span>),
+<a href=#585 id=585 data-nosnippet>585</a>            )),
+<a href=#586 id=586 data-nosnippet>586</a>        );
+<a href=#587 id=587 data-nosnippet>587</a>        rec.upsert(
+<a href=#588 id=588 data-nosnippet>588</a>            <span class="string">"axes"</span>,
+<a href=#589 id=589 data-nosnippet>589</a>            Value::Array(ArrayValue::from_string_vec(<span class="self">self</span>.axis_names())),
+<a href=#590 id=590 data-nosnippet>590</a>        );
+<a href=#591 id=591 data-nosnippet>591</a>        rec.upsert(
+<a href=#592 id=592 data-nosnippet>592</a>            <span class="string">"units"</span>,
+<a href=#593 id=593 data-nosnippet>593</a>            Value::Array(ArrayValue::from_string_vec(<span class="self">self</span>.axis_units())),
+<a href=#594 id=594 data-nosnippet>594</a>        );
+<a href=#595 id=595 data-nosnippet>595</a>        rec.upsert(
+<a href=#596 id=596 data-nosnippet>596</a>            <span class="string">"conversionSystem"</span>,
+<a href=#597 id=597 data-nosnippet>597</a>            Value::Scalar(ScalarValue::String(<span class="macro">format!</span>(<span class="string">"{:?}"</span>, <span class="self">self</span>.direction_ref))),
+<a href=#598 id=598 data-nosnippet>598</a>        );
+<a href=#599 id=599 data-nosnippet>599</a>        rec.upsert(
+<a href=#600 id=600 data-nosnippet>600</a>            <span class="string">"longpole"</span>,
+<a href=#601 id=601 data-nosnippet>601</a>            Value::Scalar(ScalarValue::Float64(<span class="self">self</span>.longpole.to_degrees())),
+<a href=#602 id=602 data-nosnippet>602</a>        );
+<a href=#603 id=603 data-nosnippet>603</a>        rec.upsert(
+<a href=#604 id=604 data-nosnippet>604</a>            <span class="string">"latpole"</span>,
+<a href=#605 id=605 data-nosnippet>605</a>            Value::Scalar(ScalarValue::Float64(<span class="self">self</span>.latpole.to_degrees())),
+<a href=#606 id=606 data-nosnippet>606</a>        );
+<a href=#607 id=607 data-nosnippet>607</a>        rec
+<a href=#608 id=608 data-nosnippet>608</a>    }
+<a href=#609 id=609 data-nosnippet>609</a>}
+<a href=#610 id=610 data-nosnippet>610</a>
+<a href=#611 id=611 data-nosnippet>611</a><span class="attr">#[cfg(test)]
+<a href=#612 id=612 data-nosnippet>612</a></span><span class="kw">mod </span>tests {
+<a href=#613 id=613 data-nosnippet>613</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#614 id=614 data-nosnippet>614</a>    <span class="kw">use </span><span class="kw">crate</span>::projection::ProjectionType;
+<a href=#615 id=615 data-nosnippet>615</a>
+<a href=#616 id=616 data-nosnippet>616</a>    <span class="kw">const </span>TOL: f64 = <span class="number">1e-10</span>;
+<a href=#617 id=617 data-nosnippet>617</a>
+<a href=#618 id=618 data-nosnippet>618</a>    <span class="kw">fn </span>make_sin_coord() -&gt; DirectionCoordinate {
+<a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">let </span>proj = Projection::new(ProjectionType::SIN);
+<a href=#620 id=620 data-nosnippet>620</a>        <span class="comment">// Reference point at RA=0, Dec=+45 degrees
+<a href=#621 id=621 data-nosnippet>621</a>        </span><span class="kw">let </span>crval = [<span class="number">0.0</span>, std::f64::consts::FRAC_PI_4];
+<a href=#622 id=622 data-nosnippet>622</a>        <span class="kw">let </span>cdelt = [-<span class="number">1e-4</span>, <span class="number">1e-4</span>]; <span class="comment">// ~20 arcsec pixels
+<a href=#623 id=623 data-nosnippet>623</a>        </span><span class="kw">let </span>crpix = [<span class="number">512.0</span>, <span class="number">512.0</span>];
+<a href=#624 id=624 data-nosnippet>624</a>        DirectionCoordinate::new(DirectionRef::J2000, proj, crval, cdelt, crpix)
+<a href=#625 id=625 data-nosnippet>625</a>    }
+<a href=#626 id=626 data-nosnippet>626</a>
+<a href=#627 id=627 data-nosnippet>627</a>    <span class="attr">#[test]
+<a href=#628 id=628 data-nosnippet>628</a>    </span><span class="kw">fn </span>reference_pixel_gives_reference_value() {
+<a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">let </span>coord = make_sin_coord();
+<a href=#630 id=630 data-nosnippet>630</a>        <span class="kw">let </span>world = coord.to_world(<span class="kw-2">&amp;</span>[<span class="number">512.0</span>, <span class="number">512.0</span>]).unwrap();
+<a href=#631 id=631 data-nosnippet>631</a>        <span class="macro">assert!</span>(
+<a href=#632 id=632 data-nosnippet>632</a>            (world[<span class="number">0</span>] - coord.crval[<span class="number">0</span>]).abs() &lt; TOL
+<a href=#633 id=633 data-nosnippet>633</a>                || (world[<span class="number">0</span>] - coord.crval[<span class="number">0</span>] - <span class="number">2.0 </span>* PI).abs() &lt; TOL,
+<a href=#634 id=634 data-nosnippet>634</a>            <span class="string">"lon mismatch: {} vs {}"</span>,
+<a href=#635 id=635 data-nosnippet>635</a>            world[<span class="number">0</span>],
+<a href=#636 id=636 data-nosnippet>636</a>            coord.crval[<span class="number">0</span>]
 <a href=#637 id=637 data-nosnippet>637</a>        );
-<a href=#638 id=638 data-nosnippet>638</a>        rec.upsert(
-<a href=#639 id=639 data-nosnippet>639</a>            <span class="string">"units"</span>,
-<a href=#640 id=640 data-nosnippet>640</a>            Value::Array(ArrayValue::from_string_vec(<span class="self">self</span>.axis_units())),
-<a href=#641 id=641 data-nosnippet>641</a>        );
-<a href=#642 id=642 data-nosnippet>642</a>        rec.upsert(
-<a href=#643 id=643 data-nosnippet>643</a>            <span class="string">"conversionSystem"</span>,
-<a href=#644 id=644 data-nosnippet>644</a>            Value::Scalar(ScalarValue::String(<span class="macro">format!</span>(<span class="string">"{:?}"</span>, <span class="self">self</span>.direction_ref))),
-<a href=#645 id=645 data-nosnippet>645</a>        );
-<a href=#646 id=646 data-nosnippet>646</a>        rec.upsert(
-<a href=#647 id=647 data-nosnippet>647</a>            <span class="string">"longpole"</span>,
-<a href=#648 id=648 data-nosnippet>648</a>            Value::Scalar(ScalarValue::Float64(<span class="self">self</span>.longpole.to_degrees())),
-<a href=#649 id=649 data-nosnippet>649</a>        );
-<a href=#650 id=650 data-nosnippet>650</a>        rec.upsert(
-<a href=#651 id=651 data-nosnippet>651</a>            <span class="string">"latpole"</span>,
-<a href=#652 id=652 data-nosnippet>652</a>            Value::Scalar(ScalarValue::Float64(<span class="self">self</span>.latpole.to_degrees())),
-<a href=#653 id=653 data-nosnippet>653</a>        );
-<a href=#654 id=654 data-nosnippet>654</a>        rec
-<a href=#655 id=655 data-nosnippet>655</a>    }
-<a href=#656 id=656 data-nosnippet>656</a>
-<a href=#657 id=657 data-nosnippet>657</a>    <span class="kw">fn </span>clone_box(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Box&lt;<span class="kw">dyn </span>Coordinate&gt; {
-<a href=#658 id=658 data-nosnippet>658</a>        Box::new(<span class="self">self</span>.clone())
-<a href=#659 id=659 data-nosnippet>659</a>    }
-<a href=#660 id=660 data-nosnippet>660</a>}
-<a href=#661 id=661 data-nosnippet>661</a>
-<a href=#662 id=662 data-nosnippet>662</a><span class="attr">#[cfg(test)]
-<a href=#663 id=663 data-nosnippet>663</a></span><span class="kw">mod </span>tests {
-<a href=#664 id=664 data-nosnippet>664</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#665 id=665 data-nosnippet>665</a>    <span class="kw">use </span><span class="kw">crate</span>::projection::ProjectionType;
-<a href=#666 id=666 data-nosnippet>666</a>
-<a href=#667 id=667 data-nosnippet>667</a>    <span class="kw">const </span>TOL: f64 = <span class="number">1e-10</span>;
-<a href=#668 id=668 data-nosnippet>668</a>
-<a href=#669 id=669 data-nosnippet>669</a>    <span class="kw">fn </span>make_sin_coord() -&gt; DirectionCoordinate {
-<a href=#670 id=670 data-nosnippet>670</a>        <span class="kw">let </span>proj = Projection::new(ProjectionType::SIN);
-<a href=#671 id=671 data-nosnippet>671</a>        <span class="comment">// Reference point at RA=0, Dec=+45 degrees
-<a href=#672 id=672 data-nosnippet>672</a>        </span><span class="kw">let </span>crval = [<span class="number">0.0</span>, std::f64::consts::FRAC_PI_4];
-<a href=#673 id=673 data-nosnippet>673</a>        <span class="kw">let </span>cdelt = [-<span class="number">1e-4</span>, <span class="number">1e-4</span>]; <span class="comment">// ~20 arcsec pixels
-<a href=#674 id=674 data-nosnippet>674</a>        </span><span class="kw">let </span>crpix = [<span class="number">512.0</span>, <span class="number">512.0</span>];
-<a href=#675 id=675 data-nosnippet>675</a>        DirectionCoordinate::new(DirectionRef::J2000, proj, crval, cdelt, crpix)
-<a href=#676 id=676 data-nosnippet>676</a>    }
-<a href=#677 id=677 data-nosnippet>677</a>
-<a href=#678 id=678 data-nosnippet>678</a>    <span class="attr">#[test]
-<a href=#679 id=679 data-nosnippet>679</a>    </span><span class="kw">fn </span>reference_pixel_gives_reference_value() {
-<a href=#680 id=680 data-nosnippet>680</a>        <span class="kw">let </span>coord = make_sin_coord();
-<a href=#681 id=681 data-nosnippet>681</a>        <span class="kw">let </span>world = coord.to_world(<span class="kw-2">&amp;</span>[<span class="number">512.0</span>, <span class="number">512.0</span>]).unwrap();
-<a href=#682 id=682 data-nosnippet>682</a>        <span class="macro">assert!</span>(
-<a href=#683 id=683 data-nosnippet>683</a>            (world[<span class="number">0</span>] - coord.crval[<span class="number">0</span>]).abs() &lt; TOL
-<a href=#684 id=684 data-nosnippet>684</a>                || (world[<span class="number">0</span>] - coord.crval[<span class="number">0</span>] - <span class="number">2.0 </span>* PI).abs() &lt; TOL,
-<a href=#685 id=685 data-nosnippet>685</a>            <span class="string">"lon mismatch: {} vs {}"</span>,
-<a href=#686 id=686 data-nosnippet>686</a>            world[<span class="number">0</span>],
-<a href=#687 id=687 data-nosnippet>687</a>            coord.crval[<span class="number">0</span>]
-<a href=#688 id=688 data-nosnippet>688</a>        );
-<a href=#689 id=689 data-nosnippet>689</a>        <span class="macro">assert!</span>(
-<a href=#690 id=690 data-nosnippet>690</a>            (world[<span class="number">1</span>] - coord.crval[<span class="number">1</span>]).abs() &lt; TOL,
-<a href=#691 id=691 data-nosnippet>691</a>            <span class="string">"lat mismatch: {} vs {}"</span>,
-<a href=#692 id=692 data-nosnippet>692</a>            world[<span class="number">1</span>],
-<a href=#693 id=693 data-nosnippet>693</a>            coord.crval[<span class="number">1</span>]
-<a href=#694 id=694 data-nosnippet>694</a>        );
-<a href=#695 id=695 data-nosnippet>695</a>    }
-<a href=#696 id=696 data-nosnippet>696</a>
-<a href=#697 id=697 data-nosnippet>697</a>    <span class="attr">#[test]
-<a href=#698 id=698 data-nosnippet>698</a>    </span><span class="kw">fn </span>roundtrip_near_reference() {
-<a href=#699 id=699 data-nosnippet>699</a>        <span class="kw">let </span>coord = make_sin_coord();
-<a href=#700 id=700 data-nosnippet>700</a>        <span class="kw">let </span>pixel = [<span class="number">520.0</span>, <span class="number">530.0</span>];
-<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">let </span>world = coord.to_world(<span class="kw-2">&amp;</span>pixel).unwrap();
-<a href=#702 id=702 data-nosnippet>702</a>        <span class="kw">let </span>back = coord.to_pixel(<span class="kw-2">&amp;</span>world).unwrap();
-<a href=#703 id=703 data-nosnippet>703</a>        <span class="macro">assert!</span>(
-<a href=#704 id=704 data-nosnippet>704</a>            (back[<span class="number">0</span>] - pixel[<span class="number">0</span>]).abs() &lt; <span class="number">1e-6</span>,
-<a href=#705 id=705 data-nosnippet>705</a>            <span class="string">"px roundtrip: {} vs {}"</span>,
-<a href=#706 id=706 data-nosnippet>706</a>            back[<span class="number">0</span>],
-<a href=#707 id=707 data-nosnippet>707</a>            pixel[<span class="number">0</span>]
-<a href=#708 id=708 data-nosnippet>708</a>        );
-<a href=#709 id=709 data-nosnippet>709</a>        <span class="macro">assert!</span>(
-<a href=#710 id=710 data-nosnippet>710</a>            (back[<span class="number">1</span>] - pixel[<span class="number">1</span>]).abs() &lt; <span class="number">1e-6</span>,
-<a href=#711 id=711 data-nosnippet>711</a>            <span class="string">"py roundtrip: {} vs {}"</span>,
-<a href=#712 id=712 data-nosnippet>712</a>            back[<span class="number">1</span>],
-<a href=#713 id=713 data-nosnippet>713</a>            pixel[<span class="number">1</span>]
-<a href=#714 id=714 data-nosnippet>714</a>        );
-<a href=#715 id=715 data-nosnippet>715</a>    }
-<a href=#716 id=716 data-nosnippet>716</a>
-<a href=#717 id=717 data-nosnippet>717</a>    <span class="attr">#[test]
-<a href=#718 id=718 data-nosnippet>718</a>    </span><span class="kw">fn </span>roundtrip_tan() {
-<a href=#719 id=719 data-nosnippet>719</a>        <span class="kw">let </span>proj = Projection::new(ProjectionType::TAN);
-<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">let </span>crval = [<span class="number">1.0</span>, <span class="number">0.5</span>];
-<a href=#721 id=721 data-nosnippet>721</a>        <span class="kw">let </span>cdelt = [-<span class="number">1e-4</span>, <span class="number">1e-4</span>];
-<a href=#722 id=722 data-nosnippet>722</a>        <span class="kw">let </span>crpix = [<span class="number">256.0</span>, <span class="number">256.0</span>];
-<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">let </span>coord = DirectionCoordinate::new(DirectionRef::J2000, proj, crval, cdelt, crpix);
-<a href=#724 id=724 data-nosnippet>724</a>
-<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">let </span>pixel = [<span class="number">270.0</span>, <span class="number">280.0</span>];
-<a href=#726 id=726 data-nosnippet>726</a>        <span class="kw">let </span>world = coord.to_world(<span class="kw-2">&amp;</span>pixel).unwrap();
-<a href=#727 id=727 data-nosnippet>727</a>        <span class="kw">let </span>back = coord.to_pixel(<span class="kw-2">&amp;</span>world).unwrap();
-<a href=#728 id=728 data-nosnippet>728</a>        <span class="macro">assert!</span>((back[<span class="number">0</span>] - pixel[<span class="number">0</span>]).abs() &lt; <span class="number">1e-6</span>);
-<a href=#729 id=729 data-nosnippet>729</a>        <span class="macro">assert!</span>((back[<span class="number">1</span>] - pixel[<span class="number">1</span>]).abs() &lt; <span class="number">1e-6</span>);
-<a href=#730 id=730 data-nosnippet>730</a>    }
-<a href=#731 id=731 data-nosnippet>731</a>
-<a href=#732 id=732 data-nosnippet>732</a>    <span class="attr">#[test]
-<a href=#733 id=733 data-nosnippet>733</a>    </span><span class="kw">fn </span>roundtrip_car() {
-<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">let </span>proj = Projection::new(ProjectionType::CAR);
-<a href=#735 id=735 data-nosnippet>735</a>        <span class="comment">// Use positive declination so longpole=0 (simple case)
-<a href=#736 id=736 data-nosnippet>736</a>        </span><span class="kw">let </span>crval = [<span class="number">3.0</span>, <span class="number">0.3</span>];
-<a href=#737 id=737 data-nosnippet>737</a>        <span class="kw">let </span>cdelt = [-<span class="number">1e-3</span>, <span class="number">1e-3</span>];
-<a href=#738 id=738 data-nosnippet>738</a>        <span class="kw">let </span>crpix = [<span class="number">100.0</span>, <span class="number">100.0</span>];
-<a href=#739 id=739 data-nosnippet>739</a>        <span class="kw">let </span>coord = DirectionCoordinate::new(DirectionRef::J2000, proj, crval, cdelt, crpix);
+<a href=#638 id=638 data-nosnippet>638</a>        <span class="macro">assert!</span>(
+<a href=#639 id=639 data-nosnippet>639</a>            (world[<span class="number">1</span>] - coord.crval[<span class="number">1</span>]).abs() &lt; TOL,
+<a href=#640 id=640 data-nosnippet>640</a>            <span class="string">"lat mismatch: {} vs {}"</span>,
+<a href=#641 id=641 data-nosnippet>641</a>            world[<span class="number">1</span>],
+<a href=#642 id=642 data-nosnippet>642</a>            coord.crval[<span class="number">1</span>]
+<a href=#643 id=643 data-nosnippet>643</a>        );
+<a href=#644 id=644 data-nosnippet>644</a>    }
+<a href=#645 id=645 data-nosnippet>645</a>
+<a href=#646 id=646 data-nosnippet>646</a>    <span class="attr">#[test]
+<a href=#647 id=647 data-nosnippet>647</a>    </span><span class="kw">fn </span>roundtrip_near_reference() {
+<a href=#648 id=648 data-nosnippet>648</a>        <span class="kw">let </span>coord = make_sin_coord();
+<a href=#649 id=649 data-nosnippet>649</a>        <span class="kw">let </span>pixel = [<span class="number">520.0</span>, <span class="number">530.0</span>];
+<a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">let </span>world = coord.to_world(<span class="kw-2">&amp;</span>pixel).unwrap();
+<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">let </span>back = coord.to_pixel(<span class="kw-2">&amp;</span>world).unwrap();
+<a href=#652 id=652 data-nosnippet>652</a>        <span class="macro">assert!</span>(
+<a href=#653 id=653 data-nosnippet>653</a>            (back[<span class="number">0</span>] - pixel[<span class="number">0</span>]).abs() &lt; <span class="number">1e-6</span>,
+<a href=#654 id=654 data-nosnippet>654</a>            <span class="string">"px roundtrip: {} vs {}"</span>,
+<a href=#655 id=655 data-nosnippet>655</a>            back[<span class="number">0</span>],
+<a href=#656 id=656 data-nosnippet>656</a>            pixel[<span class="number">0</span>]
+<a href=#657 id=657 data-nosnippet>657</a>        );
+<a href=#658 id=658 data-nosnippet>658</a>        <span class="macro">assert!</span>(
+<a href=#659 id=659 data-nosnippet>659</a>            (back[<span class="number">1</span>] - pixel[<span class="number">1</span>]).abs() &lt; <span class="number">1e-6</span>,
+<a href=#660 id=660 data-nosnippet>660</a>            <span class="string">"py roundtrip: {} vs {}"</span>,
+<a href=#661 id=661 data-nosnippet>661</a>            back[<span class="number">1</span>],
+<a href=#662 id=662 data-nosnippet>662</a>            pixel[<span class="number">1</span>]
+<a href=#663 id=663 data-nosnippet>663</a>        );
+<a href=#664 id=664 data-nosnippet>664</a>    }
+<a href=#665 id=665 data-nosnippet>665</a>
+<a href=#666 id=666 data-nosnippet>666</a>    <span class="attr">#[test]
+<a href=#667 id=667 data-nosnippet>667</a>    </span><span class="kw">fn </span>roundtrip_tan() {
+<a href=#668 id=668 data-nosnippet>668</a>        <span class="kw">let </span>proj = Projection::new(ProjectionType::TAN);
+<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">let </span>crval = [<span class="number">1.0</span>, <span class="number">0.5</span>];
+<a href=#670 id=670 data-nosnippet>670</a>        <span class="kw">let </span>cdelt = [-<span class="number">1e-4</span>, <span class="number">1e-4</span>];
+<a href=#671 id=671 data-nosnippet>671</a>        <span class="kw">let </span>crpix = [<span class="number">256.0</span>, <span class="number">256.0</span>];
+<a href=#672 id=672 data-nosnippet>672</a>        <span class="kw">let </span>coord = DirectionCoordinate::new(DirectionRef::J2000, proj, crval, cdelt, crpix);
+<a href=#673 id=673 data-nosnippet>673</a>
+<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">let </span>pixel = [<span class="number">270.0</span>, <span class="number">280.0</span>];
+<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">let </span>world = coord.to_world(<span class="kw-2">&amp;</span>pixel).unwrap();
+<a href=#676 id=676 data-nosnippet>676</a>        <span class="kw">let </span>back = coord.to_pixel(<span class="kw-2">&amp;</span>world).unwrap();
+<a href=#677 id=677 data-nosnippet>677</a>        <span class="macro">assert!</span>((back[<span class="number">0</span>] - pixel[<span class="number">0</span>]).abs() &lt; <span class="number">1e-6</span>);
+<a href=#678 id=678 data-nosnippet>678</a>        <span class="macro">assert!</span>((back[<span class="number">1</span>] - pixel[<span class="number">1</span>]).abs() &lt; <span class="number">1e-6</span>);
+<a href=#679 id=679 data-nosnippet>679</a>    }
+<a href=#680 id=680 data-nosnippet>680</a>
+<a href=#681 id=681 data-nosnippet>681</a>    <span class="attr">#[test]
+<a href=#682 id=682 data-nosnippet>682</a>    </span><span class="kw">fn </span>roundtrip_car() {
+<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span>proj = Projection::new(ProjectionType::CAR);
+<a href=#684 id=684 data-nosnippet>684</a>        <span class="comment">// Use positive declination so longpole=0 (simple case)
+<a href=#685 id=685 data-nosnippet>685</a>        </span><span class="kw">let </span>crval = [<span class="number">3.0</span>, <span class="number">0.3</span>];
+<a href=#686 id=686 data-nosnippet>686</a>        <span class="kw">let </span>cdelt = [-<span class="number">1e-3</span>, <span class="number">1e-3</span>];
+<a href=#687 id=687 data-nosnippet>687</a>        <span class="kw">let </span>crpix = [<span class="number">100.0</span>, <span class="number">100.0</span>];
+<a href=#688 id=688 data-nosnippet>688</a>        <span class="kw">let </span>coord = DirectionCoordinate::new(DirectionRef::J2000, proj, crval, cdelt, crpix);
+<a href=#689 id=689 data-nosnippet>689</a>
+<a href=#690 id=690 data-nosnippet>690</a>        <span class="kw">let </span>pixel = [<span class="number">110.0</span>, <span class="number">90.0</span>];
+<a href=#691 id=691 data-nosnippet>691</a>        <span class="kw">let </span>world = coord.to_world(<span class="kw-2">&amp;</span>pixel).unwrap();
+<a href=#692 id=692 data-nosnippet>692</a>        <span class="kw">let </span>back = coord.to_pixel(<span class="kw-2">&amp;</span>world).unwrap();
+<a href=#693 id=693 data-nosnippet>693</a>        <span class="macro">assert!</span>(
+<a href=#694 id=694 data-nosnippet>694</a>            (back[<span class="number">0</span>] - pixel[<span class="number">0</span>]).abs() &lt; <span class="number">1e-6</span>,
+<a href=#695 id=695 data-nosnippet>695</a>            <span class="string">"CAR px roundtrip: {} vs {}"</span>,
+<a href=#696 id=696 data-nosnippet>696</a>            back[<span class="number">0</span>],
+<a href=#697 id=697 data-nosnippet>697</a>            pixel[<span class="number">0</span>]
+<a href=#698 id=698 data-nosnippet>698</a>        );
+<a href=#699 id=699 data-nosnippet>699</a>        <span class="macro">assert!</span>(
+<a href=#700 id=700 data-nosnippet>700</a>            (back[<span class="number">1</span>] - pixel[<span class="number">1</span>]).abs() &lt; <span class="number">1e-6</span>,
+<a href=#701 id=701 data-nosnippet>701</a>            <span class="string">"CAR py roundtrip: {} vs {}"</span>,
+<a href=#702 id=702 data-nosnippet>702</a>            back[<span class="number">1</span>],
+<a href=#703 id=703 data-nosnippet>703</a>            pixel[<span class="number">1</span>]
+<a href=#704 id=704 data-nosnippet>704</a>        );
+<a href=#705 id=705 data-nosnippet>705</a>    }
+<a href=#706 id=706 data-nosnippet>706</a>
+<a href=#707 id=707 data-nosnippet>707</a>    <span class="comment">// NOTE: CAR with negative declination (delta_0 &lt; theta_0 = 0) requires
+<a href=#708 id=708 data-nosnippet>708</a>    // longpole = pi and a more complex native-pole computation that introduces
+<a href=#709 id=709 data-nosnippet>709</a>    // coordinate inversions. This case is deferred to a future iteration.
+<a href=#710 id=710 data-nosnippet>710</a>
+<a href=#711 id=711 data-nosnippet>711</a>    </span><span class="attr">#[test]
+<a href=#712 id=712 data-nosnippet>712</a>    </span><span class="kw">fn </span>dimension_mismatch() {
+<a href=#713 id=713 data-nosnippet>713</a>        <span class="kw">let </span>coord = make_sin_coord();
+<a href=#714 id=714 data-nosnippet>714</a>        <span class="macro">assert!</span>(coord.to_world(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>]).is_err());
+<a href=#715 id=715 data-nosnippet>715</a>        <span class="macro">assert!</span>(coord.to_pixel(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>]).is_err());
+<a href=#716 id=716 data-nosnippet>716</a>    }
+<a href=#717 id=717 data-nosnippet>717</a>
+<a href=#718 id=718 data-nosnippet>718</a>    <span class="attr">#[test]
+<a href=#719 id=719 data-nosnippet>719</a>    </span><span class="kw">fn </span>trait_methods() {
+<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">let </span>coord = make_sin_coord();
+<a href=#721 id=721 data-nosnippet>721</a>        <span class="macro">assert_eq!</span>(coord.coordinate_type(), CoordinateType::Direction);
+<a href=#722 id=722 data-nosnippet>722</a>        <span class="macro">assert_eq!</span>(coord.n_pixel_axes(), <span class="number">2</span>);
+<a href=#723 id=723 data-nosnippet>723</a>        <span class="macro">assert_eq!</span>(coord.n_world_axes(), <span class="number">2</span>);
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="macro">assert_eq!</span>(coord.axis_names(), <span class="macro">vec!</span>[<span class="string">"Right Ascension"</span>, <span class="string">"Declination"</span>]);
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="macro">assert_eq!</span>(coord.axis_units(), <span class="macro">vec!</span>[<span class="string">"rad"</span>, <span class="string">"rad"</span>]);
+<a href=#726 id=726 data-nosnippet>726</a>    }
+<a href=#727 id=727 data-nosnippet>727</a>
+<a href=#728 id=728 data-nosnippet>728</a>    <span class="attr">#[test]
+<a href=#729 id=729 data-nosnippet>729</a>    </span><span class="kw">fn </span>galactic_axis_names() {
+<a href=#730 id=730 data-nosnippet>730</a>        <span class="kw">let </span>proj = Projection::new(ProjectionType::SIN);
+<a href=#731 id=731 data-nosnippet>731</a>        <span class="kw">let </span>coord = DirectionCoordinate::new(
+<a href=#732 id=732 data-nosnippet>732</a>            DirectionRef::GALACTIC,
+<a href=#733 id=733 data-nosnippet>733</a>            proj,
+<a href=#734 id=734 data-nosnippet>734</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#735 id=735 data-nosnippet>735</a>            [<span class="number">1e-4</span>, <span class="number">1e-4</span>],
+<a href=#736 id=736 data-nosnippet>736</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#737 id=737 data-nosnippet>737</a>        );
+<a href=#738 id=738 data-nosnippet>738</a>        <span class="macro">assert_eq!</span>(coord.axis_names(), <span class="macro">vec!</span>[<span class="string">"Longitude"</span>, <span class="string">"Latitude"</span>]);
+<a href=#739 id=739 data-nosnippet>739</a>    }
 <a href=#740 id=740 data-nosnippet>740</a>
-<a href=#741 id=741 data-nosnippet>741</a>        <span class="kw">let </span>pixel = [<span class="number">110.0</span>, <span class="number">90.0</span>];
-<a href=#742 id=742 data-nosnippet>742</a>        <span class="kw">let </span>world = coord.to_world(<span class="kw-2">&amp;</span>pixel).unwrap();
-<a href=#743 id=743 data-nosnippet>743</a>        <span class="kw">let </span>back = coord.to_pixel(<span class="kw-2">&amp;</span>world).unwrap();
-<a href=#744 id=744 data-nosnippet>744</a>        <span class="macro">assert!</span>(
-<a href=#745 id=745 data-nosnippet>745</a>            (back[<span class="number">0</span>] - pixel[<span class="number">0</span>]).abs() &lt; <span class="number">1e-6</span>,
-<a href=#746 id=746 data-nosnippet>746</a>            <span class="string">"CAR px roundtrip: {} vs {}"</span>,
-<a href=#747 id=747 data-nosnippet>747</a>            back[<span class="number">0</span>],
-<a href=#748 id=748 data-nosnippet>748</a>            pixel[<span class="number">0</span>]
-<a href=#749 id=749 data-nosnippet>749</a>        );
-<a href=#750 id=750 data-nosnippet>750</a>        <span class="macro">assert!</span>(
-<a href=#751 id=751 data-nosnippet>751</a>            (back[<span class="number">1</span>] - pixel[<span class="number">1</span>]).abs() &lt; <span class="number">1e-6</span>,
-<a href=#752 id=752 data-nosnippet>752</a>            <span class="string">"CAR py roundtrip: {} vs {}"</span>,
-<a href=#753 id=753 data-nosnippet>753</a>            back[<span class="number">1</span>],
-<a href=#754 id=754 data-nosnippet>754</a>            pixel[<span class="number">1</span>]
-<a href=#755 id=755 data-nosnippet>755</a>        );
-<a href=#756 id=756 data-nosnippet>756</a>    }
-<a href=#757 id=757 data-nosnippet>757</a>
-<a href=#758 id=758 data-nosnippet>758</a>    <span class="comment">// NOTE: CAR with negative declination (delta_0 &lt; theta_0 = 0) requires
-<a href=#759 id=759 data-nosnippet>759</a>    // longpole = pi and a more complex native-pole computation that introduces
-<a href=#760 id=760 data-nosnippet>760</a>    // coordinate inversions. This case is deferred to a future iteration.
-<a href=#761 id=761 data-nosnippet>761</a>
-<a href=#762 id=762 data-nosnippet>762</a>    </span><span class="attr">#[test]
-<a href=#763 id=763 data-nosnippet>763</a>    </span><span class="kw">fn </span>dimension_mismatch() {
-<a href=#764 id=764 data-nosnippet>764</a>        <span class="kw">let </span>coord = make_sin_coord();
-<a href=#765 id=765 data-nosnippet>765</a>        <span class="macro">assert!</span>(coord.to_world(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>]).is_err());
-<a href=#766 id=766 data-nosnippet>766</a>        <span class="macro">assert!</span>(coord.to_pixel(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>]).is_err());
-<a href=#767 id=767 data-nosnippet>767</a>    }
-<a href=#768 id=768 data-nosnippet>768</a>
-<a href=#769 id=769 data-nosnippet>769</a>    <span class="attr">#[test]
-<a href=#770 id=770 data-nosnippet>770</a>    </span><span class="kw">fn </span>trait_methods() {
-<a href=#771 id=771 data-nosnippet>771</a>        <span class="kw">let </span>coord = make_sin_coord();
-<a href=#772 id=772 data-nosnippet>772</a>        <span class="macro">assert_eq!</span>(coord.coordinate_type(), CoordinateType::Direction);
-<a href=#773 id=773 data-nosnippet>773</a>        <span class="macro">assert_eq!</span>(coord.n_pixel_axes(), <span class="number">2</span>);
-<a href=#774 id=774 data-nosnippet>774</a>        <span class="macro">assert_eq!</span>(coord.n_world_axes(), <span class="number">2</span>);
-<a href=#775 id=775 data-nosnippet>775</a>        <span class="macro">assert_eq!</span>(coord.axis_names(), <span class="macro">vec!</span>[<span class="string">"Right Ascension"</span>, <span class="string">"Declination"</span>]);
-<a href=#776 id=776 data-nosnippet>776</a>        <span class="macro">assert_eq!</span>(coord.axis_units(), <span class="macro">vec!</span>[<span class="string">"rad"</span>, <span class="string">"rad"</span>]);
-<a href=#777 id=777 data-nosnippet>777</a>    }
-<a href=#778 id=778 data-nosnippet>778</a>
-<a href=#779 id=779 data-nosnippet>779</a>    <span class="attr">#[test]
-<a href=#780 id=780 data-nosnippet>780</a>    </span><span class="kw">fn </span>galactic_axis_names() {
-<a href=#781 id=781 data-nosnippet>781</a>        <span class="kw">let </span>proj = Projection::new(ProjectionType::SIN);
-<a href=#782 id=782 data-nosnippet>782</a>        <span class="kw">let </span>coord = DirectionCoordinate::new(
-<a href=#783 id=783 data-nosnippet>783</a>            DirectionRef::GALACTIC,
-<a href=#784 id=784 data-nosnippet>784</a>            proj,
-<a href=#785 id=785 data-nosnippet>785</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#786 id=786 data-nosnippet>786</a>            [<span class="number">1e-4</span>, <span class="number">1e-4</span>],
-<a href=#787 id=787 data-nosnippet>787</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#741 id=741 data-nosnippet>741</a>    <span class="attr">#[test]
+<a href=#742 id=742 data-nosnippet>742</a>    </span><span class="kw">fn </span>to_record_has_projection() {
+<a href=#743 id=743 data-nosnippet>743</a>        <span class="kw">let </span>coord = make_sin_coord();
+<a href=#744 id=744 data-nosnippet>744</a>        <span class="kw">let </span>rec = coord.to_record();
+<a href=#745 id=745 data-nosnippet>745</a>        <span class="macro">assert!</span>(rec.get(<span class="string">"projection"</span>).is_some());
+<a href=#746 id=746 data-nosnippet>746</a>        <span class="macro">assert!</span>(rec.get(<span class="string">"system"</span>).is_some());
+<a href=#747 id=747 data-nosnippet>747</a>    }
+<a href=#748 id=748 data-nosnippet>748</a>
+<a href=#749 id=749 data-nosnippet>749</a>    <span class="attr">#[test]
+<a href=#750 id=750 data-nosnippet>750</a>    </span><span class="kw">fn </span>record_roundtrip() {
+<a href=#751 id=751 data-nosnippet>751</a>        <span class="kw">let </span>proj = Projection::with_parameters(ProjectionType::SIN, <span class="macro">vec!</span>[<span class="number">0.25</span>, -<span class="number">0.5</span>]);
+<a href=#752 id=752 data-nosnippet>752</a>        <span class="kw">let </span>pc = Array2::from_shape_vec((<span class="number">2</span>, <span class="number">2</span>), <span class="macro">vec!</span>[<span class="number">0.9</span>, -<span class="number">0.1</span>, <span class="number">0.2</span>, <span class="number">1.1</span>]).unwrap();
+<a href=#753 id=753 data-nosnippet>753</a>        <span class="kw">let </span>coord = DirectionCoordinate::new(
+<a href=#754 id=754 data-nosnippet>754</a>            DirectionRef::GALACTIC,
+<a href=#755 id=755 data-nosnippet>755</a>            proj,
+<a href=#756 id=756 data-nosnippet>756</a>            [<span class="number">1.0</span>, <span class="number">0.5</span>],
+<a href=#757 id=757 data-nosnippet>757</a>            [-<span class="number">1e-4</span>, <span class="number">2e-4</span>],
+<a href=#758 id=758 data-nosnippet>758</a>            [<span class="number">128.0</span>, <span class="number">64.0</span>],
+<a href=#759 id=759 data-nosnippet>759</a>        )
+<a href=#760 id=760 data-nosnippet>760</a>        .with_pc_matrix(pc.clone())
+<a href=#761 id=761 data-nosnippet>761</a>        .with_longpole(<span class="number">0.25</span>)
+<a href=#762 id=762 data-nosnippet>762</a>        .with_latpole(<span class="number">1.2</span>);
+<a href=#763 id=763 data-nosnippet>763</a>
+<a href=#764 id=764 data-nosnippet>764</a>        <span class="kw">let </span>restored = DirectionCoordinate::from_record(<span class="kw-2">&amp;</span>coord.to_record()).unwrap();
+<a href=#765 id=765 data-nosnippet>765</a>
+<a href=#766 id=766 data-nosnippet>766</a>        <span class="macro">assert_eq!</span>(restored.direction_ref(), DirectionRef::GALACTIC);
+<a href=#767 id=767 data-nosnippet>767</a>        <span class="macro">assert_eq!</span>(restored.reference_value(), <span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">0.5</span>]);
+<a href=#768 id=768 data-nosnippet>768</a>        <span class="macro">assert_eq!</span>(restored.reference_pixel(), <span class="macro">vec!</span>[<span class="number">128.0</span>, <span class="number">64.0</span>]);
+<a href=#769 id=769 data-nosnippet>769</a>        <span class="macro">assert_eq!</span>(restored.increment(), <span class="macro">vec!</span>[-<span class="number">1e-4</span>, <span class="number">2e-4</span>]);
+<a href=#770 id=770 data-nosnippet>770</a>        <span class="macro">assert_eq!</span>(restored.pc_matrix(), <span class="kw-2">&amp;</span>pc);
+<a href=#771 id=771 data-nosnippet>771</a>        <span class="macro">assert_eq!</span>(restored.projection().projection_type(), ProjectionType::SIN);
+<a href=#772 id=772 data-nosnippet>772</a>        <span class="macro">assert_eq!</span>(restored.projection().parameters(), <span class="kw-2">&amp;</span>[<span class="number">0.25</span>, -<span class="number">0.5</span>]);
+<a href=#773 id=773 data-nosnippet>773</a>        <span class="macro">assert!</span>((restored.longpole() - <span class="number">0.25</span>).abs() &lt; TOL);
+<a href=#774 id=774 data-nosnippet>774</a>        <span class="macro">assert!</span>((restored.latpole() - <span class="number">1.2</span>).abs() &lt; TOL);
+<a href=#775 id=775 data-nosnippet>775</a>    }
+<a href=#776 id=776 data-nosnippet>776</a>
+<a href=#777 id=777 data-nosnippet>777</a>    <span class="attr">#[test]
+<a href=#778 id=778 data-nosnippet>778</a>    </span><span class="kw">fn </span>casa_record_units_are_converted_to_radians() {
+<a href=#779 id=779 data-nosnippet>779</a>        <span class="kw">let </span><span class="kw-2">mut </span>record = RecordValue::default();
+<a href=#780 id=780 data-nosnippet>780</a>        record.upsert(<span class="string">"system"</span>, Value::Scalar(ScalarValue::String(<span class="string">"J2000"</span>.into())));
+<a href=#781 id=781 data-nosnippet>781</a>        record.upsert(
+<a href=#782 id=782 data-nosnippet>782</a>            <span class="string">"projection"</span>,
+<a href=#783 id=783 data-nosnippet>783</a>            Value::Scalar(ScalarValue::String(<span class="string">"SIN"</span>.into())),
+<a href=#784 id=784 data-nosnippet>784</a>        );
+<a href=#785 id=785 data-nosnippet>785</a>        record.upsert(
+<a href=#786 id=786 data-nosnippet>786</a>            <span class="string">"crval"</span>,
+<a href=#787 id=787 data-nosnippet>787</a>            Value::Array(ArrayValue::from_f64_vec(<span class="macro">vec!</span>[<span class="number">120.0</span>, <span class="number">45.0</span>])),
 <a href=#788 id=788 data-nosnippet>788</a>        );
-<a href=#789 id=789 data-nosnippet>789</a>        <span class="macro">assert_eq!</span>(coord.axis_names(), <span class="macro">vec!</span>[<span class="string">"Longitude"</span>, <span class="string">"Latitude"</span>]);
-<a href=#790 id=790 data-nosnippet>790</a>    }
-<a href=#791 id=791 data-nosnippet>791</a>
-<a href=#792 id=792 data-nosnippet>792</a>    <span class="attr">#[test]
-<a href=#793 id=793 data-nosnippet>793</a>    </span><span class="kw">fn </span>to_record_has_projection() {
-<a href=#794 id=794 data-nosnippet>794</a>        <span class="kw">let </span>coord = make_sin_coord();
-<a href=#795 id=795 data-nosnippet>795</a>        <span class="kw">let </span>rec = coord.to_record();
-<a href=#796 id=796 data-nosnippet>796</a>        <span class="macro">assert!</span>(rec.get(<span class="string">"projection"</span>).is_some());
-<a href=#797 id=797 data-nosnippet>797</a>        <span class="macro">assert!</span>(rec.get(<span class="string">"direction_ref"</span>).is_some());
-<a href=#798 id=798 data-nosnippet>798</a>    }
-<a href=#799 id=799 data-nosnippet>799</a>
-<a href=#800 id=800 data-nosnippet>800</a>    <span class="attr">#[test]
-<a href=#801 id=801 data-nosnippet>801</a>    </span><span class="kw">fn </span>clone_box_preserves_type() {
-<a href=#802 id=802 data-nosnippet>802</a>        <span class="kw">let </span>coord = make_sin_coord();
-<a href=#803 id=803 data-nosnippet>803</a>        <span class="kw">let </span>boxed: Box&lt;<span class="kw">dyn </span>Coordinate&gt; = Box::new(coord);
-<a href=#804 id=804 data-nosnippet>804</a>        <span class="kw">let </span>cloned = boxed.clone_box();
-<a href=#805 id=805 data-nosnippet>805</a>        <span class="macro">assert_eq!</span>(cloned.coordinate_type(), CoordinateType::Direction);
-<a href=#806 id=806 data-nosnippet>806</a>    }
-<a href=#807 id=807 data-nosnippet>807</a>
-<a href=#808 id=808 data-nosnippet>808</a>    <span class="attr">#[test]
-<a href=#809 id=809 data-nosnippet>809</a>    </span><span class="kw">fn </span>record_roundtrip() {
-<a href=#810 id=810 data-nosnippet>810</a>        <span class="kw">let </span>proj = Projection::with_parameters(ProjectionType::SIN, <span class="macro">vec!</span>[<span class="number">0.25</span>, -<span class="number">0.5</span>]);
-<a href=#811 id=811 data-nosnippet>811</a>        <span class="kw">let </span>pc = Array2::from_shape_vec((<span class="number">2</span>, <span class="number">2</span>), <span class="macro">vec!</span>[<span class="number">0.9</span>, -<span class="number">0.1</span>, <span class="number">0.2</span>, <span class="number">1.1</span>]).unwrap();
-<a href=#812 id=812 data-nosnippet>812</a>        <span class="kw">let </span>coord = DirectionCoordinate::new(
-<a href=#813 id=813 data-nosnippet>813</a>            DirectionRef::GALACTIC,
-<a href=#814 id=814 data-nosnippet>814</a>            proj,
-<a href=#815 id=815 data-nosnippet>815</a>            [<span class="number">1.0</span>, <span class="number">0.5</span>],
-<a href=#816 id=816 data-nosnippet>816</a>            [-<span class="number">1e-4</span>, <span class="number">2e-4</span>],
-<a href=#817 id=817 data-nosnippet>817</a>            [<span class="number">128.0</span>, <span class="number">64.0</span>],
-<a href=#818 id=818 data-nosnippet>818</a>        )
-<a href=#819 id=819 data-nosnippet>819</a>        .with_pc_matrix(pc.clone())
-<a href=#820 id=820 data-nosnippet>820</a>        .with_longpole(<span class="number">0.25</span>)
-<a href=#821 id=821 data-nosnippet>821</a>        .with_latpole(<span class="number">1.2</span>);
-<a href=#822 id=822 data-nosnippet>822</a>
-<a href=#823 id=823 data-nosnippet>823</a>        <span class="kw">let </span>restored = DirectionCoordinate::from_record(<span class="kw-2">&amp;</span>coord.to_record()).unwrap();
-<a href=#824 id=824 data-nosnippet>824</a>
-<a href=#825 id=825 data-nosnippet>825</a>        <span class="macro">assert_eq!</span>(restored.direction_ref(), DirectionRef::GALACTIC);
-<a href=#826 id=826 data-nosnippet>826</a>        <span class="macro">assert_eq!</span>(restored.reference_value(), <span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">0.5</span>]);
-<a href=#827 id=827 data-nosnippet>827</a>        <span class="macro">assert_eq!</span>(restored.reference_pixel(), <span class="macro">vec!</span>[<span class="number">128.0</span>, <span class="number">64.0</span>]);
-<a href=#828 id=828 data-nosnippet>828</a>        <span class="macro">assert_eq!</span>(restored.increment(), <span class="macro">vec!</span>[-<span class="number">1e-4</span>, <span class="number">2e-4</span>]);
-<a href=#829 id=829 data-nosnippet>829</a>        <span class="macro">assert_eq!</span>(restored.pc_matrix(), <span class="kw-2">&amp;</span>pc);
-<a href=#830 id=830 data-nosnippet>830</a>        <span class="macro">assert_eq!</span>(restored.projection().projection_type(), ProjectionType::SIN);
-<a href=#831 id=831 data-nosnippet>831</a>        <span class="macro">assert_eq!</span>(restored.projection().parameters(), <span class="kw-2">&amp;</span>[<span class="number">0.25</span>, -<span class="number">0.5</span>]);
-<a href=#832 id=832 data-nosnippet>832</a>        <span class="macro">assert!</span>((restored.longpole() - <span class="number">0.25</span>).abs() &lt; TOL);
-<a href=#833 id=833 data-nosnippet>833</a>        <span class="macro">assert!</span>((restored.latpole() - <span class="number">1.2</span>).abs() &lt; TOL);
-<a href=#834 id=834 data-nosnippet>834</a>    }
-<a href=#835 id=835 data-nosnippet>835</a>
-<a href=#836 id=836 data-nosnippet>836</a>    <span class="attr">#[test]
-<a href=#837 id=837 data-nosnippet>837</a>    </span><span class="kw">fn </span>casa_record_units_are_converted_to_radians() {
-<a href=#838 id=838 data-nosnippet>838</a>        <span class="kw">let </span><span class="kw-2">mut </span>record = RecordValue::default();
-<a href=#839 id=839 data-nosnippet>839</a>        record.upsert(<span class="string">"system"</span>, Value::Scalar(ScalarValue::String(<span class="string">"J2000"</span>.into())));
-<a href=#840 id=840 data-nosnippet>840</a>        record.upsert(
-<a href=#841 id=841 data-nosnippet>841</a>            <span class="string">"projection"</span>,
-<a href=#842 id=842 data-nosnippet>842</a>            Value::Scalar(ScalarValue::String(<span class="string">"SIN"</span>.into())),
-<a href=#843 id=843 data-nosnippet>843</a>        );
-<a href=#844 id=844 data-nosnippet>844</a>        record.upsert(
-<a href=#845 id=845 data-nosnippet>845</a>            <span class="string">"crval"</span>,
-<a href=#846 id=846 data-nosnippet>846</a>            Value::Array(ArrayValue::from_f64_vec(<span class="macro">vec!</span>[<span class="number">120.0</span>, <span class="number">45.0</span>])),
-<a href=#847 id=847 data-nosnippet>847</a>        );
-<a href=#848 id=848 data-nosnippet>848</a>        record.upsert(
-<a href=#849 id=849 data-nosnippet>849</a>            <span class="string">"crpix"</span>,
-<a href=#850 id=850 data-nosnippet>850</a>            Value::Array(ArrayValue::from_f64_vec(<span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.0</span>])),
-<a href=#851 id=851 data-nosnippet>851</a>        );
-<a href=#852 id=852 data-nosnippet>852</a>        record.upsert(
-<a href=#853 id=853 data-nosnippet>853</a>            <span class="string">"cdelt"</span>,
-<a href=#854 id=854 data-nosnippet>854</a>            Value::Array(ArrayValue::from_f64_vec(<span class="macro">vec!</span>[-<span class="number">1.0</span>, <span class="number">1.0</span>])),
-<a href=#855 id=855 data-nosnippet>855</a>        );
-<a href=#856 id=856 data-nosnippet>856</a>        record.upsert(
-<a href=#857 id=857 data-nosnippet>857</a>            <span class="string">"units"</span>,
-<a href=#858 id=858 data-nosnippet>858</a>            Value::Array(ArrayValue::from_string_vec(<span class="macro">vec!</span>[
-<a href=#859 id=859 data-nosnippet>859</a>                <span class="string">"deg"</span>.into(),
-<a href=#860 id=860 data-nosnippet>860</a>                <span class="string">"deg"</span>.into(),
-<a href=#861 id=861 data-nosnippet>861</a>            ])),
-<a href=#862 id=862 data-nosnippet>862</a>        );
-<a href=#863 id=863 data-nosnippet>863</a>        record.upsert(
-<a href=#864 id=864 data-nosnippet>864</a>            <span class="string">"axes"</span>,
-<a href=#865 id=865 data-nosnippet>865</a>            Value::Array(ArrayValue::from_string_vec(<span class="macro">vec!</span>[
-<a href=#866 id=866 data-nosnippet>866</a>                <span class="string">"Right Ascension"</span>.into(),
-<a href=#867 id=867 data-nosnippet>867</a>                <span class="string">"Declination"</span>.into(),
-<a href=#868 id=868 data-nosnippet>868</a>            ])),
-<a href=#869 id=869 data-nosnippet>869</a>        );
-<a href=#870 id=870 data-nosnippet>870</a>        record.upsert(
-<a href=#871 id=871 data-nosnippet>871</a>            <span class="string">"conversionSystem"</span>,
-<a href=#872 id=872 data-nosnippet>872</a>            Value::Scalar(ScalarValue::String(<span class="string">"J2000"</span>.into())),
-<a href=#873 id=873 data-nosnippet>873</a>        );
-<a href=#874 id=874 data-nosnippet>874</a>        record.upsert(<span class="string">"longpole"</span>, Value::Scalar(ScalarValue::Float64(<span class="number">180.0</span>)));
-<a href=#875 id=875 data-nosnippet>875</a>        record.upsert(<span class="string">"latpole"</span>, Value::Scalar(ScalarValue::Float64(<span class="number">90.0</span>)));
-<a href=#876 id=876 data-nosnippet>876</a>
-<a href=#877 id=877 data-nosnippet>877</a>        <span class="kw">let </span>coord = DirectionCoordinate::from_record(<span class="kw-2">&amp;</span>record).unwrap();
-<a href=#878 id=878 data-nosnippet>878</a>        <span class="macro">assert!</span>((coord.reference_value()[<span class="number">0</span>] - <span class="number">120f64</span>.to_radians()).abs() &lt; TOL);
-<a href=#879 id=879 data-nosnippet>879</a>        <span class="macro">assert!</span>((coord.reference_value()[<span class="number">1</span>] - <span class="number">45f64</span>.to_radians()).abs() &lt; TOL);
-<a href=#880 id=880 data-nosnippet>880</a>        <span class="macro">assert!</span>((coord.increment()[<span class="number">0</span>] - (-<span class="number">1f64</span>).to_radians()).abs() &lt; TOL);
-<a href=#881 id=881 data-nosnippet>881</a>        <span class="macro">assert!</span>((coord.increment()[<span class="number">1</span>] - <span class="number">1f64</span>.to_radians()).abs() &lt; TOL);
-<a href=#882 id=882 data-nosnippet>882</a>        <span class="macro">assert!</span>((coord.longpole() - PI).abs() &lt; TOL);
-<a href=#883 id=883 data-nosnippet>883</a>        <span class="macro">assert!</span>((coord.latpole() - FRAC_PI_2).abs() &lt; TOL);
-<a href=#884 id=884 data-nosnippet>884</a>    }
-<a href=#885 id=885 data-nosnippet>885</a>
-<a href=#886 id=886 data-nosnippet>886</a>    <span class="attr">#[test]
-<a href=#887 id=887 data-nosnippet>887</a>    </span><span class="kw">fn </span>casa_record_serialization_uses_legacy_fields() {
-<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw">let </span>coord = make_sin_coord().with_longpole(PI).with_latpole(FRAC_PI_2);
-<a href=#889 id=889 data-nosnippet>889</a>        <span class="kw">let </span>rec = coord.to_casa_record();
-<a href=#890 id=890 data-nosnippet>890</a>        <span class="macro">assert_eq!</span>(
-<a href=#891 id=891 data-nosnippet>891</a>            rec.get(<span class="string">"system"</span>),
-<a href=#892 id=892 data-nosnippet>892</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Value::Scalar(ScalarValue::String(<span class="string">"J2000"</span>.into())))
-<a href=#893 id=893 data-nosnippet>893</a>        );
-<a href=#894 id=894 data-nosnippet>894</a>        <span class="macro">assert_eq!</span>(
-<a href=#895 id=895 data-nosnippet>895</a>            rec.get(<span class="string">"conversionSystem"</span>),
-<a href=#896 id=896 data-nosnippet>896</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Value::Scalar(ScalarValue::String(<span class="string">"J2000"</span>.into())))
-<a href=#897 id=897 data-nosnippet>897</a>        );
-<a href=#898 id=898 data-nosnippet>898</a>        <span class="macro">assert_eq!</span>(
-<a href=#899 id=899 data-nosnippet>899</a>            rec.get(<span class="string">"projection_parameters"</span>),
-<a href=#900 id=900 data-nosnippet>900</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Value::Array(ArrayValue::from_f64_vec(Vec::new())))
-<a href=#901 id=901 data-nosnippet>901</a>        );
-<a href=#902 id=902 data-nosnippet>902</a>        <span class="macro">assert_eq!</span>(
-<a href=#903 id=903 data-nosnippet>903</a>            rec.get(<span class="string">"units"</span>),
-<a href=#904 id=904 data-nosnippet>904</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Value::Array(ArrayValue::from_string_vec(<span class="macro">vec!</span>[
-<a href=#905 id=905 data-nosnippet>905</a>                <span class="string">"rad"</span>.into(),
-<a href=#906 id=906 data-nosnippet>906</a>                <span class="string">"rad"</span>.into()
-<a href=#907 id=907 data-nosnippet>907</a>            ])))
-<a href=#908 id=908 data-nosnippet>908</a>        );
-<a href=#909 id=909 data-nosnippet>909</a>        <span class="macro">assert_eq!</span>(
-<a href=#910 id=910 data-nosnippet>910</a>            rec.get(<span class="string">"longpole"</span>),
-<a href=#911 id=911 data-nosnippet>911</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Value::Scalar(ScalarValue::Float64(<span class="number">180.0</span>)))
-<a href=#912 id=912 data-nosnippet>912</a>        );
-<a href=#913 id=913 data-nosnippet>913</a>        <span class="macro">assert_eq!</span>(
-<a href=#914 id=914 data-nosnippet>914</a>            rec.get(<span class="string">"latpole"</span>),
-<a href=#915 id=915 data-nosnippet>915</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Value::Scalar(ScalarValue::Float64(<span class="number">90.0</span>)))
-<a href=#916 id=916 data-nosnippet>916</a>        );
-<a href=#917 id=917 data-nosnippet>917</a>    }
-<a href=#918 id=918 data-nosnippet>918</a>}
+<a href=#789 id=789 data-nosnippet>789</a>        record.upsert(
+<a href=#790 id=790 data-nosnippet>790</a>            <span class="string">"crpix"</span>,
+<a href=#791 id=791 data-nosnippet>791</a>            Value::Array(ArrayValue::from_f64_vec(<span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.0</span>])),
+<a href=#792 id=792 data-nosnippet>792</a>        );
+<a href=#793 id=793 data-nosnippet>793</a>        record.upsert(
+<a href=#794 id=794 data-nosnippet>794</a>            <span class="string">"cdelt"</span>,
+<a href=#795 id=795 data-nosnippet>795</a>            Value::Array(ArrayValue::from_f64_vec(<span class="macro">vec!</span>[-<span class="number">1.0</span>, <span class="number">1.0</span>])),
+<a href=#796 id=796 data-nosnippet>796</a>        );
+<a href=#797 id=797 data-nosnippet>797</a>        record.upsert(
+<a href=#798 id=798 data-nosnippet>798</a>            <span class="string">"units"</span>,
+<a href=#799 id=799 data-nosnippet>799</a>            Value::Array(ArrayValue::from_string_vec(<span class="macro">vec!</span>[
+<a href=#800 id=800 data-nosnippet>800</a>                <span class="string">"deg"</span>.into(),
+<a href=#801 id=801 data-nosnippet>801</a>                <span class="string">"deg"</span>.into(),
+<a href=#802 id=802 data-nosnippet>802</a>            ])),
+<a href=#803 id=803 data-nosnippet>803</a>        );
+<a href=#804 id=804 data-nosnippet>804</a>        record.upsert(
+<a href=#805 id=805 data-nosnippet>805</a>            <span class="string">"axes"</span>,
+<a href=#806 id=806 data-nosnippet>806</a>            Value::Array(ArrayValue::from_string_vec(<span class="macro">vec!</span>[
+<a href=#807 id=807 data-nosnippet>807</a>                <span class="string">"Right Ascension"</span>.into(),
+<a href=#808 id=808 data-nosnippet>808</a>                <span class="string">"Declination"</span>.into(),
+<a href=#809 id=809 data-nosnippet>809</a>            ])),
+<a href=#810 id=810 data-nosnippet>810</a>        );
+<a href=#811 id=811 data-nosnippet>811</a>        record.upsert(
+<a href=#812 id=812 data-nosnippet>812</a>            <span class="string">"conversionSystem"</span>,
+<a href=#813 id=813 data-nosnippet>813</a>            Value::Scalar(ScalarValue::String(<span class="string">"J2000"</span>.into())),
+<a href=#814 id=814 data-nosnippet>814</a>        );
+<a href=#815 id=815 data-nosnippet>815</a>        record.upsert(<span class="string">"longpole"</span>, Value::Scalar(ScalarValue::Float64(<span class="number">180.0</span>)));
+<a href=#816 id=816 data-nosnippet>816</a>        record.upsert(<span class="string">"latpole"</span>, Value::Scalar(ScalarValue::Float64(<span class="number">90.0</span>)));
+<a href=#817 id=817 data-nosnippet>817</a>
+<a href=#818 id=818 data-nosnippet>818</a>        <span class="kw">let </span>coord = DirectionCoordinate::from_record(<span class="kw-2">&amp;</span>record).unwrap();
+<a href=#819 id=819 data-nosnippet>819</a>        <span class="macro">assert!</span>((coord.reference_value()[<span class="number">0</span>] - <span class="number">120f64</span>.to_radians()).abs() &lt; TOL);
+<a href=#820 id=820 data-nosnippet>820</a>        <span class="macro">assert!</span>((coord.reference_value()[<span class="number">1</span>] - <span class="number">45f64</span>.to_radians()).abs() &lt; TOL);
+<a href=#821 id=821 data-nosnippet>821</a>        <span class="macro">assert!</span>((coord.increment()[<span class="number">0</span>] - (-<span class="number">1f64</span>).to_radians()).abs() &lt; TOL);
+<a href=#822 id=822 data-nosnippet>822</a>        <span class="macro">assert!</span>((coord.increment()[<span class="number">1</span>] - <span class="number">1f64</span>.to_radians()).abs() &lt; TOL);
+<a href=#823 id=823 data-nosnippet>823</a>        <span class="macro">assert!</span>((coord.longpole() - PI).abs() &lt; TOL);
+<a href=#824 id=824 data-nosnippet>824</a>        <span class="macro">assert!</span>((coord.latpole() - FRAC_PI_2).abs() &lt; TOL);
+<a href=#825 id=825 data-nosnippet>825</a>    }
+<a href=#826 id=826 data-nosnippet>826</a>
+<a href=#827 id=827 data-nosnippet>827</a>    <span class="attr">#[test]
+<a href=#828 id=828 data-nosnippet>828</a>    </span><span class="kw">fn </span>casa_record_serialization_uses_legacy_fields() {
+<a href=#829 id=829 data-nosnippet>829</a>        <span class="kw">let </span>coord = make_sin_coord().with_longpole(PI).with_latpole(FRAC_PI_2);
+<a href=#830 id=830 data-nosnippet>830</a>        <span class="kw">let </span>rec = coord.to_record();
+<a href=#831 id=831 data-nosnippet>831</a>        <span class="macro">assert_eq!</span>(
+<a href=#832 id=832 data-nosnippet>832</a>            rec.get(<span class="string">"system"</span>),
+<a href=#833 id=833 data-nosnippet>833</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Value::Scalar(ScalarValue::String(<span class="string">"J2000"</span>.into())))
+<a href=#834 id=834 data-nosnippet>834</a>        );
+<a href=#835 id=835 data-nosnippet>835</a>        <span class="macro">assert_eq!</span>(
+<a href=#836 id=836 data-nosnippet>836</a>            rec.get(<span class="string">"conversionSystem"</span>),
+<a href=#837 id=837 data-nosnippet>837</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Value::Scalar(ScalarValue::String(<span class="string">"J2000"</span>.into())))
+<a href=#838 id=838 data-nosnippet>838</a>        );
+<a href=#839 id=839 data-nosnippet>839</a>        <span class="macro">assert_eq!</span>(
+<a href=#840 id=840 data-nosnippet>840</a>            rec.get(<span class="string">"projection_parameters"</span>),
+<a href=#841 id=841 data-nosnippet>841</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Value::Array(ArrayValue::from_f64_vec(Vec::new())))
+<a href=#842 id=842 data-nosnippet>842</a>        );
+<a href=#843 id=843 data-nosnippet>843</a>        <span class="macro">assert_eq!</span>(
+<a href=#844 id=844 data-nosnippet>844</a>            rec.get(<span class="string">"units"</span>),
+<a href=#845 id=845 data-nosnippet>845</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Value::Array(ArrayValue::from_string_vec(<span class="macro">vec!</span>[
+<a href=#846 id=846 data-nosnippet>846</a>                <span class="string">"rad"</span>.into(),
+<a href=#847 id=847 data-nosnippet>847</a>                <span class="string">"rad"</span>.into()
+<a href=#848 id=848 data-nosnippet>848</a>            ])))
+<a href=#849 id=849 data-nosnippet>849</a>        );
+<a href=#850 id=850 data-nosnippet>850</a>        <span class="macro">assert_eq!</span>(
+<a href=#851 id=851 data-nosnippet>851</a>            rec.get(<span class="string">"longpole"</span>),
+<a href=#852 id=852 data-nosnippet>852</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Value::Scalar(ScalarValue::Float64(<span class="number">180.0</span>)))
+<a href=#853 id=853 data-nosnippet>853</a>        );
+<a href=#854 id=854 data-nosnippet>854</a>        <span class="macro">assert_eq!</span>(
+<a href=#855 id=855 data-nosnippet>855</a>            rec.get(<span class="string">"latpole"</span>),
+<a href=#856 id=856 data-nosnippet>856</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Value::Scalar(ScalarValue::Float64(<span class="number">90.0</span>)))
+<a href=#857 id=857 data-nosnippet>857</a>        );
+<a href=#858 id=858 data-nosnippet>858</a>    }
+<a href=#859 id=859 data-nosnippet>859</a>}
 </code></pre></div></section></main></body></html>

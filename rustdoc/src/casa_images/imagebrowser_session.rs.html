@@ -2800,32 +2800,32 @@
 <a href=#2800 id=2800 data-nosnippet>2800</a>
 <a href=#2801 id=2801 data-nosnippet>2801</a>    <span class="kw">fn </span>cube_coords() -&gt; CoordinateSystem {
 <a href=#2802 id=2802 data-nosnippet>2802</a>        <span class="kw">let </span><span class="kw-2">mut </span>coords = CoordinateSystem::new();
-<a href=#2803 id=2803 data-nosnippet>2803</a>        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+<a href=#2803 id=2803 data-nosnippet>2803</a>        coords.add_coordinate(DirectionCoordinate::new(
 <a href=#2804 id=2804 data-nosnippet>2804</a>            DirectionRef::J2000,
 <a href=#2805 id=2805 data-nosnippet>2805</a>            Projection::new(ProjectionType::SIN),
 <a href=#2806 id=2806 data-nosnippet>2806</a>            [<span class="number">0.0</span>, std::f64::consts::FRAC_PI_4],
 <a href=#2807 id=2807 data-nosnippet>2807</a>            [-<span class="number">1e-4</span>, <span class="number">1e-4</span>],
 <a href=#2808 id=2808 data-nosnippet>2808</a>            [<span class="number">1.0</span>, <span class="number">1.0</span>],
-<a href=#2809 id=2809 data-nosnippet>2809</a>        )));
-<a href=#2810 id=2810 data-nosnippet>2810</a>        coords.add_coordinate(Box::new(SpectralCoordinate::new(
+<a href=#2809 id=2809 data-nosnippet>2809</a>        ));
+<a href=#2810 id=2810 data-nosnippet>2810</a>        coords.add_coordinate(SpectralCoordinate::new(
 <a href=#2811 id=2811 data-nosnippet>2811</a>            FrequencyRef::LSRK,
 <a href=#2812 id=2812 data-nosnippet>2812</a>            <span class="number">1.42e9</span>,
 <a href=#2813 id=2813 data-nosnippet>2813</a>            <span class="number">1.0e6</span>,
 <a href=#2814 id=2814 data-nosnippet>2814</a>            <span class="number">0.0</span>,
 <a href=#2815 id=2815 data-nosnippet>2815</a>            <span class="number">1.42040575e9</span>,
-<a href=#2816 id=2816 data-nosnippet>2816</a>        )));
+<a href=#2816 id=2816 data-nosnippet>2816</a>        ));
 <a href=#2817 id=2817 data-nosnippet>2817</a>        coords
 <a href=#2818 id=2818 data-nosnippet>2818</a>    }
 <a href=#2819 id=2819 data-nosnippet>2819</a>
 <a href=#2820 id=2820 data-nosnippet>2820</a>    <span class="kw">fn </span>direction_coords() -&gt; CoordinateSystem {
 <a href=#2821 id=2821 data-nosnippet>2821</a>        <span class="kw">let </span><span class="kw-2">mut </span>coords = CoordinateSystem::new();
-<a href=#2822 id=2822 data-nosnippet>2822</a>        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+<a href=#2822 id=2822 data-nosnippet>2822</a>        coords.add_coordinate(DirectionCoordinate::new(
 <a href=#2823 id=2823 data-nosnippet>2823</a>            DirectionRef::J2000,
 <a href=#2824 id=2824 data-nosnippet>2824</a>            Projection::new(ProjectionType::SIN),
 <a href=#2825 id=2825 data-nosnippet>2825</a>            [<span class="number">0.0</span>, std::f64::consts::FRAC_PI_4],
 <a href=#2826 id=2826 data-nosnippet>2826</a>            [-<span class="number">1e-4</span>, <span class="number">1e-4</span>],
 <a href=#2827 id=2827 data-nosnippet>2827</a>            [<span class="number">1.0</span>, <span class="number">1.0</span>],
-<a href=#2828 id=2828 data-nosnippet>2828</a>        )));
+<a href=#2828 id=2828 data-nosnippet>2828</a>        ));
 <a href=#2829 id=2829 data-nosnippet>2829</a>        coords
 <a href=#2830 id=2830 data-nosnippet>2830</a>    }
 <a href=#2831 id=2831 data-nosnippet>2831</a>

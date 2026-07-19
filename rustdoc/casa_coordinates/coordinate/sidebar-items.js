@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["CoordinateType"],"trait":["Coordinate"]};
+window.SIDEBAR_ITEMS = {"enum":["CoordinateModel","CoordinateType"],"trait":["Coordinate"]};

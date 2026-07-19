@@ -27,11 +27,11 @@ keywords from an existing coordinate system.</p>
     [<span class="number">0.0</span>, std::f64::consts::FRAC_PI_4],
     [-<span class="number">1e-4</span>, <span class="number">1e-4</span>], [<span class="number">512.0</span>, <span class="number">512.0</span>],
 );
-cs.add_coordinate(Box::new(dir));
+cs.add_coordinate(dir);
 <span class="kw">let </span>spec = SpectralCoordinate::new(FrequencyRef::LSRK, <span class="number">1.42e9</span>, <span class="number">1e6</span>, <span class="number">0.0</span>, <span class="number">1.42040575e9</span>);
-cs.add_coordinate(Box::new(spec));
+cs.add_coordinate(spec);
 <span class="kw">let </span>stokes = StokesCoordinate::new(<span class="macro">vec!</span>[StokesType::I, StokesType::V]);
-cs.add_coordinate(Box::new(stokes));
+cs.add_coordinate(stokes);
 
 <span class="comment">// Convert to FITS header
 </span><span class="kw">let </span>shape = [<span class="number">1024</span>, <span class="number">1024</span>, <span class="number">256</span>, <span class="number">2</span>];
