@@ -654,8 +654,9 @@ final class CasarsMacUITests: XCTestCase {
         let diagnosticID = "msPlot.selectionDiagnostic.timerange.\(measurementSet.path)"
         let diagnostic = try require(diagnosticID, timeout: 5)
         XCTAssertFalse(diagnostic.label.isEmpty)
-        XCTAssertTrue(
-            ["invalid_text", "invalid_value"].contains(try accessibilityValue(diagnosticID)),
+        XCTAssertEqual(
+            try accessibilityValue(diagnosticID),
+            "invalid_selector_syntax",
             diagnostic.debugDescription
         )
     }
