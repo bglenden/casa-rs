@@ -2815,6 +2815,9 @@ final class CasarsMacUITests: XCTestCase {
         process.executableURL = simobserve
         process.arguments = ["--json-run", "-"]
         process.currentDirectoryURL = repoRoot
+        var processEnvironment = ProcessInfo.processInfo.environment
+        processEnvironment["CASA_RS_MEASURESPATH"] = guiMeasuresRuntimeURL(repoRoot: repoRoot).path
+        process.environment = processEnvironment
         process.standardInput = standardInput
         process.standardOutput = standardOutput
         process.standardError = standardOutput
@@ -2858,12 +2861,12 @@ final class CasarsMacUITests: XCTestCase {
         app.launchEnvironment["CODEX_HOME"] = environment["codexHome"] ?? ""
         app.launchEnvironment["CASA_RS_AGENT_COMMAND"] = environment["agentCommand"] ?? "codex"
         app.launchEnvironment["CASA_RS_GUI_TEST_PYTHON"] = environment["pythonCommand"] ?? "python3"
-        app.launchEnvironment["CASA_RS_MEASURESPATH"] = ProcessInfo.processInfo.environment[
-            "CASA_RS_MEASURESPATH"
-        ] ?? ""
         if let repoRoot = environment["repoRoot"] {
             app.launchEnvironment["CASA_RS_REPO_ROOT"] = repoRoot
             app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = repoRoot
+            app.launchEnvironment["CASA_RS_MEASURESPATH"] = guiMeasuresRuntimeURL(
+                repoRoot: URL(fileURLWithPath: repoRoot, isDirectory: true)
+            ).path
         }
         for (environmentKey, launchKey) in [
             ("simobserveCommand", "CASARS_SIMOBSERVE_BIN"),
@@ -2896,6 +2899,12 @@ final class CasarsMacUITests: XCTestCase {
                 app.debugDescription
             )
         }
+    }
+
+    private func guiMeasuresRuntimeURL(repoRoot: URL) -> URL {
+        repoRoot
+            .appendingPathComponent("apps/casars-mac/.gui-test", isDirectory: true)
+            .appendingPathComponent("casa-measures", isDirectory: true)
     }
 
     private func sha256Hex(_ data: Data) -> String {
