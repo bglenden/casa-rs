@@ -68,13 +68,16 @@ run_llvm_cov() {
   local feature_args=()
   if cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
     --tier slow-parity \
-    --require measurementset/vla/ngc5921.ms \
-    --require unittest/tclean/refim_twochan.ms \
-    --require unittest/tclean/refim_point.ms; then
-    echo "==> Including slow parity suites in coverage"
-    feature_args=(--features casa-ms/slow-tests,casars-imager/slow-tests)
+    --require measurementset/vla/ngc5921.ms; then
+    # Imaging parity is a separate release-quality gate in test-slow.sh. Do not
+    # make source coverage depend on whether this host happens to expose CASA:
+    # casars-imager/src/lib.rs is excluded from the coverage denominator, and
+    # enabling its slow tests here can execute host-only parity modes that do not
+    # contribute coverage to the measured source set.
+    echo "==> Including slow msexplore parity suite in coverage"
+    feature_args=(--features casa-ms/slow-tests)
   else
-    echo "coverage warning: slow parity datasets unavailable; coverage omits slow parity suites" >&2
+    echo "coverage warning: slow msexplore dataset unavailable; coverage omits its parity suite" >&2
   fi
 
   cargo llvm-cov \
