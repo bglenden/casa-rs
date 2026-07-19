@@ -14,11 +14,11 @@
 <a href=#14 id=14 data-nosnippet>14</a>    DEFAULT_MAX_PLOT_POINTS, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat,
 <a href=#15 id=15 data-nosnippet>15</a>    MsFlagAction, MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit, MsFlagSampleEdit,
 <a href=#16 id=16 data-nosnippet>16</a>    MsIterationAxis, MsLegendPosition, MsPageExportRange, MsPageHeaderItem, MsPlotPreset,
-<a href=#17 id=17 data-nosnippet>17</a>    MsPlotSpec, MsPlotStyleSpec, MsSelectionSpec, apply_msexplore_flag_edit_for_request,
-<a href=#18 id=18 data-nosnippet>18</a>    build_msexplore_payload, export_msexplore_plot, preview_msexplore_flag_edit_for_request,
+<a href=#17 id=17 data-nosnippet>17</a>    MsPlotSpec, MsPlotStyleSpec, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
+<a href=#18 id=18 data-nosnippet>18</a>    export_msexplore_plot, preview_msexplore_flag_edit_for_request,
 <a href=#19 id=19 data-nosnippet>19</a>};
-<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span><span class="kw">crate</span>::MeasurementSet;
-<a href=#21 id=21 data-nosnippet>21</a><span class="kw">pub use </span><span class="kw">crate</span>::presentation::{UiActionKind, UiArgumentParser, UiCommandSchema, UiValueKind};
+<a href=#20 id=20 data-nosnippet>20</a><span class="kw">pub use </span><span class="kw">crate</span>::presentation::{UiActionKind, UiArgumentParser, UiCommandSchema, UiValueKind};
+<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use crate</span>::{MeasurementSet, MsSelection};
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">use crate</span>::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
 <a href=#23 id=23 data-nosnippet>23</a>
 <a href=#24 id=24 data-nosnippet>24</a><span class="attr">#[derive(Debug)]
@@ -33,7 +33,7 @@
 <a href=#33 id=33 data-nosnippet>33</a>    summary_format: MeasurementSetSummaryOutputFormat,
 <a href=#34 id=34 data-nosnippet>34</a>    summary_output: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
 <a href=#35 id=35 data-nosnippet>35</a>    overwrite: bool,
-<a href=#36 id=36 data-nosnippet>36</a>    selection: MsSelectionSpec,
+<a href=#36 id=36 data-nosnippet>36</a>    selection: MsSelection,
 <a href=#37 id=37 data-nosnippet>37</a>    page_spec: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
 <a href=#38 id=38 data-nosnippet>38</a>    preset: <span class="prelude-ty">Option</span>&lt;MsPlotPreset&gt;,
 <a href=#39 id=39 data-nosnippet>39</a>    x_axis: <span class="prelude-ty">Option</span>&lt;MsAxis&gt;,
@@ -519,7 +519,7 @@
 <a href=#519 id=519 data-nosnippet>519</a>
 <a href=#520 id=520 data-nosnippet>520</a><span class="kw">fn </span>preview_selection_flag_edit(
 <a href=#521 id=521 data-nosnippet>521</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#522 id=522 data-nosnippet>522</a>    selection: <span class="kw-2">&amp;</span>MsSelectionSpec,
+<a href=#522 id=522 data-nosnippet>522</a>    selection: <span class="kw-2">&amp;</span>MsSelection,
 <a href=#523 id=523 data-nosnippet>523</a>    action: MsFlagAction,
 <a href=#524 id=524 data-nosnippet>524</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MsFlagEditPreview, String&gt; {
 <a href=#525 id=525 data-nosnippet>525</a>    <span class="kw">let </span>listobs_options = selection.to_summary_options();
@@ -628,7 +628,7 @@
 <a href=#628 id=628 data-nosnippet>628</a>
 <a href=#629 id=629 data-nosnippet>629</a><span class="kw">fn </span>apply_selection_flag_edit_direct(
 <a href=#630 id=630 data-nosnippet>630</a>    ms: <span class="kw-2">&amp;mut </span>MeasurementSet,
-<a href=#631 id=631 data-nosnippet>631</a>    selection: <span class="kw-2">&amp;</span>MsSelectionSpec,
+<a href=#631 id=631 data-nosnippet>631</a>    selection: <span class="kw-2">&amp;</span>MsSelection,
 <a href=#632 id=632 data-nosnippet>632</a>    action: MsFlagAction,
 <a href=#633 id=633 data-nosnippet>633</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MsFlagEditPreview, String&gt; {
 <a href=#634 id=634 data-nosnippet>634</a>    <span class="kw">let </span>listobs_options = selection.to_summary_options();
@@ -863,7 +863,7 @@
 <a href=#863 id=863 data-nosnippet>863</a>    <span class="kw">let </span><span class="kw-2">mut </span>summary_format = <span class="string">"text"</span>.to_string();
 <a href=#864 id=864 data-nosnippet>864</a>    <span class="kw">let </span><span class="kw-2">mut </span>summary_output = <span class="prelude-val">None</span>;
 <a href=#865 id=865 data-nosnippet>865</a>    <span class="kw">let </span><span class="kw-2">mut </span>overwrite = <span class="bool-val">false</span>;
-<a href=#866 id=866 data-nosnippet>866</a>    <span class="kw">let </span><span class="kw-2">mut </span>selection = MsSelectionSpec::default();
+<a href=#866 id=866 data-nosnippet>866</a>    <span class="kw">let </span><span class="kw-2">mut </span>selection = MsSelection::default();
 <a href=#867 id=867 data-nosnippet>867</a>    <span class="kw">let </span><span class="kw-2">mut </span>page_spec = <span class="prelude-val">None</span>;
 <a href=#868 id=868 data-nosnippet>868</a>    <span class="kw">let </span><span class="kw-2">mut </span>preset = <span class="prelude-val">None</span>;
 <a href=#869 id=869 data-nosnippet>869</a>    <span class="kw">let </span><span class="kw-2">mut </span>x_axis = <span class="prelude-val">None</span>;

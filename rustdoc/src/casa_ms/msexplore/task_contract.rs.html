@@ -278,14 +278,14 @@
 <a href=#278 id=278 data-nosnippet>278</a>    };
 <a href=#279 id=279 data-nosnippet>279</a>    <span class="kw">use crate</span>::{
 <a href=#280 id=280 data-nosnippet>280</a>        MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotPreset,
-<a href=#281 id=281 data-nosnippet>281</a>        MsPlotSpec, MsSelectionSpec,
+<a href=#281 id=281 data-nosnippet>281</a>        MsPlotSpec,
 <a href=#282 id=282 data-nosnippet>282</a>    };
 <a href=#283 id=283 data-nosnippet>283</a>
 <a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">fn </span>test_spec(ms_path: <span class="kw-2">&amp;</span>str) -&gt; MsExploreSpec {
 <a href=#285 id=285 data-nosnippet>285</a>        MsExploreSpec {
 <a href=#286 id=286 data-nosnippet>286</a>            ms_path: ms_path.into(),
 <a href=#287 id=287 data-nosnippet>287</a>            summary_format: MeasurementSetSummaryOutputFormat::Text,
-<a href=#288 id=288 data-nosnippet>288</a>            selection: MsSelectionSpec::default(),
+<a href=#288 id=288 data-nosnippet>288</a>            selection: <span class="kw">crate</span>::MsSelection::default(),
 <a href=#289 id=289 data-nosnippet>289</a>            header_items: Vec::new(),
 <a href=#290 id=290 data-nosnippet>290</a>            page_title: <span class="prelude-val">None</span>,
 <a href=#291 id=291 data-nosnippet>291</a>            exprange: MsPageExportRange::Current,

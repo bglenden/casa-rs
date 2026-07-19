@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["MsSelection"]};
+window.SIDEBAR_ITEMS = {"enum":["MsSelectionError"],"fn":["validate_ms_selector_edit"],"mod":["syntax"],"struct":["MsReadPlan","MsSelection","MsSelectionIoBudget","MsSelectionRowBlock","MsSelectorEditContext","ResolvedMsSelection","ResolvedMsSelectionRow"]};

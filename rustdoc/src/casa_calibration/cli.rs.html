@@ -5,7 +5,7 @@
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>std::fs;
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>std::path::{Path, PathBuf};
 <a href=#7 id=7 data-nosnippet>7</a>
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_ms::MsSelectionSpec;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_ms::MsSelection;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_ms::msexplore::cli::UiCommandSchema;
 <a href=#10 id=10 data-nosnippet>10</a>
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use crate</span>::{
@@ -39,7 +39,7 @@
 <a href=#39 id=39 data-nosnippet>39</a>    selection: SelectionOptions,
 <a href=#40 id=40 data-nosnippet>40</a>}
 <a href=#41 id=41 data-nosnippet>41</a>
-<a href=#42 id=42 data-nosnippet>42</a><span class="kw">type </span>SelectionOptions = MsSelectionSpec;
+<a href=#42 id=42 data-nosnippet>42</a><span class="kw">type </span>SelectionOptions = MsSelection;
 <a href=#43 id=43 data-nosnippet>43</a>
 <a href=#44 id=44 data-nosnippet>44</a><span class="attr">#[derive(Debug)]
 <a href=#45 id=45 data-nosnippet>45</a></span><span class="kw">struct </span>SummaryOptions {
@@ -2230,7 +2230,7 @@
 <a href=#2230 id=2230 data-nosnippet>2230</a>
 <a href=#2231 id=2231 data-nosnippet>2231</a><span class="attr">#[cfg(test)]
 <a href=#2232 id=2232 data-nosnippet>2232</a></span><span class="kw">fn </span>build_selection(options: <span class="kw-2">&amp;</span>SelectionOptions) -&gt; <span class="prelude-ty">Result</span>&lt;casa_ms::selection::MsSelection, String&gt; {
-<a href=#2233 id=2233 data-nosnippet>2233</a>    <span class="kw">crate</span>::task_contract::selection_from_spec(options)
+<a href=#2233 id=2233 data-nosnippet>2233</a>    <span class="prelude-val">Ok</span>(options.clone())
 <a href=#2234 id=2234 data-nosnippet>2234</a>}
 <a href=#2235 id=2235 data-nosnippet>2235</a>
 <a href=#2236 id=2236 data-nosnippet>2236</a><span class="attr">#[cfg(test)]
@@ -2786,7 +2786,7 @@
 <a href=#2786 id=2786 data-nosnippet>2786</a>    <span class="kw">use </span>std::fs;
 <a href=#2787 id=2787 data-nosnippet>2787</a>    <span class="kw">use </span>std::path::PathBuf;
 <a href=#2788 id=2788 data-nosnippet>2788</a>
-<a href=#2789 id=2789 data-nosnippet>2789</a>    <span class="kw">use </span>casa_ms::{MsSelectionSpec, presentation::UiValueKind};
+<a href=#2789 id=2789 data-nosnippet>2789</a>    <span class="kw">use </span>casa_ms::{MsSelection, presentation::UiValueKind};
 <a href=#2790 id=2790 data-nosnippet>2790</a>    <span class="kw">use </span>tempfile::TempDir;
 <a href=#2791 id=2791 data-nosnippet>2791</a>
 <a href=#2792 id=2792 data-nosnippet>2792</a>    <span class="kw">use super</span>::{CliAction, Command, OutputFormat, command_schema, parse_args, render_help};
@@ -3071,10 +3071,10 @@
 <a href=#3071 id=3071 data-nosnippet>3071</a>            request.command.into_task_request(),
 <a href=#3072 id=3072 data-nosnippet>3072</a>            CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
 <a href=#3073 id=3073 data-nosnippet>3073</a>                measurement_set: PathBuf::from(<span class="string">"dataset.ms"</span>),
-<a href=#3074 id=3074 data-nosnippet>3074</a>                selection: MsSelectionSpec {
+<a href=#3074 id=3074 data-nosnippet>3074</a>                selection: MsSelection {
 <a href=#3075 id=3075 data-nosnippet>3075</a>                    field: <span class="prelude-val">Some</span>(<span class="string">"0"</span>.into()),
 <a href=#3076 id=3076 data-nosnippet>3076</a>                    spw: <span class="prelude-val">Some</span>(<span class="string">"1"</span>.into()),
-<a href=#3077 id=3077 data-nosnippet>3077</a>                    ..MsSelectionSpec::default()
+<a href=#3077 id=3077 data-nosnippet>3077</a>                    ..MsSelection::default()
 <a href=#3078 id=3078 data-nosnippet>3078</a>                },
 <a href=#3079 id=3079 data-nosnippet>3079</a>                calibration_tables: <span class="macro">vec!</span>[ApplyCalibrationTableSpec::new(<span class="string">"phase.gcal"</span>)],
 <a href=#3080 id=3080 data-nosnippet>3080</a>                apply_mode: ApplyMode::Trial,
@@ -3850,81 +3850,83 @@
 <a href=#3850 id=3850 data-nosnippet>3850</a>            array: <span class="prelude-val">Some</span>(<span class="string">"7"</span>.into()),
 <a href=#3851 id=3851 data-nosnippet>3851</a>            intent: <span class="prelude-val">None</span>,
 <a href=#3852 id=3852 data-nosnippet>3852</a>            feed: <span class="prelude-val">None</span>,
-<a href=#3853 id=3853 data-nosnippet>3853</a>            msselect: <span class="prelude-val">Some</span>(<span class="string">"ANTENNA1 == 4"</span>.into()),
-<a href=#3854 id=3854 data-nosnippet>3854</a>        })
-<a href=#3855 id=3855 data-nosnippet>3855</a>        .expect(<span class="string">"selection"</span>);
-<a href=#3856 id=3856 data-nosnippet>3856</a>        <span class="kw">let </span>taql = selection.to_taql();
-<a href=#3857 id=3857 data-nosnippet>3857</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"FIELD_ID IN [1,2]"</span>));
-<a href=#3858 id=3858 data-nosnippet>3858</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"DATA_DESC_ID IN [3]"</span>));
-<a href=#3859 id=3859 data-nosnippet>3859</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"ARRAY_ID IN [7]"</span>));
-<a href=#3860 id=3860 data-nosnippet>3860</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"TIME&gt;=10"</span>));
-<a href=#3861 id=3861 data-nosnippet>3861</a>
-<a href=#3862 id=3862 data-nosnippet>3862</a>        <span class="kw">let </span>bad_timerange = <span class="kw">super</span>::parse_time_range(<span class="string">"nope"</span>).unwrap_err();
-<a href=#3863 id=3863 data-nosnippet>3863</a>        <span class="macro">assert!</span>(bad_timerange.contains(<span class="string">"START:END"</span>));
-<a href=#3864 id=3864 data-nosnippet>3864</a>        <span class="kw">let </span>bad_bool = <span class="kw">super</span>::parse_bool_literal(<span class="string">"maybe"</span>).unwrap_err();
-<a href=#3865 id=3865 data-nosnippet>3865</a>        <span class="macro">assert!</span>(bad_bool.contains(<span class="string">"expected true or false"</span>));
-<a href=#3866 id=3866 data-nosnippet>3866</a>        <span class="kw">let </span>bad_interp = <span class="kw">super</span>::parse_interp_value(<span class="string">"--interp"</span>, <span class="string">"bogus"</span>).unwrap_err();
-<a href=#3867 id=3867 data-nosnippet>3867</a>        <span class="macro">assert!</span>(bad_interp.contains(<span class="string">"is unsupported"</span>));
-<a href=#3868 id=3868 data-nosnippet>3868</a>        <span class="macro">assert_eq!</span>(
-<a href=#3869 id=3869 data-nosnippet>3869</a>            <span class="kw">super</span>::parse_interp_value(<span class="string">"--interp"</span>, <span class="string">""</span>).unwrap(),
-<a href=#3870 id=3870 data-nosnippet>3870</a>            ApplyInterpolationMode::Linear
-<a href=#3871 id=3871 data-nosnippet>3871</a>        );
-<a href=#3872 id=3872 data-nosnippet>3872</a>        <span class="macro">assert_eq!</span>(
-<a href=#3873 id=3873 data-nosnippet>3873</a>            <span class="kw">super</span>::parse_gainfield_value(<span class="string">"--gainfield"</span>, <span class="string">"nearest,0"</span>).unwrap(),
-<a href=#3874 id=3874 data-nosnippet>3874</a>            <span class="prelude-val">Some</span>(GainFieldSelector::FieldName(<span class="string">"nearest,0"</span>.into()))
-<a href=#3875 id=3875 data-nosnippet>3875</a>        );
-<a href=#3876 id=3876 data-nosnippet>3876</a>
-<a href=#3877 id=3877 data-nosnippet>3877</a>        <span class="kw">let </span>tempdir = TempDir::new().expect(<span class="string">"tempdir"</span>);
-<a href=#3878 id=3878 data-nosnippet>3878</a>        <span class="kw">let </span>output_path = tempdir.path().join(<span class="string">"report.txt"</span>);
-<a href=#3879 id=3879 data-nosnippet>3879</a>        fs::write(<span class="kw-2">&amp;</span>output_path, <span class="string">"old"</span>).expect(<span class="string">"seed output"</span>);
-<a href=#3880 id=3880 data-nosnippet>3880</a>        <span class="kw">let </span>error = <span class="kw">super</span>::write_output(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>output_path), <span class="bool-val">false</span>, <span class="string">"new output"</span>)
-<a href=#3881 id=3881 data-nosnippet>3881</a>            .expect_err(<span class="string">"refuse overwrite"</span>);
-<a href=#3882 id=3882 data-nosnippet>3882</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"refusing to overwrite existing output"</span>));
-<a href=#3883 id=3883 data-nosnippet>3883</a>        <span class="kw">super</span>::write_output(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>output_path), <span class="bool-val">true</span>, <span class="string">"new output"</span>).expect(<span class="string">"overwrite"</span>);
-<a href=#3884 id=3884 data-nosnippet>3884</a>        <span class="macro">assert_eq!</span>(fs::read_to_string(<span class="kw-2">&amp;</span>output_path).unwrap(), <span class="string">"new output"</span>);
-<a href=#3885 id=3885 data-nosnippet>3885</a>
-<a href=#3886 id=3886 data-nosnippet>3886</a>        <span class="kw">let </span>json = <span class="kw">super</span>::render_json_task_result(
-<a href=#3887 id=3887 data-nosnippet>3887</a>            <span class="bool-val">true</span>,
-<a href=#3888 id=3888 data-nosnippet>3888</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::ManagedCalibrationOutput::Summary(Vec::new()),
-<a href=#3889 id=3889 data-nosnippet>3889</a>        )
-<a href=#3890 id=3890 data-nosnippet>3890</a>        .expect(<span class="string">"managed json"</span>);
-<a href=#3891 id=3891 data-nosnippet>3891</a>        <span class="macro">assert!</span>(json.contains(<span class="string">"\"kind\""</span>));
-<a href=#3892 id=3892 data-nosnippet>3892</a>    }
-<a href=#3893 id=3893 data-nosnippet>3893</a>
-<a href=#3894 id=3894 data-nosnippet>3894</a>    <span class="attr">#[test]
-<a href=#3895 id=3895 data-nosnippet>3895</a>    </span><span class="kw">fn </span>parse_args_reject_misaligned_calibration_metadata_lists() {
-<a href=#3896 id=3896 data-nosnippet>3896</a>        <span class="kw">let </span>error = parse_args([
-<a href=#3897 id=3897 data-nosnippet>3897</a>            <span class="string">"apply"</span>.into(),
-<a href=#3898 id=3898 data-nosnippet>3898</a>            <span class="string">"dataset.ms"</span>.into(),
-<a href=#3899 id=3899 data-nosnippet>3899</a>            <span class="string">"--gaintables"</span>.into(),
-<a href=#3900 id=3900 data-nosnippet>3900</a>            <span class="string">"phase.gcal,bandpass.bcal"</span>.into(),
-<a href=#3901 id=3901 data-nosnippet>3901</a>            <span class="string">"--gainfield"</span>.into(),
-<a href=#3902 id=3902 data-nosnippet>3902</a>            <span class="string">"nearest;0;1"</span>.into(),
-<a href=#3903 id=3903 data-nosnippet>3903</a>        ])
-<a href=#3904 id=3904 data-nosnippet>3904</a>        .unwrap_err();
-<a href=#3905 id=3905 data-nosnippet>3905</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"expected one value or one per table"</span>));
-<a href=#3906 id=3906 data-nosnippet>3906</a>    }
-<a href=#3907 id=3907 data-nosnippet>3907</a>
-<a href=#3908 id=3908 data-nosnippet>3908</a>    <span class="attr">#[test]
-<a href=#3909 id=3909 data-nosnippet>3909</a>    </span><span class="kw">fn </span>parse_args_rejects_invalid_selection_and_solver_literals() {
-<a href=#3910 id=3910 data-nosnippet>3910</a>        <span class="macro">assert_eq!</span>(
-<a href=#3911 id=3911 data-nosnippet>3911</a>            <span class="kw">super</span>::parse_gain_solve_interval(<span class="string">"0s"</span>).unwrap(),
-<a href=#3912 id=3912 data-nosnippet>3912</a>            GainSolveInterval::Seconds(<span class="number">0.0</span>)
-<a href=#3913 id=3913 data-nosnippet>3913</a>        );
-<a href=#3914 id=3914 data-nosnippet>3914</a>
-<a href=#3915 id=3915 data-nosnippet>3915</a>        <span class="kw">let </span>fluxscale_error = parse_args([
-<a href=#3916 id=3916 data-nosnippet>3916</a>            <span class="string">"fluxscale"</span>.into(),
-<a href=#3917 id=3917 data-nosnippet>3917</a>            <span class="string">"--in"</span>.into(),
-<a href=#3918 id=3918 data-nosnippet>3918</a>            <span class="string">"gain.gcal"</span>.into(),
-<a href=#3919 id=3919 data-nosnippet>3919</a>            <span class="string">"--out"</span>.into(),
-<a href=#3920 id=3920 data-nosnippet>3920</a>            <span class="string">"flux.gcal"</span>.into(),
-<a href=#3921 id=3921 data-nosnippet>3921</a>            <span class="string">"--reference"</span>.into(),
-<a href=#3922 id=3922 data-nosnippet>3922</a>            <span class="string">"3C286"</span>.into(),
-<a href=#3923 id=3923 data-nosnippet>3923</a>            <span class="string">"--refspwmap"</span>.into(),
-<a href=#3924 id=3924 data-nosnippet>3924</a>            <span class="string">"0,nope"</span>.into(),
-<a href=#3925 id=3925 data-nosnippet>3925</a>        ])
-<a href=#3926 id=3926 data-nosnippet>3926</a>        .unwrap_err();
-<a href=#3927 id=3927 data-nosnippet>3927</a>        <span class="macro">assert!</span>(fluxscale_error.contains(<span class="string">"parse --refspwmap"</span>));
-<a href=#3928 id=3928 data-nosnippet>3928</a>    }
-<a href=#3929 id=3929 data-nosnippet>3929</a>}
+<a href=#3853 id=3853 data-nosnippet>3853</a>            data_description: <span class="prelude-val">None</span>,
+<a href=#3854 id=3854 data-nosnippet>3854</a>            state: <span class="prelude-val">None</span>,
+<a href=#3855 id=3855 data-nosnippet>3855</a>            msselect: <span class="prelude-val">Some</span>(<span class="string">"ANTENNA1 == 4"</span>.into()),
+<a href=#3856 id=3856 data-nosnippet>3856</a>        })
+<a href=#3857 id=3857 data-nosnippet>3857</a>        .expect(<span class="string">"selection"</span>);
+<a href=#3858 id=3858 data-nosnippet>3858</a>        <span class="kw">let </span>taql = selection.to_taql();
+<a href=#3859 id=3859 data-nosnippet>3859</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"FIELD_ID IN [1,2]"</span>));
+<a href=#3860 id=3860 data-nosnippet>3860</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"DATA_DESC_ID IN [3]"</span>));
+<a href=#3861 id=3861 data-nosnippet>3861</a>        <span class="macro">assert!</span>(taql.contains(<span class="string">"ARRAY_ID IN [7]"</span>));
+<a href=#3862 id=3862 data-nosnippet>3862</a>        <span class="macro">assert_eq!</span>(selection.timerange.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"10.0:20.0"</span>));
+<a href=#3863 id=3863 data-nosnippet>3863</a>
+<a href=#3864 id=3864 data-nosnippet>3864</a>        <span class="kw">let </span>bad_timerange = <span class="kw">super</span>::parse_time_range(<span class="string">"nope"</span>).unwrap_err();
+<a href=#3865 id=3865 data-nosnippet>3865</a>        <span class="macro">assert!</span>(bad_timerange.contains(<span class="string">"START:END"</span>));
+<a href=#3866 id=3866 data-nosnippet>3866</a>        <span class="kw">let </span>bad_bool = <span class="kw">super</span>::parse_bool_literal(<span class="string">"maybe"</span>).unwrap_err();
+<a href=#3867 id=3867 data-nosnippet>3867</a>        <span class="macro">assert!</span>(bad_bool.contains(<span class="string">"expected true or false"</span>));
+<a href=#3868 id=3868 data-nosnippet>3868</a>        <span class="kw">let </span>bad_interp = <span class="kw">super</span>::parse_interp_value(<span class="string">"--interp"</span>, <span class="string">"bogus"</span>).unwrap_err();
+<a href=#3869 id=3869 data-nosnippet>3869</a>        <span class="macro">assert!</span>(bad_interp.contains(<span class="string">"is unsupported"</span>));
+<a href=#3870 id=3870 data-nosnippet>3870</a>        <span class="macro">assert_eq!</span>(
+<a href=#3871 id=3871 data-nosnippet>3871</a>            <span class="kw">super</span>::parse_interp_value(<span class="string">"--interp"</span>, <span class="string">""</span>).unwrap(),
+<a href=#3872 id=3872 data-nosnippet>3872</a>            ApplyInterpolationMode::Linear
+<a href=#3873 id=3873 data-nosnippet>3873</a>        );
+<a href=#3874 id=3874 data-nosnippet>3874</a>        <span class="macro">assert_eq!</span>(
+<a href=#3875 id=3875 data-nosnippet>3875</a>            <span class="kw">super</span>::parse_gainfield_value(<span class="string">"--gainfield"</span>, <span class="string">"nearest,0"</span>).unwrap(),
+<a href=#3876 id=3876 data-nosnippet>3876</a>            <span class="prelude-val">Some</span>(GainFieldSelector::FieldName(<span class="string">"nearest,0"</span>.into()))
+<a href=#3877 id=3877 data-nosnippet>3877</a>        );
+<a href=#3878 id=3878 data-nosnippet>3878</a>
+<a href=#3879 id=3879 data-nosnippet>3879</a>        <span class="kw">let </span>tempdir = TempDir::new().expect(<span class="string">"tempdir"</span>);
+<a href=#3880 id=3880 data-nosnippet>3880</a>        <span class="kw">let </span>output_path = tempdir.path().join(<span class="string">"report.txt"</span>);
+<a href=#3881 id=3881 data-nosnippet>3881</a>        fs::write(<span class="kw-2">&amp;</span>output_path, <span class="string">"old"</span>).expect(<span class="string">"seed output"</span>);
+<a href=#3882 id=3882 data-nosnippet>3882</a>        <span class="kw">let </span>error = <span class="kw">super</span>::write_output(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>output_path), <span class="bool-val">false</span>, <span class="string">"new output"</span>)
+<a href=#3883 id=3883 data-nosnippet>3883</a>            .expect_err(<span class="string">"refuse overwrite"</span>);
+<a href=#3884 id=3884 data-nosnippet>3884</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"refusing to overwrite existing output"</span>));
+<a href=#3885 id=3885 data-nosnippet>3885</a>        <span class="kw">super</span>::write_output(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>output_path), <span class="bool-val">true</span>, <span class="string">"new output"</span>).expect(<span class="string">"overwrite"</span>);
+<a href=#3886 id=3886 data-nosnippet>3886</a>        <span class="macro">assert_eq!</span>(fs::read_to_string(<span class="kw-2">&amp;</span>output_path).unwrap(), <span class="string">"new output"</span>);
+<a href=#3887 id=3887 data-nosnippet>3887</a>
+<a href=#3888 id=3888 data-nosnippet>3888</a>        <span class="kw">let </span>json = <span class="kw">super</span>::render_json_task_result(
+<a href=#3889 id=3889 data-nosnippet>3889</a>            <span class="bool-val">true</span>,
+<a href=#3890 id=3890 data-nosnippet>3890</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::ManagedCalibrationOutput::Summary(Vec::new()),
+<a href=#3891 id=3891 data-nosnippet>3891</a>        )
+<a href=#3892 id=3892 data-nosnippet>3892</a>        .expect(<span class="string">"managed json"</span>);
+<a href=#3893 id=3893 data-nosnippet>3893</a>        <span class="macro">assert!</span>(json.contains(<span class="string">"\"kind\""</span>));
+<a href=#3894 id=3894 data-nosnippet>3894</a>    }
+<a href=#3895 id=3895 data-nosnippet>3895</a>
+<a href=#3896 id=3896 data-nosnippet>3896</a>    <span class="attr">#[test]
+<a href=#3897 id=3897 data-nosnippet>3897</a>    </span><span class="kw">fn </span>parse_args_reject_misaligned_calibration_metadata_lists() {
+<a href=#3898 id=3898 data-nosnippet>3898</a>        <span class="kw">let </span>error = parse_args([
+<a href=#3899 id=3899 data-nosnippet>3899</a>            <span class="string">"apply"</span>.into(),
+<a href=#3900 id=3900 data-nosnippet>3900</a>            <span class="string">"dataset.ms"</span>.into(),
+<a href=#3901 id=3901 data-nosnippet>3901</a>            <span class="string">"--gaintables"</span>.into(),
+<a href=#3902 id=3902 data-nosnippet>3902</a>            <span class="string">"phase.gcal,bandpass.bcal"</span>.into(),
+<a href=#3903 id=3903 data-nosnippet>3903</a>            <span class="string">"--gainfield"</span>.into(),
+<a href=#3904 id=3904 data-nosnippet>3904</a>            <span class="string">"nearest;0;1"</span>.into(),
+<a href=#3905 id=3905 data-nosnippet>3905</a>        ])
+<a href=#3906 id=3906 data-nosnippet>3906</a>        .unwrap_err();
+<a href=#3907 id=3907 data-nosnippet>3907</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"expected one value or one per table"</span>));
+<a href=#3908 id=3908 data-nosnippet>3908</a>    }
+<a href=#3909 id=3909 data-nosnippet>3909</a>
+<a href=#3910 id=3910 data-nosnippet>3910</a>    <span class="attr">#[test]
+<a href=#3911 id=3911 data-nosnippet>3911</a>    </span><span class="kw">fn </span>parse_args_rejects_invalid_selection_and_solver_literals() {
+<a href=#3912 id=3912 data-nosnippet>3912</a>        <span class="macro">assert_eq!</span>(
+<a href=#3913 id=3913 data-nosnippet>3913</a>            <span class="kw">super</span>::parse_gain_solve_interval(<span class="string">"0s"</span>).unwrap(),
+<a href=#3914 id=3914 data-nosnippet>3914</a>            GainSolveInterval::Seconds(<span class="number">0.0</span>)
+<a href=#3915 id=3915 data-nosnippet>3915</a>        );
+<a href=#3916 id=3916 data-nosnippet>3916</a>
+<a href=#3917 id=3917 data-nosnippet>3917</a>        <span class="kw">let </span>fluxscale_error = parse_args([
+<a href=#3918 id=3918 data-nosnippet>3918</a>            <span class="string">"fluxscale"</span>.into(),
+<a href=#3919 id=3919 data-nosnippet>3919</a>            <span class="string">"--in"</span>.into(),
+<a href=#3920 id=3920 data-nosnippet>3920</a>            <span class="string">"gain.gcal"</span>.into(),
+<a href=#3921 id=3921 data-nosnippet>3921</a>            <span class="string">"--out"</span>.into(),
+<a href=#3922 id=3922 data-nosnippet>3922</a>            <span class="string">"flux.gcal"</span>.into(),
+<a href=#3923 id=3923 data-nosnippet>3923</a>            <span class="string">"--reference"</span>.into(),
+<a href=#3924 id=3924 data-nosnippet>3924</a>            <span class="string">"3C286"</span>.into(),
+<a href=#3925 id=3925 data-nosnippet>3925</a>            <span class="string">"--refspwmap"</span>.into(),
+<a href=#3926 id=3926 data-nosnippet>3926</a>            <span class="string">"0,nope"</span>.into(),
+<a href=#3927 id=3927 data-nosnippet>3927</a>        ])
+<a href=#3928 id=3928 data-nosnippet>3928</a>        .unwrap_err();
+<a href=#3929 id=3929 data-nosnippet>3929</a>        <span class="macro">assert!</span>(fluxscale_error.contains(<span class="string">"parse --refspwmap"</span>));
+<a href=#3930 id=3930 data-nosnippet>3930</a>    }
+<a href=#3931 id=3931 data-nosnippet>3931</a>}
 </code></pre></div></section></main></body></html>
