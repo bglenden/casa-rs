@@ -2128,7 +2128,7 @@ fn populate_main_rows(
         timing.scalar_column += scalar_started.elapsed();
         let data_io_started = Instant::now();
         main_column_writer
-            .send_batch(MeasurementSetWriteBatch {
+            .send_batch(MeasurementSetWriteBatch::Rows {
                 data_rows,
                 flag_rows,
                 uvw_rows: row_uvws,

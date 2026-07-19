@@ -965,10 +965,29 @@ pub struct MeasurementSetArrayColumnPlan {
 
 /// One typed standard-visibility column batch.
 #[derive(Debug)]
-pub(crate) struct MeasurementSetWriteBatch {
-    pub data_rows: Vec<Vec<Complex32>>,
-    pub flag_rows: Vec<bool>,
-    pub uvw_rows: Vec<[f64; 3]>,
+pub(crate) enum MeasurementSetWriteBatch {
+    Rows {
+        data_rows: Vec<Vec<Complex32>>,
+        flag_rows: Vec<bool>,
+        uvw_rows: Vec<[f64; 3]>,
+    },
+    #[cfg(test)]
+    Repeated {
+        data_row: Vec<Complex32>,
+        flag_row: bool,
+        uvw_row: [f64; 3],
+        row_count: usize,
+    },
+}
+
+impl MeasurementSetWriteBatch {
+    fn row_count(&self) -> usize {
+        match self {
+            Self::Rows { data_rows, .. } => data_rows.len(),
+            #[cfg(test)]
+            Self::Repeated { row_count, .. } => *row_count,
+        }
+    }
 }
 
 /// Typed values for one selected-row mutation column batch.
@@ -1473,32 +1492,44 @@ impl MeasurementSetWriteSession {
                 "visibility batches require a creation session".to_string(),
             ));
         };
-        if batch.data_rows.len() != batch.flag_rows.len()
-            || batch.data_rows.len() != batch.uvw_rows.len()
-        {
-            return Err(MeasurementSetWriteError::InvalidPlan(format!(
-                "batch sizes differ: DATA={} FLAG={} UVW={}",
-                batch.data_rows.len(),
-                batch.flag_rows.len(),
-                batch.uvw_rows.len()
-            )));
-        }
         let sample_count = self
             .plan
             .correlation_count
             .checked_mul(self.plan.channel_count)
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
-        if let Some((row, actual)) = batch
-            .data_rows
-            .iter()
-            .enumerate()
-            .find_map(|(row, data)| (data.len() != sample_count).then_some((row, data.len())))
-        {
-            return Err(MeasurementSetWriteError::InvalidPlan(format!(
-                "DATA row {row} has {actual} samples; plan requires {sample_count}"
-            )));
+        match &batch {
+            MeasurementSetWriteBatch::Rows {
+                data_rows,
+                flag_rows,
+                uvw_rows,
+            } => {
+                if data_rows.len() != flag_rows.len() || data_rows.len() != uvw_rows.len() {
+                    return Err(MeasurementSetWriteError::InvalidPlan(format!(
+                        "batch sizes differ: DATA={} FLAG={} UVW={}",
+                        data_rows.len(),
+                        flag_rows.len(),
+                        uvw_rows.len()
+                    )));
+                }
+                if let Some((row, actual)) = data_rows.iter().enumerate().find_map(|(row, data)| {
+                    (data.len() != sample_count).then_some((row, data.len()))
+                }) {
+                    return Err(MeasurementSetWriteError::InvalidPlan(format!(
+                        "DATA row {row} has {actual} samples; plan requires {sample_count}"
+                    )));
+                }
+            }
+            #[cfg(test)]
+            MeasurementSetWriteBatch::Repeated { data_row, .. } => {
+                if data_row.len() != sample_count {
+                    return Err(MeasurementSetWriteError::InvalidPlan(format!(
+                        "repeated DATA row has {} samples; plan requires {sample_count}",
+                        data_row.len()
+                    )));
+                }
+            }
         }
-        let batch_rows = batch.data_rows.len();
+        let batch_rows = batch.row_count();
         if batch_rows > self.plan.batch_rows {
             return Err(MeasurementSetWriteError::InvalidPlan(format!(
                 "visibility batch has {batch_rows} rows; plan permits at most {}",
@@ -2200,36 +2231,58 @@ fn write_visibility_batches(
     let weight_row = vec![1.0f32; correlation_count];
     let sigma_row = vec![1.0f32; correlation_count];
     for batch in receiver {
-        for ((data_row, flag_row), uvw_row) in batch
-            .data_rows
-            .into_iter()
-            .zip(batch.flag_rows)
-            .zip(batch.uvw_rows)
-        {
-            data_writer
-                .push_row(&data_row)
-                .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-            if flag_row {
-                flag_writer
-                    .push_bool_fill_row(true)
+        match batch {
+            MeasurementSetWriteBatch::Rows {
+                data_rows,
+                flag_rows,
+                uvw_rows,
+            } => {
+                let row_count = data_rows.len();
+                data_writer
+                    .push_rows(&data_rows)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-            } else {
                 flag_writer
-                    .push_zero_row()
+                    .push_bool_fill_rows(&flag_rows)
+                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                flag_category_writer
+                    .push_zero_rows(row_count)
+                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                uvw_writer
+                    .push_f64_rows(&uvw_rows)
+                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                weight_writer
+                    .push_repeated_f32_row(&weight_row, row_count)
+                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                sigma_writer
+                    .push_repeated_f32_row(&sigma_row, row_count)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
             }
-            flag_category_writer
-                .push_zero_row()
-                .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-            uvw_writer
-                .push_f64_row(&uvw_row)
-                .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-            weight_writer
-                .push_f32_row(&weight_row)
-                .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-            sigma_writer
-                .push_f32_row(&sigma_row)
-                .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+            #[cfg(test)]
+            MeasurementSetWriteBatch::Repeated {
+                data_row,
+                flag_row,
+                uvw_row,
+                row_count,
+            } => {
+                data_writer
+                    .push_repeated_row(&data_row, row_count)
+                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                flag_writer
+                    .push_repeated_bool_fill_row(flag_row, row_count)
+                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                flag_category_writer
+                    .push_zero_rows(row_count)
+                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                uvw_writer
+                    .push_repeated_f64_row(&uvw_row, row_count)
+                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                weight_writer
+                    .push_repeated_f32_row(&weight_row, row_count)
+                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                sigma_writer
+                    .push_repeated_f32_row(&sigma_row, row_count)
+                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+            }
         }
     }
     Ok(StreamedVisibilityColumns {
@@ -2542,7 +2595,7 @@ mod tests {
             },
         };
         let error = session
-            .send_batch(MeasurementSetWriteBatch {
+            .send_batch(MeasurementSetWriteBatch::Rows {
                 data_rows: vec![vec![Complex32::new(1.0, 0.0)]; 2],
                 flag_rows: vec![false; 2],
                 uvw_rows: vec![[0.0; 3]; 2],
@@ -2755,3 +2808,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod throughput_tests;

@@ -68,12 +68,15 @@ fn run() -> Result<(), String> {
     if selected_rows == 0 {
         return Err("selected row count is zero".to_string());
     }
-    let row_blocks = if options.visibility_selection {
-        visibility_selection_row_blocks(&ms, &source_partition, options.block_rows)?
-    } else {
-        contiguous_row_blocks(options.row_start, selected_end, options.block_rows)
-    };
-    let selected_rows = row_blocks.iter().map(Vec::len).sum::<usize>();
+    let selected_row_blocks = options
+        .visibility_selection
+        .then(|| visibility_selection_row_blocks(&ms, &source_partition, options.block_rows))
+        .transpose()?;
+    let selected_rows = selected_row_blocks
+        .as_ref()
+        .map_or(selected_rows, |blocks| {
+            blocks.iter().map(Vec::len).sum::<usize>()
+        });
     if selected_rows == 0 {
         return Err("selected row count is zero after visibility selection".to_string());
     }
@@ -84,36 +87,41 @@ fn run() -> Result<(), String> {
     let mut column_aggregates = ColumnAggregates::default();
     let probe_started = Instant::now();
     for repeat_index in 0..options.repeat {
-        for row_indices in &row_blocks {
-            let request = options.sidecars.apply_to(
-                VisibilityBufferRequest::imaging(
-                    options.data_column,
-                    row_indices.clone(),
-                    options.channel_start,
+        if let Some(row_blocks) = &selected_row_blocks {
+            for row_indices in row_blocks {
+                run_probe_block(ProbeBlockContext {
+                    ms: &ms,
+                    options: &options,
+                    source_partition: &source_partition,
                     channel_count,
-                )
-                .with_source_partition(source_partition.clone()),
-            );
-            let request = options.columns.apply_to(request);
-            let started = Instant::now();
-            let fill_report = ms
-                .fill_visibility_buffer(&request, &mut buffer)
-                .map_err(|error| error.to_string())?;
-            let elapsed = started.elapsed();
-            column_aggregates.add(&fill_report.columns);
-            aggregate.add(&fill_report);
-            block_reports.push(BlockProbeReport {
-                repeat_index,
-                row_start: row_indices.first().copied().unwrap_or(0),
-                row_count: row_indices.len(),
-                elapsed_ns: elapsed.as_nanos(),
-                logical_output_bytes: fill_report.logical_output_bytes,
-                modeled_physical_read_bytes: fill_report.modeled_physical_read_bytes,
-                allocation_reused_buffers: fill_report.allocation.reused_buffers,
-                allocation_grown_or_retyped_buffers: fill_report
-                    .allocation
-                    .grown_or_retyped_buffers,
-            });
+                    repeat_index,
+                    row_indices: row_indices.clone(),
+                    buffer: &mut buffer,
+                    block_reports: &mut block_reports,
+                    aggregate: &mut aggregate,
+                    column_aggregates: &mut column_aggregates,
+                })?;
+            }
+        } else {
+            let mut block_start = options.row_start;
+            while block_start < selected_end {
+                let block_end = block_start
+                    .saturating_add(options.block_rows)
+                    .min(selected_end);
+                run_probe_block(ProbeBlockContext {
+                    ms: &ms,
+                    options: &options,
+                    source_partition: &source_partition,
+                    channel_count,
+                    repeat_index,
+                    row_indices: (block_start..block_end).collect(),
+                    buffer: &mut buffer,
+                    block_reports: &mut block_reports,
+                    aggregate: &mut aggregate,
+                    column_aggregates: &mut column_aggregates,
+                })?;
+                block_start = block_end;
+            }
         }
     }
     let probe_elapsed = probe_started.elapsed();
@@ -170,6 +178,62 @@ fn run() -> Result<(), String> {
         "{}",
         serde_json::to_string_pretty(&probe_report).map_err(|error| error.to_string())?
     );
+    Ok(())
+}
+
+struct ProbeBlockContext<'a> {
+    ms: &'a MeasurementSet,
+    options: &'a ProbeOptions,
+    source_partition: &'a SourcePartition,
+    channel_count: usize,
+    repeat_index: usize,
+    row_indices: Vec<usize>,
+    buffer: &'a mut VisibilityBuffer,
+    block_reports: &'a mut Vec<BlockProbeReport>,
+    aggregate: &'a mut AggregateFill,
+    column_aggregates: &'a mut ColumnAggregates,
+}
+
+fn run_probe_block(context: ProbeBlockContext<'_>) -> Result<(), String> {
+    let ProbeBlockContext {
+        ms,
+        options,
+        source_partition,
+        channel_count,
+        repeat_index,
+        row_indices,
+        buffer,
+        block_reports,
+        aggregate,
+        column_aggregates,
+    } = context;
+    let request = options.sidecars.apply_to(
+        VisibilityBufferRequest::imaging(
+            options.data_column,
+            row_indices,
+            options.channel_start,
+            channel_count,
+        )
+        .with_source_partition(source_partition.clone()),
+    );
+    let request = options.columns.apply_to(request);
+    let started = Instant::now();
+    let fill_report = ms
+        .fill_visibility_buffer(&request, buffer)
+        .map_err(|error| error.to_string())?;
+    let elapsed = started.elapsed();
+    column_aggregates.add(&fill_report.columns);
+    aggregate.add(&fill_report);
+    block_reports.push(BlockProbeReport {
+        repeat_index,
+        row_start: request.row_indices.first().copied().unwrap_or(0),
+        row_count: request.row_indices.len(),
+        elapsed_ns: elapsed.as_nanos(),
+        logical_output_bytes: fill_report.logical_output_bytes,
+        modeled_physical_read_bytes: fill_report.modeled_physical_read_bytes,
+        allocation_reused_buffers: fill_report.allocation.reused_buffers,
+        allocation_grown_or_retyped_buffers: fill_report.allocation.grown_or_retyped_buffers,
+    });
     Ok(())
 }
 
@@ -876,21 +940,6 @@ fn source_partition_for_row(
         full_channel_count,
         corr_count,
     ))
-}
-
-fn contiguous_row_blocks(
-    row_start: usize,
-    selected_end: usize,
-    block_rows: usize,
-) -> Vec<Vec<usize>> {
-    let mut blocks = Vec::new();
-    let mut block_start = row_start;
-    while block_start < selected_end {
-        let block_end = block_start.saturating_add(block_rows).min(selected_end);
-        blocks.push((block_start..block_end).collect());
-        block_start = block_end;
-    }
-    blocks
 }
 
 fn visibility_selection_row_blocks(

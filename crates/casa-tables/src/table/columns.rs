@@ -1014,6 +1014,46 @@ impl Table {
             .collect()
     }
 
+    /// Returns typed required scalar values for selected rows in each column.
+    ///
+    /// Storage managers may coalesce these reads by manager and bucket. This
+    /// remains a column/cell operation; manager bindings persisted by CASA are
+    /// honored rather than replaced by a separate read convention.
+    pub fn required_scalar_columns_owned_for_rows(
+        &self,
+        columns: &[&str],
+        row_indices: &[usize],
+    ) -> Result<HashMap<String, RequiredScalarColumnValues>, TableError> {
+        for &column in columns {
+            self.require_column(column)?;
+        }
+        for &row_index in row_indices {
+            if row_index >= self.row_count() {
+                return Err(TableError::RowOutOfBounds {
+                    row_index,
+                    row_count: self.row_count(),
+                });
+            }
+        }
+        if let Some(values_by_column) = self
+            .inner
+            .required_scalar_columns_owned_for_rows(row_indices, columns)?
+        {
+            return Ok(values_by_column
+                .into_iter()
+                .map(|(name, values)| (name, required_scalar_column_values(values)))
+                .collect());
+        }
+        columns
+            .iter()
+            .map(|&column| {
+                let values = self.get_scalar_cells_owned_for_rows(column, row_indices)?;
+                required_scalar_column_values_from_optional_scalars(&values, column)
+                    .map(|values| (column.to_string(), values))
+            })
+            .collect()
+    }
+
     pub(crate) fn get_scalar_cells_owned_for_rows(
         &self,
         column: &str,

@@ -1046,6 +1046,61 @@ impl TableImpl {
         Ok(Some(values))
     }
 
+    pub(crate) fn required_scalar_columns_owned_for_rows(
+        &self,
+        row_indices: &[usize],
+        columns: &[&str],
+    ) -> Result<Option<RequiredScalarColumnValueMap>, TableError> {
+        if self.loaded_rows.get().is_some() || self.lazy_rows.is_none() {
+            let mut values_by_column = HashMap::with_capacity(columns.len());
+            for &column in columns {
+                let Some(values) = self.scalar_cells_owned_for_rows(row_indices, column)? else {
+                    return Ok(None);
+                };
+                values_by_column.insert(
+                    column.to_string(),
+                    required_scalar_column_data_from_optional_scalars(&values, column)?,
+                );
+            }
+            return Ok(Some(values_by_column));
+        }
+
+        let source = self
+            .lazy_rows
+            .as_ref()
+            .expect("lazy source checked before selected scalar load");
+        let requested = columns.iter().copied().collect::<HashSet<_>>();
+        let mut values_by_column = CompositeStorage
+            .load_named_required_scalar_column_rows_with_row_hint(
+                &source.path,
+                &requested,
+                row_indices,
+                Some(source.row_count_hint as u64),
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to load required selected scalar columns {columns:?} from table {}: {err}",
+                    source.path.display()
+                ))
+            })?
+            .columns;
+        for &column in columns {
+            let values = values_by_column.get_mut(column).ok_or_else(|| {
+                TableError::Storage(format!(
+                    "required selected scalar column {column} was not loaded"
+                ))
+            })?;
+            if let Some(overrides) = self.pending_scalar_cells.by_column.get(column) {
+                for (out_idx, &row_index) in row_indices.iter().enumerate() {
+                    if let Some(value) = overrides.get(&row_index) {
+                        set_required_scalar_column_value(values, out_idx, value, column)?;
+                    }
+                }
+            }
+        }
+        Ok(Some(values_by_column))
+    }
+
     pub(crate) fn array_cell(
         &self,
         row_index: usize,

@@ -37,7 +37,7 @@ use super::stman_aipsio::ColumnRawData;
 use super::stman_aipsio::scalar_value_is_default;
 use super::stman_array_file::StManArrayFileReader;
 use super::table_control::ColumnDescContents;
-use super::{ScalarColumnSource, ScalarColumnSources, StorageError};
+use super::{RequiredScalarColumnData, ScalarColumnSource, ScalarColumnSources, StorageError};
 use crate::table::GeneratedScalarValueRun;
 
 const ISM_HEADER_SIZE: u64 = 512;
@@ -1080,6 +1080,249 @@ pub(crate) fn read_ism_scalar_column_rows(
         })?;
     store_ism_selected_scalar_rows_cache(cache_key, values_by_column);
     Ok(Some(values))
+}
+
+/// Read selected required scalar columns without expanding every physical
+/// column or every row in an incremental bucket.
+pub(crate) fn read_ism_required_scalar_columns_rows(
+    file_path: &Path,
+    dm_blob: &[u8],
+    all_col_descs: &[&ColumnDescContents],
+    requested_col_descs: &[(usize, &ColumnDescContents)],
+    selected_rows: &[usize],
+) -> Result<HashMap<String, RequiredScalarColumnData>, StorageError> {
+    let _dm_name = parse_ism_dm_blob(dm_blob)?;
+    let mut outputs = HashMap::with_capacity(requested_col_descs.len());
+    for (_, col_desc) in requested_col_descs {
+        let values = match col_desc.data_type {
+            CasacoreDataType::TpBool => {
+                RequiredScalarColumnData::Bool(vec![false; selected_rows.len()])
+            }
+            CasacoreDataType::TpInt => {
+                RequiredScalarColumnData::Int32(vec![0; selected_rows.len()])
+            }
+            CasacoreDataType::TpFloat => {
+                RequiredScalarColumnData::Float32(vec![0.0; selected_rows.len()])
+            }
+            CasacoreDataType::TpDouble => {
+                RequiredScalarColumnData::Float64(vec![0.0; selected_rows.len()])
+            }
+            other => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "required selected-row ISM column '{}' has unsupported type {other:?}",
+                    col_desc.col_name
+                )));
+            }
+        };
+        outputs.insert(col_desc.col_name.clone(), values);
+    }
+    if selected_rows.is_empty() || outputs.is_empty() {
+        return Ok(outputs);
+    }
+
+    let mut file = File::open(file_path)?;
+    let header = parse_ism_header(&mut file)?;
+    let index = parse_ism_index(&mut file, &header)?;
+    let contiguous_rows = selected_rows
+        .windows(2)
+        .all(|rows| rows[1] == rows[0].saturating_add(1));
+    if contiguous_rows {
+        let selected_end = selected_rows[0]
+            .checked_add(selected_rows.len())
+            .ok_or_else(|| StorageError::FormatMismatch("ISM row range overflow".to_string()))?;
+        let mut row_index = selected_rows[0];
+        let mut output_start = 0usize;
+        while row_index < selected_end {
+            let interval = index
+                .rows
+                .partition_point(|&start| start <= row_index as u64);
+            if interval == 0 || interval >= index.rows.len() {
+                return Err(StorageError::FormatMismatch(format!(
+                    "ISM index has no bucket for row {row_index}"
+                )));
+            }
+            let interval_idx = interval - 1;
+            let bucket_start = index.rows[interval_idx] as usize;
+            let bucket_end = (index.rows[interval_idx + 1] as usize).min(selected_end);
+            let bucket_nr = *index.bucket_nrs.get(interval_idx).ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "ISM bucket number missing for row interval {interval_idx}"
+                ))
+            })?;
+            let raw_bucket = read_ism_bucket(&mut file, &header, bucket_nr)?;
+            let bucket = parse_ism_bucket(&raw_bucket, all_col_descs.len(), header.big_endian)?;
+            let relative_start = row_index - bucket_start;
+            let row_count = bucket_end - row_index;
+            for (col_idx, col_desc) in requested_col_descs {
+                let col_index = bucket.col_indices.get(*col_idx).ok_or_else(|| {
+                    StorageError::FormatMismatch(format!(
+                        "required ISM column '{}' missing bucket index {col_idx}",
+                        col_desc.col_name
+                    ))
+                })?;
+                let output = outputs
+                    .get_mut(&col_desc.col_name)
+                    .expect("required ISM output initialized before range decode");
+                fill_ism_required_scalar_range(
+                    output,
+                    &bucket.data,
+                    col_index,
+                    relative_start,
+                    output_start,
+                    row_count,
+                    header.big_endian,
+                )?;
+            }
+            row_index = bucket_end;
+            output_start += row_count;
+        }
+        return Ok(outputs);
+    }
+    let mut requests: Vec<(usize, usize)> = selected_rows
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(out_idx, row_index)| (row_index, out_idx))
+        .collect();
+    requests.sort_unstable_by_key(|&(row_index, _)| row_index);
+
+    let mut cached_interval = None;
+    let mut cached_bucket_start = 0usize;
+    let mut cached_bucket = None;
+    for (row_index, out_idx) in requests {
+        let interval = index
+            .rows
+            .partition_point(|&start| start <= row_index as u64);
+        if interval == 0 || interval >= index.rows.len() {
+            return Err(StorageError::FormatMismatch(format!(
+                "ISM index has no bucket for row {row_index}"
+            )));
+        }
+        let interval_idx = interval - 1;
+        if cached_interval != Some(interval_idx) {
+            let bucket_nr = *index.bucket_nrs.get(interval_idx).ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "ISM bucket number missing for row interval {interval_idx}"
+                ))
+            })?;
+            cached_interval = Some(interval_idx);
+            cached_bucket_start = index.rows[interval_idx] as usize;
+            let raw_bucket = read_ism_bucket(&mut file, &header, bucket_nr)?;
+            cached_bucket = Some(parse_ism_bucket(
+                &raw_bucket,
+                all_col_descs.len(),
+                header.big_endian,
+            )?);
+        }
+        let bucket = cached_bucket
+            .as_ref()
+            .expect("ISM bucket loaded before selected scalar decode");
+        let relative_row = row_index.saturating_sub(cached_bucket_start) as u32;
+        for (col_idx, col_desc) in requested_col_descs {
+            let col_index = bucket.col_indices.get(*col_idx).ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "required ISM column '{}' missing bucket index {col_idx}",
+                    col_desc.col_name
+                ))
+            })?;
+            let value_interval = get_interval(col_index, relative_row);
+            let offset = *col_index.offsets.get(value_interval).ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "required ISM column '{}' missing value offset",
+                    col_desc.col_name
+                ))
+            })? as usize;
+            let output = outputs
+                .get_mut(&col_desc.col_name)
+                .expect("required ISM output initialized before decode");
+            match output {
+                RequiredScalarColumnData::Bool(values) => {
+                    values[out_idx] = bucket.data[offset] != 0;
+                }
+                RequiredScalarColumnData::Int32(values) => {
+                    values[out_idx] = if header.big_endian {
+                        read_i32_be(&bucket.data[offset..])
+                    } else {
+                        read_i32_le(&bucket.data[offset..])
+                    };
+                }
+                RequiredScalarColumnData::Float32(values) => {
+                    values[out_idx] = if header.big_endian {
+                        read_f32_be(&bucket.data[offset..])
+                    } else {
+                        read_f32_le(&bucket.data[offset..])
+                    };
+                }
+                RequiredScalarColumnData::Float64(values) => {
+                    values[out_idx] = if header.big_endian {
+                        read_f64_be(&bucket.data[offset..])
+                    } else {
+                        read_f64_le(&bucket.data[offset..])
+                    };
+                }
+            }
+        }
+    }
+    Ok(outputs)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fill_ism_required_scalar_range(
+    output: &mut RequiredScalarColumnData,
+    bucket_data: &[u8],
+    col_index: &IsmBucketColIndex,
+    source_row_start: usize,
+    output_row_start: usize,
+    row_count: usize,
+    big_endian: bool,
+) -> Result<(), StorageError> {
+    let source_end = source_row_start + row_count;
+    let mut source_row = source_row_start;
+    let mut output_row = output_row_start;
+    while source_row < source_end {
+        let interval = get_interval(col_index, source_row as u32);
+        let run_end = col_index
+            .row_nrs
+            .get(interval + 1)
+            .map_or(source_end, |row| *row as usize)
+            .min(source_end);
+        let run_rows = run_end - source_row;
+        let offset = *col_index.offsets.get(interval).ok_or_else(|| {
+            StorageError::FormatMismatch("ISM required scalar run has no offset".to_string())
+        })? as usize;
+        match output {
+            RequiredScalarColumnData::Bool(values) => {
+                values[output_row..output_row + run_rows].fill(bucket_data[offset] != 0);
+            }
+            RequiredScalarColumnData::Int32(values) => {
+                let value = if big_endian {
+                    read_i32_be(&bucket_data[offset..])
+                } else {
+                    read_i32_le(&bucket_data[offset..])
+                };
+                values[output_row..output_row + run_rows].fill(value);
+            }
+            RequiredScalarColumnData::Float32(values) => {
+                let value = if big_endian {
+                    read_f32_be(&bucket_data[offset..])
+                } else {
+                    read_f32_le(&bucket_data[offset..])
+                };
+                values[output_row..output_row + run_rows].fill(value);
+            }
+            RequiredScalarColumnData::Float64(values) => {
+                let value = if big_endian {
+                    read_f64_be(&bucket_data[offset..])
+                } else {
+                    read_f64_le(&bucket_data[offset..])
+                };
+                values[output_row..output_row + run_rows].fill(value);
+            }
+        }
+        source_row = run_end;
+        output_row += run_rows;
+    }
+    Ok(())
 }
 
 pub(crate) fn read_ism_scalar_column(

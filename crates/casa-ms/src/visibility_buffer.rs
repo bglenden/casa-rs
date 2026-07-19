@@ -5,7 +5,7 @@
 //! that want to reuse allocations across row blocks while reading only the
 //! source channels needed by a schedule candidate.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -16,8 +16,10 @@ use casa_imaging::{
     VisibilityFloatSamplesRef, VisibilitySourcePartition, VisibilitySourcePartitionId,
     VisibilitySourceShape, WeightingRoutePlan,
 };
-use casa_tables::{SelectedArray1DCells, SelectedArray2DCells, Table};
-use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType, ScalarValue};
+use casa_tables::{RequiredScalarColumnValues, SelectedArray1DCells, SelectedArray2DCells, Table};
+#[cfg(test)]
+use casa_types::ScalarValue;
+use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType};
 use ndarray::Ix1;
 use serde::Serialize;
 
@@ -968,17 +970,57 @@ fn read_scalar_columns(
         state_ids: None,
         reports: Vec::new(),
     };
+    let mut column_names = Vec::with_capacity(12);
     if request.include_antenna_ids {
-        let (antenna1, report) = read_i32_scalar_column(
+        column_names.extend(["ANTENNA1", "ANTENNA2"]);
+    }
+    if request.include_data_desc_ids {
+        column_names.push("DATA_DESC_ID");
+    }
+    if request.include_field_ids {
+        column_names.push("FIELD_ID");
+    }
+    if request.include_flag_row {
+        column_names.push("FLAG_ROW");
+    }
+    if request.include_time {
+        column_names.push("TIME");
+    }
+    if request.include_interval {
+        column_names.push("INTERVAL");
+    }
+    if request.include_exposure {
+        column_names.push("EXPOSURE");
+    }
+    if request.include_array_ids {
+        column_names.push("ARRAY_ID");
+    }
+    if request.include_observation_ids {
+        column_names.push("OBSERVATION_ID");
+    }
+    if request.include_scan_numbers {
+        column_names.push("SCAN_NUMBER");
+    }
+    if request.include_state_ids {
+        column_names.push("STATE_ID");
+    }
+    let mut columns = ms
+        .main_table()
+        .required_scalar_columns_owned_for_rows(&column_names, &request.row_indices)?;
+
+    if request.include_antenna_ids {
+        let (antenna1, report) = take_i32_scalar_column(
             ms,
             "ANTENNA1",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.antenna1.take(),
         )?;
-        let (antenna2, report2) = read_i32_scalar_column(
+        let (antenna2, report2) = take_i32_scalar_column(
             ms,
             "ANTENNA2",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.antenna2.take(),
         )?;
         result.antenna1 = Some(antenna1);
@@ -987,96 +1029,110 @@ fn read_scalar_columns(
         result.reports.push(report2);
     }
     if request.include_data_desc_ids {
-        let (data_desc_ids, report) = read_i32_scalar_column(
+        let (data_desc_ids, report) = take_i32_scalar_column(
             ms,
             "DATA_DESC_ID",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.data_desc_ids.take(),
         )?;
         result.data_desc_ids = Some(data_desc_ids);
         result.reports.push(report);
     }
     if request.include_field_ids {
-        let (field_ids, report) = read_i32_scalar_column(
+        let (field_ids, report) = take_i32_scalar_column(
             ms,
             "FIELD_ID",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.field_ids.take(),
         )?;
         result.field_ids = Some(field_ids);
         result.reports.push(report);
     }
     if request.include_flag_row {
-        let (flag_row, report) = read_bool_scalar_column(
+        let (flag_row, report) = take_bool_scalar_column(
             ms,
             "FLAG_ROW",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.flag_row.take(),
         )?;
         result.flag_row = Some(flag_row);
         result.reports.push(report);
     }
     if request.include_time {
-        let (time, report) =
-            read_f64_scalar_column(ms, "TIME", &request.row_indices, existing.time.take())?;
+        let (time, report) = take_f64_scalar_column(
+            ms,
+            "TIME",
+            &mut columns,
+            request.row_indices.len(),
+            existing.time.take(),
+        )?;
         result.time = Some(time);
         result.reports.push(report);
     }
     if request.include_interval {
-        let (interval, report) = read_f64_scalar_column(
+        let (interval, report) = take_f64_scalar_column(
             ms,
             "INTERVAL",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.interval.take(),
         )?;
         result.interval = Some(interval);
         result.reports.push(report);
     }
     if request.include_exposure {
-        let (exposure, report) = read_f64_scalar_column(
+        let (exposure, report) = take_f64_scalar_column(
             ms,
             "EXPOSURE",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.exposure.take(),
         )?;
         result.exposure = Some(exposure);
         result.reports.push(report);
     }
     if request.include_array_ids {
-        let (array_ids, report) = read_i32_scalar_column(
+        let (array_ids, report) = take_i32_scalar_column(
             ms,
             "ARRAY_ID",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.array_ids.take(),
         )?;
         result.array_ids = Some(array_ids);
         result.reports.push(report);
     }
     if request.include_observation_ids {
-        let (observation_ids, report) = read_i32_scalar_column(
+        let (observation_ids, report) = take_i32_scalar_column(
             ms,
             "OBSERVATION_ID",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.observation_ids.take(),
         )?;
         result.observation_ids = Some(observation_ids);
         result.reports.push(report);
     }
     if request.include_scan_numbers {
-        let (scan_numbers, report) = read_i32_scalar_column(
+        let (scan_numbers, report) = take_i32_scalar_column(
             ms,
             "SCAN_NUMBER",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.scan_numbers.take(),
         )?;
         result.scan_numbers = Some(scan_numbers);
         result.reports.push(report);
     }
     if request.include_state_ids {
-        let (state_ids, report) = read_i32_scalar_column(
+        let (state_ids, report) = take_i32_scalar_column(
             ms,
             "STATE_ID",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.state_ids.take(),
         )?;
         result.state_ids = Some(state_ids);
@@ -1548,40 +1604,23 @@ fn read_uvw_column(
     Ok((out, report))
 }
 
-fn read_i32_scalar_column(
+fn take_i32_scalar_column(
     ms: &MeasurementSet,
     column_name: &str,
-    row_indices: &[usize],
+    columns: &mut HashMap<String, RequiredScalarColumnValues>,
+    row_count: usize,
     existing: Option<Vec<i32>>,
 ) -> MsResult<(Vec<i32>, VisibilityBufferColumnReport)> {
-    let values = ms
-        .main_table()
-        .column_accessor(column_name)?
-        .scalar_cells_owned_for_rows(row_indices)?;
     let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
     if primitive != PrimitiveType::Int32 {
         return Err(column_type_error(column_name, "Int32 scalar", primitive));
     }
-    let mut out = existing.unwrap_or_else(|| Vec::with_capacity(row_indices.len()));
-    out.clear();
-    out.reserve(row_indices.len().saturating_sub(out.capacity()));
-    for (row_slot, value) in values.into_iter().enumerate() {
-        match value {
-            Some(ScalarValue::Int32(value)) => out.push(value),
-            Some(other) => {
-                return Err(column_type_error(
-                    column_name,
-                    "Int32 scalar",
-                    other.primitive_type(),
-                ));
-            }
-            None => {
-                return Err(invalid_input(format!(
-                    "{column_name} missing for selected row slot {row_slot}"
-                )));
-            }
-        }
-    }
+    let Some(RequiredScalarColumnValues::Int32(values)) = columns.remove(column_name) else {
+        return Err(invalid_input(format!(
+            "required Int32 scalar column {column_name} was not loaded"
+        )));
+    };
+    let out = reuse_or_replace_vec(existing, values);
     let report = column_report(ColumnReportInput {
         table: ms.main_table(),
         column_name,
@@ -1590,45 +1629,28 @@ fn read_i32_scalar_column(
         channel_start: 0,
         requested_channels: 1,
         elements_per_channel_or_row: 1,
-        row_count: row_indices.len(),
+        row_count,
     })?;
     Ok((out, report))
 }
 
-fn read_f64_scalar_column(
+fn take_f64_scalar_column(
     ms: &MeasurementSet,
     column_name: &str,
-    row_indices: &[usize],
+    columns: &mut HashMap<String, RequiredScalarColumnValues>,
+    row_count: usize,
     existing: Option<Vec<f64>>,
 ) -> MsResult<(Vec<f64>, VisibilityBufferColumnReport)> {
-    let values = ms
-        .main_table()
-        .column_accessor(column_name)?
-        .scalar_cells_owned_for_rows(row_indices)?;
     let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
     if primitive != PrimitiveType::Float64 {
         return Err(column_type_error(column_name, "Float64 scalar", primitive));
     }
-    let mut out = existing.unwrap_or_else(|| Vec::with_capacity(row_indices.len()));
-    out.clear();
-    out.reserve(row_indices.len().saturating_sub(out.capacity()));
-    for (row_slot, value) in values.into_iter().enumerate() {
-        match value {
-            Some(ScalarValue::Float64(value)) => out.push(value),
-            Some(other) => {
-                return Err(column_type_error(
-                    column_name,
-                    "Float64 scalar",
-                    other.primitive_type(),
-                ));
-            }
-            None => {
-                return Err(invalid_input(format!(
-                    "{column_name} missing for selected row slot {row_slot}"
-                )));
-            }
-        }
-    }
+    let Some(RequiredScalarColumnValues::Float64(values)) = columns.remove(column_name) else {
+        return Err(invalid_input(format!(
+            "required Float64 scalar column {column_name} was not loaded"
+        )));
+    };
+    let out = reuse_or_replace_vec(existing, values);
     let report = column_report(ColumnReportInput {
         table: ms.main_table(),
         column_name,
@@ -1637,45 +1659,28 @@ fn read_f64_scalar_column(
         channel_start: 0,
         requested_channels: 1,
         elements_per_channel_or_row: 1,
-        row_count: row_indices.len(),
+        row_count,
     })?;
     Ok((out, report))
 }
 
-fn read_bool_scalar_column(
+fn take_bool_scalar_column(
     ms: &MeasurementSet,
     column_name: &str,
-    row_indices: &[usize],
+    columns: &mut HashMap<String, RequiredScalarColumnValues>,
+    row_count: usize,
     existing: Option<Vec<bool>>,
 ) -> MsResult<(Vec<bool>, VisibilityBufferColumnReport)> {
-    let values = ms
-        .main_table()
-        .column_accessor(column_name)?
-        .scalar_cells_owned_for_rows(row_indices)?;
     let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
     if primitive != PrimitiveType::Bool {
         return Err(column_type_error(column_name, "Bool scalar", primitive));
     }
-    let mut out = existing.unwrap_or_else(|| Vec::with_capacity(row_indices.len()));
-    out.clear();
-    out.reserve(row_indices.len().saturating_sub(out.capacity()));
-    for (row_slot, value) in values.into_iter().enumerate() {
-        match value {
-            Some(ScalarValue::Bool(value)) => out.push(value),
-            Some(other) => {
-                return Err(column_type_error(
-                    column_name,
-                    "Bool scalar",
-                    other.primitive_type(),
-                ));
-            }
-            None => {
-                return Err(invalid_input(format!(
-                    "{column_name} missing for selected row slot {row_slot}"
-                )));
-            }
-        }
-    }
+    let Some(RequiredScalarColumnValues::Bool(values)) = columns.remove(column_name) else {
+        return Err(invalid_input(format!(
+            "required Bool scalar column {column_name} was not loaded"
+        )));
+    };
+    let out = reuse_or_replace_vec(existing, values);
     let report = column_report(ColumnReportInput {
         table: ms.main_table(),
         column_name,
@@ -1684,9 +1689,19 @@ fn read_bool_scalar_column(
         channel_start: 0,
         requested_channels: 1,
         elements_per_channel_or_row: 1,
-        row_count: row_indices.len(),
+        row_count,
     })?;
     Ok((out, report))
+}
+
+fn reuse_or_replace_vec<T: Clone>(existing: Option<Vec<T>>, replacement: Vec<T>) -> Vec<T> {
+    let Some(mut existing) = existing.filter(|values| values.capacity() >= replacement.len())
+    else {
+        return replacement;
+    };
+    existing.clear();
+    existing.extend_from_slice(&replacement);
+    existing
 }
 
 struct ColumnReportInput<'a> {
