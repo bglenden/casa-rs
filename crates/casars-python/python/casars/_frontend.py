@@ -520,6 +520,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_casars_frontend_services_checksum_func_parameter_template_toml() != 38211:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_casars_frontend_services_checksum_func_parameter_validate_edit() != 2907:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_casars_frontend_services_checksum_func_parameter_write_managed() != 30614:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_casars_frontend_services_checksum_func_probe_measurement_set_time_range() != 14615:
@@ -953,6 +955,11 @@ _UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_template_toml.argty
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_template_toml.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_validate_edit.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_validate_edit.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_write_managed.argtypes = (
     _UniffiRustBuffer,
     _UniffiRustBuffer,
@@ -1411,6 +1418,9 @@ _UniffiLib.uniffi_casars_frontend_services_checksum_func_parameter_surface_bundl
 _UniffiLib.uniffi_casars_frontend_services_checksum_func_parameter_template_toml.argtypes = (
 )
 _UniffiLib.uniffi_casars_frontend_services_checksum_func_parameter_template_toml.restype = ctypes.c_uint16
+_UniffiLib.uniffi_casars_frontend_services_checksum_func_parameter_validate_edit.argtypes = (
+)
+_UniffiLib.uniffi_casars_frontend_services_checksum_func_parameter_validate_edit.restype = ctypes.c_uint16
 _UniffiLib.uniffi_casars_frontend_services_checksum_func_parameter_write_managed.argtypes = (
 )
 _UniffiLib.uniffi_casars_frontend_services_checksum_func_parameter_write_managed.restype = ctypes.c_uint16
@@ -1515,6 +1525,19 @@ class _UniffiConverterUInt32(_UniffiConverterPrimitiveInt):
     @staticmethod
     def write(value, buf):
         buf.write_u32(value)
+
+class _UniffiConverterInt32(_UniffiConverterPrimitiveInt):
+    CLASS_NAME = "i32"
+    VALUE_MIN = -2**31
+    VALUE_MAX = 2**31
+
+    @staticmethod
+    def read(buf):
+        return buf.read_i32()
+
+    @staticmethod
+    def write(value, buf):
+        buf.write_i32(value)
 
 class _UniffiConverterUInt64(_UniffiConverterPrimitiveInt):
     CLASS_NAME = "u64"
@@ -9052,6 +9075,175 @@ class _UniffiConverterTypeSurfaceParameterDocumentation(_UniffiConverterRustBuff
         _UniffiConverterSequenceString.write(value.examples, buf)
 
 
+class SurfaceParameterEditRequest:
+    """
+    Complete context for one cross-surface parameter edit.
+    """
+
+    surface_id: "str"
+    parameter: "str"
+    text: "str"
+    dataset_path: "typing.Optional[str]"
+    spectral_window_id: "typing.Optional[int]"
+    suggestions: "typing.List[SurfaceParameterEditSuggestion]"
+    def __init__(self, *, surface_id: "str", parameter: "str", text: "str", dataset_path: "typing.Optional[str]", spectral_window_id: "typing.Optional[int]", suggestions: "typing.List[SurfaceParameterEditSuggestion]"):
+        self.surface_id = surface_id
+        self.parameter = parameter
+        self.text = text
+        self.dataset_path = dataset_path
+        self.spectral_window_id = spectral_window_id
+        self.suggestions = suggestions
+
+    def __str__(self):
+        return "SurfaceParameterEditRequest(surface_id={}, parameter={}, text={}, dataset_path={}, spectral_window_id={}, suggestions={})".format(self.surface_id, self.parameter, self.text, self.dataset_path, self.spectral_window_id, self.suggestions)
+
+    def __eq__(self, other):
+        if self.surface_id != other.surface_id:
+            return False
+        if self.parameter != other.parameter:
+            return False
+        if self.text != other.text:
+            return False
+        if self.dataset_path != other.dataset_path:
+            return False
+        if self.spectral_window_id != other.spectral_window_id:
+            return False
+        if self.suggestions != other.suggestions:
+            return False
+        return True
+
+class _UniffiConverterTypeSurfaceParameterEditRequest(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SurfaceParameterEditRequest(
+            surface_id=_UniffiConverterString.read(buf),
+            parameter=_UniffiConverterString.read(buf),
+            text=_UniffiConverterString.read(buf),
+            dataset_path=_UniffiConverterOptionalString.read(buf),
+            spectral_window_id=_UniffiConverterOptionalInt32.read(buf),
+            suggestions=_UniffiConverterSequenceTypeSurfaceParameterEditSuggestion.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterString.check_lower(value.surface_id)
+        _UniffiConverterString.check_lower(value.parameter)
+        _UniffiConverterString.check_lower(value.text)
+        _UniffiConverterOptionalString.check_lower(value.dataset_path)
+        _UniffiConverterOptionalInt32.check_lower(value.spectral_window_id)
+        _UniffiConverterSequenceTypeSurfaceParameterEditSuggestion.check_lower(value.suggestions)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterString.write(value.surface_id, buf)
+        _UniffiConverterString.write(value.parameter, buf)
+        _UniffiConverterString.write(value.text, buf)
+        _UniffiConverterOptionalString.write(value.dataset_path, buf)
+        _UniffiConverterOptionalInt32.write(value.spectral_window_id, buf)
+        _UniffiConverterSequenceTypeSurfaceParameterEditSuggestion.write(value.suggestions, buf)
+
+
+class SurfaceParameterEditResult:
+    """
+    Typed canonical result rendered by Swift and Python bindings.
+    """
+
+    parameter: "str"
+    normalized_value: "typing.Optional[SurfaceParameterValue]"
+    diagnostics: "typing.List[SurfaceParameterDiagnostic]"
+    supported_capabilities: "typing.List[str]"
+    suggestions: "typing.List[SurfaceParameterEditSuggestion]"
+    def __init__(self, *, parameter: "str", normalized_value: "typing.Optional[SurfaceParameterValue]", diagnostics: "typing.List[SurfaceParameterDiagnostic]", supported_capabilities: "typing.List[str]", suggestions: "typing.List[SurfaceParameterEditSuggestion]"):
+        self.parameter = parameter
+        self.normalized_value = normalized_value
+        self.diagnostics = diagnostics
+        self.supported_capabilities = supported_capabilities
+        self.suggestions = suggestions
+
+    def __str__(self):
+        return "SurfaceParameterEditResult(parameter={}, normalized_value={}, diagnostics={}, supported_capabilities={}, suggestions={})".format(self.parameter, self.normalized_value, self.diagnostics, self.supported_capabilities, self.suggestions)
+
+    def __eq__(self, other):
+        if self.parameter != other.parameter:
+            return False
+        if self.normalized_value != other.normalized_value:
+            return False
+        if self.diagnostics != other.diagnostics:
+            return False
+        if self.supported_capabilities != other.supported_capabilities:
+            return False
+        if self.suggestions != other.suggestions:
+            return False
+        return True
+
+class _UniffiConverterTypeSurfaceParameterEditResult(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SurfaceParameterEditResult(
+            parameter=_UniffiConverterString.read(buf),
+            normalized_value=_UniffiConverterOptionalTypeSurfaceParameterValue.read(buf),
+            diagnostics=_UniffiConverterSequenceTypeSurfaceParameterDiagnostic.read(buf),
+            supported_capabilities=_UniffiConverterSequenceString.read(buf),
+            suggestions=_UniffiConverterSequenceTypeSurfaceParameterEditSuggestion.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterString.check_lower(value.parameter)
+        _UniffiConverterOptionalTypeSurfaceParameterValue.check_lower(value.normalized_value)
+        _UniffiConverterSequenceTypeSurfaceParameterDiagnostic.check_lower(value.diagnostics)
+        _UniffiConverterSequenceString.check_lower(value.supported_capabilities)
+        _UniffiConverterSequenceTypeSurfaceParameterEditSuggestion.check_lower(value.suggestions)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterString.write(value.parameter, buf)
+        _UniffiConverterOptionalTypeSurfaceParameterValue.write(value.normalized_value, buf)
+        _UniffiConverterSequenceTypeSurfaceParameterDiagnostic.write(value.diagnostics, buf)
+        _UniffiConverterSequenceString.write(value.supported_capabilities, buf)
+        _UniffiConverterSequenceTypeSurfaceParameterEditSuggestion.write(value.suggestions, buf)
+
+
+class SurfaceParameterEditSuggestion:
+    """
+    One typed context suggestion supplied to canonical edit validation.
+    """
+
+    label: "str"
+    value: "SurfaceParameterValue"
+    def __init__(self, *, label: "str", value: "SurfaceParameterValue"):
+        self.label = label
+        self.value = value
+
+    def __str__(self):
+        return "SurfaceParameterEditSuggestion(label={}, value={})".format(self.label, self.value)
+
+    def __eq__(self, other):
+        if self.label != other.label:
+            return False
+        if self.value != other.value:
+            return False
+        return True
+
+class _UniffiConverterTypeSurfaceParameterEditSuggestion(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SurfaceParameterEditSuggestion(
+            label=_UniffiConverterString.read(buf),
+            value=_UniffiConverterTypeSurfaceParameterValue.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterString.check_lower(value.label)
+        _UniffiConverterTypeSurfaceParameterValue.check_lower(value.value)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterString.write(value.label, buf)
+        _UniffiConverterTypeSurfaceParameterValue.write(value.value, buf)
+
+
 class SurfaceParameterEntry:
     name: "str"
     value: "SurfaceParameterValue"
@@ -16339,6 +16531,33 @@ class _UniffiConverterOptionalUInt32(_UniffiConverterRustBuffer):
 
 
 
+class _UniffiConverterOptionalInt32(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiConverterInt32.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiConverterInt32.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiConverterInt32.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+
+
 class _UniffiConverterOptionalUInt64(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -18509,6 +18728,31 @@ class _UniffiConverterSequenceTypeSurfaceParameterDiagnostic(_UniffiConverterRus
 
 
 
+class _UniffiConverterSequenceTypeSurfaceParameterEditSuggestion(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiConverterTypeSurfaceParameterEditSuggestion.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiConverterTypeSurfaceParameterEditSuggestion.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiConverterTypeSurfaceParameterEditSuggestion.read(buf) for i in range(count)
+        ]
+
+
+
 class _UniffiConverterSequenceTypeSurfaceParameterEntry(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -20050,6 +20294,17 @@ def parameter_template_toml(surface_id: "str") -> "str":
         _UniffiConverterString.lower(surface_id)))
 
 
+def parameter_validate_edit(request: "SurfaceParameterEditRequest") -> "SurfaceParameterEditResult":
+    """
+    Parse, normalize, and validate one parameter edit through the generated boundary.
+    """
+
+    _UniffiConverterTypeSurfaceParameterEditRequest.check_lower(request)
+
+    return _UniffiConverterTypeSurfaceParameterEditResult.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_parameter_validate_edit,
+        _UniffiConverterTypeSurfaceParameterEditRequest.lower(request)))
+
+
 def parameter_write_managed(surface_id: "str",workspace: "str",values: "dict[str, SurfaceParameterValue]",successful: "bool") -> "SurfaceParameterWriteResult":
     """
     Explicitly write Last or Last Successful for one workspace.
@@ -20343,6 +20598,9 @@ __all__ = [
     "SurfaceParameterDefinition",
     "SurfaceParameterDiagnostic",
     "SurfaceParameterDocumentation",
+    "SurfaceParameterEditRequest",
+    "SurfaceParameterEditResult",
+    "SurfaceParameterEditSuggestion",
     "SurfaceParameterEntry",
     "SurfaceParameterLocation",
     "SurfaceParameterPatch",
@@ -20439,6 +20697,7 @@ __all__ = [
     "parameter_save",
     "parameter_surface_bundle",
     "parameter_template_toml",
+    "parameter_validate_edit",
     "parameter_write_managed",
     "probe_measurement_set_time_range",
     "probe_measurement_set_uv_range",

@@ -25,7 +25,7 @@ use casa_ms::msexplore::cli::build_explore_spec_from_args;
 use casa_ms::presentation::{UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind};
 use casa_ms::{
     MeasurementSet, MeasurementSetSummary, MeasurementSetSummaryOptions, MsExportFormat,
-    MsPlotPayload, MsPlotPreset, MsSelectionSpec, build_msexplore_payload_from_spec,
+    MsPlotPayload, MsPlotPreset, MsSelection, build_msexplore_payload_from_spec,
     export_msexplore_plot,
 };
 use casa_provider_contracts::{ParameterValue, SurfaceKind, builtin_surface_bundle};
@@ -6248,22 +6248,20 @@ impl AppState {
                         .parameter_session
                         .as_ref()
                         .ok_or_else(|| "typed parameter session is unavailable".to_string())?;
-                    let binding = session
-                        .bundle()
-                        .surface
-                        .bindings()
-                        .iter()
-                        .find(|binding| binding.name == name)
-                        .ok_or_else(|| format!("unknown parameter {name:?}"))?;
-                    let concept = session
-                        .bundle()
-                        .catalog
-                        .concept(&binding.concept)
-                        .ok_or_else(|| format!("missing concept for {name}"))?;
-                    match casa_task_runtime::parse_parameter_text(value, &concept.value_domain) {
-                        Ok(value) => Some(value),
-                        Err(error) => {
-                            let error = error.to_string();
+                    let edit = casa_task_runtime::validate_parameter_edit(
+                        session.bundle(),
+                        &name,
+                        value,
+                        [],
+                    );
+                    match edit.normalized_value {
+                        Some(value) if edit.diagnostics.is_empty() => Some(value),
+                        _ => {
+                            let error = edit
+                                .diagnostics
+                                .first()
+                                .map(|diagnostic| diagnostic.message.clone())
+                                .unwrap_or_else(|| format!("{name} has no typed value"));
                             self.parameter_edit_errors
                                 .insert(name.clone(), error.clone());
                             return Err(error);
@@ -11891,7 +11889,7 @@ impl AppState {
             })?;
         let selection_value =
             |id: &str| self.field_text(id).filter(|value| !value.trim().is_empty());
-        let selection = MsSelectionSpec {
+        let selection = MsSelection {
             selectdata: self.required_parameter_bool("selectdata")?,
             field: selection_value("field"),
             spw: selection_value("spw"),
@@ -11904,6 +11902,8 @@ impl AppState {
             array: selection_value("array"),
             intent: selection_value("intent"),
             feed: selection_value("feed"),
+            data_description: None,
+            state: None,
             msselect: selection_value("msselect"),
         };
         Ok((ms_path, selection.to_summary_options()))
@@ -11975,10 +11975,10 @@ impl AppState {
         Ok((ms_path, options))
     }
 
-    fn current_calibrate_selection_spec(&self) -> MsSelectionSpec {
+    fn current_calibrate_selection_spec(&self) -> MsSelection {
         let selection_value =
             |id: &str| self.field_text(id).filter(|value| !value.trim().is_empty());
-        MsSelectionSpec {
+        MsSelection {
             // This non-fallible plot-preview path fails closed if its typed
             // session is unavailable; it never recreates the catalog default.
             selectdata: matches!(
@@ -11996,6 +11996,8 @@ impl AppState {
             observation: selection_value("observation"),
             intent: None,
             feed: None,
+            data_description: None,
+            state: None,
             msselect: selection_value("msselect"),
         }
     }

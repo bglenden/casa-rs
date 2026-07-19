@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use casa_calibration::{
     CalibrationPlotPreset, CalibrationPlotRequest, build_calibration_plot_payload,
 };
-use casa_ms::{MsAxis, MsPlotPayload, MsSelectionSpec};
+use casa_ms::{MsAxis, MsPlotPayload, MsSelection};
 use casa_tables::{ColumnSchema, Table, TableInfo, TableOptions, TableSchema};
 use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -22,7 +22,7 @@ fn gain_phase_plot_builds_time_scatter_from_caltable() {
         &CalibrationPlotRequest {
             measurement_set_path: None,
             calibration_table_path: Some(table_path),
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
         },
         CalibrationPlotPreset::GainPhaseVsTime,
     )
@@ -46,7 +46,7 @@ fn corrected_frequency_plot_uses_corrected_data_column() {
         &CalibrationPlotRequest {
             measurement_set_path: Some(ms_path),
             calibration_table_path: None,
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
         },
         CalibrationPlotPreset::CorrectedAmplitudeVsFrequency,
     )
@@ -69,7 +69,7 @@ fn corrected_plot_requires_corrected_data_column() {
         &CalibrationPlotRequest {
             measurement_set_path: Some(ms_path),
             calibration_table_path: None,
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
         },
         CalibrationPlotPreset::CorrectedAmplitudeVsTime,
     )
@@ -91,7 +91,7 @@ fn bandpass_frequency_plot_reads_channelized_cparam() {
         &CalibrationPlotRequest {
             measurement_set_path: None,
             calibration_table_path: Some(table_path),
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
         },
         CalibrationPlotPreset::BandpassAmplitudeVsFrequency,
     )
@@ -122,7 +122,7 @@ fn casa_generated_gain_and_bandpass_tables_build_plot_payloads() {
         &CalibrationPlotRequest {
             measurement_set_path: None,
             calibration_table_path: Some(phase_gcal),
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
         },
         CalibrationPlotPreset::GainPhaseVsTime,
     )
@@ -131,7 +131,7 @@ fn casa_generated_gain_and_bandpass_tables_build_plot_payloads() {
         &CalibrationPlotRequest {
             measurement_set_path: None,
             calibration_table_path: Some(bandpass),
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
         },
         CalibrationPlotPreset::BandpassAmplitudeVsFrequency,
     )

@@ -319,6 +319,27 @@ impl TableImpl {
         }
     }
 
+    pub(crate) fn with_unloaded_rows_keywords_and_schema(
+        row_count: usize,
+        keywords: RecordValue,
+        column_keywords: HashMap<String, RecordValue>,
+        schema: Option<TableSchema>,
+    ) -> Self {
+        Self {
+            loaded_rows: OnceLock::new(),
+            loaded_scalar_columns: lazy_scalar_column_store(schema.as_ref()),
+            pending_scalar_cells: PendingScalarCells::default(),
+            loaded_array_columns: lazy_array_column_store(schema.as_ref()),
+            buffered_array_cells: lazy_buffered_array_cell_store(schema.as_ref()),
+            pending_array_cells: PendingArrayCells::default(),
+            lazy_rows: None,
+            persisted_row_count: row_count,
+            keywords,
+            column_keywords,
+            schema,
+        }
+    }
+
     fn load_rows_now(source: &LazyRowsSource) -> Result<LoadedRows, TableError> {
         let mut profiler = StorageProfiler::start(format!(
             "table_impl::load_rows_now path={}",
@@ -433,7 +454,7 @@ impl TableImpl {
         row_indices: &[usize],
         channel_start: usize,
         channel_count: usize,
-    ) -> Result<SelectedArray2DCells, TableError> {
+    ) -> Result<Option<SelectedArray2DCells>, TableError> {
         let mut profiler = StorageProfiler::start(format!(
             "table_impl::load_array_column_rows_2d_channel_range_typed_now path={} column={column}",
             source.path.display()
@@ -463,7 +484,7 @@ impl TableImpl {
                     row_indices.len(),
                     channel_start,
                     channel_count,
-                    values.row_count()
+                    values.as_ref().map_or(0, SelectedArray2DCells::row_count)
                 )),
             );
         }
@@ -1207,7 +1228,7 @@ impl TableImpl {
         column: &str,
         channel_start: usize,
         channel_count: usize,
-    ) -> Result<SelectedArray2DCells, TableError> {
+    ) -> Result<Option<SelectedArray2DCells>, TableError> {
         if self.loaded_rows.get().is_some() {
             return Err(TableError::Storage(format!(
                 "{column} typed selected channel reads require a lazy disk-backed table"
@@ -1367,6 +1388,36 @@ impl TableImpl {
             .map(|cells| cells.rows.as_slice())
     }
 
+    pub(crate) fn discard_pending_cell_updates(&mut self, columns: &[&str], rows: &[usize]) {
+        let rows = rows.iter().copied().collect::<HashSet<_>>();
+        for column in columns {
+            if let Some(values) = self.pending_scalar_cells.by_column.get_mut(*column) {
+                values.retain(|row, _| !rows.contains(row));
+                if values.is_empty() {
+                    self.pending_scalar_cells.by_column.remove(*column);
+                }
+            }
+            if let Some(values) = self.pending_array_cells.by_column.get_mut(*column) {
+                values.rows.retain(|(row, _)| !rows.contains(row));
+                if values.rows.is_empty() {
+                    self.pending_array_cells.by_column.remove(*column);
+                }
+            }
+            // Persisted values are now authoritative. Drop any lazy read cache
+            // populated before the mutation so subsequent access observes the
+            // just-written cells and long sessions release completed payloads.
+            if let Some(values) = self.loaded_scalar_columns.get_mut(*column) {
+                *values = OnceLock::new();
+            }
+            if let Some(values) = self.loaded_array_columns.get_mut(*column) {
+                *values = OnceLock::new();
+            }
+            if let Some(values) = self.buffered_array_cells.get_mut(*column) {
+                *values = OnceLock::new();
+            }
+        }
+    }
+
     pub(crate) fn undefined_for_row_mut(
         &mut self,
         row_index: usize,
@@ -1464,9 +1515,13 @@ impl TableImpl {
         self.schema = schema;
     }
 
+    pub(crate) fn rows_are_loaded(&self) -> bool {
+        self.loaded_rows.get().is_some()
+    }
+
     #[cfg(test)]
     pub(crate) fn has_loaded_rows(&self) -> bool {
-        self.loaded_rows.get().is_some()
+        self.rows_are_loaded()
     }
 
     #[cfg(test)]

@@ -8,10 +8,10 @@ use std::process;
 use std::time::{Duration, Instant};
 
 use casa_ms::{
-    MeasurementSet, SourcePartition, SourcePartitionId, VisibilityBuffer,
-    VisibilityBufferColumnReport, VisibilityBufferRequest, VisibilityBufferTimings,
-    VisibilityComplexSamples, VisibilityDataColumn, VisibilityFloatSamples,
-    VisibilityRowSelectionRequest,
+    MeasurementSet, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow, SourcePartition,
+    SourcePartitionId, VisibilityBuffer, VisibilityBufferColumnReport, VisibilityBufferRequest,
+    VisibilityBufferTimings, VisibilityComplexSamples, VisibilityDataColumn,
+    VisibilityFloatSamples,
 };
 use casa_types::{ArrayValue, ScalarValue};
 use serde::Serialize;
@@ -898,50 +898,25 @@ fn visibility_selection_row_blocks(
     source_partition: &SourcePartition,
     block_rows: usize,
 ) -> Result<Vec<Vec<usize>>, String> {
-    let data_description = ms
-        .data_description()
-        .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
-    let ddid_to_spw_pol = (0..data_description.row_count())
-        .map(|row| {
-            let spw = data_description
-                .spectral_window_id(row)
-                .map_err(|error| format!("read DATA_DESCRIPTION.SPECTRAL_WINDOW_ID: {error}"))?;
-            let pol = data_description
-                .polarization_id(row)
-                .map_err(|error| format!("read DATA_DESCRIPTION.POLARIZATION_ID: {error}"))?;
-            if spw < 0 || pol < 0 {
-                Ok(None)
-            } else {
-                Ok(Some((spw as usize, pol as usize)))
-            }
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    let mut allowed_ddids = vec![false; ddid_to_spw_pol.len()];
-    if let Some(slot) = allowed_ddids.get_mut(source_partition.data_desc_id as usize) {
-        *slot = true;
-    }
+    let row_bytes = std::mem::size_of::<ResolvedMsSelectionRow>();
+    let available_bytes = block_rows
+        .checked_mul(row_bytes)
+        .ok_or_else(|| "visibility selection row-block byte accounting overflowed".to_string())?;
     let plan = ms
-        .select_visibility_rows(&VisibilityRowSelectionRequest::new(
-            ddid_to_spw_pol,
-            allowed_ddids,
-            Some(source_partition.data_desc_id),
-            None,
-            false,
-            false,
-        ))
+        .resolve_selection(
+            &MsSelection::new().data_description(&[source_partition.data_desc_id]),
+            MsSelectionIoBudget {
+                available_bytes,
+                maximum_live_blocks: 1,
+                requested_bytes_per_row: row_bytes,
+                storage_alignment_rows: None,
+            },
+        )
         .map_err(|error| format!("select visibility rows: {error}"))?;
-    let (selected_rows, _selected_ddid, _fields, flag_row, _reference_time, _time_bounds) =
-        plan.into_parts();
-    let active_rows = selected_rows
+    let active_rows = plan
+        .selected_rows
         .into_iter()
-        .filter_map(|row| {
-            let (row_index, _field, _ddid, _spw, _pol, _time) = row.parts();
-            flag_row
-                .get(row_index)
-                .copied()
-                .map(|flagged| (!flagged).then_some(row_index))
-                .unwrap_or(Some(row_index))
-        })
+        .filter_map(|row| (!row.flag_row).then_some(row.row_index))
         .collect::<Vec<_>>();
     Ok(active_rows
         .chunks(block_rows)

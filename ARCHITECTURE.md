@@ -39,6 +39,14 @@ Additional constraints:
 - `casa-tables` keeps the broader storage/write path crate-internal even when user-facing table APIs are exposed from the crate.
 - Within `casa-tables`, lazy read paths are safe to share across threads under an in-process multi-reader, single-writer contract; shared tiled reads use a process-wide bounded cache, while dirty write state stays under exclusive mutable ownership.
 - Within `casa-tables`, row/column/cell accessor objects are the public table-data surface; prepared-row accessors provide the reusable selected-column row fast path, and the old table-level convenience wrappers have been removed from the public API.
+- ADR-0008 defines persistent-table writes: per-column casacore data-manager
+  bindings are chosen at creation and preserved when opening or mutating an
+  existing table; heterogeneous `TiledShapeStMan` rows share one hypercube per
+  distinct shape. MeasurementSet producers use one bounded plan/session whose
+  memory ceiling includes every owned scalar and array sink. New tables publish
+  from staging, while in-place changes use only an incomplete marker; general
+  rollback, snapshots, journaling, and copy-on-write generations are not part
+  of the persistence contract.
 - Versioned provider bundles are boundary contracts; UI projections are derived
   views, not separate truth sources.
 - `casa-provider-contracts::ApplicationCatalog` is the sole application

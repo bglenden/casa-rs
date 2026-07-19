@@ -25,17 +25,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
 
-use crate::MsError;
 use crate::least_squares::solve_weighted_least_squares;
 use crate::ms::MeasurementSet;
 use crate::schema::main_table::VisibilityDataColumn;
-use crate::selection::MsSelection;
-use crate::selection_syntax::{ChannelSelection, parse_spw_selector};
+use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
+use crate::selection::{MsSelection, resolve_row_indices_with_system_budget};
+use crate::{
+    MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
+    MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
+    MeasurementSetWriteColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
+    MeasurementSetWriteSession, MsError, MsReadPlan, MsSelectionIoBudget,
+    maximum_visibility_cell_elements,
+};
 
 const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";
 const FLAG_VERSION_LIST: &str = "FLAG_VERSION_LIST";
-const CLIP_SCAN_CHUNK_ROWS: usize = 4096;
 const CASA_SIMOBSERVE_SHADOW_FRACTION_LIMIT: f64 = 1.0e-6;
 type FlagSampleKey = (usize, usize, usize);
 type FlagSampleSet = HashSet<FlagSampleKey>;
@@ -416,27 +421,90 @@ pub fn flagdata(
     };
 
     if !changes.changed_row_indices.is_empty() {
-        if changes.changed_flag_row_rows == 0 {
-            ms.main_table_mut()
-                .save_selected_rows_in_place_assuming_valid(
-                    &[FLAG_COLUMN],
-                    &changes.changed_row_indices,
+        let mut maximum_flag_bytes = 0usize;
+        for &row in &changes.changed_row_indices {
+            maximum_flag_bytes = maximum_flag_bytes.max(clone_flag_matrix(ms, row)?.len());
+        }
+        let mut columns = vec![MeasurementSetWriteColumnPlan {
+            name: FLAG_COLUMN.to_string(),
+            bytes_per_row: maximum_flag_bytes,
+            mode: MeasurementSetColumnWriteMode::Replace,
+            storage_manager: MeasurementSetColumnStorage::Persisted,
+            tile_shape: None,
+            create_source_column: None,
+        }];
+        if changes.changed_flag_row_rows > 0 {
+            columns.push(MeasurementSetWriteColumnPlan {
+                name: FLAG_ROW_COLUMN.to_string(),
+                bytes_per_row: 1,
+                mode: MeasurementSetColumnWriteMode::Replace,
+                storage_manager: MeasurementSetColumnStorage::Persisted,
+                tile_shape: None,
+                create_source_column: None,
+            });
+        }
+        let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(|error| {
+            FlaggingError::MutateFlags {
+                path: ms_path.clone(),
+                reason: format!("plan changed MAIN flag rows: {error}"),
+            }
+        })?;
+        let include_flag_row = changes.changed_flag_row_rows > 0;
+        let write_plan = MeasurementSetWritePlan::selected_row_mutation(
+            changes.changed_row_indices.clone(),
+            columns,
+            resources,
+        )
+        .map_err(|error| FlaggingError::MutateFlags {
+            path: ms_path.clone(),
+            reason: format!("plan changed MAIN flag rows: {error}"),
+        })?;
+        let batch_rows = write_plan.batch_rows();
+        let mut write_session = MeasurementSetWriteSession::start_selected_row_mutation(
+            ms, write_plan,
+        )
+        .map_err(|error| FlaggingError::MutateFlags {
+            path: ms_path.clone(),
+            reason: format!("start changed MAIN flag rows: {error}"),
+        })?;
+        for rows in changes.changed_row_indices.chunks(batch_rows) {
+            let flag_values = rows
+                .iter()
+                .map(|&row| clone_flag_matrix(ms, row).map(ArrayValue::Bool))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut batch_columns = vec![MeasurementSetMutationColumnBatch {
+                name: FLAG_COLUMN.to_string(),
+                values: MeasurementSetMutationColumnValues::Arrays(flag_values),
+            }];
+            if include_flag_row {
+                let values = load_bool_cells(ms.main_table(), rows, FLAG_ROW_COLUMN, &ms_path)?
+                    .into_iter()
+                    .map(ScalarValue::Bool)
+                    .collect();
+                batch_columns.push(MeasurementSetMutationColumnBatch {
+                    name: FLAG_ROW_COLUMN.to_string(),
+                    values: MeasurementSetMutationColumnValues::Scalars(values),
+                });
+            }
+            write_session
+                .write_mutation_batch(
+                    ms,
+                    MeasurementSetMutationBatch {
+                        row_indices: rows.to_vec(),
+                        columns: batch_columns,
+                    },
                 )
-                .map_err(|source| FlaggingError::MutateFlags {
+                .map_err(|error| FlaggingError::MutateFlags {
                     path: ms_path.clone(),
-                    reason: format!("save changed MAIN flag rows: {source}"),
-                })?;
-        } else {
-            ms.main_table_mut()
-                .save_selected_rows_in_place_assuming_valid(
-                    &[FLAG_COLUMN, FLAG_ROW_COLUMN],
-                    &changes.changed_row_indices,
-                )
-                .map_err(|source| FlaggingError::MutateFlags {
-                    path: ms_path.clone(),
-                    reason: format!("save changed MAIN flag rows: {source}"),
+                    reason: format!("write changed MAIN flag rows: {error}"),
                 })?;
         }
+        write_session
+            .finish_mutation()
+            .map_err(|error| FlaggingError::MutateFlags {
+                path: ms_path.clone(),
+                reason: format!("save changed MAIN flag rows: {error}"),
+            })?;
     }
     let thresholds = changes.thresholds;
     let report = report_after(
@@ -505,13 +573,113 @@ fn selected_rows(
     ms: &MeasurementSet,
     request: &FlagDataRequest,
 ) -> Result<Vec<usize>, FlaggingError> {
-    request
-        .selection
-        .apply(ms)
-        .map_err(|source| FlaggingError::MutateFlags {
+    resolve_row_indices_with_system_budget(ms, &request.selection).map_err(|source| {
+        FlaggingError::MutateFlags {
             path: display_ms_path(ms),
             reason: format!("select rows: {source}"),
-        })
+        }
+    })
+}
+
+fn clip_read_plan(
+    ms: &MeasurementSet,
+    row_count: usize,
+    data_column: FlagDataColumn,
+    include_data_description: bool,
+) -> Result<MsReadPlan, FlaggingError> {
+    let path = display_ms_path(ms);
+    let primitive_bytes = ms
+        .main_table()
+        .schema()
+        .and_then(|schema| schema.column(data_column.name()))
+        .and_then(|column| column.data_type())
+        .and_then(PrimitiveType::fixed_width_bytes)
+        .ok_or_else(|| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: format!(
+                "{} does not expose a fixed-width numeric array type",
+                data_column.name()
+            ),
+        })?;
+    let data_description = ms
+        .data_description()
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: format!("open DATA_DESCRIPTION: {source}"),
+        })?;
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: format!("open SPECTRAL_WINDOW: {source}"),
+        })?;
+    let polarization = ms
+        .polarization()
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: format!("open POLARIZATION: {source}"),
+        })?;
+    let mut maximum_elements = 0usize;
+    for row in 0..data_description.row_count() {
+        let spw_id = data_description.spectral_window_id(row).map_err(|source| {
+            FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("read DATA_DESCRIPTION.SPECTRAL_WINDOW_ID row {row}: {source}"),
+            }
+        })?;
+        let polarization_id =
+            data_description
+                .polarization_id(row)
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!("read DATA_DESCRIPTION.POLARIZATION_ID row {row}: {source}"),
+                })?;
+        let channel_count = usize::try_from(spectral_window.num_chan(spw_id as usize).map_err(
+            |source| FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("read SPECTRAL_WINDOW.NUM_CHAN row {spw_id}: {source}"),
+            },
+        )?)
+        .map_err(|_| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: format!("SPECTRAL_WINDOW.NUM_CHAN row {spw_id} is negative"),
+        })?;
+        let correlation_count = usize::try_from(
+            polarization
+                .num_corr(polarization_id as usize)
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!("read POLARIZATION.NUM_CORR row {polarization_id}: {source}"),
+                })?,
+        )
+        .map_err(|_| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: format!("POLARIZATION.NUM_CORR row {polarization_id} is negative"),
+        })?;
+        maximum_elements =
+            maximum_elements.max(channel_count.checked_mul(correlation_count).ok_or_else(
+                || FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: "clip row shape byte accounting overflowed".to_string(),
+                },
+            )?);
+    }
+    let requested_bytes_per_row = maximum_elements
+        .checked_mul(primitive_bytes.saturating_add(2))
+        .and_then(|bytes| bytes.checked_add(usize::from(include_data_description) * 4))
+        .ok_or_else(|| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: "clip row byte accounting overflowed".to_string(),
+        })?;
+    let budget = MsSelectionIoBudget::from_system_memory(1, requested_bytes_per_row, None)
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: source.to_string(),
+        })?;
+    MsReadPlan::new(row_count, budget).map_err(|source| FlaggingError::MutateFlags {
+        path,
+        reason: source.to_string(),
+    })
 }
 
 fn apply_manual_flags(
@@ -541,14 +709,20 @@ fn apply_clip_flags(
     }
     let path = display_ms_path(ms);
     let ddid_to_spw = data_description_spw_map(ms)?;
-    let mut updates = BTreeMap::<usize, ArrayD<bool>>::new();
-    let mut touched_rows = std::collections::BTreeSet::<usize>::new();
     let mut changed = ChangeSet::default();
     let mut flagged_samples = 0usize;
     let mut total_samples = 0usize;
-    let table = ms.main_table();
     let mut row_changes = Vec::<(usize, usize)>::new();
-    for rows in selected_rows.chunks(CLIP_SCAN_CHUNK_ROWS) {
+    let read_plan = clip_read_plan(
+        ms,
+        selected_rows.len(),
+        request.data_column,
+        channel_selections.is_some(),
+    )?;
+    for rows in selected_rows.chunks(read_plan.rows_per_block.max(1)) {
+        let table = ms.main_table();
+        let mut updates = BTreeMap::<usize, ArrayD<bool>>::new();
+        let mut touched_rows = std::collections::BTreeSet::<usize>::new();
         let data_cells = table
             .column_accessor(request.data_column.name())
             .and_then(|column| column.array_cells_owned(rows))
@@ -676,8 +850,8 @@ fn apply_clip_flags(
                 touched_rows.insert(row);
             }
         }
+        write_touched_flag_updates(ms, updates, touched_rows, &mut changed)?;
     }
-    write_touched_flag_updates(ms, updates, touched_rows, &mut changed)?;
     changed.summary = Some(FlagSummary {
         flagged_samples,
         total_samples,
@@ -2594,38 +2768,118 @@ pub fn restore_flag_version(
             reason: format!("open flag version {versionname:?}: {source}"),
         }
     })?;
-    let mut updates = BTreeMap::new();
-    let mut flag_row_updates = BTreeMap::new();
-    for row in 0..ms.row_count() {
-        let source = table_flag_matrix(&table, row, FLAG_COLUMN, Some(&path))?;
-        let source_flag_row = table_bool(&table, row, FLAG_ROW_COLUMN, Some(&path))?;
-        let dest = clone_flag_matrix(ms, row)?;
-        let dest_flag_row = flag_row_value(ms, row)?;
-        updates.insert(row, merge_bool_arrays(&source, &dest, merge)?);
-        flag_row_updates.insert(row, merge_bool(source_flag_row, dest_flag_row, merge));
+    if table.row_count() != ms.row_count() {
+        return Err(FlaggingError::FlagVersion {
+            path: path.display().to_string(),
+            reason: format!(
+                "flag version {versionname:?} has {} rows; MAIN has {}",
+                table.row_count(),
+                ms.row_count()
+            ),
+        });
     }
-    let mut changed = ChangeSet::default();
-    for (row, flags) in updates {
-        let flag_row = flag_row_updates
-            .remove(&row)
-            .ok_or_else(|| FlaggingError::MutateFlags {
-                path: path.display().to_string(),
-                reason: format!("missing FLAG_ROW update for row {row}"),
-            })?;
-        if clone_flag_matrix(ms, row)? == flags && flag_row_value(ms, row)? == flag_row {
-            continue;
+    let maximum_flag_bytes =
+        maximum_visibility_cell_elements(ms).map_err(|source| FlaggingError::MutateFlags {
+            path: path.display().to_string(),
+            reason: format!("plan restored flags: {source}"),
+        })?;
+    let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(|source| {
+        FlaggingError::MutateFlags {
+            path: path.display().to_string(),
+            reason: format!("plan restored flags: {source}"),
         }
-        write_flag_row_update(ms, row, flags, flag_row, &mut changed)?;
-    }
-    ms.main_table_mut()
-        .save_selected_rows_in_place_assuming_valid(
-            &[FLAG_COLUMN, FLAG_ROW_COLUMN],
-            &changed.changed_row_indices,
-        )
+    })?;
+    let plan = MeasurementSetWritePlan::selected_row_mutation(
+        (0..ms.row_count()).collect(),
+        vec![
+            MeasurementSetWriteColumnPlan {
+                name: FLAG_COLUMN.to_string(),
+                bytes_per_row: maximum_flag_bytes,
+                mode: MeasurementSetColumnWriteMode::Replace,
+                storage_manager: MeasurementSetColumnStorage::Persisted,
+                tile_shape: None,
+                create_source_column: None,
+            },
+            MeasurementSetWriteColumnPlan {
+                name: FLAG_ROW_COLUMN.to_string(),
+                bytes_per_row: 1,
+                mode: MeasurementSetColumnWriteMode::Replace,
+                storage_manager: MeasurementSetColumnStorage::Persisted,
+                tile_shape: None,
+                create_source_column: None,
+            },
+        ],
+        resources,
+    )
+    .map_err(|source| FlaggingError::MutateFlags {
+        path: path.display().to_string(),
+        reason: format!("plan restored flags: {source}"),
+    })?;
+    let mut session =
+        MeasurementSetWriteSession::start_selected_row_mutation(ms, plan).map_err(|source| {
+            FlaggingError::MutateFlags {
+                path: path.display().to_string(),
+                reason: format!("start restored flags: {source}"),
+            }
+        })?;
+    while !session
+        .next_mutation_rows()
         .map_err(|source| FlaggingError::MutateFlags {
             path: path.display().to_string(),
-            reason: format!("save restored flags: {source}"),
-        })
+            reason: format!("plan restored flag batch: {source}"),
+        })?
+        .is_empty()
+    {
+        let rows = session
+            .next_mutation_rows()
+            .map_err(|source| FlaggingError::MutateFlags {
+                path: path.display().to_string(),
+                reason: format!("plan restored flag batch: {source}"),
+            })?
+            .to_vec();
+        let mut flags = Vec::with_capacity(rows.len());
+        let mut flag_rows = Vec::with_capacity(rows.len());
+        for &row in &rows {
+            let source = table_flag_matrix(&table, row, FLAG_COLUMN, Some(&path))?;
+            let source_flag_row = table_bool(&table, row, FLAG_ROW_COLUMN, Some(&path))?;
+            let dest = clone_flag_matrix(ms, row)?;
+            let dest_flag_row = flag_row_value(ms, row)?;
+            flags.push(ArrayValue::Bool(merge_bool_arrays(&source, &dest, merge)?));
+            flag_rows.push(ScalarValue::Bool(merge_bool(
+                source_flag_row,
+                dest_flag_row,
+                merge,
+            )));
+        }
+        session
+            .write_mutation_batch(
+                ms,
+                MeasurementSetMutationBatch {
+                    row_indices: rows,
+                    columns: vec![
+                        MeasurementSetMutationColumnBatch {
+                            name: FLAG_COLUMN.to_string(),
+                            values: MeasurementSetMutationColumnValues::Arrays(flags),
+                        },
+                        MeasurementSetMutationColumnBatch {
+                            name: FLAG_ROW_COLUMN.to_string(),
+                            values: MeasurementSetMutationColumnValues::Scalars(flag_rows),
+                        },
+                    ],
+                },
+            )
+            .map_err(|source| FlaggingError::MutateFlags {
+                path: path.display().to_string(),
+                reason: format!("write restored flag batch: {source}"),
+            })?;
+    }
+    session
+        .finish_mutation()
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.display().to_string(),
+            reason: format!("finish restored flags: {source}"),
+        })?;
+    Ok(())
 }
 
 /// Delete a named flag version.
@@ -2930,17 +3184,14 @@ fn table_flag_matrix(
     path: Option<&Path>,
 ) -> Result<ArrayD<bool>, FlaggingError> {
     let value = table
-        .cell_accessor(row, column)
-        .and_then(|cell| cell.value().map(|value| value.cloned()))
+        .column_accessor(column)
+        .and_then(|column| column.array_cell(row))
         .map_err(|source| FlaggingError::MutateFlags {
             path: display_path(path),
             reason: format!("read {column} row {row}: {source}"),
         })?;
-    match value.ok_or_else(|| FlaggingError::MutateFlags {
-        path: display_path(path),
-        reason: format!("{column} row {row} is undefined"),
-    })? {
-        Value::Array(ArrayValue::Bool(flags)) => Ok(flags),
+    match value {
+        ArrayValue::Bool(flags) => Ok(flags.clone()),
         other => Err(FlaggingError::MutateFlags {
             path: display_path(path),
             reason: format!("{column} row {row} must be Bool array, found {other:?}"),
@@ -2955,17 +3206,14 @@ fn table_bool(
     path: Option<&Path>,
 ) -> Result<bool, FlaggingError> {
     let value = table
-        .cell_accessor(row, column)
-        .and_then(|cell| cell.value().map(|value| value.cloned()))
+        .column_accessor(column)
+        .and_then(|column| column.scalar_cell(row))
         .map_err(|source| FlaggingError::MutateFlags {
             path: display_path(path),
             reason: format!("read {column} row {row}: {source}"),
         })?;
-    match value.ok_or_else(|| FlaggingError::MutateFlags {
-        path: display_path(path),
-        reason: format!("{column} row {row} is undefined"),
-    })? {
-        Value::Scalar(ScalarValue::Bool(value)) => Ok(value),
+    match value {
+        ScalarValue::Bool(value) => Ok(*value),
         other => Err(FlaggingError::MutateFlags {
             path: display_path(path),
             reason: format!("{column} row {row} must be Bool scalar, found {other:?}"),
@@ -2980,17 +3228,14 @@ fn table_i32(
     path: Option<&Path>,
 ) -> Result<i32, FlaggingError> {
     let value = table
-        .cell_accessor(row, column)
-        .and_then(|cell| cell.value().map(|value| value.cloned()))
+        .column_accessor(column)
+        .and_then(|column| column.scalar_cell(row))
         .map_err(|source| FlaggingError::MutateFlags {
             path: display_path(path),
             reason: format!("read {column} row {row}: {source}"),
         })?;
-    match value.ok_or_else(|| FlaggingError::MutateFlags {
-        path: display_path(path),
-        reason: format!("{column} row {row} is undefined"),
-    })? {
-        Value::Scalar(ScalarValue::Int32(value)) => Ok(value),
+    match value {
+        ScalarValue::Int32(value) => Ok(*value),
         other => Err(FlaggingError::MutateFlags {
             path: display_path(path),
             reason: format!("{column} row {row} must be Int32 scalar, found {other:?}"),
@@ -3005,18 +3250,15 @@ fn table_f64(
     path: Option<&Path>,
 ) -> Result<f64, FlaggingError> {
     let value = table
-        .cell_accessor(row, column)
-        .and_then(|cell| cell.value().map(|value| value.cloned()))
+        .column_accessor(column)
+        .and_then(|column| column.scalar_cell(row))
         .map_err(|source| FlaggingError::MutateFlags {
             path: display_path(path),
             reason: format!("read {column} row {row}: {source}"),
         })?;
-    match value.ok_or_else(|| FlaggingError::MutateFlags {
-        path: display_path(path),
-        reason: format!("{column} row {row} is undefined"),
-    })? {
-        Value::Scalar(ScalarValue::Float64(value)) => Ok(value),
-        Value::Scalar(ScalarValue::Float32(value)) => Ok(f64::from(value)),
+    match value {
+        ScalarValue::Float64(value) => Ok(*value),
+        ScalarValue::Float32(value) => Ok(f64::from(*value)),
         other => Err(FlaggingError::MutateFlags {
             path: display_path(path),
             reason: format!("{column} row {row} must be Float scalar, found {other:?}"),

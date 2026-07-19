@@ -35,6 +35,10 @@ pub const COL_INTERVAL: &str = "INTERVAL";
 pub const COL_SCAN_NUMBER: &str = "SCAN_NUMBER";
 /// Main-table observation identifier column.
 pub const COL_OBSERVATION_ID: &str = "OBSERVATION_ID";
+/// Main-table array identifier column.
+pub const COL_ARRAY_ID: &str = "ARRAY_ID";
+/// Main-table extra-precision companion for `TIME`.
+pub const COL_TIME_EXTRA_PREC: &str = "TIME_EXTRA_PREC";
 /// Main-table calibration-description identifier column used by legacy tables.
 pub const COL_CAL_DESC_ID: &str = "CAL_DESC_ID";
 /// Main-table complex-parameter payload column.

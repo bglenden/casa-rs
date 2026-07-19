@@ -32,9 +32,14 @@ use casa_ms::column_def::build_table_schema;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::{MsError, MsResult};
+use casa_ms::{
+    MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
+    MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
+    MeasurementSetWriteColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
+    MeasurementSetWriteSession, MsError, MsResult,
+};
 use casa_tables::{ColumnSchema, Table, TableError, TableOptions};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
+use casa_types::{ArrayValue, Complex32, ScalarValue};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -778,29 +783,118 @@ fn execute_apply_plan(
         .main_table()
         .schema()
         .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"));
-    let use_partial_main_save = true;
     let mut changed_columns: Vec<&'static str> = vec![VisibilityDataColumn::CorrectedData.name()];
     let row_loop_started_at = Instant::now();
     let mut geometry_cache = RowGeometryCache::default();
     let mut row_compute_profile =
         calibration_profile_enabled().then(ApplyRowComputeProfile::default);
-    if use_partial_main_save {
-        let anticipated_updates = plan.selected_rows.len();
-        ms.main_table_mut().reserve_array_cell_updates(
-            VisibilityDataColumn::CorrectedData.name(),
-            anticipated_updates,
-        );
-        ms.main_table_mut()
-            .reserve_array_cell_updates("FLAG", anticipated_updates);
-        ms.main_table_mut()
-            .reserve_array_cell_updates("WEIGHT", anticipated_updates);
-        ms.main_table_mut()
-            .reserve_array_cell_updates("WEIGHT_SPECTRUM", anticipated_updates);
+    if plan.apply_mode == ApplyMode::CalFlag {
+        changed_columns.push("FLAG");
     }
+    if any_calwt {
+        changed_columns.push("WEIGHT");
+        if has_weight_spectrum {
+            changed_columns.push("WEIGHT_SPECTRUM");
+        }
+    }
+    let maximum_data_elements =
+        plan.selected_rows
+            .iter()
+            .try_fold(0_usize, |maximum_elements, row| {
+                let correlations = correlation_types_by_ddid
+                    .get(&row.data_desc_id)
+                    .map(Vec::len)
+                    .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
+                        data_desc_id: row.data_desc_id,
+                        correlation_types: Vec::new(),
+                    })?;
+                let channels = plan
+                    .measurement_set_spectral_windows
+                    .iter()
+                    .find(|spw| spw.spw_id == row.data_spw_id)
+                    .and_then(|spw| usize::try_from(spw.num_chan).ok())
+                    .ok_or_else(|| ApplyExecutionError::UnsupportedParameterShape {
+                        path: format!("<measurement-set SPW {}>", row.data_spw_id),
+                        shape: Vec::new(),
+                    })?;
+                let elements = correlations.checked_mul(channels).ok_or_else(|| {
+                    ApplyExecutionError::UnsupportedParameterShape {
+                        path: "<measurement-set row byte overflow>".to_string(),
+                        shape: vec![correlations, channels],
+                    }
+                })?;
+                Ok::<_, ApplyExecutionError>(maximum_elements.max(elements))
+            })?;
+    let maximum_weight_elements = plan
+        .selected_rows
+        .iter()
+        .filter_map(|row| {
+            correlation_types_by_ddid
+                .get(&row.data_desc_id)
+                .map(Vec::len)
+        })
+        .max()
+        .unwrap_or(0);
+    let write_columns = changed_columns
+        .iter()
+        .map(|column| MeasurementSetWriteColumnPlan {
+            name: (*column).to_string(),
+            bytes_per_row: match *column {
+                "CORRECTED_DATA" => maximum_data_elements.saturating_mul(8),
+                "FLAG" => maximum_data_elements,
+                "WEIGHT" => maximum_weight_elements.saturating_mul(4),
+                "WEIGHT_SPECTRUM" => maximum_data_elements.saturating_mul(4),
+                _ => 0,
+            },
+            mode: if *column == VisibilityDataColumn::CorrectedData.name()
+                && created_corrected_data_column
+            {
+                MeasurementSetColumnWriteMode::Create
+            } else {
+                MeasurementSetColumnWriteMode::Replace
+            },
+            storage_manager: if *column == VisibilityDataColumn::CorrectedData.name()
+                && created_corrected_data_column
+            {
+                MeasurementSetColumnStorage::TiledShape
+            } else {
+                MeasurementSetColumnStorage::Persisted
+            },
+            tile_shape: None,
+            create_source_column: (*column == VisibilityDataColumn::CorrectedData.name()
+                && created_corrected_data_column)
+                .then(|| VisibilityDataColumn::Data.name().to_string()),
+        })
+        .collect();
+    let write_resources =
+        MeasurementSetWriteResources::from_system_memory(2).map_err(|source| {
+            ApplyExecutionError::MutateMeasurementSet {
+                path: ms_path.clone(),
+                source: MsError::InvalidInput(source.to_string()),
+            }
+        })?;
+    let write_plan = MeasurementSetWritePlan::selected_row_mutation(
+        plan.selected_rows.iter().map(|row| row.row_index).collect(),
+        write_columns,
+        write_resources,
+    )
+    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+        path: ms_path.clone(),
+        source: MsError::InvalidInput(source.to_string()),
+    })?;
+    let batch_rows = write_plan.batch_rows();
+    let mut write_session = MeasurementSetWriteSession::start_selected_row_mutation(ms, write_plan)
+        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+            path: ms_path.clone(),
+            source: MsError::InvalidInput(source.to_string()),
+        })?;
 
-    let prefetched_inputs = {
-        let selected_row_indices: Vec<usize> =
-            plan.selected_rows.iter().map(|row| row.row_index).collect();
+    let row_field_index_lookup_ns = 0;
+    for planned_rows in plan.selected_rows.chunks(batch_rows) {
+        let selected_row_indices = planned_rows
+            .iter()
+            .map(|row| row.row_index)
+            .collect::<Vec<_>>();
         let row_read_started_at = Instant::now();
         let row_fetch_started_at = Instant::now();
         let data_values = ms
@@ -839,332 +933,145 @@ fn execute_apply_plan(
         };
         row_fetch_ns += row_fetch_started_at.elapsed().as_nanos() as u64;
         row_read_total_ns += row_read_started_at.elapsed().as_nanos() as u64;
-        let mut prefetched_inputs = Vec::with_capacity(plan.selected_rows.len());
         let mut data_values = data_values.into_iter();
         let mut flag_values = flag_values.map(Vec::into_iter);
         let mut weight_values = weight_values.map(Vec::into_iter);
+        let mut corrected_batch = Vec::with_capacity(planned_rows.len());
+        let mut flag_batch = Vec::with_capacity(planned_rows.len());
+        let mut weight_batch = Vec::with_capacity(planned_rows.len());
+        let mut weight_spectrum_batch = Vec::with_capacity(planned_rows.len());
 
-        for row in &plan.selected_rows {
-            let data = data_values.next().flatten().ok_or_else(|| {
-                ApplyExecutionError::MutateMeasurementSet {
-                    path: ms_path.clone(),
-                    source: MsError::from(TableError::ColumnNotFound {
-                        row_index: row.row_index,
-                        column: VisibilityDataColumn::Data.name().to_string(),
-                    }),
+        for row in planned_rows {
+            let prefetched = PrefetchedExecutionRowInputs {
+                data: required_prefetched_array(
+                    data_values.next().flatten(),
+                    row.row_index,
+                    VisibilityDataColumn::Data.name(),
+                    &ms_path,
+                )?,
+                original_flags: flag_values
+                    .as_mut()
+                    .map(|values| {
+                        required_prefetched_array(
+                            values.next().flatten(),
+                            row.row_index,
+                            "FLAG",
+                            &ms_path,
+                        )
+                    })
+                    .transpose()?,
+                original_weight: weight_values
+                    .as_mut()
+                    .map(|values| {
+                        required_prefetched_array(
+                            values.next().flatten(),
+                            row.row_index,
+                            "WEIGHT",
+                            &ms_path,
+                        )
+                    })
+                    .transpose()?,
+            };
+            let correlation_types = correlation_types_by_ddid
+                .get(&row.data_desc_id)
+                .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
+                    data_desc_id: row.data_desc_id,
+                    correlation_types: Vec::new(),
+                })?;
+            let row_compute_started_at = Instant::now();
+            let result = apply_row_prefetched(
+                row,
+                correlation_types,
+                &prefetched,
+                any_calwt && has_weight_spectrum,
+                &plan,
+                &loaded_tables,
+                parang_state.as_ref(),
+                Some(&mut geometry_cache),
+                row_compute_profile.as_mut(),
+            )?;
+            row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
+            corrected_batch.push(result.corrected_data);
+            if plan.apply_mode == ApplyMode::CalFlag {
+                flag_batch.push(result.updated_flags.unwrap_or_else(|| {
+                    prefetched
+                        .original_flags
+                        .expect("CalFlag rows always prefetch FLAG")
+                }));
+                if result.row_became_fully_flagged {
+                    flagged_row_count += 1;
                 }
-            })?;
-            let original_flags = flag_values
-                .as_mut()
-                .map(|flags| {
-                    flags.next().flatten().ok_or_else(|| {
-                        ApplyExecutionError::MutateMeasurementSet {
+                flagged_sample_count += result.newly_flagged_samples;
+            }
+            if any_calwt {
+                weight_batch.push(result.updated_weight.ok_or_else(|| {
+                    ApplyExecutionError::MutateMeasurementSet {
+                        path: ms_path.clone(),
+                        source: MsError::InvalidInput(
+                            "calwt row did not produce WEIGHT output".to_string(),
+                        ),
+                    }
+                })?);
+                if has_weight_spectrum {
+                    weight_spectrum_batch.push(result.updated_weight_spectrum.ok_or_else(
+                        || ApplyExecutionError::MutateMeasurementSet {
                             path: ms_path.clone(),
-                            source: MsError::from(TableError::ColumnNotFound {
-                                row_index: row.row_index,
-                                column: "FLAG".to_string(),
-                            }),
-                        }
-                    })
-                })
-                .transpose()?;
-            let original_weight = weight_values
-                .as_mut()
-                .map(|weights| {
-                    weights.next().flatten().ok_or_else(|| {
-                        ApplyExecutionError::MutateMeasurementSet {
-                            path: ms_path.clone(),
-                            source: MsError::from(TableError::ColumnNotFound {
-                                row_index: row.row_index,
-                                column: "WEIGHT".to_string(),
-                            }),
-                        }
-                    })
-                })
-                .transpose()?;
-            prefetched_inputs.push(PrefetchedExecutionRowInputs {
-                data,
-                original_flags,
-                original_weight,
+                            source: MsError::InvalidInput(
+                                "calwt row did not produce WEIGHT_SPECTRUM output".to_string(),
+                            ),
+                        },
+                    )?);
+                }
+            }
+            updated_row_count += 1;
+        }
+
+        let mut columns = vec![MeasurementSetMutationColumnBatch {
+            name: VisibilityDataColumn::CorrectedData.name().to_string(),
+            values: MeasurementSetMutationColumnValues::Arrays(corrected_batch),
+        }];
+        if plan.apply_mode == ApplyMode::CalFlag {
+            columns.push(MeasurementSetMutationColumnBatch {
+                name: "FLAG".to_string(),
+                values: MeasurementSetMutationColumnValues::Arrays(flag_batch),
             });
         }
-
-        prefetched_inputs
-    };
-
-    let row_field_index_lookup_ns;
-    if use_partial_main_save {
-        row_field_index_lookup_ns = 0;
-        for (row, prefetched_inputs) in plan.selected_rows.iter().zip(&prefetched_inputs) {
-            let correlation_types = correlation_types_by_ddid
-                .get(&row.data_desc_id)
-                .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
-                    data_desc_id: row.data_desc_id,
-                    correlation_types: Vec::new(),
-                })?;
-            let row_compute_started_at = Instant::now();
-            let ExecutionRowResult {
-                corrected_data,
-                updated_flags,
-                updated_weight,
-                updated_weight_spectrum,
-                newly_flagged_samples,
-                row_became_fully_flagged,
-            } = apply_row_prefetched(
-                row,
-                correlation_types,
-                prefetched_inputs,
-                any_calwt && has_weight_spectrum,
-                &plan,
-                &loaded_tables,
-                parang_state.as_ref(),
-                Some(&mut geometry_cache),
-                row_compute_profile.as_mut(),
-            )?;
-            row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
-
-            let row_writeback_started_at = Instant::now();
-            ms.main_table_mut()
-                .column_accessor_mut(VisibilityDataColumn::CorrectedData.name())
-                .and_then(|mut column| {
-                    column.set_array_assuming_valid(row.row_index, corrected_data)
-                })
-                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                    path: ms_path.clone(),
-                    source: MsError::from(source),
-                })?;
-
-            if let Some(updated_flags) = updated_flags {
-                if !changed_columns.contains(&"FLAG") {
-                    changed_columns.push("FLAG");
-                }
-                ms.main_table_mut()
-                    .column_accessor_mut("FLAG")
-                    .and_then(|mut column| {
-                        column.set_array_assuming_valid(row.row_index, updated_flags)
-                    })
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: ms_path.clone(),
-                        source: MsError::from(source),
-                    })?;
-                if row_became_fully_flagged {
-                    flagged_row_count += 1;
-                }
-                flagged_sample_count += newly_flagged_samples;
+        if any_calwt {
+            columns.push(MeasurementSetMutationColumnBatch {
+                name: "WEIGHT".to_string(),
+                values: MeasurementSetMutationColumnValues::Arrays(weight_batch),
+            });
+            if has_weight_spectrum {
+                columns.push(MeasurementSetMutationColumnBatch {
+                    name: "WEIGHT_SPECTRUM".to_string(),
+                    values: MeasurementSetMutationColumnValues::Arrays(weight_spectrum_batch),
+                });
             }
-            if let Some(updated_weight) = updated_weight {
-                if !changed_columns.contains(&"WEIGHT") {
-                    changed_columns.push("WEIGHT");
-                }
-                ms.main_table_mut()
-                    .column_accessor_mut("WEIGHT")
-                    .and_then(|mut column| {
-                        column.set_array_assuming_valid(row.row_index, updated_weight)
-                    })
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: ms_path.clone(),
-                        source: MsError::from(source),
-                    })?;
-            }
-            if let Some(updated_weight_spectrum) = updated_weight_spectrum {
-                if !changed_columns.contains(&"WEIGHT_SPECTRUM") {
-                    changed_columns.push("WEIGHT_SPECTRUM");
-                }
-                ms.main_table_mut()
-                    .column_accessor_mut("WEIGHT_SPECTRUM")
-                    .and_then(|mut column| {
-                        column.set_array_assuming_valid(row.row_index, updated_weight_spectrum)
-                    })
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: ms_path.clone(),
-                        source: MsError::from(source),
-                    })?;
-            }
-            updated_row_count += 1;
-            row_writeback_ns += row_writeback_started_at.elapsed().as_nanos() as u64;
         }
-    } else {
-        let row_field_index_lookup_started_at = Instant::now();
-        let mut prepared_columns = vec![VisibilityDataColumn::CorrectedData.name()];
-        if ms
-            .main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column("FLAG"))
-        {
-            prepared_columns.push("FLAG");
-        }
-        if ms
-            .main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column("WEIGHT"))
-        {
-            prepared_columns.push("WEIGHT");
-        }
-        if has_weight_spectrum {
-            prepared_columns.push("WEIGHT_SPECTRUM");
-        }
-        let mut prepared_main_rows = ms
-            .main_table_mut()
-            .row_accessor_mut()
-            .prepare(&prepared_columns)
+        let row_writeback_started_at = Instant::now();
+        write_session
+            .write_mutation_batch(
+                ms,
+                MeasurementSetMutationBatch {
+                    row_indices: selected_row_indices,
+                    columns,
+                },
+            )
             .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                 path: ms_path.clone(),
-                source: MsError::from(source),
+                source: MsError::InvalidInput(source.to_string()),
             })?;
-        let row_field_indices = ApplyRowFieldIndices {
-            corrected_data: prepared_main_rows
-                .column_index(VisibilityDataColumn::CorrectedData.name()),
-            flag: prepared_main_rows.column_index("FLAG"),
-            weight: prepared_main_rows.column_index("WEIGHT"),
-            weight_spectrum: prepared_main_rows.column_index("WEIGHT_SPECTRUM"),
-        };
-        row_field_index_lookup_ns = row_field_index_lookup_started_at.elapsed().as_nanos() as u64;
-
-        for (row, prefetched_inputs) in plan.selected_rows.iter().zip(&prefetched_inputs) {
-            let correlation_types = correlation_types_by_ddid
-                .get(&row.data_desc_id)
-                .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
-                    data_desc_id: row.data_desc_id,
-                    correlation_types: Vec::new(),
-                })?;
-            let row_compute_started_at = Instant::now();
-            let ExecutionRowResult {
-                corrected_data,
-                updated_flags,
-                updated_weight,
-                updated_weight_spectrum,
-                newly_flagged_samples,
-                row_became_fully_flagged,
-            } = apply_row_prefetched(
-                row,
-                correlation_types,
-                prefetched_inputs,
-                any_calwt && has_weight_spectrum,
-                &plan,
-                &loaded_tables,
-                parang_state.as_ref(),
-                Some(&mut geometry_cache),
-                row_compute_profile.as_mut(),
-            )?;
-            row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
-
-            let row_writeback_started_at = Instant::now();
-            prepared_main_rows.seek(row.row_index).map_err(|source| {
-                ApplyExecutionError::MutateMeasurementSet {
-                    path: ms_path.clone(),
-                    source: MsError::from(source),
-                }
-            })?;
-            if let Some(slot_index) = row_field_indices.corrected_data {
-                prepared_main_rows
-                    .set_value_at(slot_index, Value::Array(corrected_data))
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: ms_path.clone(),
-                        source: MsError::from(source),
-                    })?;
-            }
-
-            if let Some(updated_flags) = updated_flags {
-                if let Some(slot_index) = row_field_indices.flag {
-                    prepared_main_rows
-                        .set_value_at(slot_index, Value::Array(updated_flags))
-                        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                            path: ms_path.clone(),
-                            source: MsError::from(source),
-                        })?;
-                }
-                if row_became_fully_flagged {
-                    flagged_row_count += 1;
-                }
-                flagged_sample_count += newly_flagged_samples;
-            }
-            if let Some(updated_weight) = updated_weight {
-                if let Some(slot_index) = row_field_indices.weight {
-                    prepared_main_rows
-                        .set_value_at(slot_index, Value::Array(updated_weight))
-                        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                            path: ms_path.clone(),
-                            source: MsError::from(source),
-                        })?;
-                }
-            }
-            if let Some(updated_weight_spectrum) = updated_weight_spectrum {
-                if let Some(slot_index) = row_field_indices.weight_spectrum {
-                    prepared_main_rows
-                        .set_value_at(slot_index, Value::Array(updated_weight_spectrum))
-                        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                            path: ms_path.clone(),
-                            source: MsError::from(source),
-                        })?;
-                }
-            }
-            updated_row_count += 1;
-            row_writeback_ns += row_writeback_started_at.elapsed().as_nanos() as u64;
-        }
-
-        prepared_main_rows
-            .flush()
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source: MsError::from(source),
-            })?;
+        row_writeback_ns += row_writeback_started_at.elapsed().as_nanos() as u64;
     }
     let row_loop_ns = row_loop_started_at.elapsed().as_nanos() as u64;
 
     let save_started_at = Instant::now();
-    if use_partial_main_save {
-        let changed_row_indices: Vec<usize> =
-            plan.selected_rows.iter().map(|row| row.row_index).collect();
-        if corrected_data_creation.cloned_from_data {
-            ms.main_table()
-                .save_selected_rows_in_place_assuming_valid(&changed_columns, &changed_row_indices)
-                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                    path: ms_path.clone(),
-                    source: MsError::from(source),
-                })?;
-        } else if created_corrected_data_column {
-            ms.main_table_mut()
-                .save_added_tiled_shape_column_in_place_assuming_valid(
-                    VisibilityDataColumn::CorrectedData.name(),
-                    &changed_row_indices,
-                    Some(&[4, 64, 32]),
-                )
-                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                    path: ms_path.clone(),
-                    source: MsError::from(source),
-                })?;
-            let existing_changed_columns: Vec<&str> = changed_columns
-                .iter()
-                .copied()
-                .filter(|column| *column != VisibilityDataColumn::CorrectedData.name())
-                .collect();
-            if !existing_changed_columns.is_empty() {
-                ms.main_table()
-                    .save_selected_rows_in_place_assuming_valid(
-                        &existing_changed_columns,
-                        &changed_row_indices,
-                    )
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: ms_path.clone(),
-                        source: MsError::from(source),
-                    })?;
-            }
-        } else {
-            ms.main_table()
-                .save_selected_rows_in_place_assuming_valid(&changed_columns, &changed_row_indices)
-                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                    path: ms_path.clone(),
-                    source: MsError::from(source),
-                })?;
+    write_session.finish_mutation().map_err(|source| {
+        ApplyExecutionError::MutateMeasurementSet {
+            path: ms_path.clone(),
+            source: MsError::InvalidInput(source.to_string()),
         }
-    } else {
-        ms.save_main_table_only_assuming_valid().map_err(|source| {
-            ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source,
-            }
-        })?;
-    }
+    })?;
     let save_ns = save_started_at.elapsed().as_nanos() as u64;
     let row_read_overhead_ns = row_read_total_ns.saturating_sub(row_fetch_ns);
     let execute_apply_plan_ns = execute_apply_plan_started_at.elapsed().as_nanos() as u64;
@@ -1280,6 +1187,21 @@ struct PrefetchedExecutionRowInputs {
     data: ArrayValue,
     original_flags: Option<ArrayValue>,
     original_weight: Option<ArrayValue>,
+}
+
+fn required_prefetched_array(
+    value: Option<ArrayValue>,
+    row_index: usize,
+    column: &str,
+    path: &str,
+) -> Result<ArrayValue, ApplyExecutionError> {
+    value.ok_or_else(|| ApplyExecutionError::MutateMeasurementSet {
+        path: path.to_string(),
+        source: MsError::from(TableError::ColumnNotFound {
+            row_index,
+            column: column.to_string(),
+        }),
+    })
 }
 
 #[derive(Debug, Default)]
@@ -4468,7 +4390,6 @@ fn cal_spw_reference_frequency_hz(cal_spw: &crate::plan::SpectralWindowPlan) -> 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CorrectedDataCreation {
     created: bool,
-    cloned_from_data: bool,
 }
 
 fn ensure_corrected_data_column(
@@ -4480,10 +4401,7 @@ fn ensure_corrected_data_column(
         .schema()
         .is_some_and(|schema| schema.contains_column(VisibilityDataColumn::CorrectedData.name()))
     {
-        return Ok(CorrectedDataCreation {
-            created: false,
-            cloned_from_data: false,
-        });
+        return Ok(CorrectedDataCreation { created: false });
     }
 
     let column_def = *VisibilityDataColumn::CorrectedData
@@ -4504,48 +4422,20 @@ fn ensure_corrected_data_column(
             .set_column_keywords(VisibilityDataColumn::CorrectedData.name(), data_keywords);
     }
 
-    if ms
-        .main_table_mut()
-        .save_added_tiled_column_clone_in_place_assuming_valid(
-            VisibilityDataColumn::Data.name(),
-            VisibilityDataColumn::CorrectedData.name(),
-            "TiledCorrected",
-        )
-        .is_ok()
-    {
-        return Ok(CorrectedDataCreation {
-            created: true,
-            cloned_from_data: true,
-        });
+    if ms.path().is_none() {
+        for row_index in 0..ms.row_count() {
+            let data = ms
+                .main_table()
+                .column_accessor(VisibilityDataColumn::Data.name())?
+                .array_cell(row_index)?
+                .clone();
+            ms.main_table_mut()
+                .column_accessor_mut(VisibilityDataColumn::CorrectedData.name())?
+                .set_array_assuming_valid(row_index, data)?;
+        }
     }
 
-    let row_indices = (0..ms.main_table().row_count()).collect::<Vec<_>>();
-    let data_values = ms
-        .main_table()
-        .column_accessor(VisibilityDataColumn::Data.name())?
-        .array_cells_owned(&row_indices)?;
-    let mut corrected_column = ms
-        .main_table_mut()
-        .column_accessor_mut(VisibilityDataColumn::CorrectedData.name())?;
-    for (row_index, data) in row_indices.into_iter().zip(data_values) {
-        corrected_column.set_array_assuming_valid(
-            row_index,
-            data.expect("MAIN DATA cells should be populated before applycal"),
-        )?;
-    }
-
-    Ok(CorrectedDataCreation {
-        created: true,
-        cloned_from_data: false,
-    })
-}
-
-#[derive(Clone, Copy, Default)]
-struct ApplyRowFieldIndices {
-    corrected_data: Option<usize>,
-    flag: Option<usize>,
-    weight: Option<usize>,
-    weight_spectrum: Option<usize>,
+    Ok(CorrectedDataCreation { created: true })
 }
 
 fn display_ms_path(ms: &MeasurementSet) -> String {
@@ -5850,10 +5740,7 @@ mod tests {
 
         assert_eq!(
             ensure_corrected_data_column(&mut ms, None).unwrap(),
-            CorrectedDataCreation {
-                created: true,
-                cloned_from_data: false
-            }
+            CorrectedDataCreation { created: true }
         );
         assert!(
             ms.main_table()
@@ -5871,10 +5758,7 @@ mod tests {
         );
         assert_eq!(
             ensure_corrected_data_column(&mut ms, None).unwrap(),
-            CorrectedDataCreation {
-                created: false,
-                cloned_from_data: false
-            }
+            CorrectedDataCreation { created: false }
         );
         assert_eq!(display_ms_path(&ms), "<in-memory>");
     }

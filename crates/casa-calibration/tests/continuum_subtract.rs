@@ -45,6 +45,47 @@ fn continuum_subtract_writes_residual_data_ms() {
 }
 
 #[test]
+fn continuum_subtract_streams_a_partial_selection_without_writer_artifacts() {
+    let dir = TempDir::new().expect("tempdir");
+    let input_ms = create_apply_fixture_ms(dir.path(), true);
+    let output_ms = dir.path().join("selected-contsub.ms");
+
+    let report = continuum_subtract(&ContinuumSubtractionRequest {
+        input_ms,
+        output_ms: output_ms.clone(),
+        fit_spw: "0:0~1".to_string(),
+        fit_order: 1,
+        data_column: ContinuumSubtractionDataColumn::CorrectedData,
+        selection: MsSelection::new().field(&[0]).spw(&[0]),
+    })
+    .expect("continuum subtract selected row");
+
+    assert_eq!(report.row_count, 1);
+    assert_eq!(report.fitted_row_count, 1);
+    let output = MeasurementSet::open(&output_ms).expect("open selected output");
+    assert_eq!(output.row_count(), 1);
+    let data_column = output
+        .data_column(VisibilityDataColumn::Data)
+        .expect("DATA");
+    let ArrayValue::Complex32(data) = data_column.get(0).expect("selected residual") else {
+        panic!("DATA should be complex");
+    };
+    assert!(data.iter().all(|value| value.norm() < 1.0e-6));
+    assert!(
+        std::fs::read_dir(&output_ms)
+            .expect("read output root")
+            .all(|entry| {
+                let name = entry
+                    .expect("read output entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned();
+                !name.starts_with(".casa-rs.") && name != ".casa-rs-write-incomplete"
+            })
+    );
+}
+
+#[test]
 fn continuum_subtract_rejects_bad_line_free_channels() {
     let dir = TempDir::new().expect("tempdir");
     let input_ms = create_apply_fixture_ms(dir.path(), true);

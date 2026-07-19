@@ -898,7 +898,7 @@ impl Table {
         row_indices: &[usize],
         channel_start: usize,
         channel_count: usize,
-    ) -> Result<SelectedArray2DCells, TableError> {
+    ) -> Result<Option<SelectedArray2DCells>, TableError> {
         self.require_column(column)?;
         for &row_index in row_indices {
             if row_index >= self.row_count() {
@@ -1804,13 +1804,14 @@ impl<'a> TableColumn<'a> {
     /// Returns typed 2-D array channel slices for selected rows without
     /// populating the table-level row cache.
     ///
-    /// The returned values are packed as `[channel][row][axis0]`.
+    /// The returned values are packed as `[channel][row][axis0]`. Returns
+    /// `None` when the column exists but all requested cells are undefined.
     pub fn array_cells_2d_channel_range_typed_uncached(
         &self,
         row_indices: &[usize],
         channel_start: usize,
         channel_count: usize,
-    ) -> Result<SelectedArray2DCells, TableError> {
+    ) -> Result<Option<SelectedArray2DCells>, TableError> {
         self.table.get_array_cells_2d_channel_range_typed_uncached(
             &self.column,
             row_indices,

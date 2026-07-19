@@ -13,6 +13,8 @@ use crate::plot::{
     ListObsPlotKind, ListObsPlotPayload, ListObsPlotSpec, VisibilityScatterPlotPayload,
     VisibilityScatterSeries,
 };
+use crate::selection::parser::parse_correlation_selector;
+use crate::selection::{MsSelection, resolve_row_indices_with_system_budget};
 use crate::{MeasurementSet, subtables};
 
 #[derive(Debug, Default)]
@@ -50,9 +52,12 @@ pub(crate) fn build_listobs_visibility_plot_payload(
     }))?;
     let data_column = DataColumn::parse(spec.option("data_column").unwrap_or("data"))?;
 
-    let row_numbers = listobs::resolve_selected_rows(ms, options)
-        .map_err(|error| error.to_string())?
-        .unwrap_or_else(|| (0..ms.row_count()).collect());
+    let row_numbers = if !options.selectdata || !options.has_selection() {
+        (0..ms.row_count()).collect()
+    } else {
+        resolve_row_indices_with_system_budget(ms, &MsSelection::from_summary_options(options))
+            .map_err(|error| error.to_string())?
+    };
     let selected_data =
         SelectedArrayColumn::load(ms.main_table(), data_column.column_name(), &row_numbers)?;
     let selected_flags = SelectedArrayColumn::load(ms.main_table(), "FLAG", &row_numbers)?;
@@ -73,7 +78,7 @@ pub(crate) fn build_listobs_visibility_plot_payload(
         .correlation
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .map(listobs::parse_correlation_selector)
+        .map(parse_correlation_selector)
         .transpose()
         .map_err(|error| error.to_string())?;
 

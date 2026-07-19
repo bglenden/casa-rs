@@ -11,7 +11,7 @@ use std::process::{Command, Stdio};
 use casa_calibration::{
     CalibrationPlotPreset, CalibrationPlotRequest, build_calibration_plot_payload,
 };
-use casa_ms::MsSelectionSpec;
+use casa_ms::MsSelection;
 use casa_ms::presentation::UiCommandSchema;
 use casa_provider_contracts::{
     DefaultSpec, NoAdditionalProviderSchemas, ParameterType, Predicate, ProviderCliMachineActions,
@@ -449,7 +449,7 @@ fn run_plotcal(values: BTreeMap<String, String>) -> Result<JsonValue, String> {
     let request = CalibrationPlotRequest {
         measurement_set_path: optional_path(&values, "vis"),
         calibration_table_path: optional_path(&values, "caltable"),
-        selection: MsSelectionSpec {
+        selection: MsSelection {
             selectdata: true,
             field: optional_string(&values, "field"),
             spw: optional_string(&values, "spw"),
@@ -462,6 +462,8 @@ fn run_plotcal(values: BTreeMap<String, String>) -> Result<JsonValue, String> {
             array: optional_string(&values, "array"),
             intent: optional_string(&values, "intent"),
             feed: optional_string(&values, "feed"),
+            data_description: None,
+            state: None,
             msselect: optional_string(&values, "msselect"),
         },
     };

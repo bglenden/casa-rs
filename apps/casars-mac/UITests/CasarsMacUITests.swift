@@ -610,6 +610,56 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Stop"].isEnabled, "Replacing notebook parameters must not execute the task")
     }
 
+    func testCanonicalMeasurementSetSelectorDiagnosticsReachTheLaunchedApp() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let project = try makeProductionProjectRoot(prefix: "casars-mac-ui-selector-validation")
+        productionProjectURL = project
+        let dataDirectory = project.appendingPathComponent("data", isDirectory: true)
+        try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true)
+        let measurementSet = dataDirectory.appendingPathComponent("selector.ms", isDirectory: true)
+        try createSelectorValidationMeasurementSet(at: measurementSet, repoRoot: repoRoot)
+
+        launchLiveProductionProject(
+            project,
+            environment: ["repoRoot": repoRoot.path]
+        )
+        try clickIdentified("dock.mode.datasets")
+        let datasetRow = try require("dataset.row.\(measurementSet.path)", timeout: 20)
+        datasetRow.doubleClick()
+
+        let mode = try require("msExplore.mode.\(measurementSet.path)", timeout: 20)
+        let plotsSegment = mode.descendants(matching: .radioButton).matching(
+            NSPredicate(format: "label == %@", "Plots")
+        ).firstMatch
+        XCTAssertTrue(plotsSegment.waitForExistence(timeout: 5), app.debugDescription)
+        plotsSegment.click()
+        try clickIdentified("msPlot.selections.\(measurementSet.path)")
+
+        let timerangeID = "msPlot.selection.timerange.\(measurementSet.path)"
+        let timerange = try require(timerangeID, timeout: 5)
+        let valid = "2020/01/01/00:00:00~2020/01/01/00:01:00"
+        replaceText(timerangeID, with: valid)
+        XCTAssertEqual(try textValue(timerange), valid)
+        XCTAssertFalse(
+            element("msPlot.selectionDiagnostic.timerange.\(measurementSet.path)").exists,
+            "The launched GUI rejected valid CASA date/time interval syntax"
+        )
+
+        replaceText(timerangeID, with: "not-a-casa-time")
+        XCTAssertEqual(try textValue(timerange), "not-a-casa-time")
+        let diagnosticID = "msPlot.selectionDiagnostic.timerange.\(measurementSet.path)"
+        let diagnostic = try require(diagnosticID, timeout: 5)
+        XCTAssertFalse(diagnostic.label.isEmpty)
+        XCTAssertTrue(
+            ["invalid_text", "invalid_value"].contains(try accessibilityValue(diagnosticID)),
+            diagnostic.debugDescription
+        )
+    }
+
     func testProductionPythonCellRunsPersistsReceiptAndSurvivesNotebookReload() throws {
         let notebookID = "019f0000-0000-7000-8000-000000000101"
         let cellID = "019f0000-0000-7000-8000-000000000102"
@@ -2734,6 +2784,48 @@ final class CasarsMacUITests: XCTestCase {
         }
         try fileManager.createDirectory(at: base, withIntermediateDirectories: true)
         return base.appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private func createSelectorValidationMeasurementSet(
+        at output: URL,
+        repoRoot: URL
+    ) throws {
+        let simobserve = repoRoot
+            .appendingPathComponent("target", isDirectory: true)
+            .appendingPathComponent("debug", isDirectory: true)
+            .appendingPathComponent("simobserve")
+        XCTAssertTrue(
+            FileManager.default.isExecutableFile(atPath: simobserve.path),
+            "The deterministic GUI journey must build target/debug/simobserve"
+        )
+        let request: [String: Any] = [
+            "kind": "run",
+            "request": [
+                "output_ms": output.path,
+                "duration_seconds": 30.0,
+                "integration_seconds": 10.0,
+                "predict_model": false,
+                "overwrite": true,
+            ],
+        ]
+        let requestData = try JSONSerialization.data(withJSONObject: request)
+        let standardInput = Pipe()
+        let standardOutput = Pipe()
+        let process = Process()
+        process.executableURL = simobserve
+        process.arguments = ["--json-run", "-"]
+        process.currentDirectoryURL = repoRoot
+        process.standardInput = standardInput
+        process.standardOutput = standardOutput
+        process.standardError = standardOutput
+        try process.run()
+        standardInput.fileHandleForWriting.write(requestData)
+        standardInput.fileHandleForWriting.closeFile()
+        process.waitUntilExit()
+        let outputData = standardOutput.fileHandleForReading.readDataToEndOfFile()
+        let commandOutput = String(decoding: outputData, as: UTF8.self)
+        XCTAssertEqual(process.terminationStatus, 0, commandOutput)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.path), commandOutput)
     }
 
     private func launchLiveTutorialProject(

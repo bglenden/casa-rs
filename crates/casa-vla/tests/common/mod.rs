@@ -6,7 +6,10 @@ use std::process::Command;
 use casa_ms::SubTable;
 use casa_ms::ms::MeasurementSet;
 use casa_tables::Table;
-use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier, discover_casa_python};
+use casa_test_support::ms_interop::MeasurementSetOracle;
+use casa_test_support::{
+    CasaTestDataTier, casacore_oracle_available, casatestdata_path_for_tier, discover_casa_python,
+};
 use casa_types::{ArrayValue, Complex32, Complex64, RecordValue, ScalarValue, Value};
 use casa_vla::{ImportVlaOptions, import_archive_files_to_measurement_set_from_options};
 use tempfile::TempDir;
@@ -54,6 +57,10 @@ importvla(archivefiles=[sys.argv[1]], vis=sys.argv[2], frequencytol=150000.0)
     let rust = MeasurementSet::open(&rust_ms_path).expect("open Rust MeasurementSet");
     let casa = MeasurementSet::open(&casa_ms_path).expect("open CASA MeasurementSet");
     assert_measurement_sets_match_subset(&rust, &casa);
+    if casacore_oracle_available() {
+        MeasurementSetOracle::bench_open_main_rows(&rust_ms_path)
+            .expect("open and scan casa-rs import with C++ casacore");
+    }
 }
 
 #[allow(dead_code)]

@@ -18,7 +18,7 @@ use casa_types::quanta::{Quantity, Unit};
 
 use crate::derived::engine::MsCalEngine;
 use crate::error::{MsError, MsResult};
-use crate::selection_syntax::ChannelSelection;
+use crate::selection::syntax::ChannelSelection;
 
 /// Spectral interpolation policy for cube imaging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -2910,17 +2910,17 @@ mod tests {
     fn resolve_channel_selector_selection_supports_gaps_and_stride() {
         let selector = ChannelSelection {
             segments: vec![
-                crate::selection_syntax::ChannelSelectionSegment {
+                crate::selection::syntax::ChannelSelectionSegment {
                     start: 4,
                     end: 9,
                     stride: 1,
                 },
-                crate::selection_syntax::ChannelSelectionSegment {
+                crate::selection::syntax::ChannelSelectionSegment {
                     start: 12,
                     end: 14,
                     stride: 1,
                 },
-                crate::selection_syntax::ChannelSelectionSegment {
+                crate::selection::syntax::ChannelSelectionSegment {
                     start: 18,
                     end: 22,
                     stride: 2,

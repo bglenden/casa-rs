@@ -13,7 +13,8 @@
 //! use canonical (big-endian) encoding regardless of the table's endian
 //! setting.
 
-use std::fs::File;
+use std::collections::BTreeMap;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -41,6 +42,9 @@ use super::{ScalarColumnSource, ScalarColumnSources, StorageError};
 const SSM_HEADER_SIZE: u64 = 512;
 const DEFAULT_SSM_BUCKET_SIZE: u32 = 32768;
 const AIPSIO_MAGIC: u32 = 0xbebebebe;
+
+type SparseScalarCell = (usize, Option<ScalarValue>);
+type SparseScalarColumn = Option<Vec<SparseScalarCell>>;
 
 /// SSM column data — either flat (scalar/fixed-shape) or indirect (variable-shape).
 #[derive(Debug)]
@@ -1178,6 +1182,113 @@ pub(crate) fn read_ssm_scalar_column_rows(
     Ok(Some(values))
 }
 
+/// Patch fixed-width scalar cells without rebuilding the StandardStMan group.
+///
+/// The persisted SSM header, index, bucket geometry, and data-manager blob are
+/// authoritative. Only data buckets containing requested cells are read,
+/// modified, and written back, so a bounded selected-row mutation never
+/// materializes or rewrites the complete scalar group.
+pub(crate) fn save_ssm_file_scalar_columns_sparse_rows_in_place(
+    file_path: &Path,
+    dm_blob: &[u8],
+    col_descs: &[ColumnDescContents],
+    sparse_columns: &[SparseScalarColumn],
+    changed_rows: &[usize],
+    big_endian: bool,
+) -> Result<bool, StorageError> {
+    if sparse_columns.len() != col_descs.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM sparse scalar column count mismatch: expected {}, got {}",
+            col_descs.len(),
+            sparse_columns.len()
+        )));
+    }
+    if changed_rows.is_empty()
+        || sparse_columns.iter().all(Option::is_none)
+        || col_descs.iter().any(|column| {
+            column.is_array || column.is_record() || column.data_type == CasacoreDataType::TpString
+        })
+    {
+        return Ok(false);
+    }
+
+    let mut file = OpenOptions::new().read(true).write(true).open(file_path)?;
+    let header = parse_ssm_header(&mut file)?;
+    if header.big_endian != big_endian {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM endian mismatch for sparse save: file={}, requested={}",
+            header.big_endian, big_endian
+        )));
+    }
+    let dm_info = parse_ssm_dm_blob(dm_blob)?;
+    let indices = parse_ssm_indices(&mut file, &header)?;
+    if dm_info.column_offsets.len() < col_descs.len()
+        || dm_info.col_index_map.len() < col_descs.len()
+    {
+        return Err(StorageError::FormatMismatch(
+            "SSM sparse scalar save is missing column metadata".to_string(),
+        ));
+    }
+
+    type BucketMutation = (usize, usize, Option<ScalarValue>);
+    let mut mutations_by_bucket: BTreeMap<u32, Vec<BucketMutation>> = BTreeMap::new();
+    for (col_idx, values) in sparse_columns.iter().enumerate() {
+        let Some(values) = values else {
+            continue;
+        };
+        let index_nr = dm_info.col_index_map[col_idx] as usize;
+        let index = indices.get(index_nr).ok_or_else(|| {
+            StorageError::FormatMismatch(format!(
+                "SSM column '{}' references index {index_nr} but only {} indices exist",
+                col_descs[col_idx].col_name,
+                indices.len()
+            ))
+        })?;
+        for (row_index, value) in values {
+            let (bucket_nr, start_row, _) =
+                index.find_bucket(*row_index as u64).ok_or_else(|| {
+                    StorageError::FormatMismatch(format!(
+                        "SSM index has no bucket for row {row_index}"
+                    ))
+                })?;
+            let row_in_bucket = (*row_index as u64 - start_row) as usize;
+            mutations_by_bucket.entry(bucket_nr).or_default().push((
+                col_idx,
+                row_in_bucket,
+                value.clone(),
+            ));
+        }
+    }
+    if mutations_by_bucket.is_empty() {
+        return Ok(false);
+    }
+
+    for (bucket_nr, mutations) in mutations_by_bucket {
+        let mut bucket = read_bucket(&mut file, &header, bucket_nr)?;
+        let mut unused_string_buckets = Vec::new();
+        for (col_idx, row_in_bucket, scalar) in mutations {
+            let value = scalar.map(Value::Scalar);
+            write_cell_to_bucket(
+                &mut bucket,
+                dm_info.column_offsets[col_idx] as usize,
+                row_in_bucket,
+                &col_descs[col_idx],
+                col_descs[col_idx].data_type,
+                1,
+                value.as_ref(),
+                &mut unused_string_buckets,
+                header.nr_buckets as usize,
+                header.bucket_size as usize,
+                big_endian,
+            );
+        }
+        let offset = SSM_HEADER_SIZE + u64::from(bucket_nr) * u64::from(header.bucket_size);
+        file.seek(SeekFrom::Start(offset))?;
+        file.write_all(&bucket)?;
+    }
+    Ok(true)
+}
+
 pub(crate) fn read_ssm_array_column_rows(
     file_path: &Path,
     dm_blob: &[u8],
@@ -1836,6 +1947,19 @@ fn write_ssm_file_impl(
         .unwrap_or(rows.len());
     let ncol = col_descs.len();
 
+    if let Some(scalar_columns) = scalar_columns
+        && col_descs.iter().all(|desc| {
+            !desc.is_array && !desc.is_record() && desc.data_type != CasacoreDataType::TpString
+        })
+    {
+        return write_ssm_fixed_scalar_sources_streaming(
+            file_path,
+            col_descs,
+            scalar_columns,
+            big_endian,
+        );
+    }
+
     // Check if any array columns are stored indirectly.
     let has_indirect = col_descs.iter().any(is_ssm_indirect);
 
@@ -1960,7 +2084,7 @@ fn write_ssm_file_impl(
 
                 let scalar_value;
                 let value = if let Some(columns) = scalar_columns {
-                    scalar_value = columns.value(col_idx, row).map(Value::Scalar);
+                    scalar_value = columns.value(col_idx, row)?.map(Value::Scalar);
                     scalar_value.as_ref()
                 } else {
                     let row_record = rows.get(row).ok_or_else(|| {
@@ -2029,7 +2153,7 @@ fn write_ssm_file_impl(
 
                 let scalar_value;
                 let value = if let Some(columns) = scalar_columns {
-                    scalar_value = columns.value(col_idx, row).map(Value::Scalar);
+                    scalar_value = columns.value(col_idx, row)?.map(Value::Scalar);
                     scalar_value.as_ref()
                 } else {
                     let row_record = rows.get(row).ok_or_else(|| {
@@ -2171,6 +2295,151 @@ fn write_ssm_file_impl(
     let dm_blob = serialize_ssm_dm_blob("SSM", &column_offsets, ncol)?;
 
     Ok(dm_blob)
+}
+
+/// Write fixed-width scalar sources with one resident SSM bucket.
+///
+/// The general SSM writer also supports strings and indirect arrays and builds
+/// their shared auxiliary buckets in memory. High-volume generated/file-backed
+/// scalar groups need neither feature, so they can be emitted directly in
+/// row/bucket order without retaining the table payload.
+fn write_ssm_fixed_scalar_sources_streaming(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    scalar_columns: &ScalarColumnSources<'_>,
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
+    let nrrow = scalar_columns.row_count();
+    let ncol = col_descs.len();
+    let col_sizes_bits: Vec<usize> = col_descs
+        .iter()
+        .map(|desc| canonical_element_size(desc.data_type).1)
+        .collect();
+    let total_bits_per_row: usize = col_sizes_bits.iter().sum();
+    let total_bytes_per_row = total_bits_per_row.div_ceil(8);
+    let rows_per_bucket = if total_bytes_per_row == 0 {
+        32u32
+    } else {
+        let mut rows = 32u32;
+        loop {
+            let size: usize = col_sizes_bits
+                .iter()
+                .map(|&bits| (rows as usize * bits).div_ceil(8))
+                .sum();
+            let next_size: usize = col_sizes_bits
+                .iter()
+                .map(|&bits| ((rows as usize + 1) * bits).div_ceil(8))
+                .sum();
+            if next_size > 128.max(size) {
+                break;
+            }
+            rows += 1;
+        }
+        rows
+    };
+    let bucket_size = {
+        let data_size: usize = col_sizes_bits
+            .iter()
+            .map(|&bits| (rows_per_bucket as usize * bits).div_ceil(8))
+            .sum();
+        (data_size.max(128) as u32).max(DEFAULT_SSM_BUCKET_SIZE)
+    };
+    let mut column_offsets = vec![0u32; ncol];
+    let mut offset = 0u32;
+    for (index, &bits) in col_sizes_bits.iter().enumerate() {
+        column_offsets[index] = offset;
+        offset += (rows_per_bucket as usize * bits).div_ceil(8) as u32;
+    }
+
+    let nr_data_buckets = if nrrow == 0 {
+        0
+    } else {
+        nrrow.div_ceil(rows_per_bucket as usize)
+    };
+    let mut last_row = Vec::with_capacity(nr_data_buckets);
+    let mut bucket_number = Vec::with_capacity(nr_data_buckets);
+    for index in 0..nr_data_buckets {
+        let end_row = ((index + 1) * rows_per_bucket as usize - 1).min(nrrow - 1);
+        last_row.push(end_row as u64);
+        bucket_number.push(index as u32);
+    }
+    let index_data = serialize_ssm_index(
+        nr_data_buckets as u32,
+        rows_per_bucket,
+        ncol as i32,
+        &last_row,
+        &bucket_number,
+        big_endian,
+    );
+    let chain_overhead = 8usize;
+    let data_per_index_bucket = bucket_size as usize - chain_overhead;
+    let nr_idx_buckets = if index_data.is_empty() {
+        0
+    } else {
+        index_data.len().div_ceil(data_per_index_bucket)
+    };
+    let first_idx_bucket = nr_data_buckets as i32;
+    let header = serialize_ssm_header(
+        bucket_size,
+        (nr_data_buckets + nr_idx_buckets) as u32,
+        0,
+        -1,
+        nr_idx_buckets as u32,
+        first_idx_bucket,
+        0,
+        -1,
+        index_data.len() as u32,
+        1,
+        big_endian,
+    );
+
+    let mut file = File::create(file_path)?;
+    file.write_all(&header)?;
+    let mut unused_string_buckets = Vec::new();
+    for bucket_index in 0..nr_data_buckets {
+        let mut bucket = vec![0u8; bucket_size as usize];
+        let first_row = bucket_index * rows_per_bucket as usize;
+        let end_row = (first_row + rows_per_bucket as usize).min(nrrow);
+        for row in first_row..end_row {
+            let row_in_bucket = row - first_row;
+            for (col_idx, col_desc) in col_descs.iter().enumerate() {
+                let scalar_value = scalar_columns.value(col_idx, row)?;
+                let value = scalar_value.map(Value::Scalar);
+                write_cell_to_bucket(
+                    &mut bucket,
+                    column_offsets[col_idx] as usize,
+                    row_in_bucket,
+                    col_desc,
+                    col_desc.data_type,
+                    1,
+                    value.as_ref(),
+                    &mut unused_string_buckets,
+                    nr_data_buckets,
+                    bucket_size as usize,
+                    big_endian,
+                );
+            }
+        }
+        file.write_all(&bucket)?;
+    }
+
+    let mut remaining = &index_data[..];
+    for index in 0..nr_idx_buckets {
+        let mut bucket = vec![0u8; bucket_size as usize];
+        bucket[0..4].copy_from_slice(&0i32.to_be_bytes());
+        let next = if index + 1 < nr_idx_buckets {
+            first_idx_bucket + index as i32 + 1
+        } else {
+            -1
+        };
+        bucket[4..8].copy_from_slice(&next.to_be_bytes());
+        let chunk = remaining.len().min(data_per_index_bucket);
+        bucket[chain_overhead..chain_overhead + chunk].copy_from_slice(&remaining[..chunk]);
+        remaining = &remaining[chunk..];
+        file.write_all(&bucket)?;
+    }
+
+    serialize_ssm_dm_blob("SSM", &column_offsets, ncol)
 }
 
 /// Write a single cell value into a data bucket using the specified byte order.

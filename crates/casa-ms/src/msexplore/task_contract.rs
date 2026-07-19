@@ -278,14 +278,14 @@ mod tests {
     };
     use crate::{
         MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotPreset,
-        MsPlotSpec, MsSelectionSpec,
+        MsPlotSpec,
     };
 
     fn test_spec(ms_path: &str) -> MsExploreSpec {
         MsExploreSpec {
             ms_path: ms_path.into(),
             summary_format: MeasurementSetSummaryOutputFormat::Text,
-            selection: MsSelectionSpec::default(),
+            selection: crate::MsSelection::default(),
             header_items: Vec::new(),
             page_title: None,
             exprange: MsPageExportRange::Current,

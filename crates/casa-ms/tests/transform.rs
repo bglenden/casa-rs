@@ -3,10 +3,15 @@
 mod common;
 
 use casa_ms::{
-    MeasurementSet, MsTransformRequest, SubTable, TransformDataColumn, mstransform,
-    schema::main_table::VisibilityDataColumn, selection::MsSelection,
+    MeasurementSet, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
+    MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
+    MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
+    MeasurementSetWriteResources, MeasurementSetWriteSession, MsTransformRequest, SubTable,
+    TransformDataColumn, mstransform, schema::main_table::VisibilityDataColumn,
+    selection::MsSelection,
 };
 use casa_types::{ArrayValue, ScalarValue};
+use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 #[test]
 fn mstransform_selects_channels_updates_metadata_and_weight_spectrum() {
@@ -345,4 +350,181 @@ fn mstransform_reports_contract_errors_before_mutating_outputs() {
     })
     .unwrap_err();
     assert!(missing_column.to_string().contains("CORRECTED_DATA"));
+}
+
+#[test]
+fn selected_row_write_session_persists_bounded_typed_batches() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open fixture MS");
+    let samples = common::NUM_CORR * common::NUM_CHAN;
+    let selected_rows = vec![0, 2];
+    let plan = MeasurementSetWritePlan::selected_row_mutation(
+        selected_rows.clone(),
+        vec![
+            MeasurementSetWriteColumnPlan {
+                name: "FLAG".to_string(),
+                bytes_per_row: samples,
+                mode: MeasurementSetColumnWriteMode::Replace,
+                storage_manager: MeasurementSetColumnStorage::Persisted,
+                tile_shape: None,
+                create_source_column: None,
+            },
+            MeasurementSetWriteColumnPlan {
+                name: "FLAG_ROW".to_string(),
+                bytes_per_row: 1,
+                mode: MeasurementSetColumnWriteMode::Replace,
+                storage_manager: MeasurementSetColumnStorage::Persisted,
+                tile_shape: None,
+                create_source_column: None,
+            },
+        ],
+        MeasurementSetWriteResources {
+            available_bytes: 2 * (samples + 1),
+            maximum_live_batches: 2,
+            tiled_column_buffer_bytes: 0,
+        },
+    )
+    .expect("mutation plan");
+    assert_eq!(plan.batch_rows(), 1);
+
+    let mut session =
+        MeasurementSetWriteSession::start_selected_row_mutation(&mut measurement_set, plan)
+            .expect("start mutation");
+    assert!(ms_path.join(".casa-rs-write-incomplete").exists());
+    while !session
+        .next_mutation_rows()
+        .expect("next mutation rows")
+        .is_empty()
+    {
+        let rows = session
+            .next_mutation_rows()
+            .expect("next mutation rows")
+            .to_vec();
+        session
+            .write_mutation_batch(
+                &mut measurement_set,
+                MeasurementSetMutationBatch {
+                    row_indices: rows,
+                    columns: vec![
+                        MeasurementSetMutationColumnBatch {
+                            name: "FLAG".to_string(),
+                            values: MeasurementSetMutationColumnValues::Arrays(vec![
+                                ArrayValue::Bool(
+                                    ArrayD::from_shape_vec(
+                                        IxDyn(&[common::NUM_CORR, common::NUM_CHAN]).f(),
+                                        vec![true; samples],
+                                    )
+                                    .expect("FLAG cell"),
+                                ),
+                            ]),
+                        },
+                        MeasurementSetMutationColumnBatch {
+                            name: "FLAG_ROW".to_string(),
+                            values: MeasurementSetMutationColumnValues::Scalars(vec![
+                                ScalarValue::Bool(true),
+                            ]),
+                        },
+                    ],
+                },
+            )
+            .expect("write mutation batch");
+    }
+    let telemetry = session.finish_mutation().expect("finish mutation");
+    assert_eq!(telemetry.bytes_written, selected_rows.len() * (samples + 1));
+    assert_eq!(telemetry.rows_written, selected_rows.len());
+    assert_eq!(telemetry.maximum_resident_bytes, 2 * (samples + 1));
+    assert_eq!(telemetry.queue_wait_seconds, 0.0);
+    assert!(telemetry.producer_seconds >= telemetry.write_seconds);
+    assert!(telemetry.finalize_seconds >= 0.0);
+    assert!(!ms_path.join(".casa-rs-write-incomplete").exists());
+    drop(measurement_set);
+
+    let reopened = MeasurementSet::open(&ms_path).expect("reopen mutated MS");
+    for row in selected_rows {
+        let flags = reopened
+            .main_table()
+            .cell_accessor(row, "FLAG")
+            .and_then(|cell| cell.array())
+            .expect("mutated FLAG");
+        let ArrayValue::Bool(flags) = flags else {
+            panic!("expected Bool FLAG");
+        };
+        assert!(flags.iter().all(|flag| *flag));
+        assert_eq!(
+            reopened
+                .main_table()
+                .cell_accessor(row, "FLAG_ROW")
+                .and_then(|cell| cell.scalar())
+                .expect("mutated FLAG_ROW"),
+            &ScalarValue::Bool(true)
+        );
+    }
+    assert_eq!(
+        reopened
+            .main_table()
+            .cell_accessor(1, "FLAG_ROW")
+            .and_then(|cell| cell.scalar())
+            .expect("untouched FLAG_ROW"),
+        &ScalarValue::Bool(false)
+    );
+}
+
+#[test]
+fn interrupted_selected_row_write_remains_detectable_without_snapshot_state() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open fixture MS");
+    let plan = MeasurementSetWritePlan::selected_row_mutation(
+        vec![0],
+        vec![MeasurementSetWriteColumnPlan {
+            name: "FLAG_ROW".to_string(),
+            bytes_per_row: 1,
+            mode: MeasurementSetColumnWriteMode::Replace,
+            storage_manager: MeasurementSetColumnStorage::Persisted,
+            tile_shape: None,
+            create_source_column: None,
+        }],
+        MeasurementSetWriteResources {
+            available_bytes: 1,
+            maximum_live_batches: 1,
+            tiled_column_buffer_bytes: 0,
+        },
+    )
+    .expect("mutation plan");
+    let mut session =
+        MeasurementSetWriteSession::start_selected_row_mutation(&mut measurement_set, plan)
+            .expect("start mutation");
+    session
+        .write_mutation_batch(
+            &mut measurement_set,
+            MeasurementSetMutationBatch {
+                row_indices: vec![0],
+                columns: vec![MeasurementSetMutationColumnBatch {
+                    name: "FLAG_ROW".to_string(),
+                    values: MeasurementSetMutationColumnValues::Scalars(vec![ScalarValue::Bool(
+                        true,
+                    )]),
+                }],
+            },
+        )
+        .expect("persist one row before interruption");
+    drop(session);
+    drop(measurement_set);
+
+    let error = match MeasurementSet::open(&ms_path) {
+        Ok(_) => panic!("marker must reject open"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("incomplete write marker"));
+    std::fs::remove_file(ms_path.join(".casa-rs-write-incomplete")).expect("remove test marker");
+    let reopened = MeasurementSet::open(&ms_path).expect("reopen after explicit marker removal");
+    assert_eq!(
+        reopened
+            .main_table()
+            .cell_accessor(0, "FLAG_ROW")
+            .and_then(|cell| cell.scalar())
+            .expect("persisted interrupted value"),
+        &ScalarValue::Bool(true)
+    );
 }

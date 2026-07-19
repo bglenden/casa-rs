@@ -1200,23 +1200,16 @@ fn read_ism_scalar_columns_rows_uncached(
 
     let owned_col_descs: Vec<ColumnDescContents> =
         col_descs.iter().map(|col| (*col).clone()).collect();
-    let col_info: Vec<(CasacoreDataType, usize)> = owned_col_descs
+    let col_info: Vec<Option<CasacoreDataType>> = owned_col_descs
         .iter()
         .map(|col_desc| {
             if col_desc.is_array || col_desc.is_record() {
-                return Err(StorageError::FormatMismatch(format!(
-                    "ISM selected scalar reader only supports scalar columns, found '{}'",
-                    col_desc.col_name
-                )));
+                return Ok(None);
             }
-            let scalar_dt =
-                CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
-            let nrelem = if col_desc.is_array && !col_desc.shape.is_empty() {
-                col_desc.shape.iter().map(|&s| s as usize).product()
-            } else {
-                1
-            };
-            Ok((scalar_dt, nrelem))
+            Ok(Some(CasacoreDataType::from_primitive_type(
+                col_desc.require_primitive_type()?,
+                false,
+            )))
         })
         .collect::<Result<_, StorageError>>()?;
 
@@ -1257,14 +1250,23 @@ fn read_ism_scalar_columns_rows_uncached(
             let bucket_end = index.rows[interval_idx + 1] as usize;
             let raw_bucket = read_ism_bucket(&mut file, &header, index.bucket_nrs[interval_idx])?;
             let bucket = parse_ism_bucket(&raw_bucket, owned_col_descs.len(), big_endian)?;
-            let bucket_rows = load_scalar_bucket_values(
-                &bucket,
-                &owned_col_descs,
-                &col_info,
-                bucket_end.saturating_sub(cached_bucket_start),
-                big_endian,
-            )?;
-            cached_bucket_values = bucket_rows;
+            let rows_in_bucket = bucket_end.saturating_sub(cached_bucket_start);
+            cached_bucket_values = owned_col_descs
+                .iter()
+                .zip(col_info.iter())
+                .enumerate()
+                .map(|(col_idx, (col_desc, scalar_dt))| match scalar_dt {
+                    Some(scalar_dt) => load_scalar_bucket_column_values(
+                        &bucket,
+                        col_desc,
+                        col_idx,
+                        *scalar_dt,
+                        rows_in_bucket,
+                        big_endian,
+                    ),
+                    None => Ok(vec![None; rows_in_bucket]),
+                })
+                .collect::<Result<Vec<_>, StorageError>>()?;
         }
 
         let bucket_row = row_index.saturating_sub(cached_bucket_start);
@@ -2130,9 +2132,68 @@ pub(crate) fn write_ism_file_scalar_column_sources(
         col_indices: Vec<(Vec<u32>, Vec<u32>)>,
     }
 
-    let mut buckets: Vec<BucketBuilder> = Vec::new();
     let mut bucket_start_rows: Vec<usize> = Vec::new();
     let mut last_values: Vec<Vec<u8>> = vec![Vec::new(); ncol];
+    let mut file = File::create(file_path)?;
+    file.write_all(&vec![0u8; ISM_HEADER_SIZE as usize])?;
+    let mut nr_buckets = 0usize;
+
+    let write_bucket = |file: &mut File, bucket: &BucketBuilder| -> Result<(), StorageError> {
+        let mut raw = vec![0u8; bucket_size as usize];
+        let data_len = bucket.data.len().min(bucket_size as usize - 4);
+        raw[4..4 + data_len].copy_from_slice(&bucket.data[..data_len]);
+
+        let index_len: usize = bucket
+            .col_indices
+            .iter()
+            .map(|(row_nrs, _)| 4 + row_nrs.len() * 8)
+            .sum();
+        if 4 + data_len + index_len > raw.len() {
+            return Err(StorageError::FormatMismatch(format!(
+                "ISM bucket requires {} bytes, exceeds planned bucket size {}",
+                4 + data_len + index_len,
+                raw.len()
+            )));
+        }
+        let index_start = raw.len() - index_len;
+        let index_offset = index_start as u32;
+        if big_endian {
+            raw[0..4].copy_from_slice(&index_offset.to_be_bytes());
+        } else {
+            raw[0..4].copy_from_slice(&index_offset.to_le_bytes());
+        }
+        let mut cursor = index_start;
+        for (row_nrs, offsets) in &bucket.col_indices {
+            let count = row_nrs.len() as u32;
+            let encoded_count = if big_endian {
+                count.to_be_bytes()
+            } else {
+                count.to_le_bytes()
+            };
+            raw[cursor..cursor + 4].copy_from_slice(&encoded_count);
+            cursor += 4;
+            for &row in row_nrs {
+                let encoded = if big_endian {
+                    row.to_be_bytes()
+                } else {
+                    row.to_le_bytes()
+                };
+                raw[cursor..cursor + 4].copy_from_slice(&encoded);
+                cursor += 4;
+            }
+            for &offset in offsets {
+                let encoded = if big_endian {
+                    offset.to_be_bytes()
+                } else {
+                    offset.to_le_bytes()
+                };
+                raw[cursor..cursor + 4].copy_from_slice(&encoded);
+                cursor += 4;
+            }
+        }
+        file.write_all(&raw)?;
+        Ok(())
+    };
 
     if nrrow > 0 {
         let mut current = BucketBuilder {
@@ -2148,15 +2209,13 @@ pub(crate) fn write_ism_file_scalar_column_sources(
             let mut row_encoded_values = Vec::with_capacity(ncol);
             for col_idx in 0..ncol {
                 let (dt, nrelem) = col_info[col_idx];
-                let scalar_value = scalar_columns.value(col_idx, row_idx);
+                let scalar_value = scalar_columns.value(col_idx, row_idx)?;
                 let encoded =
                     encode_scalar_column_value_bytes(scalar_value.as_ref(), dt, nrelem, big_endian);
                 if rel_row == 0 || encoded != last_values[col_idx] {
                     new_data_estimate += encoded.len();
-                    row_encoded_values.push(Some(encoded));
-                } else {
-                    row_encoded_values.push(None);
                 }
+                row_encoded_values.push(encoded);
             }
 
             let current_index_size: usize = current
@@ -2168,52 +2227,25 @@ pub(crate) fn write_ism_file_scalar_column_sources(
                 4 + current.data.len() + new_data_estimate + current_index_size + ncol * 12;
 
             if rel_row > 0 && total_estimate > bucket_size as usize {
-                buckets.push(current);
+                write_bucket(&mut file, &current)?;
+                nr_buckets += 1;
                 current = BucketBuilder {
                     data: Vec::new(),
                     col_indices: (0..ncol).map(|_| (Vec::new(), Vec::new())).collect(),
                 };
                 bucket_start_rows.push(row_idx);
-                for col_idx in 0..ncol {
-                    let (dt, nrelem) = col_info[col_idx];
-                    let bytes = if last_values[col_idx].is_empty() {
-                        let temp_value = scalar_columns
-                            .value(col_idx, row_idx)
-                            .map(casa_types::Value::Scalar);
-                        encode_value_bytes(temp_value.as_ref(), dt, nrelem, big_endian)
-                    } else {
-                        last_values[col_idx].clone()
-                    };
+                for (col_idx, encoded) in row_encoded_values.into_iter().enumerate() {
                     let offset = current.data.len() as u32;
-                    current.data.extend_from_slice(&bytes);
+                    current.data.extend_from_slice(&encoded);
                     current.col_indices[col_idx].0.push(0);
                     current.col_indices[col_idx].1.push(offset);
-                }
-                for col_idx in 0..ncol {
-                    let (dt, nrelem) = col_info[col_idx];
-                    let encoded = row_encoded_values[col_idx].take().unwrap_or_else(|| {
-                        let scalar_value = scalar_columns.value(col_idx, row_idx);
-                        encode_scalar_column_value_bytes(
-                            scalar_value.as_ref(),
-                            dt,
-                            nrelem,
-                            big_endian,
-                        )
-                    });
-                    if encoded != last_values[col_idx] {
-                        let offset = current.data.len() as u32;
-                        current.data.extend_from_slice(&encoded);
-                        let idx = &mut current.col_indices[col_idx];
-                        idx.0[0] = 0;
-                        idx.1[0] = offset;
-                        last_values[col_idx] = encoded;
-                    }
+                    last_values[col_idx] = encoded;
                 }
                 continue;
             }
 
-            for col_idx in 0..ncol {
-                if let Some(encoded) = row_encoded_values[col_idx].take() {
+            for (col_idx, encoded) in row_encoded_values.into_iter().enumerate() {
+                if rel_row == 0 || encoded != last_values[col_idx] {
                     let offset = current.data.len() as u32;
                     current.data.extend_from_slice(&encoded);
                     current.col_indices[col_idx].0.push(rel_row);
@@ -2223,49 +2255,8 @@ pub(crate) fn write_ism_file_scalar_column_sources(
             }
         }
 
-        buckets.push(current);
-    }
-
-    let nr_buckets = buckets.len();
-    let mut raw_buckets: Vec<Vec<u8>> = Vec::with_capacity(nr_buckets);
-    for bucket in &buckets {
-        let mut raw = vec![0u8; bucket_size as usize];
-        let data_len = bucket.data.len().min(bucket_size as usize - 4);
-        raw[4..4 + data_len].copy_from_slice(&bucket.data[..data_len]);
-
-        let mut index_area = Vec::new();
-        for (row_nrs, offsets) in &bucket.col_indices {
-            let n = row_nrs.len() as u32;
-            if big_endian {
-                index_area.extend_from_slice(&n.to_be_bytes());
-                for &r in row_nrs {
-                    index_area.extend_from_slice(&r.to_be_bytes());
-                }
-                for &o in offsets {
-                    index_area.extend_from_slice(&o.to_be_bytes());
-                }
-            } else {
-                index_area.extend_from_slice(&n.to_le_bytes());
-                for &r in row_nrs {
-                    index_area.extend_from_slice(&r.to_le_bytes());
-                }
-                for &o in offsets {
-                    index_area.extend_from_slice(&o.to_le_bytes());
-                }
-            }
-        }
-
-        let index_start = bucket_size as usize - index_area.len();
-        let index_offset = index_start as u32;
-        if big_endian {
-            raw[0..4].copy_from_slice(&index_offset.to_be_bytes());
-        } else {
-            raw[0..4].copy_from_slice(&index_offset.to_le_bytes());
-        }
-        if index_start + index_area.len() <= raw.len() {
-            raw[index_start..index_start + index_area.len()].copy_from_slice(&index_area);
-        }
-        raw_buckets.push(raw);
+        write_bucket(&mut file, &current)?;
+        nr_buckets += 1;
     }
 
     let mut ism_rows: Vec<u64> = Vec::with_capacity(nr_buckets + 1);
@@ -2279,12 +2270,9 @@ pub(crate) fn write_ism_file_scalar_column_sources(
     let index_data = serialize_ism_index(&ism_rows, &ism_bucket_nrs, big_endian);
     let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian);
 
-    let mut file = File::create(file_path)?;
-    file.write_all(&header_buf)?;
-    for raw in &raw_buckets {
-        file.write_all(raw)?;
-    }
     file.write_all(&index_data)?;
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(&header_buf)?;
 
     serialize_ism_dm_blob("ISM")
 }
@@ -3586,5 +3574,76 @@ mod tests {
                 std::fs::read(&scalar_path).expect("read scalar file")
             );
         }
+    }
+
+    #[test]
+    fn selected_scalar_reader_ignores_array_siblings_owned_by_same_manager() {
+        use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+        use tempfile::TempDir;
+
+        let scalar_desc = ColumnDescContents {
+            class_name: "ScalarColumnDesc".to_string(),
+            col_name: "FIELD_ID".to_string(),
+            comment: String::new(),
+            data_manager_type: "IncrementalStMan".to_string(),
+            data_manager_group: "ISMData".to_string(),
+            data_type: CasacoreDataType::TpInt,
+            option: 0,
+            nrdim: 0,
+            shape: vec![],
+            max_length: 0,
+            keywords: RecordValue::default(),
+            is_array: false,
+            primitive_type: Some(PrimitiveType::Int32),
+        };
+        let physical_sibling_desc = ColumnDescContents {
+            col_name: "UVW".to_string(),
+            ..scalar_desc.clone()
+        };
+        let rows = [0, 0, 2, 2]
+            .into_iter()
+            .map(|field_id| {
+                RecordValue::new(vec![
+                    RecordField::new("FIELD_ID", Value::Scalar(ScalarValue::Int32(field_id))),
+                    RecordField::new("UVW", Value::Scalar(ScalarValue::Int32(17))),
+                ])
+            })
+            .collect::<Vec<_>>();
+        let dir = TempDir::new().expect("tempdir");
+        let file_path = dir.path().join("mixed-manager.ism");
+        let dm_blob = write_ism_file(
+            &file_path,
+            &[scalar_desc.clone(), physical_sibling_desc.clone()],
+            &rows,
+            false,
+        )
+        .expect("write ISM fixture");
+
+        let array_sibling_desc = ColumnDescContents {
+            class_name: "ArrayColumnDesc<double>".to_string(),
+            data_type: CasacoreDataType::TpArrayDouble,
+            nrdim: 1,
+            shape: vec![3],
+            is_array: true,
+            primitive_type: Some(PrimitiveType::Float64),
+            ..physical_sibling_desc
+        };
+        let selected = read_ism_scalar_columns_rows_uncached(
+            &file_path,
+            &dm_blob,
+            &[&scalar_desc, &array_sibling_desc],
+            &[3, 0, 2],
+        )
+        .expect("read scalar column beside array sibling");
+
+        assert_eq!(
+            selected[0],
+            vec![
+                Some(ScalarValue::Int32(2)),
+                Some(ScalarValue::Int32(0)),
+                Some(ScalarValue::Int32(2)),
+            ]
+        );
+        assert_eq!(selected[1], vec![None, None, None]);
     }
 }

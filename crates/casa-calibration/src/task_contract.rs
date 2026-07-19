@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use casa_ms::{MsSelectionSpec, selection::MsSelection};
+use casa_ms::MsSelection;
 use casa_provider_contracts::{
     NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
     ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
@@ -16,12 +16,13 @@ use serde::{Deserialize, Serialize};
 use crate::managed_output::CalibrationTaskResult;
 use crate::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, BandpassSolveCombine,
-    BandpassSolveRequest, BandpassType, CalibrationStatsAxis, CalibrationStatsRequest,
+    BandpassSolveRequest, BandpassType, CalibrationDataset, CalibrationSolveRequest,
+    CalibrationSolveResult, CalibrationStatsAxis, CalibrationStatsRequest,
     ContinuumSubtractionDataColumn, ContinuumSubtractionRequest, FluxScaleRequest,
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
     GainType, GencalRequest, RefAntSelector, calibration_stats, continuum_subtract,
     execute_apply_from_path, export_corrected_data, fluxscale, gencal, plan_apply_from_path,
-    solve_bandpass_from_path, solve_gain_from_path, summarize_tables,
+    solve_calibration, summarize_tables,
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -172,7 +173,7 @@ pub struct PlanApplyTaskRequest {
     pub measurement_set: PathBuf,
     /// Structured MS selection controls.
     #[serde(default)]
-    pub selection: MsSelectionSpec,
+    pub selection: MsSelection,
     /// Ordered calibration-table inputs.
     pub calibration_tables: Vec<ApplyCalibrationTableSpec>,
     /// Whether to apply parallactic-angle correction.
@@ -187,7 +188,7 @@ pub struct ExecuteApplyTaskRequest {
     pub measurement_set: PathBuf,
     /// Structured MS selection controls.
     #[serde(default)]
-    pub selection: MsSelectionSpec,
+    pub selection: MsSelection,
     /// Ordered calibration-table inputs.
     pub calibration_tables: Vec<ApplyCalibrationTableSpec>,
     /// Apply/execution mode.
@@ -206,7 +207,7 @@ pub struct ExportCorrectedDataTaskRequest {
     pub output_ms: PathBuf,
     /// Structured MS selection controls.
     #[serde(default)]
-    pub selection: MsSelectionSpec,
+    pub selection: MsSelection,
 }
 
 /// Request for UV continuum subtraction into an imaging-ready MS.
@@ -226,7 +227,7 @@ pub struct ContinuumSubtractionTaskRequest {
     pub data_column: ContinuumSubtractionDataColumn,
     /// Structured MS selection controls.
     #[serde(default)]
-    pub selection: MsSelectionSpec,
+    pub selection: MsSelection,
 }
 
 /// Request for solving antenna gains.
@@ -236,7 +237,7 @@ pub struct SolveGainTaskRequest {
     pub measurement_set: PathBuf,
     /// Structured MS selection controls.
     #[serde(default)]
-    pub selection: MsSelectionSpec,
+    pub selection: MsSelection,
     /// Output calibration-table path.
     pub output_table: PathBuf,
     /// Gain family to solve.
@@ -280,7 +281,7 @@ pub struct SolveBandpassTaskRequest {
     pub measurement_set: PathBuf,
     /// Structured MS selection controls.
     #[serde(default)]
-    pub selection: MsSelectionSpec,
+    pub selection: MsSelection,
     /// Output calibration-table path.
     pub output_table: PathBuf,
     /// Reference antenna selector.
@@ -366,7 +367,7 @@ impl CalibrationTaskRequest {
             Self::PlanApply(request) => plan_apply_from_path(
                 &request.measurement_set,
                 &ApplyPlanRequest {
-                    selection: selection_from_spec(&request.selection)?,
+                    selection: request.selection.clone(),
                     apply_mode: ApplyMode::Trial,
                     parang: request.parang,
                     calibration_tables: request.calibration_tables.clone(),
@@ -377,7 +378,7 @@ impl CalibrationTaskRequest {
             Self::ExecuteApply(request) => execute_apply_from_path(
                 &request.measurement_set,
                 &ApplyPlanRequest {
-                    selection: selection_from_spec(&request.selection)?,
+                    selection: request.selection.clone(),
                     apply_mode: request.apply_mode,
                     parang: request.parang,
                     calibration_tables: request.calibration_tables.clone(),
@@ -389,7 +390,7 @@ impl CalibrationTaskRequest {
                 export_corrected_data(&crate::ExportCorrectedDataRequest {
                     input_ms: request.input_ms.clone(),
                     output_ms: request.output_ms.clone(),
-                    selection: selection_from_spec(&request.selection)?,
+                    selection: request.selection.clone(),
                 })
                 .map(CalibrationTaskResult::ExportCorrectedData)
                 .map_err(|error| error.to_string())
@@ -400,14 +401,14 @@ impl CalibrationTaskRequest {
                 fit_spw: request.fit_spw.clone(),
                 fit_order: request.fit_order,
                 data_column: request.data_column,
-                selection: selection_from_spec(&request.selection)?,
+                selection: request.selection.clone(),
             })
             .map(CalibrationTaskResult::ContinuumSubtract)
             .map_err(|error| error.to_string()),
-            Self::SolveGain(request) => solve_gain_from_path(
-                &request.measurement_set,
-                &GainSolveRequest {
-                    selection: selection_from_spec(&request.selection)?,
+            Self::SolveGain(request) => solve_calibration(
+                CalibrationDataset::path(&request.measurement_set),
+                CalibrationSolveRequest::Gain(GainSolveRequest {
+                    selection: request.selection.clone(),
                     output_table: request.output_table.clone(),
                     gain_type: request.gain_type,
                     solve_mode: request.solve_mode,
@@ -421,14 +422,18 @@ impl CalibrationTaskRequest {
                     min_snr: request.min_snr,
                     min_baselines_per_antenna: request.min_baselines_per_antenna,
                     smodel: request.smodel,
-                },
+                }),
             )
+            .map(|result| match result {
+                CalibrationSolveResult::Gain(report) => report,
+                CalibrationSolveResult::Bandpass(_) => unreachable!("gain request result"),
+            })
             .map(CalibrationTaskResult::SolveGain)
             .map_err(|error| error.to_string()),
-            Self::SolveBandpass(request) => solve_bandpass_from_path(
-                &request.measurement_set,
-                &BandpassSolveRequest {
-                    selection: selection_from_spec(&request.selection)?,
+            Self::SolveBandpass(request) => solve_calibration(
+                CalibrationDataset::path(&request.measurement_set),
+                CalibrationSolveRequest::Bandpass(BandpassSolveRequest {
+                    selection: request.selection.clone(),
                     output_table: request.output_table.clone(),
                     refant: request.refant.clone(),
                     prior_calibration_tables: request.prior_calibration_tables.clone(),
@@ -439,8 +444,12 @@ impl CalibrationTaskRequest {
                     amplitude_degree: request.amplitude_degree,
                     phase_degree: request.phase_degree,
                     smodel: request.smodel,
-                },
+                }),
             )
+            .map(|result| match result {
+                CalibrationSolveResult::Bandpass(report) => report,
+                CalibrationSolveResult::Gain(_) => unreachable!("bandpass request result"),
+            })
             .map(CalibrationTaskResult::SolveBandpass)
             .map_err(|error| error.to_string()),
             Self::FluxScale(request) => fluxscale(request)
@@ -469,113 +478,16 @@ fn default_polynomial_degree() -> usize {
     3
 }
 
-pub(crate) fn selection_from_spec(spec: &MsSelectionSpec) -> Result<MsSelection, String> {
-    if let Some(value) = first_non_empty(&spec.uvrange) {
-        return Err(format!(
-            "selection field uvrange is not supported by calibrate tasks yet: {value}"
-        ));
-    }
-    if let Some(value) = first_non_empty(&spec.correlation) {
-        return Err(format!(
-            "selection field correlation is not supported by calibrate tasks yet: {value}"
-        ));
-    }
-    if let Some(value) = first_non_empty(&spec.intent) {
-        return Err(format!(
-            "selection field intent is not supported by calibrate tasks yet: {value}"
-        ));
-    }
-    if let Some(value) = first_non_empty(&spec.feed) {
-        return Err(format!(
-            "selection field feed is not supported by calibrate tasks yet: {value}"
-        ));
-    }
-
-    let mut selection = MsSelection::new();
-    if let Some(field) = first_non_empty(&spec.field) {
-        selection = selection.field(&parse_i32_list("field", field)?);
-    }
-    if let Some(spw) = first_non_empty(&spec.spw) {
-        selection = selection
-            .spw_selector(spw)
-            .map_err(|error| format!("failed to parse spw selector {spw:?}: {error}"))?;
-    }
-    if !spec.selectdata {
-        return Ok(selection);
-    }
-    if let Some(antenna) = first_non_empty(&spec.antenna) {
-        selection = selection.antenna(&parse_i32_list("antenna", antenna)?);
-    }
-    if let Some(scan) = first_non_empty(&spec.scan) {
-        selection = selection.scan(&parse_i32_list("scan", scan)?);
-    }
-    if let Some(observation) = first_non_empty(&spec.observation) {
-        selection = selection.observation(&parse_i32_list("observation", observation)?);
-    }
-    if let Some(array) = first_non_empty(&spec.array) {
-        selection = selection.array(&parse_i32_list("array", array)?);
-    }
-    if let Some(timerange) = first_non_empty(&spec.timerange) {
-        let (start, end) = parse_time_range(timerange)?;
-        selection = selection.time_range(start, end);
-    }
-    if let Some(msselect) = first_non_empty(&spec.msselect) {
-        selection = selection.taql(msselect);
-    }
-    Ok(selection)
-}
-
-fn first_non_empty(value: &Option<String>) -> Option<&str> {
-    value
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-}
-
-fn parse_i32_list(flag: &str, value: &str) -> Result<Vec<i32>, String> {
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|segment| !segment.is_empty())
-        .map(|segment| {
-            segment.parse::<i32>().map_err(|error| {
-                format!("failed to parse {flag} value {segment:?} as integer: {error}")
-            })
-        })
-        .collect()
-}
-
-fn parse_time_range(value: &str) -> Result<(f64, f64), String> {
-    let mut parts = value.split(':').map(str::trim);
-    let start = parts
-        .next()
-        .ok_or_else(|| "timerange requires START:END".to_string())?;
-    let end = parts
-        .next()
-        .ok_or_else(|| "timerange requires START:END".to_string())?;
-    if parts.next().is_some() {
-        return Err("timerange requires exactly one ':' separator".to_string());
-    }
-    let start = start
-        .parse::<f64>()
-        .map_err(|error| format!("failed to parse timerange start {start:?}: {error}"))?;
-    let end = end
-        .parse::<f64>()
-        .map_err(|error| format!("failed to parse timerange end {end:?}: {error}"))?;
-    Ok((start, end))
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use casa_ms::MsSelectionSpec;
     use casa_provider_contracts::ProviderSurfaceKind;
 
     use super::{
         CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationTaskRequest,
         CalibrationTaskResult, SummaryTaskRequest, calibration_protocol_descriptor,
-        calibration_task_schema_bundle, selection_from_spec,
+        calibration_task_schema_bundle,
     };
     use crate::{
         CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
@@ -756,23 +668,5 @@ mod tests {
         );
         let form = casa_provider_contracts::project_ui_form(&bundle.parameter_surfaces[0]);
         assert_eq!(form["command_id"], "calibrate");
-    }
-
-    #[test]
-    fn calibration_selection_preserves_field_and_spw_when_selectdata_false() {
-        let selection = selection_from_spec(&MsSelectionSpec {
-            selectdata: false,
-            field: Some("12".to_string()),
-            spw: Some("0:82~89".to_string()),
-            scan: Some("9".to_string()),
-            ..MsSelectionSpec::default()
-        })
-        .expect("build selection");
-
-        let taql = selection.to_taql();
-        assert!(taql.contains("FIELD_ID IN [12]"), "{taql}");
-        assert!(taql.contains("DATA_DESC_ID IN [0]"), "{taql}");
-        assert!(!taql.contains("SCAN_NUMBER"), "{taql}");
-        assert!(selection.channel_selection_for_spw(0).is_some());
     }
 }

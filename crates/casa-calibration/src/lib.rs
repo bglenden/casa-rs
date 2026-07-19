@@ -33,14 +33,16 @@ mod managed_output;
 mod model;
 mod plan;
 mod plots;
+mod session;
 mod solve;
 mod stats;
 mod summary;
 mod task_contract;
+mod writer;
 
 pub use bandpass::{
     BandpassSolveCombine, BandpassSolveError, BandpassSolveReport, BandpassSolveRequest,
-    BandpassType, solve_bandpass, solve_bandpass_from_path,
+    BandpassType,
 };
 pub use callib::{CallibError, load_apply_specs_from_callib, save_apply_specs_to_callib};
 pub use cli::{command_schema, run_env};
@@ -77,9 +79,13 @@ pub use plots::{
     CalibrationPlotError, CalibrationPlotPreset, CalibrationPlotRequest,
     build_calibration_plot_payload,
 };
+pub use session::{
+    CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
+    solve_calibration,
+};
 pub use solve::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainSolveReport, GainSolveRequest, GainType, RefAntSelector, solve_gain, solve_gain_from_path,
+    GainSolveReport, GainSolveRequest, GainType, RefAntSelector,
 };
 pub use stats::{
     CalibrationIndexedStats, CalibrationStatsAxis, CalibrationStatsError, CalibrationStatsReport,
@@ -93,3 +99,4 @@ pub use task_contract::{
     StatsTaskRequest, SummaryTaskRequest, calibration_protocol_descriptor,
     calibration_task_schema_bundle,
 };
+pub use writer::CalibrationTableWriteError;

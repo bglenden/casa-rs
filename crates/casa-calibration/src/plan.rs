@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::model::CalibrationTableSummary;
+use crate::session::resolve_calibration_selection;
 use crate::summary::{CalibrationTableError, summarize_table};
 
 /// Calibration-application mode planned for the executor.
@@ -443,10 +444,15 @@ pub fn plan_apply_with_timings(
     };
 
     let selection_started_at = Instant::now();
-    let selected_row_indices = request
-        .selection
-        .apply(ms)
-        .map_err(|source| ApplyPlanError::Selection { source })?;
+    let selected_row_indices = resolve_calibration_selection(ms, &request.selection)
+        .map_err(|error| ApplyPlanError::Selection {
+            source: match error {
+                casa_ms::MsSelectionError::Domain(source) => source,
+                other => MsError::InvalidInput(other.to_string()),
+            },
+        })?
+        .row_indices()
+        .collect::<Vec<_>>();
     let selection_ns = selection_started_at.elapsed().as_nanos() as u64;
 
     let selected_rows_started_at = Instant::now();

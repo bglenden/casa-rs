@@ -3,12 +3,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
-use casa_tables::{ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema};
+use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use schemars::JsonSchema;
@@ -18,10 +17,9 @@ use thiserror::Error;
 use crate::constants::{
     COL_ANTENNA1, COL_ANTENNA2, COL_FIELD_ID, COL_FLAG, COL_FPARAM, COL_INTERVAL,
     COL_OBSERVATION_ID, COL_PARAMERR, COL_SCAN_NUMBER, COL_SNR, COL_SPECTRAL_WINDOW_ID, COL_TIME,
-    COL_WEIGHT, KEY_CASA_VERSION, KEY_MS_NAME, KEY_PAR_TYPE, KEY_POL_BASIS, KEY_VIS_CAL,
-    STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE,
+    COL_WEIGHT,
 };
-use crate::solve::writer::{set_fixed_unit_keyword, set_measinfo_keyword, subtable_keyword_value};
+use crate::writer::{CalibrationTableDescriptor, CalibrationTableWriter};
 
 const COL_BFREQ: &str = "BFREQ";
 const COL_EFREQ: &str = "EFREQ";
@@ -114,6 +112,9 @@ pub struct GencalReport {
 /// Errors from native prior-cal table generation.
 #[derive(Debug, Error)]
 pub enum GencalError {
+    /// Shared calibration-table persistence failed.
+    #[error(transparent)]
+    CalibrationTable(#[from] crate::CalibrationTableWriteError),
     /// Opening the input MS failed.
     #[error("failed to open measurement set {path}: {source}")]
     OpenMeasurementSet {
@@ -322,7 +323,6 @@ fn write_float_caltable(
     request: &GencalRequest,
     rows: &[PriorCalRow],
 ) -> Result<GencalReport, GencalError> {
-    prepare_output_root(&request.output_table)?;
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
         ColumnSchema::scalar(COL_FIELD_ID, casa_types::PrimitiveType::Int32),
@@ -340,99 +340,64 @@ fn write_float_caltable(
     ])
     .expect("valid gencal caltable schema");
     let subtype = request.caltype.table_subtype();
-    let mut table = Table::with_schema(schema);
-    table.set_info(TableInfo {
-        table_type: TABLE_INFO_TYPE.to_string(),
-        sub_type: subtype.to_string(),
-        readme: Vec::new(),
-    });
-    table.keywords_mut().upsert(
-        KEY_PAR_TYPE,
-        Value::Scalar(ScalarValue::String("Float".to_string())),
-    );
-    table.keywords_mut().upsert(
-        KEY_VIS_CAL,
-        Value::Scalar(ScalarValue::String(subtype.to_string())),
-    );
-    table.keywords_mut().upsert(
-        KEY_MS_NAME,
-        Value::Scalar(ScalarValue::String(
-            ms.path()
+    let mut writer = CalibrationTableWriter::create(
+        ms,
+        CalibrationTableDescriptor {
+            output: &request.output_table,
+            schema,
+            subtype,
+            parameter_type: Some("Float"),
+            measurement_set_name: ms
+                .path()
                 .and_then(Path::file_name)
                 .map(|name| name.to_string_lossy().to_string())
                 .unwrap_or_else(|| "<in-memory>".to_string()),
-        )),
-    );
-    table.keywords_mut().upsert(
-        KEY_POL_BASIS,
-        Value::Scalar(ScalarValue::String("unknown".to_string())),
-    );
-    table.keywords_mut().upsert(
-        KEY_CASA_VERSION,
-        Value::Scalar(ScalarValue::String("casa-rs".to_string())),
-    );
-    set_fixed_unit_keyword(&mut table, COL_TIME, &["s"]);
-    set_measinfo_keyword(&mut table, COL_TIME, "epoch", Some("UTC"));
-    set_fixed_unit_keyword(&mut table, COL_INTERVAL, &["s"]);
-    for name in STANDARD_SUBTABLE_KEYWORDS {
-        table.keywords_mut().upsert(
-            *name,
-            Value::table_ref(subtable_keyword_value(
-                &request.output_table,
-                &request.output_table.join(name),
-            )),
-        );
-    }
+            include_polarization_basis: true,
+            time_extra_precision_column: None,
+        },
+    )?;
 
     for row in rows {
         let len = row.fparam.len();
         let zeros = vec![0.0_f32; len];
         let flags = vec![false; len];
         let snr = vec![row.snr_value; len];
-        table
-            .add_row(RecordValue::new(vec![
-                RecordField::new(COL_TIME, Value::Scalar(ScalarValue::Float64(0.0))),
-                RecordField::new(
-                    COL_FIELD_ID,
-                    Value::Scalar(ScalarValue::Int32(row.field_id)),
-                ),
-                RecordField::new(
-                    COL_SPECTRAL_WINDOW_ID,
-                    Value::Scalar(ScalarValue::Int32(row.spw_id)),
-                ),
-                RecordField::new(
-                    COL_ANTENNA1,
-                    Value::Scalar(ScalarValue::Int32(row.antenna_id)),
-                ),
-                RecordField::new(COL_ANTENNA2, Value::Scalar(ScalarValue::Int32(-1))),
-                RecordField::new(COL_INTERVAL, Value::Scalar(ScalarValue::Float64(0.0))),
-                RecordField::new(COL_SCAN_NUMBER, Value::Scalar(ScalarValue::Int32(-1))),
-                RecordField::new(
-                    COL_OBSERVATION_ID,
-                    Value::Scalar(ScalarValue::Int32(row.observation_id)),
-                ),
-                RecordField::new(COL_FPARAM, Value::Array(f32_column(&row.fparam))),
-                RecordField::new(COL_PARAMERR, Value::Array(f32_column(&zeros))),
-                RecordField::new(COL_FLAG, Value::Array(bool_column(&flags))),
-                RecordField::new(COL_SNR, Value::Array(f32_column(&snr))),
-                RecordField::new(COL_WEIGHT, Value::Array(f32_column(&zeros))),
-            ]))
-            .map_err(|source| GencalError::Save {
-                path: request.output_table.display().to_string(),
-                source: Box::new(source),
-            })?;
+        writer.append(RecordValue::new(vec![
+            RecordField::new(COL_TIME, Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new(
+                COL_FIELD_ID,
+                Value::Scalar(ScalarValue::Int32(row.field_id)),
+            ),
+            RecordField::new(
+                COL_SPECTRAL_WINDOW_ID,
+                Value::Scalar(ScalarValue::Int32(row.spw_id)),
+            ),
+            RecordField::new(
+                COL_ANTENNA1,
+                Value::Scalar(ScalarValue::Int32(row.antenna_id)),
+            ),
+            RecordField::new(COL_ANTENNA2, Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new(COL_INTERVAL, Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new(COL_SCAN_NUMBER, Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new(
+                COL_OBSERVATION_ID,
+                Value::Scalar(ScalarValue::Int32(row.observation_id)),
+            ),
+            RecordField::new(COL_FPARAM, Value::Array(f32_column(&row.fparam))),
+            RecordField::new(COL_PARAMERR, Value::Array(f32_column(&zeros))),
+            RecordField::new(COL_FLAG, Value::Array(bool_column(&flags))),
+            RecordField::new(COL_SNR, Value::Array(f32_column(&snr))),
+            RecordField::new(COL_WEIGHT, Value::Array(f32_column(&zeros))),
+        ]))?;
     }
 
-    table
-        .save(
-            TableOptions::new(&request.output_table)
-                .with_data_manager(DataManagerKind::StandardStMan),
-        )
-        .map_err(|source| GencalError::Save {
-            path: request.output_table.display().to_string(),
-            source: Box::new(source),
-        })?;
-    copy_standard_subtables(ms, &request.output_table)?;
+    writer.finish(&[
+        (SubtableId::Observation, "OBSERVATION"),
+        (SubtableId::Antenna, "ANTENNA"),
+        (SubtableId::Field, "FIELD"),
+        (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
+        (SubtableId::History, "HISTORY"),
+    ])?;
 
     let spectral_window_ids = rows
         .iter()
@@ -833,45 +798,6 @@ fn bool_column(values: &[bool]) -> ArrayValue {
         ArrayD::from_shape_vec(IxDyn(&[values.len(), 1]).f(), values.to_vec())
             .expect("flag gencal vector should reshape to receptor x channel"),
     )
-}
-
-fn prepare_output_root(path: &Path) -> Result<(), GencalError> {
-    if path.exists() {
-        fs::remove_dir_all(path)
-            .or_else(|_| fs::remove_file(path))
-            .map_err(|error| GencalError::PrepareOutput {
-                path: path.display().to_string(),
-                reason: error.to_string(),
-            })?;
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| GencalError::PrepareOutput {
-            path: path.display().to_string(),
-            reason: error.to_string(),
-        })?;
-    }
-    Ok(())
-}
-
-fn copy_standard_subtables(ms: &MeasurementSet, output_root: &Path) -> Result<(), GencalError> {
-    for (id, name) in [
-        (SubtableId::Observation, "OBSERVATION"),
-        (SubtableId::Antenna, "ANTENNA"),
-        (SubtableId::Field, "FIELD"),
-        (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
-        (SubtableId::History, "HISTORY"),
-    ] {
-        if let Some(table) = ms.subtable(id) {
-            table
-                .save(TableOptions::new(output_root.join(name)))
-                .map_err(|source| GencalError::CopySubtable {
-                    subtable: name.to_string(),
-                    path: output_root.display().to_string(),
-                    source: Box::new(source),
-                })?;
-        }
-    }
-    Ok(())
 }
 
 fn default_vla_gaincurve_table() -> Option<PathBuf> {

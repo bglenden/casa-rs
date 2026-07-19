@@ -147,6 +147,39 @@ impl Table {
         })
     }
 
+    /// Clone a persisted table descriptor for bounded construction of a new
+    /// table with an explicit row count and externally supplied columns.
+    ///
+    /// No source rows or empty per-row records are retained. Callers must
+    /// provide an override for every output column before saving.
+    #[doc(hidden)]
+    pub fn open_metadata_for_construction(
+        options: TableOptions,
+        row_count: usize,
+    ) -> Result<Self, TableError> {
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
+        let storage = CompositeStorage;
+        let snapshot = storage.load_metadata_only(&options.path)?;
+        Ok(Self {
+            inner: TableImpl::with_unloaded_rows_keywords_and_schema(
+                row_count,
+                snapshot.keywords,
+                snapshot.column_keywords,
+                snapshot.schema,
+            ),
+            source_path: None,
+            kind: TableKind::Plain,
+            virtual_columns: snapshot.virtual_columns,
+            virtual_bindings: Vec::new(),
+            table_info: snapshot.table_info,
+            dm_info: snapshot.dm_info,
+            external_sync: None,
+            marked_for_delete: false,
+            #[cfg(unix)]
+            lock_state: None,
+        })
+    }
+
     /// Saves the table to disk.
     ///
     /// Validates the table against its schema (if any), then writes all rows,
@@ -619,24 +652,69 @@ impl Table {
                     }
                 }
                 "StandardStMan" => {
-                    let rows = build_group_rows_from_current_cells(
-                        self,
-                        self.row_count(),
-                        &group_col_descs,
-                    )?;
-                    let dm_data = crate::storage::standard_stman::write_ssm_file(
-                        &data_path,
-                        &group_col_descs,
-                        &rows,
-                        table_dat.big_endian,
-                    )?;
-                    if let Some(entry) = table_dat
-                        .column_set
-                        .data_managers
-                        .iter_mut()
-                        .find(|entry| entry.seq_nr == group.seq_nr)
-                    {
-                        entry.data = dm_data;
+                    let group_changed_columns: std::collections::HashSet<&str> = group_col_descs
+                        .iter()
+                        .filter_map(|desc| {
+                            changed_set
+                                .contains(desc.col_name.as_str())
+                                .then_some(desc.col_name.as_str())
+                        })
+                        .collect();
+                    let sparse_saved = if let Some(rows) = changed_rows.as_ref() {
+                        if let Some(sparse_group_columns) =
+                            collect_sparse_scalar_group_values_from_current_cells(
+                                self,
+                                rows,
+                                &group_col_descs,
+                                &group_changed_columns,
+                            )?
+                        {
+                            let dm_data = table_dat
+                                .column_set
+                                .data_managers
+                                .iter()
+                                .find(|entry| entry.seq_nr == group.seq_nr)
+                                .map(|entry| entry.data.clone())
+                                .ok_or_else(|| {
+                                    TableError::Storage(format!(
+                                        "StandardStMan group {} is missing data-manager metadata",
+                                        group.seq_nr
+                                    ))
+                                })?;
+                            crate::storage::standard_stman::save_ssm_file_scalar_columns_sparse_rows_in_place(
+                                &data_path,
+                                &dm_data,
+                                &group_col_descs,
+                                &sparse_group_columns,
+                                rows,
+                                table_dat.big_endian,
+                            )?
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if !sparse_saved {
+                        let rows = build_group_rows_from_current_cells(
+                            self,
+                            self.row_count(),
+                            &group_col_descs,
+                        )?;
+                        let dm_data = crate::storage::standard_stman::write_ssm_file(
+                            &data_path,
+                            &group_col_descs,
+                            &rows,
+                            table_dat.big_endian,
+                        )?;
+                        if let Some(entry) = table_dat
+                            .column_set
+                            .data_managers
+                            .iter_mut()
+                            .find(|entry| entry.seq_nr == group.seq_nr)
+                        {
+                            entry.data = dm_data;
+                        }
                     }
                 }
                 "IncrementalStMan" => {
@@ -841,6 +919,17 @@ impl Table {
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(source_path);
         Ok(())
+    }
+
+    /// Drop successfully persisted lazy cell updates for a bounded write batch.
+    ///
+    /// This construction API does not alter on-disk data. It releases the
+    /// pending values that were just saved by
+    /// [`Self::save_selected_rows_in_place_assuming_valid`] so a long mutation
+    /// does not retain every completed batch.
+    #[doc(hidden)]
+    pub fn discard_persisted_cell_updates(&mut self, columns: &[&str], rows: &[usize]) {
+        self.inner.discard_pending_cell_updates(columns, rows);
     }
 
     /// Persists a newly-added array column by cloning an existing single-column
@@ -1110,34 +1199,48 @@ impl Table {
                 .map(|dm| dm.seq_nr)
                 .max()
                 .map_or(0, |seq| seq + 1);
-            let mut value_storage = vec![None; self.row_count()];
-            if let Some(pending_values) = self.inner.pending_array_cells(column) {
-                for (row_idx, value) in pending_values {
-                    if *row_idx < value_storage.len() {
-                        value_storage[*row_idx] = Some(Value::Array(value.clone()));
+            let pending_values = self.inner.pending_array_cells(column);
+            if changed_rows.is_empty() && pending_values.is_none_or(|values| values.is_empty()) {
+                crate::storage::tiled_stman::save_empty_tiled_shape_column(
+                    &source_path,
+                    seq_nr,
+                    &desc,
+                    self.row_count(),
+                    table_dat.big_endian,
+                    tile_shape,
+                    column,
+                )?;
+            } else {
+                let mut value_storage = vec![None; self.row_count()];
+                if let Some(pending_values) = pending_values {
+                    for (row_idx, value) in pending_values {
+                        if *row_idx < value_storage.len() {
+                            value_storage[*row_idx] = Some(Value::Array(value.clone()));
+                        }
                     }
                 }
-            }
-            for &row_idx in changed_rows {
-                if row_idx >= value_storage.len() || value_storage[row_idx].is_some() {
-                    continue;
+                for &row_idx in changed_rows {
+                    if row_idx >= value_storage.len() || value_storage[row_idx].is_some() {
+                        continue;
+                    }
+                    value_storage[row_idx] = current_value_for_column(self, row_idx, &desc)?;
                 }
-                value_storage[row_idx] = current_value_for_column(self, row_idx, &desc)?;
-            }
-            let values: Vec<Option<&Value>> = value_storage.iter().map(Option::as_ref).collect();
+                let values: Vec<Option<&Value>> =
+                    value_storage.iter().map(Option::as_ref).collect();
 
-            crate::storage::tiled_stman::save_tiled_single_column_values(
-                &source_path,
-                seq_nr,
-                &desc,
-                &values,
-                crate::storage::tiled_stman::SingleColumnTiledSaveOptions {
-                    dm_type_name: "TiledShapeStMan",
-                    big_endian: table_dat.big_endian,
-                    default_tile_shape: tile_shape,
-                    dm_name: column,
-                },
-            )?;
+                crate::storage::tiled_stman::save_tiled_single_column_values(
+                    &source_path,
+                    seq_nr,
+                    &desc,
+                    &values,
+                    crate::storage::tiled_stman::SingleColumnTiledSaveOptions {
+                        dm_type_name: "TiledShapeStMan",
+                        big_endian: table_dat.big_endian,
+                        default_tile_shape: tile_shape,
+                        dm_name: column,
+                    },
+                )?;
+            }
 
             table_dat.table_desc.columns.push(desc);
             table_dat

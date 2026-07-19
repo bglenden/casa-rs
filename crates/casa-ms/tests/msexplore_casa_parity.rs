@@ -10,7 +10,7 @@ use std::sync::{Mutex, OnceLock};
 use casa_ms::{
     DEFAULT_MAX_PLOT_POINTS, MeasurementSet, MsAxis, MsExploreSpec, MsFlagAction, MsFlagEditSpec,
     MsFlagRegion, MsIterationAxis, MsPageExportRange, MsPlotPayload, MsPlotPreset, MsPlotSpec,
-    MsSelectionSpec, apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request,
+    MsSelection, apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request,
     build_msexplore_plot_payload, preview_msexplore_flag_edit,
     preview_msexplore_flag_edit_for_request,
 };
@@ -421,7 +421,7 @@ fn amplitude_and_phase_vs_time_png_export_tracks_casa_dual_axis_ranges() {
     let ms = MeasurementSet::open(&ms_path).expect("open shared ngc5921.ms");
     let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
     spec.y_axes.push(MsAxis::Phase);
-    let selection = MsSelectionSpec {
+    let selection = MsSelection {
         field: Some("0".to_string()),
         spw: Some("0".to_string()),
         scan: Some("1".to_string()),
@@ -1489,7 +1489,7 @@ fn flag_edit_single_sample_matches_casa_table_writeback_and_post_edit_plot() {
     copy_measurement_set(&source, &rust_copy).expect("copy rust ms");
     copy_measurement_set(&source, &casa_copy).expect("copy casa ms");
 
-    let selection = MsSelectionSpec {
+    let selection = MsSelection {
         field: Some("0".to_string()),
         spw: Some("0".to_string()),
         scan: Some("1".to_string()),
@@ -1573,7 +1573,7 @@ fn flag_edit_extcorr_extchannel_matches_casa_table_writeback_and_post_edit_plot(
     copy_measurement_set(&source, &rust_copy).expect("copy rust ms");
     copy_measurement_set(&source, &casa_copy).expect("copy casa ms");
 
-    let selection = MsSelectionSpec {
+    let selection = MsSelection {
         field: Some("0".to_string()),
         spw: Some("0".to_string()),
         scan: Some("1".to_string()),
@@ -1659,7 +1659,7 @@ fn flag_edit_iterated_scan_panel_matches_casa_table_writeback_and_post_edit_plot
     copy_measurement_set(&source, &rust_copy).expect("copy rust ms");
     copy_measurement_set(&source, &casa_copy).expect("copy casa ms");
 
-    let selection = MsSelectionSpec {
+    let selection = MsSelection {
         field: Some("0".to_string()),
         spw: Some("0".to_string()),
         ..Default::default()
@@ -1753,7 +1753,7 @@ fn flag_edit_stacked_page_plot_index_matches_casa_table_writeback_and_post_edit_
     copy_measurement_set(&source, &rust_copy).expect("copy rust ms");
     copy_measurement_set(&source, &casa_copy).expect("copy casa ms");
 
-    let selection = MsSelectionSpec {
+    let selection = MsSelection {
         field: Some("0".to_string()),
         spw: Some("0".to_string()),
         scan: Some("1".to_string()),
@@ -2184,7 +2184,7 @@ fn copy_measurement_set(source: &Path, destination: &Path) -> Result<(), String>
 
 fn first_point_region(
     ms_path: &Path,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     preset: MsPlotPreset,
 ) -> Result<MsFlagRegion, String> {
     let ms = MeasurementSet::open(ms_path).map_err(|error| format!("open source ms: {error}"))?;
@@ -2209,7 +2209,7 @@ fn first_point_region(
 
 fn first_iterated_panel_point_region(
     ms_path: &Path,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     preset: MsPlotPreset,
     iteraxis: MsIterationAxis,
     panel_key: &str,

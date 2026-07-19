@@ -13,8 +13,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use casa_tables::{ColumnOverrides, ColumnType, Table, TableError, TableOptions};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_tables::{
+    ColumnOverrides, ColumnType, StreamedScalarType, StreamedTiledShapeValueType, Table,
+    TableError, TableOptions,
+};
+use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder, Slice};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -25,8 +28,13 @@ use crate::ms::MeasurementSet;
 use crate::ms::{measurement_set_main_table_bindings, measurement_set_table_options};
 use crate::schema::SubtableId;
 use crate::schema::main_table::VisibilityDataColumn;
-use crate::selection::MsSelection;
-use crate::selection_syntax::{ChannelSelection, parse_spw_selector};
+use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
+use crate::selection::{MsSelection, resolve_row_indices_with_system_budget};
+use crate::write_session::{
+    MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
+    MeasurementSetCreateTarget, MeasurementSetScalarColumnPlan, MeasurementSetWritePlan,
+    MeasurementSetWriteResources, MeasurementSetWriteSession, MeasurementSetWriteTelemetry,
+};
 
 /// Input visibility column to materialize as output `DATA`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -93,6 +101,8 @@ pub struct MsTransformReport {
     pub width: usize,
     /// End-to-end runtime in nanoseconds.
     pub elapsed_ns: u64,
+    /// Canonical bounded-writer telemetry for the output MAIN table.
+    pub write_telemetry: MeasurementSetWriteTelemetry,
 }
 
 /// Errors returned by [`mstransform`].
@@ -187,10 +197,45 @@ pub enum MsTransformError {
         #[source]
         source: MsError,
     },
+
+    /// Bounded MAIN-column planning or execution failed.
+    #[error("failed to write transformed MeasurementSet {path}: {reason}")]
+    WriteMeasurementSet {
+        /// Output MeasurementSet path.
+        path: String,
+        /// Physical planning or write failure.
+        reason: String,
+    },
 }
 
 /// Materialize a selected/channel-subset MeasurementSet.
 pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, MsTransformError> {
+    if request.input_ms == request.output_ms {
+        return Err(MsTransformError::SameInputOutput {
+            path: request.input_ms.display().to_string(),
+        });
+    }
+    let target =
+        MeasurementSetCreateTarget::prepare(&request.output_ms, true).map_err(|error| {
+            MsTransformError::PrepareOutput {
+                path: request.output_ms.display().to_string(),
+                reason: error.to_string(),
+            }
+        })?;
+    let mut physical_request = request.clone();
+    physical_request.output_ms = target.staging_path().to_path_buf();
+    let mut report = mstransform_staged(&physical_request)?;
+    target
+        .commit()
+        .map_err(|error| MsTransformError::PrepareOutput {
+            path: request.output_ms.display().to_string(),
+            reason: error.to_string(),
+        })?;
+    report.output_ms = request.output_ms.clone();
+    Ok(report)
+}
+
+fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport, MsTransformError> {
     let started_at = Instant::now();
     tracing::info!(
         input_ms = %request.input_ms.display(),
@@ -199,12 +244,6 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         width = request.width,
         "mstransform started"
     );
-    if request.input_ms == request.output_ms {
-        return Err(MsTransformError::SameInputOutput {
-            path: request.input_ms.display().to_string(),
-        });
-    }
-
     let stage_started_at = Instant::now();
     let input = MeasurementSet::open(&request.input_ms).map_err(|source| {
         MsTransformError::OpenMeasurementSet {
@@ -229,14 +268,11 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         });
     }
     let stage_started_at = Instant::now();
-    let mut selected_rows =
-        request
-            .selection
-            .apply(&input)
-            .map_err(|source| MsTransformError::SelectRows {
-                path: request.input_ms.display().to_string(),
-                source,
-            })?;
+    let mut selected_rows = resolve_row_indices_with_system_budget(&input, &request.selection)
+        .map_err(|source| MsTransformError::SelectRows {
+            path: request.input_ms.display().to_string(),
+            source,
+        })?;
     maybe_log_transform_progress(
         "select_rows",
         stage_started_at.elapsed(),
@@ -410,123 +446,253 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         started_at.elapsed(),
     );
 
-    let row_indices = (0..selected_rows.len()).collect::<Vec<_>>();
+    let row_count = selected_rows.len();
+    let write_resources = MeasurementSetWriteResources::from_system_memory(2).map_err(|error| {
+        MsTransformError::WriteMeasurementSet {
+            path: request.output_ms.display().to_string(),
+            reason: error.to_string(),
+        }
+    })?;
+    let write_plan = transform_array_write_plan(
+        &input,
+        &selected_rows,
+        &selected_ddids,
+        &ddid_to_spw,
+        &channel_bins,
+        write_resources,
+    )?;
+    let batch_rows = write_plan.batch_rows();
+    let mut write_session = MeasurementSetWriteSession::start(&request.output_ms, write_plan)
+        .map_err(|error| MsTransformError::WriteMeasurementSet {
+            path: request.output_ms.display().to_string(),
+            reason: error.to_string(),
+        })?;
     let stage_started_at = Instant::now();
     let mut output_column_overrides = gather_selected_main_column_overrides(
         input.main_table(),
         &selected_rows,
         &request.output_ms,
+        batch_rows,
+        &mut write_session,
     )?;
     maybe_log_transform_progress(
         "load_main_column_overrides",
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );
-    let stage_started_at = Instant::now();
-    let source_values = input
-        .main_table()
-        .column_accessor(source_column)
-        .and_then(|column| column.array_cells_owned(&selected_rows))
-        .map_err(|source| MsTransformError::MutateMeasurementSet {
-            path: request.output_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
-    let flag_values = input
-        .main_table()
-        .column_accessor("FLAG")
-        .and_then(|column| column.array_cells_owned(&selected_rows))
-        .map_err(|source| MsTransformError::MutateMeasurementSet {
-            path: request.output_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
-    let weight_spectrum_values = if input
-        .main_table()
-        .schema()
-        .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"))
-    {
-        Some(
-            input
-                .main_table()
-                .column_accessor("WEIGHT_SPECTRUM")
-                .and_then(|column| column.array_cells_owned(&selected_rows))
-                .map_err(|source| MsTransformError::MutateMeasurementSet {
-                    path: request.output_ms.display().to_string(),
-                    source: Box::new(source),
-                })?,
-        )
-    } else {
-        None
-    };
-    maybe_log_transform_progress(
-        "load_visibility_columns",
-        stage_started_at.elapsed(),
-        started_at.elapsed(),
-    );
-
+    let spectrum_columns = spectrum_column_names(input.main_table());
     let stage_started_at = Instant::now();
     let mut touched_spws = BTreeSet::new();
-    let mut transformed_data = Vec::with_capacity(row_indices.len());
-    let mut transformed_flags = Vec::with_capacity(row_indices.len());
-    let mut transformed_weight_spectrum = weight_spectrum_values
-        .as_ref()
-        .map(|_| Vec::with_capacity(row_indices.len()));
-    let mut weight_spectrum_values = weight_spectrum_values.map(Vec::into_iter);
-    for (((row_index, data), flags), ddid) in row_indices
-        .iter()
-        .copied()
-        .zip(source_values)
-        .zip(flag_values)
-        .zip(selected_ddids)
-    {
-        let data =
-            data.ok_or_else(|| missing_column_error(&request.output_ms, row_index, source_column))?;
-        let flags =
-            flags.ok_or_else(|| missing_column_error(&request.output_ms, row_index, "FLAG"))?;
-        let spw_id = ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
-            MsTransformError::SpectralMetadata {
+    for batch_start in (0..row_count).step_by(batch_rows.max(1)) {
+        let batch_end = (batch_start + batch_rows.max(1)).min(row_count);
+        let input_rows = &selected_rows[batch_start..batch_end];
+        let source_values = input
+            .main_table()
+            .column_accessor(source_column)
+            .and_then(|column| column.array_cells_owned(input_rows))
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
-                reason: format!("MAIN row {row_index} references DATA_DESC_ID {ddid}, which has no DATA_DESCRIPTION row"),
-            }
-        })?;
-        let bins = channel_bins.get(&spw_id).ok_or_else(|| MsTransformError::InvalidSpw {
-            selector: request.spw.clone(),
-            reason: format!("selected row {row_index} maps to spectral window {spw_id}, but --spw does not include that SPW"),
-        })?;
-        transformed_data.push(
-            transform_data_channels(data, &flags, bins).map_err(|source| {
-                MsTransformError::MutateMeasurementSet {
+                source: Box::new(source),
+            })?;
+        let flag_values = input
+            .main_table()
+            .column_accessor("FLAG")
+            .and_then(|column| column.array_cells_owned(input_rows))
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+        let flag_category_values = input
+            .main_table()
+            .column_accessor("FLAG_CATEGORY")
+            .and_then(|column| column.array_cells_owned(input_rows))
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+        let uvw_values = input
+            .main_table()
+            .column_accessor("UVW")
+            .and_then(|column| column.array_cells_owned(input_rows))
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+        let weight_values = input
+            .main_table()
+            .column_accessor("WEIGHT")
+            .and_then(|column| column.array_cells_owned(input_rows))
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+        let sigma_values = input
+            .main_table()
+            .column_accessor("SIGMA")
+            .and_then(|column| column.array_cells_owned(input_rows))
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+        let mut spectrum_values = spectrum_columns
+            .iter()
+            .map(|&name| {
+                input
+                    .main_table()
+                    .column_accessor(name)
+                    .and_then(|column| column.array_cells_owned(input_rows))
+                    .map(|values| (name, values.into_iter()))
+                    .map_err(|source| MsTransformError::MutateMeasurementSet {
+                        path: request.output_ms.display().to_string(),
+                        source: Box::new(source),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut flag_category_values = flag_category_values.into_iter();
+        let mut uvw_values = uvw_values.into_iter();
+        let mut weight_values = weight_values.into_iter();
+        let mut sigma_values = sigma_values.into_iter();
+        for (batch_offset, ((data, flags), &ddid)) in source_values
+            .into_iter()
+            .zip(flag_values)
+            .zip(&selected_ddids[batch_start..batch_end])
+            .enumerate()
+        {
+            let row_index = batch_start + batch_offset;
+            let data = data.ok_or_else(|| {
+                missing_column_error(&request.output_ms, row_index, source_column)
+            })?;
+            let flags =
+                flags.ok_or_else(|| missing_column_error(&request.output_ms, row_index, "FLAG"))?;
+            let spw_id = ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
+                MsTransformError::SpectralMetadata {
                     path: request.output_ms.display().to_string(),
-                    source: Box::new(source),
+                    reason: format!("MAIN row {row_index} references DATA_DESC_ID {ddid}, which has no DATA_DESCRIPTION row"),
                 }
-            })?,
-        );
-        transformed_flags.push(
-            transform_flag_channels(flags.clone(), bins).map_err(|source| {
-                MsTransformError::MutateMeasurementSet {
-                    path: request.output_ms.display().to_string(),
-                    source: Box::new(source),
-                }
-            })?,
-        );
-        if let Some(values) = weight_spectrum_values.as_mut() {
-            let weight_spectrum = values.next().flatten();
-            if let Some(transformed) = transformed_weight_spectrum.as_mut() {
-                transformed.push(
-                    weight_spectrum
-                        .map(|value| {
-                            transform_weight_channels(value, &flags, bins).map_err(|source| {
-                                MsTransformError::MutateMeasurementSet {
-                                    path: request.output_ms.display().to_string(),
-                                    source: Box::new(source),
-                                }
-                            })
-                        })
-                        .transpose()?
-                        .map(Value::Array),
-                );
+            })?;
+            let bins = channel_bins.get(&spw_id).ok_or_else(|| MsTransformError::InvalidSpw {
+                selector: request.spw.clone(),
+                reason: format!("selected row {row_index} maps to spectral window {spw_id}, but --spw does not include that SPW"),
+            })?;
+            let transformed_data =
+                transform_data_channels(data, &flags, bins).map_err(|source| {
+                    MsTransformError::MutateMeasurementSet {
+                        path: request.output_ms.display().to_string(),
+                        source: Box::new(source),
+                    }
+                })?;
+            let transformed_flags =
+                transform_flag_channels(flags.clone(), bins).map_err(|source| {
+                    MsTransformError::MutateMeasurementSet {
+                        path: request.output_ms.display().to_string(),
+                        source: Box::new(source),
+                    }
+                })?;
+            push_complex32_array_row(
+                &mut write_session,
+                VisibilityDataColumn::Data.name(),
+                &transformed_data,
+                &request.output_ms,
+                row_index,
+            )?;
+            push_bool_array_row(
+                &mut write_session,
+                "FLAG",
+                &transformed_flags,
+                &request.output_ms,
+                row_index,
+            )?;
+            if let Some(flag_category) = flag_category_values
+                .next()
+                .flatten()
+                .filter(|value| !value.is_empty())
+            {
+                let transformed =
+                    transform_flag_category_channels(flag_category, bins).map_err(|source| {
+                        MsTransformError::MutateMeasurementSet {
+                            path: request.output_ms.display().to_string(),
+                            source: Box::new(source),
+                        }
+                    })?;
+                push_bool_array_row(
+                    &mut write_session,
+                    "FLAG_CATEGORY",
+                    &transformed,
+                    &request.output_ms,
+                    row_index,
+                )?;
+            } else {
+                write_session
+                    .push_undefined_row("FLAG_CATEGORY")
+                    .map_err(|error| MsTransformError::WriteMeasurementSet {
+                        path: request.output_ms.display().to_string(),
+                        reason: error.to_string(),
+                    })?;
             }
+            let uvw = uvw_values
+                .next()
+                .flatten()
+                .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "UVW"))?;
+            push_f64_array_row(
+                &mut write_session,
+                "UVW",
+                &uvw,
+                &request.output_ms,
+                row_index,
+            )?;
+            let weight = weight_values
+                .next()
+                .flatten()
+                .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "WEIGHT"))?;
+            let sigma = sigma_values
+                .next()
+                .flatten()
+                .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "SIGMA"))?;
+            push_f32_array_row(
+                &mut write_session,
+                "WEIGHT",
+                &weight,
+                &request.output_ms,
+                row_index,
+            )?;
+            push_f32_array_row(
+                &mut write_session,
+                "SIGMA",
+                &sigma,
+                &request.output_ms,
+                row_index,
+            )?;
+            for (name, values) in &mut spectrum_values {
+                if let Some(value) = values.next().flatten().filter(|value| !value.is_empty()) {
+                    let transformed = if *name == "SIGMA_SPECTRUM" {
+                        transform_sigma_channels(value, &flags, bins)
+                    } else {
+                        transform_weight_channels(value, &flags, bins)
+                    }
+                    .map_err(|source| {
+                        MsTransformError::MutateMeasurementSet {
+                            path: request.output_ms.display().to_string(),
+                            source: Box::new(source),
+                        }
+                    })?;
+                    push_f32_array_row(
+                        &mut write_session,
+                        name,
+                        &transformed,
+                        &request.output_ms,
+                        row_index,
+                    )?;
+                } else {
+                    write_session.push_undefined_row(name).map_err(|error| {
+                        MsTransformError::WriteMeasurementSet {
+                            path: request.output_ms.display().to_string(),
+                            reason: error.to_string(),
+                        }
+                    })?;
+                }
+            }
+            touched_spws.insert(spw_id);
         }
-        touched_spws.insert(spw_id);
     }
     maybe_log_transform_progress(
         "select_channels",
@@ -535,72 +701,59 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     );
 
     let stage_started_at = Instant::now();
-    output_column_overrides.insert_values(
-        VisibilityDataColumn::Data.name().to_string(),
-        transformed_data
-            .into_iter()
-            .map(|value| Some(Value::Array(value)))
-            .collect(),
-    );
-    output_column_overrides.insert_values(
-        "FLAG".to_string(),
-        transformed_flags
-            .into_iter()
-            .map(|value| Some(Value::Array(value)))
-            .collect(),
-    );
-    if let Some(transformed_weight_spectrum) = transformed_weight_spectrum {
-        output_column_overrides.insert_values(
-            "WEIGHT_SPECTRUM".to_string(),
-            transformed_weight_spectrum.into_iter().collect(),
-        );
+    output_column_overrides.insert_deferred(VisibilityDataColumn::Data.name());
+    output_column_overrides.insert_deferred("FLAG");
+    output_column_overrides.insert_deferred("FLAG_CATEGORY");
+    output_column_overrides.insert_deferred("UVW");
+    output_column_overrides.insert_deferred("WEIGHT");
+    output_column_overrides.insert_deferred("SIGMA");
+    for name in spectrum_columns {
+        output_column_overrides.insert_deferred(name);
     }
-    output_column_overrides.insert_values(
-        "DATA_DESC_ID".to_string(),
-        selected_ddids_for_metadata
-            .iter()
-            .map(|ddid| {
-                compact_metadata
-                    .ddid_map
-                    .get(ddid)
-                    .copied()
-                    .ok_or_else(|| MsTransformError::SpectralMetadata {
-                        path: request.output_ms.display().to_string(),
-                        reason: format!(
-                            "selected DATA_DESC_ID {ddid} was not present in compacted metadata"
-                        ),
-                    })
-                    .map(|compact| Some(Value::Scalar(ScalarValue::Int32(compact))))
-            })
-            .collect::<Result<Vec<_>, _>>()?,
-    );
-    output_column_overrides.insert_values(
-        "FIELD_ID".to_string(),
-        selected_field_ids_for_metadata
-            .iter()
-            .map(|field_id| {
-                field_id_map
-                    .get(field_id)
-                    .copied()
-                    .ok_or_else(|| MsTransformError::SpectralMetadata {
-                        path: request.output_ms.display().to_string(),
-                        reason: format!(
-                            "selected FIELD_ID {field_id} was not present in compacted FIELD metadata"
-                        ),
-                    })
-                    .map(|compact| Some(Value::Scalar(ScalarValue::Int32(compact))))
-            })
-            .collect::<Result<Vec<_>, _>>()?,
-    );
-    output_main
-        .save_with_bindings_and_column_overrides_assuming_valid(
+    for ddid in &selected_ddids_for_metadata {
+        let compact = compact_metadata
+            .ddid_map
+            .get(ddid)
+            .copied()
+            .ok_or_else(|| MsTransformError::SpectralMetadata {
+                path: request.output_ms.display().to_string(),
+                reason: format!(
+                    "selected DATA_DESC_ID {ddid} was not present in compacted metadata"
+                ),
+            })?;
+        write_session
+            .push_scalar_row("DATA_DESC_ID", Some(ScalarValue::Int32(compact)))
+            .map_err(|error| MsTransformError::WriteMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                reason: error.to_string(),
+            })?;
+    }
+    for field_id in &selected_field_ids_for_metadata {
+        let compact = field_id_map.get(field_id).copied().ok_or_else(|| {
+            MsTransformError::SpectralMetadata {
+                path: request.output_ms.display().to_string(),
+                reason: format!(
+                    "selected FIELD_ID {field_id} was not present in compacted FIELD metadata"
+                ),
+            }
+        })?;
+        write_session
+            .push_scalar_row("FIELD_ID", Some(ScalarValue::Int32(compact)))
+            .map_err(|error| MsTransformError::WriteMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                reason: error.to_string(),
+            })?;
+    }
+    let write_telemetry = write_session
+        .save_table_and_finish(
+            &output_main,
             measurement_set_table_options(&request.output_ms),
             &measurement_set_main_table_bindings(&output_main),
             &output_column_overrides,
         )
-        .map_err(|source| MsTransformError::MutateMeasurementSet {
+        .map_err(|error| MsTransformError::WriteMeasurementSet {
             path: request.output_ms.display().to_string(),
-            source: Box::new(source),
+            reason: error.to_string(),
         })?;
     maybe_log_transform_progress(
         "save_output_main",
@@ -618,14 +771,16 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     tracing::info!(
         input_ms = %request.input_ms.display(),
         output_ms = %request.output_ms.display(),
-        rows = row_indices.len(),
+        rows = row_count,
+        write_bytes = write_telemetry.bytes_written,
+        write_peak_planned_resident_bytes = write_telemetry.maximum_resident_bytes,
         elapsed_ms = started_at.elapsed().as_millis() as u64,
         "mstransform completed"
     );
     Ok(MsTransformReport {
         input_ms: request.input_ms.clone(),
         output_ms: request.output_ms.clone(),
-        row_count: row_indices.len(),
+        row_count,
         source_column: source_column.to_string(),
         output_column: VisibilityDataColumn::Data.name().to_string(),
         spw: request.spw.clone(),
@@ -636,6 +791,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
             .collect(),
         width: normalized_width(request.width),
         elapsed_ns: started_at.elapsed().as_nanos() as u64,
+        write_telemetry,
     })
 }
 
@@ -654,29 +810,409 @@ fn maybe_log_transform_progress(stage: &str, stage_elapsed: Duration, total_elap
     }
 }
 
+fn transform_array_write_plan(
+    input: &MeasurementSet,
+    selected_rows: &[usize],
+    selected_ddids: &[i32],
+    ddid_to_spw: &BTreeMap<i32, i32>,
+    channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
+    resources: MeasurementSetWriteResources,
+) -> Result<MeasurementSetWritePlan, MsTransformError> {
+    let input_path = input.path().unwrap_or_else(|| Path::new("<memory>"));
+    let data_description =
+        input
+            .data_description()
+            .map_err(|error| MsTransformError::SpectralMetadata {
+                path: input_path.display().to_string(),
+                reason: format!("open DATA_DESCRIPTION: {error}"),
+            })?;
+    let polarization =
+        input
+            .polarization()
+            .map_err(|error| MsTransformError::SpectralMetadata {
+                path: input_path.display().to_string(),
+                reason: format!("open POLARIZATION: {error}"),
+            })?;
+    let mut correlation_count_by_ddid = BTreeMap::new();
+    let mut shape_counts = BTreeMap::<Vec<usize>, usize>::new();
+    let mut weight_shape_counts = BTreeMap::<Vec<usize>, usize>::new();
+    for &ddid in selected_ddids {
+        let ddid_row = usize::try_from(ddid).map_err(|_| MsTransformError::SpectralMetadata {
+            path: input_path.display().to_string(),
+            reason: format!("negative DATA_DESC_ID {ddid}"),
+        })?;
+        let correlation_count = if let Some(&count) = correlation_count_by_ddid.get(&ddid) {
+            count
+        } else {
+            let polarization_id = data_description
+                .polarization_id(ddid_row)
+                .map_err(|error| MsTransformError::SpectralMetadata {
+                    path: input_path.display().to_string(),
+                    reason: format!("read DATA_DESCRIPTION row {ddid}: {error}"),
+                })?;
+            let polarization_row = usize::try_from(polarization_id).map_err(|_| {
+                MsTransformError::SpectralMetadata {
+                    path: input_path.display().to_string(),
+                    reason: format!(
+                        "DATA_DESCRIPTION row {ddid} has negative POLARIZATION_ID {polarization_id}"
+                    ),
+                }
+            })?;
+            let count =
+                usize::try_from(polarization.num_corr(polarization_row).map_err(|error| {
+                    MsTransformError::SpectralMetadata {
+                        path: input_path.display().to_string(),
+                        reason: format!("read POLARIZATION row {polarization_id}: {error}"),
+                    }
+                })?)
+                .map_err(|_| MsTransformError::SpectralMetadata {
+                    path: input_path.display().to_string(),
+                    reason: format!("POLARIZATION row {polarization_id} has negative NUM_CORR"),
+                })?;
+            correlation_count_by_ddid.insert(ddid, count);
+            count
+        };
+        let spw =
+            ddid_to_spw
+                .get(&ddid)
+                .copied()
+                .ok_or_else(|| MsTransformError::SpectralMetadata {
+                    path: input_path.display().to_string(),
+                    reason: format!("DATA_DESC_ID {ddid} has no spectral-window mapping"),
+                })?;
+        let output_channels = channel_bins.get(&spw).map(Vec::len).ok_or_else(|| {
+            MsTransformError::SpectralMetadata {
+                path: input_path.display().to_string(),
+                reason: format!("spectral window {spw} has no output channel bins"),
+            }
+        })?;
+        *shape_counts
+            .entry(vec![correlation_count, output_channels])
+            .or_default() += 1;
+        *weight_shape_counts
+            .entry(vec![correlation_count])
+            .or_default() += 1;
+    }
+    let shapes = shape_counts
+        .into_iter()
+        .map(|(cell_shape, row_count)| MeasurementSetArrayShapePlan {
+            tile_shape: crate::ms::casa_visibility_tile_shape(cell_shape[0], cell_shape[1], ""),
+            cell_shape,
+            row_count,
+        })
+        .collect::<Vec<_>>();
+    let weight_shapes = weight_shape_counts
+        .into_iter()
+        .map(|(cell_shape, row_count)| {
+            let visibility_tile = crate::ms::casa_visibility_tile_shape(cell_shape[0], 1, "");
+            MeasurementSetArrayShapePlan {
+                tile_shape: crate::ms::casa_weight_tile_shape(&visibility_tile),
+                cell_shape,
+                row_count,
+            }
+        })
+        .collect::<Vec<_>>();
+    let (flag_category_correlation_count, flag_category_channel_count, category_count) =
+        transform_flag_category_shape(input, selected_rows)?;
+    let flag_category_shapes = if flag_category_channel_count == 1 {
+        vec![MeasurementSetArrayShapePlan {
+            cell_shape: vec![
+                flag_category_correlation_count,
+                flag_category_channel_count,
+                category_count,
+            ],
+            row_count: selected_ddids.len(),
+            tile_shape: vec![
+                flag_category_correlation_count,
+                flag_category_channel_count,
+                1,
+                shapes
+                    .first()
+                    .and_then(|shape| shape.tile_shape.last())
+                    .copied()
+                    .unwrap_or(1),
+            ],
+        }]
+    } else {
+        shapes
+            .iter()
+            .map(|shape| MeasurementSetArrayShapePlan {
+                tile_shape: vec![
+                    shape.tile_shape[0],
+                    shape.tile_shape[1],
+                    1,
+                    shape.tile_shape[2],
+                ],
+                cell_shape: vec![shape.cell_shape[0], shape.cell_shape[1], category_count],
+                row_count: shape.row_count,
+            })
+            .collect::<Vec<_>>()
+    };
+    let visibility_tile = shapes
+        .first()
+        .map(|shape| shape.tile_shape.clone())
+        .unwrap_or_else(|| crate::ms::casa_visibility_tile_shape(1, 1, ""));
+    let mut columns = vec![
+        MeasurementSetArrayColumnPlan {
+            name: VisibilityDataColumn::Data.name().to_string(),
+            value_type: StreamedTiledShapeValueType::Complex32,
+            shapes: shapes.clone(),
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "FLAG".to_string(),
+            value_type: StreamedTiledShapeValueType::Bool,
+            shapes: shapes.clone(),
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "FLAG_CATEGORY".to_string(),
+            value_type: StreamedTiledShapeValueType::Bool,
+            shapes: flag_category_shapes,
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "UVW".to_string(),
+            value_type: StreamedTiledShapeValueType::Float64,
+            shapes: vec![MeasurementSetArrayShapePlan {
+                cell_shape: vec![3],
+                row_count: selected_ddids.len(),
+                tile_shape: crate::ms::casa_uvw_tile_shape(&visibility_tile),
+            }],
+            storage_manager: MeasurementSetColumnStorage::TiledColumn,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "WEIGHT".to_string(),
+            value_type: StreamedTiledShapeValueType::Float32,
+            shapes: weight_shapes.clone(),
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "SIGMA".to_string(),
+            value_type: StreamedTiledShapeValueType::Float32,
+            shapes: weight_shapes,
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+    ];
+    for name in spectrum_column_names(input.main_table()) {
+        columns.push(MeasurementSetArrayColumnPlan {
+            name: name.to_string(),
+            value_type: StreamedTiledShapeValueType::Float32,
+            shapes: columns[0].shapes.clone(),
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        });
+    }
+    MeasurementSetWritePlan::variable_array_creation(
+        selected_ddids.len(),
+        columns,
+        transform_scalar_column_plans(input.main_table()),
+        resources,
+    )
+    .map_err(|error| MsTransformError::WriteMeasurementSet {
+        path: input_path.display().to_string(),
+        reason: error.to_string(),
+    })
+}
+
+fn spectrum_column_names(table: &Table) -> Vec<&'static str> {
+    let Some(schema) = table.schema() else {
+        return Vec::new();
+    };
+    [
+        "WEIGHT_SPECTRUM",
+        "SIGMA_SPECTRUM",
+        "CORRECTED_WEIGHT_SPECTRUM",
+    ]
+    .into_iter()
+    .filter(|name| schema.contains_column(name))
+    .collect()
+}
+
+fn transform_flag_category_shape(
+    input: &MeasurementSet,
+    selected_rows: &[usize],
+) -> Result<(usize, usize, usize), MsTransformError> {
+    let keyword_category_count = if let Some(Value::Array(categories)) = input
+        .main_table()
+        .column_keywords("FLAG_CATEGORY")
+        .and_then(|keywords| keywords.get("CATEGORY"))
+    {
+        categories.len()
+    } else {
+        0
+    };
+    for &row in selected_rows {
+        let value = input
+            .main_table()
+            .column_accessor("FLAG_CATEGORY")
+            .and_then(|column| column.array_cells_owned(&[row]))
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: input
+                    .path()
+                    .unwrap_or_else(|| Path::new("<memory>"))
+                    .display()
+                    .to_string(),
+                source: Box::new(source),
+            })?
+            .into_iter()
+            .next()
+            .flatten();
+        if let Some(value) = value
+            && value.ndim() == 3
+            && value.shape()[2] > 0
+        {
+            return Ok((value.shape()[0], value.shape()[1], value.shape()[2]));
+        }
+    }
+    Ok((1, 1, keyword_category_count.max(1)))
+}
+
+fn push_complex32_array_row(
+    session: &mut MeasurementSetWriteSession,
+    column: &str,
+    value: &ArrayValue,
+    output_path: &Path,
+    row: usize,
+) -> Result<(), MsTransformError> {
+    let ArrayValue::Complex32(array) = value else {
+        return Err(MsTransformError::WriteMeasurementSet {
+            path: output_path.display().to_string(),
+            reason: format!("{column} row {row} is not Complex32"),
+        });
+    };
+    if array.ndim() != 2 {
+        return Err(MsTransformError::WriteMeasurementSet {
+            path: output_path.display().to_string(),
+            reason: format!("{column} row {row} is not rank-2"),
+        });
+    }
+    let values = (0..array.shape()[1])
+        .flat_map(|channel| {
+            (0..array.shape()[0]).map(move |correlation| array[[correlation, channel]])
+        })
+        .collect::<Vec<_>>();
+    session
+        .push_complex32_row(column, array.shape(), &values)
+        .map_err(|error| MsTransformError::WriteMeasurementSet {
+            path: output_path.display().to_string(),
+            reason: error.to_string(),
+        })
+}
+
+fn push_bool_array_row(
+    session: &mut MeasurementSetWriteSession,
+    column: &str,
+    value: &ArrayValue,
+    output_path: &Path,
+    row: usize,
+) -> Result<(), MsTransformError> {
+    let ArrayValue::Bool(array) = value else {
+        return Err(MsTransformError::WriteMeasurementSet {
+            path: output_path.display().to_string(),
+            reason: format!("{column} row {row} is not Bool"),
+        });
+    };
+    let values = array.t().iter().copied().collect::<Vec<_>>();
+    session
+        .push_bool_row(column, array.shape(), &values)
+        .map_err(|error| MsTransformError::WriteMeasurementSet {
+            path: output_path.display().to_string(),
+            reason: error.to_string(),
+        })
+}
+
+fn push_f64_array_row(
+    session: &mut MeasurementSetWriteSession,
+    column: &str,
+    value: &ArrayValue,
+    output_path: &Path,
+    row: usize,
+) -> Result<(), MsTransformError> {
+    let ArrayValue::Float64(array) = value else {
+        return Err(MsTransformError::WriteMeasurementSet {
+            path: output_path.display().to_string(),
+            reason: format!("{column} row {row} is not Float64"),
+        });
+    };
+    let values = array.t().iter().copied().collect::<Vec<_>>();
+    session
+        .push_f64_row(column, array.shape(), &values)
+        .map_err(|error| MsTransformError::WriteMeasurementSet {
+            path: output_path.display().to_string(),
+            reason: error.to_string(),
+        })
+}
+
+fn push_f32_array_row(
+    session: &mut MeasurementSetWriteSession,
+    column: &str,
+    value: &ArrayValue,
+    output_path: &Path,
+    row: usize,
+) -> Result<(), MsTransformError> {
+    let ArrayValue::Float32(array) = value else {
+        return Err(MsTransformError::WriteMeasurementSet {
+            path: output_path.display().to_string(),
+            reason: format!("{column} row {row} is not Float32"),
+        });
+    };
+    let values = match array.ndim() {
+        1 => array.iter().copied().collect::<Vec<_>>(),
+        2 => (0..array.shape()[1])
+            .flat_map(|axis1| (0..array.shape()[0]).map(move |axis0| array[[axis0, axis1]]))
+            .collect::<Vec<_>>(),
+        rank => {
+            return Err(MsTransformError::WriteMeasurementSet {
+                path: output_path.display().to_string(),
+                reason: format!("{column} row {row} has unsupported rank {rank}"),
+            });
+        }
+    };
+    session
+        .push_f32_row(column, array.shape(), &values)
+        .map_err(|error| MsTransformError::WriteMeasurementSet {
+            path: output_path.display().to_string(),
+            reason: error.to_string(),
+        })
+}
+
 fn materialize_empty_main_table(
     input_path: &Path,
     row_count: usize,
     output_path: &Path,
 ) -> Result<Table, MsTransformError> {
-    let mut main = Table::open_metadata_only(TableOptions::new(input_path)).map_err(|source| {
-        MsTransformError::MutateMeasurementSet {
-            path: input_path.display().to_string(),
-            source: Box::new(source),
-        }
-    })?;
-    main.add_rows_assuming_valid((0..row_count).map(|_| RecordValue::default()))
+    let mut table = Table::open_metadata_for_construction(TableOptions::new(input_path), row_count)
         .map_err(|source| MsTransformError::MutateMeasurementSet {
             path: output_path.display().to_string(),
             source: Box::new(source),
         })?;
-    Ok(main)
+    let projected_columns = table
+        .schema()
+        .into_iter()
+        .flat_map(|schema| schema.columns())
+        .filter(|column| {
+            is_deferred_visibility_column(column.name())
+                && !is_streamed_transform_output_column(column.name())
+        })
+        .map(|column| column.name().to_string())
+        .collect::<Vec<_>>();
+    for column in projected_columns {
+        table
+            .remove_column_metadata_for_construction(&column)
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: output_path.display().to_string(),
+                source: Box::new(source),
+            })?;
+    }
+    Ok(table)
 }
 
 fn gather_selected_main_column_overrides(
     table: &Table,
     selected_rows: &[usize],
     output_path: &Path,
+    batch_rows: usize,
+    write_session: &mut MeasurementSetWriteSession,
 ) -> Result<ColumnOverrides, MsTransformError> {
     let schema = table
         .schema()
@@ -695,20 +1231,43 @@ fn gather_selected_main_column_overrides(
         }
         match column.column_type() {
             ColumnType::Scalar => {
-                let values = table
-                    .column_accessor(name)
-                    .and_then(|column| column.scalar_cells_owned_for_rows(selected_rows))
-                    .map_err(|source| MsTransformError::MutateMeasurementSet {
-                        path: output_path.display().to_string(),
-                        source: Box::new(source),
-                    })?;
-                columns.insert_values(
-                    name.to_string(),
-                    values
-                        .into_iter()
-                        .map(|value| value.map(Value::Scalar))
-                        .collect(),
-                );
+                if is_remapped_scalar_column(name) {
+                    continue;
+                }
+                if column.data_type().and_then(streamed_scalar_type).is_some() {
+                    for rows in selected_rows.chunks(batch_rows.max(1)) {
+                        let values = table
+                            .column_accessor(name)
+                            .and_then(|column| column.scalar_cells_owned_for_rows(rows))
+                            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                                path: output_path.display().to_string(),
+                                source: Box::new(source),
+                            })?;
+                        for value in values {
+                            write_session
+                                .push_scalar_row(name, value)
+                                .map_err(|source| MsTransformError::WriteMeasurementSet {
+                                    path: output_path.display().to_string(),
+                                    reason: source.to_string(),
+                                })?;
+                        }
+                    }
+                } else {
+                    let values = table
+                        .column_accessor(name)
+                        .and_then(|column| column.scalar_cells_owned_for_rows(selected_rows))
+                        .map_err(|source| MsTransformError::MutateMeasurementSet {
+                            path: output_path.display().to_string(),
+                            source: Box::new(source),
+                        })?;
+                    columns.insert_values(
+                        name.to_string(),
+                        values
+                            .into_iter()
+                            .map(|value| value.map(Value::Scalar))
+                            .collect(),
+                    );
+                }
             }
             ColumnType::Array(_) => {
                 let values = table
@@ -753,6 +1312,38 @@ fn gather_selected_main_column_overrides(
     Ok(columns)
 }
 
+fn streamed_scalar_type(primitive_type: PrimitiveType) -> Option<StreamedScalarType> {
+    match primitive_type {
+        PrimitiveType::Bool => Some(StreamedScalarType::Bool),
+        PrimitiveType::Int32 => Some(StreamedScalarType::Int32),
+        PrimitiveType::Float32 => Some(StreamedScalarType::Float32),
+        PrimitiveType::Float64 => Some(StreamedScalarType::Float64),
+        _ => None,
+    }
+}
+
+fn transform_scalar_column_plans(table: &Table) -> Vec<MeasurementSetScalarColumnPlan> {
+    table
+        .schema()
+        .into_iter()
+        .flat_map(|schema| schema.columns())
+        .filter(|column| {
+            *column.column_type() == ColumnType::Scalar
+                && !is_deferred_visibility_column(column.name())
+        })
+        .filter_map(|column| {
+            Some(MeasurementSetScalarColumnPlan {
+                name: column.name().to_string(),
+                value_type: streamed_scalar_type(column.data_type()?)?,
+            })
+        })
+        .collect()
+}
+
+fn is_remapped_scalar_column(column: &str) -> bool {
+    matches!(column, "DATA_DESC_ID" | "FIELD_ID")
+}
+
 fn is_deferred_visibility_column(column: &str) -> bool {
     [
         "DATA",
@@ -761,6 +1352,25 @@ fn is_deferred_visibility_column(column: &str) -> bool {
         "FLOAT_DATA",
         "LAG_DATA",
         "FLAG",
+        "FLAG_CATEGORY",
+        "UVW",
+        "WEIGHT",
+        "SIGMA",
+        "WEIGHT_SPECTRUM",
+        "SIGMA_SPECTRUM",
+        "CORRECTED_WEIGHT_SPECTRUM",
+    ]
+    .contains(&column)
+}
+
+fn is_streamed_transform_output_column(column: &str) -> bool {
+    [
+        "DATA",
+        "FLAG",
+        "FLAG_CATEGORY",
+        "UVW",
+        "WEIGHT",
+        "SIGMA",
         "WEIGHT_SPECTRUM",
         "SIGMA_SPECTRUM",
         "CORRECTED_WEIGHT_SPECTRUM",
@@ -1022,7 +1632,7 @@ fn resolve_transform_channels(
             })?;
     let selectors = if spw.trim().is_empty() {
         (0..spectral_window.row_count())
-            .map(|row| crate::selection_syntax::SpwSelector {
+            .map(|row| crate::selection::syntax::SpwSelector {
                 spw_id: row as i32,
                 channels: None,
             })
@@ -1293,6 +1903,44 @@ fn transform_flag_channels(
     Ok(ArrayValue::Bool(output.into_dyn()))
 }
 
+fn transform_flag_category_channels(
+    value: ArrayValue,
+    bins: &[Vec<usize>],
+) -> Result<ArrayValue, TableError> {
+    let ArrayValue::Bool(values) = value else {
+        return Err(TableError::Schema(
+            "FLAG_CATEGORY arrays must be Bool rank-3 [corr, chan, category]".to_string(),
+        ));
+    };
+    if values.ndim() != 3 {
+        return Err(TableError::Schema(
+            "FLAG_CATEGORY arrays must be rank-3 [corr, chan, category]".to_string(),
+        ));
+    }
+    let correlation_count = values.shape()[0];
+    let channel_count = values.shape()[1];
+    let category_count = values.shape()[2];
+    if channel_count == 1 {
+        return Ok(ArrayValue::Bool(values));
+    }
+    validate_channel_bins(bins, channel_count)?;
+    let mut output = ArrayD::from_elem(
+        IxDyn(&[correlation_count, bins.len(), category_count]).f(),
+        false,
+    );
+    for correlation in 0..correlation_count {
+        for (output_channel, bin) in bins.iter().enumerate() {
+            for category in 0..category_count {
+                output[[correlation, output_channel, category]] = bin
+                    .iter()
+                    .copied()
+                    .all(|channel| values[[correlation, channel, category]]);
+            }
+        }
+    }
+    Ok(ArrayValue::Bool(output))
+}
+
 fn transform_weight_channels(
     value: ArrayValue,
     flags: &ArrayValue,
@@ -1336,6 +1984,51 @@ fn transform_weight_channels(
                 }
             }
             output[[corr, out_chan]] = sum;
+        }
+    }
+    Ok(ArrayValue::Float32(output.into_dyn()))
+}
+
+fn transform_sigma_channels(
+    value: ArrayValue,
+    flags: &ArrayValue,
+    bins: &[Vec<usize>],
+) -> Result<ArrayValue, TableError> {
+    if bins_are_single_channel(bins) {
+        let channels = bins.iter().map(|bin| bin[0]).collect::<Vec<_>>();
+        return select_channels(value, &channels);
+    }
+    let ArrayValue::Float32(values) = value else {
+        return Err(TableError::Schema(
+            "SIGMA_SPECTRUM arrays must be Float32 rank-2 [corr, chan]".to_string(),
+        ));
+    };
+    let ArrayValue::Bool(flags) = flags else {
+        return Err(TableError::Schema(
+            "FLAG arrays must be Bool rank-2 [corr, chan]".to_string(),
+        ));
+    };
+    if values.ndim() != 2 || flags.ndim() != 2 || values.shape() != flags.shape() {
+        return Err(TableError::Schema(
+            "SIGMA_SPECTRUM and FLAG arrays must have matching rank-2 shapes".to_string(),
+        ));
+    }
+    validate_channel_bins(bins, values.shape()[1])?;
+    let mut output = ndarray::Array2::<f32>::zeros((values.shape()[0], bins.len()));
+    for correlation in 0..values.shape()[0] {
+        for (output_channel, bin) in bins.iter().enumerate() {
+            let mut inverse_variance = 0.0_f64;
+            for &channel in bin {
+                let sigma = values[[correlation, channel]];
+                if !flags[[correlation, channel]] && sigma.is_finite() && sigma > 0.0 {
+                    inverse_variance += 1.0 / f64::from(sigma).powi(2);
+                }
+            }
+            output[[correlation, output_channel]] = if inverse_variance > 0.0 {
+                (1.0 / inverse_variance.sqrt()) as f32
+            } else {
+                0.0
+            };
         }
     }
     Ok(ArrayValue::Float32(output.into_dyn()))

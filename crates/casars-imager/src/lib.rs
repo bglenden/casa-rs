@@ -88,10 +88,10 @@ use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::spectral_selection::{CubeGridChannelContributions, CubeRowSpectralContributions};
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
-    CubeSpectralSetup, SourcePartition, VisibilityBuffer, VisibilityBufferFillReport,
-    VisibilityBufferRequest, VisibilityChannelReadRange, VisibilityComplexSamples,
-    VisibilityFloatSamples, VisibilityReadBlockPlan, VisibilityRowSelectionRequest,
-    convert_frequency_to_frame, parse_numeric_id_selector,
+    CubeSpectralSetup, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow, SourcePartition,
+    VisibilityBuffer, VisibilityBufferFillReport, VisibilityBufferRequest,
+    VisibilityChannelReadRange, VisibilityComplexSamples, VisibilityFloatSamples,
+    VisibilityReadBlockPlan, convert_frequency_to_frame, parse_numeric_id_selector,
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
@@ -28917,49 +28917,106 @@ fn select_main_rows(
         || selection_may_require_phase_reprojection(config)
         || needs_pointing_times;
     let allowed_ddids = allowed_ddids(config, ddid_info)?;
-    let allowed_field_ids = config
-        .field_ids
-        .as_ref()
-        .map(|ids| ids.iter().copied().collect::<BTreeSet<_>>());
+    let selected_ddids = if let Some(ddid) = config.ddid {
+        vec![ddid]
+    } else {
+        allowed_ddids
+            .iter()
+            .enumerate()
+            .filter_map(|(ddid, allowed)| allowed.then_some(ddid as i32))
+            .collect::<Vec<_>>()
+    };
+    let mut request = MsSelection::new();
+    if !selected_ddids.is_empty() {
+        request = request.data_description(&selected_ddids);
+    }
+    if let Some(field_ids) = config.field_ids.as_deref() {
+        request = request.field(field_ids);
+    }
+    let selection_memory = standard_mfs_memory_target(config);
     let row_selection = ms
-        .select_visibility_rows(&VisibilityRowSelectionRequest::new(
-            ddid_info.to_vec(),
-            allowed_ddids,
-            config.ddid,
-            allowed_field_ids,
-            needs_row_times,
-            config.spectral_mode.is_cube_like(),
-        ))
+        .resolve_selection(
+            &request,
+            MsSelectionIoBudget {
+                available_bytes: selection_memory.target_bytes,
+                maximum_live_blocks: 2,
+                requested_bytes_per_row: std::mem::size_of::<ResolvedMsSelectionRow>(),
+                storage_alignment_rows: None,
+            },
+        )
         .map_err(|error| match error {
-            casa_ms::MsError::InvalidInput(message) => message,
+            casa_ms::MsSelectionError::Domain(casa_ms::MsError::InvalidInput(message)) => message,
             other => other.to_string(),
         })?;
-    let (
-        selected_row_parts,
-        selected_ddid,
-        selected_fields,
-        flag_row,
-        reference_row_time_mjd_sec,
-        time_bounds_mjd_sec,
-    ) = row_selection.into_parts();
-    let selected_rows = selected_row_parts
+    let selected_ddids = row_selection
+        .selected_rows
+        .iter()
+        .map(|row| row.data_desc_id)
+        .collect::<BTreeSet<_>>();
+    let selected_ddid = if selected_ddids.is_empty() {
+        return Err("selection resolved to no rows".to_string());
+    } else if selected_ddids.len() != 1 {
+        return Err("selection spans multiple DATA_DESC_ID values".to_string());
+    } else {
+        let ddid = *selected_ddids.iter().next().expect("one selected DDID");
+        usize::try_from(ddid).map_err(|_| format!("selected DATA_DESC_ID {ddid} is negative"))?
+    };
+    let selected_fields = row_selection
+        .selected_rows
+        .iter()
+        .map(|row| row.field_id)
+        .collect::<BTreeSet<_>>();
+    let reference_row_time_mjd_sec = needs_row_times
+        .then(|| {
+            row_selection
+                .selected_rows
+                .first()
+                .map(|row| row.time_mjd_seconds)
+        })
+        .flatten();
+    let time_bounds_mjd_sec = config.spectral_mode.is_cube_like().then(|| {
+        row_selection.selected_rows.iter().fold(
+            [f64::INFINITY, f64::NEG_INFINITY],
+            |mut bounds, row| {
+                bounds[0] = bounds[0].min(row.time_mjd_seconds);
+                bounds[1] = bounds[1].max(row.time_mjd_seconds);
+                bounds
+            },
+        )
+    });
+    let mut flag_row = vec![false; ms.row_count()];
+    for row in &row_selection.selected_rows {
+        flag_row[row.row_index] = row.flag_row;
+    }
+    let selected_rows = row_selection
+        .selected_rows
         .iter()
         .map(|row| {
-            let (row_index, field_id, ddid, spw_id, polarization_id, time_mjd_seconds) =
-                row.parts();
-            let (antenna1_id, antenna2_id) = row.antenna_ids();
-            SelectedMainRow {
-                row_index,
-                field_id,
-                ddid,
-                spw_id,
-                polarization_id,
-                antenna1_id,
-                antenna2_id,
-                time_mjd_seconds,
-            }
+            Ok(SelectedMainRow {
+                row_index: row.row_index,
+                field_id: usize::try_from(row.field_id)
+                    .map_err(|_| format!("selected FIELD_ID {} is negative", row.field_id))?,
+                ddid: usize::try_from(row.data_desc_id).map_err(|_| {
+                    format!("selected DATA_DESC_ID {} is negative", row.data_desc_id)
+                })?,
+                spw_id: usize::try_from(row.spectral_window_id).map_err(|_| {
+                    format!(
+                        "selected SPECTRAL_WINDOW_ID {} is negative",
+                        row.spectral_window_id
+                    )
+                })?,
+                polarization_id: usize::try_from(row.polarization_id).map_err(|_| {
+                    format!(
+                        "selected POLARIZATION_ID {} is negative",
+                        row.polarization_id
+                    )
+                })?,
+                antenna1_id: row.antenna1_id,
+                antenna2_id: row.antenna2_id,
+                time_mjd_seconds: needs_row_times.then_some(row.time_mjd_seconds),
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, String>>()?;
     maybe_log_frontend_progress(
         "prepare_plane_input/select_main_rows/scan_rows",
         select_started_at.elapsed(),

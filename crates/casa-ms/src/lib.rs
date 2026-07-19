@@ -57,10 +57,9 @@ pub mod plot;
 mod plot_data;
 mod plot_visibility;
 pub mod presentation;
+mod probes;
 pub mod schema;
 pub mod selection;
-pub mod selection_helpers;
-pub mod selection_syntax;
 pub mod simulation;
 pub mod simulation_task;
 pub mod spectral_selection;
@@ -69,6 +68,7 @@ pub mod task_contract;
 pub mod transform;
 pub mod validate;
 pub mod visibility_buffer;
+pub mod write_session;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;
@@ -100,7 +100,7 @@ pub use msexplore::{
     MsFlagSampleEdit, MsIterationAxis, MsIterationSpec, MsLayoutSpec, MsLegendPosition,
     MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
     MsScatterGridPayload, MsScatterPageItemPayload, MsScatterPagePayload, MsScatterPanelPayload,
-    MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsSelectionSpec, MsTransformSpec,
+    MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsTransformSpec,
     apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
     build_msexplore_payload_from_spec, build_msexplore_plot_payload,
     build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
@@ -122,11 +122,20 @@ pub use plot_data::{
     MS_PLOT_DATA_SCHEMA_VERSION, MsPlotData, MsPlotDataAxis, MsPlotDataPanel,
     MsPlotDataPointProvenance, MsPlotDataSeries, build_msexplore_plot_data_from_path,
 };
+pub use probes::{
+    MeasurementSetContext, MeasurementSetNamedContext, MeasurementSetObservationContext,
+    MeasurementSetSpectralWindowContext, MeasurementSetSubtableContext, MeasurementSetTimeRange,
+    MeasurementSetUvRange,
+};
 pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
-pub use selection_syntax::{
+pub use selection::syntax::{
     ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,
     parse_spw_selector,
+};
+pub use selection::{
+    MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget, MsSelectionRowBlock,
+    MsSelectorEditContext, ResolvedMsSelection, ResolvedMsSelectionRow, validate_ms_selector_edit,
 };
 pub use simulation::{
     SyntheticAnalyticComponent, SyntheticAnalyticComponentModel, SyntheticAnalyticSpectrum,
@@ -172,7 +181,15 @@ pub use visibility_buffer::{
     SourcePartition, SourcePartitionId, VisibilityBuffer, VisibilityBufferAllocationReport,
     VisibilityBufferColumnReport, VisibilityBufferFillReport, VisibilityBufferRequest,
     VisibilityBufferTimings, VisibilityChannelReadGranularity, VisibilityChannelReadRange,
-    VisibilityComplexSamples, VisibilityFloatSamples, VisibilityReadBlockPlan,
-    VisibilityRowSelectionPlan, VisibilityRowSelectionRequest, VisibilitySelectedMainRow,
-    VisibilityShape,
+    VisibilityComplexSamples, VisibilityFloatSamples, VisibilityReadBlockPlan, VisibilityShape,
+};
+pub use write_session::{
+    MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
+    MeasurementSetColumnWriteMode, MeasurementSetColumnWriteTelemetry, MeasurementSetCreateTarget,
+    MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
+    MeasurementSetMutationColumnValues, MeasurementSetScalarColumnPlan,
+    MeasurementSetWriteColumnPlan, MeasurementSetWriteError, MeasurementSetWriteOperation,
+    MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
+    MeasurementSetWriteTelemetry, maximum_visibility_cell_elements,
+    standard_main_scalar_column_plans,
 };

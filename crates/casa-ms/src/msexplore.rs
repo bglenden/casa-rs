@@ -56,13 +56,15 @@ use crate::plot::{
     ListObsPlotSpec, ListObsPlotTheme, build_listobs_plot_payload_from_summary,
     build_listobs_uv_plot_payload, export_listobs_plot,
 };
+use crate::selection::parser::parse_correlation_selector;
+use crate::selection::resolve_row_indices_with_system_budget;
 use crate::spectral_selection::{
     convert_frequency_to_frame, parse_rest_frequency_hz, velocity_ms_from_frequency_hz,
 };
 use crate::subtables::SubTable;
 use crate::subtables::data_description::MsDataDescription;
 use crate::subtables::polarization::MsPolarization;
-use crate::{MeasurementSet, MeasurementSetSummaryOptions, MeasurementSetSummaryOutputFormat};
+use crate::{MeasurementSet, MeasurementSetSummaryOutputFormat, MsSelection};
 
 const EXPORT_DPI: f32 = 72.0;
 const AVG_TIME_BUCKET_EPSILON_SECONDS: f64 = 0.002;
@@ -759,81 +761,6 @@ impl MsExportFormat {
             Self::Png => "png",
             Self::Pdf => "pdf",
             Self::Txt => "txt",
-        }
-    }
-}
-
-/// Structured selection controls shared by CLI and library callers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct MsSelectionSpec {
-    /// Enable the structured selectors below.
-    pub selectdata: bool,
-    /// FIELD selection expression.
-    pub field: Option<String>,
-    /// SPW selection expression.
-    pub spw: Option<String>,
-    /// TIMERANGE selection expression.
-    pub timerange: Option<String>,
-    /// UVRANGE selection expression.
-    pub uvrange: Option<String>,
-    /// ANTENNA selection expression.
-    pub antenna: Option<String>,
-    /// SCAN selection expression.
-    pub scan: Option<String>,
-    /// CORRELATION selection expression.
-    pub correlation: Option<String>,
-    /// ARRAY selection expression.
-    pub array: Option<String>,
-    /// OBSERVATION selection expression.
-    pub observation: Option<String>,
-    /// INTENT selection expression.
-    pub intent: Option<String>,
-    /// FEED selection expression.
-    pub feed: Option<String>,
-    /// Raw TaQL/MSSelection expression.
-    pub msselect: Option<String>,
-}
-
-impl Default for MsSelectionSpec {
-    fn default() -> Self {
-        Self {
-            selectdata: true,
-            field: None,
-            spw: None,
-            timerange: None,
-            uvrange: None,
-            antenna: None,
-            scan: None,
-            correlation: None,
-            array: None,
-            observation: None,
-            intent: None,
-            feed: None,
-            msselect: None,
-        }
-    }
-}
-
-impl MsSelectionSpec {
-    /// Convert the generic selection spec into the shared summary option set.
-    pub fn to_summary_options(&self) -> MeasurementSetSummaryOptions {
-        MeasurementSetSummaryOptions {
-            verbose: true,
-            selectdata: self.selectdata,
-            field: self.field.clone(),
-            spw: self.spw.clone(),
-            antenna: self.antenna.clone(),
-            scan: self.scan.clone(),
-            observation: self.observation.clone(),
-            array: self.array.clone(),
-            timerange: self.timerange.clone(),
-            uvrange: self.uvrange.clone(),
-            correlation: self.correlation.clone(),
-            intent: self.intent.clone(),
-            msselect: self.msselect.clone(),
-            feed: self.feed.clone(),
-            listunfl: false,
-            cachesize_mb: None,
         }
     }
 }
@@ -1932,7 +1859,7 @@ pub struct MsExploreSpec {
     /// Human/machine-readable summary format.
     pub summary_format: MeasurementSetSummaryOutputFormat,
     /// Shared row-selection controls.
-    pub selection: MsSelectionSpec,
+    pub selection: MsSelection,
     /// Page header items shown above rendered plots.
     pub header_items: Vec<MsPageHeaderItem>,
     /// Optional page title override when composing multiple plots.
@@ -2482,7 +2409,7 @@ fn compact_payload_to_budget(
 
 fn build_msexplore_plot_payload_validated(
     ms: &MeasurementSet,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
 ) -> Result<MsPlotPayload, String> {
@@ -2652,7 +2579,7 @@ pub fn build_msexplore_payload_from_spec(spec: &MsExploreSpec) -> Result<MsPlotP
 /// samples before any writeback occurs.
 pub fn preview_msexplore_flag_edit(
     ms: &MeasurementSet,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     spec: &MsPlotSpec,
 ) -> Result<MsFlagEditPreview, String> {
     spec.validate()?;
@@ -2858,7 +2785,7 @@ fn validate_flag_edit_request(flag_edit: &MsFlagEditSpec) -> Result<(), String> 
 /// preview that was committed.
 pub fn apply_msexplore_flag_edit(
     ms: &mut MeasurementSet,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     spec: &MsPlotSpec,
 ) -> Result<MsFlagEditPreview, String> {
     let preview = preview_msexplore_flag_edit(ms, selection, spec)?;
@@ -3199,7 +3126,7 @@ fn first_non_empty<'a>(values: impl IntoIterator<Item = &'a str>) -> Option<&'a 
 /// Build a generic plot payload from one open MeasurementSet.
 pub fn build_msexplore_plot_payload(
     ms: &MeasurementSet,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     spec: &MsPlotSpec,
 ) -> Result<MsPlotPayload, String> {
     spec.validate()?;
@@ -3210,7 +3137,7 @@ pub fn build_msexplore_plot_payload(
 /// Open a MeasurementSet path and build the requested plot payload.
 pub fn build_msexplore_plot_payload_from_path(
     path: &Path,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     spec: &MsPlotSpec,
 ) -> Result<MsPlotPayload, String> {
     let ms = MeasurementSet::open(path).map_err(|error| {
@@ -3674,7 +3601,7 @@ fn predecimate_visibility_rows(
 
 fn build_generic_visibility_scatter(
     ms: &MeasurementSet,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
 ) -> Result<MsPlotPayload, String> {
@@ -3742,7 +3669,7 @@ fn build_generic_visibility_scatter(
         .correlation
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .map(listobs::parse_correlation_selector)
+        .map(parse_correlation_selector)
         .transpose()
         .map_err(|error| error.to_string())?;
 
@@ -4600,7 +4527,7 @@ fn finalize_averaged_axis_value(
 
 fn build_generic_visibility_scatter_with_averaging(
     ms: &MeasurementSet,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
 ) -> Result<MsPlotPayload, String> {
@@ -4664,7 +4591,7 @@ fn build_generic_visibility_scatter_with_averaging(
         .correlation
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .map(listobs::parse_correlation_selector)
+        .map(parse_correlation_selector)
         .transpose()
         .map_err(|error| error.to_string())?;
 
@@ -5350,7 +5277,7 @@ fn build_generic_visibility_scatter_with_averaging(
 
 fn build_stacked_amplitude_phase_time_page(
     ms: &MeasurementSet,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
 ) -> Result<MsPlotPayload, String> {
@@ -5430,7 +5357,7 @@ fn build_stacked_amplitude_phase_time_page(
 
 fn build_stacked_page_child(
     ms: &MeasurementSet,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     spec: &MsPlotSpec,
     preset: MsPlotPreset,
     y_axis: MsAxis,
@@ -5454,35 +5381,13 @@ fn build_stacked_page_child(
 
 fn resolve_selected_rows_with_msselect(
     ms: &MeasurementSet,
-    selection: &MsSelectionSpec,
-    listobs_options: &ListObsOptions,
+    selection: &MsSelection,
+    _listobs_options: &ListObsOptions,
 ) -> Result<Vec<usize>, String> {
-    if !selection.selectdata
-        || (!listobs_options.has_selection()
-            && selection
-                .msselect
-                .as_deref()
-                .is_none_or(|value| value.trim().is_empty()))
-    {
+    if !selection.selectdata {
         return Ok((0..ms.row_count()).collect());
     }
-
-    let selected = if selection
-        .msselect
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        let selection_builder = listobs::selection_from_options(ms, listobs_options)
-            .map_err(|error| error.to_string())?;
-        selection_builder
-            .apply(ms)
-            .map_err(|error| error.to_string())?
-    } else {
-        listobs::resolve_selected_rows(ms, listobs_options)
-            .map_err(|error| error.to_string())?
-            .unwrap_or_else(|| (0..ms.row_count()).collect())
-    };
-    Ok(selected)
+    resolve_row_indices_with_system_budget(ms, selection).map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -8523,7 +8428,7 @@ mod tests {
 
     #[test]
     fn selection_and_page_enums_preserve_stable_strings() {
-        let selection = MsSelectionSpec {
+        let selection = MsSelection {
             selectdata: false,
             field: Some("0".to_string()),
             spw: Some("1".to_string()),
@@ -8535,6 +8440,8 @@ mod tests {
             uvrange: Some(">100m".to_string()),
             correlation: Some("RR".to_string()),
             intent: Some("CALIBRATE".to_string()),
+            data_description: None,
+            state: None,
             msselect: Some("DATA_DESC_ID==0".to_string()),
             feed: Some("0".to_string()),
         };
@@ -8809,7 +8716,7 @@ mod tests {
         let request = MsExploreSpec {
             ms_path: PathBuf::from("demo.ms"),
             summary_format: MeasurementSetSummaryOutputFormat::Text,
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
             header_items: Vec::new(),
             page_title: None,
             exprange: MsPageExportRange::Current,
@@ -8845,7 +8752,7 @@ mod tests {
         let request = MsExploreSpec {
             ms_path: PathBuf::from("demo.ms"),
             summary_format: MeasurementSetSummaryOutputFormat::Text,
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
             header_items: Vec::new(),
             page_title: None,
             exprange: MsPageExportRange::Current,
@@ -8874,7 +8781,7 @@ mod tests {
         let request = MsExploreSpec {
             ms_path: PathBuf::from("demo.ms"),
             summary_format: MeasurementSetSummaryOutputFormat::Text,
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
             header_items: Vec::new(),
             page_title: None,
             exprange: MsPageExportRange::All,
@@ -9353,7 +9260,7 @@ mod tests {
         let spec = MsExploreSpec {
             ms_path: std::path::PathBuf::from("fixture.ms"),
             summary_format: MeasurementSetSummaryOutputFormat::Text,
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
             header_items: vec![
                 MsPageHeaderItem::Filename,
                 MsPageHeaderItem::ObsDate,

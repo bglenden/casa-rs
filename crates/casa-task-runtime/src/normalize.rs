@@ -320,12 +320,47 @@ fn normalize_path(value: &str) -> Result<String, NormalizationError> {
 }
 
 fn normalize_selector(value: &str) -> String {
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut normalized = String::with_capacity(collapsed.len());
+    let mut quoted = None;
+    let mut characters = collapsed.chars().peekable();
+    while let Some(character) = characters.next() {
+        if matches!(character, '\'' | '"') {
+            if quoted == Some(character) {
+                quoted = None;
+            } else if quoted.is_none() {
+                quoted = Some(character);
+            }
+            normalized.push(character);
+            continue;
+        }
+        if character == ' ' && quoted.is_none() {
+            let previous_is_separator = normalized
+                .chars()
+                .next_back()
+                .is_some_and(is_selector_separator);
+            let next_is_separator = characters
+                .peek()
+                .copied()
+                .is_some_and(is_selector_separator);
+            if previous_is_separator || next_is_separator {
+                continue;
+            }
+        }
+        normalized.push(character);
+    }
     if normalized.is_empty() {
         "none".to_string()
     } else {
         normalized
     }
+}
+
+fn is_selector_separator(character: char) -> bool {
+    matches!(
+        character,
+        ',' | ';' | '~' | ':' | '&' | '!' | '=' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+    )
 }
 
 fn validate_constraints(

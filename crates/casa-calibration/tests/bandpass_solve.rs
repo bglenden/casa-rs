@@ -12,9 +12,23 @@ use tempfile::TempDir;
 
 use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, BandpassSolveCombine,
-    BandpassSolveRequest, BandpassType, RefAntSelector, execute_apply_from_path,
-    solve_bandpass_from_path, summarize_table,
+    BandpassSolveReport, BandpassSolveRequest, BandpassType, CalibrationDataset, CalibrationError,
+    CalibrationSolveRequest, CalibrationSolveResult, RefAntSelector, execute_apply_from_path,
+    solve_calibration, summarize_table,
 };
+
+fn run_bandpass_solve(
+    path: impl AsRef<std::path::Path>,
+    request: &BandpassSolveRequest,
+) -> Result<BandpassSolveReport, CalibrationError> {
+    match solve_calibration(
+        CalibrationDataset::path(path),
+        CalibrationSolveRequest::Bandpass(request.clone()),
+    )? {
+        CalibrationSolveResult::Bandpass(report) => Ok(report),
+        CalibrationSolveResult::Gain(_) => unreachable!("bandpass request result"),
+    }
+}
 
 #[test]
 fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
@@ -96,7 +110,7 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
     );
 
     let bandpass_table = dir.path().join("bandpass.bcal");
-    let report = solve_bandpass_from_path(
+    let report = run_bandpass_solve(
         &ms_path,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -232,7 +246,7 @@ fn solve_bandpass_with_prior_gain_corrects_dense_synthetic_ms_downstream() {
     );
 
     let bandpass_table = dir.path().join("bandpass_dense.bcal");
-    let report = solve_bandpass_from_path(
+    let report = run_bandpass_solve(
         &ms_path,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -394,7 +408,7 @@ fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
     );
 
     let bandpass_table = dir.path().join("bandpass-combine-scan.bcal");
-    let report = solve_bandpass_from_path(
+    let report = run_bandpass_solve(
         &ms_path,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -535,7 +549,7 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
     );
 
     let bandpass_table = dir.path().join("bandpass-combine-field.bcal");
-    let report = solve_bandpass_from_path(
+    let report = run_bandpass_solve(
         &ms_path,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[0, 1]).spw(&[0]),
@@ -643,7 +657,7 @@ fn solve_bandpass_with_solnorm_normalizes_per_receptor_average_amplitude() {
     );
 
     let bandpass_table = dir.path().join("bandpass-solnorm.bcal");
-    solve_bandpass_from_path(
+    run_bandpass_solve(
         &ms_path,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -765,7 +779,7 @@ fn solve_bpoly_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
     );
 
     let bandpass_table = dir.path().join("bandpass.bpoly");
-    let report = solve_bandpass_from_path(
+    let report = run_bandpass_solve(
         &ms_path,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),

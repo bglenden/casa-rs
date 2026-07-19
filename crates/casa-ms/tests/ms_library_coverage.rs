@@ -36,6 +36,22 @@ fn measurement_set_accessors_cover_real_fixture_columns_and_subtables() {
     assert!(ms.subtable_ids().len() >= 12);
     assert!(ms.main_table().row_count() > 0);
 
+    let context = ms.probe_context().expect("MeasurementSet context probe");
+    assert_eq!(context.row_count, ms.row_count());
+    assert!(!context.fields.is_empty());
+    assert!(!context.spectral_windows.is_empty());
+    assert!(!context.antennas.is_empty());
+    assert!(!context.observations.is_empty());
+    assert!(!context.correlations.is_empty());
+    assert!(context.columns.iter().any(|column| column == "DATA"));
+    assert!(context.data_columns.iter().any(|column| column == "DATA"));
+    assert!(
+        context
+            .subtables
+            .iter()
+            .any(|subtable| subtable.name == "ANTENNA" && subtable.required)
+    );
+
     let antenna = ms.antenna().expect("ANTENNA accessor");
     assert!(antenna.row_count() > 0);
     assert!(!antenna.name(0).unwrap().is_empty());

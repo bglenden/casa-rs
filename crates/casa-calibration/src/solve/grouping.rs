@@ -12,11 +12,12 @@ use ndarray::ArrayD;
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainSolveRequest, GainType, RefAntSelector, correlation_receptors, get_f64, get_i32,
-    stokes_name,
+    GainType, RefAntSelector, correlation_receptors, get_f64, get_i32, stokes_name,
 };
+use crate::ApplyCalibrationTableSpec;
 use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};
+use crate::session::resolve_calibration_selection;
 use crate::solve::kernel::accumulate_edge_with_stats;
 
 pub(crate) fn validate_solve_interval(
@@ -38,18 +39,20 @@ pub(crate) fn validate_smodel(smodel: [f32; 4]) -> Result<(), GainSolveError> {
 
 pub(crate) fn load_preapplied_rows(
     ms: &MeasurementSet,
-    request: &GainSolveRequest,
+    selection: &MsSelection,
+    prior_calibration_tables: &[ApplyCalibrationTableSpec],
+    parang: bool,
 ) -> Result<Option<HashMap<usize, EvaluatedApplyRow>>, GainSolveError> {
-    if request.prior_calibration_tables.is_empty() && !request.parang {
+    if prior_calibration_tables.is_empty() && !parang {
         return Ok(None);
     }
     let plan = plan_apply(
         ms,
         &ApplyPlanRequest {
-            selection: request.selection.clone(),
+            selection: selection.clone(),
             apply_mode: crate::ApplyMode::CalFlag,
-            parang: request.parang,
-            calibration_tables: request.prior_calibration_tables.clone(),
+            parang,
+            calibration_tables: prior_calibration_tables.to_vec(),
         },
     )
     .map_err(|source| GainSolveError::PriorCalibrationPlan {
@@ -186,62 +189,39 @@ pub(crate) fn collect_selected_rows(
     ms: &MeasurementSet,
     selection: &MsSelection,
 ) -> Result<Vec<SelectedSolveRow>, GainSolveError> {
-    let selected_rows =
-        selection
-            .apply(ms)
-            .map_err(|source| GainSolveError::OpenMeasurementSet {
-                path: ms
-                    .path()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "<in-memory>".to_string()),
-                source,
-            })?;
-    if selected_rows.is_empty() {
-        return Err(GainSolveError::EmptySelection);
-    }
-
-    let dd = ms
-        .data_description()
-        .map_err(|source| GainSolveError::OpenMeasurementSet {
+    let selected_rows = resolve_calibration_selection(ms, selection).map_err(|error| {
+        GainSolveError::OpenMeasurementSet {
             path: ms
                 .path()
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "<in-memory>".to_string()),
-            source,
-        })?;
+            source: match error {
+                casa_ms::MsSelectionError::Domain(source) => source,
+                other => MsError::InvalidInput(other.to_string()),
+            },
+        }
+    })?;
+    if selected_rows.selected_rows.is_empty() {
+        return Err(GainSolveError::EmptySelection);
+    }
 
     selected_rows
+        .selected_rows
         .into_iter()
-        .map(|row_index| {
-            let data_desc_id = get_i32(ms.main_table(), row_index, "DATA_DESC_ID")?;
-            let data_desc_row = usize::try_from(data_desc_id).map_err(|_| {
-                GainSolveError::UnsupportedParameterShape {
-                    path: "<measurement-set DATA_DESC_ID>".to_string(),
-                    shape: vec![row_index],
-                }
-            })?;
-            let data_spw_id = dd.spectral_window_id(data_desc_row).map_err(|source| {
-                GainSolveError::OpenMeasurementSet {
-                    path: ms
-                        .path()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "<in-memory>".to_string()),
-                    source,
-                }
-            })?;
+        .map(|row| {
             Ok(SelectedSolveRow {
-                row_index,
-                field_id: get_i32(ms.main_table(), row_index, "FIELD_ID")?,
-                observation_id: get_i32(ms.main_table(), row_index, "OBSERVATION_ID")?,
-                data_desc_id,
-                data_spw_id,
-                channel_selection: selection.channel_selection_for_spw(data_spw_id).cloned(),
-                antenna1: get_i32(ms.main_table(), row_index, "ANTENNA1")?,
-                antenna2: get_i32(ms.main_table(), row_index, "ANTENNA2")?,
-                time_seconds: get_f64(ms.main_table(), row_index, "TIME")?,
-                time_centroid_seconds: get_f64(ms.main_table(), row_index, "TIME_CENTROID")?,
-                interval_seconds: get_f64(ms.main_table(), row_index, "INTERVAL")?,
-                scan_number: get_i32(ms.main_table(), row_index, "SCAN_NUMBER")?,
+                row_index: row.row_index,
+                field_id: row.field_id,
+                observation_id: get_i32(ms.main_table(), row.row_index, "OBSERVATION_ID")?,
+                data_desc_id: row.data_desc_id,
+                data_spw_id: row.spectral_window_id,
+                channel_selection: selection.channel_selection_for_spw(row.spectral_window_id),
+                antenna1: row.antenna1_id,
+                antenna2: row.antenna2_id,
+                time_seconds: row.time_mjd_seconds,
+                time_centroid_seconds: get_f64(ms.main_table(), row.row_index, "TIME_CENTROID")?,
+                interval_seconds: get_f64(ms.main_table(), row.row_index, "INTERVAL")?,
+                scan_number: get_i32(ms.main_table(), row.row_index, "SCAN_NUMBER")?,
             })
         })
         .collect()

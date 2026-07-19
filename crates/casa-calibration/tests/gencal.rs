@@ -47,6 +47,31 @@ fn gencal_antpos_writes_offsets_for_selected_antennas_and_zeroes_others() {
 }
 
 #[test]
+fn gencal_rejects_an_output_collision_without_modifying_the_existing_table() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path =
+        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let caltable_path = dir.path().join("existing.cal");
+    std::fs::create_dir(&caltable_path).expect("create existing output");
+    let sentinel = caltable_path.join("sentinel");
+    std::fs::write(&sentinel, b"keep").expect("write sentinel");
+
+    let error = gencal(&GencalRequest {
+        measurement_set: ms_path,
+        output_table: caltable_path,
+        caltype: GencalType::Opac,
+        antenna: String::new(),
+        spw: "0".to_string(),
+        parameter: vec![0.1],
+        gaincurve_table: None,
+    })
+    .expect_err("existing output must be rejected");
+
+    assert!(error.to_string().contains("output already exists"));
+    assert_eq!(std::fs::read(sentinel).expect("sentinel remains"), b"keep");
+}
+
+#[test]
 fn gencal_opacity_expands_selected_spws_across_antennas() {
     let dir = tempfile::tempdir().expect("tempdir");
     let ms_path =

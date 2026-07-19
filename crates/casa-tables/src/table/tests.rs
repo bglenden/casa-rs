@@ -14,7 +14,7 @@ use crate::schema::{ColumnSchema, TableSchema};
 use super::{
     ColumnBinding, ColumnOverrides, DataManagerKind, EndianFormat, GeneratedScalarColumn,
     GeneratedScalarValueRun, RequiredScalarColumnValues, RowRange, SelectedArray2DCells, SortOrder,
-    Table, TableError, TableOptions,
+    StreamedScalarType, StreamingScalarColumnWriter, Table, TableError, TableOptions,
 };
 
 fn row_with_fixed_arrays(id: i32, data: &[i32], other: &[i32]) -> RecordValue {
@@ -2308,7 +2308,8 @@ fn lazy_disk_open_reads_selected_tiled_array_channel_ranges_without_full_column(
         .column_accessor("data")
         .expect("data accessor")
         .array_cells_2d_channel_range_typed_uncached(&[7, 2], 1, 3)
-        .expect("typed selected channel ranges");
+        .expect("typed selected channel ranges")
+        .expect("defined selected cells");
     let SelectedArray2DCells::Float32(typed) = typed else {
         panic!("expected Float32 typed selected cells");
     };
@@ -3228,6 +3229,95 @@ fn partial_save_with_changed_rows_patches_only_touched_incremental_rows() {
 }
 
 #[test]
+fn partial_save_with_changed_rows_patches_only_touched_standard_rows() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("flag_row", PrimitiveType::Bool),
+        ColumnSchema::scalar("time", PrimitiveType::Float64),
+    ])
+    .expect("schema");
+
+    let mut table = Table::with_schema(schema);
+    for row_idx in 0..10_000 {
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(row_idx))),
+                RecordField::new(
+                    "flag_row",
+                    Value::Scalar(ScalarValue::Bool(row_idx % 17 == 0)),
+                ),
+                RecordField::new(
+                    "time",
+                    Value::Scalar(ScalarValue::Float64(row_idx as f64 * 0.5)),
+                ),
+            ]))
+            .expect("push row");
+    }
+
+    let root = unique_test_dir("partial_save_changed_rows_standard");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan))
+        .expect("save standard table");
+    let data_len = std::fs::metadata(root.join("table.f0"))
+        .expect("standard data file")
+        .len();
+
+    let mut reopened = Table::open(TableOptions::new(&root)).expect("open standard table");
+    table_set_scalar_assuming_valid(&mut reopened, 7, "flag_row", ScalarValue::Bool(true))
+        .expect("set bit before byte boundary");
+    table_set_scalar_assuming_valid(&mut reopened, 8, "flag_row", ScalarValue::Bool(true))
+        .expect("set bit after byte boundary");
+    table_set_scalar_assuming_valid(&mut reopened, 9_001, "id", ScalarValue::Int32(42))
+        .expect("set distant id");
+    reopened
+        .save_selected_rows_in_place_assuming_valid(&["flag_row", "id"], &[7, 8, 9_001])
+        .expect("sparse standard partial save");
+    assert!(!reopened.inner.has_loaded_rows());
+    assert!(!reopened.inner.has_loaded_scalar_column("flag_row"));
+    assert!(!reopened.inner.has_loaded_scalar_column("id"));
+    assert_eq!(
+        std::fs::metadata(root.join("table.f0"))
+            .expect("standard data file after patch")
+            .len(),
+        data_len,
+        "sparse patches must preserve the existing SSM layout"
+    );
+
+    let verify = Table::open(TableOptions::new(&root)).expect("reopen after sparse standard save");
+    assert_eq!(
+        table_scalar(&verify, 6, "flag_row").expect("neighbor flag"),
+        &ScalarValue::Bool(false)
+    );
+    assert_eq!(
+        table_scalar(&verify, 7, "flag_row").expect("row 7 flag"),
+        &ScalarValue::Bool(true)
+    );
+    assert_eq!(
+        table_scalar(&verify, 8, "flag_row").expect("row 8 flag"),
+        &ScalarValue::Bool(true)
+    );
+    assert_eq!(
+        table_scalar(&verify, 9, "flag_row").expect("neighbor flag"),
+        &ScalarValue::Bool(false)
+    );
+    assert_eq!(
+        table_scalar(&verify, 9_000, "id").expect("neighbor id"),
+        &ScalarValue::Int32(9_000)
+    );
+    assert_eq!(
+        table_scalar(&verify, 9_001, "id").expect("updated id"),
+        &ScalarValue::Int32(42)
+    );
+    assert_eq!(
+        table_scalar(&verify, 9_001, "time").expect("untouched time"),
+        &ScalarValue::Float64(4_500.5)
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
+#[test]
 fn get_scalar_cell_rejects_non_scalar() {
     let table = Table::from_rows(vec![RecordValue::new(vec![RecordField::new(
         "data",
@@ -3626,6 +3716,124 @@ fn save_with_bindings_generated_scalar_overrides_define_row_count() {
         table_scalar(&reopened, 35, "FLAG_ROW").expect("flag row"),
         &ScalarValue::Bool(false)
     );
+
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn streamed_scalar_overrides_round_trip_standard_and_incremental_managers() {
+    let row_count = 10_000usize;
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("ANTENNA", PrimitiveType::Int32),
+        ColumnSchema::scalar("FLAG_ROW", PrimitiveType::Bool),
+        ColumnSchema::scalar("SCAN", PrimitiveType::Int32),
+        ColumnSchema::scalar("TIME", PrimitiveType::Float64),
+    ])
+    .expect("schema");
+    let table = Table::with_schema(schema);
+    let root = unique_test_dir("streamed_scalar_overrides_round_trip");
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut antenna = StreamingScalarColumnWriter::create(
+        root.join(".antenna.scalar.tmp"),
+        row_count,
+        StreamedScalarType::Int32,
+    )
+    .expect("antenna writer");
+    let mut flag_row = StreamingScalarColumnWriter::create(
+        root.join(".flag.scalar.tmp"),
+        row_count,
+        StreamedScalarType::Bool,
+    )
+    .expect("flag writer");
+    let mut scan = StreamingScalarColumnWriter::create(
+        root.join(".scan.scalar.tmp"),
+        row_count,
+        StreamedScalarType::Int32,
+    )
+    .expect("scan writer");
+    let mut time = StreamingScalarColumnWriter::create(
+        root.join(".time.scalar.tmp"),
+        row_count,
+        StreamedScalarType::Float64,
+    )
+    .expect("time writer");
+    for row in 0..row_count {
+        antenna
+            .push(Some(ScalarValue::Int32((row % 27) as i32)))
+            .expect("antenna value");
+        flag_row
+            .push(Some(ScalarValue::Bool(row % 101 == 0)))
+            .expect("flag value");
+        scan.push(Some(ScalarValue::Int32((row / 351) as i32)))
+            .expect("scan value");
+        time.push(Some(ScalarValue::Float64(row as f64 * 0.5)))
+            .expect("time value");
+    }
+
+    let mut overrides = ColumnOverrides::for_row_count(row_count);
+    overrides.insert_streamed_scalar("ANTENNA", antenna.finish().expect("finish antenna"));
+    overrides.insert_streamed_scalar("FLAG_ROW", flag_row.finish().expect("finish flag"));
+    overrides.insert_streamed_scalar("SCAN", scan.finish().expect("finish scan"));
+    overrides.insert_streamed_scalar("TIME", time.finish().expect("finish time"));
+    let bindings = HashMap::from([
+        (
+            "ANTENNA".to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::StandardStMan,
+                tile_shape: None,
+            },
+        ),
+        (
+            "FLAG_ROW".to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::StandardStMan,
+                tile_shape: None,
+            },
+        ),
+        (
+            "SCAN".to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::IncrementalStMan,
+                tile_shape: None,
+            },
+        ),
+        (
+            "TIME".to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::IncrementalStMan,
+                tile_shape: None,
+            },
+        ),
+    ]);
+    table
+        .save_with_bindings_and_column_overrides_assuming_valid(
+            TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan),
+            &bindings,
+            &overrides,
+        )
+        .expect("save streamed scalar overrides");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
+    assert_eq!(reopened.row_count(), row_count);
+    for row in [0, 100, 350, 351, 8191, 9999] {
+        assert_eq!(
+            table_scalar(&reopened, row, "ANTENNA").expect("antenna"),
+            &ScalarValue::Int32((row % 27) as i32)
+        );
+        assert_eq!(
+            table_scalar(&reopened, row, "FLAG_ROW").expect("flag row"),
+            &ScalarValue::Bool(row % 101 == 0)
+        );
+        assert_eq!(
+            table_scalar(&reopened, row, "SCAN").expect("scan"),
+            &ScalarValue::Int32((row / 351) as i32)
+        );
+        assert_eq!(
+            table_scalar(&reopened, row, "TIME").expect("time"),
+            &ScalarValue::Float64(row as f64 * 0.5)
+        );
+    }
 
     std::fs::remove_dir_all(&root).expect("cleanup");
 }

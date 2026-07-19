@@ -71,9 +71,10 @@ row adapter, both `get_ms_values_into_*_processing_buffer` wrappers, and the
 single-implementation `VisibilitySourceRows` trait. The standard-MFS, mosaic,
 one-channel cube, and trace source-row routes now read through the
 `VisibilityBuffer`/`ColumnarPreparedSource` path. `casa-ms` also owns the
-physical MAIN-row selection plan and bounded read-block request vocabulary
-through `VisibilityRowSelectionRequest`, `VisibilityRowSelectionPlan`,
-`VisibilityChannelReadRange`, and `VisibilityReadBlockPlan`. The one-channel
+canonical MAIN-row selection intent, resolved physical facts, and bounded
+read-block planning through `MsSelection`, `ResolvedMsSelection`,
+`MsSelectionIoBudget`, and `MsSelectionRowBlock`. Array-cell consumers retain
+`VisibilityChannelReadRange` and `VisibilityReadBlockPlan`. The one-channel
 cube Briggs and mosaic density essentials readers now also adapt from the
 shared `VisibilityBuffer` path with data omitted. The remaining
 `read_visibility_source_columns` usage is the older essentials/routed reader,
@@ -207,10 +208,11 @@ implementation remain private.
 `casa-ms` already owns reusable measurement-set selection and bounded buffer
 building primitives such as `MsSelection`, channel-selection resolution,
 `VisibilityBufferRequest`, `VisibilityBuffer`, and source partitions. The
-current wave adds `VisibilityBuffer::as_visibility_block_view()`, physical
-`VisibilityRowSelectionPlan` construction, `VisibilityChannelReadRange`, and
-`VisibilityReadBlockPlan` so selected MS rows and filled buffers can cross into
-the neutral imaging source contract without app-private adapter code.
+current path adds `VisibilityBuffer::as_visibility_block_view()`, canonical
+`ResolvedMsSelection` construction with `MsSelectionRowBlock` planning,
+`VisibilityChannelReadRange`, and `VisibilityReadBlockPlan` so selected MS rows
+and filled buffers can cross into the neutral imaging source contract without
+app-private adapter code.
 
 Remaining source-boundary debt: the older essentials/routed column-read
 orchestration still lives in `casars-imager`; the active row-block source

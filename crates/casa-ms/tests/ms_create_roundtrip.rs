@@ -7,8 +7,7 @@ use casa_ms::SubTable;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
-use casa_ms::selection::MsSelection;
-use casa_ms::selection_helpers;
+use casa_ms::selection::{MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow};
 
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
@@ -87,6 +86,32 @@ fn add_main_row(ms: &mut MeasurementSet, overrides: &[(&str, Value)]) {
     ms.main_table_mut()
         .add_row(RecordValue::new(fields))
         .unwrap();
+}
+
+fn add_minimal_data_description(ms: &mut MeasurementSet) {
+    ms.subtable_mut(SubtableId::DataDescription)
+        .unwrap()
+        .add_row(RecordValue::new(vec![
+            RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+            RecordField::new("POLARIZATION_ID", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(0))),
+        ]))
+        .unwrap();
+}
+
+fn resolve_rows(ms: &MeasurementSet, selection: &MsSelection) -> Vec<usize> {
+    ms.resolve_selection(
+        selection,
+        MsSelectionIoBudget {
+            available_bytes: 1024 * 1024,
+            maximum_live_blocks: 1,
+            requested_bytes_per_row: std::mem::size_of::<ResolvedMsSelectionRow>(),
+            storage_alignment_rows: None,
+        },
+    )
+    .unwrap()
+    .row_indices()
+    .collect()
 }
 
 fn main_dm_types(ms: &MeasurementSet) -> Vec<String> {
@@ -169,10 +194,6 @@ fn round_trip_create_save_open_validate() {
         assert_eq!(ant.row_count(), 3);
         assert_eq!(ant.name(0).unwrap(), "ANT00");
         assert_eq!(ant.name(2).unwrap(), "ANT02");
-
-        // Check unique antenna IDs
-        let ids = selection_helpers::unique_antenna_ids(&ms).unwrap();
-        assert_eq!(ids, vec![0, 1, 2]);
 
         let main_dm_types = main_dm_types(&ms);
         assert!(main_dm_types.iter().any(|dm| dm == "IncrementalStMan"));
@@ -267,6 +288,7 @@ fn save_honors_standard_storage_policy_override() {
 #[test]
 fn selection_round_trip() {
     let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+    add_minimal_data_description(&mut ms);
 
     let i = |v: i32| Value::Scalar(ScalarValue::Int32(v));
     let f = |v: f64| Value::Scalar(ScalarValue::Float64(v));
@@ -285,17 +307,17 @@ fn selection_round_trip() {
 
     // Select field 0
     let sel = MsSelection::new().field(&[0]);
-    let rows = sel.apply(&ms).unwrap();
+    let rows = resolve_rows(&ms, &sel);
     assert_eq!(rows.len(), 2);
 
     // Select scan 2
     let sel = MsSelection::new().scan(&[2]);
-    let rows = sel.apply(&ms).unwrap();
+    let rows = resolve_rows(&ms, &sel);
     assert_eq!(rows.len(), 2);
 
     // Combined: field 1 AND scan 1
     let sel = MsSelection::new().field(&[1]).scan(&[1]);
-    let rows = sel.apply(&ms).unwrap();
+    let rows = resolve_rows(&ms, &sel);
     assert_eq!(rows.len(), 1);
 }
 

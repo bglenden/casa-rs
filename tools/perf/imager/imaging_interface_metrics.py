@@ -21,7 +21,7 @@ DEFAULT_PATHS = [
     "crates/casa-ms/src/visibility_buffer.rs",
     "crates/casa-ms/src/spectral_selection.rs",
     "crates/casa-ms/src/selection.rs",
-    "crates/casa-ms/src/selection_syntax.rs",
+    "crates/casa-ms/src/selection/syntax.rs",
 ]
 
 PUBLIC_RE = re.compile(r"^\s*pub\s+(fn|struct|enum|trait|type|const|static|mod|use)\b")

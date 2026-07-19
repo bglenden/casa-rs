@@ -14,11 +14,11 @@ use super::{
     DEFAULT_MAX_PLOT_POINTS, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat,
     MsFlagAction, MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit, MsFlagSampleEdit,
     MsIterationAxis, MsLegendPosition, MsPageExportRange, MsPageHeaderItem, MsPlotPreset,
-    MsPlotSpec, MsPlotStyleSpec, MsSelectionSpec, apply_msexplore_flag_edit_for_request,
-    build_msexplore_payload, export_msexplore_plot, preview_msexplore_flag_edit_for_request,
+    MsPlotSpec, MsPlotStyleSpec, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
+    export_msexplore_plot, preview_msexplore_flag_edit_for_request,
 };
-use crate::MeasurementSet;
 pub use crate::presentation::{UiActionKind, UiArgumentParser, UiCommandSchema, UiValueKind};
+use crate::{MeasurementSet, MsSelection};
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
 
 #[derive(Debug)]
@@ -33,7 +33,7 @@ struct CliOptions {
     summary_format: MeasurementSetSummaryOutputFormat,
     summary_output: Option<PathBuf>,
     overwrite: bool,
-    selection: MsSelectionSpec,
+    selection: MsSelection,
     page_spec: Option<PathBuf>,
     preset: Option<MsPlotPreset>,
     x_axis: Option<MsAxis>,
@@ -519,7 +519,7 @@ fn write_or_log_flag_preview(
 
 fn preview_selection_flag_edit(
     ms: &MeasurementSet,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     action: MsFlagAction,
 ) -> Result<MsFlagEditPreview, String> {
     let listobs_options = selection.to_summary_options();
@@ -628,7 +628,7 @@ fn apply_selection_flag_edit_preview(
 
 fn apply_selection_flag_edit_direct(
     ms: &mut MeasurementSet,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     action: MsFlagAction,
 ) -> Result<MsFlagEditPreview, String> {
     let listobs_options = selection.to_summary_options();
@@ -863,7 +863,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
     let mut summary_format = "text".to_string();
     let mut summary_output = None;
     let mut overwrite = false;
-    let mut selection = MsSelectionSpec::default();
+    let mut selection = MsSelection::default();
     let mut page_spec = None;
     let mut preset = None;
     let mut x_axis = None;

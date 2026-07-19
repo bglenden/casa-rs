@@ -213,6 +213,35 @@ impl Table {
         self.finish_write_operation(auto_unlock, result)
     }
 
+    /// Remove a column from an unloaded construction descriptor.
+    ///
+    /// This is only for a new table whose output rows are supplied entirely by
+    /// column overrides. It never reads or rewrites source rows.
+    #[doc(hidden)]
+    pub fn remove_column_metadata_for_construction(
+        &mut self,
+        name: &str,
+    ) -> Result<(), TableError> {
+        if self.inner.rows_are_loaded() {
+            return Err(TableError::Storage(
+                "construction-only column removal requires an unloaded row store".to_string(),
+            ));
+        }
+        let mut schema =
+            self.inner.schema().cloned().ok_or_else(|| {
+                TableError::Schema("schema required for column operations".into())
+            })?;
+        schema.remove_column(name)?;
+        self.inner.set_schema(Some(schema));
+        self.inner.remove_column_keywords(name);
+        for group in &mut self.dm_info {
+            group.columns.retain(|column| column != name);
+        }
+        self.dm_info.retain(|group| !group.columns.is_empty());
+        self.virtual_columns.remove(name);
+        Ok(())
+    }
+
     /// Renames a column in the table schema, all rows, and column keywords.
     ///
     /// Returns an error if no schema is attached, `old` does not exist, or

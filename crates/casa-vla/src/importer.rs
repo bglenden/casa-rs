@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native `importvla`-style MeasurementSet writer for disk archives.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::Write;
@@ -11,8 +11,12 @@ use std::time::Instant;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
-use casa_ms::{OptionalMainColumn, SubTable};
-use casa_tables::{ColumnSchema, Table};
+use casa_ms::{
+    MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
+    MeasurementSetCreateTarget, MeasurementSetWritePlan, MeasurementSetWriteResources,
+    MeasurementSetWriteSession, OptionalMainColumn, SubTable, standard_main_scalar_column_plans,
+};
+use casa_tables::{ColumnSchema, StreamedTiledShapeValueType, Table};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
@@ -40,7 +44,6 @@ const PERF_DIR_ENV: &str = "CASA_RS_IMPORTVLA_PERF_DIR";
 const FLAG_CATEGORY_NAMES: [&str; DEFAULT_FLAG_CATEGORIES] = [
     "ONLINE_1", "ONLINE_2", "ONLINE_4", "ONLINE_8", "SHADOW", "FLAG_CMD",
 ];
-
 /// Summary of one native import run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImportReport {
@@ -76,10 +79,17 @@ struct ImportPerfEvent {
     push_record_ns: u64,
     reorder_baseline_ns: u64,
     flag_row_ns: u64,
-    make_main_row_ns: u64,
     append_main_row_ns: u64,
     finish_metadata_ns: u64,
     save_ns: u64,
+    write_producer_ns: u64,
+    write_queue_wait_ns: u64,
+    write_assemble_ns: u64,
+    write_physical_ns: u64,
+    write_finalize_ns: u64,
+    write_rows: usize,
+    write_bytes: usize,
+    write_peak_planned_resident_bytes: usize,
     total_ns: u64,
     unattributed_ns: u64,
 }
@@ -91,10 +101,17 @@ struct ImportPerfSummary {
     push_record_ns: u64,
     reorder_baseline_ns: u64,
     flag_row_ns: u64,
-    make_main_row_ns: u64,
     append_main_row_ns: u64,
     finish_metadata_ns: u64,
     save_ns: u64,
+    write_producer_ns: u64,
+    write_queue_wait_ns: u64,
+    write_assemble_ns: u64,
+    write_physical_ns: u64,
+    write_finalize_ns: u64,
+    write_rows: usize,
+    write_bytes: usize,
+    write_peak_planned_resident_bytes: usize,
 }
 
 struct ImportPerfTracer {
@@ -171,10 +188,17 @@ impl ImportPerfTracer {
             push_record_ns: summary.push_record_ns,
             reorder_baseline_ns: summary.reorder_baseline_ns,
             flag_row_ns: summary.flag_row_ns,
-            make_main_row_ns: summary.make_main_row_ns,
             append_main_row_ns: summary.append_main_row_ns,
             finish_metadata_ns: summary.finish_metadata_ns,
             save_ns: summary.save_ns,
+            write_producer_ns: summary.write_producer_ns,
+            write_queue_wait_ns: summary.write_queue_wait_ns,
+            write_assemble_ns: summary.write_assemble_ns,
+            write_physical_ns: summary.write_physical_ns,
+            write_finalize_ns: summary.write_finalize_ns,
+            write_rows: summary.write_rows,
+            write_bytes: summary.write_bytes,
+            write_peak_planned_resident_bytes: summary.write_peak_planned_resident_bytes,
             total_ns,
             unattributed_ns: total_ns.saturating_sub(attributed_ns),
         };
@@ -186,7 +210,7 @@ impl ImportPerfTracer {
         if let Some(file) = self.log_file.as_mut() {
             let _ = writeln!(
                 file,
-                "[+{:>7} ms] kind={:?} rows={} total_ms={:.2} create_ms={:.2} normalize_ms={:.2} push_ms={:.2} reorder_ms={:.2} flag_row_ms={:.2} make_row_ms={:.2} append_row_ms={:.2} finish_metadata_ms={:.2} save_ms={:.2} unattributed_ms={:.2}",
+                "[+{:>7} ms] kind={:?} rows={} total_ms={:.2} create_ms={:.2} normalize_ms={:.2} push_ms={:.2} reorder_ms={:.2} flag_row_ms={:.2} append_row_ms={:.2} finish_metadata_ms={:.2} save_ms={:.2} write_producer_ms={:.2} write_queue_wait_ms={:.2} write_assemble_ms={:.2} write_physical_ms={:.2} write_finalize_ms={:.2} write_bytes={} write_peak_planned_resident_bytes={} unattributed_ms={:.2}",
                 event.monotonic_ns / 1_000_000,
                 event.kind,
                 event.main_rows_written,
@@ -196,10 +220,16 @@ impl ImportPerfTracer {
                 event.push_record_ns as f64 / 1_000_000.0,
                 event.reorder_baseline_ns as f64 / 1_000_000.0,
                 event.flag_row_ns as f64 / 1_000_000.0,
-                event.make_main_row_ns as f64 / 1_000_000.0,
                 event.append_main_row_ns as f64 / 1_000_000.0,
                 event.finish_metadata_ns as f64 / 1_000_000.0,
                 event.save_ns as f64 / 1_000_000.0,
+                event.write_producer_ns as f64 / 1_000_000.0,
+                event.write_queue_wait_ns as f64 / 1_000_000.0,
+                event.write_assemble_ns as f64 / 1_000_000.0,
+                event.write_physical_ns as f64 / 1_000_000.0,
+                event.write_finalize_ns as f64 / 1_000_000.0,
+                event.write_bytes,
+                event.write_peak_planned_resident_bytes,
                 event.unattributed_ns as f64 / 1_000_000.0
             );
             let _ = file.flush();
@@ -317,6 +347,9 @@ pub fn import_archive_files_to_measurement_set_from_options(
             message: format!("output MeasurementSet already exists: {}", vis.display()),
         });
     }
+    let output_target = MeasurementSetCreateTarget::prepare(&vis, false)
+        .map_err(|error| VlaError::import(error.to_string()))?;
+    let write_plan = plan_import_main_arrays(options)?;
 
     let builder = MeasurementSetBuilder::new()
         .with_main_column(OptionalMainColumn::Data)
@@ -325,11 +358,15 @@ pub fn import_archive_files_to_measurement_set_from_options(
         .with_optional_subtable(SubtableId::Source)
         .with_optional_subtable(SubtableId::Doppler);
     let create_started = Instant::now();
-    let ms = MeasurementSet::create(&vis, builder).map_err(|error| {
+    let ms = MeasurementSet::create(output_target.staging_path(), builder).map_err(|error| {
         VlaError::import(format!("create MeasurementSet {}: {error}", vis.display()))
     })?;
+    let main_write_session =
+        MeasurementSetWriteSession::start(output_target.staging_path(), write_plan)
+            .map_err(|error| VlaError::import(error.to_string()))?;
 
-    let mut writer = MsImportWriter::new(options.clone(), ms)?;
+    let mut writer =
+        VlaImportState::new_with_write_session(options.clone(), ms, main_write_session)?;
     writer.perf_summary.create_measurement_set_ns = create_started.elapsed().as_nanos() as u64;
     set_flag_category_names(writer.ms.main_table_mut())?;
     for path in options.require_archivefiles()? {
@@ -353,6 +390,9 @@ pub fn import_archive_files_to_measurement_set_from_options(
         }
     }
     writer.finish()?;
+    output_target
+        .commit()
+        .map_err(|error| VlaError::import(error.to_string()))?;
     let report = ImportReport {
         vis,
         logical_records_seen: writer.logical_records_seen,
@@ -398,15 +438,245 @@ fn validate_import_options(options: &ImportVlaOptions) -> Result<(), VlaError> {
     Ok(())
 }
 
+fn plan_import_main_arrays(
+    options: &ImportVlaOptions,
+) -> Result<MeasurementSetWritePlan, VlaError> {
+    let mut visibility_shapes = BTreeMap::<(usize, usize), usize>::new();
+    let mut weight_shapes = BTreeMap::<usize, usize>::new();
+    let mut row_count = 0usize;
+    for path in options.require_archivefiles()? {
+        let mut reader = VlaDiskReader::open(path)?;
+        while let Some(record) = reader.next_record()? {
+            if !record_is_selected_for_import(&record, options)? {
+                continue;
+            }
+            let antenna_count = usize::from(
+                record
+                    .rca()
+                    .n_antennas()
+                    .map_err(|error| VlaError::import(format!("decode antenna count: {error}")))?,
+            );
+            let cross_baselines = antenna_count
+                .checked_mul(antenna_count.saturating_sub(1))
+                .and_then(|count| count.checked_div(2))
+                .ok_or_else(|| VlaError::import("MAIN baseline count overflow"))?;
+            let baselines = cross_baselines
+                .checked_add(if options.autocorr { antenna_count } else { 0 })
+                .ok_or_else(|| VlaError::import("MAIN baseline count overflow"))?;
+            let groups = collect_cda_groups(&record, options)?;
+            for (descriptor, cda_ids) in groups {
+                let correlation_count =
+                    correlation_types_for_group(&record, &cda_ids, antenna_count)?.len();
+                if correlation_count == 0 || descriptor.num_chan == 0 {
+                    continue;
+                }
+                *visibility_shapes
+                    .entry((correlation_count, descriptor.num_chan))
+                    .or_default() += baselines;
+                *weight_shapes.entry(correlation_count).or_default() += baselines;
+                row_count = row_count
+                    .checked_add(baselines)
+                    .ok_or_else(|| VlaError::import("MAIN row count overflow"))?;
+            }
+        }
+    }
+
+    let visibility = visibility_shapes
+        .iter()
+        .map(|(&(correlations, channels), &rows)| {
+            MeasurementSetArrayShapePlan::visibility(
+                correlations,
+                channels,
+                rows,
+                DEFAULT_TELESCOPE_NAME,
+            )
+        })
+        .collect::<Vec<_>>();
+    let flag_category = visibility_shapes
+        .iter()
+        .map(|(&(correlations, channels), &rows)| {
+            MeasurementSetArrayShapePlan::flag_category(
+                correlations,
+                channels,
+                DEFAULT_FLAG_CATEGORIES,
+                rows,
+                DEFAULT_TELESCOPE_NAME,
+            )
+        })
+        .collect::<Vec<_>>();
+    let weight = weight_shapes
+        .iter()
+        .map(|(&correlations, &rows)| {
+            MeasurementSetArrayShapePlan::weight(correlations, rows, DEFAULT_TELESCOPE_NAME)
+        })
+        .collect::<Vec<_>>();
+    let visibility_tile_elements = visibility
+        .first()
+        .map(|shape| shape.tile_shape.iter().product::<usize>())
+        .unwrap_or(3);
+    let uvw_tile_shape = vec![3, (visibility_tile_elements / 3).max(1)];
+    let columns = vec![
+        MeasurementSetArrayColumnPlan {
+            name: "DATA".to_string(),
+            value_type: StreamedTiledShapeValueType::Complex32,
+            shapes: visibility.clone(),
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "CORRECTED_DATA".to_string(),
+            value_type: StreamedTiledShapeValueType::Complex32,
+            shapes: visibility.clone(),
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "MODEL_DATA".to_string(),
+            value_type: StreamedTiledShapeValueType::Complex32,
+            shapes: visibility.clone(),
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "FLAG".to_string(),
+            value_type: StreamedTiledShapeValueType::Bool,
+            shapes: visibility.clone(),
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "FLAG_CATEGORY".to_string(),
+            value_type: StreamedTiledShapeValueType::Bool,
+            shapes: flag_category,
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "UVW".to_string(),
+            value_type: StreamedTiledShapeValueType::Float64,
+            shapes: vec![MeasurementSetArrayShapePlan {
+                cell_shape: vec![3],
+                row_count,
+                tile_shape: uvw_tile_shape,
+            }],
+            storage_manager: MeasurementSetColumnStorage::TiledColumn,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "WEIGHT".to_string(),
+            value_type: StreamedTiledShapeValueType::Float32,
+            shapes: weight.clone(),
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "SIGMA".to_string(),
+            value_type: StreamedTiledShapeValueType::Float32,
+            shapes: weight,
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+    ];
+    let resources = MeasurementSetWriteResources::from_system_memory(2)
+        .map_err(|error| VlaError::import(error.to_string()))?;
+    MeasurementSetWritePlan::variable_array_creation(
+        row_count,
+        columns,
+        standard_main_scalar_column_plans(),
+        resources,
+    )
+    .map_err(|error| VlaError::import(error.to_string()))
+}
+
+#[cfg(test)]
+fn test_import_write_plan(
+    row_count: usize,
+    correlation_count: usize,
+    channel_count: usize,
+) -> Result<MeasurementSetWritePlan, VlaError> {
+    let visibility = MeasurementSetArrayShapePlan::visibility(
+        correlation_count,
+        channel_count,
+        row_count,
+        DEFAULT_TELESCOPE_NAME,
+    );
+    let flag_category = MeasurementSetArrayShapePlan::flag_category(
+        correlation_count,
+        channel_count,
+        1,
+        row_count,
+        DEFAULT_TELESCOPE_NAME,
+    );
+    let weight =
+        MeasurementSetArrayShapePlan::weight(correlation_count, row_count, DEFAULT_TELESCOPE_NAME);
+    let uvw_tile_shape = vec![
+        3,
+        (visibility.tile_shape.iter().product::<usize>() / 3).max(1),
+    ];
+    let columns = vec![
+        MeasurementSetArrayColumnPlan {
+            name: "DATA".to_string(),
+            value_type: StreamedTiledShapeValueType::Complex32,
+            shapes: vec![visibility.clone()],
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "CORRECTED_DATA".to_string(),
+            value_type: StreamedTiledShapeValueType::Complex32,
+            shapes: vec![visibility.clone()],
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "MODEL_DATA".to_string(),
+            value_type: StreamedTiledShapeValueType::Complex32,
+            shapes: vec![visibility.clone()],
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "FLAG".to_string(),
+            value_type: StreamedTiledShapeValueType::Bool,
+            shapes: vec![visibility],
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "FLAG_CATEGORY".to_string(),
+            value_type: StreamedTiledShapeValueType::Bool,
+            shapes: vec![flag_category],
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "UVW".to_string(),
+            value_type: StreamedTiledShapeValueType::Float64,
+            shapes: vec![MeasurementSetArrayShapePlan {
+                cell_shape: vec![3],
+                row_count,
+                tile_shape: uvw_tile_shape,
+            }],
+            storage_manager: MeasurementSetColumnStorage::TiledColumn,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "WEIGHT".to_string(),
+            value_type: StreamedTiledShapeValueType::Float32,
+            shapes: vec![weight.clone()],
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+        MeasurementSetArrayColumnPlan {
+            name: "SIGMA".to_string(),
+            value_type: StreamedTiledShapeValueType::Float32,
+            shapes: vec![weight],
+            storage_manager: MeasurementSetColumnStorage::TiledShape,
+        },
+    ];
+    MeasurementSetWritePlan::variable_array_creation(
+        row_count,
+        columns,
+        standard_main_scalar_column_plans(),
+        MeasurementSetWriteResources {
+            available_bytes: 64 * 1024 * 1024,
+            maximum_live_batches: 2,
+            tiled_column_buffer_bytes: 0,
+        },
+    )
+    .map_err(|error| VlaError::import(error.to_string()))
+}
+
 fn normalize_record(
     record: &LogicalRecord,
     options: &ImportVlaOptions,
 ) -> Result<Option<NormalizedRecord>, VlaError> {
-    let rca = record
-        .rca()
-        .length_bytes()
-        .map_err(|error| VlaError::import(format!("decode RCA length: {error}")))?;
-    if rca == 0 {
+    if !record_is_selected_for_import(record, options)? {
         return Ok(None);
     }
 
@@ -417,23 +687,9 @@ fn normalize_record(
     let project = sda
         .observation_id()
         .map_err(|error| VlaError::import(format!("decode observation id: {error}")))?;
-    if let Some(expected) = &options.project {
-        if project.trim() != expected.trim() {
-            return Ok(None);
-        }
-    }
-    let observation_mode = sda
-        .observation_mode_code()
-        .map_err(|error| VlaError::import(format!("decode observation mode: {error}")))?;
-    if !is_supported_observation_mode(&observation_mode) {
-        return Ok(None);
-    }
     let source_name = sda
         .source_name()
         .map_err(|error| VlaError::import(format!("decode source name: {error}")))?;
-    if source_name.is_empty() && !options.keepblanks {
-        return Ok(None);
-    }
 
     let direction_epoch = sda
         .direction_epoch()
@@ -479,6 +735,43 @@ fn normalize_record(
         antennas,
         groups,
     }))
+}
+
+fn record_is_selected_for_import(
+    record: &LogicalRecord,
+    options: &ImportVlaOptions,
+) -> Result<bool, VlaError> {
+    if record
+        .rca()
+        .length_bytes()
+        .map_err(|error| VlaError::import(format!("decode RCA length: {error}")))?
+        == 0
+    {
+        return Ok(false);
+    }
+    let sda = record
+        .sda()
+        .map_err(|error| VlaError::import(format!("decode SDA: {error}")))?;
+    let project = sda
+        .observation_id()
+        .map_err(|error| VlaError::import(format!("decode observation id: {error}")))?;
+    if options
+        .project
+        .as_ref()
+        .is_some_and(|expected| project.trim() != expected.trim())
+    {
+        return Ok(false);
+    }
+    let observation_mode = sda
+        .observation_mode_code()
+        .map_err(|error| VlaError::import(format!("decode observation mode: {error}")))?;
+    if !is_supported_observation_mode(&observation_mode) {
+        return Ok(false);
+    }
+    let source_name = sda
+        .source_name()
+        .map_err(|error| VlaError::import(format!("decode source name: {error}")))?;
+    Ok(!source_name.is_empty() || options.keepblanks)
 }
 
 fn is_supported_observation_mode(code: &str) -> bool {
@@ -566,89 +859,11 @@ fn normalize_groups(
     options: &ImportVlaOptions,
     n_antennas: usize,
 ) -> Result<Vec<NormalizedGroup>, VlaError> {
-    let rca = record.rca();
-    let sda = record
-        .sda()
-        .map_err(|error| VlaError::import(format!("decode SDA: {error}")))?;
     let revision = record
         .rca()
         .revision()
         .map_err(|error| VlaError::import(format!("decode revision: {error}")))?;
-    let mut cda_groups: Vec<(SpectralDescriptor, Vec<CdaId>)> = Vec::new();
-
-    for cda_id in [CdaId::Cda0, CdaId::Cda1, CdaId::Cda2, CdaId::Cda3] {
-        if rca
-            .cda_offset_bytes(cda_id.index())
-            .map_err(|error| VlaError::import(format!("decode CDA offset {:?}: {error}", cda_id)))?
-            == 0
-        {
-            continue;
-        }
-        let cda = record
-            .cda(cda_id)
-            .map_err(|error| VlaError::import(format!("decode CDA {:?}: {error}", cda_id)))?;
-        if !cda.is_valid() {
-            continue;
-        }
-        if sda
-            .n_polarizations(cda_id)
-            .map_err(|error| VlaError::import(format!("decode CDA polarization count: {error}")))?
-            == 0
-        {
-            continue;
-        }
-        let descriptor = SpectralDescriptor {
-            edge_frequency_hz: sda.edge_frequency_hz(cda_id).map_err(|error| {
-                VlaError::import(format!("decode edge frequency for {:?}: {error}", cda_id))
-            })?,
-            observed_frequency_hz: sda.observed_frequency_hz(cda_id).map_err(|error| {
-                VlaError::import(format!(
-                    "decode observed frequency for {:?}: {error}",
-                    cda_id
-                ))
-            })?,
-            channel_width_hz: sda.channel_width_hz(cda_id).map_err(|error| {
-                VlaError::import(format!("decode channel width for {:?}: {error}", cda_id))
-            })?,
-            total_bandwidth_hz: sda.correlated_bandwidth_hz(cda_id).map_err(|error| {
-                VlaError::import(format!("decode bandwidth for {:?}: {error}", cda_id))
-            })?,
-            num_chan: usize::try_from(sda.n_channels(cda_id).map_err(|error| {
-                VlaError::import(format!("decode channel count for {:?}: {error}", cda_id))
-            })?)
-            .map_err(|_| VlaError::import("channel count does not fit in usize"))?,
-            if_conv_chain: i32::try_from(sda.electronic_path(cda_id).map_err(|error| {
-                VlaError::import(format!("decode IF chain for {:?}: {error}", cda_id))
-            })?)
-            .map_err(|_| VlaError::import("IF conversion chain does not fit in i32"))?,
-            rest_frequency_hz: sda.rest_frequency_hz(cda_id).map_err(|error| {
-                VlaError::import(format!("decode rest frequency for {:?}: {error}", cda_id))
-            })?,
-            rest_frame: sda.rest_frame(cda_id).map_err(|error| {
-                VlaError::import(format!("decode rest frame for {:?}: {error}", cda_id))
-            })?,
-            doppler_definition: sda.doppler_definition(cda_id).map_err(|error| {
-                VlaError::import(format!(
-                    "decode doppler definition for {:?}: {error}",
-                    cda_id
-                ))
-            })?,
-            doppler_velocity_mps: sda.radial_velocity_mps(cda_id).map_err(|error| {
-                VlaError::import(format!("decode radial velocity for {:?}: {error}", cda_id))
-            })?,
-            doppler_tracking: sda.doppler_tracking(cda_id).map_err(|error| {
-                VlaError::import(format!("decode doppler tracking for {:?}: {error}", cda_id))
-            })?,
-        };
-
-        if let Some((_, cdas)) = cda_groups.iter_mut().find(|(existing, _)| {
-            same_spectral_descriptor(existing, &descriptor, options.frequencytol_hz)
-        }) {
-            cdas.push(cda_id);
-        } else {
-            cda_groups.push((descriptor, vec![cda_id]));
-        }
-    }
+    let cda_groups = collect_cda_groups(record, options)?;
 
     let mut groups = Vec::with_capacity(cda_groups.len());
     for (descriptor, cda_ids) in cda_groups {
@@ -715,6 +930,90 @@ fn normalize_groups(
     }
 
     Ok(groups)
+}
+
+fn collect_cda_groups(
+    record: &LogicalRecord,
+    options: &ImportVlaOptions,
+) -> Result<Vec<(SpectralDescriptor, Vec<CdaId>)>, VlaError> {
+    let rca = record.rca();
+    let sda = record
+        .sda()
+        .map_err(|error| VlaError::import(format!("decode SDA: {error}")))?;
+    let mut cda_groups: Vec<(SpectralDescriptor, Vec<CdaId>)> = Vec::new();
+    for cda_id in [CdaId::Cda0, CdaId::Cda1, CdaId::Cda2, CdaId::Cda3] {
+        if rca
+            .cda_offset_bytes(cda_id.index())
+            .map_err(|error| VlaError::import(format!("decode CDA offset {:?}: {error}", cda_id)))?
+            == 0
+        {
+            continue;
+        }
+        let cda = record
+            .cda(cda_id)
+            .map_err(|error| VlaError::import(format!("decode CDA {:?}: {error}", cda_id)))?;
+        if !cda.is_valid() {
+            continue;
+        }
+        if sda
+            .n_polarizations(cda_id)
+            .map_err(|error| VlaError::import(format!("decode CDA polarization count: {error}")))?
+            == 0
+        {
+            continue;
+        }
+        let descriptor = SpectralDescriptor {
+            edge_frequency_hz: sda.edge_frequency_hz(cda_id).map_err(|error| {
+                VlaError::import(format!("decode edge frequency for {:?}: {error}", cda_id))
+            })?,
+            observed_frequency_hz: sda.observed_frequency_hz(cda_id).map_err(|error| {
+                VlaError::import(format!(
+                    "decode observed frequency for {:?}: {error}",
+                    cda_id
+                ))
+            })?,
+            channel_width_hz: sda.channel_width_hz(cda_id).map_err(|error| {
+                VlaError::import(format!("decode channel width for {:?}: {error}", cda_id))
+            })?,
+            total_bandwidth_hz: sda.correlated_bandwidth_hz(cda_id).map_err(|error| {
+                VlaError::import(format!("decode bandwidth for {:?}: {error}", cda_id))
+            })?,
+            num_chan: usize::try_from(sda.n_channels(cda_id).map_err(|error| {
+                VlaError::import(format!("decode channel count for {:?}: {error}", cda_id))
+            })?)
+            .map_err(|_| VlaError::import("channel count does not fit in usize"))?,
+            if_conv_chain: i32::try_from(sda.electronic_path(cda_id).map_err(|error| {
+                VlaError::import(format!("decode IF chain for {:?}: {error}", cda_id))
+            })?)
+            .map_err(|_| VlaError::import("IF conversion chain does not fit in i32"))?,
+            rest_frequency_hz: sda.rest_frequency_hz(cda_id).map_err(|error| {
+                VlaError::import(format!("decode rest frequency for {:?}: {error}", cda_id))
+            })?,
+            rest_frame: sda.rest_frame(cda_id).map_err(|error| {
+                VlaError::import(format!("decode rest frame for {:?}: {error}", cda_id))
+            })?,
+            doppler_definition: sda.doppler_definition(cda_id).map_err(|error| {
+                VlaError::import(format!(
+                    "decode doppler definition for {:?}: {error}",
+                    cda_id
+                ))
+            })?,
+            doppler_velocity_mps: sda.radial_velocity_mps(cda_id).map_err(|error| {
+                VlaError::import(format!("decode radial velocity for {:?}: {error}", cda_id))
+            })?,
+            doppler_tracking: sda.doppler_tracking(cda_id).map_err(|error| {
+                VlaError::import(format!("decode doppler tracking for {:?}: {error}", cda_id))
+            })?,
+        };
+        if let Some((_, cdas)) = cda_groups.iter_mut().find(|(existing, _)| {
+            same_spectral_descriptor(existing, &descriptor, options.frequencytol_hz)
+        }) {
+            cdas.push(cda_id);
+        } else {
+            cda_groups.push((descriptor, vec![cda_id]));
+        }
+    }
+    Ok(cda_groups)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1185,7 +1484,7 @@ fn time_from_archive(obs_day: u32, obs_seconds: f64) -> f64 {
     f64::from(obs_day) * 86_400.0 + obs_seconds
 }
 
-struct MsImportWriter {
+struct VlaImportState {
     options: ImportVlaOptions,
     ms: MeasurementSet,
     logical_records_seen: usize,
@@ -1211,10 +1510,39 @@ struct MsImportWriter {
     current_scan_by_array: HashMap<i32, i32>,
     last_field_by_array: HashMap<i32, i32>,
     last_data_desc_ids_by_array: HashMap<i32, Vec<i32>>,
+    main_write_session: Option<MeasurementSetWriteSession>,
 }
 
-impl MsImportWriter {
-    fn new(options: ImportVlaOptions, ms: MeasurementSet) -> Result<Self, VlaError> {
+impl VlaImportState {
+    #[cfg(test)]
+    fn new(
+        options: ImportVlaOptions,
+        ms: MeasurementSet,
+        row_count: usize,
+        channel_count: usize,
+    ) -> Result<Self, VlaError> {
+        let output = ms
+            .path()
+            .ok_or_else(|| VlaError::import("test importer requires a disk-backed MS"))?;
+        let write_plan = test_import_write_plan(row_count, 4, channel_count)?;
+        let main_write_session = MeasurementSetWriteSession::start(output, write_plan)
+            .map_err(|error| VlaError::import(error.to_string()))?;
+        Self::new_inner(options, ms, main_write_session)
+    }
+
+    fn new_with_write_session(
+        options: ImportVlaOptions,
+        ms: MeasurementSet,
+        main_write_session: MeasurementSetWriteSession,
+    ) -> Result<Self, VlaError> {
+        Self::new_inner(options, ms, main_write_session)
+    }
+
+    fn new_inner(
+        options: ImportVlaOptions,
+        ms: MeasurementSet,
+        main_write_session: MeasurementSetWriteSession,
+    ) -> Result<Self, VlaError> {
         let mut writer = Self {
             options,
             ms,
@@ -1241,6 +1569,7 @@ impl MsImportWriter {
             current_scan_by_array: HashMap::new(),
             last_field_by_array: HashMap::new(),
             last_data_desc_ids_by_array: HashMap::new(),
+            main_write_session: Some(main_write_session),
         };
         writer.initialize_epoch_measure_references()?;
         writer.initialize_vla_spectral_window_columns()?;
@@ -1445,10 +1774,37 @@ impl MsImportWriter {
         }
         self.perf_summary.finish_metadata_ns = finish_started.elapsed().as_nanos() as u64;
         let save_started = Instant::now();
-        let result = self
-            .ms
-            .save_assuming_valid()
-            .map_err(|error| VlaError::import(format!("save MeasurementSet: {error}")));
+        let main_write_session = self
+            .main_write_session
+            .take()
+            .ok_or_else(|| VlaError::import("MAIN write session was already finalized"))?;
+        let mut overrides = casa_tables::ColumnOverrides::for_row_count(self.main_rows_written);
+        for column in [
+            "DATA",
+            "CORRECTED_DATA",
+            "MODEL_DATA",
+            "FLAG",
+            "FLAG_CATEGORY",
+            "WEIGHT",
+            "SIGMA",
+        ] {
+            overrides.insert_deferred(column);
+        }
+        overrides.insert_deferred("UVW");
+        let write_telemetry = main_write_session
+            .save_and_finish(&mut self.ms, &overrides)
+            .map_err(|error| VlaError::import(error.to_string()))?;
+        self.perf_summary.write_producer_ns = seconds_to_nanos(write_telemetry.producer_seconds);
+        self.perf_summary.write_queue_wait_ns =
+            seconds_to_nanos(write_telemetry.queue_wait_seconds);
+        self.perf_summary.write_assemble_ns = seconds_to_nanos(write_telemetry.assemble_seconds);
+        self.perf_summary.write_physical_ns = seconds_to_nanos(write_telemetry.write_seconds);
+        self.perf_summary.write_finalize_ns = seconds_to_nanos(write_telemetry.finalize_seconds);
+        self.perf_summary.write_rows = write_telemetry.rows_written;
+        self.perf_summary.write_bytes = write_telemetry.bytes_written;
+        self.perf_summary.write_peak_planned_resident_bytes =
+            write_telemetry.maximum_resident_bytes;
+        let result = Ok(());
         self.perf_summary.save_ns = save_started.elapsed().as_nanos() as u64;
         result
     }
@@ -2113,74 +2469,149 @@ impl MsImportWriter {
             self.perf_summary.flag_row_ns += flag_started.elapsed().as_nanos() as u64;
             value
         };
-        let row = {
-            let make_started = Instant::now();
-            let row = make_main_row(
-                &self.ms,
-                &[
-                    ("ANTENNA1", Value::Scalar(ScalarValue::Int32(row_ant1))),
-                    ("ANTENNA2", Value::Scalar(ScalarValue::Int32(row_ant2))),
-                    ("ARRAY_ID", Value::Scalar(ScalarValue::Int32(array_id))),
-                    (
-                        "DATA_DESC_ID",
-                        Value::Scalar(ScalarValue::Int32(data_desc_id)),
-                    ),
-                    (
-                        "EXPOSURE",
-                        Value::Scalar(ScalarValue::Float64(integration_seconds)),
-                    ),
-                    ("FEED1", Value::Scalar(ScalarValue::Int32(0))),
-                    ("FEED2", Value::Scalar(ScalarValue::Int32(0))),
-                    ("FIELD_ID", Value::Scalar(ScalarValue::Int32(field_id))),
-                    ("FLAG", Value::Array(row_flag)),
-                    ("FLAG_CATEGORY", Value::Array(row_flag_category)),
-                    ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(row_flag_row))),
-                    (
-                        "INTERVAL",
-                        Value::Scalar(ScalarValue::Float64(integration_seconds)),
-                    ),
-                    (
-                        "OBSERVATION_ID",
-                        Value::Scalar(ScalarValue::Int32(observation_id)),
-                    ),
-                    ("PROCESSOR_ID", Value::Scalar(ScalarValue::Int32(-1))),
-                    (
-                        "SCAN_NUMBER",
-                        Value::Scalar(ScalarValue::Int32(scan_number)),
-                    ),
-                    ("SIGMA", Value::Array(row_sigma)),
-                    ("STATE_ID", Value::Scalar(ScalarValue::Int32(-1))),
-                    ("TIME", Value::Scalar(ScalarValue::Float64(time_seconds))),
-                    (
-                        "TIME_CENTROID",
-                        Value::Scalar(ScalarValue::Float64(time_seconds)),
-                    ),
-                    (
-                        "UVW",
-                        Value::Array(ArrayValue::Float64(
-                            ArrayD::from_shape_vec(IxDyn(&[3]).f(), row_uvw.to_vec()).map_err(
-                                |error| VlaError::import(format!("shape UVW array: {error}")),
-                            )?,
-                        )),
-                    ),
-                    ("WEIGHT", Value::Array(row_weight)),
-                    ("DATA", Value::Array(row_data)),
-                    ("CORRECTED_DATA", Value::Array(row_corrected)),
-                    ("MODEL_DATA", Value::Array(row_model)),
-                ],
+        {
+            let writer = self
+                .main_write_session
+                .as_mut()
+                .ok_or_else(|| VlaError::import("MAIN write session is unavailable"))?;
+            let append_started = Instant::now();
+            push_import_complex32_row(writer, "DATA", &row_data)?;
+            push_import_complex32_row(writer, "CORRECTED_DATA", &row_corrected)?;
+            push_import_complex32_row(writer, "MODEL_DATA", &row_model)?;
+            push_import_bool_row(writer, "FLAG", &row_flag)?;
+            push_import_bool_row(writer, "FLAG_CATEGORY", &row_flag_category)?;
+            push_import_f32_row(writer, "WEIGHT", &row_weight)?;
+            push_import_f32_row(writer, "SIGMA", &row_sigma)?;
+            writer
+                .push_f64_row("UVW", &[3], &row_uvw)
+                .map_err(|error| VlaError::import(error.to_string()))?;
+            push_import_scalar_row(
+                writer,
+                row_ant1,
+                row_ant2,
+                array_id,
+                data_desc_id,
+                integration_seconds,
+                field_id,
+                row_flag_row,
+                observation_id,
+                scan_number,
+                time_seconds,
             )?;
-            self.perf_summary.make_main_row_ns += make_started.elapsed().as_nanos() as u64;
-            row
-        };
-        let append_started = Instant::now();
-        self.ms
-            .main_table_mut()
-            .add_row_assuming_valid(row)
-            .map_err(|error| VlaError::import(format!("add MAIN row: {error}")))?;
-        self.perf_summary.append_main_row_ns += append_started.elapsed().as_nanos() as u64;
+            self.perf_summary.append_main_row_ns += append_started.elapsed().as_nanos() as u64;
+        }
         self.main_rows_written += 1;
         Ok(())
     }
+}
+
+fn seconds_to_nanos(seconds: f64) -> u64 {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return 0;
+    }
+    (seconds * 1_000_000_000.0).min(u64::MAX as f64) as u64
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_import_scalar_row(
+    writer: &mut MeasurementSetWriteSession,
+    antenna1: i32,
+    antenna2: i32,
+    array_id: i32,
+    data_desc_id: i32,
+    exposure: f64,
+    field_id: i32,
+    flag_row: bool,
+    observation_id: i32,
+    scan_number: i32,
+    time: f64,
+) -> Result<(), VlaError> {
+    for (column, value) in [
+        ("ANTENNA1", ScalarValue::Int32(antenna1)),
+        ("ANTENNA2", ScalarValue::Int32(antenna2)),
+        ("ARRAY_ID", ScalarValue::Int32(array_id)),
+        ("DATA_DESC_ID", ScalarValue::Int32(data_desc_id)),
+        ("EXPOSURE", ScalarValue::Float64(exposure)),
+        ("FEED1", ScalarValue::Int32(0)),
+        ("FEED2", ScalarValue::Int32(0)),
+        ("FIELD_ID", ScalarValue::Int32(field_id)),
+        ("FLAG_ROW", ScalarValue::Bool(flag_row)),
+        ("INTERVAL", ScalarValue::Float64(exposure)),
+        ("OBSERVATION_ID", ScalarValue::Int32(observation_id)),
+        ("PROCESSOR_ID", ScalarValue::Int32(-1)),
+        ("SCAN_NUMBER", ScalarValue::Int32(scan_number)),
+        ("STATE_ID", ScalarValue::Int32(-1)),
+        ("TIME", ScalarValue::Float64(time)),
+        ("TIME_CENTROID", ScalarValue::Float64(time)),
+    ] {
+        writer
+            .push_scalar_row(column, Some(value))
+            .map_err(|error| VlaError::import(error.to_string()))?;
+    }
+    Ok(())
+}
+
+fn push_import_complex32_row(
+    writer: &mut MeasurementSetWriteSession,
+    column: &str,
+    value: &ArrayValue,
+) -> Result<(), VlaError> {
+    let ArrayValue::Complex32(array) = value else {
+        return Err(VlaError::import(format!(
+            "MAIN.{column} is not a Complex32 array"
+        )));
+    };
+    let values = array_values_in_casa_order(array);
+    writer
+        .push_complex32_row(column, array.shape(), &values)
+        .map_err(|error| VlaError::import(error.to_string()))
+}
+
+fn push_import_bool_row(
+    writer: &mut MeasurementSetWriteSession,
+    column: &str,
+    value: &ArrayValue,
+) -> Result<(), VlaError> {
+    let ArrayValue::Bool(array) = value else {
+        return Err(VlaError::import(format!(
+            "MAIN.{column} is not a Bool array"
+        )));
+    };
+    let values = array_values_in_casa_order(array);
+    writer
+        .push_bool_row(column, array.shape(), &values)
+        .map_err(|error| VlaError::import(error.to_string()))
+}
+
+fn push_import_f32_row(
+    writer: &mut MeasurementSetWriteSession,
+    column: &str,
+    value: &ArrayValue,
+) -> Result<(), VlaError> {
+    let ArrayValue::Float32(array) = value else {
+        return Err(VlaError::import(format!(
+            "MAIN.{column} is not a Float32 array"
+        )));
+    };
+    let values = array_values_in_casa_order(array);
+    writer
+        .push_f32_row(column, array.shape(), &values)
+        .map_err(|error| VlaError::import(error.to_string()))
+}
+
+fn array_values_in_casa_order<T: Copy>(array: &ArrayD<T>) -> Vec<T> {
+    let shape = array.shape();
+    let mut values = Vec::with_capacity(array.len());
+    let mut position = vec![0usize; shape.len()];
+    for linear in 0..array.len() {
+        let mut remainder = linear;
+        for (axis, &extent) in shape.iter().enumerate() {
+            position[axis] = remainder % extent;
+            remainder /= extent;
+        }
+        values.push(array[IxDyn(&position)]);
+    }
+    values
 }
 
 fn align_direction_for_epoch(
@@ -2639,26 +3070,6 @@ fn corr_product_array(corr_types: &[i32]) -> Result<ArrayValue, VlaError> {
     ))
 }
 
-fn make_main_row(
-    ms: &MeasurementSet,
-    overrides: &[(&str, Value)],
-) -> Result<RecordValue, VlaError> {
-    let schema = ms
-        .main_table()
-        .schema()
-        .ok_or_else(|| VlaError::import("main table has no schema"))?;
-    let schema_column_names: Vec<&str> = schema
-        .columns()
-        .iter()
-        .map(|column| column.name())
-        .collect();
-    let all_cols: Vec<_> = casa_ms::schema::main_table::REQUIRED_COLUMNS
-        .iter()
-        .chain(casa_ms::schema::main_table::OPTIONAL_COLUMNS.iter())
-        .collect();
-    make_row_from_names(&schema_column_names, &all_cols, overrides)
-}
-
 fn make_row_from_columns(
     columns: &[casa_ms::column_def::ColumnDef],
     overrides: &[(&str, Value)],
@@ -2846,10 +3257,17 @@ mod tests {
                 push_record_ns: 3,
                 reorder_baseline_ns: 4,
                 flag_row_ns: 5,
-                make_main_row_ns: 6,
                 append_main_row_ns: 7,
                 finish_metadata_ns: 8,
                 save_ns: 9,
+                write_producer_ns: 10,
+                write_queue_wait_ns: 11,
+                write_assemble_ns: 12,
+                write_physical_ns: 13,
+                write_finalize_ns: 14,
+                write_rows: 42,
+                write_bytes: 16,
+                write_peak_planned_resident_bytes: 17,
             },
             40,
         );
@@ -2879,10 +3297,14 @@ mod tests {
         let json = std::fs::read_to_string(&json_paths[0]).expect("read perf jsonl");
         assert!(json.contains("\"kind\":\"import_completed\""));
         assert!(json.contains("\"main_rows_written\":42"));
+        assert!(json.contains("\"write_rows\":42"));
+        assert!(json.contains("\"write_peak_planned_resident_bytes\":17"));
 
         let log = std::fs::read_to_string(&log_paths[0]).expect("read perf log");
         assert!(log.contains("rows=42"));
         assert!(log.contains("save_ms="));
+        assert!(log.contains("write_physical_ms="));
+        assert!(log.contains("write_peak_planned_resident_bytes=17"));
     }
 
     #[test]
@@ -3038,13 +3460,15 @@ mod tests {
             .with_optional_subtable(SubtableId::Source)
             .with_optional_subtable(SubtableId::Doppler);
         let ms = MeasurementSet::create(&ms_path, builder).unwrap();
-        let mut writer = MsImportWriter::new(
+        let mut writer = VlaImportState::new(
             ImportVlaOptions {
                 archivefiles: vec![PathBuf::from("synthetic.xp1")],
                 vis: Some(ms_path.clone()),
                 ..ImportVlaOptions::default()
             },
             ms,
+            1,
+            1,
         )
         .unwrap();
 
@@ -3322,7 +3746,7 @@ mod tests {
             .with_optional_subtable(SubtableId::Source)
             .with_optional_subtable(SubtableId::Doppler);
         let ms = MeasurementSet::create(&ms_path, builder).unwrap();
-        let mut writer = MsImportWriter::new(ImportVlaOptions::default(), ms).unwrap();
+        let mut writer = VlaImportState::new(ImportVlaOptions::default(), ms, 3, 1).unwrap();
         set_flag_category_names(writer.ms.main_table_mut()).unwrap();
 
         let descriptor = test_descriptor(1.4e9);
@@ -3355,7 +3779,7 @@ mod tests {
             .with_optional_subtable(SubtableId::Source)
             .with_optional_subtable(SubtableId::Doppler);
         let ms = MeasurementSet::create(&ms_path, builder).unwrap();
-        let mut writer = MsImportWriter::new(ImportVlaOptions::default(), ms).unwrap();
+        let mut writer = VlaImportState::new(ImportVlaOptions::default(), ms, 3, 1).unwrap();
         set_flag_category_names(writer.ms.main_table_mut()).unwrap();
 
         writer
@@ -3398,7 +3822,7 @@ mod tests {
             .with_optional_subtable(SubtableId::Source)
             .with_optional_subtable(SubtableId::Doppler);
         let ms = MeasurementSet::create(&ms_path, builder).unwrap();
-        let mut writer = MsImportWriter::new(ImportVlaOptions::default(), ms).unwrap();
+        let mut writer = VlaImportState::new(ImportVlaOptions::default(), ms, 2, 1).unwrap();
         set_flag_category_names(writer.ms.main_table_mut()).unwrap();
 
         let topo_descriptor = SpectralDescriptor {
@@ -3499,7 +3923,7 @@ mod tests {
             .with_optional_subtable(SubtableId::Source)
             .with_optional_subtable(SubtableId::Doppler);
         let ms = MeasurementSet::create(&ms_path, builder).unwrap();
-        let mut writer = MsImportWriter::new(ImportVlaOptions::default(), ms).unwrap();
+        let mut writer = VlaImportState::new(ImportVlaOptions::default(), ms, 1, 1).unwrap();
         set_flag_category_names(writer.ms.main_table_mut()).unwrap();
         writer
             .push_record(test_record(
@@ -3550,7 +3974,7 @@ mod tests {
             .with_optional_subtable(SubtableId::Source)
             .with_optional_subtable(SubtableId::Doppler);
         let ms = MeasurementSet::create(&ms_path, builder).unwrap();
-        let mut writer = MsImportWriter::new(ImportVlaOptions::default(), ms).unwrap();
+        let mut writer = VlaImportState::new(ImportVlaOptions::default(), ms, 1, 1).unwrap();
         set_flag_category_names(writer.ms.main_table_mut()).unwrap();
         writer
             .push_record(test_record(
@@ -3653,7 +4077,7 @@ mod tests {
             .with_optional_subtable(SubtableId::Source)
             .with_optional_subtable(SubtableId::Doppler);
         let ms = MeasurementSet::create(&ms_path, builder).unwrap();
-        let mut writer = MsImportWriter::new(ImportVlaOptions::default(), ms).unwrap();
+        let mut writer = VlaImportState::new(ImportVlaOptions::default(), ms, 1, 1).unwrap();
         set_flag_category_names(writer.ms.main_table_mut()).unwrap();
         writer
             .push_record(test_record(
@@ -3908,7 +4332,7 @@ mod tests {
             .with_optional_subtable(SubtableId::Source)
             .with_optional_subtable(SubtableId::Doppler);
         let ms = MeasurementSet::create(&ms_path, builder).unwrap();
-        let mut writer = MsImportWriter::new(ImportVlaOptions::default(), ms).unwrap();
+        let mut writer = VlaImportState::new(ImportVlaOptions::default(), ms, 3, 1).unwrap();
         set_flag_category_names(writer.ms.main_table_mut()).unwrap();
 
         let data = ArrayValue::Complex32(
