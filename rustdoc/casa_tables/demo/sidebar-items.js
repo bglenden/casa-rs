@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["run_table_quantum_demo","run_ttable_like_demo"]};

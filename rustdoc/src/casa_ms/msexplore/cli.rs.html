@@ -302,7 +302,7 @@
 <a href=#302 id=302 data-nosnippet>302</a>                preview
 <a href=#303 id=303 data-nosnippet>303</a>            };
 <a href=#304 id=304 data-nosnippet>304</a>            <span class="kw">if </span>options.flag_apply {
-<a href=#305 id=305 data-nosnippet>305</a>                ms.save_main_table_only_assuming_valid()
+<a href=#305 id=305 data-nosnippet>305</a>                ms.save_main_table_only()
 <a href=#306 id=306 data-nosnippet>306</a>                    .map_err(|error| error.to_string())<span class="question-mark">?</span>;
 <a href=#307 id=307 data-nosnippet>307</a>            }
 <a href=#308 id=308 data-nosnippet>308</a>            write_or_log_flag_preview(<span class="kw-2">&amp;</span>options, <span class="kw-2">&amp;</span>preview)<span class="question-mark">?</span>;
@@ -313,7 +313,7 @@
 <a href=#313 id=313 data-nosnippet>313</a>            <span class="kw">let </span>preview = <span class="kw">if </span>options.flag_apply {
 <a href=#314 id=314 data-nosnippet>314</a>                <span class="kw">let </span>preview =
 <a href=#315 id=315 data-nosnippet>315</a>                    apply_msexplore_flag_edit_for_request(<span class="kw-2">&amp;mut </span>ms, explore_spec, flag_edit)<span class="question-mark">?</span>;
-<a href=#316 id=316 data-nosnippet>316</a>                ms.save_main_table_only_assuming_valid()
+<a href=#316 id=316 data-nosnippet>316</a>                ms.save_main_table_only()
 <a href=#317 id=317 data-nosnippet>317</a>                    .map_err(|error| error.to_string())<span class="question-mark">?</span>;
 <a href=#318 id=318 data-nosnippet>318</a>                preview
 <a href=#319 id=319 data-nosnippet>319</a>            } <span class="kw">else </span>{

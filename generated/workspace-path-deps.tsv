@@ -25,11 +25,13 @@ casa-lattices	casa-tables	normal	crates/casa-tables
 casa-lattices	casa-types	normal	crates/casa-types
 casa-logging	casa-tables	normal	crates/casa-tables
 casa-logging	casa-types	normal	crates/casa-types
-casa-measures-data	casa-table-read	normal	crates/casa-table-read
+casa-measures-data	casa-tables	normal	crates/casa-tables
+casa-measures-data	casa-types	normal	crates/casa-types
 casa-measures-tools	casa-measures-data	normal	crates/casa-measures-data
 casa-ms	casa-coordinates	normal	crates/casa-coordinates
 casa-ms	casa-imaging	normal	crates/casa-imaging
 casa-ms	casa-logging	normal	crates/casa-logging
+casa-ms	casa-measures-data	normal	crates/casa-measures-data
 casa-ms	casa-provider-contracts	normal	crates/casa-provider-contracts
 casa-ms	casa-tables	normal	crates/casa-tables
 casa-ms	casa-task-runtime	normal	crates/casa-task-runtime
@@ -50,9 +52,9 @@ casa-test-support	casa-measures-data	normal	crates/casa-measures-data
 casa-test-support	casa-ms	dev	crates/casa-ms
 casa-test-support	casa-tables	normal	crates/casa-tables
 casa-test-support	casa-types	normal	crates/casa-types
-casa-types	casa-measures-data	normal	crates/casa-measures-data
 casa-types	casa-values	normal	crates/casa-values
 casa-vla	casa-logging	normal	crates/casa-logging
+casa-vla	casa-measures-data	normal	crates/casa-measures-data
 casa-vla	casa-ms	normal	crates/casa-ms
 casa-vla	casa-provider-contracts	normal	crates/casa-provider-contracts
 casa-vla	casa-tables	normal	crates/casa-tables
@@ -89,6 +91,7 @@ casars-imager	casa-coordinates	normal	crates/casa-coordinates
 casars-imager	casa-images	normal	crates/casa-images
 casars-imager	casa-imaging	normal	crates/casa-imaging
 casars-imager	casa-logging	normal	crates/casa-logging
+casars-imager	casa-measures-data	dev	crates/casa-measures-data
 casars-imager	casa-ms	normal	crates/casa-ms
 casars-imager	casa-provider-contracts	normal	crates/casa-provider-contracts
 casars-imager	casa-tables	normal	crates/casa-tables

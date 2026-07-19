@@ -826,8 +826,9 @@ are:</p>
   <code>/Volumes/home/casatestdata</code> when it contains the required paths.</li>
 <li>Tutorial parity data: <code>CASA_RS_TUTORIAL_DATA_ROOT/tutorial-parity/...</code> or
   <code>~/SoftwareProjects/casa-tutorial-data/tutorial-parity/...</code>.</li>
-<li>Measures runtime data: <code>~/.casa/data</code>, overridden by
-  <code>CASA_RS_MEASURESPATH</code>. <code>CASA_RS_DATA</code> is deprecated compatibility only.</li>
+<li>Measures runtime data: an explicit root supplied to <code>MeasuresRuntime::open</code>,
+  or a complete <code>CASA_RS_MEASURESPATH</code> / <code>~/.casa/data</code> candidate selected by
+  the application before opening the runtime. Discovery never installs data.</li>
 <li>Small bundled real-MS CI fixtures: <code>crates/casa-ms/tests/fixtures/</code>.</li>
 </ul>
 <p>Slow, release, parity, and tutorial gates run shared-data preflight and report

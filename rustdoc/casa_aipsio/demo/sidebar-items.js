@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["AipsIoDemoError"],"fn":["run_taipsio_like_demo"],"type":["AipsIoDemoResult"]};

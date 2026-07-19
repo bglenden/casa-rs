@@ -74,19 +74,23 @@
 <a href=#74 id=74 data-nosnippet>74</a>    </span><span class="attr">#[error(<span class="string">"measure conversion: {0}"</span>)]
 <a href=#75 id=75 data-nosnippet>75</a>    </span>Measure(<span class="attr">#[from] </span>MeasureError),
 <a href=#76 id=76 data-nosnippet>76</a>
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// A schema construction error.
-<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="attr">#[error(<span class="string">"schema error: {0}"</span>)]
-<a href=#79 id=79 data-nosnippet>79</a>    </span>Schema(<span class="attr">#[from] </span>casa_tables::SchemaError),
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// Measures runtime discovery, validation, or table loading failed.
+<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="attr">#[error(<span class="string">"measures runtime: {0}"</span>)]
+<a href=#79 id=79 data-nosnippet>79</a>    </span>MeasuresRuntime(String),
 <a href=#80 id=80 data-nosnippet>80</a>
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// Invalid caller input for a MeasurementSet read or write request.
-<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="attr">#[error(<span class="string">"invalid input: {0}"</span>)]
-<a href=#83 id=83 data-nosnippet>83</a>    </span>InvalidInput(String),
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// A schema construction error.
+<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="attr">#[error(<span class="string">"schema error: {0}"</span>)]
+<a href=#83 id=83 data-nosnippet>83</a>    </span>Schema(<span class="attr">#[from] </span>casa_tables::SchemaError),
 <a href=#84 id=84 data-nosnippet>84</a>
-<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// Invalid input for native synthetic-observation generation.
-<a href=#86 id=86 data-nosnippet>86</a>    </span><span class="attr">#[error(<span class="string">"synthetic observation input: {0}"</span>)]
-<a href=#87 id=87 data-nosnippet>87</a>    </span>SyntheticObservation(String),
-<a href=#88 id=88 data-nosnippet>88</a>}
-<a href=#89 id=89 data-nosnippet>89</a>
-<a href=#90 id=90 data-nosnippet>90</a><span class="doccomment">/// Convenience type alias for MS operations.
-<a href=#91 id=91 data-nosnippet>91</a></span><span class="kw">pub type </span>MsResult&lt;T&gt; = <span class="prelude-ty">Result</span>&lt;T, MsError&gt;;
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// Invalid caller input for a MeasurementSet read or write request.
+<a href=#86 id=86 data-nosnippet>86</a>    </span><span class="attr">#[error(<span class="string">"invalid input: {0}"</span>)]
+<a href=#87 id=87 data-nosnippet>87</a>    </span>InvalidInput(String),
+<a href=#88 id=88 data-nosnippet>88</a>
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="doccomment">/// Invalid input for native synthetic-observation generation.
+<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="attr">#[error(<span class="string">"synthetic observation input: {0}"</span>)]
+<a href=#91 id=91 data-nosnippet>91</a>    </span>SyntheticObservation(String),
+<a href=#92 id=92 data-nosnippet>92</a>}
+<a href=#93 id=93 data-nosnippet>93</a>
+<a href=#94 id=94 data-nosnippet>94</a><span class="doccomment">/// Convenience type alias for MS operations.
+<a href=#95 id=95 data-nosnippet>95</a></span><span class="kw">pub type </span>MsResult&lt;T&gt; = <span class="prelude-ty">Result</span>&lt;T, MsError&gt;;
 </code></pre></div></section></main></body></html>
