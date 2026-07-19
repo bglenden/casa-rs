@@ -71,12 +71,10 @@ fn new_ssm_bucket_layout(col_sizes_bits: &[usize], row_count: usize) -> (u32, u3
 
     let bucket_size = DEFAULT_SSM_BUCKET_SIZE as usize;
     let full_bytes_per_row = col_sizes_bits.iter().map(|bits| bits / 8).sum::<usize>();
-    let mut rows = if full_bytes_per_row == 0 {
-        bucket_size * 8 / col_sizes_bits.iter().sum::<usize>().max(1)
-    } else {
-        bucket_size / full_bytes_per_row
-    }
-    .max(1);
+    let mut rows = bucket_size
+        .checked_div(full_bytes_per_row)
+        .unwrap_or_else(|| bucket_size * 8 / col_sizes_bits.iter().sum::<usize>().max(1))
+        .max(1);
     while rows > 1 && packed_ssm_column_bytes(col_sizes_bits, rows) > bucket_size {
         rows -= 1;
     }
