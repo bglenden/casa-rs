@@ -8,8 +8,9 @@
 #![cfg(feature = "performance-tests")]
 
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
+use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::expr_file;
@@ -22,7 +23,7 @@ use casa_lattices::{
 use casa_test_support::{ImageOracle, casacore_oracle_available};
 use casa_types::Complex32;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 fn flatten_fortran<T: Clone>(array: &ArrayD<T>) -> Vec<T> {
     let shape = array.shape();
@@ -1418,35 +1419,101 @@ fn plane_by_plane_bounded_cache_perf() {
     }
 }
 
+fn sync_file_tree(path: &Path) {
+    if path.is_dir() {
+        for entry in std::fs::read_dir(path).unwrap() {
+            sync_file_tree(&entry.unwrap().path());
+        }
+    } else if path.is_file() {
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .unwrap()
+            .sync_all()
+            .unwrap();
+    }
+}
+
+#[cfg(unix)]
+fn allocated_file_tree_bytes(path: &Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+
+    if path.is_dir() {
+        std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| allocated_file_tree_bytes(&entry.unwrap().path()))
+            .sum()
+    } else {
+        path.metadata().unwrap().blocks() * 512
+    }
+}
+
+fn report_cube_progress(stage: &str, completed: usize, channels: usize, started: Instant) {
+    if completed == channels || completed % 1024 == 0 {
+        let gib = completed as f64 * 4.0 / 1024.0;
+        let mib_per_second = completed as f64 * 4.0 / started.elapsed().as_secs_f64();
+        eprintln!(
+            "{stage}: {completed}/{channels} planes ({gib:.1} GiB), {mib_per_second:.0} MiB/s"
+        );
+    }
+}
+
+fn mark_cube_plane(plane: &mut ArrayD<f32>, channel: usize) {
+    plane[[0, 0, 0, 0]] = channel as f32 + 0.25;
+    plane[[1023, 1023, 0, 0]] = -(channel as f32 + 0.5);
+}
+
+fn cube_plane_bytes(plane: &ArrayD<f32>) -> &[u8] {
+    let values = plane.as_slice_memory_order().unwrap();
+    unsafe {
+        std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values))
+    }
+}
+
 #[test]
-#[ignore = "physical disk throughput gate; writes about 1 GiB by default"]
-fn spectral_cube_plane_io_tracks_raw_disk_speed() {
+#[ignore = "full physical 50 GiB cube throughput gate; requires CASA_RS_CUBE_PERF_DIR with at least 110 GiB free"]
+fn full_spectral_cube_plane_io_tracks_raw_disk_speed() {
     let channels = std::env::var("CASA_RS_CUBE_CHANNELS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(128);
+        .unwrap_or(12_800);
     let plane_shape = [1024, 1024, 1, 1];
     let shape = vec![1024, 1024, 1, channels];
-    let plane = ArrayD::from_shape_vec(
+    let mut random_state = 0x4d59_5df4_d0f3_3173_u64;
+    let mut plane = ArrayD::from_shape_vec(
         IxDyn(&plane_shape).f(),
-        vec![2.5f32; plane_shape.iter().product()],
+        (0..plane_shape.iter().product())
+            .map(|_| {
+                random_state ^= random_state << 13;
+                random_state ^= random_state >> 7;
+                random_state ^= random_state << 17;
+                f32::from_bits((random_state as u32 & 0x007f_ffff) | 0x3f00_0000)
+            })
+            .collect(),
     )
     .unwrap();
-    let plane_slice = plane.as_slice_memory_order().unwrap();
-    let plane_bytes = unsafe {
-        std::slice::from_raw_parts(
-            plane_slice.as_ptr().cast::<u8>(),
-            std::mem::size_of_val(plane_slice),
-        )
-    };
-    let total_bytes = plane_bytes.len() * channels;
-    let directory = tempfile::tempdir().unwrap();
+    let plane_bytes = cube_plane_bytes(&plane).len();
+    let total_bytes = plane_bytes * channels;
+    let benchmark_root = std::env::var_os("CASA_RS_CUBE_PERF_DIR")
+        .expect("CASA_RS_CUBE_PERF_DIR must name a physical volume with at least 110 GiB free");
+    let directory = tempfile::Builder::new()
+        .prefix("casa-rs-full-cube-")
+        .tempdir_in(benchmark_root)
+        .unwrap();
+    eprintln!(
+        "full cube benchmark: shape={shape:?}, tile={plane_shape:?}, {:.1} GiB per cube, root={}",
+        total_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
+        directory.path().display()
+    );
 
     let raw_path = directory.path().join("raw-cube.bin");
     let raw_write_start = Instant::now();
     let mut raw = File::create(&raw_path).unwrap();
-    for _ in 0..channels {
-        raw.write_all(plane_bytes).unwrap();
+    for channel in 0..channels {
+        mark_cube_plane(&mut plane, channel);
+        raw.write_all(cube_plane_bytes(&plane)).unwrap();
+        report_cube_progress("raw write", channel + 1, channels, raw_write_start);
     }
     raw.sync_all().unwrap();
     let raw_write_seconds = raw_write_start.elapsed().as_secs_f64();
@@ -1463,9 +1530,12 @@ fn spectral_cube_plane_io_tracks_raw_disk_speed() {
     .unwrap();
     let image_write_start = Instant::now();
     for channel in 0..channels {
+        mark_cube_plane(&mut plane, channel);
         image.put_slice(&plane, &[0, 0, 0, channel]).unwrap();
+        report_cube_progress("image write", channel + 1, channels, image_write_start);
     }
     image.save().unwrap();
+    sync_file_tree(&image_path);
     let image_write_seconds = image_write_start.elapsed().as_secs_f64();
     assert_eq!(
         image.tiled_io_stats().unwrap().direct_tile_write_tiles,
@@ -1475,21 +1545,37 @@ fn spectral_cube_plane_io_tracks_raw_disk_speed() {
 
     let mut raw = File::open(&raw_path).unwrap();
     let raw_read_start = Instant::now();
-    for _ in 0..channels {
+    let mut raw_read_io = Duration::ZERO;
+    for channel in 0..channels {
         // Match PagedImage::get_slice's owned-result contract.
-        let mut raw_plane = vec![0u8; plane_bytes.len()];
+        let mut raw_plane = vec![0u8; plane_bytes];
+        let io_start = Instant::now();
         raw.read_exact(&mut raw_plane).unwrap();
-        std::hint::black_box(raw_plane[0]);
+        raw_read_io += io_start.elapsed();
+        mark_cube_plane(&mut plane, channel);
+        assert!(
+            raw_plane == cube_plane_bytes(&plane),
+            "raw pixel pattern mismatch in channel {channel}"
+        );
+        report_cube_progress("raw read", channel + 1, channels, raw_read_start);
     }
-    let raw_read_seconds = raw_read_start.elapsed().as_secs_f64();
+    let raw_read_seconds = raw_read_io.as_secs_f64();
 
     let image = PagedImage::<f32>::open_with_cache(&image_path, 64 * 1024 * 1024).unwrap();
     let image_read_start = Instant::now();
+    let mut image_read_io = Duration::ZERO;
     for channel in 0..channels {
+        let io_start = Instant::now();
         let read = image.get_slice(&[0, 0, 0, channel], &plane_shape).unwrap();
-        std::hint::black_box(read[[0, 0, 0, 0]]);
+        image_read_io += io_start.elapsed();
+        mark_cube_plane(&mut plane, channel);
+        assert!(
+            read.as_slice_memory_order().unwrap() == plane.as_slice_memory_order().unwrap(),
+            "image pixel pattern mismatch in channel {channel}"
+        );
+        report_cube_progress("image read", channel + 1, channels, image_read_start);
     }
-    let image_read_seconds = image_read_start.elapsed().as_secs_f64();
+    let image_read_seconds = image_read_io.as_secs_f64();
 
     let raw_write_mib = total_bytes as f64 / raw_write_seconds / (1024.0 * 1024.0);
     let image_write_mib = total_bytes as f64 / image_write_seconds / (1024.0 * 1024.0);
@@ -1497,6 +1583,18 @@ fn spectral_cube_plane_io_tracks_raw_disk_speed() {
     let image_read_mib = total_bytes as f64 / image_read_seconds / (1024.0 * 1024.0);
     let write_fraction = image_write_mib / raw_write_mib;
     let read_fraction = image_read_mib / raw_read_mib;
+    #[cfg(unix)]
+    {
+        let minimum_physical_bytes = total_bytes as u64 * 95 / 100;
+        assert!(
+            allocated_file_tree_bytes(&raw_path) >= minimum_physical_bytes,
+            "raw benchmark file is unexpectedly sparse"
+        );
+        assert!(
+            allocated_file_tree_bytes(&image_path) >= minimum_physical_bytes,
+            "image benchmark tree is unexpectedly sparse"
+        );
+    }
     eprintln!(
         "spectral plane I/O ({:.1} GiB): raw write {:.0} MiB/s, image write {:.0} MiB/s ({:.0}%); raw read {:.0} MiB/s, image read {:.0} MiB/s ({:.0}%)",
         total_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
