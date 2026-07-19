@@ -2858,6 +2858,9 @@ final class CasarsMacUITests: XCTestCase {
         app.launchEnvironment["CODEX_HOME"] = environment["codexHome"] ?? ""
         app.launchEnvironment["CASA_RS_AGENT_COMMAND"] = environment["agentCommand"] ?? "codex"
         app.launchEnvironment["CASA_RS_GUI_TEST_PYTHON"] = environment["pythonCommand"] ?? "python3"
+        app.launchEnvironment["CASA_RS_MEASURESPATH"] = ProcessInfo.processInfo.environment[
+            "CASA_RS_MEASURESPATH"
+        ] ?? ""
         if let repoRoot = environment["repoRoot"] {
             app.launchEnvironment["CASA_RS_REPO_ROOT"] = repoRoot
             app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = repoRoot

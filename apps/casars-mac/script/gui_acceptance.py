@@ -14,6 +14,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = APP_ROOT.parent.parent
 MANIFEST_PATH = APP_ROOT / "gui-journeys.json"
 GATE_ROOT = APP_ROOT / ".gui-test"
+MEASURES_RUNTIME_ROOT = GATE_ROOT / "casa-measures"
 
 
 class HarnessError(RuntimeError):
@@ -139,6 +141,26 @@ def resolve_python() -> str:
 def target_directory() -> Path:
     configured = Path(os.environ.get("CARGO_TARGET_DIR", str(REPO_ROOT / "target")))
     return configured if configured.is_absolute() else REPO_ROOT / configured
+
+
+def prepare_measures_runtime() -> None:
+    data_root = REPO_ROOT / "crates/casa-measures-data/data"
+    archive = data_root / "casa-measures-runtime.tar.gz"
+    provenance = data_root / "casa-measures-runtime.provenance.json"
+    if not archive.is_file() or not provenance.is_file():
+        raise HarnessError("packaged measures runtime is incomplete")
+    if MEASURES_RUNTIME_ROOT.exists():
+        shutil.rmtree(MEASURES_RUNTIME_ROOT)
+    MEASURES_RUNTIME_ROOT.mkdir(parents=True)
+    with tarfile.open(archive, "r:gz") as runtime_archive:
+        if sys.version_info >= (3, 12):
+            runtime_archive.extractall(MEASURES_RUNTIME_ROOT, filter="data")
+        else:
+            runtime_archive.extractall(MEASURES_RUNTIME_ROOT)
+    shutil.copy2(
+        provenance,
+        MEASURES_RUNTIME_ROOT / ".casa-rs-measures-provenance.json",
+    )
 
 
 def sha256(path: Path) -> str:
@@ -517,6 +539,7 @@ def run_journey(journey_id: str) -> int:
     python = resolve_python()
     paths = make_paths(journey)
     paths.artifact_root.mkdir(parents=True, exist_ok=True)
+    prepare_measures_runtime()
     if paths.result_bundle.exists():
         shutil.rmtree(paths.result_bundle)
     preflight_live(journey, python)
