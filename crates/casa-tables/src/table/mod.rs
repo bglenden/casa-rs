@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::collections::{HashMap, HashSet};
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -583,6 +585,193 @@ impl std::fmt::Debug for GeneratedScalarColumn {
     }
 }
 
+/// Fixed-width scalar type accepted by [`StreamingScalarColumnWriter`].
+///
+/// This construction-only representation is decoded into normal casacore
+/// scalar values before the selected storage manager writes its data file. It
+/// is not a persisted table format.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamedScalarType {
+    Bool,
+    Int32,
+    Float32,
+    Float64,
+}
+
+impl StreamedScalarType {
+    pub(crate) const fn payload_bytes(self) -> usize {
+        match self {
+            Self::Bool => 1,
+            Self::Int32 | Self::Float32 => 4,
+            Self::Float64 => 8,
+        }
+    }
+
+    pub(crate) const fn record_bytes(self) -> usize {
+        1 + self.payload_bytes()
+    }
+
+    fn matches(self, value: &ScalarValue) -> bool {
+        matches!(
+            (self, value),
+            (Self::Bool, ScalarValue::Bool(_))
+                | (Self::Int32, ScalarValue::Int32(_))
+                | (Self::Float32, ScalarValue::Float32(_))
+                | (Self::Float64, ScalarValue::Float64(_))
+        )
+    }
+}
+
+/// Completed bounded scalar-column construction source.
+///
+/// The referenced file is a temporary input to table creation. The table
+/// storage writer consumes it into StandardStMan or IncrementalStMan; callers
+/// should then remove the temporary file before publishing the table.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct StreamedScalarColumn {
+    path: PathBuf,
+    row_count: usize,
+    scalar_type: StreamedScalarType,
+}
+
+impl StreamedScalarColumn {
+    /// Temporary construction file containing the column values.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Number of rows represented by the construction source.
+    pub fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    /// Fixed scalar type represented by the construction source.
+    pub fn scalar_type(&self) -> StreamedScalarType {
+        self.scalar_type
+    }
+}
+
+/// Append-only bounded writer for a fixed-width scalar column.
+///
+/// Values are written to a temporary construction file one row at a time.
+/// Each record contains a validity byte followed by a fixed-width
+/// little-endian payload, so undefined scalar cells remain representable.
+#[doc(hidden)]
+pub struct StreamingScalarColumnWriter {
+    path: PathBuf,
+    writer: BufWriter<File>,
+    expected_rows: usize,
+    rows_written: usize,
+    scalar_type: StreamedScalarType,
+}
+
+/// Resident buffer reserved by each [`StreamingScalarColumnWriter`].
+#[doc(hidden)]
+pub const STREAMING_SCALAR_COLUMN_BUFFER_BYTES: usize = 64 * 1024;
+
+impl StreamingScalarColumnWriter {
+    /// Create a temporary scalar construction source.
+    pub fn create(
+        path: impl Into<PathBuf>,
+        expected_rows: usize,
+        scalar_type: StreamedScalarType,
+    ) -> Result<Self, TableError> {
+        let path = path.into();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                TableError::Storage(format!(
+                    "create scalar construction directory {}: {error}",
+                    parent.display()
+                ))
+            })?;
+        }
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| {
+                TableError::Storage(format!(
+                    "create scalar construction file {}: {error}",
+                    path.display()
+                ))
+            })?;
+        Ok(Self {
+            path,
+            writer: BufWriter::with_capacity(STREAMING_SCALAR_COLUMN_BUFFER_BYTES, file),
+            expected_rows,
+            rows_written: 0,
+            scalar_type,
+        })
+    }
+
+    /// Append one scalar cell, using `None` for an undefined cell.
+    pub fn push(&mut self, value: Option<ScalarValue>) -> Result<(), TableError> {
+        if self.rows_written >= self.expected_rows {
+            return Err(TableError::Storage(format!(
+                "scalar construction source {} received more than {} rows",
+                self.path.display(),
+                self.expected_rows
+            )));
+        }
+        if let Some(value) = value.as_ref()
+            && !self.scalar_type.matches(value)
+        {
+            return Err(TableError::Storage(format!(
+                "scalar construction source {} expected {:?}, found {value:?}",
+                self.path.display(),
+                self.scalar_type
+            )));
+        }
+
+        let mut record = [0u8; 9];
+        if let Some(value) = value {
+            record[0] = 1;
+            match value {
+                ScalarValue::Bool(value) => record[1] = u8::from(value),
+                ScalarValue::Int32(value) => record[1..5].copy_from_slice(&value.to_le_bytes()),
+                ScalarValue::Float32(value) => record[1..5].copy_from_slice(&value.to_le_bytes()),
+                ScalarValue::Float64(value) => record[1..9].copy_from_slice(&value.to_le_bytes()),
+                _ => unreachable!("scalar type was validated above"),
+            }
+        }
+        self.writer
+            .write_all(&record[..self.scalar_type.record_bytes()])
+            .map_err(|error| {
+                TableError::Storage(format!(
+                    "write scalar construction file {}: {error}",
+                    self.path.display()
+                ))
+            })?;
+        self.rows_written += 1;
+        Ok(())
+    }
+
+    /// Finish the construction source after exactly the planned row count.
+    pub fn finish(mut self) -> Result<StreamedScalarColumn, TableError> {
+        if self.rows_written != self.expected_rows {
+            return Err(TableError::Storage(format!(
+                "scalar construction source {} has {} rows, expected {}",
+                self.path.display(),
+                self.rows_written,
+                self.expected_rows
+            )));
+        }
+        self.writer.flush().map_err(|error| {
+            TableError::Storage(format!(
+                "flush scalar construction file {}: {error}",
+                self.path.display()
+            ))
+        })?;
+        Ok(StreamedScalarColumn {
+            path: self.path,
+            row_count: self.rows_written,
+            scalar_type: self.scalar_type,
+        })
+    }
+}
+
 /// Per-column override used by high-volume save paths.
 #[derive(Clone, Debug)]
 pub enum ColumnOverride {
@@ -590,6 +779,8 @@ pub enum ColumnOverride {
     Values(Vec<Option<Value>>),
     /// Scalar values generated on demand by row number.
     GeneratedScalar(GeneratedScalarColumn),
+    /// Fixed-width scalar values read from a bounded construction source.
+    StreamedScalar(StreamedScalarColumn),
     /// The column is written by another path after table metadata is saved.
     ///
     /// This is only valid for single-column data-manager groups whose on-disk
@@ -603,6 +794,7 @@ impl ColumnOverride {
         match self {
             Self::Values(values) => Some(values.len()),
             Self::GeneratedScalar(column) => Some(column.row_count()),
+            Self::StreamedScalar(column) => Some(column.row_count()),
             Self::Deferred => None,
         }
     }
@@ -667,6 +859,17 @@ impl ColumnOverrides {
     ) -> Option<ColumnOverride> {
         self.columns
             .insert(column.into(), ColumnOverride::GeneratedScalar(values))
+    }
+
+    /// Insert a bounded file-backed scalar construction source.
+    #[doc(hidden)]
+    pub fn insert_streamed_scalar(
+        &mut self,
+        column: impl Into<String>,
+        values: StreamedScalarColumn,
+    ) -> Option<ColumnOverride> {
+        self.columns
+            .insert(column.into(), ColumnOverride::StreamedScalar(values))
     }
 
     /// Mark a column as externally streamed/deferred.

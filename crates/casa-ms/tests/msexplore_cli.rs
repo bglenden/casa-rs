@@ -17,7 +17,7 @@ use casa_ms::{
     MeasurementSetUvCoverage, MsAxis, MsColorAxis, MsDataColumn, MsExploreFlagEditRequest,
     MsExploreRunTaskRequest, MsExploreSpec, MsFlagAction, MsFlagEditSpec, MsFlagRegion,
     MsIterationAxis, MsLayoutSpec, MsLegendPosition, MsPageExportRange, MsPageHeaderItem,
-    MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec, apply_msexplore_flag_edit,
+    MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelection, apply_msexplore_flag_edit,
     apply_msexplore_flag_edit_for_request, build_measurement_set_uv_plot_payload,
     build_msexplore_payload, build_msexplore_payload_from_spec, build_msexplore_plot_payload,
     export_msexplore_plot, preview_msexplore_flag_edit, preview_msexplore_flag_edit_for_request,
@@ -96,7 +96,7 @@ fn msexplore_decimated_payload_samples_rows_before_large_array_reads() {
     let payload = build_msexplore_payload_from_spec(&MsExploreSpec {
         ms_path,
         summary_format: MeasurementSetSummaryOutputFormat::Text,
-        selection: MsSelectionSpec::default(),
+        selection: MsSelection::default(),
         header_items: Vec::new(),
         page_title: None,
         exprange: MsPageExportRange::Current,
@@ -129,7 +129,7 @@ fn msexplore_run_task_writes_summary_and_flag_preview_artifacts() {
         spec: MsExploreSpec {
             ms_path,
             summary_format: MeasurementSetSummaryOutputFormat::Text,
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
             header_items: Vec::new(),
             page_title: None,
             exprange: MsPageExportRange::Current,
@@ -834,7 +834,7 @@ fn msexplore_scan_iteration_payload_resolves_grid_and_scaling() {
     spec.iteration.iteraxis = Some(MsIterationAxis::Scan);
     spec.iteration.xselfscale = true;
 
-    let payload = build_msexplore_plot_payload(&ms, &MsSelectionSpec::default(), &spec)
+    let payload = build_msexplore_plot_payload(&ms, &MsSelection::default(), &spec)
         .expect("build iterated payload");
     let MsPlotPayload::ScatterGrid(grid) = payload else {
         panic!("expected iterated scatter grid payload");
@@ -858,7 +858,7 @@ fn msexplore_dual_y_payload_tracks_secondary_axis_and_style_flags() {
     spec.style.showmajorgrid = true;
     spec.style.showminorgrid = true;
 
-    let payload = build_msexplore_plot_payload(&ms, &MsSelectionSpec::default(), &spec)
+    let payload = build_msexplore_plot_payload(&ms, &MsSelection::default(), &spec)
         .expect("build dual-y payload");
     let MsPlotPayload::Scatter(scatter) = payload else {
         panic!("expected scatter payload");
@@ -927,7 +927,7 @@ fn msexplore_payload_resolves_page_header_items() {
         &MsExploreSpec {
             ms_path,
             summary_format: MeasurementSetSummaryOutputFormat::Text,
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
             header_items: vec![MsPageHeaderItem::Filename, MsPageHeaderItem::YColumn],
             page_title: Some("Amplitude".to_string()),
             exprange: MsPageExportRange::Current,
@@ -1008,7 +1008,7 @@ fn msexplore_stacked_time_preset_builds_two_row_page_payload() {
 
     let payload = build_msexplore_plot_payload(
         &ms,
-        &MsSelectionSpec::default(),
+        &MsSelection::default(),
         &MsPlotSpec::from_preset(MsPlotPreset::AmplitudePhaseVsTimeStacked),
     )
     .expect("build stacked page payload");
@@ -1059,7 +1059,7 @@ fn msexplore_generic_page_spec_builds_side_by_side_page_payload() {
         &MsExploreSpec {
             ms_path,
             summary_format: MeasurementSetSummaryOutputFormat::Text,
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
             header_items: Vec::new(),
             page_title: Some("Amplitude and Phase Side by Side".to_string()),
             exprange: MsPageExportRange::Current,
@@ -1200,7 +1200,7 @@ fn msexplore_generic_page_spec_allows_same_cell_overplot_render() {
         &MsExploreSpec {
             ms_path,
             summary_format: MeasurementSetSummaryOutputFormat::Text,
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
             header_items: Vec::new(),
             page_title: Some("Amplitude Overplot".to_string()),
             exprange: MsPageExportRange::Current,
@@ -1255,7 +1255,7 @@ fn msexplore_payload_from_spec_opens_disk_backed_ms_for_scatter_pages() {
     let payload = build_msexplore_payload_from_spec(&MsExploreSpec {
         ms_path,
         summary_format: MeasurementSetSummaryOutputFormat::Text,
-        selection: MsSelectionSpec::default(),
+        selection: MsSelection::default(),
         header_items: vec![MsPageHeaderItem::Filename, MsPageHeaderItem::YColumn],
         page_title: Some("Amplitude and Phase".to_string()),
         exprange: MsPageExportRange::Current,
@@ -1293,7 +1293,7 @@ fn msexplore_export_api_writes_grid_page_png_pdf_and_manifest_outputs() {
     iterated.iteration.xselfscale = true;
     iterated.style.showlegend = true;
     iterated.style.legendposition = MsLegendPosition::ExteriorRight;
-    let grid_payload = build_msexplore_plot_payload(&ms, &MsSelectionSpec::default(), &iterated)
+    let grid_payload = build_msexplore_plot_payload(&ms, &MsSelection::default(), &iterated)
         .expect("build iterated payload");
     let MsPlotPayload::ScatterGrid(_) = &grid_payload else {
         panic!("expected scatter grid payload");
@@ -1358,7 +1358,7 @@ fn msexplore_export_api_writes_grid_page_png_pdf_and_manifest_outputs() {
         &MsExploreSpec {
             ms_path,
             summary_format: MeasurementSetSummaryOutputFormat::Text,
-            selection: MsSelectionSpec::default(),
+            selection: MsSelection::default(),
             header_items: vec![MsPageHeaderItem::Filename, MsPageHeaderItem::YColumn],
             page_title: Some("Amplitude and Phase".to_string()),
             exprange: MsPageExportRange::Current,
@@ -1971,7 +1971,7 @@ fn preview_flag_edit_selects_one_unique_sample() {
     });
 
     let preview =
-        preview_msexplore_flag_edit(&ms, &MsSelectionSpec::default(), &spec).expect("preview");
+        preview_msexplore_flag_edit(&ms, &MsSelection::default(), &spec).expect("preview");
     assert_eq!(preview.matched_points, 1);
     assert_eq!(preview.affected_rows, 1);
     assert_eq!(preview.affected_samples, 1);
@@ -2007,7 +2007,7 @@ fn preview_flag_edit_expands_across_correlation_and_channel() {
     });
 
     let preview =
-        preview_msexplore_flag_edit(&ms, &MsSelectionSpec::default(), &spec).expect("preview");
+        preview_msexplore_flag_edit(&ms, &MsSelection::default(), &spec).expect("preview");
     assert_eq!(preview.matched_points, 1);
     assert_eq!(preview.affected_rows, 1);
     assert_eq!(
@@ -2038,7 +2038,7 @@ fn apply_flag_edit_updates_flag_cells_and_flag_row() {
     });
 
     let preview =
-        apply_msexplore_flag_edit(&mut ms, &MsSelectionSpec::default(), &spec).expect("apply");
+        apply_msexplore_flag_edit(&mut ms, &MsSelection::default(), &spec).expect("apply");
     assert_eq!(
         preview.affected_samples,
         common::NUM_CORR * common::NUM_CHAN
@@ -2190,7 +2190,7 @@ fn preview_flag_edit_on_iterated_scan_grid_requires_panel_key() {
     });
 
     let error =
-        preview_msexplore_flag_edit(&ms, &MsSelectionSpec::default(), &spec).expect_err("error");
+        preview_msexplore_flag_edit(&ms, &MsSelection::default(), &spec).expect_err("error");
     assert!(error.contains("requires panel_key"));
     assert!(error.contains("scan-1"));
     assert!(error.contains("scan-4"));
@@ -2218,7 +2218,7 @@ fn preview_flag_edit_on_iterated_scan_panel_reports_panel_metadata() {
     });
 
     let preview =
-        preview_msexplore_flag_edit(&ms, &MsSelectionSpec::default(), &spec).expect("preview");
+        preview_msexplore_flag_edit(&ms, &MsSelection::default(), &spec).expect("preview");
     assert_eq!(preview.panel_key.as_deref(), Some("scan-1"));
     assert_eq!(preview.panel_label.as_deref(), Some("Scan 1"));
     assert_eq!(preview.matched_points, 1);
@@ -2249,7 +2249,7 @@ fn apply_flag_edit_on_iterated_scan_panel_updates_only_target_panel_rows() {
     });
 
     let preview =
-        apply_msexplore_flag_edit(&mut ms, &MsSelectionSpec::default(), &spec).expect("apply");
+        apply_msexplore_flag_edit(&mut ms, &MsSelection::default(), &spec).expect("apply");
     assert_eq!(preview.panel_key.as_deref(), Some("scan-1"));
     assert_eq!(preview.affected_rows, 1);
     assert_eq!(preview.sample_edits[0].row, 0);
@@ -2352,7 +2352,7 @@ fn preview_flag_edit_on_stacked_page_requires_plot_index() {
     let explore = MsExploreSpec {
         ms_path: ms_path.clone(),
         summary_format: MeasurementSetSummaryOutputFormat::Text,
-        selection: MsSelectionSpec::default(),
+        selection: MsSelection::default(),
         header_items: Vec::new(),
         page_title: None,
         exprange: MsPageExportRange::Current,
@@ -2390,7 +2390,7 @@ fn preview_flag_edit_on_stacked_page_targets_selected_plot_index() {
     let explore = MsExploreSpec {
         ms_path: ms_path.clone(),
         summary_format: MeasurementSetSummaryOutputFormat::Text,
-        selection: MsSelectionSpec::default(),
+        selection: MsSelection::default(),
         header_items: Vec::new(),
         page_title: None,
         exprange: MsPageExportRange::Current,
@@ -2430,7 +2430,7 @@ fn apply_flag_edit_on_stacked_page_updates_selected_plot_samples() {
     let explore = MsExploreSpec {
         ms_path: ms_path.clone(),
         summary_format: MeasurementSetSummaryOutputFormat::Text,
-        selection: MsSelectionSpec::default(),
+        selection: MsSelection::default(),
         header_items: Vec::new(),
         page_title: None,
         exprange: MsPageExportRange::Current,

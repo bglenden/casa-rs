@@ -5,7 +5,7 @@
 //! that want to reuse allocations across row blocks while reading only the
 //! source channels needed by a schedule candidate.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -17,7 +17,9 @@ use casa_imaging::{
     VisibilitySourceShape, WeightingRoutePlan,
 };
 use casa_tables::{RequiredScalarColumnValues, SelectedArray1DCells, SelectedArray2DCells, Table};
-use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType, ScalarValue};
+#[cfg(test)]
+use casa_types::ScalarValue;
+use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType};
 use ndarray::Ix1;
 use serde::Serialize;
 
@@ -283,125 +285,6 @@ impl VisibilityReadBlockPlan {
         .with_source_partition(self.source_partition.clone());
         request.include_data = include_data;
         request
-    }
-}
-
-/// Request for physical MAIN-row selection before imaging-specific geometry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VisibilityRowSelectionRequest {
-    /// Mapping from `DATA_DESC_ID` to `(SPECTRAL_WINDOW_ID, POLARIZATION_ID)`.
-    pub(crate) ddid_to_spw_pol: Vec<Option<(usize, usize)>>,
-    /// DDIDs allowed by app-level selectors such as SPW.
-    pub(crate) allowed_ddids: Vec<bool>,
-    /// Optional explicit `DATA_DESC_ID` selector.
-    pub(crate) selected_ddid: Option<i32>,
-    /// Optional allowed `FIELD_ID` set.
-    pub(crate) allowed_field_ids: Option<BTreeSet<i32>>,
-    /// Include per-row `TIME` values in selected rows.
-    pub(crate) include_time: bool,
-    /// Track min/max selected row times.
-    pub(crate) track_time_bounds: bool,
-}
-
-impl VisibilityRowSelectionRequest {
-    /// Create a physical MAIN-row selection request.
-    pub fn new(
-        ddid_to_spw_pol: Vec<Option<(usize, usize)>>,
-        allowed_ddids: Vec<bool>,
-        selected_ddid: Option<i32>,
-        allowed_field_ids: Option<BTreeSet<i32>>,
-        include_time: bool,
-        track_time_bounds: bool,
-    ) -> Self {
-        Self {
-            ddid_to_spw_pol,
-            allowed_ddids,
-            selected_ddid,
-            allowed_field_ids,
-            include_time,
-            track_time_bounds,
-        }
-    }
-}
-
-/// One selected physical MAIN row with homogeneous DDID/SPW/polarization facts.
-#[derive(Debug, Clone, PartialEq)]
-pub struct VisibilitySelectedMainRow {
-    /// MAIN table row index.
-    pub(crate) row_index: usize,
-    /// `FIELD_ID` as a non-negative index.
-    pub(crate) field_id: usize,
-    /// `DATA_DESC_ID` as a non-negative index.
-    pub(crate) data_desc_id: usize,
-    /// Spectral-window id resolved from `DATA_DESCRIPTION`.
-    pub(crate) spw_id: usize,
-    /// Polarization id resolved from `DATA_DESCRIPTION`.
-    pub(crate) polarization_id: usize,
-    /// `ANTENNA1` for the selected MAIN row.
-    pub(crate) antenna1_id: i32,
-    /// `ANTENNA2` for the selected MAIN row.
-    pub(crate) antenna2_id: i32,
-    /// Optional row time in MJD seconds.
-    pub(crate) time_mjd_seconds: Option<f64>,
-}
-
-impl VisibilitySelectedMainRow {
-    /// Return the row facts as copyable parts.
-    pub fn parts(&self) -> (usize, usize, usize, usize, usize, Option<f64>) {
-        (
-            self.row_index,
-            self.field_id,
-            self.data_desc_id,
-            self.spw_id,
-            self.polarization_id,
-            self.time_mjd_seconds,
-        )
-    }
-
-    /// Return the selected row's antenna ids.
-    pub fn antenna_ids(&self) -> (i32, i32) {
-        (self.antenna1_id, self.antenna2_id)
-    }
-}
-
-/// Physical MAIN-row selection plan for visibility imaging reads.
-#[derive(Debug, Clone, PartialEq)]
-pub struct VisibilityRowSelectionPlan {
-    /// Selected rows in MAIN-table order.
-    pub(crate) selected_rows: Vec<VisibilitySelectedMainRow>,
-    /// Homogeneous selected `DATA_DESC_ID`.
-    pub(crate) selected_ddid: usize,
-    /// Selected field ids.
-    pub(crate) selected_fields: BTreeSet<i32>,
-    /// Full `FLAG_ROW` column for selected-row fallback lookups.
-    pub(crate) flag_row: Vec<bool>,
-    /// First selected row time, when requested.
-    pub(crate) reference_row_time_mjd_sec: Option<f64>,
-    /// Selected row time bounds, when requested.
-    pub(crate) time_bounds_mjd_sec: Option<[f64; 2]>,
-}
-
-/// Decomposed physical row-selection facts.
-pub type VisibilityRowSelectionParts = (
-    Vec<VisibilitySelectedMainRow>,
-    usize,
-    BTreeSet<i32>,
-    Vec<bool>,
-    Option<f64>,
-    Option<[f64; 2]>,
-);
-
-impl VisibilityRowSelectionPlan {
-    /// Decompose this plan into the physical selection facts.
-    pub fn into_parts(self) -> VisibilityRowSelectionParts {
-        (
-            self.selected_rows,
-            self.selected_ddid,
-            self.selected_fields,
-            self.flag_row,
-            self.reference_row_time_mjd_sec,
-            self.time_bounds_mjd_sec,
-        )
     }
 }
 
@@ -781,138 +664,6 @@ pub struct VisibilityBufferAllocationReport {
 }
 
 impl MeasurementSet {
-    /// Select homogeneous physical MAIN rows for imaging visibility reads.
-    pub fn select_visibility_rows(
-        &self,
-        request: &VisibilityRowSelectionRequest,
-    ) -> MsResult<VisibilityRowSelectionPlan> {
-        let mut scalar_names = vec![
-            "FIELD_ID",
-            "DATA_DESC_ID",
-            "FLAG_ROW",
-            "ANTENNA1",
-            "ANTENNA2",
-        ];
-        if request.include_time {
-            scalar_names.push("TIME");
-        }
-        let mut scalars = load_main_required_scalar_columns(self, &scalar_names)?;
-        let field_values = take_required_i32_main_column(&mut scalars, "FIELD_ID")?;
-        let ddid_values = take_required_i32_main_column(&mut scalars, "DATA_DESC_ID")?;
-        let flag_row = take_required_bool_main_column(&mut scalars, "FLAG_ROW")?;
-        let antenna1_values = take_required_i32_main_column(&mut scalars, "ANTENNA1")?;
-        let antenna2_values = take_required_i32_main_column(&mut scalars, "ANTENNA2")?;
-        let time_values = if request.include_time {
-            Some(take_required_f64_main_column(&mut scalars, "TIME")?)
-        } else {
-            None
-        };
-        let mut selected_fields = BTreeSet::<i32>::new();
-        let mut selected_ddid = None::<i32>;
-        let mut selected_rows = Vec::<VisibilitySelectedMainRow>::new();
-        let mut reference_row_time_mjd_sec = None::<f64>;
-        let mut time_bounds_mjd_sec = None::<[f64; 2]>;
-
-        for (row, (&field_id, &ddid)) in field_values.iter().zip(ddid_values.iter()).enumerate() {
-            if ddid < 0 {
-                continue;
-            }
-            if request
-                .allowed_field_ids
-                .as_ref()
-                .is_some_and(|allowed| !allowed.contains(&field_id))
-            {
-                continue;
-            }
-            if request.selected_ddid.is_some_and(|value| value != ddid) {
-                continue;
-            }
-            if !request.allowed_ddids.is_empty()
-                && !request
-                    .allowed_ddids
-                    .get(ddid as usize)
-                    .copied()
-                    .unwrap_or(false)
-            {
-                continue;
-            }
-
-            selected_fields.insert(field_id);
-            selected_ddid = combine_single_ddid(selected_ddid, ddid)?;
-            let field_id_usize = usize::try_from(field_id).map_err(|_| {
-                MsError::InvalidInput(format!(
-                    "FIELD_ID row {row} must be non-negative, found {field_id}"
-                ))
-            })?;
-            let antenna1_id = *antenna1_values
-                .get(row)
-                .ok_or_else(|| MsError::InvalidInput(format!("ANTENNA1 row {row} is missing")))?;
-            let antenna2_id = *antenna2_values
-                .get(row)
-                .ok_or_else(|| MsError::InvalidInput(format!("ANTENNA2 row {row} is missing")))?;
-            let row_time_mjd_sec = if request.include_time {
-                let row_time_mjd_sec = *time_values
-                    .as_ref()
-                    .and_then(|values| values.get(row))
-                    .ok_or_else(|| MsError::InvalidInput(format!("TIME row {row} is missing")))?;
-                reference_row_time_mjd_sec.get_or_insert(row_time_mjd_sec);
-                if request.track_time_bounds {
-                    match &mut time_bounds_mjd_sec {
-                        Some(bounds) => {
-                            bounds[0] = bounds[0].min(row_time_mjd_sec);
-                            bounds[1] = bounds[1].max(row_time_mjd_sec);
-                        }
-                        None => {
-                            time_bounds_mjd_sec = Some([row_time_mjd_sec, row_time_mjd_sec]);
-                        }
-                    }
-                }
-                Some(row_time_mjd_sec)
-            } else {
-                None
-            };
-            let (spw_id, polarization_id) = request
-                .ddid_to_spw_pol
-                .get(ddid as usize)
-                .copied()
-                .flatten()
-                .ok_or_else(|| {
-                    MsError::InvalidInput(format!("map DDID {ddid} to SPW/POLARIZATION"))
-                })?;
-            selected_rows.push(VisibilitySelectedMainRow {
-                row_index: row,
-                field_id: field_id_usize,
-                data_desc_id: ddid as usize,
-                spw_id,
-                polarization_id,
-                antenna1_id,
-                antenna2_id,
-                time_mjd_seconds: row_time_mjd_sec,
-            });
-        }
-
-        if selected_fields.is_empty() {
-            return Err(MsError::InvalidInput(
-                "selection resolved to no field".to_string(),
-            ));
-        }
-        if selected_rows.is_empty() {
-            return Err(MsError::InvalidInput(
-                "selection resolved to no rows".to_string(),
-            ));
-        }
-        let selected_ddid = selected_ddid
-            .ok_or_else(|| MsError::InvalidInput("selection resolved to no DDID".to_string()))?;
-        Ok(VisibilityRowSelectionPlan {
-            selected_rows,
-            selected_ddid: selected_ddid as usize,
-            selected_fields,
-            flag_row,
-            reference_row_time_mjd_sec,
-            time_bounds_mjd_sec,
-        })
-    }
-
     /// Fill caller-owned columnar visibility buffers for selected rows/channels.
     ///
     /// Channelized arrays (`DATA`, `FLAG`, and `WEIGHT_SPECTRUM`) use the
@@ -1078,11 +829,13 @@ impl MeasurementSet {
             buffer.weights = Some(weights);
             columns.push(report);
         }
-        if let Some(((weights, row_corr_count, report), elapsed)) = parallel_reads.weight_spectrum {
+        if let Some((weights, elapsed)) = parallel_reads.weight_spectrum {
             timings.weight_spectrum_ns = elapsed_ns(elapsed);
-            corr_count = merge_corr_count(corr_count, row_corr_count)?;
-            buffer.weight_spectrum = Some(weights);
-            columns.push(report);
+            if let Some((weights, row_corr_count, report)) = weights {
+                corr_count = merge_corr_count(corr_count, row_corr_count)?;
+                buffer.weight_spectrum = Some(weights);
+                columns.push(report);
+            }
         }
         if let Some(((uvw, report), elapsed)) = parallel_reads.uvw {
             timings.uvw_ns = elapsed_ns(elapsed);
@@ -1149,7 +902,7 @@ struct ParallelVisibilityReads {
     data: TimedRead<DataReadResult>,
     flags: TimedRead<BoolChannelReadResult>,
     weights: TimedRead<FloatReadResult>,
-    weight_spectrum: TimedRead<FloatReadResult>,
+    weight_spectrum: TimedRead<Option<FloatReadResult>>,
     uvw: TimedRead<UvwReadResult>,
     scalars: TimedRead<ScalarColumnReadResult>,
 }
@@ -1217,17 +970,57 @@ fn read_scalar_columns(
         state_ids: None,
         reports: Vec::new(),
     };
+    let mut column_names = Vec::with_capacity(12);
     if request.include_antenna_ids {
-        let (antenna1, report) = read_i32_scalar_column(
+        column_names.extend(["ANTENNA1", "ANTENNA2"]);
+    }
+    if request.include_data_desc_ids {
+        column_names.push("DATA_DESC_ID");
+    }
+    if request.include_field_ids {
+        column_names.push("FIELD_ID");
+    }
+    if request.include_flag_row {
+        column_names.push("FLAG_ROW");
+    }
+    if request.include_time {
+        column_names.push("TIME");
+    }
+    if request.include_interval {
+        column_names.push("INTERVAL");
+    }
+    if request.include_exposure {
+        column_names.push("EXPOSURE");
+    }
+    if request.include_array_ids {
+        column_names.push("ARRAY_ID");
+    }
+    if request.include_observation_ids {
+        column_names.push("OBSERVATION_ID");
+    }
+    if request.include_scan_numbers {
+        column_names.push("SCAN_NUMBER");
+    }
+    if request.include_state_ids {
+        column_names.push("STATE_ID");
+    }
+    let mut columns = ms
+        .main_table()
+        .required_scalar_columns_owned_for_rows(&column_names, &request.row_indices)?;
+
+    if request.include_antenna_ids {
+        let (antenna1, report) = take_i32_scalar_column(
             ms,
             "ANTENNA1",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.antenna1.take(),
         )?;
-        let (antenna2, report2) = read_i32_scalar_column(
+        let (antenna2, report2) = take_i32_scalar_column(
             ms,
             "ANTENNA2",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.antenna2.take(),
         )?;
         result.antenna1 = Some(antenna1);
@@ -1236,96 +1029,110 @@ fn read_scalar_columns(
         result.reports.push(report2);
     }
     if request.include_data_desc_ids {
-        let (data_desc_ids, report) = read_i32_scalar_column(
+        let (data_desc_ids, report) = take_i32_scalar_column(
             ms,
             "DATA_DESC_ID",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.data_desc_ids.take(),
         )?;
         result.data_desc_ids = Some(data_desc_ids);
         result.reports.push(report);
     }
     if request.include_field_ids {
-        let (field_ids, report) = read_i32_scalar_column(
+        let (field_ids, report) = take_i32_scalar_column(
             ms,
             "FIELD_ID",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.field_ids.take(),
         )?;
         result.field_ids = Some(field_ids);
         result.reports.push(report);
     }
     if request.include_flag_row {
-        let (flag_row, report) = read_bool_scalar_column(
+        let (flag_row, report) = take_bool_scalar_column(
             ms,
             "FLAG_ROW",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.flag_row.take(),
         )?;
         result.flag_row = Some(flag_row);
         result.reports.push(report);
     }
     if request.include_time {
-        let (time, report) =
-            read_f64_scalar_column(ms, "TIME", &request.row_indices, existing.time.take())?;
+        let (time, report) = take_f64_scalar_column(
+            ms,
+            "TIME",
+            &mut columns,
+            request.row_indices.len(),
+            existing.time.take(),
+        )?;
         result.time = Some(time);
         result.reports.push(report);
     }
     if request.include_interval {
-        let (interval, report) = read_f64_scalar_column(
+        let (interval, report) = take_f64_scalar_column(
             ms,
             "INTERVAL",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.interval.take(),
         )?;
         result.interval = Some(interval);
         result.reports.push(report);
     }
     if request.include_exposure {
-        let (exposure, report) = read_f64_scalar_column(
+        let (exposure, report) = take_f64_scalar_column(
             ms,
             "EXPOSURE",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.exposure.take(),
         )?;
         result.exposure = Some(exposure);
         result.reports.push(report);
     }
     if request.include_array_ids {
-        let (array_ids, report) = read_i32_scalar_column(
+        let (array_ids, report) = take_i32_scalar_column(
             ms,
             "ARRAY_ID",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.array_ids.take(),
         )?;
         result.array_ids = Some(array_ids);
         result.reports.push(report);
     }
     if request.include_observation_ids {
-        let (observation_ids, report) = read_i32_scalar_column(
+        let (observation_ids, report) = take_i32_scalar_column(
             ms,
             "OBSERVATION_ID",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.observation_ids.take(),
         )?;
         result.observation_ids = Some(observation_ids);
         result.reports.push(report);
     }
     if request.include_scan_numbers {
-        let (scan_numbers, report) = read_i32_scalar_column(
+        let (scan_numbers, report) = take_i32_scalar_column(
             ms,
             "SCAN_NUMBER",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.scan_numbers.take(),
         )?;
         result.scan_numbers = Some(scan_numbers);
         result.reports.push(report);
     }
     if request.include_state_ids {
-        let (state_ids, report) = read_i32_scalar_column(
+        let (state_ids, report) = take_i32_scalar_column(
             ms,
             "STATE_ID",
-            &request.row_indices,
+            &mut columns,
+            request.row_indices.len(),
             existing.state_ids.take(),
         )?;
         result.state_ids = Some(state_ids);
@@ -1395,11 +1202,14 @@ fn read_typed_channel_block(
     row_indices: &[usize],
     channel_start: usize,
     channel_count: usize,
-) -> MsResult<TypedChannelBlock> {
+) -> MsResult<Option<TypedChannelBlock>> {
     let cells = ms
         .main_table()
         .column_accessor(column_name)?
         .array_cells_2d_channel_range_typed_uncached(row_indices, channel_start, channel_count)?;
+    let Some(cells) = cells else {
+        return Ok(None);
+    };
     let primitive = cells.primitive_type();
     let corr_count = ensure_typed_channel_block_shape(
         column_name,
@@ -1409,11 +1219,11 @@ fn read_typed_channel_block(
         row_indices.len(),
         channel_count,
     )?;
-    Ok(TypedChannelBlock {
+    Ok(Some(TypedChannelBlock {
         primitive,
         corr_count,
         cells,
-    })
+    }))
 }
 
 fn channel_block_report(
@@ -1449,7 +1259,12 @@ fn read_complex_channel_column(
     VisibilityBufferColumnReport,
 )> {
     let block =
-        read_typed_channel_block(ms, column_name, row_indices, channel_start, channel_count)?;
+        read_typed_channel_block(ms, column_name, row_indices, channel_start, channel_count)?
+            .ok_or_else(|| {
+                invalid_input(format!(
+                    "required visibility column {column_name} is undefined for the selected rows"
+                ))
+            })?;
     let primitive = block.primitive;
     let corr_count = block.corr_count;
     let samples = match block.cells {
@@ -1487,7 +1302,12 @@ fn read_bool_channel_column(
     channel_count: usize,
 ) -> MsResult<(Vec<bool>, usize, VisibilityBufferColumnReport)> {
     let block =
-        read_typed_channel_block(ms, column_name, row_indices, channel_start, channel_count)?;
+        read_typed_channel_block(ms, column_name, row_indices, channel_start, channel_count)?
+            .ok_or_else(|| {
+                invalid_input(format!(
+                    "required visibility column {column_name} is undefined for the selected rows"
+                ))
+            })?;
     let primitive = block.primitive;
     let corr_count = block.corr_count;
     let SelectedArray2DCells::Bool(values) = block.cells else {
@@ -1512,9 +1332,12 @@ fn read_float_channel_column(
     row_indices: &[usize],
     channel_start: usize,
     channel_count: usize,
-) -> MsResult<(VisibilityFloatSamples, usize, VisibilityBufferColumnReport)> {
-    let block =
-        read_typed_channel_block(ms, column_name, row_indices, channel_start, channel_count)?;
+) -> MsResult<Option<(VisibilityFloatSamples, usize, VisibilityBufferColumnReport)>> {
+    let Some(block) =
+        read_typed_channel_block(ms, column_name, row_indices, channel_start, channel_count)?
+    else {
+        return Ok(None);
+    };
     let primitive = block.primitive;
     let corr_count = block.corr_count;
     let samples = match block.cells {
@@ -1541,7 +1364,7 @@ fn read_float_channel_column(
         corr_count,
         row_indices.len(),
     )?;
-    Ok((samples, corr_count, report))
+    Ok(Some((samples, corr_count, report)))
 }
 
 fn read_float_row_column(
@@ -1781,40 +1604,23 @@ fn read_uvw_column(
     Ok((out, report))
 }
 
-fn read_i32_scalar_column(
+fn take_i32_scalar_column(
     ms: &MeasurementSet,
     column_name: &str,
-    row_indices: &[usize],
+    columns: &mut HashMap<String, RequiredScalarColumnValues>,
+    row_count: usize,
     existing: Option<Vec<i32>>,
 ) -> MsResult<(Vec<i32>, VisibilityBufferColumnReport)> {
-    let values = ms
-        .main_table()
-        .column_accessor(column_name)?
-        .scalar_cells_owned_for_rows(row_indices)?;
     let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
     if primitive != PrimitiveType::Int32 {
         return Err(column_type_error(column_name, "Int32 scalar", primitive));
     }
-    let mut out = existing.unwrap_or_else(|| Vec::with_capacity(row_indices.len()));
-    out.clear();
-    out.reserve(row_indices.len().saturating_sub(out.capacity()));
-    for (row_slot, value) in values.into_iter().enumerate() {
-        match value {
-            Some(ScalarValue::Int32(value)) => out.push(value),
-            Some(other) => {
-                return Err(column_type_error(
-                    column_name,
-                    "Int32 scalar",
-                    other.primitive_type(),
-                ));
-            }
-            None => {
-                return Err(invalid_input(format!(
-                    "{column_name} missing for selected row slot {row_slot}"
-                )));
-            }
-        }
-    }
+    let Some(RequiredScalarColumnValues::Int32(values)) = columns.remove(column_name) else {
+        return Err(invalid_input(format!(
+            "required Int32 scalar column {column_name} was not loaded"
+        )));
+    };
+    let out = reuse_or_replace_vec(existing, values);
     let report = column_report(ColumnReportInput {
         table: ms.main_table(),
         column_name,
@@ -1823,45 +1629,28 @@ fn read_i32_scalar_column(
         channel_start: 0,
         requested_channels: 1,
         elements_per_channel_or_row: 1,
-        row_count: row_indices.len(),
+        row_count,
     })?;
     Ok((out, report))
 }
 
-fn read_f64_scalar_column(
+fn take_f64_scalar_column(
     ms: &MeasurementSet,
     column_name: &str,
-    row_indices: &[usize],
+    columns: &mut HashMap<String, RequiredScalarColumnValues>,
+    row_count: usize,
     existing: Option<Vec<f64>>,
 ) -> MsResult<(Vec<f64>, VisibilityBufferColumnReport)> {
-    let values = ms
-        .main_table()
-        .column_accessor(column_name)?
-        .scalar_cells_owned_for_rows(row_indices)?;
     let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
     if primitive != PrimitiveType::Float64 {
         return Err(column_type_error(column_name, "Float64 scalar", primitive));
     }
-    let mut out = existing.unwrap_or_else(|| Vec::with_capacity(row_indices.len()));
-    out.clear();
-    out.reserve(row_indices.len().saturating_sub(out.capacity()));
-    for (row_slot, value) in values.into_iter().enumerate() {
-        match value {
-            Some(ScalarValue::Float64(value)) => out.push(value),
-            Some(other) => {
-                return Err(column_type_error(
-                    column_name,
-                    "Float64 scalar",
-                    other.primitive_type(),
-                ));
-            }
-            None => {
-                return Err(invalid_input(format!(
-                    "{column_name} missing for selected row slot {row_slot}"
-                )));
-            }
-        }
-    }
+    let Some(RequiredScalarColumnValues::Float64(values)) = columns.remove(column_name) else {
+        return Err(invalid_input(format!(
+            "required Float64 scalar column {column_name} was not loaded"
+        )));
+    };
+    let out = reuse_or_replace_vec(existing, values);
     let report = column_report(ColumnReportInput {
         table: ms.main_table(),
         column_name,
@@ -1870,45 +1659,28 @@ fn read_f64_scalar_column(
         channel_start: 0,
         requested_channels: 1,
         elements_per_channel_or_row: 1,
-        row_count: row_indices.len(),
+        row_count,
     })?;
     Ok((out, report))
 }
 
-fn read_bool_scalar_column(
+fn take_bool_scalar_column(
     ms: &MeasurementSet,
     column_name: &str,
-    row_indices: &[usize],
+    columns: &mut HashMap<String, RequiredScalarColumnValues>,
+    row_count: usize,
     existing: Option<Vec<bool>>,
 ) -> MsResult<(Vec<bool>, VisibilityBufferColumnReport)> {
-    let values = ms
-        .main_table()
-        .column_accessor(column_name)?
-        .scalar_cells_owned_for_rows(row_indices)?;
     let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
     if primitive != PrimitiveType::Bool {
         return Err(column_type_error(column_name, "Bool scalar", primitive));
     }
-    let mut out = existing.unwrap_or_else(|| Vec::with_capacity(row_indices.len()));
-    out.clear();
-    out.reserve(row_indices.len().saturating_sub(out.capacity()));
-    for (row_slot, value) in values.into_iter().enumerate() {
-        match value {
-            Some(ScalarValue::Bool(value)) => out.push(value),
-            Some(other) => {
-                return Err(column_type_error(
-                    column_name,
-                    "Bool scalar",
-                    other.primitive_type(),
-                ));
-            }
-            None => {
-                return Err(invalid_input(format!(
-                    "{column_name} missing for selected row slot {row_slot}"
-                )));
-            }
-        }
-    }
+    let Some(RequiredScalarColumnValues::Bool(values)) = columns.remove(column_name) else {
+        return Err(invalid_input(format!(
+            "required Bool scalar column {column_name} was not loaded"
+        )));
+    };
+    let out = reuse_or_replace_vec(existing, values);
     let report = column_report(ColumnReportInput {
         table: ms.main_table(),
         column_name,
@@ -1917,9 +1689,19 @@ fn read_bool_scalar_column(
         channel_start: 0,
         requested_channels: 1,
         elements_per_channel_or_row: 1,
-        row_count: row_indices.len(),
+        row_count,
     })?;
     Ok((out, report))
+}
+
+fn reuse_or_replace_vec<T: Clone>(existing: Option<Vec<T>>, replacement: Vec<T>) -> Vec<T> {
+    let Some(mut existing) = existing.filter(|values| values.capacity() >= replacement.len())
+    else {
+        return replacement;
+    };
+    existing.clear();
+    existing.extend_from_slice(&replacement);
+    existing
 }
 
 struct ColumnReportInput<'a> {
@@ -2235,93 +2017,6 @@ fn elapsed_ns(duration: Duration) -> u128 {
     duration.as_nanos()
 }
 
-fn load_main_required_scalar_columns(
-    ms: &MeasurementSet,
-    column_names: &[&'static str],
-) -> MsResult<HashMap<String, RequiredScalarColumnValues>> {
-    let row_count = ms.main_table().row_count();
-    let values = ms
-        .main_table()
-        .required_scalar_columns_owned(column_names)
-        .map_err(MsError::Table)?;
-    for &column_name in column_names {
-        let Some(column_values) = values.get(column_name) else {
-            return Err(MsError::InvalidInput(format!(
-                "scalar column {column_name} was not loaded"
-            )));
-        };
-        if column_values.len() != row_count {
-            return Err(MsError::InvalidInput(format!(
-                "{column_name} length {} does not match MAIN row count {}",
-                column_values.len(),
-                row_count
-            )));
-        }
-    }
-    Ok(values)
-}
-
-fn take_required_i32_main_column(
-    columns: &mut HashMap<String, RequiredScalarColumnValues>,
-    column_name: &'static str,
-) -> MsResult<Vec<i32>> {
-    let values = columns.remove(column_name).ok_or_else(|| {
-        MsError::InvalidInput(format!("scalar column {column_name} was not loaded"))
-    })?;
-    match values {
-        RequiredScalarColumnValues::Int32(values) => Ok(values),
-        other => Err(MsError::InvalidInput(format!(
-            "{column_name} must be Int32, found typed scalar column with {} rows",
-            other.len()
-        ))),
-    }
-}
-
-fn take_required_bool_main_column(
-    columns: &mut HashMap<String, RequiredScalarColumnValues>,
-    column_name: &'static str,
-) -> MsResult<Vec<bool>> {
-    let values = columns.remove(column_name).ok_or_else(|| {
-        MsError::InvalidInput(format!("scalar column {column_name} was not loaded"))
-    })?;
-    match values {
-        RequiredScalarColumnValues::Bool(values) => Ok(values),
-        other => Err(MsError::InvalidInput(format!(
-            "{column_name} must be Bool, found typed scalar column with {} rows",
-            other.len()
-        ))),
-    }
-}
-
-fn take_required_f64_main_column(
-    columns: &mut HashMap<String, RequiredScalarColumnValues>,
-    column_name: &'static str,
-) -> MsResult<Vec<f64>> {
-    let values = columns.remove(column_name).ok_or_else(|| {
-        MsError::InvalidInput(format!("scalar column {column_name} was not loaded"))
-    })?;
-    match values {
-        RequiredScalarColumnValues::Float64(values) => Ok(values),
-        RequiredScalarColumnValues::Float32(values) => {
-            Ok(values.into_iter().map(f64::from).collect())
-        }
-        other => Err(MsError::InvalidInput(format!(
-            "{column_name} must be Float64, found typed scalar column with {} rows",
-            other.len()
-        ))),
-    }
-}
-
-fn combine_single_ddid(current: Option<i32>, candidate: i32) -> MsResult<Option<i32>> {
-    match current {
-        None => Ok(Some(candidate)),
-        Some(existing) if existing == candidate => Ok(Some(existing)),
-        Some(existing) => Err(MsError::InvalidInput(format!(
-            "selection spans multiple DATA_DESC_ID values ({existing} and {candidate}); narrow it with --field/--ddid/--spw"
-        ))),
-    }
-}
-
 fn invalid_input(message: String) -> MsError {
     MsError::InvalidInput(message)
 }
@@ -2384,70 +2079,6 @@ mod tests {
         assert!(request.include_weights);
         assert!(request.include_weight_spectrum);
         assert!(request.include_uvw);
-    }
-
-    #[test]
-    fn select_visibility_rows_filters_fields_ddids_and_tracks_time() {
-        let mut ms = MeasurementSet::create_memory(
-            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
-        )
-        .unwrap();
-        add_visibility_test_row(ms.main_table_mut(), 0);
-        add_visibility_test_row(ms.main_table_mut(), 1);
-
-        let plan = ms
-            .select_visibility_rows(&VisibilityRowSelectionRequest {
-                ddid_to_spw_pol: ddid_map(&[(3, (5, 6)), (13, (15, 16))]),
-                allowed_ddids: allowed_ddids(&[3]),
-                selected_ddid: None,
-                allowed_field_ids: Some(BTreeSet::from([4])),
-                include_time: true,
-                track_time_bounds: true,
-            })
-            .unwrap();
-
-        assert_eq!(plan.selected_ddid, 3);
-        assert_eq!(plan.selected_fields, BTreeSet::from([4]));
-        assert_eq!(plan.flag_row, vec![true, false]);
-        assert_eq!(plan.reference_row_time_mjd_sec, Some(1.0));
-        assert_eq!(plan.time_bounds_mjd_sec, Some([1.0, 1.0]));
-        assert_eq!(plan.selected_rows.len(), 1);
-        let row = &plan.selected_rows[0];
-        assert_eq!(row.row_index, 0);
-        assert_eq!(row.field_id, 4);
-        assert_eq!(row.data_desc_id, 3);
-        assert_eq!(row.spw_id, 5);
-        assert_eq!(row.polarization_id, 6);
-        assert_eq!(row.antenna_ids(), (1, 2));
-        assert_eq!(row.time_mjd_seconds, Some(1.0));
-    }
-
-    #[test]
-    fn select_visibility_rows_rejects_multi_ddid_selection() {
-        let mut ms = MeasurementSet::create_memory(
-            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
-        )
-        .unwrap();
-        add_visibility_test_row(ms.main_table_mut(), 0);
-        add_visibility_test_row(ms.main_table_mut(), 1);
-
-        let error = ms
-            .select_visibility_rows(&VisibilityRowSelectionRequest {
-                ddid_to_spw_pol: ddid_map(&[(3, (5, 6)), (13, (15, 16))]),
-                allowed_ddids: allowed_ddids(&[3, 13]),
-                selected_ddid: None,
-                allowed_field_ids: None,
-                include_time: false,
-                track_time_bounds: false,
-            })
-            .unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("selection spans multiple DATA_DESC_ID values"),
-            "{error}"
-        );
     }
 
     #[test]
@@ -2727,23 +2358,5 @@ mod tests {
         corr_count: usize,
     ) -> usize {
         (channel_slot * row_count + row_slot) * corr_count + corr_slot
-    }
-
-    fn ddid_map(entries: &[(usize, (usize, usize))]) -> Vec<Option<(usize, usize)>> {
-        let max_ddid = entries.iter().map(|(ddid, _)| *ddid).max().unwrap_or(0);
-        let mut values = vec![None; max_ddid + 1];
-        for &(ddid, mapping) in entries {
-            values[ddid] = Some(mapping);
-        }
-        values
-    }
-
-    fn allowed_ddids(ddids: &[usize]) -> Vec<bool> {
-        let max_ddid = ddids.iter().copied().max().unwrap_or(0);
-        let mut values = vec![false; max_ddid + 1];
-        for &ddid in ddids {
-            values[ddid] = true;
-        }
-        values
     }
 }

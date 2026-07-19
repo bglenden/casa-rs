@@ -5829,7 +5829,7 @@ fn grid_mosaic_mtmfs_prepared_group_into_metal_shared(
             grid_elapsed: Duration::ZERO,
         });
     }
-    tasks.sort_unstable_by(|left, right| right.samples.len().cmp(&left.samples.len()));
+    tasks.sort_unstable_by_key(|task| std::cmp::Reverse(task.samples.len()));
     let worker_count = thread_count.max(1).min(tasks.len());
     let mut worker_tasks = (0..worker_count)
         .map(|_| Vec::<MosaicDirectMetalTileTask<'_>>::new())
@@ -13899,7 +13899,7 @@ fn accumulate_mosaic_dirty_groups_into_metal_shared(
             })
             .collect::<Vec<_>>();
         let nonempty_tile_count = tasks.len();
-        tasks.sort_unstable_by(|left, right| right.samples.len().cmp(&left.samples.len()));
+        tasks.sort_unstable_by_key(|task| std::cmp::Reverse(task.samples.len()));
         let worker_count = thread_count.max(1).min(tasks.len().max(1));
         let mut worker_tasks = (0..worker_count)
             .map(|_| Vec::<MosaicDirectMetalTileTask<'_>>::new())

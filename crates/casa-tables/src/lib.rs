@@ -264,18 +264,22 @@ pub use schema::{
 };
 pub use sorting::{TableGroup, TableIterator};
 pub use storage::{
-    DataManagerInfo, StorageError, StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType,
-    StreamedTiledShapeComplex32Column, StreamingTiledPrimitiveWriter,
-    StreamingTiledShapeComplex32Writer, TableInfo, TilePixel, TiledFileIO, TiledFileIoStats,
-    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_complex32_column,
-    install_streamed_tiled_shape_primitive_column, set_table_cache_budget_bytes,
-    table_cache_budget_bytes,
+    DataManagerInfo, STREAMING_TILED_COLUMN_BUFFER_BYTES, StorageError,
+    StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeColumn,
+    StreamedTiledShapeComplex32Column, StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType,
+    StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter,
+    TableInfo, TilePixel, TiledFileIO, TiledFileIoStats, install_streamed_tiled_column,
+    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_column,
+    install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
+    set_table_cache_budget_bytes, table_cache_budget_bytes,
 };
 pub use table::{
     ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride, ColumnOverrides,
     DataManagerKind, EndianFormat, GeneratedScalarColumn, GeneratedScalarValueRun, QueryResult,
-    RecordColumnCell, RecordColumnIter, RequiredScalarColumnValues, RowRange, SelectedArray1DCells,
-    SelectedArray2D, SelectedArray2DCells, Slicer, SortOrder, Table, TableCell, TableCellMut,
-    TableColumn, TableColumnMut, TableError, TableKind, TableOptions, TableRow, TableRowMut,
+    RecordColumnCell, RecordColumnIter, RequiredScalarColumnValues, RowRange,
+    STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray2D,
+    SelectedArray2DCells, Slicer, SortOrder, StreamedScalarColumn, StreamedScalarType,
+    StreamingScalarColumnWriter, Table, TableCell, TableCellMut, TableColumn, TableColumnMut,
+    TableError, TableKind, TableOptions, TableRow, TableRowMut,
 };
 pub use tablebrowser::{LinkedTableRef, TableBrowser, TableBrowserError, TableBrowserView};

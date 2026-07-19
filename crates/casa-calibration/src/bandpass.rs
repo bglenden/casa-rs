@@ -14,16 +14,13 @@
 //! close to CASA's own `bandpass` when applied after the same prior gains.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_ms::selection::MsSelection;
-use casa_tables::{
-    ColumnSchema, DataManagerKind, Table, TableError, TableInfo, TableOptions, TableSchema,
-};
+use casa_tables::{ColumnSchema, Table, TableError, TableOptions, TableSchema};
 use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use schemars::JsonSchema;
@@ -31,25 +28,23 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::constants::{
-    COL_ANTENNA1, COL_ANTENNA2, COL_CAL_DESC_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_INTERVAL,
-    COL_N_POLY_AMP, COL_N_POLY_PHASE, COL_OBSERVATION_ID, COL_PARAMERR, COL_PHASE_UNITS,
-    COL_POLY_COEFF_AMP, COL_POLY_COEFF_PHASE, COL_SCALE_FACTOR, COL_SCAN_NUMBER, COL_SNR,
-    COL_SPECTRAL_WINDOW_ID, COL_TIME, COL_VALID_DOMAIN, COL_WEIGHT, KEY_CASA_VERSION, KEY_MS_NAME,
-    KEY_PAR_TYPE, KEY_POL_BASIS, KEY_VIS_CAL, LEGACY_CAL_DESC_KEYWORD, STANDARD_SUBTABLE_KEYWORDS,
-    TABLE_INFO_TYPE,
+    COL_ANTENNA1, COL_ANTENNA2, COL_ARRAY_ID, COL_CAL_DESC_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG,
+    COL_INTERVAL, COL_N_POLY_AMP, COL_N_POLY_PHASE, COL_OBSERVATION_ID, COL_PARAMERR,
+    COL_PHASE_UNITS, COL_POLY_COEFF_AMP, COL_POLY_COEFF_PHASE, COL_SCALE_FACTOR, COL_SCAN_NUMBER,
+    COL_SNR, COL_SPECTRAL_WINDOW_ID, COL_TIME, COL_TIME_EXTRA_PREC, COL_VALID_DOMAIN, COL_WEIGHT,
+    LEGACY_CAL_DESC_KEYWORD,
 };
-use crate::execute::{ApplyExecutionError, EvaluatedApplyRow, evaluate_apply_rows};
-use crate::plan::{ApplyPlanError, ApplyPlanRequest, plan_apply};
-use crate::solve::grouping::{
-    SelectedSolveRow, collect_selected_rows, correlation_types_for_ddid, resolve_refant,
-    validate_smodel,
-};
+use crate::execute::EvaluatedApplyRow;
+use crate::session::prepare_calibration_solve;
+use crate::solve::grouping::{SelectedSolveRow, correlation_types_for_ddid, validate_smodel};
 use crate::solve::kernel::{SolveGraphOptions, solve_graph};
 use crate::solve::{GainSolveMode, RefAntSelector, correlation_receptors, stokes_name};
+use crate::writer::{
+    CalibrationTableDescriptor, CalibrationTableWriter, set_fixed_unit_keyword,
+    set_measinfo_keyword,
+};
 use casa_ms::least_squares::solve_weighted_least_squares;
 
-const COL_ARRAY_ID: &str = "ARRAY_ID";
-const COL_TIME_EXTRA_PREC: &str = "TIME_EXTRA_PREC";
 const LEGACY_CAL_HISTORY_KEYWORD: &str = "CAL_HISTORY";
 
 /// Supported `bandpass` table families.
@@ -119,6 +114,12 @@ pub struct BandpassSolveReport {
 /// Errors returned by the limited `bandpass` solver.
 #[derive(Debug, Error)]
 pub enum BandpassSolveError {
+    /// Shared gain/bandpass solve lifecycle failed.
+    #[error(transparent)]
+    SharedSolve(#[from] crate::solve::GainSolveError),
+    /// Shared calibration-table persistence failed.
+    #[error(transparent)]
+    CalibrationTable(#[from] crate::CalibrationTableWriteError),
     /// Opening the MeasurementSet failed.
     #[error("failed to open MeasurementSet {path}: {source}")]
     OpenMeasurementSet {
@@ -145,31 +146,6 @@ pub enum BandpassSolveError {
     UnsupportedConfiguration {
         /// Error context.
         reason: String,
-    },
-
-    /// The reference antenna could not be resolved.
-    #[error("failed to resolve reference antenna {selector}: {reason}")]
-    ResolveRefAnt {
-        /// Caller-visible selector.
-        selector: String,
-        /// Additional context.
-        reason: String,
-    },
-
-    /// Planning prior on-the-fly calibration application failed.
-    #[error("failed to plan prior calibration application: {source}")]
-    PriorCalibrationPlan {
-        /// Underlying apply-planning error.
-        #[source]
-        source: Box<ApplyPlanError>,
-    },
-
-    /// Evaluating prior on-the-fly calibration application failed.
-    #[error("failed to evaluate prior calibration application: {source}")]
-    PriorCalibrationApply {
-        /// Underlying apply-execution error.
-        #[source]
-        source: Box<ApplyExecutionError>,
     },
 
     /// The MS polarization layout is outside the supported diagonal surface.
@@ -253,34 +229,23 @@ pub enum BandpassSolveError {
     },
 }
 
-/// Solve a limited `bandpass` request from an on-disk MeasurementSet path.
-pub fn solve_bandpass_from_path(
-    path: impl AsRef<Path>,
-    request: &BandpassSolveRequest,
-) -> Result<BandpassSolveReport, BandpassSolveError> {
-    let path = path.as_ref().to_path_buf();
-    let ms =
-        MeasurementSet::open(&path).map_err(|source| BandpassSolveError::OpenMeasurementSet {
-            path: path.display().to_string(),
-            source,
-        })?;
-    solve_bandpass(&ms, request)
-}
-
 /// Solve a limited `bandpass` request from an already-open MeasurementSet.
-pub fn solve_bandpass(
+pub(crate) fn solve_bandpass(
     ms: &MeasurementSet,
     request: &BandpassSolveRequest,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     validate_bandpass_request(request)?;
-    let refant_id = resolve_refant(ms, &request.refant).map_err(map_refant_error)?;
-    let available_antennas = all_antenna_ids(ms)?;
-    let rows = collect_selected_rows(ms, &request.selection).map_err(map_collect_rows_error)?;
-    let preapplied_rows = load_preapplied_rows(ms, request)?;
+    let context = prepare_calibration_solve(
+        ms,
+        &request.selection,
+        &request.refant,
+        &request.prior_calibration_tables,
+        request.parang,
+    )?;
     let groups = build_bandpass_groups(
         ms,
-        &rows,
-        preapplied_rows.as_ref(),
+        &context.rows,
+        context.preapplied_rows.as_ref(),
         request.smodel[0],
         request.combine,
     )?;
@@ -293,20 +258,20 @@ pub fn solve_bandpass(
     for group in groups.into_values() {
         solution_rows.extend(solve_bandpass_group(
             group,
-            &available_antennas,
-            refant_id,
+            &context.available_antennas,
+            context.refant_id,
             request.combine,
             request.normalize_average_amplitude,
         )?);
     }
     match request.band_type {
-        BandpassType::B => write_bandpass_caltable(ms, request, refant_id, &solution_rows),
-        BandpassType::BPoly => write_bpoly_caltable(ms, request, refant_id, &solution_rows),
+        BandpassType::B => write_bandpass_caltable(ms, request, context.refant_id, &solution_rows),
+        BandpassType::BPoly => write_bpoly_caltable(ms, request, context.refant_id, &solution_rows),
     }
 }
 
 fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), BandpassSolveError> {
-    validate_smodel(request.smodel).map_err(map_validate_smodel_error)?;
+    validate_smodel(request.smodel)?;
     if matches!(request.band_type, BandpassType::BPoly)
         && (request.amplitude_degree > 31 || request.phase_degree > 31)
     {
@@ -315,32 +280,6 @@ fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), Bandp
         });
     }
     Ok(())
-}
-
-fn load_preapplied_rows(
-    ms: &MeasurementSet,
-    request: &BandpassSolveRequest,
-) -> Result<Option<HashMap<usize, EvaluatedApplyRow>>, BandpassSolveError> {
-    if request.prior_calibration_tables.is_empty() && !request.parang {
-        return Ok(None);
-    }
-    let plan = plan_apply(
-        ms,
-        &ApplyPlanRequest {
-            selection: request.selection.clone(),
-            apply_mode: crate::ApplyMode::CalFlag,
-            parang: request.parang,
-            calibration_tables: request.prior_calibration_tables.clone(),
-        },
-    )
-    .map_err(|source| BandpassSolveError::PriorCalibrationPlan {
-        source: Box::new(source),
-    })?;
-    evaluate_apply_rows(ms, &plan).map(Some).map_err(|source| {
-        BandpassSolveError::PriorCalibrationApply {
-            source: Box::new(source),
-        }
-    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -446,8 +385,7 @@ impl BandpassAccumulator {
                     .unwrap_or_else(|| "<in-memory>".to_string()),
                 source: MsError::from(source),
             })?;
-        let correlation_types =
-            correlation_types_for_ddid(ms, row.data_desc_id).map_err(map_correlation_error)?;
+        let correlation_types = correlation_types_for_ddid(ms, row.data_desc_id)?;
 
         let ArrayValue::Complex32(data) = data else {
             return Err(BandpassSolveError::UnsupportedParameterShape {
@@ -643,19 +581,16 @@ fn solve_bandpass_group(
     for receptor in 0..2 {
         let mut channel_solutions = Vec::new();
         for chan_index in 0..group.channel_count {
-            channel_solutions.push(
-                solve_graph(
-                    &group.receptor_graphs[receptor][chan_index],
-                    &group.receptor_weights[receptor][chan_index],
-                    &HashMap::new(),
-                    GainSolveMode::AmplitudePhase,
-                    SolveGraphOptions {
-                        refant_id,
-                        min_baselines_per_antenna: 0,
-                    },
-                )
-                .map_err(map_solve_graph_error)?,
-            );
+            channel_solutions.push(solve_graph(
+                &group.receptor_graphs[receptor][chan_index],
+                &group.receptor_weights[receptor][chan_index],
+                &HashMap::new(),
+                GainSolveMode::AmplitudePhase,
+                SolveGraphOptions {
+                    refant_id,
+                    min_baselines_per_antenna: 0,
+                },
+            )?);
         }
         solved_by_receptor.push(channel_solutions);
     }
@@ -771,8 +706,6 @@ fn write_bandpass_caltable(
     refant_id: i32,
     rows: &[BandpassSolutionRow],
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
-    prepare_output_root(&request.output_table)?;
-
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
         ColumnSchema::scalar(COL_FIELD_ID, casa_types::PrimitiveType::Int32),
@@ -791,169 +724,120 @@ fn write_bandpass_caltable(
         ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
     ])
     .expect("valid bandpass schema");
-    let mut table = Table::with_schema(schema);
-    table.set_info(TableInfo {
-        table_type: TABLE_INFO_TYPE.to_string(),
-        sub_type: "B Jones".to_string(),
-        readme: Vec::new(),
-    });
-    table.keywords_mut().upsert(
-        KEY_PAR_TYPE,
-        Value::Scalar(ScalarValue::String("Complex".to_string())),
-    );
-    table.keywords_mut().upsert(
-        KEY_VIS_CAL,
-        Value::Scalar(ScalarValue::String("B Jones".to_string())),
-    );
-    table.keywords_mut().upsert(
-        KEY_MS_NAME,
-        Value::Scalar(ScalarValue::String(
-            ms.path()
+    let mut writer = CalibrationTableWriter::create(
+        ms,
+        CalibrationTableDescriptor {
+            output: &request.output_table,
+            schema,
+            subtype: "B Jones",
+            parameter_type: Some("Complex"),
+            measurement_set_name: ms
+                .path()
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "<in-memory>".to_string()),
-        )),
-    );
-    table.keywords_mut().upsert(
-        KEY_POL_BASIS,
-        Value::Scalar(ScalarValue::String("unknown".to_string())),
-    );
-    table.keywords_mut().upsert(
-        KEY_CASA_VERSION,
-        Value::Scalar(ScalarValue::String("casa-rs".to_string())),
-    );
-    set_fixed_unit_keyword(&mut table, COL_TIME, &["s"]);
-    set_measinfo_keyword(&mut table, COL_TIME, "epoch", Some("UTC"));
-    set_fixed_unit_keyword(&mut table, COL_INTERVAL, &["s"]);
-    set_fixed_unit_keyword(&mut table, COL_TIME_EXTRA_PREC, &["s"]);
-    for name in STANDARD_SUBTABLE_KEYWORDS {
-        table.keywords_mut().upsert(
-            *name,
-            Value::table_ref(subtable_keyword_value(
-                &request.output_table,
-                &request.output_table.join(name),
-            )),
-        );
-    }
+            include_polarization_basis: true,
+            time_extra_precision_column: Some(COL_TIME_EXTRA_PREC),
+        },
+    )?;
 
     for row in rows {
         let receptor_count = 2;
         let element_count = receptor_count * row.channel_count;
-        table
-            .add_row(RecordValue::new(vec![
-                RecordField::new(
-                    COL_TIME,
-                    Value::Scalar(ScalarValue::Float64(row.time_seconds)),
-                ),
-                RecordField::new(
-                    COL_FIELD_ID,
-                    Value::Scalar(ScalarValue::Int32(row.field_id)),
-                ),
-                RecordField::new(
-                    COL_SPECTRAL_WINDOW_ID,
-                    Value::Scalar(ScalarValue::Int32(row.spw_id)),
-                ),
-                RecordField::new(
-                    COL_ANTENNA1,
-                    Value::Scalar(ScalarValue::Int32(row.antenna_id)),
-                ),
-                RecordField::new(COL_ANTENNA2, Value::Scalar(ScalarValue::Int32(refant_id))),
-                RecordField::new(
-                    COL_INTERVAL,
-                    Value::Scalar(ScalarValue::Float64(row.interval_seconds)),
-                ),
-                RecordField::new(
-                    COL_SCAN_NUMBER,
-                    Value::Scalar(ScalarValue::Int32(row.scan_number)),
-                ),
-                RecordField::new(
-                    COL_OBSERVATION_ID,
-                    Value::Scalar(ScalarValue::Int32(row.observation_id)),
-                ),
-                RecordField::new(COL_ARRAY_ID, Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new(
-                    COL_TIME_EXTRA_PREC,
-                    Value::Scalar(ScalarValue::Float64(0.0)),
-                ),
-                RecordField::new(
-                    COL_CPARAM,
-                    Value::Array(ArrayValue::Complex32(
-                        ArrayD::from_shape_vec(
-                            IxDyn(&[receptor_count, row.channel_count]).f(),
-                            row.gains.clone(),
-                        )
-                        .expect("bandpass gains should reshape to receptor x channel"),
-                    )),
-                ),
-                RecordField::new(
-                    COL_PARAMERR,
-                    Value::Array(ArrayValue::Float32(
-                        ArrayD::from_shape_vec(
-                            IxDyn(&[receptor_count, row.channel_count]).f(),
-                            vec![0.0; element_count],
-                        )
-                        .expect("bandpass paramerr should reshape to receptor x channel"),
-                    )),
-                ),
-                RecordField::new(
-                    COL_FLAG,
-                    Value::Array(ArrayValue::Bool(
-                        ArrayD::from_shape_vec(
-                            IxDyn(&[receptor_count, row.channel_count]).f(),
-                            row.flags.clone(),
-                        )
-                        .expect("bandpass flags should reshape to receptor x channel"),
-                    )),
-                ),
-                RecordField::new(
-                    COL_SNR,
-                    Value::Array(ArrayValue::Float32(
-                        ArrayD::from_shape_vec(
-                            IxDyn(&[receptor_count, row.channel_count]).f(),
-                            vec![1.0; element_count],
-                        )
-                        .expect("bandpass snr should reshape to receptor x channel"),
-                    )),
-                ),
-                RecordField::new(
-                    COL_WEIGHT,
-                    Value::Array(ArrayValue::Float32(
-                        ArrayD::from_shape_vec(
-                            IxDyn(&[receptor_count, row.channel_count]).f(),
-                            vec![1.0; element_count],
-                        )
-                        .expect("bandpass weight should reshape to receptor x channel"),
-                    )),
-                ),
-            ]))
-            .expect("insert bandpass row");
+        writer.append(RecordValue::new(vec![
+            RecordField::new(
+                COL_TIME,
+                Value::Scalar(ScalarValue::Float64(row.time_seconds)),
+            ),
+            RecordField::new(
+                COL_FIELD_ID,
+                Value::Scalar(ScalarValue::Int32(row.field_id)),
+            ),
+            RecordField::new(
+                COL_SPECTRAL_WINDOW_ID,
+                Value::Scalar(ScalarValue::Int32(row.spw_id)),
+            ),
+            RecordField::new(
+                COL_ANTENNA1,
+                Value::Scalar(ScalarValue::Int32(row.antenna_id)),
+            ),
+            RecordField::new(COL_ANTENNA2, Value::Scalar(ScalarValue::Int32(refant_id))),
+            RecordField::new(
+                COL_INTERVAL,
+                Value::Scalar(ScalarValue::Float64(row.interval_seconds)),
+            ),
+            RecordField::new(
+                COL_SCAN_NUMBER,
+                Value::Scalar(ScalarValue::Int32(row.scan_number)),
+            ),
+            RecordField::new(
+                COL_OBSERVATION_ID,
+                Value::Scalar(ScalarValue::Int32(row.observation_id)),
+            ),
+            RecordField::new(COL_ARRAY_ID, Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new(
+                COL_TIME_EXTRA_PREC,
+                Value::Scalar(ScalarValue::Float64(0.0)),
+            ),
+            RecordField::new(
+                COL_CPARAM,
+                Value::Array(ArrayValue::Complex32(
+                    ArrayD::from_shape_vec(
+                        IxDyn(&[receptor_count, row.channel_count]).f(),
+                        row.gains.clone(),
+                    )
+                    .expect("bandpass gains should reshape to receptor x channel"),
+                )),
+            ),
+            RecordField::new(
+                COL_PARAMERR,
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(
+                        IxDyn(&[receptor_count, row.channel_count]).f(),
+                        vec![0.0; element_count],
+                    )
+                    .expect("bandpass paramerr should reshape to receptor x channel"),
+                )),
+            ),
+            RecordField::new(
+                COL_FLAG,
+                Value::Array(ArrayValue::Bool(
+                    ArrayD::from_shape_vec(
+                        IxDyn(&[receptor_count, row.channel_count]).f(),
+                        row.flags.clone(),
+                    )
+                    .expect("bandpass flags should reshape to receptor x channel"),
+                )),
+            ),
+            RecordField::new(
+                COL_SNR,
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(
+                        IxDyn(&[receptor_count, row.channel_count]).f(),
+                        vec![1.0; element_count],
+                    )
+                    .expect("bandpass snr should reshape to receptor x channel"),
+                )),
+            ),
+            RecordField::new(
+                COL_WEIGHT,
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(
+                        IxDyn(&[receptor_count, row.channel_count]).f(),
+                        vec![1.0; element_count],
+                    )
+                    .expect("bandpass weight should reshape to receptor x channel"),
+                )),
+            ),
+        ]))?;
     }
 
-    table
-        .save(
-            TableOptions::new(&request.output_table)
-                .with_data_manager(DataManagerKind::StandardStMan),
-        )
-        .map_err(|source| BandpassSolveError::SaveCalibrationTable {
-            path: request.output_table.display().to_string(),
-            source: Box::new(source),
-        })?;
-
-    for (id, name) in [
+    writer.finish(&[
         (SubtableId::Observation, "OBSERVATION"),
         (SubtableId::Antenna, "ANTENNA"),
         (SubtableId::Field, "FIELD"),
         (SubtableId::History, "HISTORY"),
         (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
-    ] {
-        ms.subtable(id)
-            .expect("required subtable available")
-            .save(TableOptions::new(request.output_table.join(name)))
-            .map_err(|source| BandpassSolveError::CopySubtable {
-                subtable: name.to_string(),
-                path: request.output_table.display().to_string(),
-                source: Box::new(source),
-            })?;
-    }
+    ])?;
 
     let field_ids = rows.iter().map(|row| row.field_id).collect::<BTreeSet<_>>();
     let spw_ids = rows.iter().map(|row| row.spw_id).collect::<BTreeSet<_>>();
@@ -975,7 +859,6 @@ fn write_bpoly_caltable(
     refant_id: i32,
     rows: &[BandpassSolutionRow],
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
-    prepare_output_root(&request.output_table)?;
     let fitted_rows = fit_bpoly_rows(ms, rows, request.amplitude_degree, request.phase_degree)?;
 
     let schema = TableSchema::new(vec![
@@ -1044,53 +927,36 @@ fn write_bpoly_caltable(
         ),
     ])
     .expect("valid BPOLY schema");
-    let mut table = Table::with_schema(schema);
-    table.set_info(TableInfo {
-        table_type: TABLE_INFO_TYPE.to_string(),
-        sub_type: "BPOLY".to_string(),
-        readme: Vec::new(),
-    });
-    table
-        .keywords_mut()
-        .upsert(LEGACY_CAL_DESC_KEYWORD, Value::table_ref("././CAL_DESC"));
-    table.keywords_mut().upsert(
-        LEGACY_CAL_HISTORY_KEYWORD,
-        Value::table_ref("././CAL_HISTORY"),
-    );
-    table.keywords_mut().upsert(
-        KEY_VIS_CAL,
-        Value::Scalar(ScalarValue::String("BPOLY".to_string())),
-    );
-    table.keywords_mut().upsert(
-        KEY_MS_NAME,
-        Value::Scalar(ScalarValue::String(
-            ms.path()
+    let mut writer = CalibrationTableWriter::create(
+        ms,
+        CalibrationTableDescriptor {
+            output: &request.output_table,
+            schema,
+            subtype: "BPOLY",
+            parameter_type: None,
+            measurement_set_name: ms
+                .path()
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "<in-memory>".to_string()),
-        )),
-    );
-    table.keywords_mut().upsert(
-        KEY_CASA_VERSION,
-        Value::Scalar(ScalarValue::String("casa-rs".to_string())),
-    );
-    for name in STANDARD_SUBTABLE_KEYWORDS {
+            include_polarization_basis: false,
+            time_extra_precision_column: Some(COL_TIME_EXTRA_PREC),
+        },
+    )?;
+    {
+        let table = writer.table_mut();
+        table
+            .keywords_mut()
+            .upsert(LEGACY_CAL_DESC_KEYWORD, Value::table_ref("././CAL_DESC"));
         table.keywords_mut().upsert(
-            *name,
-            Value::table_ref(subtable_keyword_value(
-                &request.output_table,
-                &request.output_table.join(name),
-            )),
+            LEGACY_CAL_HISTORY_KEYWORD,
+            Value::table_ref("././CAL_HISTORY"),
         );
+        set_fixed_unit_keyword(table, COL_VALID_DOMAIN, &["Hz"]);
+        set_fixed_unit_keyword(table, "REF_FREQUENCY", &["Hz"]);
+        set_measinfo_keyword(table, "REF_FREQUENCY", "frequency", Some("TOPO"));
+        set_fixed_unit_keyword(table, "REF_DIRECTION", &["rad", "rad"]);
+        set_measinfo_keyword(table, "REF_DIRECTION", "direction", Some("J2000"));
     }
-    set_fixed_unit_keyword(&mut table, COL_TIME, &["s"]);
-    set_measinfo_keyword(&mut table, COL_TIME, "epoch", Some("UTC"));
-    set_fixed_unit_keyword(&mut table, COL_INTERVAL, &["s"]);
-    set_fixed_unit_keyword(&mut table, COL_TIME_EXTRA_PREC, &["s"]);
-    set_fixed_unit_keyword(&mut table, COL_VALID_DOMAIN, &["Hz"]);
-    set_fixed_unit_keyword(&mut table, "REF_FREQUENCY", &["Hz"]);
-    set_measinfo_keyword(&mut table, "REF_FREQUENCY", "frequency", Some("TOPO"));
-    set_fixed_unit_keyword(&mut table, "REF_DIRECTION", &["rad", "rad"]);
-    set_measinfo_keyword(&mut table, "REF_DIRECTION", "direction", Some("J2000"));
 
     let cal_desc_ids = fitted_rows
         .iter()
@@ -1120,233 +986,214 @@ fn write_bpoly_caltable(
             .collect::<Vec<_>>();
         let amp_shape = IxDyn(&[1, 1, 1, flat_amp.len()]).f();
         let phase_shape = IxDyn(&[1, 1, 1, flat_phase.len()]).f();
-        table
-            .add_row(RecordValue::new(vec![
-                RecordField::new(
-                    COL_TIME,
-                    Value::Scalar(ScalarValue::Float64(row.time_seconds)),
-                ),
-                RecordField::new(
-                    COL_TIME_EXTRA_PREC,
-                    Value::Scalar(ScalarValue::Float64(0.0)),
-                ),
-                RecordField::new(
-                    COL_FIELD_ID,
-                    Value::Scalar(ScalarValue::Int32(row.field_id)),
-                ),
-                RecordField::new(
-                    COL_ANTENNA1,
-                    Value::Scalar(ScalarValue::Int32(row.antenna_id)),
-                ),
-                RecordField::new("FEED1", Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new(
-                    COL_INTERVAL,
-                    Value::Scalar(ScalarValue::Float64(row.interval_seconds)),
-                ),
-                RecordField::new(
-                    COL_SCAN_NUMBER,
-                    Value::Scalar(ScalarValue::Int32(row.scan_number)),
-                ),
-                RecordField::new(
-                    COL_OBSERVATION_ID,
-                    Value::Scalar(ScalarValue::Int32(row.observation_id)),
-                ),
-                RecordField::new(COL_ARRAY_ID, Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new("PROCESSOR_ID", Value::Scalar(ScalarValue::Int32(-1))),
-                RecordField::new("STATE_ID", Value::Scalar(ScalarValue::Int32(-1))),
-                RecordField::new("PHASE_ID", Value::Scalar(ScalarValue::Int32(-1))),
-                RecordField::new("PULSAR_BIN", Value::Scalar(ScalarValue::Int32(-1))),
-                RecordField::new("PULSAR_GATE_ID", Value::Scalar(ScalarValue::Int32(-1))),
-                RecordField::new("FREQ_GROUP", Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new(
-                    "FREQ_GROUP_NAME",
-                    Value::Scalar(ScalarValue::String(String::new())),
-                ),
-                RecordField::new(
-                    "FIELD_NAME",
-                    Value::Scalar(ScalarValue::String(String::new())),
-                ),
-                RecordField::new(
-                    "FIELD_CODE",
-                    Value::Scalar(ScalarValue::String(String::new())),
-                ),
-                RecordField::new(
-                    "SOURCE_NAME",
-                    Value::Scalar(ScalarValue::String(String::new())),
-                ),
-                RecordField::new(
-                    "SOURCE_CODE",
-                    Value::Scalar(ScalarValue::String(String::new())),
-                ),
-                RecordField::new("CALIBRATION_GROUP", Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new(
-                    COL_CAL_DESC_ID,
-                    Value::Scalar(ScalarValue::Int32(
-                        *cal_desc_ids
-                            .get(&row.spw_id)
-                            .expect("BPOLY CAL_DESC entry for solved SPW"),
-                    )),
-                ),
-                RecordField::new("CAL_HISTORY_ID", Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new(
-                    "GAIN",
-                    Value::Array(ArrayValue::from_complex32_vec(vec![Complex32::new(
-                        1.0, 0.0,
-                    )])),
-                ),
-                RecordField::new(
-                    "SIDEBAND_REF",
-                    Value::Scalar(ScalarValue::Complex32(Complex32::new(1.0, 0.0))),
-                ),
-                RecordField::new(
-                    "REF_ANT",
-                    Value::Array(ArrayValue::from_i32_vec(vec![row.antenna_id])),
-                ),
-                RecordField::new("REF_FEED", Value::Array(ArrayValue::from_i32_vec(vec![0]))),
-                RecordField::new(
-                    "REF_RECEPTOR",
-                    Value::Array(ArrayValue::from_i32_vec(vec![0])),
-                ),
-                RecordField::new(
-                    "REF_FREQUENCY",
-                    Value::Array(ArrayValue::from_f64_vec(vec![reference_frequency_hz])),
-                ),
-                RecordField::new("MEAS_FREQ_REF", Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new(
-                    "REF_DIRECTION",
-                    Value::Array(ArrayValue::from_f64_vec(vec![0.0, 0.0])),
-                ),
-                RecordField::new("MEAS_DIR_REF", Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new("TOTAL_SOLUTION_OK", Value::Scalar(ScalarValue::Bool(true))),
-                RecordField::new("TOTAL_FIT", Value::Scalar(ScalarValue::Float32(0.0))),
-                RecordField::new("TOTAL_FIT_WEIGHT", Value::Scalar(ScalarValue::Float32(1.0))),
-                RecordField::new(
-                    "SOLUTION_OK",
-                    Value::Array(ArrayValue::from_bool_vec(vec![true, true])),
-                ),
-                RecordField::new(
-                    "FIT",
-                    Value::Array(ArrayValue::from_f32_vec(vec![0.0, 0.0])),
-                ),
-                RecordField::new(
-                    "FIT_WEIGHT",
-                    Value::Array(ArrayValue::from_f32_vec(vec![1.0, 1.0])),
-                ),
-                RecordField::new(
-                    COL_FLAG,
-                    Value::Array(ArrayValue::from_bool_vec(vec![false, false])),
-                ),
-                RecordField::new(
-                    COL_PARAMERR,
-                    Value::Array(ArrayValue::from_f32_vec(vec![0.0, 0.0])),
-                ),
-                RecordField::new(
-                    COL_SNR,
-                    Value::Array(ArrayValue::from_f32_vec(vec![1.0, 1.0])),
-                ),
-                RecordField::new(
-                    COL_WEIGHT,
-                    Value::Array(ArrayValue::from_f32_vec(vec![1.0, 1.0])),
-                ),
-                RecordField::new(
-                    "POLY_TYPE",
-                    Value::Scalar(ScalarValue::String("CHEBYSHEV".to_string())),
-                ),
-                RecordField::new(
-                    "POLY_MODE",
-                    Value::Scalar(ScalarValue::String("A&P".to_string())),
-                ),
-                RecordField::new(
-                    COL_SCALE_FACTOR,
-                    Value::Scalar(ScalarValue::Complex32(row.scale_factor)),
-                ),
-                RecordField::new(
-                    COL_N_POLY_AMP,
-                    Value::Scalar(ScalarValue::Int32(
-                        i32::try_from(row.amp_coefficients.first().map_or(0, Vec::len))
-                            .expect("small BPOLY amp coefficient count"),
-                    )),
-                ),
-                RecordField::new(
-                    COL_N_POLY_PHASE,
-                    Value::Scalar(ScalarValue::Int32(
-                        i32::try_from(row.phase_coefficients.first().map_or(0, Vec::len))
-                            .expect("small BPOLY phase coefficient count"),
-                    )),
-                ),
-                RecordField::new(
-                    COL_PHASE_UNITS,
-                    Value::Scalar(ScalarValue::String("RAD".to_string())),
-                ),
-                RecordField::new(
-                    COL_VALID_DOMAIN,
-                    Value::Array(ArrayValue::Float64(
-                        ArrayD::from_shape_vec(
-                            IxDyn(&[2]).f(),
-                            vec![row.valid_domain_hz[0], row.valid_domain_hz[1]],
-                        )
-                        .expect("BPOLY valid domain should reshape"),
-                    )),
-                ),
-                RecordField::new(
-                    COL_POLY_COEFF_AMP,
-                    Value::Array(ArrayValue::Float64(
-                        ArrayD::from_shape_vec(amp_shape, flat_amp)
-                            .expect("BPOLY amp coefficients should reshape"),
-                    )),
-                ),
-                RecordField::new(
-                    COL_POLY_COEFF_PHASE,
-                    Value::Array(ArrayValue::Float64(
-                        ArrayD::from_shape_vec(phase_shape, flat_phase)
-                            .expect("BPOLY phase coefficients should reshape"),
-                    )),
-                ),
-            ]))
-            .expect("insert BPOLY row");
+        writer.append(RecordValue::new(vec![
+            RecordField::new(
+                COL_TIME,
+                Value::Scalar(ScalarValue::Float64(row.time_seconds)),
+            ),
+            RecordField::new(
+                COL_TIME_EXTRA_PREC,
+                Value::Scalar(ScalarValue::Float64(0.0)),
+            ),
+            RecordField::new(
+                COL_FIELD_ID,
+                Value::Scalar(ScalarValue::Int32(row.field_id)),
+            ),
+            RecordField::new(
+                COL_ANTENNA1,
+                Value::Scalar(ScalarValue::Int32(row.antenna_id)),
+            ),
+            RecordField::new("FEED1", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new(
+                COL_INTERVAL,
+                Value::Scalar(ScalarValue::Float64(row.interval_seconds)),
+            ),
+            RecordField::new(
+                COL_SCAN_NUMBER,
+                Value::Scalar(ScalarValue::Int32(row.scan_number)),
+            ),
+            RecordField::new(
+                COL_OBSERVATION_ID,
+                Value::Scalar(ScalarValue::Int32(row.observation_id)),
+            ),
+            RecordField::new(COL_ARRAY_ID, Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new("PROCESSOR_ID", Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new("STATE_ID", Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new("PHASE_ID", Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new("PULSAR_BIN", Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new("PULSAR_GATE_ID", Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new("FREQ_GROUP", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new(
+                "FREQ_GROUP_NAME",
+                Value::Scalar(ScalarValue::String(String::new())),
+            ),
+            RecordField::new(
+                "FIELD_NAME",
+                Value::Scalar(ScalarValue::String(String::new())),
+            ),
+            RecordField::new(
+                "FIELD_CODE",
+                Value::Scalar(ScalarValue::String(String::new())),
+            ),
+            RecordField::new(
+                "SOURCE_NAME",
+                Value::Scalar(ScalarValue::String(String::new())),
+            ),
+            RecordField::new(
+                "SOURCE_CODE",
+                Value::Scalar(ScalarValue::String(String::new())),
+            ),
+            RecordField::new("CALIBRATION_GROUP", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new(
+                COL_CAL_DESC_ID,
+                Value::Scalar(ScalarValue::Int32(
+                    *cal_desc_ids
+                        .get(&row.spw_id)
+                        .expect("BPOLY CAL_DESC entry for solved SPW"),
+                )),
+            ),
+            RecordField::new("CAL_HISTORY_ID", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new(
+                "GAIN",
+                Value::Array(ArrayValue::from_complex32_vec(vec![Complex32::new(
+                    1.0, 0.0,
+                )])),
+            ),
+            RecordField::new(
+                "SIDEBAND_REF",
+                Value::Scalar(ScalarValue::Complex32(Complex32::new(1.0, 0.0))),
+            ),
+            RecordField::new(
+                "REF_ANT",
+                Value::Array(ArrayValue::from_i32_vec(vec![row.antenna_id])),
+            ),
+            RecordField::new("REF_FEED", Value::Array(ArrayValue::from_i32_vec(vec![0]))),
+            RecordField::new(
+                "REF_RECEPTOR",
+                Value::Array(ArrayValue::from_i32_vec(vec![0])),
+            ),
+            RecordField::new(
+                "REF_FREQUENCY",
+                Value::Array(ArrayValue::from_f64_vec(vec![reference_frequency_hz])),
+            ),
+            RecordField::new("MEAS_FREQ_REF", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new(
+                "REF_DIRECTION",
+                Value::Array(ArrayValue::from_f64_vec(vec![0.0, 0.0])),
+            ),
+            RecordField::new("MEAS_DIR_REF", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new("TOTAL_SOLUTION_OK", Value::Scalar(ScalarValue::Bool(true))),
+            RecordField::new("TOTAL_FIT", Value::Scalar(ScalarValue::Float32(0.0))),
+            RecordField::new("TOTAL_FIT_WEIGHT", Value::Scalar(ScalarValue::Float32(1.0))),
+            RecordField::new(
+                "SOLUTION_OK",
+                Value::Array(ArrayValue::from_bool_vec(vec![true, true])),
+            ),
+            RecordField::new(
+                "FIT",
+                Value::Array(ArrayValue::from_f32_vec(vec![0.0, 0.0])),
+            ),
+            RecordField::new(
+                "FIT_WEIGHT",
+                Value::Array(ArrayValue::from_f32_vec(vec![1.0, 1.0])),
+            ),
+            RecordField::new(
+                COL_FLAG,
+                Value::Array(ArrayValue::from_bool_vec(vec![false, false])),
+            ),
+            RecordField::new(
+                COL_PARAMERR,
+                Value::Array(ArrayValue::from_f32_vec(vec![0.0, 0.0])),
+            ),
+            RecordField::new(
+                COL_SNR,
+                Value::Array(ArrayValue::from_f32_vec(vec![1.0, 1.0])),
+            ),
+            RecordField::new(
+                COL_WEIGHT,
+                Value::Array(ArrayValue::from_f32_vec(vec![1.0, 1.0])),
+            ),
+            RecordField::new(
+                "POLY_TYPE",
+                Value::Scalar(ScalarValue::String("CHEBYSHEV".to_string())),
+            ),
+            RecordField::new(
+                "POLY_MODE",
+                Value::Scalar(ScalarValue::String("A&P".to_string())),
+            ),
+            RecordField::new(
+                COL_SCALE_FACTOR,
+                Value::Scalar(ScalarValue::Complex32(row.scale_factor)),
+            ),
+            RecordField::new(
+                COL_N_POLY_AMP,
+                Value::Scalar(ScalarValue::Int32(
+                    i32::try_from(row.amp_coefficients.first().map_or(0, Vec::len))
+                        .expect("small BPOLY amp coefficient count"),
+                )),
+            ),
+            RecordField::new(
+                COL_N_POLY_PHASE,
+                Value::Scalar(ScalarValue::Int32(
+                    i32::try_from(row.phase_coefficients.first().map_or(0, Vec::len))
+                        .expect("small BPOLY phase coefficient count"),
+                )),
+            ),
+            RecordField::new(
+                COL_PHASE_UNITS,
+                Value::Scalar(ScalarValue::String("RAD".to_string())),
+            ),
+            RecordField::new(
+                COL_VALID_DOMAIN,
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(
+                        IxDyn(&[2]).f(),
+                        vec![row.valid_domain_hz[0], row.valid_domain_hz[1]],
+                    )
+                    .expect("BPOLY valid domain should reshape"),
+                )),
+            ),
+            RecordField::new(
+                COL_POLY_COEFF_AMP,
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(amp_shape, flat_amp)
+                        .expect("BPOLY amp coefficients should reshape"),
+                )),
+            ),
+            RecordField::new(
+                COL_POLY_COEFF_PHASE,
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(phase_shape, flat_phase)
+                        .expect("BPOLY phase coefficients should reshape"),
+                )),
+            ),
+        ]))?;
     }
 
-    table
-        .save(
-            TableOptions::new(&request.output_table)
-                .with_data_manager(DataManagerKind::StandardStMan),
-        )
-        .map_err(|source| BandpassSolveError::SaveCalibrationTable {
-            path: request.output_table.display().to_string(),
-            source: Box::new(source),
-        })?;
-
-    write_bpoly_cal_desc_subtable(
-        request.output_table.join("CAL_DESC"),
-        &cal_desc_ids,
-        &fitted_rows,
-    )?;
-    for (id, name) in [
+    writer.copy_subtables(&[
         (SubtableId::Observation, "OBSERVATION"),
         (SubtableId::Antenna, "ANTENNA"),
         (SubtableId::Field, "FIELD"),
         (SubtableId::History, "HISTORY"),
         (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
-    ] {
-        ms.subtable(id)
-            .expect("required subtable available")
-            .save(TableOptions::new(request.output_table.join(name)))
-            .map_err(|source| BandpassSolveError::CopySubtable {
-                subtable: name.to_string(),
-                path: request.output_table.display().to_string(),
-                source: Box::new(source),
-            })?;
-    }
+    ])?;
+
+    write_bpoly_cal_desc_subtable(
+        writer.output_path().join("CAL_DESC"),
+        &cal_desc_ids,
+        &fitted_rows,
+    )?;
     Table::with_schema(TableSchema::new(vec![]).expect("empty schema"))
-        .save(TableOptions::new(request.output_table.join("CAL_HISTORY")))
+        .save(TableOptions::new(writer.output_path().join("CAL_HISTORY")))
         .map_err(|source| BandpassSolveError::SaveCalibrationTable {
-            path: request
-                .output_table
+            path: writer
+                .output_path()
                 .join("CAL_HISTORY")
                 .display()
                 .to_string(),
             source: Box::new(source),
         })?;
+    writer.save_main()?;
 
     let field_ids = fitted_rows
         .iter()
@@ -1594,152 +1441,4 @@ fn write_bpoly_cal_desc_subtable(
             source: Box::new(source),
         }
     })
-}
-
-fn all_antenna_ids(ms: &MeasurementSet) -> Result<BTreeSet<i32>, BandpassSolveError> {
-    let antenna = ms
-        .antenna()
-        .map_err(|source| BandpassSolveError::OpenMeasurementSet {
-            path: ms
-                .path()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "<in-memory>".to_string()),
-            source,
-        })?;
-    Ok((0..antenna.row_count())
-        .map(|row| i32::try_from(row).expect("antenna row count should fit in i32"))
-        .collect())
-}
-
-fn prepare_output_root(path: &Path) -> Result<(), BandpassSolveError> {
-    if path.exists() {
-        fs::remove_dir_all(path)
-            .or_else(|_| fs::remove_file(path))
-            .map_err(|error| BandpassSolveError::PrepareOutput {
-                path: path.display().to_string(),
-                reason: error.to_string(),
-            })?;
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| BandpassSolveError::PrepareOutput {
-            path: path.display().to_string(),
-            reason: error.to_string(),
-        })?;
-    }
-    Ok(())
-}
-
-fn set_fixed_unit_keyword(table: &mut Table, column: &str, units: &[&str]) {
-    let mut keywords = table.column_keywords(column).cloned().unwrap_or_default();
-    keywords.upsert(
-        "QuantumUnits",
-        Value::Array(ArrayValue::from_string_vec(
-            units.iter().map(|unit| (*unit).to_string()).collect(),
-        )),
-    );
-    table.set_column_keywords(column, keywords);
-}
-
-fn set_measinfo_keyword(
-    table: &mut Table,
-    column: &str,
-    measure_type: &str,
-    measure_ref: Option<&str>,
-) {
-    let mut keywords = table.column_keywords(column).cloned().unwrap_or_default();
-    let mut fields = vec![RecordField::new(
-        "type",
-        Value::Scalar(ScalarValue::String(measure_type.to_string())),
-    )];
-    if let Some(measure_ref) = measure_ref {
-        fields.push(RecordField::new(
-            "Ref",
-            Value::Scalar(ScalarValue::String(measure_ref.to_string())),
-        ));
-    }
-    keywords.upsert("MEASINFO", Value::Record(RecordValue::new(fields)));
-    table.set_column_keywords(column, keywords);
-}
-
-fn subtable_keyword_value(base_path: &Path, subtable_path: &Path) -> String {
-    if let Ok(relative) = subtable_path.strip_prefix(base_path) {
-        let rel = relative.to_string_lossy();
-        return format!("././{rel}");
-    }
-    if let Some(parent) = base_path.parent()
-        && let Ok(relative) = subtable_path.strip_prefix(parent)
-    {
-        let rel = relative.to_string_lossy();
-        return format!("./{rel}");
-    }
-    if subtable_path.is_relative() {
-        let rel = subtable_path.to_string_lossy();
-        return format!("././{}", rel.trim_start_matches("./"));
-    }
-    subtable_path.to_string_lossy().to_string()
-}
-
-fn map_validate_smodel_error(error: crate::solve::GainSolveError) -> BandpassSolveError {
-    match error {
-        crate::solve::GainSolveError::UnsupportedSkyModel { smodel } => {
-            BandpassSolveError::UnsupportedSkyModel { smodel }
-        }
-        other => panic!("unexpected validate_smodel error variant: {other}"),
-    }
-}
-
-fn map_refant_error(error: crate::solve::GainSolveError) -> BandpassSolveError {
-    match error {
-        crate::solve::GainSolveError::ResolveRefAnt { selector, reason } => {
-            BandpassSolveError::ResolveRefAnt { selector, reason }
-        }
-        crate::solve::GainSolveError::OpenMeasurementSet { path, source } => {
-            BandpassSolveError::OpenMeasurementSet { path, source }
-        }
-        other => panic!("unexpected resolve_refant error variant: {other}"),
-    }
-}
-
-fn map_collect_rows_error(error: crate::solve::GainSolveError) -> BandpassSolveError {
-    match error {
-        crate::solve::GainSolveError::EmptySelection => BandpassSolveError::EmptySelection,
-        crate::solve::GainSolveError::OpenMeasurementSet { path, source } => {
-            BandpassSolveError::OpenMeasurementSet { path, source }
-        }
-        crate::solve::GainSolveError::UnsupportedParameterShape { path, shape } => {
-            BandpassSolveError::UnsupportedParameterShape { path, shape }
-        }
-        other => panic!("unexpected collect_selected_rows error variant: {other}"),
-    }
-}
-
-fn map_correlation_error(error: crate::solve::GainSolveError) -> BandpassSolveError {
-    match error {
-        crate::solve::GainSolveError::OpenMeasurementSet { path, source } => {
-            BandpassSolveError::OpenMeasurementSet { path, source }
-        }
-        crate::solve::GainSolveError::UnsupportedCorrelationLayout {
-            data_desc_id,
-            correlation_types,
-        } => BandpassSolveError::UnsupportedCorrelationLayout {
-            data_desc_id,
-            correlation_types,
-        },
-        other => panic!("unexpected correlation_types_for_ddid error variant: {other}"),
-    }
-}
-
-fn map_solve_graph_error(error: crate::solve::GainSolveError) -> BandpassSolveError {
-    match error {
-        crate::solve::GainSolveError::UnsolvableAntenna {
-            antenna_id,
-            field_id,
-            spw_id,
-        } => BandpassSolveError::UnsolvableAntenna {
-            antenna_id,
-            field_id,
-            spw_id,
-        },
-        other => panic!("unexpected solve_graph error variant: {other}"),
-    }
 }

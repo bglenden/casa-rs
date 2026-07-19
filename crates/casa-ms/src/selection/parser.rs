@@ -5,30 +5,18 @@ use std::collections::BTreeSet;
 
 use casa_types::quanta::MvTime;
 
-use crate::selection::MsSelection;
-use crate::selection_syntax::parse_numeric_id_selector;
+use crate::selection::CompiledMsSelection;
+use crate::selection::syntax::{dedup_i32, parse_numeric_id_selector, parse_numeric_range};
 use crate::subtables::{get_f64, has_column};
 use crate::{MeasurementSet, MsError, MsResult};
 
-use super::{ListObsOptions, format_float_compact};
-
-pub(crate) fn resolve_selected_rows(
-    ms: &MeasurementSet,
-    options: &ListObsOptions,
-) -> MsResult<Option<Vec<usize>>> {
-    if !options.selectdata || !options.has_selection() {
-        return Ok(None);
-    }
-
-    let selection = selection_from_options(ms, options)?;
-    Ok(Some(selection.apply(ms)?))
-}
+use crate::listobs::{ListObsOptions, format_float_compact};
 
 pub(crate) fn selection_from_options(
     ms: &MeasurementSet,
     options: &ListObsOptions,
-) -> MsResult<MsSelection> {
-    let mut selection = MsSelection::new();
+) -> MsResult<CompiledMsSelection> {
+    let mut selection = CompiledMsSelection::new();
 
     if let Some(field) = options.field.as_deref() {
         let (field_ids, field_names) = parse_field_selector(ms, field)?;
@@ -43,7 +31,7 @@ pub(crate) fn selection_from_options(
     }
 
     if let Some(spw) = options.spw.as_deref() {
-        selection = selection.spw(&parse_numeric_id_selector(spw, "spw")?);
+        selection = selection.spw_selector(spw)?;
     }
     if let Some(scan) = options.scan.as_deref() {
         selection = selection.scan(&parse_numeric_id_selector(scan, "scan")?);
@@ -112,9 +100,9 @@ fn parse_field_selector(ms: &MeasurementSet, value: &str) -> MsResult<(Vec<i32>,
 
 fn apply_antenna_selector(
     ms: &MeasurementSet,
-    mut selection: MsSelection,
+    mut selection: CompiledMsSelection,
     value: &str,
-) -> MsResult<MsSelection> {
+) -> MsResult<CompiledMsSelection> {
     let mut antenna_ids = Vec::new();
     let mut antenna_names = Vec::new();
     let mut baselines = Vec::new();
@@ -154,9 +142,9 @@ fn apply_antenna_selector(
 
 fn apply_intent_selector(
     ms: &MeasurementSet,
-    mut selection: MsSelection,
+    mut selection: CompiledMsSelection,
     value: &str,
-) -> MsResult<MsSelection> {
+) -> MsResult<CompiledMsSelection> {
     let state_ids = parse_state_selector(ms, value)?;
     if state_ids.is_empty() {
         return Err(MsError::VersionError(format!(
@@ -169,10 +157,11 @@ fn apply_intent_selector(
 
 fn apply_correlation_selector(
     ms: &MeasurementSet,
-    mut selection: MsSelection,
+    mut selection: CompiledMsSelection,
     value: &str,
-) -> MsResult<MsSelection> {
+) -> MsResult<CompiledMsSelection> {
     let requested_codes = parse_correlation_selector(value)?;
+    selection.correlation_types = requested_codes.clone();
     let polarization = ms.polarization()?;
     let data_description = ms.data_description()?;
     let mut matching_ddids = Vec::new();
@@ -200,9 +189,9 @@ fn apply_correlation_selector(
 
 fn apply_uvrange_selector(
     ms: &MeasurementSet,
-    mut selection: MsSelection,
+    mut selection: CompiledMsSelection,
     value: &str,
-) -> MsResult<MsSelection> {
+) -> MsResult<CompiledMsSelection> {
     let taql = build_uvrange_taql(ms, value)?;
     selection = selection.taql(&taql);
     Ok(selection)
@@ -210,9 +199,9 @@ fn apply_uvrange_selector(
 
 fn apply_timerange_selector(
     ms: &MeasurementSet,
-    mut selection: MsSelection,
+    mut selection: CompiledMsSelection,
     value: &str,
-) -> MsResult<MsSelection> {
+) -> MsResult<CompiledMsSelection> {
     let taql = build_timerange_taql(ms, &selection, value)?;
     selection = selection.taql(&taql);
     Ok(selection)
@@ -251,7 +240,7 @@ struct ResolvedTimeSpec {
 
 fn build_timerange_taql(
     ms: &MeasurementSet,
-    selection: &MsSelection,
+    selection: &CompiledMsSelection,
     value: &str,
 ) -> MsResult<String> {
     let defaults = timerange_defaults(ms, selection)?;
@@ -271,7 +260,7 @@ fn build_timerange_taql(
 
 fn timerange_defaults(
     ms: &MeasurementSet,
-    selection: &MsSelection,
+    selection: &CompiledMsSelection,
 ) -> MsResult<TimeSelectionDefaults> {
     let rows = selection.apply(ms)?;
     let row = rows.first().copied().ok_or_else(|| {
@@ -984,26 +973,6 @@ fn resolve_antenna_ref(ms: &MeasurementSet, value: &str) -> MsResult<i32> {
     Err(MsError::VersionError(format!(
         "antenna selector {value:?} did not match any ANTENNA rows"
     )))
-}
-
-fn parse_numeric_range(value: &str) -> Option<(i32, i32)> {
-    let (start, end) = value.split_once('~')?;
-    let start = start.trim().parse::<i32>().ok()?;
-    let end = end.trim().parse::<i32>().ok()?;
-    let (start, end) = if start <= end {
-        (start, end)
-    } else {
-        (end, start)
-    };
-    Some((start, end))
-}
-
-fn dedup_i32(values: Vec<i32>) -> Vec<i32> {
-    values
-        .into_iter()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
 }
 
 fn dedup_strings(values: Vec<String>) -> Vec<String> {

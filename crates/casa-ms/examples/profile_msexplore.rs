@@ -17,7 +17,7 @@ use std::time::Instant;
 use casa_ms::{
     MeasurementSet, MeasurementSetPlotTheme, MeasurementSetSummary,
     MeasurementSetSummaryOutputFormat, MsColorAxis, MsIterationAxis, MsPlotPayload, MsPlotPreset,
-    MsPlotSpec, MsSelectionSpec, build_msexplore_plot_payload, render_msexplore_plot_image,
+    MsPlotSpec, MsSelection, build_msexplore_plot_payload, render_msexplore_plot_image,
 };
 use image::ImageFormat;
 
@@ -62,13 +62,13 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let options = parse_args(env::args().skip(1))?;
-    let selection = MsSelectionSpec {
+    let selection = MsSelection {
         field: options.field.clone(),
         spw: options.spw.clone(),
         scan: options.scan.clone(),
         correlation: options.correlation.clone(),
         msselect: options.msselect.clone(),
-        ..MsSelectionSpec::default()
+        ..MsSelection::default()
     };
     let mut spec = MsPlotSpec::from_preset(options.preset);
     spec.color_by = options.color_by;

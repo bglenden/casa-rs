@@ -8,18 +8,16 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
-use casa_images::{AnyPagedImage, ImageBrowserSession, ImageInfo, ImagePixelType};
-use casa_ms::columns::main_ids;
-use casa_ms::plot::{
-    AntennaLayoutPlotPayload, AntennaLayoutPoint, ScanTimelineBar, ScanTimelinePlotPayload,
-    SpectralWindowCoverageBar, SpectralWindowCoveragePlotPayload, UvCoverageSeries,
+use casa_images::{
+    AnyPagedImage, ImageBrowserSession, ImageInfo, ImagePixelType, parse_image_channel_selection,
 };
+use casa_ms::plot::UvCoverageSeries;
 use casa_ms::{
     MeasurementSet, MeasurementSetPlotPayload, MeasurementSetSummary,
     MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotData,
     MsPlotDataPanel, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsScatterGridPayload,
-    MsScatterPagePayload, MsScatterPlotPayload, MsScatterSeries, MsSelectionSpec,
-    VisibilityDataColumn, build_msexplore_payload_from_spec,
+    MsScatterPagePayload, MsScatterPlotPayload, MsScatterSeries, MsSelection,
+    MsSelectorEditContext, build_msexplore_payload_from_spec, validate_ms_selector_edit,
 };
 use casa_notebook::{
     ASSISTANT_PROFILE_VERSION, ASSISTANT_TRANSCRIPT_SCHEMA_VERSION, AssistantActivity,
@@ -36,17 +34,17 @@ use casa_notebook::{
     VisualizationSnapshot,
 };
 use casa_provider_contracts::{
-    ParameterValue, ProviderInvocationAdaptation, RunProductKind, RunProductRole, RunSafetyClass,
-    SurfaceContractBundle, SurfaceKind, builtin_application_catalog, builtin_surface_bundle,
-    builtin_surface_catalog, project_ui_form,
+    NormalizationRule, ParameterValue, ProviderInvocationAdaptation, RunProductKind,
+    RunProductRole, RunSafetyClass, SelectorGrammar, SurfaceContractBundle, SurfaceKind,
+    builtin_application_catalog, builtin_surface_bundle, builtin_surface_catalog, project_ui_form,
 };
 use casa_tables::{ArrayShapeContract, ColumnType, Table, TableBrowser, TableOptions};
 use casa_task_runtime::{
     BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, OpenSessionRequest,
-    ParameterRuntime, ParameterSession, ResolutionPatch, SessionLastCoordinator,
-    TaskLastCoordinator, TaskOutputValue, decode_task_completion, parse_parameter_text,
-    parse_profile, project_provider_invocation, render_documented_template,
-    write_parameter_profile_atomic,
+    ParameterEditDiagnosticCode, ParameterEditSuggestion, ParameterRuntime, ParameterSession,
+    ResolutionPatch, SessionLastCoordinator, TaskLastCoordinator, TaskOutputValue,
+    decode_task_completion, parse_parameter_text, parse_profile, project_provider_invocation,
+    render_documented_template, validate_parameter_edit, write_parameter_profile_atomic,
 };
 use casa_types::measures::direction::{
     angular_increment_arcseconds, declination_increment_arcseconds, format_declination_labeled,
@@ -65,9 +63,7 @@ use thiserror::Error;
 const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
 const MAX_PROJECT_SCAN_DEPTH: usize = 4;
 const DEFAULT_GUI_MAX_PLOT_POINTS: u64 = 250_000;
-const MAIN_SCALAR_CHUNK_ROWS: usize = 65_536;
 const FRONTEND_POINT_PROVENANCE_LIMIT: usize = 8_000;
-const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 #[cfg(test)]
 const DEFAULT_PLOT_WIDTH: u32 = 960;
 #[cfg(test)]
@@ -922,6 +918,34 @@ pub struct SurfaceParameterDiagnostic {
     pub parameter: Option<String>,
     pub location: Option<SurfaceParameterLocation>,
     pub suggestions: Vec<String>,
+}
+
+/// One typed context suggestion supplied to canonical edit validation.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterEditSuggestion {
+    pub label: String,
+    pub value: SurfaceParameterValue,
+}
+
+/// Complete context for one cross-surface parameter edit.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterEditRequest {
+    pub surface_id: String,
+    pub parameter: String,
+    pub text: String,
+    pub dataset_path: Option<String>,
+    pub spectral_window_id: Option<i32>,
+    pub suggestions: Vec<SurfaceParameterEditSuggestion>,
+}
+
+/// Typed canonical result rendered by Swift and Python bindings.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SurfaceParameterEditResult {
+    pub parameter: String,
+    pub normalized_value: Option<SurfaceParameterValue>,
+    pub diagnostics: Vec<SurfaceParameterDiagnostic>,
+    pub supported_capabilities: Vec<String>,
+    pub suggestions: Vec<SurfaceParameterEditSuggestion>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -4939,6 +4963,370 @@ fn parameter_bundle(surface_id: &str) -> FrontendResult<SurfaceContractBundle> {
         .map_err(|error| parameter_error("load parameter surface", error))
 }
 
+/// Parse, normalize, and validate one parameter edit through the generated boundary.
+#[uniffi::export]
+pub fn parameter_validate_edit(
+    request: SurfaceParameterEditRequest,
+) -> FrontendResult<SurfaceParameterEditResult> {
+    let bundle = parameter_bundle(&request.surface_id)?;
+    let grammar = selector_grammar_for_parameter(&bundle, &request.parameter);
+    let mut suggestions = request
+        .suggestions
+        .into_iter()
+        .map(|suggestion| ParameterEditSuggestion {
+            label: suggestion.label,
+            value: suggestion.value.into(),
+        })
+        .collect::<Vec<_>>();
+    if request.text.trim().is_empty()
+        && let Some(grammar) = grammar
+    {
+        suggestions.extend(domain_parameter_suggestions(
+            grammar,
+            request.dataset_path.as_deref(),
+            request.spectral_window_id,
+        ));
+    }
+    let mut result =
+        validate_parameter_edit(&bundle, &request.parameter, &request.text, suggestions);
+
+    let domain_edit = result
+        .is_valid()
+        .then(|| result.normalized_value.clone())
+        .flatten()
+        .zip(grammar);
+    if let Some((value, grammar)) = domain_edit {
+        validate_domain_parameter_edit(
+            &mut result,
+            grammar,
+            &value,
+            request.dataset_path.as_deref(),
+            request.spectral_window_id,
+        );
+    }
+
+    Ok(SurfaceParameterEditResult {
+        parameter: result.parameter,
+        normalized_value: result.normalized_value.map(Into::into),
+        diagnostics: result
+            .diagnostics
+            .into_iter()
+            .map(|diagnostic| SurfaceParameterDiagnostic {
+                level: "error".to_string(),
+                code: snake_case_debug(diagnostic.code),
+                message: diagnostic.message,
+                parameter: Some(diagnostic.parameter),
+                location: None,
+                suggestions: Vec::new(),
+            })
+            .collect(),
+        supported_capabilities: result.supported_capabilities,
+        suggestions: result
+            .suggestions
+            .into_iter()
+            .map(|suggestion| SurfaceParameterEditSuggestion {
+                label: suggestion.label,
+                value: suggestion.value.into(),
+            })
+            .collect(),
+    })
+}
+
+fn domain_parameter_suggestions(
+    grammar: SelectorGrammar,
+    dataset_path: Option<&str>,
+    spectral_window_id: Option<i32>,
+) -> Vec<ParameterEditSuggestion> {
+    if grammar == SelectorGrammar::ImageChannels {
+        return image_channel_suggestions(dataset_path);
+    }
+    let Some(path) = dataset_path else {
+        return Vec::new();
+    };
+    let Ok(ms) = MeasurementSet::open(path) else {
+        return Vec::new();
+    };
+    let Ok(context) = ms.probe_context() else {
+        return Vec::new();
+    };
+    if grammar == SelectorGrammar::SpectralWindow
+        && let Some(spw_id) = spectral_window_id
+        && let Ok(spw_id) = usize::try_from(spw_id)
+        && let Some(channels) = context
+            .spectral_windows
+            .iter()
+            .find(|spw| spw.row == spw_id)
+            .map(|spw| spw.channel_count)
+    {
+        return channel_range_suggestions(channels);
+    }
+    let pairs = match grammar {
+        SelectorGrammar::Field => Some(
+            context
+                .fields
+                .into_iter()
+                .map(|field| {
+                    (
+                        format!("{}: {}", field.row, field.name),
+                        field.row.to_string(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        ),
+        SelectorGrammar::SpectralWindow => Some(
+            context
+                .spectral_windows
+                .into_iter()
+                .map(|spw| {
+                    (
+                        format!("spw {}: {} channels", spw.row, spw.channel_count),
+                        spw.row.to_string(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        ),
+        SelectorGrammar::Antenna => Some(
+            context
+                .antennas
+                .into_iter()
+                .map(|antenna| (antenna.name.clone(), antenna.name))
+                .collect::<Vec<_>>(),
+        ),
+        SelectorGrammar::Observation => Some(
+            context
+                .observations
+                .into_iter()
+                .map(|observation| {
+                    let detail = [observation.project, observation.telescope_name]
+                        .into_iter()
+                        .filter(|value| !value.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let label = if detail.is_empty() {
+                        format!("observation {}", observation.row)
+                    } else {
+                        format!("observation {}: {detail}", observation.row)
+                    };
+                    (label, observation.row.to_string())
+                })
+                .collect::<Vec<_>>(),
+        ),
+        SelectorGrammar::Intent => Some(
+            context
+                .intents
+                .into_iter()
+                .map(|label| (label.clone(), label))
+                .collect::<Vec<_>>(),
+        ),
+        SelectorGrammar::Feed => Some(
+            context
+                .feed_ids
+                .into_iter()
+                .map(|id| (format!("feed {id}"), id.to_string()))
+                .collect::<Vec<_>>(),
+        ),
+        SelectorGrammar::Correlation => Some(
+            context
+                .correlations
+                .into_iter()
+                .map(|label| (label.clone(), label))
+                .collect::<Vec<_>>(),
+        ),
+        SelectorGrammar::TimeRange
+        | SelectorGrammar::UvRange
+        | SelectorGrammar::Scan
+        | SelectorGrammar::Array
+        | SelectorGrammar::MsSelect
+        | SelectorGrammar::ImageBox
+        | SelectorGrammar::ImageChannels
+        | SelectorGrammar::ImageRegion
+        | SelectorGrammar::Stokes => None,
+    };
+    pairs
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(label, value)| ParameterEditSuggestion {
+            label,
+            value: ParameterValue::String(value),
+        })
+        .collect()
+}
+
+fn image_channel_suggestions(dataset_path: Option<&str>) -> Vec<ParameterEditSuggestion> {
+    let Some(path) = dataset_path else {
+        return Vec::new();
+    };
+    let Ok(image) = AnyPagedImage::open(path) else {
+        return Vec::new();
+    };
+    let spectral_axis = match &image {
+        AnyPagedImage::Float32(image) => image.find_axis(CoordinateType::Spectral),
+        AnyPagedImage::Float64(image) => image.find_axis(CoordinateType::Spectral),
+        AnyPagedImage::Complex32(image) => image.find_axis(CoordinateType::Spectral),
+        AnyPagedImage::Complex64(image) => image.find_axis(CoordinateType::Spectral),
+    };
+    let Some(axis) = spectral_axis else {
+        return Vec::new();
+    };
+    let channels = image.shape()[axis];
+    if channels == 0 {
+        return Vec::new();
+    }
+    channel_range_suggestions(image.shape()[axis])
+}
+
+fn channel_range_suggestions(channels: usize) -> Vec<ParameterEditSuggestion> {
+    if channels == 0 {
+        return Vec::new();
+    }
+    let mut suggestions = vec![
+        ("All channels".to_string(), String::new()),
+        ("First channel".to_string(), "0".to_string()),
+    ];
+    if channels > 1 {
+        suggestions.push(("All explicit".to_string(), format!("0~{}", channels - 1)));
+    }
+    if channels >= 16 {
+        suggestions.push(("Every fourth".to_string(), format!("0~{}^4", channels - 1)));
+    }
+    suggestions
+        .into_iter()
+        .map(|(label, value)| ParameterEditSuggestion {
+            label,
+            value: ParameterValue::String(value),
+        })
+        .collect()
+}
+
+fn selector_grammar_for_parameter(
+    bundle: &SurfaceContractBundle,
+    parameter: &str,
+) -> Option<SelectorGrammar> {
+    let binding = bundle
+        .surface
+        .bindings()
+        .iter()
+        .find(|binding| binding.name == parameter)?;
+    let concept = bundle.catalog.concept(&binding.concept)?;
+    selector_grammar_from_rule(&concept.normalization)
+}
+
+fn selector_grammar_from_rule(rule: &NormalizationRule) -> Option<SelectorGrammar> {
+    match rule {
+        NormalizationRule::CasaSelector { grammar, .. } => Some(*grammar),
+        NormalizationRule::Sequence { rules } => rules.iter().find_map(selector_grammar_from_rule),
+        NormalizationRule::Identity
+        | NormalizationRule::Trim
+        | NormalizationRule::Lowercase
+        | NormalizationRule::Path
+        | NormalizationRule::Quantity { .. } => None,
+    }
+}
+
+fn validate_domain_parameter_edit(
+    result: &mut casa_task_runtime::ParameterEditResult,
+    grammar: SelectorGrammar,
+    value: &ParameterValue,
+    dataset_path: Option<&str>,
+    spectral_window_id: Option<i32>,
+) {
+    let ParameterValue::String(value) = value else {
+        result.reject(
+            ParameterEditDiagnosticCode::InvalidText,
+            "selector edits must normalize to a string",
+        );
+        return;
+    };
+    if value.is_empty() {
+        return;
+    }
+
+    let validation = match grammar {
+        SelectorGrammar::ImageChannels => validate_image_channel_edit(dataset_path, value),
+        SelectorGrammar::ImageBox | SelectorGrammar::ImageRegion | SelectorGrammar::Stokes => {
+            return;
+        }
+        _ => validate_measurement_set_edit(dataset_path, grammar, value, spectral_window_id),
+    };
+    if let Err((code, message)) = validation {
+        result.reject(code, message);
+    }
+}
+
+fn validate_measurement_set_edit(
+    dataset_path: Option<&str>,
+    grammar: SelectorGrammar,
+    value: &str,
+    spectral_window_id: Option<i32>,
+) -> Result<(), (ParameterEditDiagnosticCode, String)> {
+    let path = dataset_path.ok_or_else(|| {
+        (
+            ParameterEditDiagnosticCode::DatasetUnavailable,
+            "MeasurementSet context is required to validate this selector".to_string(),
+        )
+    })?;
+    let ms = MeasurementSet::open(Path::new(path)).map_err(|error| {
+        (
+            ParameterEditDiagnosticCode::DatasetUnavailable,
+            format!("open MeasurementSet selector context {path}: {error}"),
+        )
+    })?;
+    validate_ms_selector_edit(
+        &ms,
+        grammar,
+        value,
+        MsSelectorEditContext { spectral_window_id },
+    )
+    .map_err(|error| classify_selector_error(error.to_string()))
+}
+
+fn validate_image_channel_edit(
+    dataset_path: Option<&str>,
+    value: &str,
+) -> Result<(), (ParameterEditDiagnosticCode, String)> {
+    let path = dataset_path.ok_or_else(|| {
+        (
+            ParameterEditDiagnosticCode::DatasetUnavailable,
+            "image context is required to validate channel bounds".to_string(),
+        )
+    })?;
+    let image = AnyPagedImage::open(path).map_err(|error| {
+        (
+            ParameterEditDiagnosticCode::DatasetUnavailable,
+            format!("open image selector context {path}: {error}"),
+        )
+    })?;
+    let spectral_axis = match &image {
+        AnyPagedImage::Float32(image) => image.find_axis(CoordinateType::Spectral),
+        AnyPagedImage::Float64(image) => image.find_axis(CoordinateType::Spectral),
+        AnyPagedImage::Complex32(image) => image.find_axis(CoordinateType::Spectral),
+        AnyPagedImage::Complex64(image) => image.find_axis(CoordinateType::Spectral),
+    }
+    .ok_or_else(|| {
+        (
+            ParameterEditDiagnosticCode::DatasetUnavailable,
+            "image has no spectral axis for channel validation".to_string(),
+        )
+    })?;
+    parse_image_channel_selection(value, image.shape()[spectral_axis])
+        .map(|_| ())
+        .map_err(|error| classify_selector_error(error.to_string()))
+}
+
+fn classify_selector_error(message: String) -> (ParameterEditDiagnosticCode, String) {
+    let code = if message.contains("outside")
+        || message.contains("exceeds")
+        || message.contains("Shape mismatch")
+    {
+        ParameterEditDiagnosticCode::SelectorValueOutOfRange
+    } else if message.contains("not present") || message.contains("did not match") {
+        ParameterEditDiagnosticCode::UnknownSelectorValue
+    } else {
+        ParameterEditDiagnosticCode::InvalidSelectorSyntax
+    };
+    (code, message)
+}
+
 fn parameter_session_from_source(
     surface_id: &str,
     source: &str,
@@ -5516,7 +5904,7 @@ pub fn build_measurement_set_summary(
             });
         }
     };
-    let selection = MsSelectionSpec {
+    let selection = MsSelection {
         field: normalized_optional(request.field.clone()),
         spw: normalized_optional(request.spectral_window.clone()),
         timerange: normalized_optional(request.timerange.clone()),
@@ -5528,8 +5916,10 @@ pub fn build_measurement_set_summary(
         observation: normalized_optional(request.observation.clone()),
         intent: normalized_optional(request.intent.clone()),
         feed: normalized_optional(request.feed.clone()),
+        data_description: None,
+        state: None,
         msselect: normalized_optional(request.msselect.clone()),
-        ..MsSelectionSpec::default()
+        ..MsSelection::default()
     };
     let started = Instant::now();
     let ms = MeasurementSet::open(&dataset_path).map_err(|error| FrontendServiceError::Probe {
@@ -5615,7 +6005,7 @@ pub fn build_measurement_set_plot(
             reason: format!("{}: {error}", dataset_path.display()),
         })?;
 
-    let selection = MsSelectionSpec {
+    let selection = MsSelection {
         field: normalized_optional(request.field.clone()),
         spw: normalized_optional(request.spectral_window.clone()),
         timerange: normalized_optional(request.timerange.clone()),
@@ -5627,8 +6017,10 @@ pub fn build_measurement_set_plot(
         observation: normalized_optional(request.observation.clone()),
         intent: normalized_optional(request.intent.clone()),
         feed: normalized_optional(request.feed.clone()),
+        data_description: None,
+        state: None,
         msselect: normalized_optional(request.msselect.clone()),
-        ..MsSelectionSpec::default()
+        ..MsSelection::default()
     };
     let spec = MsExploreSpec {
         ms_path: dataset_path.clone(),
@@ -5643,7 +6035,7 @@ pub fn build_measurement_set_plot(
 
     let payload_started = Instant::now();
     let payload =
-        build_frontend_msexplore_payload(&spec).map_err(|error| FrontendServiceError::Plot {
+        build_msexplore_payload_from_spec(&spec).map_err(|error| FrontendServiceError::Plot {
             reason: format!("{}: {error}", dataset_path.display()),
         })?;
     let payload_elapsed = payload_started.elapsed();
@@ -5682,373 +6074,6 @@ pub fn build_measurement_set_plot(
         },
         image_bytes: Vec::new(),
     })
-}
-
-fn build_frontend_msexplore_payload(spec: &MsExploreSpec) -> Result<MsPlotPayload, String> {
-    let [plot] = spec.plots.as_slice() else {
-        return build_msexplore_payload_from_spec(spec);
-    };
-    match plot.preset {
-        Some(MsPlotPreset::AntennaLayout)
-            if spec.selection.spw.is_none() && spec.selection.correlation.is_none() =>
-        {
-            let ms = MeasurementSet::open(&spec.ms_path).map_err(|error| error.to_string())?;
-            build_antenna_layout_payload_fast(&ms, spec.selection.field.as_deref()).map(|payload| {
-                MsPlotPayload::ListObs(MeasurementSetPlotPayload::AntennaLayout(payload))
-            })
-        }
-        Some(MsPlotPreset::ScanTimeline) if spec.selection.correlation.is_none() => {
-            let ms = MeasurementSet::open(&spec.ms_path).map_err(|error| error.to_string())?;
-            build_scan_timeline_payload_fast(
-                &ms,
-                spec.selection.field.as_deref(),
-                spec.selection.spw.as_deref(),
-            )
-            .map(|payload| MsPlotPayload::ListObs(MeasurementSetPlotPayload::ScanTimeline(payload)))
-        }
-        Some(MsPlotPreset::SpectralWindowCoverage)
-            if spec.selection.field.is_none() && spec.selection.correlation.is_none() =>
-        {
-            let ms = MeasurementSet::open(&spec.ms_path).map_err(|error| error.to_string())?;
-            build_spectral_window_coverage_payload_fast(&ms, spec.selection.spw.as_deref()).map(
-                |payload| {
-                    MsPlotPayload::ListObs(MeasurementSetPlotPayload::SpectralWindowCoverage(
-                        payload,
-                    ))
-                },
-            )
-        }
-        _ => build_msexplore_payload_from_spec(spec),
-    }
-}
-
-fn build_antenna_layout_payload_fast(
-    ms: &MeasurementSet,
-    field_selection: Option<&str>,
-) -> Result<AntennaLayoutPlotPayload, String> {
-    let selected_field = field_selection.and_then(parse_single_index_selector);
-    let used_antennas = selected_field
-        .map(|field| selected_antennas_for_field(ms, field))
-        .transpose()?;
-    let antenna = ms.antenna().map_err(|error| error.to_string())?;
-    let mut points = Vec::new();
-    let mut omitted = 0usize;
-    for row in 0..antenna.row_count() {
-        if used_antennas
-            .as_ref()
-            .is_some_and(|used| !used.contains(&row))
-        {
-            continue;
-        }
-        let position = antenna.position(row).map_err(|error| error.to_string())?;
-        let x = position[0];
-        let y = position[1];
-        if !x.is_finite() || !y.is_finite() {
-            omitted += 1;
-            continue;
-        }
-        points.push(AntennaLayoutPoint {
-            label: antenna.name(row).map_err(|error| error.to_string())?,
-            x,
-            y,
-            marker_radius: ((antenna.dish_diameter(row).unwrap_or(15.0) / 3.0).round() as i32)
-                .clamp(3, 12),
-        });
-    }
-    if points.is_empty() {
-        return Err("Antenna layout requires finite ANTENNA positions".to_string());
-    }
-    let suffix = if omitted == 0 {
-        String::new()
-    } else {
-        format!(" ({} omitted without finite coordinates)", omitted)
-    };
-    Ok(AntennaLayoutPlotPayload {
-        x_label: "ITRF X (m)".to_string(),
-        y_label: "ITRF Y (m)".to_string(),
-        labels_enabled: true,
-        summary: format!("Antenna layout. Antennas={}{}", points.len(), suffix),
-        antennas: points,
-    })
-}
-
-fn selected_antennas_for_field(
-    ms: &MeasurementSet,
-    field_id: usize,
-) -> Result<BTreeSet<usize>, String> {
-    let main = ms.main_table();
-    let field_column = main_ids::field_id(main);
-    let antenna1 = main_ids::antenna1(main);
-    let antenna2 = main_ids::antenna2(main);
-    let mut antennas = BTreeSet::new();
-    for row in 0..main.row_count() {
-        if field_column.get(row).map_err(|error| error.to_string())? == field_id as i32 {
-            let ant1 = antenna1.get(row).map_err(|error| error.to_string())?;
-            let ant2 = antenna2.get(row).map_err(|error| error.to_string())?;
-            if ant1 >= 0 {
-                antennas.insert(ant1 as usize);
-            }
-            if ant2 >= 0 {
-                antennas.insert(ant2 as usize);
-            }
-        }
-    }
-    Ok(antennas)
-}
-
-fn build_scan_timeline_payload_fast(
-    ms: &MeasurementSet,
-    field_selection: Option<&str>,
-    spw_selection: Option<&str>,
-) -> Result<ScanTimelinePlotPayload, String> {
-    #[derive(Default)]
-    struct ScanAccum {
-        lane: usize,
-        start: f64,
-        end: f64,
-        field_ids: BTreeSet<i32>,
-        row_count: usize,
-    }
-
-    let selected_field = field_selection.and_then(parse_single_index_selector);
-    let selected_spw = spw_selection.and_then(parse_single_spw_selector);
-    let dd_to_spw = data_description_to_spw(ms)?;
-    let field_names = field_names(ms)?;
-    let main = ms.main_table();
-    let row_numbers = (0..main.row_count()).collect::<Vec<_>>();
-    let mut lane_lookup = BTreeMap::<i32, usize>::new();
-    let mut scans = BTreeMap::<i32, ScanAccum>::new();
-
-    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
-        let scan_values = selected_i32_values(main, "SCAN_NUMBER", row_chunk)?;
-        let field_values = selected_i32_values(main, "FIELD_ID", row_chunk)?;
-        let data_desc_values = selected_i32_values(main, "DATA_DESC_ID", row_chunk)?;
-        let time_values = selected_f64_values(main, "TIME", row_chunk)?;
-        for row_slot in 0..row_chunk.len() {
-            let row_field = field_values[row_slot];
-            if selected_field.is_some_and(|field| row_field != field as i32) {
-                continue;
-            }
-            let row_dd = data_desc_values[row_slot];
-            let row_spw = dd_to_spw.get(&row_dd).copied().unwrap_or(-1);
-            if selected_spw.is_some_and(|spw| row_spw != spw as i32) {
-                continue;
-            }
-            let scan = scan_values[row_slot];
-            let row_time = time_values[row_slot];
-            let next_lane = lane_lookup.len();
-            let lane = *lane_lookup.entry(scan).or_insert(next_lane);
-            let entry = scans.entry(scan).or_insert_with(|| ScanAccum {
-                lane,
-                start: row_time,
-                end: row_time,
-                ..ScanAccum::default()
-            });
-            entry.start = entry.start.min(row_time);
-            entry.end = entry.end.max(row_time);
-            entry.field_ids.insert(row_field);
-            entry.row_count += 1;
-        }
-    }
-
-    let mut lane_labels = vec![String::new(); lane_lookup.len()];
-    for (scan, lane) in &lane_lookup {
-        if let Some(label) = lane_labels.get_mut(*lane) {
-            *label = format!("Scan {scan}");
-        }
-    }
-    let mut bars = Vec::new();
-    let mut start = f64::INFINITY;
-    let mut end = f64::NEG_INFINITY;
-    for (scan, entry) in scans {
-        start = start.min(entry.start);
-        end = end.max(entry.end);
-        let field_label = entry
-            .field_ids
-            .iter()
-            .next()
-            .and_then(|field| field_names.get(field))
-            .cloned()
-            .unwrap_or_else(|| "unknown".to_string());
-        bars.push(ScanTimelineBar {
-            lane: entry.lane,
-            start_mjd_seconds: entry.start,
-            end_mjd_seconds: entry.end.max(entry.start + 1.0e-6),
-            label: format!("Scan {scan}"),
-            color_group: field_label,
-        });
-    }
-    if !start.is_finite() || !end.is_finite() {
-        start = 0.0;
-        end = 1.0;
-    }
-    Ok(ScanTimelinePlotPayload {
-        start_mjd_seconds: start,
-        end_mjd_seconds: if end > start { end } else { start + 1.0 },
-        bars,
-        lane_labels,
-        summary: format!("Scan timeline. Scans={}", lane_lookup.len()),
-    })
-}
-
-fn selected_i32_values(
-    table: &Table,
-    column: &'static str,
-    rows: &[usize],
-) -> Result<Vec<i32>, String> {
-    selected_scalar_values(table, column, rows, |value| match value {
-        ScalarValue::Int32(value) => Ok(value),
-        other => Err(format!(
-            "plot service requires INT {column} cells, found {:?}",
-            other.primitive_type()
-        )),
-    })
-}
-
-fn selected_f64_values(
-    table: &Table,
-    column: &'static str,
-    rows: &[usize],
-) -> Result<Vec<f64>, String> {
-    selected_scalar_values(table, column, rows, |value| match value {
-        ScalarValue::Float64(value) => Ok(value),
-        other => Err(format!(
-            "plot service requires DOUBLE {column} cells, found {:?}",
-            other.primitive_type()
-        )),
-    })
-}
-
-fn selected_scalar_values<T>(
-    table: &Table,
-    column: &'static str,
-    rows: &[usize],
-    convert: impl Fn(ScalarValue) -> Result<T, String>,
-) -> Result<Vec<T>, String> {
-    table
-        .column_accessor(column)
-        .map_err(|error| error.to_string())?
-        .scalar_cells_owned_for_rows(rows)
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .zip(rows.iter().copied())
-        .map(|(value, row)| {
-            value
-                .ok_or_else(|| format!("plot service requires {column} data for row {row}"))
-                .and_then(&convert)
-        })
-        .collect()
-}
-
-fn build_spectral_window_coverage_payload_fast(
-    ms: &MeasurementSet,
-    spw_selection: Option<&str>,
-) -> Result<SpectralWindowCoveragePlotPayload, String> {
-    let spectral_windows = ms.spectral_window().map_err(|error| error.to_string())?;
-    let selected_spw = spw_selection.and_then(parse_single_spw_selector);
-    let mut bars = Vec::new();
-    for row in 0..spectral_windows.row_count() {
-        if selected_spw.is_some_and(|selected| selected != row) {
-            continue;
-        }
-        let chan_freq = spectral_windows
-            .chan_freq(row)
-            .map_err(|error| error.to_string())?;
-        let chan_width = spectral_windows.chan_width(row).unwrap_or_default();
-        let (start, end) = spectral_window_frequency_bounds_ghz(
-            &chan_freq,
-            &chan_width,
-            spectral_windows
-                .ref_frequency(row)
-                .map_err(|error| error.to_string())?,
-            spectral_windows.total_bandwidth(row).unwrap_or(0.0),
-        );
-        let name = spectral_windows.name(row).unwrap_or_default();
-        let label = if name.trim().is_empty() {
-            format!("SPW {row}")
-        } else {
-            format!("SPW {row} {name}")
-        };
-        bars.push(SpectralWindowCoverageBar {
-            spectral_window_id: row,
-            lane: bars.len(),
-            start,
-            end,
-            label,
-            color_group: format!("spw-{row}"),
-        });
-    }
-    Ok(SpectralWindowCoveragePlotPayload {
-        x_label: "Frequency (GHz)".to_string(),
-        summary: format!("Spectral window coverage. Windows={}", bars.len()),
-        bars,
-    })
-}
-
-fn parse_single_spw_selector(value: &str) -> Option<usize> {
-    parse_single_index_selector(value)
-}
-
-fn parse_single_index_selector(value: &str) -> Option<usize> {
-    let trimmed = value.trim();
-    let without_prefix = trimmed.strip_prefix("spw ").unwrap_or(trimmed);
-    without_prefix
-        .chars()
-        .take_while(|character| character.is_ascii_digit())
-        .collect::<String>()
-        .parse()
-        .ok()
-}
-
-fn data_description_to_spw(ms: &MeasurementSet) -> Result<BTreeMap<i32, i32>, String> {
-    let data_description = ms.data_description().map_err(|error| error.to_string())?;
-    let mut lookup = BTreeMap::new();
-    for row in 0..data_description.row_count() {
-        lookup.insert(
-            row as i32,
-            data_description
-                .spectral_window_id(row)
-                .map_err(|error| error.to_string())?,
-        );
-    }
-    Ok(lookup)
-}
-
-fn field_names(ms: &MeasurementSet) -> Result<BTreeMap<i32, String>, String> {
-    let fields = ms.field().map_err(|error| error.to_string())?;
-    let mut names = BTreeMap::new();
-    for row in 0..fields.row_count() {
-        names.insert(
-            row as i32,
-            fields.name(row).map_err(|error| error.to_string())?,
-        );
-    }
-    Ok(names)
-}
-
-fn spectral_window_frequency_bounds_ghz(
-    chan_freq_hz: &[f64],
-    chan_width_hz: &[f64],
-    ref_frequency_hz: f64,
-    total_bandwidth_hz: f64,
-) -> (f64, f64) {
-    let mut bounds = None;
-    for (index, frequency) in chan_freq_hz.iter().copied().enumerate() {
-        let half_width = chan_width_hz
-            .get(index)
-            .copied()
-            .or_else(|| chan_width_hz.first().copied())
-            .unwrap_or(0.0)
-            .abs()
-            / 2.0;
-        bounds = bounds_accumulator(bounds, frequency - half_width);
-        bounds = bounds_accumulator(bounds, frequency + half_width);
-    }
-    let (lower, upper) = bounds.unwrap_or_else(|| {
-        let half_width = total_bandwidth_hz.abs() / 2.0;
-        (ref_frequency_hz - half_width, ref_frequency_hz + half_width)
-    });
-    (lower / 1.0e9, upper / 1.0e9)
 }
 
 fn required_image_command_field<T>(
@@ -8655,31 +8680,75 @@ fn probe_measurement_set(
         Ok(ms) => ms,
         Err(_) => return Ok(None),
     };
-    let fields = match ms_field_labels(&ms) {
-        Ok(fields) => fields,
+    let context = match ms.probe_context() {
+        Ok(context) => context,
         Err(_) => return Ok(None),
     };
-    let spectral_windows = match ms_spectral_window_labels(&ms) {
-        Ok(spectral_windows) => spectral_windows,
-        Err(_) => return Ok(None),
-    };
-    let antennas = match ms_antenna_labels(&ms) {
-        Ok(antennas) => antennas,
-        Err(_) => return Ok(None),
-    };
+    let fields: Vec<String> = context
+        .fields
+        .iter()
+        .map(|field| format!("{}: {}", field.row, field.name))
+        .collect();
+    let spectral_windows: Vec<String> = context
+        .spectral_windows
+        .iter()
+        .map(|spw| {
+            format!(
+                "spw {}: {} chan, {:.6} GHz center",
+                spw.row,
+                spw.channel_count,
+                spw.center_frequency_hz / 1.0e9
+            )
+        })
+        .collect();
+    let antennas: Vec<String> = context
+        .antennas
+        .iter()
+        .map(|antenna| antenna.name.clone())
+        .collect();
     let scans = Vec::new();
     let arrays = Vec::new();
-    let observations = ms_observation_labels(&ms).unwrap_or_default();
-    let intents = ms_intent_labels(&ms).unwrap_or_default();
-    let feeds = ms_feed_labels(&ms).unwrap_or_default();
-    let correlations = match ms_correlation_labels(&ms) {
-        Ok(correlations) => correlations,
-        Err(_) => return Ok(None),
-    };
-    let columns = table_columns(ms.main_table());
-    let data_columns = visibility_data_columns(&columns);
-    let subtables = ms_subtables(&ms);
-    let row_count = ms.row_count();
+    let observations = context
+        .observations
+        .iter()
+        .map(|observation| {
+            let detail = [
+                observation.project.as_str(),
+                observation.telescope_name.as_str(),
+            ]
+            .into_iter()
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join(", ");
+            if detail.is_empty() {
+                format!("observation {}", observation.row)
+            } else {
+                format!("observation {}: {detail}", observation.row)
+            }
+        })
+        .collect();
+    let intents = context.intents.clone();
+    let feeds = context
+        .feed_ids
+        .iter()
+        .map(|id| format!("feed {id}"))
+        .collect();
+    let correlations = context.correlations.clone();
+    let columns = context.columns.clone();
+    let data_columns = context.data_columns.clone();
+    let subtables = context
+        .subtables
+        .iter()
+        .map(|subtable| {
+            let role = if subtable.required {
+                "required"
+            } else {
+                "optional"
+            };
+            format!("{} ({role})", subtable.name)
+        })
+        .collect();
+    let row_count = context.row_count;
 
     Ok(Some(DatasetProbe {
         id: stable_id(path),
@@ -8716,110 +8785,6 @@ fn probe_measurement_set(
     }))
 }
 
-fn ms_field_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
-    let fields = ms.field().map_err(|error| error.to_string())?;
-    (0..fields.row_count())
-        .map(|row| {
-            fields
-                .name(row)
-                .map(|name| format!("{row}: {name}"))
-                .map_err(|error| error.to_string())
-        })
-        .collect()
-}
-
-fn ms_spectral_window_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
-    let spectral_windows = ms.spectral_window().map_err(|error| error.to_string())?;
-    (0..spectral_windows.row_count())
-        .map(|row| {
-            let num_chan = spectral_windows
-                .num_chan(row)
-                .map_err(|error| error.to_string())?;
-            let chan_freq = spectral_windows.chan_freq(row).unwrap_or_default();
-            let center_hz = if chan_freq.is_empty() {
-                spectral_windows
-                    .ref_frequency(row)
-                    .map_err(|error| error.to_string())?
-            } else {
-                mean_or_zero(&chan_freq)
-            };
-            Ok(format!(
-                "spw {}: {} chan, {:.6} GHz center",
-                row,
-                num_chan,
-                center_hz / 1.0e9
-            ))
-        })
-        .collect()
-}
-
-fn ms_antenna_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
-    let antennas = ms.antenna().map_err(|error| error.to_string())?;
-    (0..antennas.row_count())
-        .map(|row| antennas.name(row).map_err(|error| error.to_string()))
-        .collect()
-}
-
-fn ms_intent_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
-    let state = ms.state().map_err(|error| error.to_string())?;
-    let mut intents = BTreeSet::new();
-    for row in 0..state.row_count() {
-        let intent = state
-            .string(row, "OBS_MODE")
-            .map_err(|error| error.to_string())?;
-        for item in intent
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            intents.insert(item.to_string());
-        }
-    }
-    Ok(intents.into_iter().collect())
-}
-
-fn ms_observation_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
-    let observations = ms.observation().map_err(|error| error.to_string())?;
-    let mut labels = Vec::new();
-    for row in 0..observations.row_count() {
-        let project = observations
-            .string(row, "PROJECT")
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let telescope = observations
-            .string(row, "TELESCOPE_NAME")
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let detail = [project, telescope]
-            .into_iter()
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>()
-            .join(", ");
-        if detail.is_empty() {
-            labels.push(format!("observation {row}"));
-        } else {
-            labels.push(format!("observation {row}: {detail}"));
-        }
-    }
-    Ok(labels)
-}
-
-fn ms_feed_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
-    let feed = ms.feed().map_err(|error| error.to_string())?;
-    let mut ids = BTreeSet::new();
-    for row in 0..feed.row_count() {
-        let id = feed
-            .i32(row, "FEED_ID")
-            .map_err(|error| error.to_string())?;
-        if id >= 0 {
-            ids.insert(id);
-        }
-    }
-    Ok(ids.into_iter().map(|id| format!("feed {id}")).collect())
-}
-
 #[uniffi::export]
 pub fn probe_measurement_set_uv_range(
     dataset_path: String,
@@ -8846,57 +8811,13 @@ fn probe_measurement_set_uv_range_inner(
     dataset_path: &str,
 ) -> Result<MeasurementSetUvRangeProbe, String> {
     let ms = MeasurementSet::open(Path::new(dataset_path)).map_err(|error| error.to_string())?;
-    let table = ms.main_table();
-    if table.row_count() == 0 {
-        return Err("MeasurementSet has no MAIN rows".to_string());
-    }
-    let ddid_to_spw = data_description_to_spw(&ms)?;
-    let spw_center_frequency_hz = spw_center_frequency_lookup(&ms)?;
-    let row_numbers = (0..table.row_count()).collect::<Vec<_>>();
-    let mut min_meters = f64::INFINITY;
-    let mut max_meters = f64::NEG_INFINITY;
-    let mut min_kilolambda = f64::INFINITY;
-    let mut max_kilolambda = f64::NEG_INFINITY;
-    let mut seen_rows = 0u64;
-
-    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
-        let uvw_values = selected_uvw_values(table, "UVW", row_chunk)?;
-        let ddids = selected_i32_values(table, "DATA_DESC_ID", row_chunk)?;
-        for (uvw, ddid) in uvw_values.into_iter().zip(ddids) {
-            let uv_meters = uvw[0].hypot(uvw[1]);
-            if !uv_meters.is_finite() {
-                continue;
-            }
-            min_meters = min_meters.min(uv_meters);
-            max_meters = max_meters.max(uv_meters);
-            if let Some(frequency_hz) = ddid_to_spw
-                .get(&ddid)
-                .and_then(|spw| spw_center_frequency_hz.get(spw))
-                .copied()
-                .filter(|frequency| *frequency > 0.0)
-            {
-                let kilo_lambda = uv_meters * frequency_hz / SPEED_OF_LIGHT_M_S / 1_000.0;
-                min_kilolambda = min_kilolambda.min(kilo_lambda);
-                max_kilolambda = max_kilolambda.max(kilo_lambda);
-            }
-            seen_rows += 1;
-        }
-    }
-
-    if seen_rows == 0 || !min_meters.is_finite() || !max_meters.is_finite() {
-        return Err("MeasurementSet UVW column did not contain finite UV distances".to_string());
-    }
-    if !min_kilolambda.is_finite() || !max_kilolambda.is_finite() {
-        min_kilolambda = 0.0;
-        max_kilolambda = 0.0;
-    }
-
+    let probe = ms.probe_uv_range().map_err(|error| error.to_string())?;
     Ok(MeasurementSetUvRangeProbe {
-        min_meters,
-        max_meters,
-        min_kilolambda,
-        max_kilolambda,
-        row_count: seen_rows,
+        min_meters: probe.min_meters,
+        max_meters: probe.max_meters,
+        min_kilolambda: probe.min_kilolambda,
+        max_kilolambda: probe.max_kilolambda,
+        row_count: probe.row_count,
     })
 }
 
@@ -8904,128 +8825,12 @@ fn probe_measurement_set_time_range_inner(
     dataset_path: &str,
 ) -> Result<MeasurementSetTimeRangeProbe, String> {
     let ms = MeasurementSet::open(Path::new(dataset_path)).map_err(|error| error.to_string())?;
-    let table = ms.main_table();
-    if table.row_count() == 0 {
-        return Err("MeasurementSet has no MAIN rows".to_string());
-    }
-    let row_numbers = (0..table.row_count()).collect::<Vec<_>>();
-    let mut min_seconds = f64::INFINITY;
-    let mut max_seconds = f64::NEG_INFINITY;
-    let mut seen_rows = 0u64;
-    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
-        for seconds in selected_f64_values(table, "TIME", row_chunk)? {
-            if !seconds.is_finite() {
-                continue;
-            }
-            min_seconds = min_seconds.min(seconds);
-            max_seconds = max_seconds.max(seconds);
-            seen_rows += 1;
-        }
-    }
-    if seen_rows == 0 || !min_seconds.is_finite() || !max_seconds.is_finite() {
-        return Err("MeasurementSet TIME column did not contain finite seconds".to_string());
-    }
+    let probe = ms.probe_time_range().map_err(|error| error.to_string())?;
     Ok(MeasurementSetTimeRangeProbe {
-        min_seconds,
-        max_seconds,
-        row_count: seen_rows,
+        min_seconds: probe.min_seconds,
+        max_seconds: probe.max_seconds,
+        row_count: probe.row_count,
     })
-}
-
-fn spw_center_frequency_lookup(ms: &MeasurementSet) -> Result<BTreeMap<i32, f64>, String> {
-    let spectral_windows = ms.spectral_window().map_err(|error| error.to_string())?;
-    let mut lookup = BTreeMap::new();
-    for row in 0..spectral_windows.row_count() {
-        let chan_freq = spectral_windows.chan_freq(row).unwrap_or_default();
-        let center_hz = if chan_freq.is_empty() {
-            spectral_windows
-                .ref_frequency(row)
-                .map_err(|error| error.to_string())?
-        } else {
-            mean_or_zero(&chan_freq)
-        };
-        lookup.insert(row as i32, center_hz);
-    }
-    Ok(lookup)
-}
-
-fn selected_uvw_values(
-    table: &Table,
-    column: &'static str,
-    rows: &[usize],
-) -> Result<Vec<[f64; 3]>, String> {
-    table
-        .column_accessor(column)
-        .map_err(|error| error.to_string())?
-        .array_cells_owned(rows)
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .zip(rows.iter().copied())
-        .map(|(value, row)| {
-            let value = value
-                .ok_or_else(|| format!("plot service requires {column} data for row {row}"))?;
-            match value {
-                casa_types::ArrayValue::Float64(values) => {
-                    let slice = values.as_slice().ok_or_else(|| {
-                        format!("plot service requires contiguous {column} f64[3] cells")
-                    })?;
-                    if slice.len() != 3 {
-                        return Err(format!(
-                            "plot service requires {column} cells with shape [3], found [{}]",
-                            slice.len()
-                        ));
-                    }
-                    Ok([slice[0], slice[1], slice[2]])
-                }
-                other => Err(format!(
-                    "plot service requires DOUBLE array {column} cells, found {:?}",
-                    other.primitive_type()
-                )),
-            }
-        })
-        .collect()
-}
-
-fn ms_correlation_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
-    let polarization = ms.polarization().map_err(|error| error.to_string())?;
-    let mut labels = Vec::new();
-    for row in 0..polarization.row_count() {
-        labels.extend(
-            polarization
-                .corr_type(row)
-                .map_err(|error| error.to_string())?
-                .into_iter()
-                .map(stokes_name)
-                .map(str::to_string),
-        );
-    }
-    Ok(unique_sorted(labels))
-}
-
-fn stokes_name(code: i32) -> &'static str {
-    match code {
-        1 => "I",
-        2 => "Q",
-        3 => "U",
-        4 => "V",
-        5 => "RR",
-        6 => "RL",
-        7 => "LR",
-        8 => "LL",
-        9 => "XX",
-        10 => "XY",
-        11 => "YX",
-        12 => "YY",
-        _ => "??",
-    }
-}
-
-fn mean_or_zero(values: &[f64]) -> f64 {
-    if values.is_empty() {
-        0.0
-    } else {
-        values.iter().sum::<f64>() / values.len() as f64
-    }
 }
 
 fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetProbe>, String> {
@@ -9374,30 +9179,6 @@ fn table_columns(table: &Table) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn visibility_data_columns(columns: &[String]) -> Vec<String> {
-    VisibilityDataColumn::ALL
-        .iter()
-        .map(|column| column.name())
-        .filter(|name| columns.iter().any(|column| column == *name))
-        .map(str::to_string)
-        .collect()
-}
-
-fn ms_subtables(ms: &MeasurementSet) -> Vec<String> {
-    let mut ids = ms.subtable_ids();
-    ids.sort();
-    ids.into_iter()
-        .map(|id| {
-            let role = if id.is_required() {
-                "required"
-            } else {
-                "optional"
-            };
-            format!("{} ({role})", id.name())
-        })
-        .collect()
-}
-
 fn dataset_size_bytes(path: &Path, metadata: &fs::Metadata) -> (u64, Vec<String>) {
     if metadata.is_file() {
         return (metadata.len(), vec![]);
@@ -9484,14 +9265,6 @@ fn now_unix_seconds() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
-}
-
-fn unique_sorted(values: impl IntoIterator<Item = String>) -> Vec<String> {
-    values
-        .into_iter()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
 }
 
 fn format_shape(shape: &[u64]) -> String {
@@ -9671,6 +9444,52 @@ mod tests {
         assert!(probe.row_count > 0);
         assert!(probe.min_seconds.is_finite());
         assert!(probe.max_seconds >= probe.min_seconds);
+    }
+
+    #[test]
+    fn parameter_edit_projection_uses_the_canonical_measurement_set_selector_corpus() {
+        let (_dir, ms_path) = unpack_small_ms();
+        let cases = [
+            ("timerange", "2020/01/01/00:00:00~2020/01/01/00:01:00"),
+            ("uvrange", "0~1klambda"),
+            ("spw", "0:0~0^1"),
+            ("field", "0"),
+            ("antenna", "*"),
+            ("scan", "0~1"),
+            ("timerange", ""),
+        ];
+        for (parameter, text) in cases {
+            let result = parameter_validate_edit(SurfaceParameterEditRequest {
+                surface_id: "msexplore".to_string(),
+                parameter: parameter.to_string(),
+                text: text.to_string(),
+                dataset_path: Some(ms_path.display().to_string()),
+                spectral_window_id: None,
+                suggestions: Vec::new(),
+            })
+            .unwrap_or_else(|error| panic!("{parameter} {text:?}: {error}"));
+            assert!(
+                result.diagnostics.is_empty(),
+                "{parameter} {text:?}: {:?}",
+                result.diagnostics
+            );
+        }
+
+        let invalid = parameter_validate_edit(SurfaceParameterEditRequest {
+            surface_id: "msexplore".to_string(),
+            parameter: "timerange".to_string(),
+            text: "not-a-casa-time".to_string(),
+            dataset_path: Some(ms_path.display().to_string()),
+            spectral_window_id: None,
+            suggestions: Vec::new(),
+        })
+        .expect("typed rejection result");
+        assert_eq!(invalid.diagnostics.len(), 1);
+        assert_eq!(invalid.diagnostics[0].code, "invalid_selector_syntax");
+        assert_eq!(
+            invalid.diagnostics[0].parameter.as_deref(),
+            Some("timerange")
+        );
     }
 
     #[test]
@@ -10318,66 +10137,6 @@ mod tests {
                 plot.sampling.diagnostics
             );
         }
-
-        let ms = MeasurementSet::open(&ms_path).expect("open timing MS");
-        let row_count = ms.main_table().row_count();
-        let target_rows = 250_000usize / (384 * 2);
-        let rows = sampled_indices_for_test(row_count, target_rows);
-        let scalars_started = Instant::now();
-        let _times = selected_f64_values(ms.main_table(), "TIME", &rows).expect("time rows");
-        let _fields = selected_i32_values(ms.main_table(), "FIELD_ID", &rows).expect("field rows");
-        let _ddids =
-            selected_i32_values(ms.main_table(), "DATA_DESC_ID", &rows).expect("ddid rows");
-        let scalars_elapsed = scalars_started.elapsed();
-        let flags_started = Instant::now();
-        let flags = ms
-            .main_table()
-            .column_accessor("FLAG")
-            .expect("FLAG")
-            .array_cells_owned(&rows)
-            .expect("flag rows");
-        let flags_elapsed = flags_started.elapsed();
-        let data_started = Instant::now();
-        let data = ms
-            .main_table()
-            .column_accessor("DATA")
-            .expect("DATA")
-            .array_cells_owned(&rows)
-            .expect("data rows");
-        let data_elapsed = data_started.elapsed();
-        let scan_started = Instant::now();
-        let mut sample_count = 0usize;
-        for cell in data {
-            sample_count += match cell {
-                Some(ArrayValue::Complex32(values)) => values.len(),
-                Some(ArrayValue::Complex64(values)) => values.len(),
-                _ => 0,
-            };
-        }
-        let scan_elapsed = scan_started.elapsed();
-        eprintln!(
-            "selected row probe: rows={}, samples={}, scalar={} ms, FLAG={} ms ({} cells), DATA={} ms, sample-scan={} ms",
-            rows.len(),
-            sample_count,
-            scalars_elapsed.as_millis(),
-            flags_elapsed.as_millis(),
-            flags.len(),
-            data_elapsed.as_millis(),
-            scan_elapsed.as_millis()
-        );
-    }
-
-    fn sampled_indices_for_test(total: usize, target: usize) -> Vec<usize> {
-        if target >= total {
-            return (0..total).collect();
-        }
-        if target <= 1 {
-            return vec![0];
-        }
-        let step = (total - 1) as f64 / (target - 1) as f64;
-        (0..target)
-            .map(|index| ((index as f64 * step).round() as usize).min(total - 1))
-            .collect()
     }
 
     #[test]

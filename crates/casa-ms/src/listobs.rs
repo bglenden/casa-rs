@@ -33,19 +33,15 @@ use ndarray::IxDyn;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+use crate::selection::parser::{parse_correlation_selector, selection_from_options};
+use crate::selection::{MsSelection, resolve_row_indices_with_system_budget};
 use crate::subtables::{SubTable, get_i32, has_column};
-use crate::{MeasurementSet, MsError, MsResult};
-
-mod selector;
-
-pub(crate) use selector::{
-    parse_correlation_selector, resolve_selected_rows, selection_from_options,
-};
+use crate::{MeasurementSet, MsError, MsReadPlan, MsResult, MsSelectionIoBudget};
 
 const LISTOBS_SCHEMA_VERSION: u32 = 1;
 const LISTOBS_UV_SCHEMA_VERSION: u32 = 1;
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
-const MAIN_SCALAR_CHUNK_ROWS: usize = 65_536;
 
 /// Output formats supported by the `listobs` renderers and CLI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -513,7 +509,14 @@ impl ListObsSummary {
     /// using explicit task-style options.
     pub fn from_ms_with_options(ms: &MeasurementSet, options: &ListObsOptions) -> MsResult<Self> {
         options.validate_supported()?;
-        let selected_rows = resolve_selected_rows(ms, options)?;
+        let selected_rows = if !options.selectdata || !options.has_selection() {
+            None
+        } else {
+            Some(resolve_row_indices_with_system_budget(
+                ms,
+                &MsSelection::from_summary_options(options),
+            )?)
+        };
         let unflagged_context = if options.listunfl {
             Some(UnflaggedRowContext::new(ms)?)
         } else {
@@ -926,7 +929,14 @@ impl ListObsUvCoverage {
     /// task-style options.
     pub fn from_ms_with_options(ms: &MeasurementSet, options: &ListObsOptions) -> MsResult<Self> {
         options.validate_supported()?;
-        let selected_rows = resolve_selected_rows(ms, options)?;
+        let selected_rows = if !options.selectdata || !options.has_selection() {
+            None
+        } else {
+            Some(resolve_row_indices_with_system_budget(
+                ms,
+                &MsSelection::from_summary_options(options),
+            )?)
+        };
         let dd = ms.data_description()?;
         let spw = ms.spectral_window()?;
         let mut ddid_to_spw = HashMap::<i32, i32>::with_capacity(dd.row_count());
@@ -1533,7 +1543,8 @@ fn build_scans(
     let row_numbers = selected_rows
         .map(|rows| rows.to_vec())
         .unwrap_or_else(|| (0..table.row_count()).collect());
-    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
+    let row_chunk_rows = planned_scalar_scan_rows(row_numbers.len(), 6 * 4 + 3 * 8)?;
+    for row_chunk in row_numbers.chunks(row_chunk_rows) {
         let observation_values = load_i32_rows(table, "OBSERVATION_ID", row_chunk)?;
         let array_values = load_i32_rows(table, "ARRAY_ID", row_chunk)?;
         let scan_values = load_i32_rows(table, "SCAN_NUMBER", row_chunk)?;
@@ -1888,7 +1899,8 @@ fn analyze_main_table(
     let row_numbers = selected_rows
         .map(|rows| rows.to_vec())
         .unwrap_or_else(|| (0..table.row_count()).collect());
-    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
+    let row_chunk_rows = planned_scalar_scan_rows(row_numbers.len(), 6 * 4 + 2 * 8)?;
+    for row_chunk in row_numbers.chunks(row_chunk_rows) {
         let field_values = load_i32_rows(table, "FIELD_ID", row_chunk)?;
         let observation_values = load_i32_rows(table, "OBSERVATION_ID", row_chunk)?;
         let array_values = load_i32_rows(table, "ARRAY_ID", row_chunk)?;
@@ -1944,6 +1956,17 @@ fn analyze_main_table(
         usage.time_range = Some((start, end));
     }
     Ok(usage)
+}
+
+fn planned_scalar_scan_rows(row_count: usize, requested_bytes_per_row: usize) -> MsResult<usize> {
+    if row_count == 0 {
+        return Ok(1);
+    }
+    let budget = MsSelectionIoBudget::from_system_memory(1, requested_bytes_per_row, None)
+        .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+    MsReadPlan::new(row_count, budget)
+        .map(|plan| plan.rows_per_block)
+        .map_err(|error| MsError::InvalidInput(error.to_string()))
 }
 
 fn build_state_intent_lookup(ms: &MeasurementSet) -> MsResult<HashMap<i32, String>> {
@@ -2272,7 +2295,7 @@ fn format_f64_bracket_list(values: &[f64]) -> String {
     )
 }
 
-fn format_float_compact(value: f64, decimals: usize) -> String {
+pub(crate) fn format_float_compact(value: f64, decimals: usize) -> String {
     let epsilon = 10f64.powi(-(decimals as i32)) / 2.0;
     let normalized = if value.abs() < epsilon { 0.0 } else { value };
     let mut formatted = format!("{normalized:.decimals$}");

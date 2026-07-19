@@ -898,7 +898,7 @@ impl Table {
         row_indices: &[usize],
         channel_start: usize,
         channel_count: usize,
-    ) -> Result<SelectedArray2DCells, TableError> {
+    ) -> Result<Option<SelectedArray2DCells>, TableError> {
         self.require_column(column)?;
         for &row_index in row_indices {
             if row_index >= self.row_count() {
@@ -1008,6 +1008,46 @@ impl Table {
             .iter()
             .map(|&column| {
                 let values = self.get_scalar_cells_owned(column)?;
+                required_scalar_column_values_from_optional_scalars(&values, column)
+                    .map(|values| (column.to_string(), values))
+            })
+            .collect()
+    }
+
+    /// Returns typed required scalar values for selected rows in each column.
+    ///
+    /// Storage managers may coalesce these reads by manager and bucket. This
+    /// remains a column/cell operation; manager bindings persisted by CASA are
+    /// honored rather than replaced by a separate read convention.
+    pub fn required_scalar_columns_owned_for_rows(
+        &self,
+        columns: &[&str],
+        row_indices: &[usize],
+    ) -> Result<HashMap<String, RequiredScalarColumnValues>, TableError> {
+        for &column in columns {
+            self.require_column(column)?;
+        }
+        for &row_index in row_indices {
+            if row_index >= self.row_count() {
+                return Err(TableError::RowOutOfBounds {
+                    row_index,
+                    row_count: self.row_count(),
+                });
+            }
+        }
+        if let Some(values_by_column) = self
+            .inner
+            .required_scalar_columns_owned_for_rows(row_indices, columns)?
+        {
+            return Ok(values_by_column
+                .into_iter()
+                .map(|(name, values)| (name, required_scalar_column_values(values)))
+                .collect());
+        }
+        columns
+            .iter()
+            .map(|&column| {
+                let values = self.get_scalar_cells_owned_for_rows(column, row_indices)?;
                 required_scalar_column_values_from_optional_scalars(&values, column)
                     .map(|values| (column.to_string(), values))
             })
@@ -1804,13 +1844,14 @@ impl<'a> TableColumn<'a> {
     /// Returns typed 2-D array channel slices for selected rows without
     /// populating the table-level row cache.
     ///
-    /// The returned values are packed as `[channel][row][axis0]`.
+    /// The returned values are packed as `[channel][row][axis0]`. Returns
+    /// `None` when the column exists but all requested cells are undefined.
     pub fn array_cells_2d_channel_range_typed_uncached(
         &self,
         row_indices: &[usize],
         channel_start: usize,
         channel_count: usize,
-    ) -> Result<SelectedArray2DCells, TableError> {
+    ) -> Result<Option<SelectedArray2DCells>, TableError> {
         self.table.get_array_cells_2d_channel_range_typed_uncached(
             &self.column,
             row_indices,

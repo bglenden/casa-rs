@@ -432,6 +432,22 @@ fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt32: FfiConverterPrimitive {
+    typealias FfiType = Int32
+    typealias SwiftType = Int32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int32, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
     typealias FfiType = UInt64
     typealias SwiftType = UInt64
@@ -12911,6 +12927,287 @@ public func FfiConverterTypeSurfaceParameterDocumentation_lower(_ value: Surface
 }
 
 
+/**
+ * Complete context for one cross-surface parameter edit.
+ */
+public struct SurfaceParameterEditRequest {
+    public var surfaceId: String
+    public var parameter: String
+    public var text: String
+    public var datasetPath: String?
+    public var spectralWindowId: Int32?
+    public var suggestions: [SurfaceParameterEditSuggestion]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(surfaceId: String, parameter: String, text: String, datasetPath: String?, spectralWindowId: Int32?, suggestions: [SurfaceParameterEditSuggestion]) {
+        self.surfaceId = surfaceId
+        self.parameter = parameter
+        self.text = text
+        self.datasetPath = datasetPath
+        self.spectralWindowId = spectralWindowId
+        self.suggestions = suggestions
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterEditRequest: Sendable {}
+#endif
+
+
+extension SurfaceParameterEditRequest: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterEditRequest, rhs: SurfaceParameterEditRequest) -> Bool {
+        if lhs.surfaceId != rhs.surfaceId {
+            return false
+        }
+        if lhs.parameter != rhs.parameter {
+            return false
+        }
+        if lhs.text != rhs.text {
+            return false
+        }
+        if lhs.datasetPath != rhs.datasetPath {
+            return false
+        }
+        if lhs.spectralWindowId != rhs.spectralWindowId {
+            return false
+        }
+        if lhs.suggestions != rhs.suggestions {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(surfaceId)
+        hasher.combine(parameter)
+        hasher.combine(text)
+        hasher.combine(datasetPath)
+        hasher.combine(spectralWindowId)
+        hasher.combine(suggestions)
+    }
+}
+
+extension SurfaceParameterEditRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterEditRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterEditRequest {
+        return
+            try SurfaceParameterEditRequest(
+                surfaceId: FfiConverterString.read(from: &buf),
+                parameter: FfiConverterString.read(from: &buf),
+                text: FfiConverterString.read(from: &buf),
+                datasetPath: FfiConverterOptionString.read(from: &buf),
+                spectralWindowId: FfiConverterOptionInt32.read(from: &buf),
+                suggestions: FfiConverterSequenceTypeSurfaceParameterEditSuggestion.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterEditRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.surfaceId, into: &buf)
+        FfiConverterString.write(value.parameter, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterOptionString.write(value.datasetPath, into: &buf)
+        FfiConverterOptionInt32.write(value.spectralWindowId, into: &buf)
+        FfiConverterSequenceTypeSurfaceParameterEditSuggestion.write(value.suggestions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterEditRequest_lift(_ buf: RustBuffer) throws -> SurfaceParameterEditRequest {
+    return try FfiConverterTypeSurfaceParameterEditRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterEditRequest_lower(_ value: SurfaceParameterEditRequest) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterEditRequest.lower(value)
+}
+
+
+/**
+ * Typed canonical result rendered by Swift and Python bindings.
+ */
+public struct SurfaceParameterEditResult {
+    public var parameter: String
+    public var normalizedValue: SurfaceParameterValue?
+    public var diagnostics: [SurfaceParameterDiagnostic]
+    public var supportedCapabilities: [String]
+    public var suggestions: [SurfaceParameterEditSuggestion]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(parameter: String, normalizedValue: SurfaceParameterValue?, diagnostics: [SurfaceParameterDiagnostic], supportedCapabilities: [String], suggestions: [SurfaceParameterEditSuggestion]) {
+        self.parameter = parameter
+        self.normalizedValue = normalizedValue
+        self.diagnostics = diagnostics
+        self.supportedCapabilities = supportedCapabilities
+        self.suggestions = suggestions
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterEditResult: Sendable {}
+#endif
+
+
+extension SurfaceParameterEditResult: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterEditResult, rhs: SurfaceParameterEditResult) -> Bool {
+        if lhs.parameter != rhs.parameter {
+            return false
+        }
+        if lhs.normalizedValue != rhs.normalizedValue {
+            return false
+        }
+        if lhs.diagnostics != rhs.diagnostics {
+            return false
+        }
+        if lhs.supportedCapabilities != rhs.supportedCapabilities {
+            return false
+        }
+        if lhs.suggestions != rhs.suggestions {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(parameter)
+        hasher.combine(normalizedValue)
+        hasher.combine(diagnostics)
+        hasher.combine(supportedCapabilities)
+        hasher.combine(suggestions)
+    }
+}
+
+extension SurfaceParameterEditResult: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterEditResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterEditResult {
+        return
+            try SurfaceParameterEditResult(
+                parameter: FfiConverterString.read(from: &buf),
+                normalizedValue: FfiConverterOptionTypeSurfaceParameterValue.read(from: &buf),
+                diagnostics: FfiConverterSequenceTypeSurfaceParameterDiagnostic.read(from: &buf),
+                supportedCapabilities: FfiConverterSequenceString.read(from: &buf),
+                suggestions: FfiConverterSequenceTypeSurfaceParameterEditSuggestion.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterEditResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.parameter, into: &buf)
+        FfiConverterOptionTypeSurfaceParameterValue.write(value.normalizedValue, into: &buf)
+        FfiConverterSequenceTypeSurfaceParameterDiagnostic.write(value.diagnostics, into: &buf)
+        FfiConverterSequenceString.write(value.supportedCapabilities, into: &buf)
+        FfiConverterSequenceTypeSurfaceParameterEditSuggestion.write(value.suggestions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterEditResult_lift(_ buf: RustBuffer) throws -> SurfaceParameterEditResult {
+    return try FfiConverterTypeSurfaceParameterEditResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterEditResult_lower(_ value: SurfaceParameterEditResult) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterEditResult.lower(value)
+}
+
+
+/**
+ * One typed context suggestion supplied to canonical edit validation.
+ */
+public struct SurfaceParameterEditSuggestion {
+    public var label: String
+    public var value: SurfaceParameterValue
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(label: String, value: SurfaceParameterValue) {
+        self.label = label
+        self.value = value
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceParameterEditSuggestion: Sendable {}
+#endif
+
+
+extension SurfaceParameterEditSuggestion: Equatable, Hashable {
+    public static func ==(lhs: SurfaceParameterEditSuggestion, rhs: SurfaceParameterEditSuggestion) -> Bool {
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.value != rhs.value {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(label)
+        hasher.combine(value)
+    }
+}
+
+extension SurfaceParameterEditSuggestion: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceParameterEditSuggestion: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceParameterEditSuggestion {
+        return
+            try SurfaceParameterEditSuggestion(
+                label: FfiConverterString.read(from: &buf),
+                value: FfiConverterTypeSurfaceParameterValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceParameterEditSuggestion, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterTypeSurfaceParameterValue.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterEditSuggestion_lift(_ buf: RustBuffer) throws -> SurfaceParameterEditSuggestion {
+    return try FfiConverterTypeSurfaceParameterEditSuggestion.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceParameterEditSuggestion_lower(_ value: SurfaceParameterEditSuggestion) -> RustBuffer {
+    return FfiConverterTypeSurfaceParameterEditSuggestion.lower(value)
+}
+
+
 public struct SurfaceParameterEntry {
     public var name: String
     public var value: SurfaceParameterValue
@@ -21692,6 +21989,30 @@ fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionInt32: FfiConverterRustBuffer {
+    typealias SwiftType = Int32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
     typealias SwiftType = UInt64?
 
@@ -23757,6 +24078,31 @@ fileprivate struct FfiConverterSequenceTypeSurfaceParameterDiagnostic: FfiConver
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeSurfaceParameterEditSuggestion: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceParameterEditSuggestion]
+
+    public static func write(_ value: [SurfaceParameterEditSuggestion], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceParameterEditSuggestion.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceParameterEditSuggestion] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceParameterEditSuggestion]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceParameterEditSuggestion.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeSurfaceParameterEntry: FfiConverterRustBuffer {
     typealias SwiftType = [SurfaceParameterEntry]
 
@@ -24901,6 +25247,16 @@ public func parameterTemplateToml(surfaceId: String)throws  -> String  {
 })
 }
 /**
+ * Parse, normalize, and validate one parameter edit through the generated boundary.
+ */
+public func parameterValidateEdit(request: SurfaceParameterEditRequest)throws  -> SurfaceParameterEditResult  {
+    return try  FfiConverterTypeSurfaceParameterEditResult_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_validate_edit(
+        FfiConverterTypeSurfaceParameterEditRequest_lower(request),$0
+    )
+})
+}
+/**
  * Explicitly write Last or Last Successful for one workspace.
  */
 public func parameterWriteManaged(surfaceId: String, workspace: String, values: [String: SurfaceParameterValue], successful: Bool)throws  -> SurfaceParameterWriteResult  {
@@ -25157,6 +25513,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_parameter_template_toml() != 38211) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_validate_edit() != 2907) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_parameter_write_managed() != 30614) {

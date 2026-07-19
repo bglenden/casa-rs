@@ -6,11 +6,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::MsSelection;
-use casa_ms::selection_syntax::{ChannelSelection, parse_spw_selector};
+use casa_ms::selection::syntax::{ChannelSelection, parse_spw_selector};
+use casa_ms::{
+    MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetCreateTarget,
+    MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
+    MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
+    MeasurementSetWriteResources, MeasurementSetWriteSession, MsError, MsTransformRequest,
+    TransformDataColumn, maximum_visibility_cell_elements, mstransform,
+};
 use casa_tables::TableError;
 use casa_types::{ArrayValue, ScalarValue};
 use num_complex::Complex32;
@@ -18,6 +24,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::session::resolve_calibration_selection;
 use casa_ms::least_squares::solve_weighted_least_squares;
 
 /// Input visibility column used for continuum subtraction.
@@ -185,12 +192,35 @@ pub enum ContinuumSubtractionError {
 pub fn continuum_subtract(
     request: &ContinuumSubtractionRequest,
 ) -> Result<ContinuumSubtractionReport, ContinuumSubtractionError> {
-    let started_at = Instant::now();
     if request.input_ms == request.output_ms {
         return Err(ContinuumSubtractionError::SameInputOutput {
             path: request.input_ms.display().to_string(),
         });
     }
+    let target =
+        MeasurementSetCreateTarget::prepare(&request.output_ms, true).map_err(|error| {
+            ContinuumSubtractionError::PrepareOutput {
+                path: request.output_ms.display().to_string(),
+                reason: error.to_string(),
+            }
+        })?;
+    let mut physical_request = request.clone();
+    physical_request.output_ms = target.staging_path().to_path_buf();
+    let mut report = continuum_subtract_staged(&physical_request)?;
+    target
+        .commit()
+        .map_err(|error| ContinuumSubtractionError::PrepareOutput {
+            path: request.output_ms.display().to_string(),
+            reason: error.to_string(),
+        })?;
+    report.output_ms = request.output_ms.clone();
+    Ok(report)
+}
+
+fn continuum_subtract_staged(
+    request: &ContinuumSubtractionRequest,
+) -> Result<ContinuumSubtractionReport, ContinuumSubtractionError> {
+    let started_at = Instant::now();
     if request.fit_order > 3 {
         return Err(ContinuumSubtractionError::InvalidFitSpw {
             selector: request.fit_spw.clone(),
@@ -216,23 +246,26 @@ pub fn continuum_subtract(
         });
     }
     let input_row_count = input.row_count();
-    let selected_rows = request.selection.apply(&input).map_err(|source| {
-        ContinuumSubtractionError::SelectRows {
+    let selected_rows = resolve_calibration_selection(&input, &request.selection)
+        .map_err(|error| ContinuumSubtractionError::SelectRows {
             path: request.input_ms.display().to_string(),
-            source,
-        }
-    })?;
+            source: match error {
+                casa_ms::MsSelectionError::Domain(source) => source,
+                other => MsError::InvalidInput(other.to_string()),
+            },
+        })?
+        .row_indices()
+        .collect::<Vec<_>>();
     if selected_rows.is_empty() {
         return Err(ContinuumSubtractionError::EmptySelection {
             path: request.input_ms.display().to_string(),
         });
     }
     let fit_channels_by_spw = resolve_fit_channels(&input, &request.fit_spw)?;
-    let ddid_to_spw = data_description_spw_map(&input)?;
     drop(input);
 
     let full_selection = selected_rows.len() == input_row_count;
-    let mut output = if full_selection {
+    if full_selection {
         prepare_output_root(&request.output_ms)?;
         copy_dir_recursive(&request.input_ms, &request.output_ms).map_err(|error| {
             ContinuumSubtractionError::PrepareOutput {
@@ -240,196 +273,238 @@ pub fn continuum_subtract(
                 reason: error.to_string(),
             }
         })?;
-        MeasurementSet::open(&request.output_ms).map_err(|source| {
-            ContinuumSubtractionError::OpenMeasurementSet {
-                path: request.output_ms.display().to_string(),
-                source,
-            }
-        })?
     } else {
-        MeasurementSet::open(&request.input_ms).map_err(|source| {
-            ContinuumSubtractionError::OpenMeasurementSet {
-                path: request.input_ms.display().to_string(),
-                source,
-            }
-        })?
-    };
-
-    if !full_selection {
-        let mut keep = vec![false; output.row_count()];
-        for &row_index in &selected_rows {
-            keep[row_index] = true;
-        }
-        let rows_to_remove = keep
-            .into_iter()
-            .enumerate()
-            .filter_map(|(row_index, keep)| (!keep).then_some(row_index))
-            .collect::<Vec<_>>();
-        output
-            .main_table_mut()
-            .remove_rows(&rows_to_remove)
-            .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
-                path: request.output_ms.display().to_string(),
-                source: Box::new(source),
-            })?;
+        mstransform(&MsTransformRequest {
+            input_ms: request.input_ms.clone(),
+            output_ms: request.output_ms.clone(),
+            spw: String::new(),
+            width: 1,
+            data_column: match request.data_column {
+                ContinuumSubtractionDataColumn::Data => TransformDataColumn::Data,
+                ContinuumSubtractionDataColumn::CorrectedData => TransformDataColumn::CorrectedData,
+            },
+            selection: request.selection.clone(),
+            keep_flags: true,
+        })
+        .map_err(|error| ContinuumSubtractionError::SaveMeasurementSet {
+            path: request.output_ms.display().to_string(),
+            source: MsError::InvalidInput(error.to_string()),
+        })?;
     }
 
-    let row_indices = (0..output.row_count()).collect::<Vec<_>>();
-    let data_values = output
-        .main_table()
-        .column_accessor(source_column.name())
-        .and_then(|column| column.array_cells_owned(&row_indices))
-        .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
+    let mut output = MeasurementSet::open(&request.output_ms).map_err(|source| {
+        ContinuumSubtractionError::OpenMeasurementSet {
             path: request.output_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
-    let flag_values = output
-        .main_table()
-        .column_accessor("FLAG")
-        .and_then(|column| column.array_cells_owned(&row_indices))
-        .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
-            path: request.output_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
-    let weight_spectrum_values = if output
-        .main_table()
-        .schema()
-        .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"))
-    {
-        Some(
-            output
-                .main_table()
-                .column_accessor("WEIGHT_SPECTRUM")
-                .and_then(|column| column.array_cells_owned(&row_indices))
-                .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
-                    path: request.output_ms.display().to_string(),
-                    source: Box::new(source),
-                })?,
-        )
+            source,
+        }
+    })?;
+    let processing_source_column = if full_selection {
+        source_column
     } else {
-        None
+        VisibilityDataColumn::Data
     };
-    let weight_values = output
-        .main_table()
-        .column_accessor("WEIGHT")
-        .and_then(|column| column.array_cells_owned(&row_indices))
-        .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
+    let output_ddid_to_spw = data_description_spw_map(&output)?;
+    let row_indices = (0..output.row_count()).collect::<Vec<_>>();
+    let maximum_data_bytes = maximum_visibility_cell_elements(&output)
+        .and_then(|elements| {
+            elements
+                .checked_mul(8)
+                .ok_or(casa_ms::MeasurementSetWriteError::ByteOverflow)
+        })
+        .map_err(|error| ContinuumSubtractionError::MutateMeasurementSet {
             path: request.output_ms.display().to_string(),
-            source: Box::new(source),
+            source: Box::new(TableError::Storage(error.to_string())),
         })?;
-    let flag_row_values = output
-        .main_table()
-        .column_accessor("FLAG_ROW")
-        .and_then(|column| column.scalar_cells_owned())
-        .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
+    let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(|error| {
+        ContinuumSubtractionError::MutateMeasurementSet {
             path: request.output_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
-    let data_desc_ids = output
-        .main_table()
-        .column_accessor("DATA_DESC_ID")
-        .and_then(|column| column.scalar_cells_owned())
-        .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
-            path: request.output_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
+            source: Box::new(TableError::Storage(error.to_string())),
+        }
+    })?;
+    let write_plan = MeasurementSetWritePlan::selected_row_mutation(
+        row_indices,
+        vec![MeasurementSetWriteColumnPlan {
+            name: VisibilityDataColumn::Data.name().to_string(),
+            bytes_per_row: maximum_data_bytes,
+            mode: MeasurementSetColumnWriteMode::Replace,
+            storage_manager: MeasurementSetColumnStorage::Persisted,
+            tile_shape: None,
+            create_source_column: None,
+        }],
+        resources,
+    )
+    .map_err(|error| ContinuumSubtractionError::MutateMeasurementSet {
+        path: request.output_ms.display().to_string(),
+        source: Box::new(TableError::Storage(error.to_string())),
+    })?;
+    let mut write_session =
+        MeasurementSetWriteSession::start_selected_row_mutation(&mut output, write_plan).map_err(
+            |error| ContinuumSubtractionError::MutateMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                source: Box::new(TableError::Storage(error.to_string())),
+            },
+        )?;
 
-    let mut changed_rows = Vec::with_capacity(row_indices.len());
     let mut fitted_row_count = 0usize;
     let mut skipped_fit_count = 0usize;
     let mut touched_spws = BTreeSet::new();
-    let mut weight_spectrum_values = weight_spectrum_values.map(Vec::into_iter);
-    for (((((row_index, data), flags), weights), flag_row), ddid) in row_indices
-        .iter()
-        .copied()
-        .zip(data_values)
-        .zip(flag_values)
-        .zip(weight_values)
-        .zip(flag_row_values)
-        .zip(data_desc_ids)
-    {
-        let data = data.ok_or_else(|| {
-            missing_column_error(&request.output_ms, row_index, source_column.name())
-        })?;
-        let flags =
-            flags.ok_or_else(|| missing_column_error(&request.output_ms, row_index, "FLAG"))?;
-        let weights =
-            weights.ok_or_else(|| missing_column_error(&request.output_ms, row_index, "WEIGHT"))?;
-        let weight_spectrum = weight_spectrum_values
-            .as_mut()
-            .map(|values| {
-                values.next().flatten().ok_or_else(|| {
-                    missing_column_error(&request.output_ms, row_index, "WEIGHT_SPECTRUM")
-                })
-            })
-            .transpose()?;
-        let flag_row = scalar_bool(flag_row.as_ref(), "FLAG_ROW", row_index)?;
-        let ddid = scalar_i32(ddid.as_ref(), "DATA_DESC_ID", row_index)?;
-        let spw_id = ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
-            ContinuumSubtractionError::SpectralMetadata {
+    loop {
+        let rows = write_session
+            .next_mutation_rows()
+            .map_err(|error| ContinuumSubtractionError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
-                reason: format!("MAIN row {row_index} references DATA_DESC_ID {ddid}, which has no DATA_DESCRIPTION row"),
-            }
-        })?;
-        let fit = fit_channels_by_spw.get(&spw_id).ok_or_else(|| {
-            ContinuumSubtractionError::InvalidFitSpw {
-                selector: request.fit_spw.clone(),
-                reason: format!(
-                    "selected row {row_index} maps to spectral window {spw_id}, but fit_spw does not include that SPW"
-                ),
-            }
-        })?;
-        touched_spws.insert(spw_id);
-        let (residual, fitted, skipped) = subtract_row(SubtractRowRequest {
-            data,
-            flags,
-            weights,
-            weight_spectrum,
-            flag_row,
-            fit,
-            fit_order: request.fit_order,
-            row_index,
-        })?;
-        if fitted {
-            fitted_row_count += 1;
+                source: Box::new(TableError::Storage(error.to_string())),
+            })?
+            .to_vec();
+        if rows.is_empty() {
+            break;
         }
-        skipped_fit_count += skipped;
-        output
-            .main_table_mut()
-            .column_accessor_mut(VisibilityDataColumn::Data.name())
-            .and_then(|mut column| column.set_array_assuming_valid(row_index, residual))
-            .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
-                path: request.output_ms.display().to_string(),
-                source: Box::new(source),
-            })?;
-        changed_rows.push(row_index);
-    }
-
-    if full_selection {
-        output
+        let data_values = output
             .main_table()
-            .save_selected_rows_in_place_assuming_valid(
-                &[VisibilityDataColumn::Data.name()],
-                &changed_rows,
-            )
+            .column_accessor(processing_source_column.name())
+            .and_then(|column| column.array_cells_owned(&rows))
             .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
                 source: Box::new(source),
             })?;
-    } else {
-        prepare_output_root(&request.output_ms)?;
-        output
-            .save_as_assuming_valid(&request.output_ms)
-            .map_err(|source| ContinuumSubtractionError::SaveMeasurementSet {
+        let flag_values = output
+            .main_table()
+            .column_accessor("FLAG")
+            .and_then(|column| column.array_cells_owned(&rows))
+            .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
-                source,
+                source: Box::new(source),
+            })?;
+        let weight_values = output
+            .main_table()
+            .column_accessor("WEIGHT")
+            .and_then(|column| column.array_cells_owned(&rows))
+            .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+        let weight_spectrum_values = if output
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"))
+        {
+            Some(
+                output
+                    .main_table()
+                    .column_accessor("WEIGHT_SPECTRUM")
+                    .and_then(|column| column.array_cells_owned(&rows))
+                    .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
+                        path: request.output_ms.display().to_string(),
+                        source: Box::new(source),
+                    })?,
+            )
+        } else {
+            None
+        };
+        let flag_row_values = output
+            .main_table()
+            .column_accessor("FLAG_ROW")
+            .and_then(|column| column.scalar_cells_owned_for_rows(&rows))
+            .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+        let data_desc_ids = output
+            .main_table()
+            .column_accessor("DATA_DESC_ID")
+            .and_then(|column| column.scalar_cells_owned_for_rows(&rows))
+            .map_err(|source| ContinuumSubtractionError::MutateMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+        let mut weight_spectrum_values = weight_spectrum_values.map(Vec::into_iter);
+        let mut residuals = Vec::with_capacity(rows.len());
+        for (((((row_index, data), flags), weights), flag_row), ddid) in rows
+            .iter()
+            .copied()
+            .zip(data_values)
+            .zip(flag_values)
+            .zip(weight_values)
+            .zip(flag_row_values)
+            .zip(data_desc_ids)
+        {
+            let data = data.ok_or_else(|| {
+                missing_column_error(
+                    &request.output_ms,
+                    row_index,
+                    processing_source_column.name(),
+                )
+            })?;
+            let flags =
+                flags.ok_or_else(|| missing_column_error(&request.output_ms, row_index, "FLAG"))?;
+            let weights = weights
+                .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "WEIGHT"))?;
+            let weight_spectrum = weight_spectrum_values
+                .as_mut()
+                .map(|values| {
+                    values.next().flatten().ok_or_else(|| {
+                        missing_column_error(&request.output_ms, row_index, "WEIGHT_SPECTRUM")
+                    })
+                })
+                .transpose()?;
+            let flag_row = scalar_bool(flag_row.as_ref(), "FLAG_ROW", row_index)?;
+            let ddid = scalar_i32(ddid.as_ref(), "DATA_DESC_ID", row_index)?;
+            let spw_id = output_ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
+                ContinuumSubtractionError::SpectralMetadata {
+                    path: request.output_ms.display().to_string(),
+                    reason: format!("MAIN row {row_index} references DATA_DESC_ID {ddid}, which has no DATA_DESCRIPTION row"),
+                }
+            })?;
+            let fit = fit_channels_by_spw.get(&spw_id).ok_or_else(|| {
+                ContinuumSubtractionError::InvalidFitSpw {
+                    selector: request.fit_spw.clone(),
+                    reason: format!(
+                        "selected row {row_index} maps to spectral window {spw_id}, but fit_spw does not include that SPW"
+                    ),
+                }
+            })?;
+            touched_spws.insert(spw_id);
+            let (residual, fitted, skipped) = subtract_row(SubtractRowRequest {
+                data,
+                flags,
+                weights,
+                weight_spectrum,
+                flag_row,
+                fit,
+                fit_order: request.fit_order,
+                row_index,
+            })?;
+            fitted_row_count += usize::from(fitted);
+            skipped_fit_count += skipped;
+            residuals.push(residual);
+        }
+        write_session
+            .write_mutation_batch(
+                &mut output,
+                MeasurementSetMutationBatch {
+                    row_indices: rows,
+                    columns: vec![MeasurementSetMutationColumnBatch {
+                        name: VisibilityDataColumn::Data.name().to_string(),
+                        values: MeasurementSetMutationColumnValues::Arrays(residuals),
+                    }],
+                },
+            )
+            .map_err(|error| ContinuumSubtractionError::MutateMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                source: Box::new(TableError::Storage(error.to_string())),
             })?;
     }
+    write_session.finish_mutation().map_err(|error| {
+        ContinuumSubtractionError::MutateMeasurementSet {
+            path: request.output_ms.display().to_string(),
+            source: Box::new(TableError::Storage(error.to_string())),
+        }
+    })?;
 
     Ok(ContinuumSubtractionReport {
         input_ms: request.input_ms.clone(),
         output_ms: request.output_ms.clone(),
-        row_count: row_indices.len(),
+        row_count: output.row_count(),
         fitted_row_count,
         skipped_fit_count,
         source_column: request.data_column.name().to_string(),

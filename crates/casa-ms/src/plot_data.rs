@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     MsPlotPayload, MsPlotSpec, MsScatterPagePayload, MsScatterPlotPayload, MsScatterPointRef,
-    MsScatterSeries, MsSelectionSpec, build_msexplore_plot_payload_from_path,
+    MsScatterSeries, MsSelection, build_msexplore_plot_payload_from_path,
 };
 
 /// Version of the renderer-neutral plot-data contract.
@@ -130,7 +130,7 @@ impl MsPlotData {
 /// Build shared numeric data directly from a MeasurementSet path.
 pub fn build_msexplore_plot_data_from_path(
     path: &std::path::Path,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     spec: &MsPlotSpec,
 ) -> Result<MsPlotData, String> {
     let payload = build_msexplore_plot_payload_from_path(path, selection, spec)?;

@@ -10,11 +10,14 @@ pub(crate) mod stman_array_file;
 pub(crate) mod table_control;
 pub(crate) mod tiled_stman;
 pub use tiled_stman::{
-    StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column,
-    StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer, TilePixel, TiledFileIO,
-    TiledFileIoStats, install_streamed_tiled_column_primitive_column,
-    install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
-    set_table_cache_budget_bytes, table_cache_budget_bytes,
+    STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType,
+    StreamedTiledShapeColumn, StreamedTiledShapeComplex32Column, StreamedTiledShapeCubeLayout,
+    StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer,
+    StreamingTiledShapeWriter, TilePixel, TiledFileIO, TiledFileIoStats,
+    install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
+    install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
+    install_streamed_tiled_shape_primitive_column, set_table_cache_budget_bytes,
+    table_cache_budget_bytes,
 };
 pub(crate) mod virtual_bitflags;
 pub(crate) mod virtual_compress;
@@ -23,8 +26,10 @@ pub(crate) mod virtual_forward;
 pub(crate) mod virtual_scaled_array;
 pub(crate) mod virtual_taql_column;
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -36,18 +41,19 @@ use thiserror::Error;
 use crate::schema::{SchemaError, TableSchema};
 use crate::table::{
     ColumnOverride, ColumnOverrides, GeneratedScalarColumn, GeneratedScalarValueRun,
-    SelectedArray1DCells, SelectedArray2DCells,
+    SelectedArray1DCells, SelectedArray2DCells, StreamedScalarColumn, StreamedScalarType,
 };
 
 use self::data_type::CasacoreDataType;
 use self::incremental_stman::{
-    IsmColumnResult, read_ism_file, read_ism_file_columns, read_ism_scalar_column,
-    read_ism_scalar_column_rows, write_ism_file, write_ism_file_indexed,
+    IsmColumnResult, read_ism_file, read_ism_file_columns, read_ism_required_scalar_columns_rows,
+    read_ism_scalar_column, read_ism_scalar_column_rows, write_ism_file, write_ism_file_indexed,
     write_ism_file_scalar_column_sources,
 };
 use self::standard_stman::{
-    read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns, read_ssm_scalar_column_rows,
-    write_ssm_file, write_ssm_file_indexed, write_ssm_file_scalar_column_sources,
+    read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns,
+    read_ssm_required_scalar_columns_rows, read_ssm_scalar_column_rows, write_ssm_file,
+    write_ssm_file_indexed, write_ssm_file_scalar_column_sources,
 };
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
@@ -341,13 +347,15 @@ fn filter_rows_for_save(
 pub(crate) enum ScalarColumnSource<'a> {
     Materialized(Vec<Option<ScalarValue>>),
     Generated(&'a GeneratedScalarColumn),
+    Streamed(RefCell<StreamedScalarColumnReader>),
 }
 
 impl<'a> ScalarColumnSource<'a> {
-    pub(crate) fn value(&self, row: usize) -> Option<ScalarValue> {
+    pub(crate) fn value(&self, row: usize) -> Result<Option<ScalarValue>, StorageError> {
         match self {
-            Self::Materialized(values) => values.get(row).cloned().unwrap_or(None),
-            Self::Generated(column) => column.value(row),
+            Self::Materialized(values) => Ok(values.get(row).cloned().unwrap_or(None)),
+            Self::Generated(column) => Ok(column.value(row)),
+            Self::Streamed(reader) => reader.borrow_mut().value(row),
         }
     }
 
@@ -355,7 +363,91 @@ impl<'a> ScalarColumnSource<'a> {
         match self {
             Self::Materialized(_) => None,
             Self::Generated(column) => column.scalar_runs(),
+            Self::Streamed(_) => None,
         }
+    }
+}
+
+pub(crate) struct StreamedScalarColumnReader {
+    reader: BufReader<File>,
+    path: PathBuf,
+    row_count: usize,
+    scalar_type: StreamedScalarType,
+    next_row: usize,
+}
+
+impl StreamedScalarColumnReader {
+    fn open(column: &StreamedScalarColumn) -> Result<Self, StorageError> {
+        let file = File::open(column.path())?;
+        let expected_bytes = column
+            .row_count()
+            .checked_mul(column.scalar_type().record_bytes())
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "streamed scalar source {} byte length overflow",
+                    column.path().display()
+                ))
+            })?;
+        let actual_bytes = usize::try_from(file.metadata()?.len()).map_err(|_| {
+            StorageError::FormatMismatch(format!(
+                "streamed scalar source {} is too large for this platform",
+                column.path().display()
+            ))
+        })?;
+        if actual_bytes != expected_bytes {
+            return Err(StorageError::FormatMismatch(format!(
+                "streamed scalar source {} has {actual_bytes} bytes, expected {expected_bytes}",
+                column.path().display()
+            )));
+        }
+        Ok(Self {
+            reader: BufReader::with_capacity(64 * 1024, file),
+            path: column.path().to_path_buf(),
+            row_count: column.row_count(),
+            scalar_type: column.scalar_type(),
+            next_row: 0,
+        })
+    }
+
+    fn value(&mut self, row: usize) -> Result<Option<ScalarValue>, StorageError> {
+        if row >= self.row_count {
+            return Err(StorageError::FormatMismatch(format!(
+                "streamed scalar source {} row {row} exceeds {} rows",
+                self.path.display(),
+                self.row_count
+            )));
+        }
+        if row != self.next_row {
+            let offset = row
+                .checked_mul(self.scalar_type.record_bytes())
+                .ok_or_else(|| {
+                    StorageError::FormatMismatch(format!(
+                        "streamed scalar source {} row offset overflow",
+                        self.path.display()
+                    ))
+                })?;
+            self.reader.seek(SeekFrom::Start(offset as u64))?;
+        }
+        let mut record = [0u8; 9];
+        self.reader
+            .read_exact(&mut record[..self.scalar_type.record_bytes()])?;
+        self.next_row = row + 1;
+        if record[0] == 0 {
+            return Ok(None);
+        }
+        let value = match self.scalar_type {
+            StreamedScalarType::Bool => ScalarValue::Bool(record[1] != 0),
+            StreamedScalarType::Int32 => {
+                ScalarValue::Int32(i32::from_le_bytes(record[1..5].try_into().unwrap()))
+            }
+            StreamedScalarType::Float32 => {
+                ScalarValue::Float32(f32::from_le_bytes(record[1..5].try_into().unwrap()))
+            }
+            StreamedScalarType::Float64 => {
+                ScalarValue::Float64(f64::from_le_bytes(record[1..9].try_into().unwrap()))
+            }
+        };
+        Ok(Some(value))
     }
 }
 
@@ -373,7 +465,11 @@ impl<'a> ScalarColumnSources<'a> {
         self.columns.len()
     }
 
-    pub(crate) fn value(&self, column: usize, row: usize) -> Option<ScalarValue> {
+    pub(crate) fn value(
+        &self,
+        column: usize,
+        row: usize,
+    ) -> Result<Option<ScalarValue>, StorageError> {
         self.columns[column].value(row)
     }
 
@@ -390,6 +486,7 @@ fn override_value_for_row(
     match column_overrides.get(column)? {
         ColumnOverride::Values(values) => values.get(row_idx).cloned().unwrap_or(None),
         ColumnOverride::GeneratedScalar(column) => column.value(row_idx).map(Value::Scalar),
+        ColumnOverride::StreamedScalar(_) => None,
         ColumnOverride::Deferred => None,
     }
 }
@@ -479,6 +576,11 @@ fn scalar_override_columns_for_group<'a>(
             }
             ColumnOverride::GeneratedScalar(column) => {
                 columns.push(ScalarColumnSource::Generated(column));
+            }
+            ColumnOverride::StreamedScalar(column) => {
+                columns.push(ScalarColumnSource::Streamed(RefCell::new(
+                    StreamedScalarColumnReader::open(column)?,
+                )));
             }
             ColumnOverride::Deferred => return Ok(None),
         }
@@ -1352,6 +1454,138 @@ impl CompositeStorage {
         }
     }
 
+    pub(crate) fn load_named_required_scalar_column_rows_with_row_hint(
+        &self,
+        table_path: &Path,
+        columns: &HashSet<&str>,
+        selected_rows: &[usize],
+        row_hint: Option<u64>,
+    ) -> Result<RequiredScalarColumnSnapshot, StorageError> {
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+        if !control_path.exists() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+        let TableDatResult::Plain(table_dat) = read_table_dat_dispatch(&control_path)? else {
+            let scalar_columns = columns
+                .iter()
+                .map(|column| {
+                    self.load_scalar_column_rows_with_row_hint(
+                        table_path,
+                        column,
+                        selected_rows,
+                        row_hint,
+                    )
+                    .and_then(|values| {
+                        required_scalar_column_from_optional_scalars(&values, column)
+                            .map(|values| ((*column).to_string(), values))
+                    })
+                })
+                .collect::<Result<HashMap<_, _>, _>>()?;
+            return Ok(RequiredScalarColumnSnapshot {
+                row_count: selected_rows.len(),
+                columns: scalar_columns,
+            });
+        };
+
+        if table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .any(|dm| is_virtual_engine(&dm.type_name))
+        {
+            let scalar_columns = columns
+                .iter()
+                .map(|column| {
+                    self.load_plain_scalar_column_rows(
+                        table_path,
+                        &table_dat,
+                        column,
+                        selected_rows,
+                        row_hint,
+                    )
+                    .and_then(|values| {
+                        required_scalar_column_from_optional_scalars(&values, column)
+                            .map(|values| ((*column).to_string(), values))
+                    })
+                })
+                .collect::<Result<HashMap<_, _>, _>>()?;
+            return Ok(RequiredScalarColumnSnapshot {
+                row_count: selected_rows.len(),
+                columns: scalar_columns,
+            });
+        }
+
+        let mut loaded = HashMap::new();
+        for dm in &table_dat.column_set.data_managers {
+            let bound_cols: Vec<(usize, &_)> = table_dat
+                .column_set
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.dm_seq_nr == dm.seq_nr)
+                .collect();
+            let requested: Vec<(usize, &_)> = bound_cols
+                .iter()
+                .enumerate()
+                .filter_map(|(dm_col_idx, (desc_idx, entry))| {
+                    columns
+                        .contains(entry.original_name.as_str())
+                        .then_some((dm_col_idx, &table_dat.table_desc.columns[*desc_idx]))
+                })
+                .collect();
+            if requested.is_empty() {
+                continue;
+            }
+            let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
+            match dm.type_name.as_str() {
+                "StandardStMan" => loaded.extend(read_ssm_required_scalar_columns_rows(
+                    &data_path,
+                    &dm.data,
+                    &requested,
+                    selected_rows,
+                )?),
+                "IncrementalStMan" => {
+                    let all_descs = bound_cols
+                        .iter()
+                        .map(|(desc_idx, _)| &table_dat.table_desc.columns[*desc_idx])
+                        .collect::<Vec<_>>();
+                    loaded.extend(read_ism_required_scalar_columns_rows(
+                        &data_path,
+                        &dm.data,
+                        &all_descs,
+                        &requested,
+                        selected_rows,
+                    )?);
+                }
+                _ => {}
+            }
+        }
+
+        for &column in columns {
+            if loaded.contains_key(column) {
+                continue;
+            }
+            let values = self.load_plain_scalar_column_rows(
+                table_path,
+                &table_dat,
+                column,
+                selected_rows,
+                row_hint,
+            )?;
+            loaded.insert(
+                column.to_string(),
+                required_scalar_column_from_optional_scalars(&values, column)?,
+            );
+        }
+        Ok(RequiredScalarColumnSnapshot {
+            row_count: selected_rows.len(),
+            columns: loaded,
+        })
+    }
+
     pub(crate) fn load_array_column_with_row_hint(
         &self,
         table_path: &Path,
@@ -1420,7 +1654,7 @@ impl CompositeStorage {
         channel_start: usize,
         channel_count: usize,
         _row_hint: Option<u64>,
-    ) -> Result<SelectedArray2DCells, StorageError> {
+    ) -> Result<Option<SelectedArray2DCells>, StorageError> {
         if selected_rows.is_empty() {
             return Err(StorageError::FormatMismatch(format!(
                 "typed selected 2-D read for {column} requires at least one selected row"
@@ -2629,7 +2863,7 @@ impl CompositeStorage {
         table_path: &Path,
         table_dat: &TableDatContents,
         request: SelectedArray2DChannelRead<'_>,
-    ) -> Result<SelectedArray2DCells, StorageError> {
+    ) -> Result<Option<SelectedArray2DCells>, StorageError> {
         let column = request.column;
         let desc_idx = table_dat
             .table_desc
@@ -2767,7 +3001,7 @@ impl CompositeStorage {
             .collect();
 
         match dm.type_name.as_str() {
-            "TiledShapeStMan" => tiled_stman::load_tiled_column_rows_1d_typed(
+            "TiledColumnStMan" | "TiledShapeStMan" => tiled_stman::load_tiled_column_rows_1d_typed(
                 table_path,
                 dm,
                 &table_dat.table_desc.columns,
@@ -2776,7 +3010,7 @@ impl CompositeStorage {
                 request.selected_rows,
             ),
             other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 1-D reads for column '{}' require TiledShapeStMan, found {other}",
+                "typed selected 1-D reads for column '{}' require TiledColumnStMan or TiledShapeStMan, found {other}",
                 request.column
             ))),
         }
@@ -3375,6 +3609,12 @@ impl CompositeStorage {
                     Some(ColumnOverride::GeneratedScalar(_)) => {
                         return Err(StorageError::FormatMismatch(format!(
                             "tiled column override {} cannot be generated scalar",
+                            group_col_descs[0].col_name
+                        )));
+                    }
+                    Some(ColumnOverride::StreamedScalar(_)) => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "tiled column override {} cannot be streamed scalar",
                             group_col_descs[0].col_name
                         )));
                     }

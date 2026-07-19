@@ -6,11 +6,19 @@ use std::path::{Path, PathBuf};
 
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::{MsError, selection::MsSelection};
+use casa_ms::{
+    MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetCreateTarget,
+    MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
+    MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
+    MeasurementSetWriteResources, MeasurementSetWriteSession, MsError, MsTransformRequest,
+    TransformDataColumn, maximum_visibility_cell_elements, mstransform, selection::MsSelection,
+};
 use casa_tables::TableError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::session::resolve_calibration_selection;
 
 /// Request to materialize an MS with `CORRECTED_DATA` copied into `DATA`.
 #[derive(Debug, Clone)]
@@ -121,8 +129,30 @@ pub fn export_corrected_data(
             path: request.input_ms.display().to_string(),
         });
     }
+    let target =
+        MeasurementSetCreateTarget::prepare(&request.output_ms, true).map_err(|error| {
+            ExportCorrectedDataError::PrepareOutput {
+                path: request.output_ms.display().to_string(),
+                reason: error.to_string(),
+            }
+        })?;
+    let mut physical_request = request.clone();
+    physical_request.output_ms = target.staging_path().to_path_buf();
+    let mut report = export_corrected_data_staged(&physical_request)?;
+    target
+        .commit()
+        .map_err(|error| ExportCorrectedDataError::PrepareOutput {
+            path: request.output_ms.display().to_string(),
+            reason: error.to_string(),
+        })?;
+    report.output_ms = request.output_ms.clone();
+    Ok(report)
+}
 
-    let mut ms = MeasurementSet::open(&request.input_ms).map_err(|source| {
+fn export_corrected_data_staged(
+    request: &ExportCorrectedDataRequest,
+) -> Result<ExportCorrectedDataReport, ExportCorrectedDataError> {
+    let ms = MeasurementSet::open(&request.input_ms).map_err(|source| {
         ExportCorrectedDataError::OpenMeasurementSet {
             path: request.input_ms.display().to_string(),
             source,
@@ -138,14 +168,16 @@ pub fn export_corrected_data(
         });
     }
 
-    let selected_rows =
-        request
-            .selection
-            .apply(&ms)
-            .map_err(|source| ExportCorrectedDataError::SelectRows {
-                path: request.input_ms.display().to_string(),
-                source,
-            })?;
+    let selected_rows = resolve_calibration_selection(&ms, &request.selection)
+        .map_err(|error| ExportCorrectedDataError::SelectRows {
+            path: request.input_ms.display().to_string(),
+            source: match error {
+                casa_ms::MsSelectionError::Domain(source) => source,
+                other => MsError::InvalidInput(other.to_string()),
+            },
+        })?
+        .row_indices()
+        .collect::<Vec<_>>();
     if selected_rows.is_empty() {
         return Err(ExportCorrectedDataError::EmptySelection {
             path: request.input_ms.display().to_string(),
@@ -164,72 +196,25 @@ pub fn export_corrected_data(
         });
     }
 
-    let corrected_rows = ms
-        .main_table()
-        .column_accessor(VisibilityDataColumn::CorrectedData.name())
-        .and_then(|column| column.array_cells_owned(&selected_rows))
-        .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
-            path: request.input_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
-    for (&row_index, corrected) in selected_rows.iter().zip(corrected_rows) {
-        let corrected = match corrected {
-            Some(corrected) if !corrected.is_empty() => corrected,
-            None => ms
-                .main_table()
-                .column_accessor(VisibilityDataColumn::Data.name())
-                .and_then(|column| column.array_cell(row_index).cloned())
-                .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
-                    path: request.input_ms.display().to_string(),
-                    source: Box::new(source),
-                })?,
-            Some(_) => ms
-                .main_table()
-                .column_accessor(VisibilityDataColumn::Data.name())
-                .and_then(|column| column.array_cell(row_index).cloned())
-                .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
-                    path: request.input_ms.display().to_string(),
-                    source: Box::new(source),
-                })?,
-        };
-        ms.main_table_mut()
-            .column_accessor_mut(VisibilityDataColumn::Data.name())
-            .and_then(|mut column| column.set_array_assuming_valid(row_index, corrected))
-            .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
-                path: request.input_ms.display().to_string(),
-                source: Box::new(source),
-            })?;
-    }
-
-    if selected_rows.len() != ms.row_count() {
-        let mut keep = vec![false; ms.row_count()];
-        for &row_index in &selected_rows {
-            keep[row_index] = true;
-        }
-        let rows_to_remove = keep
-            .into_iter()
-            .enumerate()
-            .filter_map(|(row_index, keep)| (!keep).then_some(row_index))
-            .collect::<Vec<_>>();
-        ms.main_table_mut()
-            .remove_rows(&rows_to_remove)
-            .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
-                path: request.input_ms.display().to_string(),
-                source: Box::new(source),
-            })?;
-    }
-
-    prepare_output_root(&request.output_ms)?;
-    ms.save_as_assuming_valid(&request.output_ms)
-        .map_err(|source| ExportCorrectedDataError::SaveMeasurementSet {
-            path: request.output_ms.display().to_string(),
-            source,
-        })?;
+    drop(ms);
+    let transformed = mstransform(&MsTransformRequest {
+        input_ms: request.input_ms.clone(),
+        output_ms: request.output_ms.clone(),
+        spw: String::new(),
+        width: 1,
+        data_column: TransformDataColumn::CorrectedData,
+        selection: request.selection.clone(),
+        keep_flags: true,
+    })
+    .map_err(|error| ExportCorrectedDataError::SaveMeasurementSet {
+        path: request.output_ms.display().to_string(),
+        source: MsError::InvalidInput(error.to_string()),
+    })?;
 
     Ok(ExportCorrectedDataReport {
         input_ms: request.input_ms.clone(),
         output_ms: request.output_ms.clone(),
-        row_count: selected_rows.len(),
+        row_count: transformed.row_count,
         source_column: VisibilityDataColumn::CorrectedData.name().to_string(),
         output_column: VisibilityDataColumn::Data.name().to_string(),
     })
@@ -253,53 +238,111 @@ fn export_all_corrected_data_by_copy(
         }
     })?;
     let row_indices = (0..output.row_count()).collect::<Vec<_>>();
-    let corrected_rows = output
-        .main_table()
-        .column_accessor(VisibilityDataColumn::CorrectedData.name())
-        .and_then(|column| column.array_cells_owned(&row_indices))
-        .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+    let maximum_data_bytes = maximum_visibility_cell_elements(&output)
+        .and_then(|elements| {
+            elements
+                .checked_mul(8)
+                .ok_or(casa_ms::MeasurementSetWriteError::ByteOverflow)
+        })
+        .map_err(|error| ExportCorrectedDataError::MutateMeasurementSet {
             path: output_ms.display().to_string(),
-            source: Box::new(source),
+            source: Box::new(TableError::Storage(error.to_string())),
         })?;
-    for (row_index, corrected) in row_indices.iter().copied().zip(corrected_rows) {
-        let corrected = match corrected {
-            Some(corrected) if !corrected.is_empty() => corrected,
-            None => output
-                .main_table()
-                .column_accessor(VisibilityDataColumn::Data.name())
-                .and_then(|column| column.array_cell(row_index).cloned())
-                .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
-                    path: output_ms.display().to_string(),
-                    source: Box::new(source),
-                })?,
-            Some(_) => output
-                .main_table()
-                .column_accessor(VisibilityDataColumn::Data.name())
-                .and_then(|column| column.array_cell(row_index).cloned())
-                .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
-                    path: output_ms.display().to_string(),
-                    source: Box::new(source),
-                })?,
-        };
-        output
-            .main_table_mut()
-            .column_accessor_mut(VisibilityDataColumn::Data.name())
-            .and_then(|mut column| column.set_array_assuming_valid(row_index, corrected))
+    let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(|error| {
+        ExportCorrectedDataError::MutateMeasurementSet {
+            path: output_ms.display().to_string(),
+            source: Box::new(TableError::Storage(error.to_string())),
+        }
+    })?;
+    let write_plan = MeasurementSetWritePlan::selected_row_mutation(
+        row_indices,
+        vec![MeasurementSetWriteColumnPlan {
+            name: VisibilityDataColumn::Data.name().to_string(),
+            bytes_per_row: maximum_data_bytes,
+            mode: MeasurementSetColumnWriteMode::Replace,
+            storage_manager: MeasurementSetColumnStorage::Persisted,
+            tile_shape: None,
+            create_source_column: None,
+        }],
+        resources,
+    )
+    .map_err(|error| ExportCorrectedDataError::MutateMeasurementSet {
+        path: output_ms.display().to_string(),
+        source: Box::new(TableError::Storage(error.to_string())),
+    })?;
+    let mut write_session =
+        MeasurementSetWriteSession::start_selected_row_mutation(&mut output, write_plan).map_err(
+            |error| ExportCorrectedDataError::MutateMeasurementSet {
+                path: output_ms.display().to_string(),
+                source: Box::new(TableError::Storage(error.to_string())),
+            },
+        )?;
+    loop {
+        let rows = write_session
+            .next_mutation_rows()
+            .map_err(|error| ExportCorrectedDataError::MutateMeasurementSet {
+                path: output_ms.display().to_string(),
+                source: Box::new(TableError::Storage(error.to_string())),
+            })?
+            .to_vec();
+        if rows.is_empty() {
+            break;
+        }
+        let corrected = output
+            .main_table()
+            .column_accessor(VisibilityDataColumn::CorrectedData.name())
+            .and_then(|column| column.array_cells_owned(&rows))
             .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
                 path: output_ms.display().to_string(),
                 source: Box::new(source),
             })?;
+        let mut values = Vec::with_capacity(rows.len());
+        for (&row, corrected) in rows.iter().zip(corrected) {
+            let corrected =
+                corrected.ok_or_else(|| ExportCorrectedDataError::MutateMeasurementSet {
+                    path: output_ms.display().to_string(),
+                    source: Box::new(TableError::ColumnNotFound {
+                        row_index: row,
+                        column: VisibilityDataColumn::CorrectedData.name().to_string(),
+                    }),
+                })?;
+            if corrected.is_empty() {
+                values.push(
+                    output
+                        .main_table()
+                        .column_accessor(VisibilityDataColumn::Data.name())
+                        .and_then(|column| column.array_cell(row).cloned())
+                        .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+                            path: output_ms.display().to_string(),
+                            source: Box::new(source),
+                        })?,
+                );
+            } else {
+                values.push(corrected);
+            }
+        }
+        write_session
+            .write_mutation_batch(
+                &mut output,
+                MeasurementSetMutationBatch {
+                    row_indices: rows,
+                    columns: vec![MeasurementSetMutationColumnBatch {
+                        name: VisibilityDataColumn::Data.name().to_string(),
+                        values: MeasurementSetMutationColumnValues::Arrays(values),
+                    }],
+                },
+            )
+            .map_err(|error| ExportCorrectedDataError::MutateMeasurementSet {
+                path: output_ms.display().to_string(),
+                source: Box::new(TableError::Storage(error.to_string())),
+            })?;
     }
-    output
-        .main_table()
-        .save_selected_rows_in_place_assuming_valid(
-            &[VisibilityDataColumn::Data.name()],
-            &row_indices,
-        )
-        .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+    write_session.finish_mutation().map_err(|error| {
+        ExportCorrectedDataError::MutateMeasurementSet {
             path: output_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
+            source: Box::new(TableError::Storage(error.to_string())),
+        }
+    })?;
     Ok(())
 }
 

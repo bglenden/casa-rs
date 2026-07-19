@@ -19,7 +19,7 @@ mod trace;
 pub(crate) mod writer;
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
@@ -30,11 +30,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::session::prepare_calibration_solve;
 use crate::{ApplyExecutionError, ApplyPlanError};
-use grouping::{
-    SolveGroupOptions, all_antenna_ids, build_solve_groups, collect_selected_rows,
-    load_preapplied_rows, resolve_refant, validate_smodel, validate_solve_interval,
-};
+use grouping::{SolveGroupOptions, build_solve_groups, validate_smodel, validate_solve_interval};
 use kernel::solve_group;
 use writer::write_gain_caltable;
 
@@ -157,6 +155,9 @@ pub struct GainSolveReport {
 /// Errors returned by the limited `gaincal` solver.
 #[derive(Debug, Error)]
 pub enum GainSolveError {
+    /// Shared calibration-table persistence failed.
+    #[error(transparent)]
+    CalibrationTable(#[from] crate::CalibrationTableWriteError),
     /// Opening the MeasurementSet failed.
     #[error("failed to open MeasurementSet {path}: {source}")]
     OpenMeasurementSet {
@@ -280,21 +281,8 @@ pub enum GainSolveError {
     },
 }
 
-/// Solve a limited `gaincal` request from an on-disk MeasurementSet path.
-pub fn solve_gain_from_path(
-    path: impl AsRef<Path>,
-    request: &GainSolveRequest,
-) -> Result<GainSolveReport, GainSolveError> {
-    let path = path.as_ref().to_path_buf();
-    let ms = MeasurementSet::open(&path).map_err(|source| GainSolveError::OpenMeasurementSet {
-        path: path.display().to_string(),
-        source,
-    })?;
-    solve_gain(&ms, request)
-}
-
 /// Solve a limited `gaincal` request from an already-open MeasurementSet.
-pub fn solve_gain(
+pub(crate) fn solve_gain(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
 ) -> Result<GainSolveReport, GainSolveError> {
@@ -308,14 +296,17 @@ pub fn solve_gain(
         return Err(GainSolveError::MissingModelColumn);
     }
     validate_solve_interval(request.solve_interval)?;
-    let refant_id = resolve_refant(ms, &request.refant)?;
-    let available_antennas = all_antenna_ids(ms)?;
-    let rows = collect_selected_rows(ms, &request.selection)?;
-    let preapplied_rows = load_preapplied_rows(ms, request)?;
+    let context = prepare_calibration_solve(
+        ms,
+        &request.selection,
+        &request.refant,
+        &request.prior_calibration_tables,
+        request.parang,
+    )?;
     let groups = build_solve_groups(
         ms,
-        &rows,
-        preapplied_rows.as_ref(),
+        &context.rows,
+        context.preapplied_rows.as_ref(),
         SolveGroupOptions {
             gain_type: request.gain_type,
             model_source: request.model_source,
@@ -335,10 +326,10 @@ pub fn solve_gain(
         trace::trace_group(&base_key, &bucket_key, &group, request);
         let mut group_rows = solve_group(
             group,
-            &available_antennas,
+            &context.available_antennas,
             request.gain_type,
             request.solve_mode,
-            refant_id,
+            context.refant_id,
             request.min_snr,
             request.min_baselines_per_antenna,
         )?;
@@ -347,11 +338,17 @@ pub fn solve_gain(
         {
             normalize_gain_solution_amplitudes(&mut group_rows);
         }
-        trace::trace_solution_rows(&base_key, &bucket_key, &group_rows, request, refant_id);
+        trace::trace_solution_rows(
+            &base_key,
+            &bucket_key,
+            &group_rows,
+            request,
+            context.refant_id,
+        );
         solution_rows.extend(group_rows);
     }
-    apply_flex_refant(&mut solution_rows, refant_id);
-    write_gain_caltable(ms, request, refant_id, &solution_rows)
+    apply_flex_refant(&mut solution_rows, context.refant_id);
+    write_gain_caltable(ms, request, context.refant_id, &solution_rows)
 }
 
 fn apply_flex_refant(rows: &mut [kernel::SolutionRow], preferred_refant_id: i32) {

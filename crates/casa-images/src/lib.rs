@@ -85,7 +85,7 @@ pub use analysis::{
     ImstatRequest, ImsubimageRequest, MomentMapSummary, PbcorSummary, PvImageSummary,
     dispatch_image_analysis_task_cli, export_fits, feather, image_analysis_protocol_descriptor,
     image_analysis_task_schema_bundle, imhead, imhead_put, immath, immoments, impbcor, import_fits,
-    impv, imregrid, imstat, imsubimage, run_image_analysis_task,
+    impv, imregrid, imstat, imsubimage, parse_image_channel_selection, run_image_analysis_task,
 };
 pub use beam::{GaussianBeam, ImageBeamSet};
 pub use browser_render::{

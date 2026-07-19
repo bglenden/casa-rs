@@ -5,7 +5,7 @@ mod common;
 
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::selection::MsSelection;
+use casa_ms::selection::{MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow};
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayValue, Complex32};
 use ndarray::Ix2;
@@ -13,11 +13,38 @@ use tempfile::TempDir;
 
 use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, BandpassSolveCombine,
-    BandpassSolveRequest, BandpassType, CalibrationParameterFamily, FluxScaleRequest,
+    BandpassSolveReport, BandpassSolveRequest, BandpassType, CalibrationDataset, CalibrationError,
+    CalibrationParameterFamily, CalibrationSolveRequest, CalibrationSolveResult, FluxScaleRequest,
     GainFieldSelector, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainSolveRequest, GainType, RefAntSelector, execute_apply_from_path, fluxscale,
-    load_apply_specs_from_callib, solve_bandpass_from_path, solve_gain_from_path, summarize_table,
+    GainSolveReport, GainSolveRequest, GainType, RefAntSelector, execute_apply_from_path,
+    fluxscale, load_apply_specs_from_callib, solve_calibration, summarize_table,
 };
+
+fn run_gain_solve(
+    path: impl AsRef<std::path::Path>,
+    request: &GainSolveRequest,
+) -> Result<GainSolveReport, CalibrationError> {
+    match solve_calibration(
+        CalibrationDataset::path(path),
+        CalibrationSolveRequest::Gain(request.clone()),
+    )? {
+        CalibrationSolveResult::Gain(report) => Ok(report),
+        CalibrationSolveResult::Bandpass(_) => unreachable!("gain request result"),
+    }
+}
+
+fn run_bandpass_solve(
+    path: impl AsRef<std::path::Path>,
+    request: &BandpassSolveRequest,
+) -> Result<BandpassSolveReport, CalibrationError> {
+    match solve_calibration(
+        CalibrationDataset::path(path),
+        CalibrationSolveRequest::Bandpass(request.clone()),
+    )? {
+        CalibrationSolveResult::Bandpass(report) => Ok(report),
+        CalibrationSolveResult::Gain(_) => unreachable!("bandpass request result"),
+    }
+}
 
 #[test]
 fn summarize_casa_generated_gain_t_and_bandpass_tables() {
@@ -572,7 +599,7 @@ fn solve_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal() {
         }
     };
     let rust_gcal = dir.path().join("rust-phase.gcal");
-    solve_gain_from_path(
+    run_gain_solve(
         &source_ms,
         &GainSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -662,7 +689,7 @@ fn solve_phase_gain_with_parang_matches_casa_gaincal_downstream_via_casa_applyca
         }
     };
     let rust_gcal = dir.path().join("rust-phase-parang.gcal");
-    solve_gain_from_path(
+    run_gain_solve(
         &source_ms,
         &GainSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -752,7 +779,7 @@ fn solve_amplitude_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal(
         }
     };
     let rust_gcal = dir.path().join("rust-amplitude-phase.gcal");
-    solve_gain_from_path(
+    run_gain_solve(
         &source_ms,
         &GainSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -842,7 +869,7 @@ fn solve_phase_gain_with_solint_integration_matches_casa_gaincal_downstream() {
         }
     };
     let rust_gcal = dir.path().join("rust-int.gcal");
-    solve_gain_from_path(
+    run_gain_solve(
         &source_ms,
         &GainSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -931,7 +958,7 @@ fn solve_phase_gain_with_combine_scan_matches_casa_gaincal_downstream() {
         }
     };
     let rust_gcal = dir.path().join("rust-combine-scan.gcal");
-    solve_gain_from_path(
+    run_gain_solve(
         &source_ms,
         &GainSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -1098,7 +1125,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
     fixture_ms.save().expect("save synthetic multifield MS");
 
     let rust_gcal = dir.path().join("rust-combine-scan-field.gcal");
-    let report = solve_gain_from_path(
+    let report = run_gain_solve(
         &source_ms,
         &GainSolveRequest {
             selection: MsSelection::new().field(&[0, 1]).spw(&[0]),
@@ -1277,7 +1304,7 @@ fn solve_t_phase_gain_with_prior_g_preapply_matches_casa_gaincal_downstream() {
         }
     };
     let rust_t = dir.path().join("rust-prior-t.gcal");
-    solve_gain_from_path(
+    run_gain_solve(
         &source_ms,
         &GainSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -1384,7 +1411,7 @@ fn solve_bandpass_with_prior_gain_matches_casa_bandpass_downstream_via_casa_appl
         }
     };
     let rust_b = dir.path().join("rust-bandpass.bcal");
-    solve_bandpass_from_path(
+    run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -1489,7 +1516,7 @@ fn solve_bandpass_with_combine_field_matches_casa_bandpass_downstream_via_casa_a
         }
     };
     let rust_b = dir.path().join("rust-bandpass-combine-field.bcal");
-    solve_bandpass_from_path(
+    run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[0, 1]).spw(&[0]),
@@ -1597,7 +1624,7 @@ fn solve_bandpass_with_combine_scan_matches_casa_bandpass_downstream_via_casa_ap
         }
     };
     let rust_b = dir.path().join("rust-bandpass-combine-scan.bcal");
-    solve_bandpass_from_path(
+    run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[1]).spw(&[0]),
@@ -1705,7 +1732,7 @@ fn solve_bandpass_with_combine_scan_and_field_matches_casa_bandpass_downstream_v
         }
     };
     let rust_b = dir.path().join("rust-bandpass-combine-scan-field.bcal");
-    solve_bandpass_from_path(
+    run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[0, 1]).spw(&[0]),
@@ -1813,7 +1840,7 @@ fn solve_bandpass_with_prior_gain_and_parang_matches_casa_bandpass_downstream() 
         }
     };
     let rust_b = dir.path().join("rust-bandpass-parang.bcal");
-    solve_bandpass_from_path(
+    run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -1918,7 +1945,7 @@ fn solve_bandpass_with_solnorm_matches_casa_bandpass_downstream_via_casa_applyca
         }
     };
     let rust_b = dir.path().join("rust-bandpass-solnorm.bcal");
-    solve_bandpass_from_path(
+    run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -2020,7 +2047,7 @@ fn solve_bpoly_bandpass_with_prior_gain_matches_casa_bandpass_downstream() {
         }
     };
     let rust_bpoly = dir.path().join("rust-bandpass.bpoly");
-    solve_bandpass_from_path(
+    run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -2108,8 +2135,22 @@ fn assert_apply_state_close_with_complex_tolerances(
     let left = MeasurementSet::open(left_path).expect("open left MeasurementSet");
     let right = MeasurementSet::open(right_path).expect("open right MeasurementSet");
 
-    let left_rows = selection.apply(&left).expect("select left rows");
-    let right_rows = selection.apply(&right).expect("select right rows");
+    let selection_budget = MsSelectionIoBudget {
+        available_bytes: 1024 * 1024,
+        maximum_live_blocks: 2,
+        requested_bytes_per_row: std::mem::size_of::<ResolvedMsSelectionRow>(),
+        storage_alignment_rows: None,
+    };
+    let left_rows = left
+        .resolve_selection(selection, selection_budget)
+        .expect("select left rows")
+        .row_indices()
+        .collect::<Vec<_>>();
+    let right_rows = right
+        .resolve_selection(selection, selection_budget)
+        .expect("select right rows")
+        .row_indices()
+        .collect::<Vec<_>>();
     assert_eq!(left_rows, right_rows, "selected row mismatch");
     assert!(!left_rows.is_empty(), "selected rows should not be empty");
 

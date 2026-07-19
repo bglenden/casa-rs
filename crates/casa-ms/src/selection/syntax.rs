@@ -7,9 +7,11 @@
 //! parsing for numeric-id selectors and SPW+channel selectors.
 
 use crate::error::{MsError, MsResult};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 /// One `spw[:channel-selection]` clause from a CASA spectral-window selector.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SpwSelector {
     /// Spectral-window id.
     pub spw_id: i32,
@@ -18,14 +20,14 @@ pub struct SpwSelector {
 }
 
 /// Parsed CASA channel selector such as `4~9;12~14` or `0~10^2`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ChannelSelection {
     /// Ordered selector segments.
     pub segments: Vec<ChannelSelectionSegment>,
 }
 
 /// One contiguous channel-selection segment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ChannelSelectionSegment {
     /// Inclusive starting channel.
     pub start: i32,
@@ -205,7 +207,7 @@ fn parse_channel_selection(value: &str) -> MsResult<ChannelSelection> {
     Ok(ChannelSelection { segments })
 }
 
-fn parse_numeric_range(value: &str) -> Option<(i32, i32)> {
+pub(super) fn parse_numeric_range(value: &str) -> Option<(i32, i32)> {
     let (start, end) = value.split_once('~')?;
     let start = start.trim().parse::<i32>().ok()?;
     let end = end.trim().parse::<i32>().ok()?;
@@ -217,7 +219,7 @@ fn parse_numeric_range(value: &str) -> Option<(i32, i32)> {
     Some((start, end))
 }
 
-fn dedup_i32(values: Vec<i32>) -> Vec<i32> {
+pub(super) fn dedup_i32(values: Vec<i32>) -> Vec<i32> {
     values
         .into_iter()
         .collect::<std::collections::BTreeSet<_>>()

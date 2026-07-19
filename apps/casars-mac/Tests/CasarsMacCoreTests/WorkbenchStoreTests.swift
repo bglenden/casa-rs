@@ -44,6 +44,15 @@ final class WorkbenchStoreTests: XCTestCase {
             ),
         ]
         discussion.selectedContextIDs = ["task:task-b"]
+        discussion.models = [AssistantModelState(
+            id: "fixture-model",
+            label: "Fixture model",
+            defaultEffort: "medium",
+            supportedEfforts: ["medium"],
+            isDefault: true,
+            inputCapacityUnits: 1_000_000,
+            outputReserveUnits: 1_000
+        )]
         var state = EmptyWorkbench.makeState()
         state.tabs = [
             WorkbenchTab(id: "task-a", title: "First", kind: .task, taskID: "imager"),
@@ -61,10 +70,17 @@ final class WorkbenchStoreTests: XCTestCase {
         let contexts = try XCTUnwrap(store.state.assistantDiscussion?.contexts)
         let firstContext = try XCTUnwrap(contexts.first { $0.id == "task:task-a" })
         let secondContext = try XCTUnwrap(contexts.first { $0.id == "task:task-b" })
-        XCTAssertTrue(firstContext.excerpt.contains("robust = 0.25"))
+        XCTAssertTrue(firstContext.excerpt.isEmpty)
         XCTAssertTrue(secondContext.excerpt.contains("robust = -1.0"))
         XCTAssertFalse(store.state.assistantDiscussion?.selectedContextIDs.contains(firstContext.id) ?? true)
         XCTAssertTrue(store.state.assistantDiscussion?.selectedContextIDs.contains(secondContext.id) ?? false)
+
+        store.toggleAssistantContext(firstContext.id)
+        store.refreshAssistantDiscussionContexts()
+        let selectedFirst = try XCTUnwrap(
+            store.state.assistantDiscussion?.contexts.first { $0.id == firstContext.id }
+        )
+        XCTAssertTrue(selectedFirst.excerpt.contains("robust = 0.25"))
     }
 
     func testAssistantSendRefreshesTheBoundedMCPProjectionFromCurrentTabs() throws {
@@ -113,6 +129,15 @@ final class WorkbenchStoreTests: XCTestCase {
             untrustedEvidence: true
         )]
         discussion.selectedContextIDs = ["task:task-a"]
+        discussion.models = [AssistantModelState(
+            id: "fixture-model",
+            label: "Fixture model",
+            defaultEffort: "medium",
+            supportedEfforts: ["medium"],
+            isDefault: true,
+            inputCapacityUnits: 1_000_000,
+            outputReserveUnits: 1_000
+        )]
 
         var state = EmptyWorkbench.makeState()
         state.project.rootPath = project.path

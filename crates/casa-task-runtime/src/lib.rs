@@ -8,6 +8,7 @@
 mod cli;
 mod completion;
 mod diagnostic;
+mod edit;
 mod invocation;
 mod normalize;
 mod profile;
@@ -25,6 +26,10 @@ pub use completion::{
     decode_task_completion,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLevel, SourceLocation};
+pub use edit::{
+    ParameterEditDiagnostic, ParameterEditDiagnosticCode, ParameterEditResult,
+    ParameterEditSuggestion, validate_parameter_edit,
+};
 pub use invocation::{
     ProviderInvocationError, parameter_value_is_omitted, project_parameter_value,
     project_provider_invocation, provider_parameter_applies,

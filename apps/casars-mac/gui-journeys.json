@@ -14,7 +14,8 @@
       "timeout_class": "deterministic",
       "result_bundle": "CasarsMacUITests.xcresult",
       "rust_binaries": [
-        {"package": "casars-frontend-services", "bins": []}
+        {"package": "casars-frontend-services", "bins": []},
+        {"package": "casa-ms", "bins": ["simobserve"]}
       ],
       "python_packages": [],
       "requires_codex_account": false,

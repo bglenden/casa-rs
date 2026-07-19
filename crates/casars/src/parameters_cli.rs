@@ -14,9 +14,9 @@ use casa_provider_contracts::{
 };
 use casa_task_runtime::{
     BaseSource, OpenSessionRequest, ParameterRuntime, ParameterSession, ResolutionPatch,
-    TaskLastCoordinator, parameter_value_is_omitted, parse_parameter_text, parse_profile,
-    project_parameter_value, project_provider_invocation, render_documented_template,
-    resolve_profile, write_parameter_profile_atomic,
+    TaskLastCoordinator, parameter_value_is_omitted, parse_profile, project_parameter_value,
+    project_provider_invocation, render_documented_template, resolve_profile,
+    validate_parameter_edit, write_parameter_profile_atomic,
 };
 
 use crate::execution::{ExecutionPlan, run_process_blocking};
@@ -410,8 +410,7 @@ fn parse_surface_options(
                         required_utf8(args.get(index), &format!("--{flag} value"))?
                     }
                 };
-                parse_parameter_text(&value, &concept.value_domain)
-                    .map_err(|error| error.to_string())?
+                validated_parameter_edit(bundle, &binding.name, &value)?
             };
             overrides.unset.remove(&binding.name);
             overrides.values.insert(binding.name.clone(), value);
@@ -420,13 +419,9 @@ fn parse_surface_options(
                 return Err(format!("unexpected positional parameter {raw:?}"));
             };
             let binding = ensure_binding(bundle, name)?;
-            let concept = bundle.catalog.concept(&binding.concept).ok_or_else(|| {
-                format!("missing concept for positional parameter {}", binding.name)
-            })?;
             overrides.values.insert(
                 binding.name.clone(),
-                parse_parameter_text(raw, &concept.value_domain)
-                    .map_err(|error| error.to_string())?,
+                validated_parameter_edit(bundle, &binding.name, raw)?,
             );
             positional_index += 1;
         }
@@ -447,6 +442,20 @@ fn parse_surface_options(
         confirm_overwrite,
         confirm_mutation,
     })
+}
+
+fn validated_parameter_edit(
+    bundle: &SurfaceContractBundle,
+    parameter: &str,
+    text: &str,
+) -> Result<ParameterValue, String> {
+    let result = validate_parameter_edit(bundle, parameter, text, []);
+    if let Some(diagnostic) = result.diagnostics.first() {
+        return Err(diagnostic.message.clone());
+    }
+    result
+        .normalized_value
+        .ok_or_else(|| format!("parameter {parameter:?} has no typed value"))
 }
 
 fn set_source(target: &mut Option<SourceChoice>, source: SourceChoice) -> Result<(), String> {

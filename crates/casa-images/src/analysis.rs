@@ -1501,7 +1501,7 @@ impl Selection {
                     "channel selection requires a spectral axis".to_string(),
                 )
             })?;
-            let indices = parse_indices(chans, image.shape()[spectral_axis])?;
+            let indices = parse_image_channel_selection(chans, image.shape()[spectral_axis])?;
             start[spectral_axis] = indices[0];
             shape[spectral_axis] = indices[indices.len() - 1] - indices[0] + 1;
             Some(indices)
@@ -1950,11 +1950,34 @@ fn parse_box(text: &str) -> Result<[usize; 4], ImageError> {
     Ok([values[0], values[1], values[2], values[3]])
 }
 
-fn parse_indices(text: &str, axis_len: usize) -> Result<Vec<usize>, ImageError> {
+/// Parse a CASA image-channel selector and resolve it against one spectral axis.
+pub fn parse_image_channel_selection(
+    text: &str,
+    axis_len: usize,
+) -> Result<Vec<usize>, ImageError> {
     let mut indices = Vec::new();
-    for segment in text.split(',').filter(|segment| !segment.trim().is_empty()) {
+    for segment in text
+        .split([',', ';'])
+        .filter(|segment| !segment.trim().is_empty())
+    {
         let segment = segment.trim();
-        if let Some((lhs, rhs)) = segment.split_once('~') {
+        let (range, stride) = match segment.split_once('^') {
+            Some((range, stride)) => {
+                let stride = stride.trim().parse::<usize>().map_err(|error| {
+                    ImageError::InvalidMetadata(format!(
+                        "invalid channel stride {segment:?}: {error}"
+                    ))
+                })?;
+                if stride == 0 {
+                    return Err(ImageError::InvalidMetadata(format!(
+                        "channel stride must be positive: {segment:?}"
+                    )));
+                }
+                (range.trim(), stride)
+            }
+            None => (segment, 1),
+        };
+        if let Some((lhs, rhs)) = range.split_once('~') {
             let start = lhs.trim().parse::<usize>().map_err(|error| {
                 ImageError::InvalidMetadata(format!("invalid channel range {segment:?}: {error}"))
             })?;
@@ -1966,9 +1989,14 @@ fn parse_indices(text: &str, axis_len: usize) -> Result<Vec<usize>, ImageError> 
                     "channel range end precedes start: {segment:?}"
                 )));
             }
-            indices.extend(start..=end);
+            indices.extend((start..=end).step_by(stride));
         } else {
-            indices.push(segment.parse::<usize>().map_err(|error| {
+            if stride != 1 {
+                return Err(ImageError::InvalidMetadata(format!(
+                    "channel stride requires a range: {segment:?}"
+                )));
+            }
+            indices.push(range.parse::<usize>().map_err(|error| {
                 ImageError::InvalidMetadata(format!("invalid channel {segment:?}: {error}"))
             })?);
         }
@@ -3546,7 +3574,7 @@ where
             .as_deref()
             .filter(|text| !text.trim().is_empty()),
     ) {
-        let indices = parse_indices(chans, image.shape()[axis])?;
+        let indices = parse_image_channel_selection(chans, image.shape()[axis])?;
         start[axis] = indices[0];
         shape[axis] = indices[indices.len() - 1] - indices[0] + 1;
         Some((axis, indices))
@@ -4292,7 +4320,14 @@ mod tests {
 
     #[test]
     fn parse_indices_expands_casa_range() {
-        assert_eq!(parse_indices("4~6,8", 10).unwrap(), vec![4, 5, 6, 8]);
+        assert_eq!(
+            parse_image_channel_selection("4~6,8", 10).unwrap(),
+            vec![4, 5, 6, 8]
+        );
+        assert_eq!(
+            parse_image_channel_selection("0~8^2", 10).unwrap(),
+            vec![0, 2, 4, 6, 8]
+        );
     }
 
     #[test]
@@ -4685,15 +4720,18 @@ mod tests {
                 if message.contains("inclusive upper bounds")
         ));
         assert!(matches!(
-            parse_indices("3~1", 4),
+            parse_image_channel_selection("3~1", 4),
             Err(ImageError::InvalidMetadata(message))
                 if message.contains("end precedes start")
         ));
         assert!(matches!(
-            parse_indices("0,9", 4),
+            parse_image_channel_selection("0,9", 4),
             Err(ImageError::ShapeMismatch { .. })
         ));
-        assert_eq!(parse_indices("2,1,2", 4).unwrap(), vec![1, 2]);
+        assert_eq!(
+            parse_image_channel_selection("2,1,2", 4).unwrap(),
+            vec![1, 2]
+        );
 
         assert!(matches!(
             immoments(&ImmomentsRequest {

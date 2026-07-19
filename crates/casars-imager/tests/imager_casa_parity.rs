@@ -9151,16 +9151,19 @@ fn stage_measurement_set(ms_path: &Path, temp_root: &Path, name: &str) -> Result
         std::fs::remove_dir_all(&staged)
             .map_err(|error| format!("remove existing {}: {error}", staged.display()))?;
     }
+    let copy_source = ms_path
+        .canonicalize()
+        .map_err(|error| format!("resolve MeasurementSet {}: {error}", ms_path.display()))?;
     let copy_status = Command::new("cp")
         .arg("-R")
-        .arg(ms_path)
+        .arg(&copy_source)
         .arg(&staged)
         .status()
-        .map_err(|error| format!("spawn cp -R for {}: {error}", ms_path.display()))?;
+        .map_err(|error| format!("spawn cp -R for {}: {error}", copy_source.display()))?;
     if !copy_status.success() {
         return Err(format!(
             "cp -R {} {} failed with status {}",
-            ms_path.display(),
+            copy_source.display(),
             staged.display(),
             copy_status
         ));

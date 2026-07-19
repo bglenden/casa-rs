@@ -11,7 +11,7 @@ use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::column_def::{ColumnDef, ColumnKind};
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema;
-use casa_ms::selection::MsSelection;
+use casa_ms::selection::{MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 use num_complex::Complex32;
@@ -20,6 +20,14 @@ fn main() {
     println!("=== t_ms_selection: MeasurementSet selection demo ===\n");
 
     let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).expect("create MS");
+    ms.subtable_mut(schema::SubtableId::DataDescription)
+        .expect("DATA_DESCRIPTION")
+        .add_row(RecordValue::new(vec![
+            RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+            RecordField::new("POLARIZATION_ID", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(0))),
+        ]))
+        .expect("add DATA_DESCRIPTION row");
 
     // Add 3 antennas
     {
@@ -75,7 +83,7 @@ fn main() {
         let sel = MsSelection::new().field(&[0, 1]);
         println!("1. Field selection: fields [0, 1]");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&ms).expect("apply");
+        let rows = resolve_rows(&ms, &sel);
         println!("   Selected rows: {} (expected 24)\n", rows.len());
     }
 
@@ -84,7 +92,7 @@ fn main() {
         let sel = MsSelection::new().scan(&[2]);
         println!("2. Scan selection: scan [2]");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&ms).expect("apply");
+        let rows = resolve_rows(&ms, &sel);
         println!("   Selected rows: {} (expected 18)\n", rows.len());
     }
 
@@ -92,7 +100,7 @@ fn main() {
     {
         let sel = MsSelection::new().antenna_name(&["VLA01"]);
         println!("3. Antenna selection by name: [VLA01]");
-        let rows = sel.apply(&ms).expect("apply");
+        let rows = resolve_rows(&ms, &sel);
         println!(
             "   Selected rows: {} (expected 24, baselines 0-1 and 0-2)\n",
             rows.len()
@@ -104,7 +112,7 @@ fn main() {
         let sel = MsSelection::new().antenna(&[2]);
         println!("4. Antenna selection by ID: [2]");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&ms).expect("apply");
+        let rows = resolve_rows(&ms, &sel);
         println!(
             "   Selected rows: {} (expected 24, baselines 0-2 and 1-2)\n",
             rows.len()
@@ -119,7 +127,7 @@ fn main() {
         let sel = MsSelection::new().time_range(t_start, t_end);
         println!("5. Time range selection: [{t_start:.0}, {t_end:.0}]");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&ms).expect("apply");
+        let rows = resolve_rows(&ms, &sel);
         println!("   Selected rows: {}\n", rows.len());
     }
 
@@ -128,7 +136,7 @@ fn main() {
         let sel = MsSelection::new().field(&[0]).scan(&[1]);
         println!("6. Combined selection: field=0 AND scan=1");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&ms).expect("apply");
+        let rows = resolve_rows(&ms, &sel);
         println!("   Selected rows: {} (expected 6)\n", rows.len());
     }
 
@@ -137,7 +145,7 @@ fn main() {
         let sel = MsSelection::new().baseline(&[(0, 1)]);
         println!("7. Baseline selection: [(0,1)]");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&ms).expect("apply");
+        let rows = resolve_rows(&ms, &sel);
         println!("   Selected rows: {} (expected 12)\n", rows.len());
     }
 
@@ -146,11 +154,26 @@ fn main() {
         let sel = MsSelection::new().taql("FIELD_ID == 2 AND SCAN_NUMBER == 2");
         println!("8. Raw TaQL: FIELD_ID == 2 AND SCAN_NUMBER == 2");
         println!("   TaQL: {}", sel.to_taql());
-        let rows = sel.apply(&ms).expect("apply");
+        let rows = resolve_rows(&ms, &sel);
         println!("   Selected rows: {} (expected 6)\n", rows.len());
     }
 
     println!("=== t_ms_selection complete ===");
+}
+
+fn resolve_rows(ms: &MeasurementSet, selection: &MsSelection) -> Vec<usize> {
+    ms.resolve_selection(
+        selection,
+        MsSelectionIoBudget {
+            available_bytes: 1024 * 1024,
+            maximum_live_blocks: 1,
+            requested_bytes_per_row: std::mem::size_of::<ResolvedMsSelectionRow>(),
+            storage_alignment_rows: None,
+        },
+    )
+    .expect("resolve selection")
+    .row_indices()
+    .collect()
 }
 
 fn add_main_row(ms: &mut MeasurementSet, overrides: &[(&str, Value)]) {

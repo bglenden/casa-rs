@@ -6,14 +6,93 @@ use tempfile::TempDir;
 
 use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
-    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-    GainType, RefAntSelector, execute_apply_from_path, solve_gain_from_path, summarize_table,
+    CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
+    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveReport,
+    GainSolveRequest, GainType, RefAntSelector, execute_apply_from_path, solve_calibration,
+    summarize_table,
 };
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_tables::{Table, TableOptions};
 use casa_types::ArrayValue;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+
+fn run_gain_solve(
+    path: impl AsRef<std::path::Path>,
+    request: &GainSolveRequest,
+) -> Result<GainSolveReport, CalibrationError> {
+    match solve_calibration(
+        CalibrationDataset::path(path),
+        CalibrationSolveRequest::Gain(request.clone()),
+    )? {
+        CalibrationSolveResult::Gain(report) => Ok(report),
+        CalibrationSolveResult::Bandpass(_) => unreachable!("gain request result"),
+    }
+}
+
+fn phase_gain_request(output_table: std::path::PathBuf) -> GainSolveRequest {
+    GainSolveRequest {
+        selection: MsSelection::new(),
+        output_table,
+        gain_type: GainType::G,
+        solve_mode: GainSolveMode::Phase,
+        solve_interval: GainSolveInterval::Infinite,
+        combine: GainSolveCombine::default(),
+        refant: RefAntSelector::AntennaId(0),
+        prior_calibration_tables: Vec::new(),
+        parang: false,
+        model_source: GainSolveModelSource::PointSource,
+        normalize_average_amplitude: false,
+        min_snr: 0.0,
+        min_baselines_per_antenna: 0,
+        smodel: [1.0, 0.0, 0.0, 0.0],
+    }
+}
+
+#[test]
+fn shared_solve_setup_reports_invalid_empty_missing_prior_and_refant_errors() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path =
+        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+
+    let mut invalid = phase_gain_request(dir.path().join("invalid.gcal"));
+    invalid.selection.field = Some("[".to_string());
+    assert!(
+        run_gain_solve(&ms_path, &invalid)
+            .expect_err("invalid selector must fail")
+            .to_string()
+            .contains("field")
+    );
+
+    let mut empty = phase_gain_request(dir.path().join("empty.gcal"));
+    empty.selection.scan = Some("999".to_string());
+    assert!(
+        run_gain_solve(&ms_path, &empty)
+            .expect_err("empty selection must fail")
+            .to_string()
+            .contains("selection produced no rows")
+    );
+
+    let mut missing_prior = phase_gain_request(dir.path().join("missing-prior.gcal"));
+    missing_prior.prior_calibration_tables = vec![ApplyCalibrationTableSpec::new(
+        dir.path().join("does-not-exist.gcal"),
+    )];
+    assert!(
+        run_gain_solve(&ms_path, &missing_prior)
+            .expect_err("missing prior table must fail")
+            .to_string()
+            .contains("prior calibration")
+    );
+
+    let mut bad_refant = phase_gain_request(dir.path().join("bad-refant.gcal"));
+    bad_refant.refant = RefAntSelector::AntennaName("missing".to_string());
+    assert!(
+        run_gain_solve(&ms_path, &bad_refant)
+            .expect_err("missing refant must fail")
+            .to_string()
+            .contains("no ANTENNA.NAME match")
+    );
+}
 
 #[test]
 fn solve_gain_phase_g_corrects_synthetic_ms_downstream() {
@@ -22,7 +101,7 @@ fn solve_gain_phase_g_corrects_synthetic_ms_downstream() {
         common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
     let caltable_path = dir.path().join("solved.gcal");
 
-    let report = solve_gain_from_path(
+    let report = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -76,7 +155,7 @@ fn solve_gain_phase_g_uses_model_data_column_downstream() {
     );
     let caltable_path = dir.path().join("solved-model.gcal");
 
-    let report = solve_gain_from_path(
+    let report = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -118,7 +197,7 @@ fn solve_gain_channel_average_uses_weight_spectrum_when_present() {
     let ms_path = common::create_gain_solve_weight_spectrum_fixture_ms(dir.path());
     let caltable_path = dir.path().join("solved-weight-spectrum.gcal");
 
-    solve_gain_from_path(
+    run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -183,7 +262,7 @@ fn solve_gain_phase_t_uses_per_correlation_model_data_column_downstream() {
     );
     let caltable_path = dir.path().join("solved-model.tcal");
 
-    let report = solve_gain_from_path(
+    let report = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -250,7 +329,7 @@ fn solve_gain_g_uses_casa_correlation_independent_flags() {
     }
     let caltable_path = dir.path().join("solved-corr-independent.gcal");
 
-    solve_gain_from_path(
+    run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -329,7 +408,7 @@ fn solve_gain_t_uses_casa_correlation_independent_flags() {
     }
     let caltable_path = dir.path().join("solved-t-per-corr-flags.tcal");
 
-    solve_gain_from_path(
+    run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -384,7 +463,7 @@ fn solve_gain_min_snr_flags_low_snr_solutions_and_writes_diagnostics() {
         common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
     let caltable_path = dir.path().join("solved-minsnr.gcal");
 
-    solve_gain_from_path(
+    run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -466,7 +545,7 @@ fn solve_gain_phase_t_corrects_synthetic_ms_downstream() {
         common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::T);
     let caltable_path = dir.path().join("solved.tcal");
 
-    let report = solve_gain_from_path(
+    let report = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -515,7 +594,7 @@ fn solve_gain_amplitude_phase_g_corrects_synthetic_ms_downstream() {
     );
     let caltable_path = dir.path().join("solved-ap.gcal");
 
-    let report = solve_gain_from_path(
+    let report = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -564,7 +643,7 @@ fn solve_gain_amplitude_phase_t_corrects_synthetic_ms_downstream() {
     );
     let caltable_path = dir.path().join("solved-ap.tcal");
 
-    let report = solve_gain_from_path(
+    let report = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -613,7 +692,7 @@ fn solve_gain_amplitude_phase_t_with_solnorm_normalizes_average_amplitude() {
     );
     let caltable_path = dir.path().join("solved-ap-solnorm.tcal");
 
-    solve_gain_from_path(
+    run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -718,7 +797,7 @@ fn solve_gain_phase_g_solint_integration_writes_per_integration_solutions() {
     );
     let caltable_path = dir.path().join("solved-int.gcal");
 
-    let report = solve_gain_from_path(
+    let report = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -811,7 +890,7 @@ fn solve_gain_phase_g_solint_seconds_groups_nearby_integrations() {
     );
     let caltable_path = dir.path().join("solved-30s.gcal");
 
-    let report = solve_gain_from_path(
+    let report = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -884,7 +963,7 @@ fn solve_gain_phase_g_combine_scans_writes_one_solution_group_across_scans() {
     );
     let caltable_path = dir.path().join("solved-combine-scan.gcal");
 
-    let report = solve_gain_from_path(
+    let report = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),
@@ -960,7 +1039,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
     ms.save().expect("save multi-field synthetic MS");
     let caltable_path = dir.path().join("solved-combine-scan-field.gcal");
 
-    let report = solve_gain_from_path(
+    let report = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new().field(&[0, 1]),
@@ -1083,7 +1162,7 @@ fn solve_gain_phase_g_with_prior_caltable_corrects_residual_downstream() {
     );
     let residual_table = dir.path().join("residual.gcal");
 
-    let report = solve_gain_from_path(
+    let report = run_gain_solve(
         &ms_path,
         &GainSolveRequest {
             selection: MsSelection::new(),

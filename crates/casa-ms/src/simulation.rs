@@ -14,12 +14,7 @@ use casa_coordinates::{
 use casa_imaging::{
     ImageGeometry, PrimaryBeamModel, PrimaryBeamVoltagePattern, StandardMfsModelPredictor,
 };
-use casa_tables::{
-    ColumnOverrides, GeneratedScalarColumn, GeneratedScalarValueRun, StreamedTiledPrimitiveColumn,
-    StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column, StreamingTiledPrimitiveWriter,
-    StreamingTiledShapeComplex32Writer, install_streamed_tiled_column_primitive_column,
-    install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
-};
+use casa_tables::ColumnOverrides;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
@@ -33,7 +28,6 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -41,10 +35,13 @@ use crate::column_def::{ColumnDef, ColumnKind};
 use crate::error::{MsError, MsResult};
 use crate::flagging::shadowed_antennas_from_projected_baselines;
 use crate::schema::{self, SubtableId};
+use crate::write_session::{
+    MeasurementSetCreateTarget, MeasurementSetWriteBatch, MeasurementSetWritePlan,
+    MeasurementSetWriteResources, MeasurementSetWriteSession,
+};
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
 
 const DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD: f64 = 20.0_f64.to_radians();
-const DEFAULT_SIMOBSERVE_IO_QUEUE_DEPTH: usize = 16;
 const SIDEREAL_DAY_SECONDS: f64 = 86_164.090_5;
 
 fn default_simobserve_elevation_limit_rad() -> f64 {
@@ -931,6 +928,12 @@ pub struct SyntheticMainRowTimingReport {
     /// Time spent waiting to enqueue DATA row batches to the background writer.
     #[serde(default)]
     pub data_io_enqueue_millis: u128,
+    /// Session lifetime available to the producer, excluding bounded-queue wait.
+    #[serde(default)]
+    pub data_io_producer_millis: u128,
+    /// Time the producer was blocked by the bounded writer queue.
+    #[serde(default)]
+    pub data_io_queue_wait_millis: u128,
     /// Time spent joining and finalizing the background DATA writer.
     #[serde(default)]
     pub data_io_finalize_millis: u128,
@@ -943,6 +946,12 @@ pub struct SyntheticMainRowTimingReport {
     /// Bytes written through the streamed tiled MAIN column writers.
     #[serde(default)]
     pub data_io_bytes: u64,
+    /// MAIN rows completed by the canonical write session.
+    #[serde(default)]
+    pub data_io_rows: u64,
+    /// Maximum writer-owned resident bytes modeled by the immutable plan.
+    #[serde(default)]
+    pub data_io_maximum_resident_bytes: u64,
     /// Per-column timing for the streamed tiled MAIN column writers.
     #[serde(default)]
     pub data_io_columns: Vec<SyntheticMainColumnIoTimingReport>,
@@ -982,30 +991,18 @@ pub fn generate_synthetic_observation_ms(
     let validate_millis = elapsed_millis(validate_started.elapsed());
 
     let setup_started = Instant::now();
-    if request.output_ms.exists() {
-        if request.overwrite {
-            fs::remove_dir_all(&request.output_ms).map_err(|error| {
-                MsError::SyntheticObservation(format!(
-                    "failed to remove existing output {}: {error}",
-                    request.output_ms.display()
-                ))
-            })?;
-        } else {
-            return Err(MsError::SyntheticObservation(format!(
-                "output MeasurementSet {} already exists",
-                request.output_ms.display()
-            )));
-        }
-    }
+    let output_target = MeasurementSetCreateTarget::prepare(&request.output_ms, request.overwrite)
+        .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
+    let physical_output_ms = output_target.staging_path().to_path_buf();
 
     let mut ms = MeasurementSet::create(
-        &request.output_ms,
+        &physical_output_ms,
         MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
     )?;
-    fs::create_dir_all(&request.output_ms).map_err(|error| {
+    fs::create_dir_all(&physical_output_ms).map_err(|error| {
         MsError::SyntheticObservation(format!(
             "failed to create output MeasurementSet directory {}: {error}",
-            request.output_ms.display()
+            physical_output_ms.display()
         ))
     })?;
     let setup_millis = elapsed_millis(setup_started.elapsed());
@@ -1032,32 +1029,59 @@ pub fn generate_synthetic_observation_ms(
     let model_started = Instant::now();
     let model = prepare_sky_model(request)?;
     let model_prepare_millis = elapsed_millis(model_started.elapsed());
-    let mut main_column_writer = SimobserveMainColumnWriter::start(
-        &request.output_ms,
+    let write_resources = MeasurementSetWriteResources::from_system_memory(2)
+        .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
+    let write_plan = MeasurementSetWritePlan::visibility_creation(
         baseline_count * time_sample_count,
         request.polarization_setup.correlation_count,
         request.spectral_setup.channel_count,
         &request.telescope_name,
-    )?;
+        write_resources,
+    )
+    .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
+    let mut main_column_writer = MeasurementSetWriteSession::start(&physical_output_ms, write_plan)
+        .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
     let mut main_rows = populate_main_rows(
         request,
         &sample_times,
         model.as_ref(),
         &mut main_column_writer,
     )?;
-    let data_io_finalize_started = Instant::now();
-    let streamed_main_columns = main_column_writer.finish()?;
-    main_rows.timing.data_io_finalize_millis = elapsed_millis(data_io_finalize_started.elapsed());
-    main_rows.timing.data_io_assemble_millis =
-        elapsed_seconds_to_millis(streamed_main_columns.assemble_seconds());
-    main_rows.timing.data_io_write_millis =
-        elapsed_seconds_to_millis(streamed_main_columns.write_seconds());
-    main_rows.timing.data_io_bytes = streamed_main_columns.bytes_written() as u64;
-    main_rows.timing.data_io_columns = streamed_main_columns.column_timing_reports();
 
     let save_started = Instant::now();
-    ms.save_assuming_valid_with_main_column_overrides(&main_rows.scalar_column_overrides)?;
-    install_streamed_main_columns(ms.main_table(), &request.output_ms, streamed_main_columns)?;
+    let mut column_overrides = ColumnOverrides::for_row_count(main_rows.row_count);
+    for column in ["DATA", "FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"] {
+        column_overrides.insert_deferred(column);
+    }
+    let write_telemetry = main_column_writer
+        .save_and_finish(&mut ms, &column_overrides)
+        .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
+    main_rows.timing.data_io_producer_millis =
+        elapsed_seconds_to_millis(write_telemetry.producer_seconds);
+    main_rows.timing.data_io_queue_wait_millis =
+        elapsed_seconds_to_millis(write_telemetry.queue_wait_seconds);
+    main_rows.timing.data_io_finalize_millis =
+        elapsed_seconds_to_millis(write_telemetry.finalize_seconds);
+    main_rows.timing.data_io_assemble_millis =
+        elapsed_seconds_to_millis(write_telemetry.assemble_seconds);
+    main_rows.timing.data_io_write_millis =
+        elapsed_seconds_to_millis(write_telemetry.write_seconds);
+    main_rows.timing.data_io_bytes = write_telemetry.bytes_written as u64;
+    main_rows.timing.data_io_rows = write_telemetry.rows_written as u64;
+    main_rows.timing.data_io_maximum_resident_bytes = write_telemetry.maximum_resident_bytes as u64;
+    main_rows.timing.data_io_columns = write_telemetry
+        .columns
+        .into_iter()
+        .map(|column| SyntheticMainColumnIoTimingReport {
+            column: column.column,
+            assemble_millis: elapsed_seconds_to_millis(column.assemble_seconds),
+            write_millis: elapsed_seconds_to_millis(column.write_seconds),
+            bytes_written: column.bytes_written as u64,
+        })
+        .collect();
+    output_target
+        .commit()
+        .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
     let save_millis = elapsed_millis(save_started.elapsed());
 
     Ok(SyntheticObservationReport {
@@ -1956,7 +1980,7 @@ fn populate_main_rows(
     request: &SyntheticObservationRequest,
     sample_times: &[f64],
     model: Option<&PreparedSkyModel>,
-    main_column_writer: &mut SimobserveMainColumnWriter,
+    main_column_writer: &mut MeasurementSetWriteSession,
 ) -> MsResult<MainRowsReport> {
     let samples = sample_times.len();
     let num_corr = request.polarization_setup.correlation_count;
@@ -1987,7 +2011,6 @@ fn populate_main_rows(
     let row_pairs = observation_row_pairs(request);
     let baseline_count = row_pairs.len();
     let total_row_count = samples * baseline_count;
-    let mut all_flag_rows = Vec::with_capacity(total_row_count);
     let observatory = simulation_observatory_position(&request.telescope_name, &request.antennas);
     let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
     let uvw_production_trace = SimobserveUvwProductionTrace::from_env();
@@ -2092,35 +2115,34 @@ fn populate_main_rows(
             flag_rows.push(elevation_flagged || shadow_flagged);
         }
         let scalar_started = Instant::now();
-        all_flag_rows.extend(flag_rows.iter().copied());
+        push_synthetic_scalar_rows(
+            main_column_writer,
+            &row_pairs,
+            &flag_rows,
+            sample,
+            time,
+            field_plans.len(),
+            request.integration_seconds,
+            request.observation_mode,
+        )?;
         timing.scalar_column += scalar_started.elapsed();
         let data_io_started = Instant::now();
-        main_column_writer.send_batch(SimobserveMainColumnBatch {
-            data_rows,
-            flag_rows,
-            uvw_rows: row_uvws,
-        })?;
+        main_column_writer
+            .send_batch(MeasurementSetWriteBatch::Rows {
+                data_rows,
+                flag_rows,
+                uvw_rows: row_uvws,
+            })
+            .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
         timing.data_io_enqueue += data_io_started.elapsed();
     }
-    let scalar_started = Instant::now();
-    let scalar_column_overrides = MainScalarColumnOverrides::new(
-        total_row_count,
-        row_pairs,
-        sample_times.to_vec(),
-        field_plans.len(),
-        request.integration_seconds,
-        request.observation_mode,
-        all_flag_rows,
-    )
-    .into_column_overrides()?;
-    timing.scalar_column += scalar_started.elapsed();
     Ok(MainRowsReport {
+        row_count: total_row_count,
         nonzero_visibility_count,
         flagged_row_count,
         elevation_flagged_row_count,
         shadow_flagged_row_count,
         timing: timing.into_report(),
-        scalar_column_overrides,
     })
 }
 
@@ -2299,577 +2321,56 @@ fn count_nonzero_complex(values: &[Complex32]) -> usize {
 }
 
 struct MainRowsReport {
+    row_count: usize,
     nonzero_visibility_count: usize,
     flagged_row_count: usize,
     elevation_flagged_row_count: usize,
     shadow_flagged_row_count: usize,
     timing: SyntheticMainRowTimingReport,
-    scalar_column_overrides: ColumnOverrides,
 }
 
-struct SimobserveMainColumnBatch {
-    data_rows: Vec<Vec<Complex32>>,
-    flag_rows: Vec<bool>,
-    uvw_rows: Vec<[f64; 3]>,
-}
-
-struct StreamedSimobserveMainColumns {
-    data: StreamedTiledShapeComplex32Column,
-    flag: StreamedTiledPrimitiveColumn,
-    flag_category: StreamedTiledPrimitiveColumn,
-    uvw: StreamedTiledPrimitiveColumn,
-    weight: StreamedTiledPrimitiveColumn,
-    sigma: StreamedTiledPrimitiveColumn,
-}
-
-impl StreamedSimobserveMainColumns {
-    fn column_timing_reports(&self) -> Vec<SyntheticMainColumnIoTimingReport> {
-        vec![
-            self.column_timing_report(
-                "DATA",
-                self.data.assemble_seconds(),
-                self.data.write_seconds(),
-                self.data.bytes_written(),
-            ),
-            self.column_timing_report(
-                "FLAG",
-                self.flag.assemble_seconds(),
-                self.flag.write_seconds(),
-                self.flag.bytes_written(),
-            ),
-            self.column_timing_report(
-                "FLAG_CATEGORY",
-                self.flag_category.assemble_seconds(),
-                self.flag_category.write_seconds(),
-                self.flag_category.bytes_written(),
-            ),
-            self.column_timing_report(
-                "UVW",
-                self.uvw.assemble_seconds(),
-                self.uvw.write_seconds(),
-                self.uvw.bytes_written(),
-            ),
-            self.column_timing_report(
-                "WEIGHT",
-                self.weight.assemble_seconds(),
-                self.weight.write_seconds(),
-                self.weight.bytes_written(),
-            ),
-            self.column_timing_report(
-                "SIGMA",
-                self.sigma.assemble_seconds(),
-                self.sigma.write_seconds(),
-                self.sigma.bytes_written(),
-            ),
-        ]
-    }
-
-    fn column_timing_report(
-        &self,
-        column: &str,
-        assemble_seconds: f64,
-        write_seconds: f64,
-        bytes_written: usize,
-    ) -> SyntheticMainColumnIoTimingReport {
-        SyntheticMainColumnIoTimingReport {
-            column: column.to_string(),
-            assemble_millis: elapsed_seconds_to_millis(assemble_seconds),
-            write_millis: elapsed_seconds_to_millis(write_seconds),
-            bytes_written: bytes_written as u64,
-        }
-    }
-
-    fn assemble_seconds(&self) -> f64 {
-        self.data.assemble_seconds()
-            + self.flag.assemble_seconds()
-            + self.flag_category.assemble_seconds()
-            + self.uvw.assemble_seconds()
-            + self.weight.assemble_seconds()
-            + self.sigma.assemble_seconds()
-    }
-
-    fn write_seconds(&self) -> f64 {
-        self.data.write_seconds()
-            + self.flag.write_seconds()
-            + self.flag_category.write_seconds()
-            + self.uvw.write_seconds()
-            + self.weight.write_seconds()
-            + self.sigma.write_seconds()
-    }
-
-    fn bytes_written(&self) -> usize {
-        self.data.bytes_written()
-            + self.flag.bytes_written()
-            + self.flag_category.bytes_written()
-            + self.uvw.bytes_written()
-            + self.weight.bytes_written()
-            + self.sigma.bytes_written()
-    }
-}
-
-struct SimobserveMainColumnWriter {
-    sender: mpsc::SyncSender<SimobserveMainColumnBatch>,
-    handle: thread::JoinHandle<MsResult<StreamedSimobserveMainColumns>>,
-}
-
-impl SimobserveMainColumnWriter {
-    fn start(
-        output_ms: &Path,
-        row_count: usize,
-        num_corr: usize,
-        num_chan: usize,
-        telescope_name: &str,
-    ) -> MsResult<Self> {
-        let visibility_tile_shape =
-            crate::ms::casa_visibility_tile_shape(num_corr, num_chan, telescope_name);
-        let weight_tile_shape = crate::ms::casa_weight_tile_shape(&visibility_tile_shape);
-        let uvw_tile_shape = crate::ms::casa_uvw_tile_shape(&visibility_tile_shape);
-        let flag_category_tile_shape = vec![
-            visibility_tile_shape[0],
-            visibility_tile_shape[1],
-            1,
-            visibility_tile_shape[2],
-        ];
-
-        let data_writer = StreamingTiledShapeComplex32Writer::create(
-            output_ms.join(".casa-rs.DATA.table.f.tmp"),
-            row_count,
-            vec![num_corr, num_chan],
-            visibility_tile_shape.clone(),
-            false,
-        )
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!("failed to create streamed DATA writer: {error}"))
-        })?;
-        let flag_writer = StreamingTiledPrimitiveWriter::create_shape(
-            output_ms.join(".casa-rs.FLAG.table.f.tmp"),
-            row_count,
-            vec![num_corr, num_chan],
-            visibility_tile_shape,
-            StreamedTiledPrimitiveType::Bool,
-            false,
-        )
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!("failed to create streamed FLAG writer: {error}"))
-        })?;
-        let flag_category_writer = StreamingTiledPrimitiveWriter::create_shape(
-            output_ms.join(".casa-rs.FLAG_CATEGORY.table.f.tmp"),
-            row_count,
-            vec![0, num_corr, num_chan],
-            flag_category_tile_shape,
-            StreamedTiledPrimitiveType::Bool,
-            false,
-        )
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!(
-                "failed to create streamed FLAG_CATEGORY writer: {error}"
-            ))
-        })?;
-        let uvw_writer = StreamingTiledPrimitiveWriter::create_column(
-            output_ms.join(".casa-rs.UVW.table.f.tmp"),
-            row_count,
-            vec![3],
-            uvw_tile_shape,
-            StreamedTiledPrimitiveType::Float64,
-            false,
-        )
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!("failed to create streamed UVW writer: {error}"))
-        })?;
-        let weight_writer = StreamingTiledPrimitiveWriter::create_shape(
-            output_ms.join(".casa-rs.WEIGHT.table.f.tmp"),
-            row_count,
-            vec![num_corr],
-            weight_tile_shape.clone(),
-            StreamedTiledPrimitiveType::Float32,
-            false,
-        )
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!(
-                "failed to create streamed WEIGHT writer: {error}"
-            ))
-        })?;
-        let sigma_writer = StreamingTiledPrimitiveWriter::create_shape(
-            output_ms.join(".casa-rs.SIGMA.table.f.tmp"),
-            row_count,
-            vec![num_corr],
-            weight_tile_shape,
-            StreamedTiledPrimitiveType::Float32,
-            false,
-        )
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!(
-                "failed to create streamed SIGMA writer: {error}"
-            ))
-        })?;
-
-        let (sender, receiver) =
-            mpsc::sync_channel::<SimobserveMainColumnBatch>(simobserve_io_queue_depth());
-        let handle = thread::spawn(move || {
-            let mut data_writer = data_writer;
-            let mut flag_writer = flag_writer;
-            let mut flag_category_writer = flag_category_writer;
-            let mut uvw_writer = uvw_writer;
-            let mut weight_writer = weight_writer;
-            let mut sigma_writer = sigma_writer;
-            let weight_row = vec![1.0f32; num_corr];
-            let sigma_row = vec![1.0f32; num_corr];
-
-            for batch in receiver {
-                if batch.data_rows.len() != batch.flag_rows.len()
-                    || batch.data_rows.len() != batch.uvw_rows.len()
-                {
-                    return Err(MsError::SyntheticObservation(format!(
-                        "background MAIN column writer received inconsistent batch sizes: DATA={} FLAG={} UVW={}",
-                        batch.data_rows.len(),
-                        batch.flag_rows.len(),
-                        batch.uvw_rows.len()
-                    )));
-                }
-                for ((data_row, flag_row), uvw_row) in batch
-                    .data_rows
-                    .into_iter()
-                    .zip(batch.flag_rows)
-                    .zip(batch.uvw_rows)
-                {
-                    data_writer.push_row(&data_row).map_err(|error| {
-                        MsError::SyntheticObservation(format!(
-                            "failed to stream DATA row into tiled storage: {error}"
-                        ))
-                    })?;
-                    if flag_row {
-                        flag_writer.push_bool_fill_row(true).map_err(|error| {
-                            MsError::SyntheticObservation(format!(
-                                "failed to stream FLAG row into tiled storage: {error}"
-                            ))
-                        })?;
-                    } else {
-                        flag_writer.push_zero_row().map_err(|error| {
-                            MsError::SyntheticObservation(format!(
-                                "failed to stream empty FLAG row into tiled storage: {error}"
-                            ))
-                        })?;
-                    }
-                    flag_category_writer.push_zero_row().map_err(|error| {
-                        MsError::SyntheticObservation(format!(
-                            "failed to stream empty FLAG_CATEGORY row into tiled storage: {error}"
-                        ))
-                    })?;
-                    uvw_writer.push_f64_row(&uvw_row).map_err(|error| {
-                        MsError::SyntheticObservation(format!(
-                            "failed to stream UVW row into tiled storage: {error}"
-                        ))
-                    })?;
-                    weight_writer.push_f32_row(&weight_row).map_err(|error| {
-                        MsError::SyntheticObservation(format!(
-                            "failed to stream WEIGHT row into tiled storage: {error}"
-                        ))
-                    })?;
-                    sigma_writer.push_f32_row(&sigma_row).map_err(|error| {
-                        MsError::SyntheticObservation(format!(
-                            "failed to stream SIGMA row into tiled storage: {error}"
-                        ))
-                    })?;
-                }
-            }
-            Ok(StreamedSimobserveMainColumns {
-                data: data_writer.finish().map_err(|error| {
-                    MsError::SyntheticObservation(format!(
-                        "failed to finalize streamed DATA writer: {error}"
-                    ))
-                })?,
-                flag: flag_writer.finish().map_err(|error| {
-                    MsError::SyntheticObservation(format!(
-                        "failed to finalize streamed FLAG writer: {error}"
-                    ))
-                })?,
-                flag_category: flag_category_writer.finish().map_err(|error| {
-                    MsError::SyntheticObservation(format!(
-                        "failed to finalize streamed FLAG_CATEGORY writer: {error}"
-                    ))
-                })?,
-                uvw: uvw_writer.finish().map_err(|error| {
-                    MsError::SyntheticObservation(format!(
-                        "failed to finalize streamed UVW writer: {error}"
-                    ))
-                })?,
-                weight: weight_writer.finish().map_err(|error| {
-                    MsError::SyntheticObservation(format!(
-                        "failed to finalize streamed WEIGHT writer: {error}"
-                    ))
-                })?,
-                sigma: sigma_writer.finish().map_err(|error| {
-                    MsError::SyntheticObservation(format!(
-                        "failed to finalize streamed SIGMA writer: {error}"
-                    ))
-                })?,
-            })
-        });
-        Ok(Self { sender, handle })
-    }
-
-    fn send_batch(&self, batch: SimobserveMainColumnBatch) -> MsResult<()> {
-        self.sender.send(batch).map_err(|error| {
-            MsError::SyntheticObservation(format!(
-                "background MAIN column writer stopped before accepting rows: {error}"
-            ))
-        })
-    }
-
-    fn finish(self) -> MsResult<StreamedSimobserveMainColumns> {
-        drop(self.sender);
-        self.handle.join().map_err(|_| {
-            MsError::SyntheticObservation("background MAIN column writer panicked".to_string())
-        })?
-    }
-}
-
-fn install_streamed_main_columns(
-    main: &casa_tables::Table,
-    output_ms: &Path,
-    streamed: StreamedSimobserveMainColumns,
-) -> MsResult<()> {
-    let data_seq = data_manager_sequence(main, "DATA")?;
-    install_streamed_tiled_shape_complex32_column(output_ms, data_seq, "DATA", streamed.data)
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!(
-                "failed to install streamed DATA column: {error}"
-            ))
-        })?;
-
-    let flag_seq = data_manager_sequence(main, "FLAG")?;
-    install_streamed_tiled_shape_primitive_column(output_ms, flag_seq, "FLAG", streamed.flag)
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!(
-                "failed to install streamed FLAG column: {error}"
-            ))
-        })?;
-
-    let flag_category_seq = data_manager_sequence(main, "FLAG_CATEGORY")?;
-    install_streamed_tiled_shape_primitive_column(
-        output_ms,
-        flag_category_seq,
-        "FLAG_CATEGORY",
-        streamed.flag_category,
-    )
-    .map_err(|error| {
-        MsError::SyntheticObservation(format!(
-            "failed to install streamed FLAG_CATEGORY column: {error}"
-        ))
-    })?;
-
-    let uvw_seq = data_manager_sequence(main, "UVW")?;
-    install_streamed_tiled_column_primitive_column(output_ms, uvw_seq, "UVW", streamed.uvw)
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!("failed to install streamed UVW column: {error}"))
-        })?;
-
-    let weight_seq = data_manager_sequence(main, "WEIGHT")?;
-    install_streamed_tiled_shape_primitive_column(output_ms, weight_seq, "WEIGHT", streamed.weight)
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!(
-                "failed to install streamed WEIGHT column: {error}"
-            ))
-        })?;
-
-    let sigma_seq = data_manager_sequence(main, "SIGMA")?;
-    install_streamed_tiled_shape_primitive_column(output_ms, sigma_seq, "SIGMA", streamed.sigma)
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!(
-                "failed to install streamed SIGMA column: {error}"
-            ))
-        })?;
-
-    Ok(())
-}
-
-fn data_manager_sequence(main: &casa_tables::Table, column: &str) -> MsResult<u32> {
-    crate::ms::measurement_set_main_data_manager_sequence(main, column).ok_or_else(|| {
-        MsError::SyntheticObservation(format!(
-            "could not resolve {column} data-manager sequence for streamed install"
-        ))
-    })
-}
-
-fn simobserve_io_queue_depth() -> usize {
-    std::env::var("CASA_RS_SIMOBSERVE_IO_QUEUE_DEPTH")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_SIMOBSERVE_IO_QUEUE_DEPTH)
-}
-
-struct MainScalarColumnOverrides {
-    row_count: usize,
-    baseline_count: usize,
-    row_pairs: Arc<Vec<BaselinePair>>,
-    sample_times: Arc<Vec<f64>>,
+#[allow(clippy::too_many_arguments)]
+fn push_synthetic_scalar_rows(
+    writer: &mut MeasurementSetWriteSession,
+    row_pairs: &[BaselinePair],
+    flag_rows: &[bool],
+    sample: usize,
+    time: f64,
     field_count: usize,
     integration_seconds: f64,
     observation_mode: SyntheticObservationMode,
-    flag_rows: Arc<Vec<bool>>,
-}
-
-impl MainScalarColumnOverrides {
-    fn new(
-        row_count: usize,
-        row_pairs: Vec<BaselinePair>,
-        sample_times: Vec<f64>,
-        field_count: usize,
-        integration_seconds: f64,
-        observation_mode: SyntheticObservationMode,
-        flag_rows: Vec<bool>,
-    ) -> Self {
-        debug_assert_eq!(row_count, row_pairs.len() * sample_times.len());
-        debug_assert_eq!(row_count, flag_rows.len());
-        Self {
-            row_count,
-            baseline_count: row_pairs.len(),
-            row_pairs: Arc::new(row_pairs),
-            sample_times: Arc::new(sample_times),
-            field_count,
-            integration_seconds,
-            observation_mode,
-            flag_rows: Arc::new(flag_rows),
+) -> MsResult<()> {
+    let field_id = (sample % field_count) as i32;
+    let scan_number = if observation_mode == SyntheticObservationMode::TotalPower {
+        sample as i32 + 1
+    } else {
+        1
+    };
+    for (pair, flag_row) in row_pairs.iter().zip(flag_rows) {
+        for (column, value) in [
+            ("ANTENNA1", ScalarValue::Int32(pair.antenna1 as i32)),
+            ("ANTENNA2", ScalarValue::Int32(pair.antenna2 as i32)),
+            ("ARRAY_ID", ScalarValue::Int32(0)),
+            ("DATA_DESC_ID", ScalarValue::Int32(0)),
+            ("EXPOSURE", ScalarValue::Float64(integration_seconds)),
+            ("FEED1", ScalarValue::Int32(0)),
+            ("FEED2", ScalarValue::Int32(0)),
+            ("FIELD_ID", ScalarValue::Int32(field_id)),
+            ("FLAG_ROW", ScalarValue::Bool(*flag_row)),
+            ("INTERVAL", ScalarValue::Float64(integration_seconds)),
+            ("OBSERVATION_ID", ScalarValue::Int32(0)),
+            ("PROCESSOR_ID", ScalarValue::Int32(0)),
+            ("SCAN_NUMBER", ScalarValue::Int32(scan_number)),
+            ("STATE_ID", ScalarValue::Int32(0)),
+            ("TIME", ScalarValue::Float64(time)),
+            ("TIME_CENTROID", ScalarValue::Float64(time)),
+        ] {
+            writer
+                .push_scalar_row(column, Some(value))
+                .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
         }
     }
-
-    fn into_column_overrides(self) -> MsResult<ColumnOverrides> {
-        let mut overrides = ColumnOverrides::for_row_count(self.row_count);
-        self.insert_deferred_tiled_columns(&mut overrides);
-        self.insert_baseline_columns(&mut overrides);
-        self.insert_sample_columns(&mut overrides)?;
-        self.insert_constant_columns(&mut overrides);
-        Ok(overrides)
-    }
-
-    fn insert_deferred_tiled_columns(&self, overrides: &mut ColumnOverrides) {
-        for column in ["DATA", "FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"] {
-            overrides.insert_deferred(column);
-        }
-    }
-
-    fn insert_baseline_columns(&self, overrides: &mut ColumnOverrides) {
-        let row_count = self.row_count;
-        let baseline_count = self.baseline_count;
-        let row_pairs = Arc::clone(&self.row_pairs);
-        overrides.insert_generated_scalar(
-            "ANTENNA1",
-            GeneratedScalarColumn::new(row_count, move |row| {
-                Some(ScalarValue::Int32(
-                    row_pairs[row % baseline_count].antenna1 as i32,
-                ))
-            }),
-        );
-
-        let row_pairs = Arc::clone(&self.row_pairs);
-        overrides.insert_generated_scalar(
-            "ANTENNA2",
-            GeneratedScalarColumn::new(row_count, move |row| {
-                Some(ScalarValue::Int32(
-                    row_pairs[row % baseline_count].antenna2 as i32,
-                ))
-            }),
-        );
-    }
-
-    fn insert_sample_columns(&self, overrides: &mut ColumnOverrides) -> MsResult<()> {
-        let row_count = self.row_count;
-        let time_runs =
-            self.sample_runs(|sample| Some(ScalarValue::Float64(self.sample_times[sample])));
-        overrides.insert_generated_scalar(
-            "TIME",
-            GeneratedScalarColumn::from_scalar_runs(row_count, time_runs.clone())?,
-        );
-
-        overrides.insert_generated_scalar(
-            "TIME_CENTROID",
-            GeneratedScalarColumn::from_scalar_runs(row_count, time_runs)?,
-        );
-
-        let field_count = self.field_count;
-        let field_runs =
-            self.sample_runs(|sample| Some(ScalarValue::Int32((sample % field_count) as i32)));
-        overrides.insert_generated_scalar(
-            "FIELD_ID",
-            GeneratedScalarColumn::from_scalar_runs(row_count, field_runs)?,
-        );
-
-        let scan_column = if self.observation_mode == SyntheticObservationMode::TotalPower {
-            GeneratedScalarColumn::from_scalar_runs(
-                row_count,
-                self.sample_runs(|sample| Some(ScalarValue::Int32(sample as i32 + 1))),
-            )?
-        } else {
-            GeneratedScalarColumn::constant(row_count, Some(ScalarValue::Int32(1)))
-        };
-        overrides.insert_generated_scalar("SCAN_NUMBER", scan_column);
-
-        let flag_rows = Arc::clone(&self.flag_rows);
-        overrides.insert_generated_scalar(
-            "FLAG_ROW",
-            GeneratedScalarColumn::new(row_count, move |row| {
-                Some(ScalarValue::Bool(flag_rows[row]))
-            }),
-        );
-        Ok(())
-    }
-
-    fn insert_constant_columns(&self, overrides: &mut ColumnOverrides) {
-        self.insert_constant_i32(overrides, "ARRAY_ID", 0);
-        self.insert_constant_i32(overrides, "DATA_DESC_ID", 0);
-        self.insert_constant_i32(overrides, "FEED1", 0);
-        self.insert_constant_i32(overrides, "FEED2", 0);
-        self.insert_constant_i32(overrides, "OBSERVATION_ID", 0);
-        self.insert_constant_i32(overrides, "PROCESSOR_ID", 0);
-        self.insert_constant_i32(overrides, "STATE_ID", 0);
-        self.insert_constant_f64(overrides, "EXPOSURE", self.integration_seconds);
-        self.insert_constant_f64(overrides, "INTERVAL", self.integration_seconds);
-    }
-
-    fn insert_constant_i32(
-        &self,
-        overrides: &mut ColumnOverrides,
-        column: &'static str,
-        value: i32,
-    ) {
-        overrides.insert_generated_scalar(
-            column,
-            GeneratedScalarColumn::constant(self.row_count, Some(ScalarValue::Int32(value))),
-        );
-    }
-
-    fn insert_constant_f64(
-        &self,
-        overrides: &mut ColumnOverrides,
-        column: &'static str,
-        value: f64,
-    ) {
-        overrides.insert_generated_scalar(
-            column,
-            GeneratedScalarColumn::constant(self.row_count, Some(ScalarValue::Float64(value))),
-        );
-    }
-
-    fn sample_runs(
-        &self,
-        mut value_for_sample: impl FnMut(usize) -> Option<ScalarValue>,
-    ) -> Vec<GeneratedScalarValueRun> {
-        let sample_count = self.sample_times.len();
-        let mut runs = Vec::with_capacity(sample_count);
-        let mut last_value: Option<ScalarValue> = None;
-        for sample in 0..sample_count {
-            let value = value_for_sample(sample);
-            if sample == 0 || value != last_value {
-                runs.push(GeneratedScalarValueRun::new(
-                    sample * self.baseline_count,
-                    value.clone(),
-                ));
-                last_value = value;
-            }
-        }
-        runs
-    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -2896,10 +2397,14 @@ impl MainRowTimingDurations {
             prediction_gather_millis: elapsed_millis(self.prediction_gather),
             corruption_millis: elapsed_millis(self.corruption),
             data_io_enqueue_millis: elapsed_millis(self.data_io_enqueue),
+            data_io_producer_millis: 0,
+            data_io_queue_wait_millis: 0,
             data_io_finalize_millis: 0,
             data_io_assemble_millis: 0,
             data_io_write_millis: 0,
             data_io_bytes: 0,
+            data_io_rows: 0,
+            data_io_maximum_resident_bytes: 0,
             data_io_columns: Vec::new(),
             main_write_millis: elapsed_millis(self.main_write),
             scalar_column_millis: elapsed_millis(self.scalar_column),

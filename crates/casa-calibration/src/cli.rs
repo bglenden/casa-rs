@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_ms::MsSelectionSpec;
+use casa_ms::MsSelection;
 use casa_ms::msexplore::cli::UiCommandSchema;
 
 use crate::{
@@ -39,7 +39,7 @@ struct ApplyOptions {
     selection: SelectionOptions,
 }
 
-type SelectionOptions = MsSelectionSpec;
+type SelectionOptions = MsSelection;
 
 #[derive(Debug)]
 struct SummaryOptions {
@@ -2230,7 +2230,7 @@ fn parse_bool_list(flag: &str, value: &str) -> Result<Vec<bool>, String> {
 
 #[cfg(test)]
 fn build_selection(options: &SelectionOptions) -> Result<casa_ms::selection::MsSelection, String> {
-    crate::task_contract::selection_from_spec(options)
+    Ok(options.clone())
 }
 
 #[cfg(test)]
@@ -2786,7 +2786,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use casa_ms::{MsSelectionSpec, presentation::UiValueKind};
+    use casa_ms::{MsSelection, presentation::UiValueKind};
     use tempfile::TempDir;
 
     use super::{CliAction, Command, OutputFormat, command_schema, parse_args, render_help};
@@ -3071,10 +3071,10 @@ mod tests {
             request.command.into_task_request(),
             CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
                 measurement_set: PathBuf::from("dataset.ms"),
-                selection: MsSelectionSpec {
+                selection: MsSelection {
                     field: Some("0".into()),
                     spw: Some("1".into()),
-                    ..MsSelectionSpec::default()
+                    ..MsSelection::default()
                 },
                 calibration_tables: vec![ApplyCalibrationTableSpec::new("phase.gcal")],
                 apply_mode: ApplyMode::Trial,
@@ -3850,6 +3850,8 @@ mod tests {
             array: Some("7".into()),
             intent: None,
             feed: None,
+            data_description: None,
+            state: None,
             msselect: Some("ANTENNA1 == 4".into()),
         })
         .expect("selection");
@@ -3857,7 +3859,7 @@ mod tests {
         assert!(taql.contains("FIELD_ID IN [1,2]"));
         assert!(taql.contains("DATA_DESC_ID IN [3]"));
         assert!(taql.contains("ARRAY_ID IN [7]"));
-        assert!(taql.contains("TIME>=10"));
+        assert_eq!(selection.timerange.as_deref(), Some("10.0:20.0"));
 
         let bad_timerange = super::parse_time_range("nope").unwrap_err();
         assert!(bad_timerange.contains("START:END"));

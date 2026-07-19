@@ -4938,8 +4938,8 @@ struct MeasurementSetPlotPanel: View {
                 set: { store.setMeasurementSetPlotField($0, datasetID: dataset.id) }
             )) {
                 Text("all").tag("all")
-                ForEach(dataset.fields, id: \.self) { field in
-                    Text(field).tag(field)
+                ForEach(fieldSelectionOptions) { option in
+                    Text(option.label).tag(option.value)
                 }
             }
             .accessibilityIdentifier("msPlot.field.\(dataset.id)")
@@ -4949,8 +4949,8 @@ struct MeasurementSetPlotPanel: View {
                 set: { store.setMeasurementSetPlotSpectralWindow($0, datasetID: dataset.id) }
             )) {
                 Text("all").tag("all")
-                ForEach(dataset.spectralWindows, id: \.self) { spectralWindow in
-                    Text(spectralWindow).tag(spectralWindow)
+                ForEach(spectralWindowSelectionOptions) { option in
+                    Text(option.label).tag(option.value)
                 }
             }
             .accessibilityIdentifier("msPlot.spw.\(dataset.id)")
@@ -4976,7 +4976,7 @@ struct MeasurementSetPlotPanel: View {
                 systemImage: "number",
                 help: "CASA channel syntax: channel, start~end, or start~end^step. Values are limited to the selected spectral window.",
                 helperOptions: channelSelectionOptions,
-                validator: isValidChannelSelection
+                validation: canonicalChannelEditValidation
             )
 
             selectionTextField(
@@ -4989,7 +4989,7 @@ struct MeasurementSetPlotPanel: View {
                 systemImage: "clock",
                 help: "CASA timerange syntax. This helper builds numeric MJD-second ranges from MAIN.TIME, for example 4860027194~4860033280.",
                 helperOptions: [SelectionHelperOption(label: "All times", value: "")],
-                validator: isValidTimerangeSelection
+                validation: { canonicalMeasurementSetEditValidation(parameter: "timerange", value: $0) }
             )
 
             selectionTextField(
@@ -5002,7 +5002,7 @@ struct MeasurementSetPlotPanel: View {
                 systemImage: "ruler",
                 help: "CASA UV range syntax: min~maxm, >100m, <2klambda, or 0~1klambda. Supported units are m and klambda here.",
                 helperOptions: [SelectionHelperOption(label: "All UV distances", value: "")],
-                validator: isValidUVRangeSelection
+                validation: { canonicalMeasurementSetEditValidation(parameter: "uvrange", value: $0) }
             )
 
             selectionTextField(
@@ -5015,7 +5015,7 @@ struct MeasurementSetPlotPanel: View {
                 systemImage: "antenna.radiowaves.left.and.right",
                 help: "CASA antenna syntax: antenna name, numeric antenna id, comma list, or baseline with &. Values must exist in this MS.",
                 helperOptions: antennaSelectionOptions,
-                validator: isValidAntennaSelection
+                validation: { canonicalMeasurementSetEditValidation(parameter: "antenna", value: $0) }
             )
 
             selectionTextField(
@@ -5028,7 +5028,7 @@ struct MeasurementSetPlotPanel: View {
                 systemImage: "rectangle.stack",
                 help: "CASA scan syntax: scan number, comma list, or numeric range. Values must exist in this MS.",
                 helperOptions: scanSelectionOptions,
-                validator: { isValidIntegerSelection($0, labels: dataset.scans) }
+                validation: { canonicalMeasurementSetEditValidation(parameter: "scan", value: $0) }
             )
 
             selectionTextField(
@@ -5041,7 +5041,7 @@ struct MeasurementSetPlotPanel: View {
                 systemImage: "square.grid.3x3",
                 help: "CASA array syntax: array id, comma list, or numeric range. Values must exist in this MS.",
                 helperOptions: arraySelectionOptions,
-                validator: { isValidIntegerSelection($0, labels: dataset.arrays) }
+                validation: { canonicalMeasurementSetEditValidation(parameter: "array", value: $0) }
             )
 
             selectionTextField(
@@ -5054,7 +5054,7 @@ struct MeasurementSetPlotPanel: View {
                 systemImage: "eye",
                 help: "CASA observation syntax: observation id, comma list, or numeric range. Values must exist in this MS.",
                 helperOptions: observationSelectionOptions,
-                validator: { isValidIntegerSelection($0, labels: dataset.observations) }
+                validation: { canonicalMeasurementSetEditValidation(parameter: "observation", value: $0) }
             )
 
             selectionTextField(
@@ -5067,7 +5067,7 @@ struct MeasurementSetPlotPanel: View {
                 systemImage: "tag",
                 help: "CASA intent selection. Choose an OBS_MODE value present in this MS, or leave empty for all intents.",
                 helperOptions: intentSelectionOptions,
-                validator: isValidIntentSelection
+                validation: { canonicalMeasurementSetEditValidation(parameter: "intent", value: $0) }
             )
 
             selectionTextField(
@@ -5080,7 +5080,7 @@ struct MeasurementSetPlotPanel: View {
                 systemImage: "dot.radiowaves.left.and.right",
                 help: "CASA feed syntax: feed id, comma list, or numeric range. Values must exist in this MS.",
                 helperOptions: feedSelectionOptions,
-                validator: { isValidIntegerSelection($0, labels: dataset.feeds) }
+                validation: { canonicalMeasurementSetEditValidation(parameter: "feed", value: $0) }
             )
 
             selectionTextField(
@@ -5355,49 +5355,68 @@ struct MeasurementSetPlotPanel: View {
         systemImage: String,
         help: String,
         helperOptions: [SelectionHelperOption],
-        validator: @escaping (String) -> Bool = { _ in true }
+        validator: @escaping (String) -> Bool = { _ in true },
+        validation: ((String) -> SurfaceParameterEditResult?)? = nil
     ) -> some View {
+        let validationResult = validation?(text.wrappedValue)
+        let diagnostic = validationResult?.diagnostics.first
+        let isValid = validation != nil
+            ? validationResult?.diagnostics.isEmpty == true
+            : validator(text.wrappedValue)
         let validatedText = Binding<String>(
             get: { text.wrappedValue },
             set: { newValue in
-                if validator(newValue) {
+                if validation != nil || validator(newValue) {
                     text.wrappedValue = newValue
                 }
             }
         )
-        let isValid = validator(text.wrappedValue)
-        return HStack {
-            Text(label)
-            Spacer()
-            TextField(prompt, text: validatedText)
-                .multilineTextAlignment(.trailing)
-                .textFieldStyle(.roundedBorder)
-                .foregroundStyle(isValid ? Color.primary : Color.red)
-                .frame(width: 150)
-                .help(help)
-            Button {
-                activeSelectionHelper = label
-            } label: {
-                Image(systemName: systemImage)
-                    .frame(width: 18)
-            }
-            .buttonStyle(.borderless)
-            .fixedSize()
-            .help("Open guided choices for \(label.lowercased()). \(help)")
-            .popover(isPresented: Binding(
-                get: { activeSelectionHelper == label },
-                set: { isPresented in
-                    if !isPresented && activeSelectionHelper == label {
-                        activeSelectionHelper = nil
-                    }
+        let identifier = label.lowercased().replacingOccurrences(of: " ", with: "-")
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label)
+                Spacer()
+                TextField(prompt, text: validatedText)
+                    .multilineTextAlignment(.trailing)
+                    .textFieldStyle(.roundedBorder)
+                    .foregroundStyle(isValid ? Color.primary : Color.red)
+                    .frame(width: 150)
+                    .help(help)
+                    .accessibilityIdentifier("msPlot.selection.\(identifier).\(dataset.id)")
+                Button {
+                    activeSelectionHelper = label
+                } label: {
+                    Image(systemName: systemImage)
+                        .frame(width: 18)
                 }
-            )) {
-                selectionHelperPopover(
-                    label: label,
-                    text: text,
-                    help: help,
-                    helperOptions: helperOptions
-                )
+                .buttonStyle(.borderless)
+                .fixedSize()
+                .help("Open guided choices for \(label.lowercased()). \(help)")
+                .popover(isPresented: Binding(
+                    get: { activeSelectionHelper == label },
+                    set: { isPresented in
+                        if !isPresented && activeSelectionHelper == label {
+                            activeSelectionHelper = nil
+                        }
+                    }
+                )) {
+                    selectionHelperPopover(
+                        label: label,
+                        text: text,
+                        help: help,
+                        helperOptions: helperOptions
+                    )
+                }
+            }
+            if let diagnostic {
+                Text(diagnostic.message)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(Color.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(
+                        "msPlot.selectionDiagnostic.\(identifier).\(dataset.id)"
+                    )
+                    .accessibilityValue(diagnostic.code)
             }
         }
     }
@@ -5468,11 +5487,6 @@ struct MeasurementSetPlotPanel: View {
                 .workbenchFont(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let limit = selectedSpectralWindowChannelLimit {
-                Text("Valid channel IDs: 0 through \(max(0, limit - 1))")
-                    .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
-            }
             HStack {
                 TextField("start", text: $channelStartText)
                     .textFieldStyle(.roundedBorder)
@@ -5507,7 +5521,6 @@ struct MeasurementSetPlotPanel: View {
                     ForEach(channelSelectionOptions) { option in
                         Button(option.label) {
                             text.wrappedValue = option.value
-                            populateChannelFields(from: option.value)
                         }
                     }
                 }
@@ -5517,9 +5530,6 @@ struct MeasurementSetPlotPanel: View {
         }
         .padding(12)
         .frame(width: 420, alignment: .leading)
-        .onAppear {
-            populateChannelFields(from: text.wrappedValue)
-        }
     }
 
     private func timerangeHelperPopover(text: Binding<String>, help: String) -> some View {
@@ -5564,9 +5574,6 @@ struct MeasurementSetPlotPanel: View {
         }
         .padding(12)
         .frame(width: 420, alignment: .leading)
-        .onAppear {
-            populateTimerangeFields(from: text.wrappedValue)
-        }
     }
 
     private func uvRangeHelperPopover(text: Binding<String>, help: String) -> some View {
@@ -5612,9 +5619,6 @@ struct MeasurementSetPlotPanel: View {
         }
         .padding(12)
         .frame(width: 340, alignment: .leading)
-        .onAppear {
-            populateUVRangeFields(from: text.wrappedValue)
-        }
     }
 
     private func antennaHelperPopover(text: Binding<String>, help: String) -> some View {
@@ -5640,7 +5644,7 @@ struct MeasurementSetPlotPanel: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 82), spacing: 6)], alignment: .leading, spacing: 6) {
                     ForEach(dataset.antennas, id: \.self) { antenna in
                         Button(antenna) {
-                            toggleAntenna(antenna, text: text)
+                            text.wrappedValue = antenna
                         }
                         .buttonStyle(.bordered)
                     }
@@ -5690,7 +5694,7 @@ struct MeasurementSetPlotPanel: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: 6)], alignment: .leading, spacing: 6) {
                     ForEach(helperOptions.filter { !$0.value.isEmpty }) { option in
                         Button(option.label) {
-                            toggleCommaToken(option.value, text: text)
+                            text.wrappedValue = option.value
                         }
                         .buttonStyle(.bordered)
                     }
@@ -5700,9 +5704,6 @@ struct MeasurementSetPlotPanel: View {
         }
         .padding(12)
         .frame(width: 390, alignment: .leading)
-        .onAppear {
-            populateIntegerRangeFields(from: text.wrappedValue)
-        }
     }
 
     private func toggleListHelperPopover(
@@ -5730,7 +5731,7 @@ struct MeasurementSetPlotPanel: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(helperOptions.filter { !$0.value.isEmpty }) { option in
                         Button(option.label) {
-                            toggleCommaToken(option.value, text: text)
+                            text.wrappedValue = option.value
                         }
                     }
                 }
@@ -5792,11 +5793,6 @@ struct MeasurementSetPlotPanel: View {
                 .workbenchFont(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let limit = selectedSpectralWindowChannelLimit {
-                Text("Maximum useful bin for selected SPW: \(limit)")
-                    .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
-            }
             HStack {
                 TextField("channels", text: text)
                     .textFieldStyle(.roundedBorder)
@@ -5870,7 +5866,7 @@ struct MeasurementSetPlotPanel: View {
         let start = channelStartText.trimmingCharacters(in: .whitespacesAndNewlines)
         let end = channelEndText.trimmingCharacters(in: .whitespacesAndNewlines)
         let step = channelStepText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !start.isEmpty, Int(start) != nil else {
+        guard !start.isEmpty else {
             return
         }
         let candidate: String
@@ -5881,65 +5877,29 @@ struct MeasurementSetPlotPanel: View {
         } else {
             candidate = "\(start)~\(end)^\(step)"
         }
-        if isValidChannelSelection(candidate) {
+        if canonicalChannelEditIsValid(candidate) {
             text.wrappedValue = candidate
         }
-    }
-
-    private func populateChannelFields(from value: String) {
-        let first = value
-            .split(whereSeparator: { $0 == ";" || $0 == "," })
-            .first
-            .map(String.init) ?? ""
-        guard !first.isEmpty else {
-            channelStartText = ""
-            channelEndText = ""
-            channelStepText = ""
-            return
-        }
-        let stepped = first.split(separator: "^", omittingEmptySubsequences: false)
-        channelStepText = stepped.count == 2 ? String(stepped[1]) : ""
-        let range = stepped[0].split(separator: "~", omittingEmptySubsequences: false)
-        channelStartText = range.first.map(String.init) ?? ""
-        channelEndText = range.count == 2 ? String(range[1]) : ""
     }
 
     private func applyTimerangeSelection(text: Binding<String>) {
         let start = timerangeStartText.trimmingCharacters(in: .whitespacesAndNewlines)
         let end = timerangeEndText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (start.isEmpty || Double(start) != nil), (end.isEmpty || Double(end) != nil) else {
-            timerangeScanStatus = "Enter numeric MJD seconds."
-            return
-        }
+        let candidate: String
         if start.isEmpty && end.isEmpty {
-            text.wrappedValue = ""
+            candidate = ""
         } else if !start.isEmpty && !end.isEmpty {
-            text.wrappedValue = "\(start)~\(end)"
+            candidate = "\(start)~\(end)"
         } else if !start.isEmpty {
-            text.wrappedValue = ">\(start)"
+            candidate = ">\(start)"
         } else {
-            text.wrappedValue = "<\(end)"
+            candidate = "<\(end)"
         }
-        timerangeScanStatus = nil
-    }
-
-    private func populateTimerangeFields(from value: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            timerangeStartText = ""
-            timerangeEndText = ""
-            return
-        }
-        let range = trimmed.split(separator: "~", omittingEmptySubsequences: false)
-        if range.count == 2 {
-            timerangeStartText = String(range[0])
-            timerangeEndText = String(range[1])
-        } else if trimmed.hasPrefix(">") {
-            timerangeStartText = String(trimmed.drop(while: { $0 == ">" || $0 == "=" }))
-            timerangeEndText = ""
-        } else if trimmed.hasPrefix("<") {
-            timerangeStartText = ""
-            timerangeEndText = String(trimmed.drop(while: { $0 == "<" || $0 == "=" }))
+        if canonicalMeasurementSetEditIsValid(parameter: "timerange", value: candidate) {
+            text.wrappedValue = candidate
+            timerangeScanStatus = nil
+        } else {
+            timerangeScanStatus = "The canonical CASA timerange parser rejected this value."
         }
     }
 
@@ -5968,36 +5928,14 @@ struct MeasurementSetPlotPanel: View {
     private func applyIntegerRangeSelection(label: String, text: Binding<String>) {
         let start = integerRangeStartText.trimmingCharacters(in: .whitespacesAndNewlines)
         let end = integerRangeEndText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !start.isEmpty, Int(start) != nil else {
+        guard !start.isEmpty else {
             return
         }
         let candidate = end.isEmpty ? start : "\(start)~\(end)"
-        let labels: [String]
-        switch label {
-        case "Scan":
-            labels = dataset.scans
-        case "Array":
-            labels = dataset.arrays
-        case "Observation":
-            labels = dataset.observations
-        case "Feed":
-            labels = dataset.feeds
-        default:
-            labels = []
-        }
-        if isValidIntegerSelection(candidate, labels: labels) {
+        let parameter = label.lowercased()
+        if canonicalMeasurementSetEditIsValid(parameter: parameter, value: candidate) {
             text.wrappedValue = candidate
         }
-    }
-
-    private func populateIntegerRangeFields(from value: String) {
-        let first = value
-            .split(separator: ",")
-            .first
-            .map(String.init) ?? ""
-        let range = first.split(separator: "~", omittingEmptySubsequences: false)
-        integerRangeStartText = range.first.map(String.init) ?? ""
-        integerRangeEndText = range.count == 2 ? String(range[1]) : ""
     }
 
     private func applyMSSelect(text: Binding<String>) {
@@ -6036,46 +5974,21 @@ struct MeasurementSetPlotPanel: View {
     private func applyUVRangeSelection(text: Binding<String>) {
         let minValue = uvRangeMinText.trimmingCharacters(in: .whitespacesAndNewlines)
         let maxValue = uvRangeMaxText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (minValue.isEmpty || Double(minValue) != nil),
-              (maxValue.isEmpty || Double(maxValue) != nil) else {
-            uvRangeScanStatus = "Enter numeric UV bounds."
-            return
-        }
+        let candidate: String
         if minValue.isEmpty && maxValue.isEmpty {
-            text.wrappedValue = ""
+            candidate = ""
         } else if !minValue.isEmpty && !maxValue.isEmpty {
-            text.wrappedValue = "\(minValue)~\(maxValue)\(uvRangeUnit)"
+            candidate = "\(minValue)~\(maxValue)\(uvRangeUnit)"
         } else if !minValue.isEmpty {
-            text.wrappedValue = ">\(minValue)\(uvRangeUnit)"
+            candidate = ">\(minValue)\(uvRangeUnit)"
         } else {
-            text.wrappedValue = "<\(maxValue)\(uvRangeUnit)"
+            candidate = "<\(maxValue)\(uvRangeUnit)"
         }
-        uvRangeScanStatus = nil
-    }
-
-    private func populateUVRangeFields(from value: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return
-        }
-        let unit = trimmed.lowercased().hasSuffix("klambda") ? "klambda" : "m"
-        uvRangeUnit = unit
-        var body = trimmed
-        if body.lowercased().hasSuffix("klambda") {
-            body.removeLast("klambda".count)
-        } else if body.lowercased().hasSuffix("m") {
-            body.removeLast()
-        }
-        let range = body.split(separator: "~", omittingEmptySubsequences: false)
-        if range.count == 2 {
-            uvRangeMinText = String(range[0])
-            uvRangeMaxText = String(range[1])
-        } else if body.hasPrefix(">") {
-            uvRangeMinText = String(body.drop(while: { $0 == ">" || $0 == "=" }))
-            uvRangeMaxText = ""
-        } else if body.hasPrefix("<") {
-            uvRangeMinText = ""
-            uvRangeMaxText = String(body.drop(while: { $0 == "<" || $0 == "=" }))
+        if canonicalMeasurementSetEditIsValid(parameter: "uvrange", value: candidate) {
+            text.wrappedValue = candidate
+            uvRangeScanStatus = nil
+        } else {
+            uvRangeScanStatus = "The canonical CASA UV-range parser rejected this value."
         }
     }
 
@@ -6107,108 +6020,66 @@ struct MeasurementSetPlotPanel: View {
         }
     }
 
-    private func toggleAntenna(_ antenna: String, text: Binding<String>) {
-        var tokens = text.wrappedValue
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        if let index = tokens.firstIndex(of: antenna) {
-            tokens.remove(at: index)
-        } else {
-            tokens.append(antenna)
-        }
-        text.wrappedValue = tokens.joined(separator: ",")
-    }
-
-    private func toggleCommaToken(_ token: String, text: Binding<String>) {
-        var tokens = text.wrappedValue
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        if let index = tokens.firstIndex(of: token) {
-            tokens.remove(at: index)
-        } else {
-            tokens.append(token)
-        }
-        text.wrappedValue = tokens.joined(separator: ",")
-    }
-
-    private var selectedSpectralWindowChannelLimit: Int? {
-        let counts = dataset.spectralWindows.compactMap(Self.channelCount(fromSpectralWindowLabel:))
-        guard !counts.isEmpty else {
-            return nil
-        }
-        guard let selected = plotState.selectedSpectralWindow, selected != "all" else {
-            return counts.min()
-        }
-        return Self.channelCount(fromSpectralWindowLabel: selected)
-    }
-
     private var channelSelectionOptions: [SelectionHelperOption] {
-        guard let channelLimit = selectedSpectralWindowChannelLimit, channelLimit > 0 else {
+        guard let selected = plotState.selectedSpectralWindow,
+              let spectralWindowID = Int32(selected),
+              let result = try? parameterValidateEdit(request: SurfaceParameterEditRequest(
+                  surfaceId: "msexplore",
+                  parameter: "spw",
+                  text: "",
+                  datasetPath: dataset.path,
+                  spectralWindowId: spectralWindowID,
+                  suggestions: []
+              )) else {
             return [SelectionHelperOption(label: "All channels", value: "")]
         }
-        var options = [SelectionHelperOption(label: "All channels", value: "")]
-        options.append(SelectionHelperOption(label: "First channel", value: "0"))
-        if channelLimit > 1 {
-            options.append(SelectionHelperOption(label: "All explicit", value: "0~\(channelLimit - 1)"))
+        return result.suggestions.compactMap { suggestion -> SelectionHelperOption? in
+            guard case .string(let value) = suggestion.value else {
+                return nil
+            }
+            return SelectionHelperOption(label: suggestion.label, value: value)
         }
-        if channelLimit >= 8 {
-            options.append(SelectionHelperOption(label: "First eight", value: "0~7"))
-        }
-        if channelLimit >= 16 {
-            options.append(SelectionHelperOption(label: "Every fourth", value: "0~\(channelLimit - 1)^4"))
-        }
-        return options
+    }
+
+    private var fieldSelectionOptions: [SelectionHelperOption] {
+        canonicalMeasurementSetSuggestions(parameter: "field", allLabel: "All fields")
+            .filter { !$0.value.isEmpty }
+    }
+
+    private var spectralWindowSelectionOptions: [SelectionHelperOption] {
+        canonicalMeasurementSetSuggestions(parameter: "spw", allLabel: "All spectral windows")
+            .filter { !$0.value.isEmpty }
     }
 
     private var antennaSelectionOptions: [SelectionHelperOption] {
-        var options = [SelectionHelperOption(label: "All antennas", value: "")]
-        options.append(contentsOf: dataset.antennas.map { name in
-            SelectionHelperOption(label: name, value: name)
-        })
-        if dataset.antennas.count >= 2 {
-            options.append(
-                SelectionHelperOption(
-                    label: "\(dataset.antennas[0]) & \(dataset.antennas[1])",
-                    value: "\(dataset.antennas[0])&\(dataset.antennas[1])"
-                )
-            )
-        }
-        return options
+        canonicalMeasurementSetSuggestions(parameter: "antenna", allLabel: "All antennas")
     }
 
     private var scanSelectionOptions: [SelectionHelperOption] {
-        integerSelectionOptions(title: "All scans", labels: dataset.scans)
+        canonicalMeasurementSetSuggestions(parameter: "scan", allLabel: "All scans")
     }
 
     private var arraySelectionOptions: [SelectionHelperOption] {
-        integerSelectionOptions(title: "All arrays", labels: dataset.arrays)
+        canonicalMeasurementSetSuggestions(parameter: "array", allLabel: "All arrays")
     }
 
     private var observationSelectionOptions: [SelectionHelperOption] {
-        integerSelectionOptions(title: "All observations", labels: dataset.observations)
+        canonicalMeasurementSetSuggestions(parameter: "observation", allLabel: "All observations")
     }
 
     private var intentSelectionOptions: [SelectionHelperOption] {
-        [SelectionHelperOption(label: "All intents", value: "")]
-            + dataset.intents.map { SelectionHelperOption(label: $0, value: $0) }
+        canonicalMeasurementSetSuggestions(parameter: "intent", allLabel: "All intents")
     }
 
     private var feedSelectionOptions: [SelectionHelperOption] {
-        integerSelectionOptions(title: "All feeds", labels: dataset.feeds)
+        canonicalMeasurementSetSuggestions(parameter: "feed", allLabel: "All feeds")
     }
 
     private var avgChannelOptions: [SelectionHelperOption] {
-        let limit = selectedSpectralWindowChannelLimit ?? 0
-        var options = [SelectionHelperOption(label: "No channel averaging", value: "")]
-        for value in [2, 4, 8, 16, 32, 64] where limit == 0 || value <= limit {
-            options.append(SelectionHelperOption(label: "\(value) channels", value: "\(value)"))
-        }
-        if limit > 0 {
-            options.append(SelectionHelperOption(label: "Whole selected SPW", value: "\(limit)"))
-        }
-        return options
+        [SelectionHelperOption(label: "No channel averaging", value: "")]
+            + [2, 4, 8, 16, 32, 64].map {
+                SelectionHelperOption(label: "\($0) channels", value: "\($0)")
+            }
     }
 
     private var avgTimeOptions: [SelectionHelperOption] {
@@ -6221,196 +6092,65 @@ struct MeasurementSetPlotPanel: View {
         ]
     }
 
-    private func integerSelectionOptions(title: String, labels: [String]) -> [SelectionHelperOption] {
-        [SelectionHelperOption(label: title, value: "")]
-            + labels.map { label in
-                SelectionHelperOption(label: label, value: Self.lastIntegerToken(in: label).map(String.init) ?? label)
+    private func canonicalMeasurementSetSuggestions(
+        parameter: String,
+        allLabel: String
+    ) -> [SelectionHelperOption] {
+        guard let result = try? parameterValidateEdit(request: SurfaceParameterEditRequest(
+            surfaceId: "msexplore",
+            parameter: parameter,
+            text: "",
+            datasetPath: dataset.path,
+            spectralWindowId: nil,
+            suggestions: []
+        )) else {
+            return [SelectionHelperOption(label: allLabel, value: "")]
+        }
+        let projected = result.suggestions.compactMap { suggestion -> SelectionHelperOption? in
+            guard case .string(let value) = suggestion.value else {
+                return nil
             }
+            return SelectionHelperOption(label: suggestion.label, value: value)
+        }
+        return [SelectionHelperOption(label: allLabel, value: "")]
+            + projected.filter { !$0.value.isEmpty }
     }
 
-    private func isValidChannelSelection(_ value: String) -> Bool {
+    private func canonicalMeasurementSetEditValidation(
+        parameter: String,
+        value: String
+    ) -> SurfaceParameterEditResult? {
+        try? parameterValidateEdit(request: SurfaceParameterEditRequest(
+            surfaceId: "msexplore",
+            parameter: parameter,
+            text: value,
+            datasetPath: dataset.path,
+            spectralWindowId: nil,
+            suggestions: []
+        ))
+    }
+
+    private func canonicalMeasurementSetEditIsValid(parameter: String, value: String) -> Bool {
+        canonicalMeasurementSetEditValidation(parameter: parameter, value: value)?
+            .diagnostics.isEmpty == true
+    }
+
+    private func canonicalChannelEditValidation(_ value: String) -> SurfaceParameterEditResult? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return true
+            return canonicalMeasurementSetEditValidation(parameter: "spw", value: "")
         }
-        guard let channelLimit = selectedSpectralWindowChannelLimit, channelLimit > 0 else {
-            return false
-        }
-        let tokens = trimmed
-            .split(whereSeparator: { $0 == ";" || $0 == "," })
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard !tokens.isEmpty else {
-            return false
-        }
-        return tokens.allSatisfy { token in
-            let stepped = token.split(separator: "^", omittingEmptySubsequences: false)
-            guard stepped.count <= 2 else {
-                return false
-            }
-            if stepped.count == 2 {
-                guard let step = Int(stepped[1]), step > 0 else {
-                    return false
-                }
-            }
-            let rangeParts = stepped[0].split(separator: "~", omittingEmptySubsequences: false)
-            if rangeParts.count == 1, let channel = Int(rangeParts[0]) {
-                return channel >= 0 && channel < channelLimit
-            }
-            guard rangeParts.count == 2,
-                  let start = Int(rangeParts[0]),
-                  let end = Int(rangeParts[1]) else {
-                return false
-            }
-            return start >= 0 && start <= end && end < channelLimit
-        }
-    }
-
-    private func isValidIntegerSelection(_ value: String, labels: [String]) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return true
-        }
-        let validIDs = Set(labels.compactMap(Self.lastIntegerToken(in:)))
-        guard !validIDs.isEmpty else {
-            return false
-        }
-        let tokens = trimmed
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard !tokens.isEmpty else {
-            return false
-        }
-        return tokens.allSatisfy { token in
-            let rangeParts = token.split(separator: "~", omittingEmptySubsequences: false)
-            if rangeParts.count == 1, let id = Int(rangeParts[0]) {
-                return validIDs.contains(id)
-            }
-            guard rangeParts.count == 2,
-                  let start = Int(rangeParts[0]),
-                  let end = Int(rangeParts[1]),
-                  start <= end else {
-                return false
-            }
-            return (start...end).allSatisfy(validIDs.contains)
-        }
-    }
-
-    private func isValidAntennaSelection(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return true
-        }
-        let validNames = Set(dataset.antennas)
-        guard !validNames.isEmpty else {
-            return false
-        }
-        let tokens = trimmed
-            .split(separator: ",")
-            .flatMap { $0.split(separator: "&") }
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard !tokens.isEmpty else {
-            return false
-        }
-        return tokens.allSatisfy { token in
-            if validNames.contains(token) {
-                return true
-            }
-            if let id = Int(token), id >= 0, id < dataset.antennas.count {
-                return true
-            }
-            return false
-        }
-    }
-
-    private func isValidUVRangeSelection(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return true
-        }
-        return trimmed
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .allSatisfy(isValidUVRangePart)
-    }
-
-    private func isValidTimerangeSelection(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return true
-        }
-        return trimmed
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .allSatisfy(isValidNumericRangePart)
-    }
-
-    private func isValidNumericRangePart(_ value: String) -> Bool {
-        for prefix in [">=", "<=", ">", "<"] where value.hasPrefix(prefix) {
-            return Double(value.dropFirst(prefix.count)) != nil
-        }
-        let range = value.split(separator: "~", omittingEmptySubsequences: false)
-        if range.count == 2 {
-            guard let start = Double(range[0]), let end = Double(range[1]) else {
-                return false
-            }
-            return start <= end
-        }
-        return Double(value) != nil
-    }
-
-    private func isValidUVRangePart(_ value: String) -> Bool {
-        for prefix in [">=", "<=", ">", "<"] where value.hasPrefix(prefix) {
-            return Self.parseUVBound(String(value.dropFirst(prefix.count))) != nil
-        }
-        let range = value.split(separator: "~", omittingEmptySubsequences: false)
-        if range.count == 2 {
-            guard let start = Self.parseUVBound(String(range[0])),
-                  let end = Self.parseUVBound(String(range[1])) else {
-                return false
-            }
-            if let startUnit = start.unit, let endUnit = end.unit, startUnit != endUnit {
-                return false
-            }
-            return start.value <= end.value
-        }
-        return Self.parseUVBound(value) != nil
-    }
-
-    private static func parseUVBound(_ value: String) -> (value: Double, unit: String?)? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+        guard let spectralWindow = selectorToken(plotState.selectedSpectralWindow) else {
             return nil
         }
-        let splitIndex = trimmed.firstIndex { character in
-            !(character.isNumber || character == "." || character == "+" || character == "-")
-        } ?? trimmed.endIndex
-        let numberText = String(trimmed[..<splitIndex])
-        let unitText = trimmed[splitIndex...].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard let number = Double(numberText), number.isFinite else {
-            return nil
-        }
-        if unitText.isEmpty {
-            return (number, nil)
-        }
-        guard ["m", "lambda", "klambda", "mlambda", "glambda"].contains(unitText) else {
-            return nil
-        }
-        return (number, unitText)
+        return canonicalMeasurementSetEditValidation(
+            parameter: "spw",
+            value: "\(spectralWindow):\(trimmed)"
+        )
     }
 
-    private func isValidIntentSelection(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return true
-        }
-        let validIntents = Set(dataset.intents)
-        guard !validIntents.isEmpty else {
-            return false
-        }
-        return trimmed
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .allSatisfy(validIntents.contains)
+    private func canonicalChannelEditIsValid(_ value: String) -> Bool {
+        canonicalChannelEditValidation(value)?.diagnostics.isEmpty == true
     }
 
     private func isValidAvgChannelText(_ value: String) -> Bool {
@@ -6421,10 +6161,7 @@ struct MeasurementSetPlotPanel: View {
         guard let avgChannel = UInt64(trimmed), avgChannel > 0 else {
             return false
         }
-        guard let channelLimit = selectedSpectralWindowChannelLimit else {
-            return true
-        }
-        return avgChannel <= UInt64(channelLimit)
+        return true
     }
 
     private func isValidPositiveSecondsText(_ value: String) -> Bool {
@@ -6438,24 +6175,6 @@ struct MeasurementSetPlotPanel: View {
         return seconds.isFinite && seconds > 0
     }
 
-    private static func channelCount(fromSpectralWindowLabel label: String) -> Int? {
-        guard let colon = label.firstIndex(of: ":") else {
-            return nil
-        }
-        let tail = label[label.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-        guard let channelText = tail.split(separator: " ").first else {
-            return nil
-        }
-        return Int(channelText)
-    }
-
-    private static func lastIntegerToken(in label: String) -> Int? {
-        let digits = label
-            .split(whereSeparator: { !$0.isNumber })
-            .last
-        return digits.flatMap { Int($0) }
-    }
-
     private static func formatSeconds(_ value: Double) -> String {
         guard value.isFinite else {
             return ""
@@ -6467,13 +6186,7 @@ struct MeasurementSetPlotPanel: View {
     }
 
     private func selectorToken(_ value: String?) -> String? {
-        guard let value = normalizedPickerValue(value) else {
-            return nil
-        }
-        if let colon = value.firstIndex(of: ":") {
-            return String(value[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return value
+        normalizedPickerValue(value)
     }
 
     private func spectralWindowSelectorToken(_ plotState: MeasurementSetExplorerPlotState) -> String? {
@@ -8568,7 +8281,11 @@ struct GenericTaskPanel: View {
         argument: TaskUiArgument
     ) -> some View {
         let limit = genericImageChannelLimit()
-        let isValid = isValidGenericChannelSelection(value.wrappedValue, channelLimit: limit)
+        let validation = canonicalGenericEditValidation(
+            argument: argument,
+            value: value.wrappedValue
+        )
+        let isValid = validation?.diagnostics.isEmpty == true
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 TextField(label, text: value)
@@ -8576,7 +8293,6 @@ struct GenericTaskPanel: View {
                     .foregroundStyle(isValid ? Color.primary : Color.red)
                     .help(helpText(for: argument))
                 Button {
-                    populateGenericChannelFieldsForHelper(from: value.wrappedValue)
                     activeGenericSelectionHelper = argument.id
                 } label: {
                     Image(systemName: "number")
@@ -8601,6 +8317,14 @@ struct GenericTaskPanel: View {
                 Text(genericChannelSelectionSummary(value.wrappedValue, channelLimit: limit))
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
+            }
+            if let diagnostic = validation?.diagnostics.first {
+                Text(diagnostic.message)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(Color.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("task.parameterDiagnostic.\(argument.id)")
+                    .accessibilityValue(diagnostic.code)
             }
         }
     }
@@ -8649,7 +8373,6 @@ struct GenericTaskPanel: View {
                 Spacer()
                 Button("All") {
                     text.wrappedValue = ""
-                    populateGenericChannelFieldsForHelper(from: "")
                 }
             }
             Divider()
@@ -8658,7 +8381,6 @@ struct GenericTaskPanel: View {
                     ForEach(genericChannelSelectionOptions) { option in
                         Button(option.label) {
                             text.wrappedValue = option.value
-                            populateGenericChannelFieldsForHelper(from: option.value)
                         }
                     }
                 }
@@ -8668,36 +8390,34 @@ struct GenericTaskPanel: View {
         }
         .padding(12)
         .frame(width: 420, alignment: .leading)
-        .onAppear {
-            populateGenericChannelFieldsForHelper(from: text.wrappedValue)
-        }
     }
 
     private var genericChannelSelectionOptions: [SelectionHelperOption] {
-        guard let limit = genericImageChannelLimit(), limit > 0 else {
+        guard let schema,
+              let argument = schema.arguments.first(where: isChannelSelectionArgument),
+              let result = try? parameterValidateEdit(request: SurfaceParameterEditRequest(
+                  surfaceId: schema.commandId,
+                  parameter: argument.id,
+                  text: "",
+                  datasetPath: genericImageDataset()?.path,
+                  spectralWindowId: nil,
+                  suggestions: []
+              )) else {
             return [SelectionHelperOption(label: "All channels", value: "")]
         }
-        var options = [SelectionHelperOption(label: "All channels", value: "")]
-        options.append(SelectionHelperOption(label: "First channel", value: "0"))
-        if limit > 1 {
-            options.append(SelectionHelperOption(label: "All explicit", value: "0~\(limit - 1)"))
+        return result.suggestions.compactMap { suggestion -> SelectionHelperOption? in
+            guard case .string(let value) = suggestion.value else {
+                return nil
+            }
+            return SelectionHelperOption(label: suggestion.label, value: value)
         }
-        if limit >= 8 {
-            let start = limit / 4
-            let end = max(start, (limit * 3 / 4) - 1)
-            options.append(SelectionHelperOption(label: "Middle half", value: "\(start)~\(end)"))
-        }
-        if limit >= 16 {
-            options.append(SelectionHelperOption(label: "Every fourth", value: "0~\(limit - 1)^4"))
-        }
-        return options
     }
 
     private func applyGenericChannelSelection(text: Binding<String>) {
         let start = genericChannelStartText.trimmingCharacters(in: .whitespacesAndNewlines)
         let end = genericChannelEndText.trimmingCharacters(in: .whitespacesAndNewlines)
         let step = genericChannelStepText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !start.isEmpty, Int(start) != nil else {
+        guard !start.isEmpty else {
             return
         }
         let candidate: String
@@ -8708,38 +8428,10 @@ struct GenericTaskPanel: View {
         } else {
             candidate = "\(start)~\(end)^\(step)"
         }
-        if isValidGenericChannelSelection(candidate, channelLimit: genericImageChannelLimit()) {
+        if let argument = schema?.arguments.first(where: isChannelSelectionArgument),
+           canonicalGenericEditIsValid(argument: argument, value: candidate) {
             text.wrappedValue = candidate
         }
-    }
-
-    private func populateGenericChannelFields(from value: String) {
-        let first = value
-            .split(whereSeparator: { $0 == ";" || $0 == "," })
-            .first
-            .map(String.init) ?? ""
-        guard !first.isEmpty else {
-            genericChannelStartText = ""
-            genericChannelEndText = ""
-            genericChannelStepText = ""
-            return
-        }
-        let stepped = first.split(separator: "^", omittingEmptySubsequences: false)
-        genericChannelStepText = stepped.count == 2 ? String(stepped[1]) : ""
-        let range = stepped[0].split(separator: "~", omittingEmptySubsequences: false)
-        genericChannelStartText = range.first.map(String.init) ?? ""
-        genericChannelEndText = range.count == 2 ? String(range[1]) : ""
-    }
-
-    private func populateGenericChannelFieldsForHelper(from value: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.isEmpty else {
-            populateGenericChannelFields(from: value)
-            return
-        }
-        genericChannelStartText = "0"
-        genericChannelEndText = genericImageChannelLimit().map { String(max(0, $0 - 1)) } ?? ""
-        genericChannelStepText = ""
     }
 
     private func genericChannelSelectionSummary(_ value: String, channelLimit: Int) -> String {
@@ -8750,33 +8442,27 @@ struct GenericTaskPanel: View {
         return "Current selector: \(trimmed)"
     }
 
-    private func isValidGenericChannelSelection(_ value: String, channelLimit: Int?) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let channelLimit, channelLimit > 0 else {
-            return true
+    private func canonicalGenericEditValidation(
+        argument: TaskUiArgument,
+        value: String
+    ) -> SurfaceParameterEditResult? {
+        guard let schema,
+              let result = try? parameterValidateEdit(request: SurfaceParameterEditRequest(
+                  surfaceId: schema.commandId,
+                  parameter: argument.id,
+                  text: value,
+                  datasetPath: genericImageDataset()?.path,
+                  spectralWindowId: nil,
+                  suggestions: []
+              )) else {
+            return nil
         }
-        return trimmed
-            .split(whereSeparator: { $0 == ";" || $0 == "," })
-            .allSatisfy { rawPart in
-                let part = String(rawPart).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !part.isEmpty else { return false }
-                let stepped = part.split(separator: "^", omittingEmptySubsequences: false)
-                guard stepped.count <= 2 else { return false }
-                if stepped.count == 2 {
-                    guard let step = Int(stepped[1]), step > 0 else { return false }
-                }
-                let rangeParts = stepped[0].split(separator: "~", omittingEmptySubsequences: false)
-                if rangeParts.count == 1, let channel = Int(rangeParts[0]) {
-                    return channel >= 0 && channel < channelLimit
-                }
-                guard rangeParts.count == 2,
-                      let start = Int(rangeParts[0]),
-                      let end = Int(rangeParts[1])
-                else {
-                    return false
-                }
-                return start >= 0 && start <= end && end < channelLimit
-            }
+        return result
+    }
+
+    private func canonicalGenericEditIsValid(argument: TaskUiArgument, value: String) -> Bool {
+        canonicalGenericEditValidation(argument: argument, value: value)?
+            .diagnostics.isEmpty == true
     }
 
     private func isChannelSelectionArgument(_ argument: TaskUiArgument) -> Bool {
@@ -8845,6 +8531,31 @@ struct GenericTaskPanel: View {
     private func choices(for argument: TaskUiArgument) -> [String] {
         let concept = parameterConcept(for: argument)
         let binding = parameterBinding(for: argument)
+        if let concept,
+           concept.id.contains(".selection."),
+           let schema {
+            let datasetPath = concept.id.hasPrefix("image.")
+                ? genericImageDataset()?.path
+                : store.state.selectedDataset?.path
+            if let result = try? parameterValidateEdit(request: SurfaceParameterEditRequest(
+                surfaceId: schema.commandId,
+                parameter: argument.id,
+                text: "",
+                datasetPath: datasetPath,
+                spectralWindowId: nil,
+                suggestions: []
+            )) {
+                let values = result.suggestions.compactMap { suggestion -> String? in
+                    guard case .string(let value) = suggestion.value else {
+                        return nil
+                    }
+                    return value
+                }
+                if !values.isEmpty {
+                    return values
+                }
+            }
+        }
         switch concept?.valueDomain.resourceKind {
         case "measurement_set":
             let measurementSets = store.state.project.datasets
@@ -8886,37 +8597,6 @@ struct GenericTaskPanel: View {
             if !regions.isEmpty {
                 return regions
             }
-        }
-        if binding?.contextRole == "spectral_window_selection",
-           let spectralWindows = store.state.selectedDataset?.spectralWindows,
-           !spectralWindows.isEmpty {
-            return spectralWindows.compactMap { label in
-                label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
-            }
-        }
-        if binding?.contextRole == "field_selection" || concept?.id == "ms.selection.field",
-           let fields = store.state.selectedDataset?.fields,
-           !fields.isEmpty {
-            return fields.compactMap { label in
-                label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
-            }
-        }
-        if concept?.id == "ms.selection.scan",
-           let scans = store.state.selectedDataset?.scans,
-           !scans.isEmpty {
-            return scans.compactMap { label in
-                label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
-            }
-        }
-        if concept?.id == "ms.selection.antenna",
-           let antennas = store.state.selectedDataset?.antennas,
-           !antennas.isEmpty {
-            return antennas
-        }
-        if concept?.id == "ms.selection.correlation",
-           let correlations = store.state.selectedDataset?.correlations,
-           !correlations.isEmpty {
-            return correlations
         }
         if concept?.id == "parameter.datacolumn",
            let columns = store.state.selectedDataset?.dataColumns,

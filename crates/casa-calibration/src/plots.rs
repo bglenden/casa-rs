@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use casa_ms::{
     MeasurementSet, MsAxis, MsDataColumn, MsLegendPosition, MsPlotPayload, MsPlotPreset,
-    MsPlotSpec, MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsSelectionSpec,
+    MsPlotSpec, MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsSelection,
     VisibilityDataColumn, build_msexplore_plot_payload,
 };
 use casa_tables::{Table, TableError, TableOptions};
@@ -142,7 +142,7 @@ pub struct CalibrationPlotRequest {
     /// Calibration-table path used by inspection plots.
     pub calibration_table_path: Option<PathBuf>,
     /// Shared MeasurementSet selection controls used by corrected-data plots.
-    pub selection: MsSelectionSpec,
+    pub selection: MsSelection,
 }
 
 /// Errors returned while preparing calibration plot payloads.
@@ -273,7 +273,7 @@ pub fn build_calibration_plot_payload(
 
 fn build_corrected_data_plot(
     path: &Path,
-    selection: &MsSelectionSpec,
+    selection: &MsSelection,
     preset: CalibrationPlotPreset,
 ) -> Result<MsPlotPayload, CalibrationPlotError> {
     let ms =

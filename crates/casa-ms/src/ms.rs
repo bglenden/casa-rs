@@ -78,9 +78,16 @@ impl MeasurementSet {
     /// Creates the main table directory and subtable subdirectories.
     pub fn create(path: impl AsRef<Path>, builder: MeasurementSetBuilder) -> MsResult<Self> {
         let path = path.as_ref().to_path_buf();
+        let target = crate::write_session::MeasurementSetCreateTarget::prepare(&path, false)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
         let schemas = builder.build_schemas()?;
-        let mut ms = Self::from_schemas(schemas, Some(path.clone()))?;
+        let mut ms = Self::from_schemas(schemas, Some(target.staging_path().to_path_buf()))?;
         ms.save()?;
+        target
+            .commit()
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        ms.path = Some(path.clone());
+        ms.rebase_subtable_paths(&path);
         Ok(ms)
     }
 
@@ -91,6 +98,14 @@ impl MeasurementSet {
     /// keywords written by older versions of this crate are also accepted.
     pub fn open(path: impl AsRef<Path>) -> MsResult<Self> {
         let path = path.as_ref().to_path_buf();
+        let incomplete_marker = crate::write_session::incomplete_write_marker(&path);
+        if incomplete_marker.exists() {
+            return Err(MsError::InvalidInput(format!(
+                "MeasurementSet {} has an incomplete write marker at {}",
+                path.display(),
+                incomplete_marker.display()
+            )));
+        }
         tracing::info!(path = %path.display(), "opening MeasurementSet");
         let main = Table::open(TableOptions::new(&path))?;
 
@@ -146,6 +161,7 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
+        let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
         save_main_table_with_policy(&self.main, &path, false)?;
 
         for (id, table) in &self.subtables {
@@ -156,6 +172,7 @@ impl MeasurementSet {
                 .unwrap_or_else(|| path.join(id.name()));
             table.save(measurement_set_table_options(&subtable_path))?;
         }
+        crate::write_session::complete_in_place_write(incomplete_marker)?;
 
         tracing::info!(path = %path.display(), rows = self.row_count(), "saved MeasurementSet");
         Ok(())
@@ -183,6 +200,7 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
+        let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
         save_main_table_with_policy(&self.main, &path, true)?;
 
         for (id, table) in &self.subtables {
@@ -193,6 +211,7 @@ impl MeasurementSet {
                 .unwrap_or_else(|| path.join(id.name()));
             table.save_assuming_valid(measurement_set_table_options(&subtable_path))?;
         }
+        crate::write_session::complete_in_place_write(incomplete_marker)?;
 
         tracing::info!(
             path = %path.display(),
@@ -214,6 +233,7 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
+        let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
         save_main_table_with_policy_and_column_overrides(&self.main, &path, column_overrides)?;
 
         for (id, table) in &self.subtables {
@@ -224,6 +244,7 @@ impl MeasurementSet {
                 .unwrap_or_else(|| path.join(id.name()));
             table.save_assuming_valid(measurement_set_table_options(&subtable_path))?;
         }
+        crate::write_session::complete_in_place_write(incomplete_marker)?;
 
         Ok(())
     }
@@ -244,7 +265,9 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
+        let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
         save_main_table_with_policy(&self.main, &path, false)?;
+        crate::write_session::complete_in_place_write(incomplete_marker)?;
         Ok(())
     }
 
@@ -268,7 +291,9 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
+        let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
         save_main_table_with_policy(&self.main, &path, true)?;
+        crate::write_session::complete_in_place_write(incomplete_marker)?;
         tracing::info!(path = %path.display(), rows = self.row_count(), "saved MeasurementSet MAIN table");
         Ok(())
     }
@@ -279,9 +304,17 @@ impl MeasurementSet {
     /// self-consistent when reopened by Rust or C++ casacore tools.
     pub fn save_as(&mut self, path: impl AsRef<Path>) -> MsResult<()> {
         let path = path.as_ref().to_path_buf();
+        let target = crate::write_session::MeasurementSetCreateTarget::prepare(&path, true)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        self.path = Some(target.staging_path().to_path_buf());
+        self.rebase_subtable_paths(target.staging_path());
+        self.save()?;
+        target
+            .commit()
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
         self.path = Some(path.clone());
         self.rebase_subtable_paths(&path);
-        self.save()
+        Ok(())
     }
 
     /// Save the MS to a new path without re-validating every table row.
@@ -292,9 +325,17 @@ impl MeasurementSet {
     /// the storage layer yet fail strict full-row validation.
     pub fn save_as_assuming_valid(&mut self, path: impl AsRef<Path>) -> MsResult<()> {
         let path = path.as_ref().to_path_buf();
+        let target = crate::write_session::MeasurementSetCreateTarget::prepare(&path, true)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        self.path = Some(target.staging_path().to_path_buf());
+        self.rebase_subtable_paths(target.staging_path());
+        self.save_assuming_valid()?;
+        target
+            .commit()
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
         self.path = Some(path.clone());
         self.rebase_subtable_paths(&path);
-        self.save_assuming_valid()
+        Ok(())
     }
 
     /// Validate the MS structure and required column metadata.
@@ -716,14 +757,7 @@ impl MeasurementSet {
         crate::columns::weight_columns::SigmaColumn::new(&self.main)
     }
 
-    // ---- Selection and iteration convenience methods ----
-
-    /// Apply a selection to this MS, returning matching row indices.
-    ///
-    /// Convenience wrapper around [`MsSelection::apply`](crate::selection::MsSelection::apply).
-    pub fn select(&mut self, sel: &crate::selection::MsSelection) -> MsResult<Vec<usize>> {
-        sel.apply(self)
-    }
+    // ---- Iteration convenience methods ----
 
     /// Iterate over the main table with canonical sort order
     /// (ARRAY_ID, FIELD_ID, DATA_DESC_ID, TIME).
@@ -1375,6 +1409,25 @@ mod tests {
             assert_eq!(ms.antenna().unwrap().row_count(), 1);
             assert_eq!(ms.antenna().unwrap().name(0).unwrap(), "ALMA01");
         }
+    }
+
+    #[test]
+    fn open_rejects_incomplete_in_place_write_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let ms_path = dir.path().join("incomplete.ms");
+        let mut ms = MeasurementSet::create(&ms_path, MeasurementSetBuilder::new()).unwrap();
+        ms.save().unwrap();
+        let marker = crate::write_session::incomplete_write_marker(&ms_path);
+        fs::write(&marker, b"interrupted").unwrap();
+
+        let error = match MeasurementSet::open(&ms_path) {
+            Ok(_) => panic!("incomplete MS must not open"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("incomplete write marker"));
+
+        fs::remove_file(marker).unwrap();
+        MeasurementSet::open(&ms_path).expect("complete MS reopens after explicit recovery");
     }
 
     #[test]

@@ -389,34 +389,7 @@ fn parse_bool(value: &str) -> Result<bool, String> {
 
 fn parse_numeric_selector(value: &str, label: &str) -> Result<Vec<i32>, String> {
     let value = strip_quotes(value);
-    if value.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut values = Vec::new();
-    for raw_part in value.split(',') {
-        let part = raw_part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if let Some((start, end)) = parse_numeric_range(part) {
-            values.extend(start..=end);
-            continue;
-        }
-        let parsed = part.parse::<i32>().map_err(|_| {
-            format!("{label} selector {part:?} is not a supported numeric id or range")
-        })?;
-        values.push(parsed);
-    }
-    values.sort_unstable();
-    values.dedup();
-    Ok(values)
-}
-
-fn parse_numeric_range(value: &str) -> Option<(i32, i32)> {
-    let (start, end) = value.split_once('~')?;
-    let start = start.trim().parse::<i32>().ok()?;
-    let end = end.trim().parse::<i32>().ok()?;
-    Some((start.min(end), start.max(end)))
+    casa_ms::parse_numeric_id_selector(&value, label).map_err(|error| error.to_string())
 }
 
 fn parse_gainfield_selector(value: &str) -> Result<Option<GainFieldSelector>, String> {
