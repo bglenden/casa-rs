@@ -131,11 +131,11 @@ fn create_image_fixture(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut coords = CoordinateSystem::new();
-    coords.add_coordinate(Box::new(LinearCoordinate::new(
+    coords.add_coordinate(LinearCoordinate::new(
         3,
         vec!["X".into(), "Y".into(), "Plane".into()],
         vec!["pix".into(), "pix".into(), "pix".into()],
-    )));
+    ));
 
     let mut image = Image::create(vec![4, 3, 2], coords, path)?;
     image.set_units("Jy/beam")?;

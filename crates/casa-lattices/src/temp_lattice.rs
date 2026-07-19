@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Automatic memory/disk switching lattice.
 
+use std::path::PathBuf;
+
 use ndarray::ArrayD;
 
 use crate::array_lattice::ArrayLattice;
@@ -11,18 +13,97 @@ use crate::paged_array::PagedArray;
 use crate::tiled_shape::TiledShape;
 use crate::traversal::{TraversalCacheHint, TraversalCacheScope};
 
-/// Default threshold in elements: lattices below this use in-memory storage.
-///
-/// Matches the C++ casacore `TempLattice` default of 2 MiB (at 8 bytes/element
-/// this is 256 Ki elements).
-const DEFAULT_THRESHOLD: usize = 256 * 1024;
+/// Location used when a temporary lattice is paged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScratchSpace {
+    /// Create and automatically remove a unique system temporary directory.
+    SystemTemp,
+    /// Create and automatically remove a unique scratch subdirectory here.
+    Directory(PathBuf),
+}
+
+/// Explicit byte-aware storage policy for temporary lattices and images.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TempStoragePolicy {
+    Memory,
+    Paged {
+        scratch: ScratchSpace,
+    },
+    Auto {
+        memory_budget_bytes: usize,
+        scratch: ScratchSpace,
+    },
+}
+
+/// Pure storage decision returned by [`TempStoragePolicy::plan`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TempStoragePlan {
+    shape_bytes: usize,
+    paged: bool,
+}
+
+impl TempStoragePlan {
+    pub fn shape_bytes(self) -> usize {
+        self.shape_bytes
+    }
+
+    pub fn is_paged(self) -> bool {
+        self.paged
+    }
+}
+
+impl TempStoragePolicy {
+    pub fn plan<T: LatticeElement>(
+        &self,
+        shape: &[usize],
+    ) -> Result<TempStoragePlan, LatticeError> {
+        if shape.is_empty() || shape.contains(&0) {
+            return Err(LatticeError::TileLayout(format!(
+                "temporary lattice shape must be non-empty and positive: {shape:?}"
+            )));
+        }
+        let elements = shape.iter().try_fold(1usize, |product, &extent| {
+            product.checked_mul(extent).ok_or_else(|| {
+                LatticeError::TileLayout("temporary lattice element count overflows usize".into())
+            })
+        })?;
+        let element_bytes = T::PRIMITIVE_TYPE.fixed_width_bytes().ok_or_else(|| {
+            LatticeError::TileLayout(format!(
+                "temporary storage has no fixed byte width for {:?}",
+                T::PRIMITIVE_TYPE
+            ))
+        })?;
+        let shape_bytes = elements.checked_mul(element_bytes).ok_or_else(|| {
+            LatticeError::TileLayout("temporary lattice byte size overflows usize".into())
+        })?;
+        let paged = match self {
+            Self::Memory => false,
+            Self::Paged { .. } => true,
+            Self::Auto {
+                memory_budget_bytes,
+                ..
+            } => shape_bytes > *memory_budget_bytes,
+        };
+        Ok(TempStoragePlan { shape_bytes, paged })
+    }
+
+    fn scratch(&self) -> Option<&ScratchSpace> {
+        match self {
+            Self::Memory => None,
+            Self::Paged { scratch } | Self::Auto { scratch, .. } => Some(scratch),
+        }
+    }
+}
+
+struct ScratchLease {
+    _directory: tempfile::TempDir,
+}
 
 /// A lattice that automatically chooses memory or scratch-disk storage.
 ///
-/// Corresponds to the C++ `TempLattice<T>` class. If the lattice is small
-/// enough (below `max_memory_elements`), data is kept in an
-/// [`ArrayLattice`]. Otherwise, a scratch [`PagedArray`] is created on disk
-/// in a temporary directory (enabling `temp_close()`/`reopen()` cycles).
+/// Corresponds to the C++ `TempLattice<T>` class. [`TempStoragePolicy`] makes
+/// the storage choice explicit; its automatic mode compares checked storage
+/// bytes with a caller-supplied memory budget.
 ///
 /// `TempLattice` is always writable. It is persistent only when backed by
 /// a scratch `PagedArray`, and it is paged only in that case.
@@ -30,74 +111,91 @@ const DEFAULT_THRESHOLD: usize = 256 * 1024;
 /// # Examples
 ///
 /// ```rust
-/// use casa_lattices::{TempLattice, Lattice, LatticeMut};
+/// use casa_lattices::{Lattice, LatticeMut, TempLattice, TempStoragePolicy};
 ///
 /// // Small: stays in memory.
-/// let mut lat = TempLattice::<f64>::new(vec![4, 4], None).unwrap();
+/// let mut lat = TempLattice::<f64>::new(vec![4, 4], TempStoragePolicy::Memory).unwrap();
 /// assert!(!lat.is_paged());
 /// lat.set(3.0).unwrap();
 /// assert_eq!(lat.get_at(&[0, 0]).unwrap(), 3.0);
 /// ```
-pub enum TempLattice<T: LatticeElement> {
-    /// In-memory storage.
+pub struct TempLattice<T: LatticeElement> {
+    storage: TempLatticeStorage<T>,
+}
+
+enum TempLatticeStorage<T: LatticeElement> {
     Memory(ArrayLattice<T>),
-    /// Scratch-disk storage backed by a temporary directory.
     Paged {
-        /// The paged array storing pixel data.
         array: Box<PagedArray<T>>,
-        /// Keeps the temp directory alive; cleaned up on drop.
-        _dir: tempfile::TempDir,
+        _scratch: ScratchLease,
     },
 }
 
 impl<T: LatticeElement> TempLattice<T> {
     /// Creates a new `TempLattice` with the given shape.
     ///
-    /// If `max_memory_elements` is `None`, the default threshold
-    /// (256 Ki elements) is used. If the total number of elements exceeds
-    /// the threshold, a scratch [`PagedArray`] is created in a temporary
-    /// directory on disk.
-    pub fn new(
-        shape: Vec<usize>,
-        max_memory_elements: Option<usize>,
-    ) -> Result<Self, LatticeError> {
-        let nelements: usize = shape.iter().product();
-        let threshold = max_memory_elements.unwrap_or(DEFAULT_THRESHOLD);
+    /// The policy is explicit and measured in bytes; no element-count or
+    /// element-width-dependent threshold is hidden in this constructor.
+    pub fn new(shape: Vec<usize>, policy: TempStoragePolicy) -> Result<Self, LatticeError> {
+        let plan = policy.plan::<T>(&shape)?;
 
-        if nelements <= threshold {
-            Ok(Self::Memory(ArrayLattice::zeros(shape)))
+        if !plan.is_paged() {
+            Ok(Self {
+                storage: TempLatticeStorage::Memory(ArrayLattice::zeros(shape)),
+            })
         } else {
-            let dir = tempfile::tempdir().map_err(|e| {
-                LatticeError::Table(format!("failed to create scratch directory: {e}"))
-            })?;
-            let table_path = dir.path().join("TempLattice.table");
-            let ts = TiledShape::new(shape);
+            let lease = match policy.scratch().expect("paged policy has scratch") {
+                ScratchSpace::SystemTemp => {
+                    let dir = tempfile::tempdir().map_err(|e| {
+                        LatticeError::Table(format!("failed to create scratch directory: {e}"))
+                    })?;
+                    ScratchLease { _directory: dir }
+                }
+                ScratchSpace::Directory(directory) => {
+                    std::fs::create_dir_all(directory).map_err(|e| {
+                        LatticeError::Table(format!("failed to create scratch directory: {e}"))
+                    })?;
+                    let dir = tempfile::Builder::new()
+                        .prefix("TempLattice-")
+                        .tempdir_in(directory)
+                        .map_err(|e| {
+                            LatticeError::Table(format!(
+                                "failed to create unique scratch directory: {e}"
+                            ))
+                        })?;
+                    ScratchLease { _directory: dir }
+                }
+            };
+            let table_path = lease._directory.path().join("TempLattice.table");
+            let ts = TiledShape::new(shape, std::mem::size_of::<T>())?;
             let pa = PagedArray::create(ts, &table_path)?;
-            Ok(Self::Paged {
-                array: Box::new(pa),
-                _dir: dir,
+            Ok(Self {
+                storage: TempLatticeStorage::Paged {
+                    array: Box::new(pa),
+                    _scratch: lease,
+                },
             })
         }
     }
 
     /// Returns `true` if the lattice is using in-memory storage.
     pub fn is_in_memory(&self) -> bool {
-        matches!(self, Self::Memory(_))
+        matches!(self.storage, TempLatticeStorage::Memory(_))
     }
 
     /// Returns a reference to the inner `PagedArray`, if paged.
     fn paged_array(&self) -> Option<&PagedArray<T>> {
-        match self {
-            Self::Memory(_) => None,
-            Self::Paged { array, .. } => Some(array),
+        match &self.storage {
+            TempLatticeStorage::Memory(_) => None,
+            TempLatticeStorage::Paged { array, .. } => Some(array),
         }
     }
 
     /// Returns a mutable reference to the inner `PagedArray`, if paged.
     fn paged_array_mut(&mut self) -> Option<&mut PagedArray<T>> {
-        match self {
-            Self::Memory(_) => None,
-            Self::Paged { array, .. } => Some(array),
+        match &mut self.storage {
+            TempLatticeStorage::Memory(_) => None,
+            TempLatticeStorage::Paged { array, .. } => Some(array),
         }
     }
 
@@ -131,7 +229,7 @@ impl<T: LatticeElement> TempLattice<T> {
     /// Returns the configured maximum tile-cache size in pixels.
     ///
     /// Returns `0` for in-memory lattices and for paged lattices with no
-    /// explicit maximum.
+    /// explicit request; persistent storage then uses its fixed default.
     pub fn maximum_cache_size_pixels(&self) -> usize {
         self.paged_array()
             .map(PagedArray::maximum_cache_size_pixels)
@@ -141,7 +239,7 @@ impl<T: LatticeElement> TempLattice<T> {
     /// Sets the maximum tile-cache size in pixels for the paged variant.
     ///
     /// No-op for in-memory lattices. A value of `0` removes the explicit
-    /// maximum. Mirrors C++ `TempLattice::setMaximumCacheSize`.
+    /// maximum request. Mirrors C++ `TempLattice::setMaximumCacheSize`.
     pub fn set_maximum_cache_size_pixels(
         &mut self,
         how_many_pixels: usize,
@@ -155,7 +253,7 @@ impl<T: LatticeElement> TempLattice<T> {
     /// Sets the tile cache to hold approximately `how_many_tiles` tiles.
     ///
     /// No-op for in-memory lattices. A value of `0` removes the explicit
-    /// maximum. Mirrors C++ `TempLattice::setCacheSizeInTiles`.
+    /// maximum request. Mirrors C++ `TempLattice::setCacheSizeInTiles`.
     pub fn set_cache_size_in_tiles(&mut self, how_many_tiles: usize) -> Result<(), LatticeError> {
         match self.paged_array_mut() {
             Some(pa) => pa.set_cache_size_in_tiles(how_many_tiles),
@@ -166,30 +264,30 @@ impl<T: LatticeElement> TempLattice<T> {
 
 impl<T: LatticeElement> Lattice<T> for TempLattice<T> {
     fn shape(&self) -> &[usize] {
-        match self {
-            Self::Memory(l) => l.shape(),
-            Self::Paged { array, .. } => array.shape(),
+        match &self.storage {
+            TempLatticeStorage::Memory(l) => l.shape(),
+            TempLatticeStorage::Paged { array, .. } => array.shape(),
         }
     }
 
     fn is_persistent(&self) -> bool {
-        match self {
-            Self::Memory(l) => l.is_persistent(),
-            Self::Paged { array, .. } => array.is_persistent(),
+        match &self.storage {
+            TempLatticeStorage::Memory(l) => l.is_persistent(),
+            TempLatticeStorage::Paged { array, .. } => array.is_persistent(),
         }
     }
 
     fn is_paged(&self) -> bool {
-        match self {
-            Self::Memory(l) => l.is_paged(),
-            Self::Paged { array, .. } => array.is_paged(),
+        match &self.storage {
+            TempLatticeStorage::Memory(l) => l.is_paged(),
+            TempLatticeStorage::Paged { array, .. } => array.is_paged(),
         }
     }
 
     fn get_at(&self, position: &[usize]) -> Result<T, LatticeError> {
-        match self {
-            Self::Memory(l) => l.get_at(position),
-            Self::Paged { array, .. } => array.get_at(position),
+        match &self.storage {
+            TempLatticeStorage::Memory(l) => l.get_at(position),
+            TempLatticeStorage::Paged { array, .. } => array.get_at(position),
         }
     }
 
@@ -199,23 +297,23 @@ impl<T: LatticeElement> Lattice<T> for TempLattice<T> {
         shape: &[usize],
         stride: &[usize],
     ) -> Result<ArrayD<T>, LatticeError> {
-        match self {
-            Self::Memory(l) => l.get_slice(start, shape, stride),
-            Self::Paged { array, .. } => array.get_slice(start, shape, stride),
+        match &self.storage {
+            TempLatticeStorage::Memory(l) => l.get_slice(start, shape, stride),
+            TempLatticeStorage::Paged { array, .. } => array.get_slice(start, shape, stride),
         }
     }
 
     fn get(&self) -> Result<ArrayD<T>, LatticeError> {
-        match self {
-            Self::Memory(l) => l.get(),
-            Self::Paged { array, .. } => array.get(),
+        match &self.storage {
+            TempLatticeStorage::Memory(l) => l.get(),
+            TempLatticeStorage::Paged { array, .. } => array.get(),
         }
     }
 
     fn nice_cursor_shape(&self) -> Vec<usize> {
-        match self {
-            Self::Memory(l) => l.nice_cursor_shape(),
-            Self::Paged { array, .. } => array.nice_cursor_shape(),
+        match &self.storage {
+            TempLatticeStorage::Memory(l) => l.nice_cursor_shape(),
+            TempLatticeStorage::Paged { array, .. } => array.nice_cursor_shape(),
         }
     }
 
@@ -223,9 +321,9 @@ impl<T: LatticeElement> Lattice<T> for TempLattice<T> {
         &'a self,
         hint: &TraversalCacheHint,
     ) -> Result<Option<Box<dyn TraversalCacheScope + 'a>>, LatticeError> {
-        match self {
-            Self::Memory(_) => Ok(None),
-            Self::Paged { array, .. } => array.enter_traversal_cache_scope(hint),
+        match &self.storage {
+            TempLatticeStorage::Memory(_) => Ok(None),
+            TempLatticeStorage::Paged { array, .. } => array.enter_traversal_cache_scope(hint),
         }
     }
 }
@@ -271,32 +369,34 @@ impl<T: LatticeElement> LatticeMut<T> for TempLattice<T> {
     }
 
     fn put_at(&mut self, value: T, position: &[usize]) -> Result<(), LatticeError> {
-        match self {
-            Self::Memory(l) => l.put_at(value, position),
-            Self::Paged { array, .. } => array.put_at(value, position),
+        match &mut self.storage {
+            TempLatticeStorage::Memory(l) => l.put_at(value, position),
+            TempLatticeStorage::Paged { array, .. } => array.put_at(value, position),
         }
     }
 
     fn put_slice(&mut self, data: &ArrayD<T>, start: &[usize]) -> Result<(), LatticeError> {
-        match self {
-            Self::Memory(l) => l.put_slice(data, start),
-            Self::Paged { array, .. } => array.put_slice(data, start),
+        match &mut self.storage {
+            TempLatticeStorage::Memory(l) => l.put_slice(data, start),
+            TempLatticeStorage::Paged { array, .. } => array.put_slice(data, start),
         }
     }
 
     fn set(&mut self, value: T) -> Result<(), LatticeError> {
-        match self {
-            Self::Memory(l) => l.set(value),
-            Self::Paged { array, .. } => array.set(value),
+        match &mut self.storage {
+            TempLatticeStorage::Memory(l) => l.set(value),
+            TempLatticeStorage::Paged { array, .. } => array.set(value),
         }
     }
 }
 
 impl<T: LatticeElement> std::fmt::Debug for TempLattice<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Memory(l) => f.debug_tuple("TempLattice::Memory").field(l).finish(),
-            Self::Paged { array, .. } => f.debug_tuple("TempLattice::Paged").field(array).finish(),
+        match &self.storage {
+            TempLatticeStorage::Memory(l) => f.debug_tuple("TempLattice::Memory").field(l).finish(),
+            TempLatticeStorage::Paged { array, .. } => {
+                f.debug_tuple("TempLattice::Paged").field(array).finish()
+            }
         }
     }
 }
@@ -307,47 +407,107 @@ mod tests {
 
     #[test]
     fn small_uses_memory() {
-        let lat = TempLattice::<f64>::new(vec![4, 4], None).unwrap();
+        let lat = TempLattice::<f64>::new(vec![4, 4], TempStoragePolicy::Memory).unwrap();
         assert!(lat.is_in_memory());
         assert!(!lat.is_paged());
     }
 
     #[test]
     fn large_uses_paged() {
-        // Force paging with a threshold of 10 elements.
-        let lat = TempLattice::<f64>::new(vec![10, 10], Some(10)).unwrap();
+        // Explicit paging is independent of element type and shape size.
+        let lat = TempLattice::<f64>::new(
+            vec![10, 10],
+            TempStoragePolicy::Paged {
+                scratch: ScratchSpace::SystemTemp,
+            },
+        )
+        .unwrap();
         assert!(!lat.is_in_memory());
         assert!(lat.is_paged());
     }
 
     #[test]
     fn memory_read_write() {
-        let mut lat = TempLattice::<i32>::new(vec![3, 3], None).unwrap();
+        let mut lat = TempLattice::<i32>::new(vec![3, 3], TempStoragePolicy::Memory).unwrap();
         lat.set(5).unwrap();
         assert_eq!(lat.get_at(&[1, 1]).unwrap(), 5);
     }
 
     #[test]
     fn paged_read_write() {
-        let mut lat = TempLattice::<f64>::new(vec![4, 4], Some(1)).unwrap();
+        let mut lat = TempLattice::<f64>::new(
+            vec![4, 4],
+            TempStoragePolicy::Paged {
+                scratch: ScratchSpace::SystemTemp,
+            },
+        )
+        .unwrap();
         lat.set(2.5).unwrap();
         assert_eq!(lat.get_at(&[0, 0]).unwrap(), 2.5);
     }
 
     #[test]
-    fn threshold_boundary() {
-        // Exactly at threshold: should be memory.
-        let lat = TempLattice::<f64>::new(vec![10], Some(10)).unwrap();
+    fn byte_budget_boundary() {
+        // Ten f64 values are exactly 80 bytes.
+        let lat = TempLattice::<f64>::new(
+            vec![10],
+            TempStoragePolicy::Auto {
+                memory_budget_bytes: 80,
+                scratch: ScratchSpace::SystemTemp,
+            },
+        )
+        .unwrap();
         assert!(lat.is_in_memory());
 
-        // One above threshold: should be paged.
-        let lat = TempLattice::<f64>::new(vec![11], Some(10)).unwrap();
+        // One byte less forces the same shape to scratch storage.
+        let lat = TempLattice::<f64>::new(
+            vec![10],
+            TempStoragePolicy::Auto {
+                memory_budget_bytes: 79,
+                scratch: ScratchSpace::SystemTemp,
+            },
+        )
+        .unwrap();
         assert!(!lat.is_in_memory());
     }
 
     #[test]
+    fn byte_plan_rejects_overflow() {
+        let error = TempStoragePolicy::Memory
+            .plan::<f64>(&[usize::MAX, 2])
+            .unwrap_err();
+        assert!(error.to_string().contains("overflows usize"));
+    }
+
+    #[test]
+    fn directory_scratch_is_unique_and_removed_on_drop() {
+        let parent = tempfile::tempdir().unwrap();
+        let policy = || TempStoragePolicy::Paged {
+            scratch: ScratchSpace::Directory(parent.path().to_path_buf()),
+        };
+
+        {
+            let mut first = TempLattice::<f32>::new(vec![4, 4], policy()).unwrap();
+            let mut second = TempLattice::<f32>::new(vec![4, 4], policy()).unwrap();
+            first.set(1.0).unwrap();
+            second.set(2.0).unwrap();
+            assert_eq!(first.get_at(&[0, 0]).unwrap(), 1.0);
+            assert_eq!(second.get_at(&[0, 0]).unwrap(), 2.0);
+            assert_eq!(std::fs::read_dir(parent.path()).unwrap().count(), 2);
+        }
+
+        assert_eq!(std::fs::read_dir(parent.path()).unwrap().count(), 0);
+    }
+
+    #[test]
     fn temp_close_reopen_paged() {
-        let mut lat = TempLattice::<f64>::new(vec![4, 4], Some(1)).unwrap();
+        let mut lat = TempLattice::<f64>::new(
+            vec![4, 4],
+            TempStoragePolicy::Paged {
+                scratch: ScratchSpace::SystemTemp,
+            },
+        )
+        .unwrap();
         lat.set(3.0).unwrap();
         assert!(!lat.is_temp_closed());
 
@@ -363,7 +523,13 @@ mod tests {
 
     #[test]
     fn temp_close_paged_auto_reopens_on_read() {
-        let mut lat = TempLattice::<f64>::new(vec![4, 4], Some(1)).unwrap();
+        let mut lat = TempLattice::<f64>::new(
+            vec![4, 4],
+            TempStoragePolicy::Paged {
+                scratch: ScratchSpace::SystemTemp,
+            },
+        )
+        .unwrap();
         lat.set(7.0).unwrap();
         lat.temp_close().unwrap();
         assert!(lat.is_temp_closed());
@@ -378,7 +544,7 @@ mod tests {
 
     #[test]
     fn temp_close_memory_noop() {
-        let mut lat = TempLattice::<f64>::new(vec![4, 4], None).unwrap();
+        let mut lat = TempLattice::<f64>::new(vec![4, 4], TempStoragePolicy::Memory).unwrap();
         lat.set(5.0).unwrap();
         lat.temp_close().unwrap();
         assert!(!lat.is_temp_closed());
@@ -387,9 +553,18 @@ mod tests {
 
     #[test]
     fn paged_cache_size_controls_forward_to_paged_array() {
-        let mut lat = TempLattice::<f32>::new(vec![16, 16, 16], Some(1)).unwrap();
+        let mut lat = TempLattice::<f32>::new(
+            vec![16, 16, 16],
+            TempStoragePolicy::Paged {
+                scratch: ScratchSpace::SystemTemp,
+            },
+        )
+        .unwrap();
         assert!(lat.is_paged());
-        assert_eq!(lat.maximum_cache_size_pixels(), 0);
+        assert_eq!(
+            lat.maximum_cache_size_pixels(),
+            casa_tables::DEFAULT_TILED_ARRAY_CACHE_BYTES / std::mem::size_of::<f32>()
+        );
 
         lat.set_cache_size_in_tiles(2).unwrap();
         assert_eq!(lat.maximum_cache_size_pixels(), 2 * 16 * 16 * 16);

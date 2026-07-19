@@ -6,7 +6,12 @@ use casa_images::{SubImage, TempImage};
 use casa_lattices::{Lattice, LatticeMut};
 
 fn main() {
-    let mut image = TempImage::<f32>::new(vec![6, 6], CoordinateSystem::new()).unwrap();
+    let mut image = TempImage::<f32>::new(
+        vec![6, 6],
+        CoordinateSystem::new(),
+        casa_lattices::TempStoragePolicy::Memory,
+    )
+    .unwrap();
     image.set(0.0).unwrap();
 
     {

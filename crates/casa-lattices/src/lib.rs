@@ -12,12 +12,9 @@
 //!
 //! # Iteration
 //!
-//! Navigators ([`LatticeStepper`], [`TiledLineStepper`], [`TileStepper`])
-//! define low-level stepping strategies. [`TraversalSpec`] provides a
-//! higher-level traversal API, while [`LatticeIter`] and [`LatticeIterMut`]
-//! remain available for explicit navigator-based iteration. The
-//! [`LatticeIterExt`] trait provides convenience methods
-//! (`traverse`, `iter_lines`, `iter_tiles`, `iter_chunks`).
+//! [`TraversalSpec`] is the sole public traversal model. Read-only callers use
+//! [`LatticeIterExt::traverse`]; writable callers use
+//! [`LatticeMut::for_each_chunk_mut`].
 //!
 //! # Regions and masks
 //!
@@ -49,18 +46,14 @@ mod error;
 pub mod execution;
 mod iterator;
 mod lattice;
-mod lattice_stepper;
 mod lc_box;
 mod lc_ellipsoid;
 mod lc_operations;
-mod navigator;
 mod paged_array;
 mod region;
 pub mod statistics;
 mod sub_lattice;
 mod temp_lattice;
-mod tile_stepper;
-mod tiled_line_stepper;
 mod tiled_shape;
 mod traversal;
 pub(crate) mod value_bridge;
@@ -71,20 +64,16 @@ pub use array_math::{
 };
 pub use element::LatticeElement;
 pub use error::LatticeError;
-pub use iterator::{LatticeChunk, LatticeIter, LatticeIterExt, LatticeIterMut};
+pub use iterator::LatticeIterExt;
 pub use lattice::{Lattice, LatticeMut};
-pub use lattice_stepper::LatticeStepper;
 pub use lc_box::LCBox;
 pub use lc_ellipsoid::LCEllipsoid;
 pub use lc_operations::{LCComplement, LCDifference, LCIntersection, LCUnion};
-pub use navigator::LatticeNavigator;
 pub use paged_array::PagedArray;
 pub use region::LCRegion;
 pub use statistics::{ExecutionPolicy, LatticeStatistics, Statistic, StatsElement};
 pub use sub_lattice::{SubLattice, SubLatticeMut};
-pub use temp_lattice::TempLattice;
-pub use tile_stepper::TileStepper;
-pub use tiled_line_stepper::TiledLineStepper;
+pub use temp_lattice::{ScratchSpace, TempLattice, TempStoragePlan, TempStoragePolicy};
 pub use tiled_shape::TiledShape;
 pub use traversal::{
     TraversalCacheHint, TraversalCacheMode, TraversalCacheScope, TraversalChunk, TraversalCursor,

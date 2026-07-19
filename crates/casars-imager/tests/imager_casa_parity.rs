@@ -12923,10 +12923,11 @@ fn spectral_header_summary_full(path: &Path) -> SpectralHeaderSummary {
     let coord = coords.coordinate(index);
     let reference_value_hz = coord.reference_value()[0];
     let increment_hz = coord.increment()[0];
-    let record = coord.to_record();
-    let frequency_ref = match record.get("frequency_ref") {
-        Some(casa_types::Value::Scalar(casa_types::ScalarValue::String(value))) => value.clone(),
-        other => panic!("unexpected spectral frequency_ref record field: {other:?}"),
+    let frequency_ref = match coord {
+        casa_coordinates::CoordinateModel::Spectral(spectral) => {
+            spectral.frequency_ref().as_str().to_string()
+        }
+        other => panic!("unexpected spectral coordinate model: {other:?}"),
     };
     SpectralHeaderSummary {
         frequency_ref,

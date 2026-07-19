@@ -16,8 +16,18 @@ use casa_images::image::ImageInterface;
 use casa_images::{ImageExpr, ImageExprUnaryOp, TempImage};
 
 fn main() {
-    let mut lhs = TempImage::<f32>::new(vec![4, 4], CoordinateSystem::new()).unwrap();
-    let mut rhs = TempImage::<f32>::new(vec![4, 4], CoordinateSystem::new()).unwrap();
+    let mut lhs = TempImage::<f32>::new(
+        vec![4, 4],
+        CoordinateSystem::new(),
+        casa_lattices::TempStoragePolicy::Memory,
+    )
+    .unwrap();
+    let mut rhs = TempImage::<f32>::new(
+        vec![4, 4],
+        CoordinateSystem::new(),
+        casa_lattices::TempStoragePolicy::Memory,
+    )
+    .unwrap();
     lhs.set(1.5).unwrap();
     rhs.set(2.0).unwrap();
 

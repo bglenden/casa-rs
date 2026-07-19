@@ -72,6 +72,22 @@ Verification: just verify
   suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow
 
+Large spectral-cube storage changes additionally run the sparse logical-capacity
+test and the explicit release throughput guard:
+
+- `cargo test -p casa-images fifty_gib_spectral_cube_streams_selected_planes_with_bounded_storage -- --nocapture`
+- `CASA_RS_CUBE_PERF_DIR=/path/to/volume cargo test -p casa-test-support --features performance-tests --test images_perf_vs_cpp full_spectral_cube_plane_io_tracks_raw_disk_speed --release -- --ignored --nocapture`
+
+The first test proves a 50 GiB logical cube can access separated planes with
+bounded owned storage. The second physically writes and reads every plane of
+both a 50 GiB raw baseline and a 50 GiB tiled image. Both write timings include
+a stable-storage flush, the pass order displaces each 50 GiB file from systems
+with less RAM, allocated-block checks reject sparse results, and every plane has
+a distinct deterministic high-entropy value at every pixel. Pattern generation
+and full-plane verification occur outside the timed I/O calls. The selected
+volume needs at least 110 GiB free. Image writes must reach at least 60% and
+reads at least 50% of the equivalent raw-file path on the same volume and run.
+
 `just quick` includes `scripts/test-task-cli-hosts.py`, which builds and runs
 every one-shot binary hosted by `casa-task-runtime::TaskCliHost`. The explicit
 inventory proves common protocol/schema discovery, generated help, malformed

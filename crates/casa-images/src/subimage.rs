@@ -349,7 +349,12 @@ mod tests {
 
     #[test]
     fn readonly_subimage_reads_parent_region() {
-        let mut image = TempImage::<f32>::new(vec![4, 4], CoordinateSystem::new()).unwrap();
+        let mut image = TempImage::<f32>::new(
+            vec![4, 4],
+            CoordinateSystem::new(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         image.put_at(7.0, &[2, 3]).unwrap();
         let sub = SubImage::new(&image, vec![1, 2], vec![3, 2]).unwrap();
         assert_eq!(sub.get_at(&[1, 1]).unwrap(), 7.0);
@@ -357,7 +362,12 @@ mod tests {
 
     #[test]
     fn mutable_subimage_writes_parent_region() {
-        let mut image = TempImage::<f32>::new(vec![4, 4], CoordinateSystem::new()).unwrap();
+        let mut image = TempImage::<f32>::new(
+            vec![4, 4],
+            CoordinateSystem::new(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         let mut sub = SubImageMut::new(&mut image, vec![1, 1], vec![2, 2]).unwrap();
         sub.put_at(3.5, &[1, 1]).unwrap();
         drop(sub);
@@ -366,7 +376,12 @@ mod tests {
 
     #[test]
     fn strided_subimage_reads_every_other_pixel() {
-        let mut image = TempImage::<f32>::new(vec![5, 5], CoordinateSystem::new()).unwrap();
+        let mut image = TempImage::<f32>::new(
+            vec![5, 5],
+            CoordinateSystem::new(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         image.put_at(11.0, &[4, 4]).unwrap();
         let sub = SubImage::with_stride(&image, vec![0, 0], vec![3, 3], vec![2, 2]).unwrap();
         assert_eq!(sub.get_at(&[2, 2]).unwrap(), 11.0);
@@ -374,7 +389,12 @@ mod tests {
 
     #[test]
     fn subimage_validation_rejects_mismatched_dimensions_and_bounds() {
-        let image = TempImage::<f32>::new(vec![4, 4], CoordinateSystem::new()).unwrap();
+        let image = TempImage::<f32>::new(
+            vec![4, 4],
+            CoordinateSystem::new(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         assert!(matches!(
             SubImage::with_stride(&image, vec![0], vec![2, 2], vec![1, 1]),
             Err(ImageError::ShapeMismatch { .. })
@@ -391,7 +411,12 @@ mod tests {
 
     #[test]
     fn readonly_subimage_get_slice_and_metadata_delegate_to_parent() {
-        let mut image = TempImage::<f32>::new(vec![4, 4], CoordinateSystem::new()).unwrap();
+        let mut image = TempImage::<f32>::new(
+            vec![4, 4],
+            CoordinateSystem::new(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         image.set_units("Jy/beam").unwrap();
         image
             .set_misc_info(RecordValue::new(vec![RecordField::new(
@@ -424,7 +449,12 @@ mod tests {
 
     #[test]
     fn mutable_subimage_put_slice_and_set_cover_parent_mapping() {
-        let mut image = TempImage::<f32>::new(vec![5, 5], CoordinateSystem::new()).unwrap();
+        let mut image = TempImage::<f32>::new(
+            vec![5, 5],
+            CoordinateSystem::new(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         let mut sub =
             SubImageMut::with_stride(&mut image, vec![1, 1], vec![2, 2], vec![2, 2]).unwrap();
         sub.put_slice(
@@ -447,7 +477,12 @@ mod tests {
 
     #[test]
     fn mutable_subimage_reports_dimension_errors() {
-        let mut image = TempImage::<f32>::new(vec![4, 4], CoordinateSystem::new()).unwrap();
+        let mut image = TempImage::<f32>::new(
+            vec![4, 4],
+            CoordinateSystem::new(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         let mut sub = SubImageMut::new(&mut image, vec![0, 0], vec![2, 2]).unwrap();
         assert!(matches!(
             sub.get_at(&[0, 0, 0]),

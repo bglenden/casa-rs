@@ -44,6 +44,14 @@ Additional constraints:
   and pass it inward. Discovery never installs data, and installation is an
   explicit caller-selected maintenance action.
 - `casa-tables` keeps the broader storage/write path crate-internal even when user-facing table APIs are exposed from the crate.
+- Large lattices and images cross `casa-tables` through the typed
+  `TiledArrayStorage` seam; raw tiled-file mechanics remain crate-internal.
+  `TileLayoutPlanner` is the sole checked byte-aware physical-layout policy,
+  with a 4 MiB default I/O target and exact preservation of legal explicit
+  tile shapes. `casa-lattices` exposes one `TraversalSpec` traversal contract
+  and byte-based `TempStoragePolicy`/`TempStoragePlan`; `casa-coordinates`
+  stores its five supported kinds in the closed `CoordinateModel` enum and
+  serializes `CoordinateSystem` through one strict casacore codec.
 - Within `casa-tables`, lazy read paths are safe to share across threads under an in-process multi-reader, single-writer contract; shared tiled reads use a process-wide bounded cache, while dirty write state stays under exclusive mutable ownership.
 - Within `casa-tables`, row/column/cell accessor objects are the public
   table-data surface. `PreparedRowAppender` and prepared mutable rows compile

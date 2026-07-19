@@ -363,116 +363,10 @@ impl Coordinate for SpectralCoordinate {
     fn axis_units(&self) -> Vec<String> {
         vec![self.unit.clone()]
     }
+}
 
-    fn to_record(&self) -> RecordValue {
-        let mut rec = RecordValue::default();
-
-        rec.upsert(
-            "coordinate_type",
-            Value::Scalar(ScalarValue::String("Spectral".into())),
-        );
-        rec.upsert(
-            "frequency_ref",
-            Value::Scalar(ScalarValue::String(self.frequency_ref.as_str().into())),
-        );
-        rec.upsert(
-            "restfreq",
-            Value::Scalar(ScalarValue::Float64(self.rest_frequency)),
-        );
-        rec.upsert(
-            "unit",
-            Value::Scalar(ScalarValue::String(self.unit.clone())),
-        );
-        rec.upsert(
-            "name",
-            Value::Scalar(ScalarValue::String(self.name.clone())),
-        );
-
-        match &self.mapping {
-            SpectralMapping::Linear {
-                crval,
-                cdelt,
-                crpix,
-            } => {
-                rec.upsert(
-                    "crval",
-                    Value::Array(ArrayValue::from_f64_vec(vec![*crval])),
-                );
-                rec.upsert(
-                    "cdelt",
-                    Value::Array(ArrayValue::from_f64_vec(vec![*cdelt])),
-                );
-                rec.upsert(
-                    "crpix",
-                    Value::Array(ArrayValue::from_f64_vec(vec![*crpix])),
-                );
-            }
-            SpectralMapping::Tabular {
-                pixel_values,
-                world_values,
-                crval,
-                cdelt,
-                crpix,
-            } => {
-                let mut tabular = RecordValue::default();
-                tabular.upsert(
-                    "crval",
-                    Value::Array(ArrayValue::from_f64_vec(vec![*crval])),
-                );
-                tabular.upsert(
-                    "cdelt",
-                    Value::Array(ArrayValue::from_f64_vec(vec![*cdelt])),
-                );
-                tabular.upsert(
-                    "crpix",
-                    Value::Array(ArrayValue::from_f64_vec(vec![*crpix])),
-                );
-                tabular.upsert("pc", Value::Array(ArrayValue::from_f64_vec(vec![1.0])));
-                tabular.upsert(
-                    "axes",
-                    Value::Array(ArrayValue::from_string_vec(vec![self.name.clone()])),
-                );
-                tabular.upsert(
-                    "units",
-                    Value::Array(ArrayValue::from_string_vec(vec![self.unit.clone()])),
-                );
-                tabular.upsert(
-                    "pixelvalues",
-                    Value::Array(ArrayValue::from_f64_vec(pixel_values.clone())),
-                );
-                tabular.upsert(
-                    "worldvalues",
-                    Value::Array(ArrayValue::from_f64_vec(world_values.clone())),
-                );
-                rec.upsert("tabular", Value::Record(tabular));
-            }
-        }
-
-        if let Some(conversion) = &self.conversion {
-            if let (Some(direction), Some(position), Some(epoch)) = (
-                conversion.frame.direction(),
-                conversion.frame.position(),
-                conversion.frame.epoch(),
-            ) {
-                let mut conversion_record = RecordValue::default();
-                conversion_record.upsert(
-                    "system",
-                    Value::Scalar(ScalarValue::String(
-                        conversion.frequency_ref.as_str().into(),
-                    )),
-                );
-                conversion_record
-                    .upsert("direction", Value::Record(direction_to_record(direction)));
-                conversion_record.upsert("position", Value::Record(position_to_record(position)));
-                conversion_record.upsert("epoch", Value::Record(epoch_to_record(epoch)));
-                rec.upsert("conversion", Value::Record(conversion_record));
-            }
-        }
-
-        rec
-    }
-
-    fn to_casa_record(&self) -> RecordValue {
+impl SpectralCoordinate {
+    pub(crate) fn to_record(&self) -> RecordValue {
         let mut rec = RecordValue::default();
         rec.upsert("version", Value::Scalar(ScalarValue::Int32(2)));
         rec.upsert(
@@ -559,11 +453,28 @@ impl Coordinate for SpectralCoordinate {
             }
         }
 
-        rec
-    }
+        if let Some(conversion) = &self.conversion {
+            if let (Some(direction), Some(position), Some(epoch)) = (
+                conversion.frame.direction(),
+                conversion.frame.position(),
+                conversion.frame.epoch(),
+            ) {
+                let mut conversion_record = RecordValue::default();
+                conversion_record.upsert(
+                    "system",
+                    Value::Scalar(ScalarValue::String(
+                        conversion.frequency_ref.as_str().into(),
+                    )),
+                );
+                conversion_record
+                    .upsert("direction", Value::Record(direction_to_record(direction)));
+                conversion_record.upsert("position", Value::Record(position_to_record(position)));
+                conversion_record.upsert("epoch", Value::Record(epoch_to_record(epoch)));
+                rec.upsert("conversion", Value::Record(conversion_record));
+            }
+        }
 
-    fn clone_box(&self) -> Box<dyn Coordinate> {
-        Box::new(self.clone())
+        rec
     }
 }
 
@@ -747,17 +658,9 @@ mod tests {
     fn to_record_has_fields() {
         let coord = SpectralCoordinate::new(FrequencyRef::LSRK, 1e9, 1e6, 0.0, 1.42e9);
         let rec = coord.to_record();
-        assert!(rec.get("frequency_ref").is_some());
+        assert!(rec.get("system").is_some());
         assert!(rec.get("restfreq").is_some());
-        assert!(rec.get("crval").is_some());
-    }
-
-    #[test]
-    fn clone_box_works() {
-        let coord = SpectralCoordinate::new(FrequencyRef::TOPO, 1e9, 1e6, 0.0, 0.0);
-        let boxed: Box<dyn Coordinate> = Box::new(coord);
-        let cloned = boxed.clone_box();
-        assert_eq!(cloned.coordinate_type(), CoordinateType::Spectral);
+        assert!(rec.get("wcs").is_some());
     }
 
     #[test]

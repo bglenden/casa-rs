@@ -261,14 +261,16 @@ pub use schema::{
 };
 pub use sorting::{TableGroup, TableIterator};
 pub use storage::{
-    DataManagerInfo, STREAMING_TILED_COLUMN_BUFFER_BYTES, StorageError,
-    StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeColumn,
-    StreamedTiledShapeComplex32Column, StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType,
-    StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter,
-    TableInfo, TilePixel, TiledFileIO, TiledFileIoStats, install_streamed_tiled_column,
-    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_column,
-    install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
-    set_table_cache_budget_bytes, table_cache_budget_bytes,
+    DEFAULT_TILE_IO_BYTES, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerInfo,
+    STREAMING_TILED_COLUMN_BUFFER_BYTES, StorageError, StreamedTiledPrimitiveColumn,
+    StreamedTiledPrimitiveType, StreamedTiledShapeColumn, StreamedTiledShapeComplex32Column,
+    StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter,
+    StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter, TableInfo, TileLayoutError,
+    TileLayoutPlan, TileLayoutPlanner, TilePixel, TiledArrayStorage, TiledFileIoStats,
+    install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
+    install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
+    install_streamed_tiled_shape_primitive_column, set_table_cache_budget_bytes,
+    table_cache_budget_bytes,
 };
 pub use table::{
     ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride, ColumnOverrides,

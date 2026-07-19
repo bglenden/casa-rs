@@ -38,13 +38,11 @@
 //!
 //! ```rust
 //! use casa_coordinates::CoordinateSystem;
-//! use casa_images::{
-//!     ImageExpr, ImageExprBinaryOp, ImageExprUnaryOp, ImageIter, ImageType, TempImage,
-//! };
-//! use casa_lattices::{Lattice, LatticeMut};
+//! use casa_images::{ImageExpr, ImageExprBinaryOp, ImageExprUnaryOp, ImageType, TempImage};
+//! use casa_lattices::{Lattice, LatticeIterExt, LatticeMut, TraversalSpec};
 //! use casa_types::Complex32;
 //!
-//! let mut image = TempImage::<f32>::new(vec![8, 8], CoordinateSystem::new()).unwrap();
+//! let mut image = TempImage::<f32>::new(vec![8, 8], CoordinateSystem::new(), casa_lattices::TempStoragePolicy::Memory).unwrap();
 //! image.set(1.0).unwrap();
 //!
 //! let expr = ImageExpr::from_image(&image)
@@ -53,8 +51,8 @@
 //!     .unary(ImageExprUnaryOp::Negate);
 //! assert_eq!(expr.get_at(&[0, 0]).unwrap(), -2.0);
 //!
-//! let complex = TempImage::<Complex32>::new(vec![4, 4], CoordinateSystem::new()).unwrap();
-//! let _chunks = ImageIter::new(&complex, vec![2, 2]).count();
+//! let complex = TempImage::<Complex32>::new(vec![4, 4], CoordinateSystem::new(), casa_lattices::TempStoragePolicy::Memory).unwrap();
+//! let _chunks = complex.traverse(TraversalSpec::chunks(vec![2, 2])).count();
 //! assert_eq!(ImageType::Velocity.to_string(), "Velocity");
 //! ```
 
@@ -69,7 +67,6 @@ pub mod image_expr;
 pub mod image_info;
 pub mod image_view;
 pub mod imagebrowser_session;
-pub mod iterator;
 pub mod movie;
 pub mod subimage;
 pub mod temp_image;
@@ -95,6 +92,7 @@ pub use browser_render::{
     image_plane_layout, image_spectrum_layout, render_image_plane_image,
     render_image_spectrum_image,
 };
+pub use casa_lattices::{ScratchSpace, TempStoragePlan, TempStoragePolicy};
 pub use error::ImageError;
 pub use image::{
     AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
@@ -111,7 +109,6 @@ pub use image_view::{
     OpenedImageView, PlaneRaster,
 };
 pub use imagebrowser_session::ImageBrowserSession;
-pub use iterator::{ImageChunk, ImageIter, ImageIterMut};
 pub use movie::{
     ImageMovieBundleCache, ImageMovieBundleEngine, ImageMovieBundleKey, ImageMovieBundleRequest,
     ImageMovieOccurrence, ImageMoviePreparedBundle, ImageMoviePreparedSurface,

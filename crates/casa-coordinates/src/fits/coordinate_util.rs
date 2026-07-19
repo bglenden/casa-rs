@@ -36,7 +36,7 @@ use casa_types::measures::frequency::FrequencyRef;
 
 use super::header::{FitsHeader, FitsValue};
 use crate::CoordinateSystem;
-use crate::coordinate::{Coordinate, CoordinateType};
+use crate::coordinate::{CoordinateModel, CoordinateType};
 use crate::direction::DirectionCoordinate;
 use crate::error::CoordinateError;
 use crate::linear::LinearCoordinate;
@@ -129,49 +129,18 @@ pub fn to_fits_header(cs: &CoordinateSystem, shape: &[usize]) -> FitsHeader {
 }
 
 /// Emits FITS keywords for a [`DirectionCoordinate`].
-///
-/// Uses the trait object to get generic properties, then downcasts internally
-/// via the known field accessors on [`DirectionCoordinate`]. Because we
-/// cannot downcast a `&dyn Coordinate` directly (the trait is not `Any`), we
-/// reconstruct the needed info from the trait methods and the record.
-fn emit_direction(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
+fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
+    let CoordinateModel::Direction(direction) = coord else {
+        return;
+    };
     let crval = coord.reference_value();
     let crpix = coord.reference_pixel();
     let cdelt = coord.increment();
-
-    // We need projection, direction_ref, longpole, latpole, pc.
-    // Extract from the record representation.
-    let rec = coord.to_record();
-
-    // Projection name
-    let proj_name = match rec.get("projection") {
-        Some(casa_types::Value::Scalar(casa_types::ScalarValue::String(s))) => s.clone(),
-        _ => "SIN".to_string(),
-    };
-
-    // Direction reference
-    let dir_ref_str = match rec.get("direction_ref") {
-        Some(casa_types::Value::Scalar(casa_types::ScalarValue::String(s))) => s.clone(),
-        _ => "J2000".to_string(),
-    };
-
-    // Longpole / latpole
-    let longpole = match rec.get("longpole") {
-        Some(casa_types::Value::Scalar(casa_types::ScalarValue::Float64(v))) => *v,
-        _ => 0.0,
-    };
-    let latpole = match rec.get("latpole") {
-        Some(casa_types::Value::Scalar(casa_types::ScalarValue::Float64(v))) => *v,
-        _ => std::f64::consts::FRAC_PI_2,
-    };
-
-    // PC matrix (flattened 2x2)
-    let pc_flat: Vec<f64> = match rec.get("pc") {
-        Some(casa_types::Value::Array(casa_types::ArrayValue::Float64(a))) => {
-            a.iter().copied().collect()
-        }
-        _ => vec![1.0, 0.0, 0.0, 1.0],
-    };
+    let proj_name = direction.projection().name();
+    let dir_ref_str = format!("{:?}", direction.direction_ref());
+    let longpole = direction.longpole();
+    let latpole = direction.latpole();
+    let pc_flat: Vec<f64> = direction.pc_matrix().iter().copied().collect();
 
     // CTYPE: "RA---SIN" / "DEC--SIN" for equatorial, "GLON-SIN" / "GLAT-SIN" for galactic
     let (lon_prefix, lat_prefix) = match dir_ref_str.as_str() {
@@ -247,7 +216,10 @@ fn emit_direction(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
 }
 
 /// Emits FITS keywords for a [`SpectralCoordinate`].
-fn emit_spectral(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
+fn emit_spectral(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
+    let CoordinateModel::Spectral(spectral) = coord else {
+        return;
+    };
     let crval = coord.reference_value();
     let crpix = coord.reference_pixel();
     let cdelt = coord.increment();
@@ -262,28 +234,19 @@ fn emit_spectral(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
         FitsValue::String(units.first().cloned().unwrap_or_default()),
     );
 
-    // Frequency reference and rest frequency from record
-    let rec = coord.to_record();
-    if let Some(casa_types::Value::Scalar(casa_types::ScalarValue::String(fref))) =
-        rec.get("frequency_ref")
-    {
-        let specsys = match fref.as_str() {
-            "LSRK" => "LSRK",
-            "BARY" => "BARYCENT",
-            "TOPO" => "TOPOCENT",
-            other => other,
-        };
-        h.set("SPECSYS", FitsValue::String(specsys.into()));
-    }
-    if let Some(casa_types::Value::Scalar(casa_types::ScalarValue::Float64(rf))) =
-        rec.get("restfreq")
-    {
-        h.set("RESTFRQ", FitsValue::Float(*rf));
-    }
+    let frequency_ref = spectral.frequency_ref();
+    let specsys = match frequency_ref.as_str() {
+        "LSRK" => "LSRK",
+        "BARY" => "BARYCENT",
+        "TOPO" => "TOPOCENT",
+        other => other,
+    };
+    h.set("SPECSYS", FitsValue::String(specsys.into()));
+    h.set("RESTFRQ", FitsValue::Float(spectral.rest_frequency()));
 }
 
 /// Emits FITS keywords for a [`StokesCoordinate`].
-fn emit_stokes(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
+fn emit_stokes(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     let crval = coord.reference_value();
     let crpix = coord.reference_pixel();
     let cdelt = coord.increment();
@@ -296,7 +259,7 @@ fn emit_stokes(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
 }
 
 /// Emits FITS keywords for a [`LinearCoordinate`] (or tabular treated as linear).
-fn emit_linear(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
+fn emit_linear(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     let crval = coord.reference_value();
     let crpix = coord.reference_pixel();
     let cdelt = coord.increment();
@@ -319,10 +282,8 @@ fn emit_linear(coord: &dyn Coordinate, h: &mut FitsHeader, axis: usize) {
         );
     }
 
-    // Emit PC matrix from record if present
-    let rec = coord.to_record();
-    if let Some(casa_types::Value::Array(casa_types::ArrayValue::Float64(pc_arr))) = rec.get("pc") {
-        let pc_flat: Vec<f64> = pc_arr.iter().copied().collect();
+    if let CoordinateModel::Linear(linear) = coord {
+        let pc_flat: Vec<f64> = linear.pc_matrix().iter().copied().collect();
         if pc_flat.len() == n * n {
             for i in 0..n {
                 for j in 0..n {
@@ -390,7 +351,7 @@ pub fn from_fits_header(
             identify_direction_pair(&ctypes, i, &consumed)
         {
             let coord = parse_direction(header, lon_axis, lat_axis, &proj_code, dir_ref)?;
-            cs.add_coordinate(Box::new(coord));
+            cs.add_coordinate(coord);
             consumed[lon_axis] = true;
             consumed[lat_axis] = true;
         }
@@ -406,14 +367,14 @@ pub fn from_fits_header(
 
         if upper.starts_with("FREQ") || upper.starts_with("VELO") {
             let coord = parse_spectral(header, i + 1)?;
-            cs.add_coordinate(Box::new(coord));
+            cs.add_coordinate(coord);
         } else if upper == "STOKES" {
             let axis_len = shape.get(i).copied().unwrap_or(1);
             let coord = parse_stokes(header, i + 1, axis_len)?;
-            cs.add_coordinate(Box::new(coord));
+            cs.add_coordinate(coord);
         } else {
             let coord = parse_linear_single(header, i + 1, ctype)?;
-            cs.add_coordinate(Box::new(coord));
+            cs.add_coordinate(coord);
         }
         consumed[i] = true;
     }
@@ -765,11 +726,11 @@ mod tests {
             [-1e-4, 1e-4], // ~20 arcsec pixels
             [512.0, 512.0],
         );
-        cs.add_coordinate(Box::new(dir));
+        cs.add_coordinate(dir);
 
         let spec =
             SpectralCoordinate::new(FrequencyRef::LSRK, 1.42040575e9, 1e6, 128.0, 1.42040575e9);
-        cs.add_coordinate(Box::new(spec));
+        cs.add_coordinate(spec);
 
         let stokes = StokesCoordinate::new(vec![
             StokesType::I,
@@ -777,7 +738,7 @@ mod tests {
             StokesType::U,
             StokesType::V,
         ]);
-        cs.add_coordinate(Box::new(stokes));
+        cs.add_coordinate(stokes);
 
         let obs = ObsInfo::new("ALMA").with_observer("Test Observer");
         *cs.obs_info_mut() = obs;
@@ -916,7 +877,7 @@ mod tests {
             [-2e-5, 2e-5],
             [256.0, 256.0],
         );
-        cs.add_coordinate(Box::new(dir));
+        cs.add_coordinate(dir);
 
         let shape = [512, 512];
         let header = to_fits_header(&cs, &shape);
@@ -936,7 +897,7 @@ mod tests {
     fn spectral_roundtrip() {
         let mut cs = CoordinateSystem::new();
         let spec = SpectralCoordinate::new(FrequencyRef::BARY, 1.5e9, -500e3, 64.0, 1.42040575e9);
-        cs.add_coordinate(Box::new(spec));
+        cs.add_coordinate(spec);
 
         let shape = [128];
         let header = to_fits_header(&cs, &shape);
@@ -1037,7 +998,7 @@ mod tests {
             [256.0, 256.0],
         )
         .with_pc_matrix(pc.clone());
-        cs.add_coordinate(Box::new(dir));
+        cs.add_coordinate(dir);
 
         let shape = [512, 512];
         let header = to_fits_header(&cs, &shape);
@@ -1153,7 +1114,7 @@ mod tests {
             [-1e-3, 1e-3],
             [100.0, 100.0],
         );
-        cs.add_coordinate(Box::new(dir));
+        cs.add_coordinate(dir);
 
         let shape = [200, 200];
         let header = to_fits_header(&cs, &shape);
@@ -1188,7 +1149,7 @@ mod tests {
             StokesType::LR,
             StokesType::LL,
         ]);
-        cs.add_coordinate(Box::new(stokes));
+        cs.add_coordinate(stokes);
 
         let shape = [4];
         let header = to_fits_header(&cs, &shape);

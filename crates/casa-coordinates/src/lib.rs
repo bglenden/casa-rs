@@ -44,19 +44,19 @@
 //!     [-1e-4, 1e-4],
 //!     [512.0, 512.0],
 //! );
-//! cs.add_coordinate(Box::new(dir));
+//! cs.add_coordinate(dir);
 //!
 //! // Spectral coordinate
 //! let spec = SpectralCoordinate::new(
 //!     FrequencyRef::LSRK, 1.42e9, 1e6, 0.0, 1.42040575e9,
 //! );
-//! cs.add_coordinate(Box::new(spec));
+//! cs.add_coordinate(spec);
 //!
 //! // Stokes coordinate
 //! let stokes = StokesCoordinate::new(vec![
 //!     StokesType::I, StokesType::Q, StokesType::U, StokesType::V,
 //! ]);
-//! cs.add_coordinate(Box::new(stokes));
+//! cs.add_coordinate(stokes);
 //!
 //! assert_eq!(cs.n_pixel_axes(), 4); // 2 (direction) + 1 (spectral) + 1 (stokes)
 //! ```
@@ -75,7 +75,7 @@ pub mod stokes;
 pub mod tabular;
 
 // Re-export public types at crate root for convenience.
-pub use coordinate::{Coordinate, CoordinateType};
+pub use coordinate::{Coordinate, CoordinateModel, CoordinateType};
 pub use coordinate_system::CoordinateSystem;
 pub use direction::DirectionCoordinate;
 pub use error::CoordinateError;

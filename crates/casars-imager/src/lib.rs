@@ -50263,8 +50263,8 @@ mod tests {
         assert_eq!(lhs_image.shape(), rhs_image.shape());
         assert_eq!(lhs_image.units(), rhs_image.units());
         assert_eq!(
-            lhs_image.coordinates().to_casa_record(),
-            rhs_image.coordinates().to_casa_record(),
+            lhs_image.coordinates().to_record(),
+            rhs_image.coordinates().to_record(),
             "image coordinate metadata differs: lhs={} rhs={}",
             lhs_path.as_ref().display(),
             rhs_path.as_ref().display()

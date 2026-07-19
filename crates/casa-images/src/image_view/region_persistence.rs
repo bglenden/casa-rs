@@ -356,7 +356,7 @@ fn wc_polygon_record(
     );
     record.upsert(
         "coordinates",
-        Value::Record(image_coordinates(&view.image).to_casa_record()),
+        Value::Record(image_coordinates(&view.image).to_record()),
     );
     Ok(record)
 }

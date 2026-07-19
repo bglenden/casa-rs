@@ -12,6 +12,9 @@ use std::fmt;
 use casa_types::RecordValue;
 
 use crate::error::CoordinateError;
+use crate::{
+    DirectionCoordinate, LinearCoordinate, SpectralCoordinate, StokesCoordinate, TabularCoordinate,
+};
 
 /// Discriminant for the five coordinate kinds supported by casacore.
 ///
@@ -44,16 +47,117 @@ impl fmt::Display for CoordinateType {
     }
 }
 
+/// Closed model for every coordinate kind supported by casacore images.
+#[derive(Debug, Clone)]
+pub enum CoordinateModel {
+    Linear(LinearCoordinate),
+    Direction(DirectionCoordinate),
+    Spectral(Box<SpectralCoordinate>),
+    Stokes(StokesCoordinate),
+    Tabular(TabularCoordinate),
+}
+
+macro_rules! dispatch_coordinate {
+    ($coordinate:expr, $method:ident $(, $argument:expr)*) => {
+        match $coordinate {
+            CoordinateModel::Linear(value) => value.$method($($argument),*),
+            CoordinateModel::Direction(value) => value.$method($($argument),*),
+            CoordinateModel::Spectral(value) => value.$method($($argument),*),
+            CoordinateModel::Stokes(value) => value.$method($($argument),*),
+            CoordinateModel::Tabular(value) => value.$method($($argument),*),
+        }
+    };
+}
+
+impl CoordinateModel {
+    pub fn coordinate_type(&self) -> CoordinateType {
+        dispatch_coordinate!(self, coordinate_type)
+    }
+
+    pub fn n_pixel_axes(&self) -> usize {
+        dispatch_coordinate!(self, n_pixel_axes)
+    }
+
+    pub fn n_world_axes(&self) -> usize {
+        dispatch_coordinate!(self, n_world_axes)
+    }
+
+    pub fn to_world(&self, pixel: &[f64]) -> Result<Vec<f64>, CoordinateError> {
+        dispatch_coordinate!(self, to_world, pixel)
+    }
+
+    pub fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
+        dispatch_coordinate!(self, to_pixel, world)
+    }
+
+    pub fn reference_value(&self) -> Vec<f64> {
+        dispatch_coordinate!(self, reference_value)
+    }
+
+    pub fn reference_pixel(&self) -> Vec<f64> {
+        dispatch_coordinate!(self, reference_pixel)
+    }
+
+    pub fn increment(&self) -> Vec<f64> {
+        dispatch_coordinate!(self, increment)
+    }
+
+    pub fn axis_names(&self) -> Vec<String> {
+        dispatch_coordinate!(self, axis_names)
+    }
+
+    pub fn axis_units(&self) -> Vec<String> {
+        dispatch_coordinate!(self, axis_units)
+    }
+
+    /// Serializes this coordinate in the canonical casacore field layout.
+    pub fn to_record(&self) -> RecordValue {
+        dispatch_coordinate!(self, to_record)
+    }
+}
+
+macro_rules! coordinate_model_from {
+    ($type:ty, $variant:ident) => {
+        impl From<$type> for CoordinateModel {
+            fn from(value: $type) -> Self {
+                Self::$variant(value)
+            }
+        }
+    };
+}
+
+coordinate_model_from!(LinearCoordinate, Linear);
+coordinate_model_from!(DirectionCoordinate, Direction);
+coordinate_model_from!(StokesCoordinate, Stokes);
+coordinate_model_from!(TabularCoordinate, Tabular);
+
+impl From<SpectralCoordinate> for CoordinateModel {
+    fn from(value: SpectralCoordinate) -> Self {
+        Self::Spectral(Box::new(value))
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+impl sealed::Sealed for LinearCoordinate {}
+impl sealed::Sealed for DirectionCoordinate {}
+impl sealed::Sealed for SpectralCoordinate {}
+impl sealed::Sealed for StokesCoordinate {}
+impl sealed::Sealed for TabularCoordinate {}
+
 /// The interface shared by all coordinate types.
 ///
 /// Every concrete coordinate (e.g. [`LinearCoordinate`](crate::LinearCoordinate),
 /// [`DirectionCoordinate`](crate::DirectionCoordinate)) implements this trait.
-/// The trait is object-safe (via `clone_box`) so that coordinates can be stored
-/// as `Box<dyn Coordinate>` inside a [`CoordinateSystem`](crate::CoordinateSystem).
+/// [`CoordinateSystem`](crate::CoordinateSystem) stores the closed
+/// [`CoordinateModel`] enum; this trait only shares behavior among the five
+/// concrete coordinate types.
 ///
 /// The pixel-to-world and world-to-pixel methods follow the conventions of
 /// C++ `Coordinate::toWorld` and `Coordinate::toPixel`.
-pub trait Coordinate: fmt::Debug + Send + Sync {
+pub trait Coordinate: sealed::Sealed + fmt::Debug + Send + Sync {
     /// Returns the kind of this coordinate.
     fn coordinate_type(&self) -> CoordinateType;
 
@@ -87,30 +191,6 @@ pub trait Coordinate: fmt::Debug + Send + Sync {
 
     /// Returns the axis unit strings (one per world axis).
     fn axis_units(&self) -> Vec<String>;
-
-    /// Serializes this coordinate to a casacore-compatible record.
-    fn to_record(&self) -> RecordValue;
-
-    /// Serializes this coordinate using the legacy casacore
-    /// `Coordinate::save()` field layout.
-    ///
-    /// Most coordinates can reuse [`Coordinate::to_record`]. Coordinate types
-    /// with a materially different legacy layout, such as direction
-    /// coordinates, can override this.
-    fn to_casa_record(&self) -> RecordValue {
-        self.to_record()
-    }
-
-    /// Returns a boxed clone of this coordinate.
-    ///
-    /// This method exists because `Clone` is not object-safe.
-    fn clone_box(&self) -> Box<dyn Coordinate>;
-}
-
-impl Clone for Box<dyn Coordinate> {
-    fn clone(&self) -> Self {
-        self.clone_box()
-    }
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@
 //!
 //! This corresponds to C++ `StokesCoordinate`.
 
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_types::{RecordValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
@@ -255,24 +255,10 @@ impl Coordinate for StokesCoordinate {
     fn axis_units(&self) -> Vec<String> {
         vec![String::new()]
     }
+}
 
-    fn to_record(&self) -> RecordValue {
-        let mut rec = RecordValue::default();
-
-        rec.upsert(
-            "coordinate_type",
-            Value::Scalar(ScalarValue::String("Stokes".into())),
-        );
-        let codes: Vec<i32> = self.stokes.iter().map(|s| s.code()).collect();
-        rec.upsert(
-            "stokes",
-            Value::Array(casa_types::ArrayValue::from_i32_vec(codes)),
-        );
-
-        rec
-    }
-
-    fn to_casa_record(&self) -> RecordValue {
+impl StokesCoordinate {
+    pub(crate) fn to_record(&self) -> RecordValue {
         let mut rec = RecordValue::default();
         rec.upsert(
             "axes",
@@ -307,10 +293,6 @@ impl Coordinate for StokesCoordinate {
             )),
         );
         rec
-    }
-
-    fn clone_box(&self) -> Box<dyn Coordinate> {
-        Box::new(self.clone())
     }
 }
 
@@ -421,13 +403,13 @@ mod tests {
         let coord = make_iquv();
         let rec = coord.to_record();
         assert!(rec.get("stokes").is_some());
-        assert!(rec.get("coordinate_type").is_some());
+        assert!(rec.get("axes").is_some());
     }
 
     #[test]
-    fn to_casa_record_matches_legacy_layout() {
+    fn to_record_matches_canonical_layout() {
         let coord = make_iquv();
-        let rec = coord.to_casa_record();
+        let rec = coord.to_record();
         assert_eq!(
             rec.get("axes"),
             Some(&Value::Array(casa_types::ArrayValue::from_string_vec(
@@ -454,7 +436,7 @@ mod tests {
     #[test]
     fn casa_record_serialization_uses_legacy_fields() {
         let coord = StokesCoordinate::new(vec![StokesType::I]);
-        let rec = coord.to_casa_record();
+        let rec = coord.to_record();
 
         assert_eq!(
             rec.get("axes"),
@@ -486,14 +468,6 @@ mod tests {
                 1.0
             ])))
         );
-    }
-
-    #[test]
-    fn clone_box_works() {
-        let coord = make_iquv();
-        let boxed: Box<dyn Coordinate> = Box::new(coord);
-        let cloned = boxed.clone_box();
-        assert_eq!(cloned.coordinate_type(), CoordinateType::Stokes);
     }
 
     #[test]

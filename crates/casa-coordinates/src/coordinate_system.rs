@@ -8,9 +8,9 @@
 //!
 //! This corresponds to C++ `CoordinateSystem`.
 
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, RecordValue, Value};
 
-use crate::coordinate::{Coordinate, CoordinateType};
+use crate::coordinate::{CoordinateModel, CoordinateType};
 use crate::direction::DirectionCoordinate;
 use crate::error::CoordinateError;
 use crate::linear::LinearCoordinate;
@@ -29,7 +29,7 @@ use crate::tabular::TabularCoordinate;
 /// Corresponds to C++ `CoordinateSystem`.
 #[derive(Debug, Clone)]
 pub struct CoordinateSystem {
-    coordinates: Vec<Box<dyn Coordinate>>,
+    coordinates: Vec<CoordinateModel>,
     obs_info: ObsInfo,
 }
 
@@ -45,8 +45,8 @@ impl CoordinateSystem {
     /// Adds a coordinate to the system.
     ///
     /// The new coordinate's axes are appended after all existing axes.
-    pub fn add_coordinate(&mut self, coord: Box<dyn Coordinate>) {
-        self.coordinates.push(coord);
+    pub fn add_coordinate(&mut self, coord: impl Into<CoordinateModel>) {
+        self.coordinates.push(coord.into());
     }
 
     /// Returns the number of coordinates in the system.
@@ -59,8 +59,8 @@ impl CoordinateSystem {
     /// # Panics
     ///
     /// Panics if `index >= n_coordinates()`.
-    pub fn coordinate(&self, index: usize) -> &dyn Coordinate {
-        &*self.coordinates[index]
+    pub fn coordinate(&self, index: usize) -> &CoordinateModel {
+        &self.coordinates[index]
     }
 
     /// Returns the total number of pixel axes across all coordinates.
@@ -151,36 +151,9 @@ impl CoordinateSystem {
         Ok(pixel)
     }
 
-    /// Serializes the coordinate system to a casacore-compatible record.
-    ///
-    /// The record contains an `obsinfo` sub-record and one sub-record per
-    /// coordinate (named `coordinate0`, `coordinate1`, etc.).
+    /// Serializes the coordinate system using casacore's canonical
+    /// `CoordinateSystem::save()` layout.
     pub fn to_record(&self) -> RecordValue {
-        let mut rec = RecordValue::default();
-
-        rec.upsert(
-            "ncoordinates",
-            Value::Scalar(ScalarValue::Int32(self.coordinates.len() as i32)),
-        );
-
-        for (i, coord) in self.coordinates.iter().enumerate() {
-            let key = format!("coordinate{i}");
-            rec.upsert(&key, Value::Record(coord.to_record()));
-        }
-
-        rec.upsert("obsinfo", Value::Record(self.obs_info.to_record()));
-
-        rec
-    }
-
-    /// Serializes the coordinate system using the legacy casacore
-    /// `CoordinateSystem::save()` field layout.
-    ///
-    /// This is the form embedded inside native saved-region records such as
-    /// `WCPolygon::toRecord()`: coordinate sub-records are named
-    /// `direction0`, `spectral1`, etc., with accompanying `worldmapN`,
-    /// `worldreplaceN`, `pixelmapN`, and `pixelreplaceN` fields.
-    pub fn to_casa_record(&self) -> RecordValue {
         let mut rec = self.obs_info.to_record();
         let mut next_world_axis = 0i32;
         let mut next_pixel_axis = 0i32;
@@ -195,7 +168,7 @@ impl CoordinateSystem {
             };
             rec.upsert(
                 format!("{basename}{index}"),
-                Value::Record(coord.to_casa_record()),
+                Value::Record(coord.to_record()),
             );
 
             let n_world = coord.n_world_axes() as i32;
@@ -234,8 +207,8 @@ impl CoordinateSystem {
 
     /// Deserializes a coordinate system from a casacore-compatible record.
     ///
-    /// Unknown or malformed coordinate sub-records are skipped so persisted
-    /// images can still reopen in pixel-only mode.
+    /// Unknown or malformed coordinate sub-records are rejected; callers never
+    /// receive a silently truncated coordinate system.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
         let obs_info = match rec.get("obsinfo") {
             Some(Value::Record(obs_rec)) => ObsInfo::from_record(obs_rec)?,
@@ -245,11 +218,11 @@ impl CoordinateSystem {
         let mut coordinates = Vec::new();
         for (_, key) in coordinate_record_entries(rec) {
             let Some(Value::Record(coord_rec)) = rec.get(&key) else {
-                continue;
+                return Err(CoordinateError::InvalidRecord(format!(
+                    "coordinate field '{key}' is not a record"
+                )));
             };
-            if let Some(coord) = parse_coordinate_record(&key, coord_rec) {
-                coordinates.push(coord);
-            }
+            coordinates.push(parse_coordinate_record(&key, coord_rec)?);
         }
 
         Ok(Self {
@@ -319,26 +292,26 @@ fn inferred_coordinate_type(name: &str) -> Option<&'static str> {
     }
 }
 
-fn parse_coordinate_record(name: &str, rec: &RecordValue) -> Option<Box<dyn Coordinate>> {
+fn parse_coordinate_record(
+    name: &str,
+    rec: &RecordValue,
+) -> Result<CoordinateModel, CoordinateError> {
     let coord_type = get_optional_string(rec, "coordinate_type")
-        .or_else(|| inferred_coordinate_type(name).map(str::to_string))?;
+        .or_else(|| inferred_coordinate_type(name).map(str::to_string))
+        .ok_or_else(|| {
+            CoordinateError::InvalidRecord(format!(
+                "coordinate '{name}' has no recognized coordinate type"
+            ))
+        })?;
     match coord_type.as_str() {
-        "Linear" => LinearCoordinate::from_record(rec)
-            .ok()
-            .map(|coord| Box::new(coord) as Box<dyn Coordinate>),
-        "Direction" => DirectionCoordinate::from_record(rec)
-            .ok()
-            .map(|coord| Box::new(coord) as Box<dyn Coordinate>),
-        "Spectral" => SpectralCoordinate::from_record(rec)
-            .ok()
-            .map(|coord| Box::new(coord) as Box<dyn Coordinate>),
-        "Stokes" => StokesCoordinate::from_record(rec)
-            .ok()
-            .map(|coord| Box::new(coord) as Box<dyn Coordinate>),
-        "Tabular" => TabularCoordinate::from_record(rec)
-            .ok()
-            .map(|coord| Box::new(coord) as Box<dyn Coordinate>),
-        _ => None,
+        "Linear" => LinearCoordinate::from_record(rec).map(CoordinateModel::Linear),
+        "Direction" => DirectionCoordinate::from_record(rec).map(CoordinateModel::Direction),
+        "Spectral" => SpectralCoordinate::from_record(rec).map(Into::into),
+        "Stokes" => StokesCoordinate::from_record(rec).map(CoordinateModel::Stokes),
+        "Tabular" => TabularCoordinate::from_record(rec).map(CoordinateModel::Tabular),
+        other => Err(CoordinateError::InvalidRecord(format!(
+            "unsupported coordinate type '{other}' in '{name}'"
+        ))),
     }
 }
 
@@ -356,7 +329,7 @@ mod tests {
     use casa_types::measures::frequency::{FrequencyRef, MFrequency};
     use casa_types::measures::position::MPosition;
     use casa_types::measures::{EpochRef, MeasFrame, PositionRef};
-    use casa_types::{ArrayD, ArrayValue, RecordField};
+    use casa_types::{ArrayD, ArrayValue, RecordField, ScalarValue};
     use ndarray::IxDyn;
 
     fn quantity_record(value: f64, unit: &str) -> RecordValue {
@@ -811,11 +784,11 @@ mod tests {
             vec!["Right Ascension".into(), "Declination".into()],
             vec!["rad".into(), "rad".into()],
         );
-        cs.add_coordinate(Box::new(dir));
+        cs.add_coordinate(dir);
 
         // Spectral
         let spec = SpectralCoordinate::new(FrequencyRef::LSRK, 1.42e9, 1e6, 0.0, 1.42e9);
-        cs.add_coordinate(Box::new(spec));
+        cs.add_coordinate(spec);
 
         // Stokes
         let stokes = StokesCoordinate::new(vec![
@@ -824,7 +797,7 @@ mod tests {
             StokesType::U,
             StokesType::V,
         ]);
-        cs.add_coordinate(Box::new(stokes));
+        cs.add_coordinate(stokes);
 
         cs
     }
@@ -915,11 +888,11 @@ mod tests {
     fn to_record_has_coordinates() {
         let cs = make_typical_system();
         let rec = cs.to_record();
-        assert!(rec.get("ncoordinates").is_some());
-        assert!(rec.get("coordinate0").is_some());
-        assert!(rec.get("coordinate1").is_some());
-        assert!(rec.get("coordinate2").is_some());
-        assert!(rec.get("obsinfo").is_some());
+        assert!(rec.get("linear0").is_some());
+        assert!(rec.get("spectral1").is_some());
+        assert!(rec.get("stokes2").is_some());
+        assert!(rec.get("worldmap0").is_some());
+        assert!(rec.get("pixelmap2").is_some());
     }
 
     #[test]
@@ -977,24 +950,21 @@ mod tests {
             [-1e-4, 1e-4],
             [256.0, 256.0],
         );
-        cs.add_coordinate(Box::new(dir));
-        cs.add_coordinate(Box::new(SpectralCoordinate::new(
+        cs.add_coordinate(dir);
+        cs.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
             1.42e9,
             1.0e6,
             0.0,
             1.42040575e9,
-        )));
-        cs.add_coordinate(Box::new(StokesCoordinate::new(vec![
-            StokesType::I,
-            StokesType::Q,
-        ])));
-        cs.add_coordinate(Box::new(TabularCoordinate::new(
+        ));
+        cs.add_coordinate(StokesCoordinate::new(vec![StokesType::I, StokesType::Q]));
+        cs.add_coordinate(TabularCoordinate::new(
             vec![0.0, 1.0, 2.0],
             vec![100.0, 200.0, 300.0],
             "Velocity",
             "km/s",
-        )));
+        ));
 
         let restored = CoordinateSystem::from_record(&cs.to_record()).unwrap();
 
@@ -1032,7 +1002,7 @@ mod tests {
     }
 
     #[test]
-    fn from_record_skips_unknown_coordinate_type() {
+    fn from_record_rejects_unknown_coordinate_type() {
         let mut rec = RecordValue::default();
         rec.upsert("ncoordinates", Value::Scalar(ScalarValue::Int32(2)));
         let mut unknown = RecordValue::default();
@@ -1046,13 +1016,14 @@ mod tests {
             Value::Record(LinearCoordinate::new(1, vec!["X".into()], vec!["m".into()]).to_record()),
         );
 
-        let cs = CoordinateSystem::from_record(&rec).unwrap();
-        assert_eq!(cs.n_coordinates(), 1);
-        assert_eq!(cs.coordinate(0).coordinate_type(), CoordinateType::Linear);
+        assert!(matches!(
+            CoordinateSystem::from_record(&rec),
+            Err(CoordinateError::InvalidRecord(_))
+        ));
     }
 
     #[test]
-    fn from_record_skips_invalid_coordinate_record() {
+    fn from_record_rejects_invalid_coordinate_record() {
         let mut rec = RecordValue::default();
         rec.upsert("ncoordinates", Value::Scalar(ScalarValue::Int32(2)));
         let mut broken = RecordValue::default();
@@ -1066,9 +1037,10 @@ mod tests {
             Value::Record(StokesCoordinate::new(vec![StokesType::I]).to_record()),
         );
 
-        let cs = CoordinateSystem::from_record(&rec).unwrap();
-        assert_eq!(cs.n_coordinates(), 1);
-        assert_eq!(cs.coordinate(0).coordinate_type(), CoordinateType::Stokes);
+        assert!(matches!(
+            CoordinateSystem::from_record(&rec),
+            Err(CoordinateError::InvalidRecord(_))
+        ));
     }
 
     #[test]

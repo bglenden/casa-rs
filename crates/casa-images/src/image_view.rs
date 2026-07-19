@@ -8,7 +8,7 @@ mod region_persistence;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use casa_coordinates::{CoordinateSystem, CoordinateType, ObsInfo, StokesType};
+use casa_coordinates::{CoordinateSystem, CoordinateType, ObsInfo};
 use casa_types::measures::direction::{
     angular_increment_arcseconds, declination_increment_arcseconds, format_declination_labeled,
     format_right_ascension_labeled,
@@ -2599,8 +2599,6 @@ fn build_coordinate_summary_lines(coords: &CoordinateSystem, shape: &[usize]) ->
         let reference_values = coord.reference_value();
         let reference_pixels = coord.reference_pixel();
         let increments = coord.increment();
-        let record = coord.to_record();
-
         if !lines.is_empty() {
             lines.push(String::new());
         }
@@ -2608,7 +2606,7 @@ fn build_coordinate_summary_lines(coords: &CoordinateSystem, shape: &[usize]) ->
             "{} {}: {}",
             coord.coordinate_type(),
             index,
-            coordinate_header_details(coord.coordinate_type(), &record)
+            coordinate_header_details(coord)
         ));
         for axis in 0..coord.n_world_axes() {
             let axis_name = axis_names
@@ -2648,77 +2646,44 @@ fn build_coordinate_summary_lines(coords: &CoordinateSystem, shape: &[usize]) ->
     lines
 }
 
-fn coordinate_header_details(coord_type: CoordinateType, record: &RecordValue) -> String {
-    match coord_type {
-        CoordinateType::Direction => {
-            let frame = record_string(record, "direction_ref").unwrap_or("unknown");
-            let projection = record_string(record, "projection").unwrap_or("unknown");
-            format!("frame={frame} projection={projection}")
-        }
-        CoordinateType::Spectral => {
-            let native_frame = record_string(record, "frequency_ref").unwrap_or("unknown");
-            let frame = record_subrecord(record, "conversion")
-                .and_then(|conversion| record_string(conversion, "system"))
-                .unwrap_or(native_frame);
-            let restfreq = record_f64(record, "restfreq")
-                .map(|value| format!(" restfreq={}", format_numeric_value_with_unit(value, "Hz")))
-                .unwrap_or_default();
+fn coordinate_header_details(coord: &casa_coordinates::CoordinateModel) -> String {
+    match coord {
+        casa_coordinates::CoordinateModel::Direction(direction) => format!(
+            "frame={:?} projection={}",
+            direction.direction_ref(),
+            direction.projection().name()
+        ),
+        casa_coordinates::CoordinateModel::Spectral(spectral) => {
+            let native_frame = spectral.frequency_ref().as_str();
+            let frame = spectral.world_frequency_ref().as_str();
+            let restfreq = format!(
+                " restfreq={}",
+                format_numeric_value_with_unit(spectral.rest_frequency(), "Hz")
+            );
             if frame == native_frame {
                 format!("frame={frame}{restfreq}")
             } else {
                 format!("frame={frame} native={native_frame}{restfreq}")
             }
         }
-        CoordinateType::Stokes => {
-            let stokes = record_stokes_values(record);
+        casa_coordinates::CoordinateModel::Stokes(stokes_coordinate) => {
+            let stokes = stokes_coordinate
+                .stokes()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
             if stokes.is_empty() {
                 "values=<unknown>".into()
             } else {
                 format!("values={}", stokes.join(","))
             }
         }
-        CoordinateType::Linear => "linear mapping".into(),
-        CoordinateType::Tabular => {
-            let name = record_string(record, "name").unwrap_or("lookup");
+        casa_coordinates::CoordinateModel::Linear(_) => "linear mapping".into(),
+        casa_coordinates::CoordinateModel::Tabular(_) => {
+            let names = coord.axis_names();
+            let name = names.first().map(String::as_str).unwrap_or("lookup");
             format!("lookup={name}")
         }
-    }
-}
-
-fn record_string<'a>(record: &'a RecordValue, key: &str) -> Option<&'a str> {
-    match record.get(key) {
-        Some(Value::Scalar(ScalarValue::String(value))) => Some(value.as_str()),
-        _ => None,
-    }
-}
-
-fn record_subrecord<'a>(record: &'a RecordValue, key: &str) -> Option<&'a RecordValue> {
-    match record.get(key) {
-        Some(Value::Record(value)) => Some(value),
-        _ => None,
-    }
-}
-
-fn record_f64(record: &RecordValue, key: &str) -> Option<f64> {
-    match record.get(key) {
-        Some(Value::Scalar(ScalarValue::Float64(value))) => Some(*value),
-        Some(Value::Scalar(ScalarValue::Float32(value))) => Some(f64::from(*value)),
-        _ => None,
-    }
-}
-
-fn record_stokes_values(record: &RecordValue) -> Vec<String> {
-    match record.get("stokes") {
-        Some(Value::Array(ArrayValue::Int32(values))) => values
-            .iter()
-            .map(|value| {
-                StokesType::from_code(*value)
-                    .map(|stokes| stokes.to_string())
-                    .unwrap_or_else(|| value.to_string())
-            })
-            .collect(),
-        Some(Value::Array(ArrayValue::String(values))) => values.iter().cloned().collect(),
-        _ => Vec::new(),
     }
 }
 
@@ -2762,45 +2727,45 @@ mod tests {
 
     fn direction_spectral_coords() -> CoordinateSystem {
         let mut coords = CoordinateSystem::new();
-        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+        coords.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [0.0, std::f64::consts::FRAC_PI_4],
             [-1e-4, 1e-4],
             [1.0, 1.0],
-        )));
-        coords.add_coordinate(Box::new(SpectralCoordinate::new(
+        ));
+        coords.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
             1.42e9,
             1.0e6,
             0.0,
             1.42040575e9,
-        )));
+        ));
         coords
     }
 
     fn direction_coords() -> CoordinateSystem {
         let mut coords = CoordinateSystem::new();
-        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+        coords.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [0.0, std::f64::consts::FRAC_PI_4],
             [-1e-4, 1e-4],
             [1.0, 1.0],
-        )));
+        ));
         coords
     }
 
     fn direction_tabular_spectral_coords() -> CoordinateSystem {
         let mut coords = CoordinateSystem::new();
-        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+        coords.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [0.0, std::f64::consts::FRAC_PI_4],
             [-1e-4, 1e-4],
             [1.0, 1.0],
-        )));
-        coords.add_coordinate(Box::new(
+        ));
+        coords.add_coordinate(
             SpectralCoordinate::from_tabular(
                 FrequencyRef::LSRK,
                 vec![0.0, 1.0, 3.0, 4.0],
@@ -2811,7 +2776,7 @@ mod tests {
                 1.42040575e9,
             )
             .unwrap(),
-        ));
+        );
         coords
     }
 

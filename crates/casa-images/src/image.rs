@@ -18,11 +18,11 @@ use std::path::{Path, PathBuf};
 use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_lattices::{
     Lattice, LatticeElement, LatticeError, LatticeMut, PagedArray, TiledShape, TraversalCacheHint,
-    TraversalCacheScope, recommended_tile_cache_size,
+    TraversalCacheScope, TraversalCursorIter, TraversalSpec, recommended_tile_cache_size,
 };
 use casa_tables::{
-    ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema, TilePixel,
-    TiledFileIO, TiledFileIoStats,
+    ColumnSchema, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerKind, Table, TableInfo, TableOptions,
+    TableSchema, TilePixel, TiledArrayStorage, TiledFileIoStats,
 };
 use casa_types::{
     ArrayD, ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue,
@@ -112,99 +112,27 @@ impl AnyPagedImage {
         max_cache_bytes: usize,
     ) -> Result<Self, ImageError> {
         let path = path.as_ref().to_path_buf();
-        let tiled_io = PagedImage::<f32>::open_tiled_io(&path, max_cache_bytes)
-            .ok()
-            .map(RefCell::new);
-        let table = if tiled_io.is_some() {
-            Table::open_metadata_only(TableOptions::new(&path))?
-        } else {
-            Table::open(TableOptions::new(&path))?
-        };
-        let coords = match table.keywords().get("coords") {
-            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec).unwrap_or_default(),
-            _ => CoordinateSystem::new(),
-        };
-        let units = match table.keywords().get("units") {
-            Some(Value::Scalar(ScalarValue::String(s))) => s.clone(),
-            _ => String::new(),
-        };
-        let misc_info = match table.keywords().get("miscinfo") {
-            Some(Value::Record(rec)) => rec.clone(),
-            _ => RecordValue::default(),
-        };
+        let table = Table::open_metadata_only(TableOptions::new(&path))?;
         let pixel_type = ImagePixelType::from_primitive_type(
-            PagedImage::<f32>::map_column_primitive_type(&table, tiled_io.as_ref())?,
+            PagedImage::<f32>::map_column_primitive_type(&table, None)?,
         )?;
-        let (shape, tile_shape) = if let Some(ref tio) = tiled_io {
-            let tio_ref = tio.borrow();
-            (tio_ref.cube_shape().to_vec(), tio_ref.tile_shape().to_vec())
-        } else {
-            let shape = PagedImage::<f32>::map_column_shape(&table)?;
-            let tile_shape = TiledShape::new(shape.clone()).tile_shape();
-            (shape, tile_shape)
-        };
-
         match pixel_type {
-            ImagePixelType::Float32 => Ok(Self::Float32(PagedImage {
-                table,
-                shape,
-                tile_shape,
-                coords,
-                path: Some(path),
-                units,
-                misc_info,
-                temp_masks: BTreeMap::new(),
-                persistent_masks: RefCell::new(BTreeMap::new()),
-                temp_history: Vec::new(),
-                tiled_io,
-                max_cache_bytes: Cell::new(max_cache_bytes),
-                _pixel: PhantomData,
-            })),
-            ImagePixelType::Float64 => Ok(Self::Float64(PagedImage {
-                table,
-                shape,
-                tile_shape,
-                coords,
-                path: Some(path),
-                units,
-                misc_info,
-                temp_masks: BTreeMap::new(),
-                persistent_masks: RefCell::new(BTreeMap::new()),
-                temp_history: Vec::new(),
-                tiled_io,
-                max_cache_bytes: Cell::new(max_cache_bytes),
-                _pixel: PhantomData,
-            })),
-            ImagePixelType::Complex32 => Ok(Self::Complex32(PagedImage {
-                table,
-                shape,
-                tile_shape,
-                coords,
-                path: Some(path),
-                units,
-                misc_info,
-                temp_masks: BTreeMap::new(),
-                persistent_masks: RefCell::new(BTreeMap::new()),
-                temp_history: Vec::new(),
-                tiled_io,
-                max_cache_bytes: Cell::new(max_cache_bytes),
-                _pixel: PhantomData,
-            })),
-            ImagePixelType::Complex64 => Ok(Self::Complex64(PagedImage {
-                table,
-                shape,
-                tile_shape,
-                coords,
-                path: Some(path),
-                units,
-                misc_info,
-                temp_masks: BTreeMap::new(),
-                persistent_masks: RefCell::new(BTreeMap::new()),
-                temp_history: Vec::new(),
-                tiled_io,
-                max_cache_bytes: Cell::new(max_cache_bytes),
-                _pixel: PhantomData,
-            })),
+            ImagePixelType::Float32 => Ok(Self::Float32(PagedImage::open_with_cache(
+                &path,
+                max_cache_bytes,
+            )?)),
+            ImagePixelType::Float64 => Ok(Self::Float64(PagedImage::open_with_cache(
+                &path,
+                max_cache_bytes,
+            )?)),
+            ImagePixelType::Complex32 => Ok(Self::Complex32(PagedImage::open_with_cache(
+                &path,
+                max_cache_bytes,
+            )?)),
+            ImagePixelType::Complex64 => Ok(Self::Complex64(PagedImage::open_with_cache(
+                &path,
+                max_cache_bytes,
+            )?)),
         }
     }
 
@@ -679,7 +607,7 @@ pub struct PagedImage<T: ImagePixel> {
     /// or when opening an on-disk image that was created with it.
     /// Wrapped in `RefCell` for interior mutability since the tile cache
     /// needs mutation even through `&self` trait methods.
-    tiled_io: Option<RefCell<TiledFileIO>>,
+    tiled_io: Option<RefCell<TiledArrayStorage>>,
     max_cache_bytes: Cell<usize>,
     _pixel: PhantomData<T>,
 }
@@ -711,12 +639,10 @@ impl<T: ImagePixel> std::fmt::Debug for PagedImage<T> {
 impl<T: ImagePixel> PagedImage<T> {
     fn map_column_primitive_type(
         table: &Table,
-        tiled_io: Option<&RefCell<TiledFileIO>>,
+        tiled_io: Option<&RefCell<TiledArrayStorage>>,
     ) -> Result<PrimitiveType, ImageError> {
-        if let Some(tiled_io) = tiled_io
-            && let Some(data_type) = tiled_io.borrow().pixel_type()
-        {
-            return Ok(data_type);
+        if let Some(tiled_io) = tiled_io {
+            return Ok(tiled_io.borrow().pixel_type());
         }
         if let Some(schema) = table.schema()
             && let Some(column) = schema.column(MAP_COLUMN)
@@ -754,16 +680,15 @@ impl<T: ImagePixel> PagedImage<T> {
         }
     }
 
-    fn open_tiled_io(path: &Path, max_cache_bytes: usize) -> Result<TiledFileIO, ImageError> {
-        if max_cache_bytes == 0 {
-            TiledFileIO::open(path, 1)
-                .or_else(|_| TiledFileIO::open(path, 0))
-                .map_err(|e| ImageError::Io(e.to_string()))
+    fn open_tiled_io(path: &Path, max_cache_bytes: usize) -> Result<TiledArrayStorage, ImageError> {
+        let cache_bytes = if max_cache_bytes == 0 {
+            DEFAULT_TILED_ARRAY_CACHE_BYTES
         } else {
-            TiledFileIO::open_with_cache_limit(path, 1, max_cache_bytes)
-                .or_else(|_| TiledFileIO::open_with_cache_limit(path, 0, max_cache_bytes))
-                .map_err(|e| ImageError::Io(e.to_string()))
-        }
+            max_cache_bytes
+        };
+        TiledArrayStorage::open_with_cache::<T>(path, 1, cache_bytes)
+            .or_else(|_| TiledArrayStorage::open_with_cache::<T>(path, 0, cache_bytes))
+            .map_err(|e| ImageError::Io(e.to_string()))
     }
 
     fn tile_pixels(&self) -> usize {
@@ -789,7 +714,11 @@ impl<T: ImagePixel> PagedImage<T> {
     }
 
     fn set_cache_bytes_shared(&self, max_cache_bytes: usize) -> Result<(), ImageError> {
-        self.max_cache_bytes.set(max_cache_bytes);
+        self.max_cache_bytes.set(if max_cache_bytes == 0 {
+            DEFAULT_TILED_ARRAY_CACHE_BYTES
+        } else {
+            max_cache_bytes
+        });
         self.persistent_masks.borrow_mut().clear();
         self.refresh_tiled_io()
     }
@@ -838,43 +767,10 @@ impl<T: ImagePixel> PagedImage<T> {
         coords: CoordinateSystem,
         path: impl AsRef<Path>,
     ) -> Result<Self, ImageError> {
-        let path = path.as_ref().to_path_buf();
-        let tile_shape = TiledShape::new(shape.clone()).tile_shape();
-        let mut table = Self::build_table(&shape, false)?;
-        Self::initialize_keywords(&mut table, &coords);
-        table.keywords_mut().upsert(
-            LOGTABLE_KEYWORD,
-            Value::TableRef(LOGTABLE_RELATIVE_PATH.to_string()),
-        );
-        table.set_info(TableInfo {
-            table_type: "Image".into(),
-            sub_type: "PAGEDIMAGE".into(),
-            readme: Vec::new(),
-        });
-        table.add_row(RecordValue::new(vec![RecordField::new(
-            MAP_COLUMN,
-            Value::Array(to_array_value(&ArrayD::from_elem(
-                IxDyn(&shape),
-                T::default_value(),
-            ))),
-        )]))?;
-        // Don't save to disk yet — save() will write everything in one pass.
-
-        Ok(Self {
-            table,
-            shape,
-            tile_shape,
-            coords,
-            path: Some(path),
-            units: String::new(),
-            misc_info: RecordValue::default(),
-            temp_masks: BTreeMap::new(),
-            persistent_masks: RefCell::new(BTreeMap::new()),
-            temp_history: Vec::new(),
-            tiled_io: None,
-            max_cache_bytes: Cell::new(0),
-            _pixel: PhantomData,
-        })
+        let tile_shape = TiledShape::new(shape.clone(), T::ELEM_SIZE)?
+            .tile_shape()
+            .to_vec();
+        Self::create_with_tile_shape(shape, tile_shape, coords, path)
     }
 
     /// Creates a new persistent image with direct tile-level I/O.
@@ -882,7 +778,7 @@ impl<T: ImagePixel> PagedImage<T> {
     /// Unlike [`create`](Self::create), this method does *not* allocate a full
     /// in-memory default array. Instead, it sets up the table structure and a
     /// zeroed tile data file on disk. Subsequent `put_slice` / `get_slice`
-    /// calls operate tile-by-tile via [`TiledFileIO`], making plane-by-plane
+    /// calls operate tile-by-tile via the typed storage seam, making plane-by-plane
     /// writes O(tiles_intersected) instead of O(total_pixels).
     ///
     /// Call [`save`](Self::save) after all writes to flush metadata.
@@ -919,14 +815,14 @@ impl<T: ImagePixel> PagedImage<T> {
         });
         // Add a row with a tiny placeholder array.
         // The actual pixel data lives in the tile file.
-        let placeholder = ArrayD::from_elem(IxDyn(&vec![1; shape.len()]), T::default_value());
+        let placeholder = ArrayD::from_elem(IxDyn(&tile_shape), T::default_value());
         table.add_row(RecordValue::new(vec![RecordField::new(
             MAP_COLUMN,
             Value::Array(to_array_value(&placeholder)),
         )]))?;
 
         // Save the table skeleton with a CASA-visible tiled data manager for
-        // the map column. TiledFileIO overwrites this same DM sequence below
+        // the map column. The typed tiled seam overwrites this same DM sequence below
         // with the full target cube shape while avoiding a full in-memory map.
         table.save(
             TableOptions::new(&path)
@@ -934,14 +830,13 @@ impl<T: ImagePixel> PagedImage<T> {
                 .with_tile_shape(tile_shape.clone()),
         )?;
 
-        // Create the TiledFileIO which writes the TSM header + allocates
+        // Create the typed tiled storage which writes the TSM header + allocates
         // a zeroed data file for the same TiledCellStMan sequence registered
         // in table.dat.
-        let tiled_io = TiledFileIO::create(
+        let tiled_io = TiledArrayStorage::create::<T>(
             &path,
             &shape,
             &tile_shape,
-            T::PRIMITIVE_TYPE,
             cfg!(target_endian = "big"), // native endian, matching C++ default
             0,
             MAP_COLUMN,
@@ -960,7 +855,7 @@ impl<T: ImagePixel> PagedImage<T> {
             persistent_masks: RefCell::new(BTreeMap::new()),
             temp_history: Vec::new(),
             tiled_io: Some(RefCell::new(tiled_io)),
-            max_cache_bytes: Cell::new(0),
+            max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
             _pixel: PhantomData,
         })
     }
@@ -998,7 +893,7 @@ impl<T: ImagePixel> PagedImage<T> {
             sub_type: "PAGEDIMAGE".into(),
             readme: Vec::new(),
         });
-        let placeholder = ArrayD::from_elem(IxDyn(&vec![1; shape.len()]), T::default_value());
+        let placeholder = ArrayD::from_elem(IxDyn(&tile_shape), T::default_value());
         table.add_row(RecordValue::new(vec![RecordField::new(
             MAP_COLUMN,
             Value::Array(to_array_value(&placeholder)),
@@ -1009,15 +904,19 @@ impl<T: ImagePixel> PagedImage<T> {
                 .with_tile_shape(tile_shape.clone()),
         )?;
 
-        let tiled_io = TiledFileIO::create_with_cache_limit(
+        let cache_bytes = if max_cache_bytes == 0 {
+            DEFAULT_TILED_ARRAY_CACHE_BYTES
+        } else {
+            max_cache_bytes
+        };
+        let tiled_io = TiledArrayStorage::create_with_cache::<T>(
             &path,
             &shape,
             &tile_shape,
-            T::PRIMITIVE_TYPE,
             cfg!(target_endian = "big"),
             0,
             MAP_COLUMN,
-            max_cache_bytes,
+            cache_bytes,
         )
         .map_err(|e| ImageError::Io(e.to_string()))?;
 
@@ -1033,7 +932,7 @@ impl<T: ImagePixel> PagedImage<T> {
             persistent_masks: RefCell::new(BTreeMap::new()),
             temp_history: Vec::new(),
             tiled_io: Some(RefCell::new(tiled_io)),
-            max_cache_bytes: Cell::new(max_cache_bytes),
+            max_cache_bytes: Cell::new(cache_bytes),
             _pixel: PhantomData,
         })
     }
@@ -1053,7 +952,8 @@ impl<T: ImagePixel> PagedImage<T> {
             Table::open(TableOptions::new(&path))?
         };
         let coords = match table.keywords().get("coords") {
-            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec).unwrap_or_default(),
+            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)
+                .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
             _ => CoordinateSystem::new(),
         };
         let units = match table.keywords().get("units") {
@@ -1077,7 +977,9 @@ impl<T: ImagePixel> PagedImage<T> {
             (tio_ref.cube_shape().to_vec(), tio_ref.tile_shape().to_vec())
         } else {
             let shape = Self::map_column_shape(&table)?;
-            let ts = TiledShape::new(shape.clone()).tile_shape();
+            let ts = TiledShape::new(shape.clone(), T::ELEM_SIZE)?
+                .tile_shape()
+                .to_vec();
             (shape, ts)
         };
         Ok(Self {
@@ -1092,7 +994,11 @@ impl<T: ImagePixel> PagedImage<T> {
             persistent_masks: RefCell::new(BTreeMap::new()),
             temp_history: Vec::new(),
             tiled_io,
-            max_cache_bytes: Cell::new(max_cache_bytes),
+            max_cache_bytes: Cell::new(if max_cache_bytes == 0 {
+                DEFAULT_TILED_ARRAY_CACHE_BYTES
+            } else {
+                max_cache_bytes
+            }),
             _pixel: PhantomData,
         })
     }
@@ -1103,7 +1009,9 @@ impl<T: ImagePixel> PagedImage<T> {
     /// overhead entirely.
     #[deprecated(note = "Use TempImage::new() instead")]
     pub fn create_temp(shape: Vec<usize>, coords: CoordinateSystem) -> Result<Self, ImageError> {
-        let tile_shape = TiledShape::new(shape.clone()).tile_shape();
+        let tile_shape = TiledShape::new(shape.clone(), T::ELEM_SIZE)?
+            .tile_shape()
+            .to_vec();
         let mut table = Self::build_table(&shape, true)?;
         Self::initialize_keywords(&mut table, &coords);
         table.set_info(TableInfo {
@@ -1131,7 +1039,7 @@ impl<T: ImagePixel> PagedImage<T> {
             persistent_masks: RefCell::new(BTreeMap::new()),
             temp_history: Vec::new(),
             tiled_io: None,
-            max_cache_bytes: Cell::new(0),
+            max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
             _pixel: PhantomData,
         })
     }
@@ -1146,7 +1054,8 @@ impl<T: ImagePixel> PagedImage<T> {
             Table::open(TableOptions::new(&path))?
         };
         let coords = match table.keywords().get("coords") {
-            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec).unwrap_or_default(),
+            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)
+                .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
             _ => CoordinateSystem::new(),
         };
         let units = match table.keywords().get("units") {
@@ -1177,7 +1086,9 @@ impl<T: ImagePixel> PagedImage<T> {
             (tio_ref.cube_shape().to_vec(), tio_ref.tile_shape().to_vec())
         } else {
             let shape = Self::map_column_shape(&table)?;
-            let ts = TiledShape::new(shape.clone()).tile_shape();
+            let ts = TiledShape::new(shape.clone(), T::ELEM_SIZE)?
+                .tile_shape()
+                .to_vec();
             (shape, ts)
         };
 
@@ -1193,7 +1104,7 @@ impl<T: ImagePixel> PagedImage<T> {
             persistent_masks: RefCell::new(BTreeMap::new()),
             temp_history: Vec::new(),
             tiled_io,
-            max_cache_bytes: Cell::new(0),
+            max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
             _pixel: PhantomData,
         })
     }
@@ -1313,6 +1224,13 @@ impl<T: ImagePixel> PagedImage<T> {
             .map(|tiled_io| tiled_io.borrow().io_stats())
     }
 
+    /// Bytes currently owned by the bounded tile cache and direct-I/O buffer.
+    pub fn tiled_storage_resident_bytes(&self) -> Option<usize> {
+        self.tiled_io
+            .as_ref()
+            .map(|tiled_io| tiled_io.borrow().owned_resident_bytes())
+    }
+
     /// Clears tiled-I/O diagnostic counters for this image.
     pub fn reset_tiled_io_stats(&mut self) {
         if let Some(tiled_io) = &self.tiled_io {
@@ -1339,7 +1257,7 @@ impl<T: ImagePixel> PagedImage<T> {
     pub fn set_coordinates(&mut self, coords: CoordinateSystem) -> Result<(), ImageError> {
         self.table
             .keywords_mut()
-            .upsert("coords", Value::Record(coords.to_casa_record()));
+            .upsert("coords", Value::Record(coords.to_record()));
         self.coords = coords;
         Ok(())
     }
@@ -1792,7 +1710,7 @@ impl<T: ImagePixel> PagedImage<T> {
             let mask_path = resolve_mask_table_path(path, &table_ref);
             if !mask_path.exists() {
                 let mut mask =
-                    PagedArray::<bool>::create(TiledShape::new(self.shape.clone()), &mask_path)
+                    PagedArray::<bool>::create(TiledShape::new(self.shape.clone(), 1)?, &mask_path)
                         .map_err(ImageError::from)?;
                 mask.put_slice(data, start)?;
                 mask.flush().map_err(ImageError::from)?;
@@ -1915,7 +1833,7 @@ impl<T: ImagePixel> PagedImage<T> {
     fn initialize_keywords(table: &mut Table, coords: &CoordinateSystem) {
         table
             .keywords_mut()
-            .upsert("coords", Value::Record(coords.to_casa_record()));
+            .upsert("coords", Value::Record(coords.to_record()));
         table
             .keywords_mut()
             .upsert("units", Value::Scalar(ScalarValue::String(String::new())));
@@ -2132,7 +2050,7 @@ impl<T: ImagePixel> PagedImage<T> {
             std::fs::remove_dir_all(&mask_path).map_err(|e| ImageError::Io(e.to_string()))?;
         }
         let mut mask =
-            PagedArray::<bool>::create(TiledShape::new(data.shape().to_vec()), &mask_path)
+            PagedArray::<bool>::create(TiledShape::new(data.shape().to_vec(), 1)?, &mask_path)
                 .map_err(ImageError::from)?;
         mask.put_slice(data, &vec![0; data.ndim()])?;
         mask.flush().map_err(ImageError::from)
@@ -2305,6 +2223,38 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
                     .map_err(|e| LatticeError::Table(e.to_string()))?;
                 return Ok(arr);
             }
+            let bounding_shape = shape
+                .iter()
+                .zip(stride.iter())
+                .map(|(&count, &step)| {
+                    if step == 0 {
+                        return Err(LatticeError::InvalidTraversal(
+                            "slice stride must be positive".into(),
+                        ));
+                    }
+                    count
+                        .saturating_sub(1)
+                        .checked_mul(step)
+                        .and_then(|extent| extent.checked_add(usize::from(count > 0)))
+                        .ok_or_else(|| {
+                            LatticeError::InvalidTraversal("strided slice extent overflow".into())
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let bounding = tio
+                .borrow_mut()
+                .get_slice::<T>(start, &bounding_shape)
+                .map_err(|e| LatticeError::Table(e.to_string()))?;
+            let local_slice: Vec<SliceInfoElem> = bounding_shape
+                .iter()
+                .zip(stride.iter())
+                .map(|(&extent, &step)| SliceInfoElem::Slice {
+                    start: 0,
+                    end: Some(extent as isize),
+                    step: step as isize,
+                })
+                .collect();
+            return Ok(bounding.slice(local_slice.as_slice()).to_owned());
         }
         let array = self
             .read_array()
@@ -2398,12 +2348,17 @@ fn paged_image_put_slice_view<T: ImagePixel>(
         {
             return Ok(());
         }
-        if let Some(slice) = data.as_slice()
-            && tio
-                .borrow_mut()
+        if let Some(slice) = data.as_slice() {
+            let mut tiled = tio.borrow_mut();
+            if tiled
                 .put_aligned_c_order_tiles::<T>(slice, start, data.shape())
                 .map_err(|e| LatticeError::Table(e.to_string()))?
-        {
+            {
+                return Ok(());
+            }
+            tiled
+                .put_slice_c_order::<T>(slice, start, data.shape())
+                .map_err(|e| LatticeError::Table(e.to_string()))?;
             return Ok(());
         }
         let fortran_view = data.t();
@@ -2492,6 +2447,10 @@ impl<T: ImagePixel> LatticeMut<T> for PagedImage<T> {
                 got: position.len(),
             });
         }
+        if self.tiled_io.is_some() {
+            let pixel = ArrayD::from_elem(IxDyn(&vec![1; self.shape.len()]), value);
+            return paged_image_put_slice_view(self, pixel.view(), position);
+        }
         let mut array = self
             .read_array()
             .map_err(|e| LatticeError::Table(e.to_string()))?;
@@ -2512,6 +2471,19 @@ impl<T: ImagePixel> LatticeMut<T> for PagedImage<T> {
     }
 
     fn set(&mut self, value: T) -> Result<(), LatticeError> {
+        if self.tiled_io.is_some() {
+            let cursors = TraversalCursorIter::new(
+                self.shape.clone(),
+                self.tile_shape.clone(),
+                TraversalSpec::tiles(),
+            );
+            for cursor in cursors {
+                let cursor = cursor?;
+                let tile = ArrayD::from_elem(IxDyn(&cursor.shape), value);
+                paged_image_put_slice_view(self, tile.view(), &cursor.position)?;
+            }
+            return Ok(());
+        }
         let array = ArrayD::from_elem(IxDyn(&self.shape), value);
         self.write_array(&array)
             .map_err(|e| LatticeError::Table(e.to_string()))
@@ -2873,8 +2845,9 @@ mod tests {
         let observed = image
             .get_slice(&[1, 1], &[2, 2])
             .unwrap()
-            .into_raw_vec_and_offset()
-            .0;
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
         assert_eq!(observed, vec![1.0, 2.0, 3.0, 4.0]);
     }
 
@@ -3069,7 +3042,12 @@ mod tests {
     fn temp_image_materializes_masks_and_history() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("temp.image");
-        let mut image = crate::TempImage::<f32>::new(vec![3, 3], make_coords()).unwrap();
+        let mut image = crate::TempImage::<f32>::new(
+            vec![3, 3],
+            make_coords(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         image.make_mask("quality", true, true).unwrap();
         image.add_history("temp").unwrap();
         let _paged = image.save_as(&path).unwrap();
@@ -3083,7 +3061,12 @@ mod tests {
 
     #[test]
     fn default_mask_requires_existing_name() {
-        let mut image = crate::TempImage::<f32>::new(vec![2, 2], make_coords()).unwrap();
+        let mut image = crate::TempImage::<f32>::new(
+            vec![2, 2],
+            make_coords(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         assert!(matches!(
             image.set_default_mask("missing"),
             Err(ImageError::MaskNotFound(_))
@@ -3218,7 +3201,12 @@ mod tests {
 
     #[test]
     fn image_interface_defaults_cover_axes_plane_names_and_masks() {
-        let mut image = crate::TempImage::<f32>::new(vec![3, 4], make_coords()).unwrap();
+        let mut image = crate::TempImage::<f32>::new(
+            vec![3, 4],
+            make_coords(),
+            casa_lattices::TempStoragePolicy::Memory,
+        )
+        .unwrap();
         image.set_units("K").unwrap();
         image.make_mask("quality", true, true).unwrap();
         image
@@ -3621,6 +3609,48 @@ mod tests {
         assert_eq!(
             image.get_plane(0, 1).unwrap(),
             ArrayD::from_shape_vec(IxDyn(&[1, 2]), vec![3.0, 4.0]).unwrap()
+        );
+    }
+
+    #[test]
+    fn fifty_gib_spectral_cube_streams_selected_planes_with_bounded_storage() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let shape = vec![1024, 1024, 1, 12_800];
+        let logical_bytes = shape.iter().product::<usize>() * std::mem::size_of::<f32>();
+        assert_eq!(logical_bytes, 50 * GIB);
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("fifty-gib-spectral.image");
+        let mut image = PagedImage::<f32>::create(shape.clone(), make_coords(), &path).unwrap();
+        assert_eq!(image.tile_shape(), &[1024, 1024, 1, 1]);
+
+        let plane_shape = vec![1024, 1024, 1, 1];
+        let plane = ArrayD::from_elem(IxDyn(&plane_shape), 7.25f32);
+        for channel in [0, 6_400, 12_799] {
+            image.put_slice(&plane, &[0, 0, 0, channel]).unwrap();
+        }
+        image.save().unwrap();
+        let stats = image.tiled_io_stats().unwrap();
+        assert_eq!(stats.direct_tile_write_tiles, 3);
+        assert_eq!(stats.direct_tile_write_bytes, 3 * 4 * 1024 * 1024);
+        assert_eq!(stats.flat_allocated_bytes, 0);
+        assert!(
+            image.tiled_storage_resident_bytes().unwrap()
+                <= DEFAULT_TILED_ARRAY_CACHE_BYTES + 4 * 1024 * 1024
+        );
+        drop(image);
+
+        let reopened = PagedImage::<f32>::open(&path).unwrap();
+        assert_eq!(reopened.shape(), shape);
+        for channel in [0, 6_400, 12_799] {
+            let read = reopened
+                .get_slice(&[0, 0, 0, channel], &plane_shape)
+                .unwrap();
+            assert!(read.iter().all(|&value| value == 7.25));
+        }
+        assert!(
+            reopened.tiled_storage_resident_bytes().unwrap()
+                <= DEFAULT_TILED_ARRAY_CACHE_BYTES + 4 * 1024 * 1024
         );
     }
 }

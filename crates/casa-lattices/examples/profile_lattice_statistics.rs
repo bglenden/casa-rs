@@ -23,7 +23,8 @@
 use std::time::Instant;
 
 use casa_lattices::{
-    ArrayLattice, ExecutionPolicy, LatticeMut, LatticeStatistics, Statistic, TempLattice,
+    ArrayLattice, ExecutionPolicy, LatticeMut, LatticeStatistics, ScratchSpace, Statistic,
+    TempLattice, TempStoragePolicy,
 };
 use ndarray::{ArrayD, IxDyn};
 
@@ -236,7 +237,13 @@ fn bench_paged_order(
 
 fn make_paged_lattice(data: &ArrayD<f32>) -> TempLattice<f32> {
     let shape = data.shape().to_vec();
-    let mut lattice = TempLattice::<f32>::new(shape, Some(1)).unwrap();
+    let mut lattice = TempLattice::<f32>::new(
+        shape,
+        TempStoragePolicy::Paged {
+            scratch: ScratchSpace::SystemTemp,
+        },
+    )
+    .unwrap();
     lattice.put_slice(data, &vec![0; data.ndim()]).unwrap();
     lattice
 }
