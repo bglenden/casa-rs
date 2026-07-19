@@ -495,11 +495,10 @@ impl MeasurementSetWritePlan {
             .checked_mul(bytes_per_row)
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
         let queue_budget = streaming_budget.saturating_sub(batch_bytes);
-        let queue_capacity = if batch_bytes == 0 {
-            0
-        } else {
-            (queue_budget / batch_bytes).min(resources.maximum_live_batches.saturating_sub(1))
-        };
+        let queue_capacity = queue_budget
+            .checked_div(batch_bytes)
+            .unwrap_or(0)
+            .min(resources.maximum_live_batches.saturating_sub(1));
         let maximum_resident_bytes = batch_bytes
             .checked_mul(queue_capacity.saturating_add(1))
             .and_then(|bytes| bytes.checked_add(fixed_writer_bytes))
@@ -643,11 +642,7 @@ impl MeasurementSetWritePlan {
             ));
         }
         let per_batch_budget = resources.available_bytes / resources.maximum_live_batches;
-        let mut batch_rows = if bytes_per_row == 0 {
-            0
-        } else {
-            per_batch_budget / bytes_per_row
-        };
+        let mut batch_rows = per_batch_budget.checked_div(bytes_per_row).unwrap_or(0);
         if !selected_rows.is_empty() && batch_rows == 0 {
             return Err(MeasurementSetWriteError::InsufficientBudget {
                 bytes_per_row,
@@ -667,12 +662,12 @@ impl MeasurementSetWritePlan {
         let batch_bytes = batch_rows
             .checked_mul(bytes_per_row)
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
-        let queue_capacity = if batch_bytes == 0 {
-            0
-        } else {
-            (resources.available_bytes.saturating_sub(batch_bytes) / batch_bytes)
-                .min(resources.maximum_live_batches.saturating_sub(1))
-        };
+        let queue_capacity = resources
+            .available_bytes
+            .saturating_sub(batch_bytes)
+            .checked_div(batch_bytes)
+            .unwrap_or(0)
+            .min(resources.maximum_live_batches.saturating_sub(1));
         let maximum_resident_bytes = batch_bytes
             .checked_mul(queue_capacity.saturating_add(1))
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
@@ -807,11 +802,7 @@ impl MeasurementSetWritePlan {
         }
         let streaming_budget = resources.available_bytes - scalar_buffer_bytes;
         let batch_budget = streaming_budget / resources.maximum_live_batches;
-        let mut batch_rows = if bytes_per_row == 0 {
-            0
-        } else {
-            batch_budget / bytes_per_row
-        };
+        let mut batch_rows = batch_budget.checked_div(bytes_per_row).unwrap_or(0);
         if row_count > 0 && batch_rows == 0 {
             return Err(MeasurementSetWriteError::InsufficientBudget {
                 bytes_per_row,
