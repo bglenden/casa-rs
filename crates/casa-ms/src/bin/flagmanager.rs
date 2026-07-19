@@ -84,7 +84,7 @@ fn execute_task_request(request: FlagManagerTaskRequest) -> Result<FlagManagerTa
                 request.merge,
             )
             .map_err(|error| error.to_string())?;
-            ms.save_main_table_only_assuming_valid()
+            ms.save_main_table_only()
                 .map_err(|error| error.to_string())?;
             mutation("restore", request.versionname, None)
         }

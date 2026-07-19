@@ -38,6 +38,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+casa-measures-data = { path = "../casa-measures-data" }
 casa-test-support = { path = "../casa-test-support" }
 tempfile = "3"
 

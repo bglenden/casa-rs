@@ -15,6 +15,7 @@ use casa_imaging::{
     ImageGeometry, PrimaryBeamModel, PrimaryBeamVoltagePattern, StandardMfsModelPredictor,
 };
 use casa_tables::ColumnOverrides;
+use casa_types::measures::MeasuresProvider;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
@@ -1982,6 +1983,7 @@ fn populate_main_rows(
     model: Option<&PreparedSkyModel>,
     main_column_writer: &mut MeasurementSetWriteSession,
 ) -> MsResult<MainRowsReport> {
+    let measures: std::sync::Arc<dyn MeasuresProvider> = crate::open_measures_runtime()?;
     let samples = sample_times.len();
     let num_corr = request.polarization_setup.correlation_count;
     let num_chan = request.spectral_setup.channel_count;
@@ -2011,7 +2013,11 @@ fn populate_main_rows(
     let row_pairs = observation_row_pairs(request);
     let baseline_count = row_pairs.len();
     let total_row_count = samples * baseline_count;
-    let observatory = simulation_observatory_position(&request.telescope_name, &request.antennas);
+    let observatory = simulation_observatory_position(
+        &request.telescope_name,
+        &request.antennas,
+        measures.as_ref(),
+    );
     let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
     let uvw_production_trace = SimobserveUvwProductionTrace::from_env();
     let mut flagged_row_count = 0usize;
@@ -2027,6 +2033,7 @@ fn populate_main_rows(
             field_plan.phase_center_rad,
             time,
             &observatory,
+            std::sync::Arc::clone(&measures),
         )?;
         let mut row_specs = Vec::with_capacity(baseline_count);
         let mut row_uvws = Vec::with_capacity(baseline_count);
@@ -2078,6 +2085,7 @@ fn populate_main_rows(
             &observatory,
             elevation_margin_rad,
             request.elevation_limit_rad,
+            std::sync::Arc::clone(&measures),
         )?;
         timing.uvw_and_row_setup += uvw_started.elapsed();
 
@@ -2171,9 +2179,14 @@ fn antennas_below_elevation_limit(
     observatory: &MPosition,
     elevation_margin_rad: f64,
     elevation_limit_rad: f64,
+    measures: std::sync::Arc<dyn MeasuresProvider>,
 ) -> MsResult<Vec<bool>> {
-    let observatory_elevation_rad =
-        field_elevation_rad(phase_center_rad, time_mjd_seconds, observatory)?;
+    let observatory_elevation_rad = field_elevation_rad(
+        phase_center_rad,
+        time_mjd_seconds,
+        observatory,
+        std::sync::Arc::clone(&measures),
+    )?;
     if observatory_elevation_rad + elevation_margin_rad < elevation_limit_rad {
         return Ok(vec![true; antennas.len()]);
     }
@@ -2189,10 +2202,12 @@ fn antennas_below_elevation_limit(
                 antenna.position_m[1],
                 antenna.position_m[2],
             );
-            Ok(
-                field_elevation_rad(phase_center_rad, time_mjd_seconds, &position)?
-                    < elevation_limit_rad,
-            )
+            Ok(field_elevation_rad(
+                phase_center_rad,
+                time_mjd_seconds,
+                &position,
+                std::sync::Arc::clone(&measures),
+            )? < elevation_limit_rad)
         })
         .collect()
 }
@@ -2222,6 +2237,7 @@ fn field_elevation_rad(
     phase_center_rad: [f64; 2],
     time_mjd_seconds: f64,
     observatory: &MPosition,
+    measures: std::sync::Arc<dyn MeasuresProvider>,
 ) -> MsResult<f64> {
     let phase_center = MDirection::from_angles(
         phase_center_rad[0],
@@ -2232,7 +2248,7 @@ fn field_elevation_rad(
         .with_epoch(MEpoch::from_mjd(time_mjd_seconds / 86_400.0, EpochRef::UT1))
         .with_position(observatory.clone())
         .with_direction(phase_center.clone())
-        .with_bundled_eop();
+        .with_measures(measures);
     let azel = phase_center
         .convert_to(DirectionRef::AZEL, &frame)
         .map_err(|error| {
@@ -4384,7 +4400,12 @@ fn observation_sample_times(
             .collect());
     }
 
-    let observatory = simulation_observatory_position(&request.telescope_name, &request.antennas);
+    let measures: std::sync::Arc<dyn MeasuresProvider> = crate::open_measures_runtime()?;
+    let observatory = simulation_observatory_position(
+        &request.telescope_name,
+        &request.antennas,
+        measures.as_ref(),
+    );
     let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
     let phase_center_rad = effective_fields(request)
         .first()
@@ -4394,6 +4415,7 @@ fn observation_sample_times(
         phase_center_rad,
         request.start_time_mjd_seconds,
         &observatory,
+        std::sync::Arc::clone(&measures),
     )?;
     let mut sample_times = Vec::with_capacity(sample_count);
     let mut transit = first_transit;
@@ -4406,6 +4428,7 @@ fn observation_sample_times(
             transit,
             &observatory,
             elevation_margin_rad,
+            std::sync::Arc::clone(&measures),
         )?;
         if offsets.is_empty() {
             return Err(MsError::SyntheticObservation(format!(
@@ -4435,6 +4458,7 @@ fn next_transit_time_mjd_seconds(
     phase_center_rad: [f64; 2],
     reference_time_mjd_seconds: f64,
     observatory: &MPosition,
+    measures: std::sync::Arc<dyn MeasuresProvider>,
 ) -> MsResult<f64> {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(
@@ -4447,7 +4471,7 @@ fn next_transit_time_mjd_seconds(
             phase_center_rad[1],
             DirectionRef::J2000,
         ))
-        .with_bundled_eop();
+        .with_measures(measures);
     let last = local_apparent_sidereal_time(&frame)?;
     let mut delta = circular_angle_delta_rad(phase_center_rad[0] - last);
     if delta < -1.0e-12 {
@@ -4462,6 +4486,7 @@ fn above_elevation_offsets_for_transit(
     transit_time_mjd_seconds: f64,
     observatory: &MPosition,
     elevation_margin_rad: f64,
+    measures: std::sync::Arc<dyn MeasuresProvider>,
 ) -> MsResult<Vec<f64>> {
     let slots_per_sidereal_day = (SIDEREAL_DAY_SECONDS / request.integration_seconds)
         .floor()
@@ -4472,7 +4497,12 @@ fn above_elevation_offsets_for_transit(
     for slot in 0..slots_per_sidereal_day {
         let offset = first_offset + slot as f64 * request.integration_seconds;
         let time = transit_time_mjd_seconds + offset;
-        let elevation = field_elevation_rad(phase_center_rad, time, observatory)?;
+        let elevation = field_elevation_rad(
+            phase_center_rad,
+            time,
+            observatory,
+            std::sync::Arc::clone(&measures),
+        )?;
         if elevation - elevation_margin_rad >= request.elevation_limit_rad {
             offsets.push(offset);
         }
@@ -4485,14 +4515,15 @@ pub(crate) fn zenith_transit_phase_center_rad(
     antennas: &[SyntheticAntenna],
     transit_time_mjd_seconds: f64,
 ) -> MsResult<[f64; 2]> {
-    let observatory = simulation_observatory_position(telescope_name, antennas);
+    let measures: std::sync::Arc<dyn MeasuresProvider> = crate::open_measures_runtime()?;
+    let observatory = simulation_observatory_position(telescope_name, antennas, measures.as_ref());
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(
             transit_time_mjd_seconds / 86_400.0,
             EpochRef::UT1,
         ))
         .with_position(observatory.clone())
-        .with_bundled_eop();
+        .with_measures(measures);
     Ok([
         local_apparent_sidereal_time(&frame)?.rem_euclid(std::f64::consts::TAU),
         observatory.latitude_rad(),
@@ -4508,8 +4539,10 @@ fn antenna_uvw_positions(
     phase_center_rad: [f64; 2],
     time_mjd_seconds: f64,
     observatory: &MPosition,
+    measures: std::sync::Arc<dyn MeasuresProvider>,
 ) -> MsResult<Vec<[f64; 3]>> {
-    let context = UvwConversionContext::new(phase_center_rad, time_mjd_seconds, observatory)?;
+    let context =
+        UvwConversionContext::new(phase_center_rad, time_mjd_seconds, observatory, measures)?;
     let obs_itrf = observatory.as_itrf();
     antennas
         .iter()
@@ -4540,6 +4573,7 @@ impl UvwConversionContext {
         phase_center_rad: [f64; 2],
         time_mjd_seconds: f64,
         observatory: &MPosition,
+        measures: std::sync::Arc<dyn MeasuresProvider>,
     ) -> MsResult<Self> {
         let phase_center = MDirection::from_angles(
             phase_center_rad[0],
@@ -4550,12 +4584,12 @@ impl UvwConversionContext {
             .with_epoch(MEpoch::from_mjd(time_mjd_seconds / 86_400.0, EpochRef::UT1))
             .with_position(observatory.clone())
             .with_direction(phase_center.clone())
-            .with_bundled_eop();
+            .with_measures(measures);
         let longitude = observatory.longitude_rad();
         let observatory_longitude_sin_cos = longitude.sin_cos();
         let last = local_apparent_sidereal_time(&frame)?;
         let tdb_mjd = epoch_mjd(&frame, EpochRef::TDB)?;
-        let (xp, yp) = polar_motion_rad(&frame, tdb_mjd);
+        let (xp, yp) = polar_motion_rad(&frame, tdb_mjd)?;
         let polar_motion_rotation = polar_motion_euler(-xp, -yp, last);
         let radius = vector_norm(observatory.as_itrf());
         let v_c = diurnal_aberration_factor(radius);
@@ -4636,19 +4670,28 @@ impl UvwConversionContext {
 fn simulation_observatory_position(
     telescope_name: &str,
     antennas: &[SyntheticAntenna],
+    measures: &dyn MeasuresProvider,
 ) -> MPosition {
-    observatory_position_from_name(telescope_name)
+    observatory_position_from_name(telescope_name, measures)
         .unwrap_or_else(|| antenna_centroid_position(antennas))
 }
 
-fn observatory_position_from_name(name: &str) -> Option<MPosition> {
-    MPosition::from_observatory_name(name).or_else(|| {
-        if name.eq_ignore_ascii_case("ALMASD") {
-            MPosition::from_observatory_name("ALMA")
-        } else {
-            None
-        }
-    })
+fn observatory_position_from_name(
+    name: &str,
+    measures: &dyn MeasuresProvider,
+) -> Option<MPosition> {
+    MPosition::from_observatory_name(name, measures)
+        .ok()
+        .flatten()
+        .or_else(|| {
+            if name.eq_ignore_ascii_case("ALMASD") {
+                MPosition::from_observatory_name("ALMA", measures)
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            }
+        })
 }
 
 fn antenna_centroid_position(antennas: &[SyntheticAntenna]) -> MPosition {
@@ -4860,11 +4903,11 @@ fn epoch_mjd(frame: &MeasFrame, refer: EpochRef) -> MsResult<f64> {
     Ok(converted.value().as_mjd())
 }
 
-fn polar_motion_rad(frame: &MeasFrame, epoch_mjd: f64) -> (f64, f64) {
+fn polar_motion_rad(frame: &MeasFrame, epoch_mjd: f64) -> MsResult<(f64, f64)> {
     const ARCSEC_TO_RAD: f64 = std::f64::consts::PI / (180.0 * 3600.0);
-    match frame.polar_motion_for_mjd(epoch_mjd) {
-        Some((xp_arcsec, yp_arcsec)) => (xp_arcsec * ARCSEC_TO_RAD, yp_arcsec * ARCSEC_TO_RAD),
-        None => (0.0, 0.0),
+    match frame.polar_motion_for_mjd(epoch_mjd)? {
+        Some((xp_arcsec, yp_arcsec)) => Ok((xp_arcsec * ARCSEC_TO_RAD, yp_arcsec * ARCSEC_TO_RAD)),
+        None => Ok((0.0, 0.0)),
     }
 }
 
@@ -5164,6 +5207,10 @@ fn string_array(values: &[&str], shape: Vec<usize>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_measures() -> std::sync::Arc<dyn MeasuresProvider> {
+        crate::open_measures_runtime().expect("test measures runtime")
+    }
 
     #[test]
     fn spectral_setup_reference_frequency_matches_casa_center_channel_convention() {
@@ -5748,9 +5795,14 @@ mod tests {
         let a2 = parse_trace_triplet(&a2_text);
         let time_s = time_text.parse::<f64>().expect("trace time seconds");
         let phase_center_rad = [-1.570_794_075_320_161_2, -0.401_423_790_643_226_1];
+        let measures = test_measures();
         let observatory = std::env::var("CASA_RS_SIMOBSERVE_UVW_TRACE_OBSERVATORY")
             .ok()
-            .and_then(|name| MPosition::from_observatory_name(&name))
+            .and_then(|name| {
+                MPosition::from_observatory_name(&name, measures.as_ref())
+                    .ok()
+                    .flatten()
+            })
             .unwrap_or_else(|| {
                 MPosition::new_itrf(
                     2_225_052.376_592_874_5,
@@ -5758,7 +5810,8 @@ mod tests {
                     -2_481_673.806_727_262_7,
                 )
             });
-        let context = UvwConversionContext::new(phase_center_rad, time_s, &observatory).unwrap();
+        let context =
+            UvwConversionContext::new(phase_center_rad, time_s, &observatory, measures).unwrap();
         let a1_uvw = context.baseline_itrf_to_uvw(a1);
         let a2_uvw = context.baseline_itrf_to_uvw(a2);
         eprintln!("TRACE_A1_UVW={a1_uvw:?}");
@@ -6126,18 +6179,22 @@ mod tests {
 
     #[test]
     fn elevation_limit_identifies_below_limit_full_track_samples() {
-        let observatory = MPosition::from_observatory_name("ALMA").expect("ALMA position");
+        let measures = test_measures();
+        let observatory = MPosition::from_observatory_name("ALMA", measures.as_ref())
+            .expect("catalog lookup")
+            .expect("ALMA position");
         let phase_center = [-1.570_794_075_320_161, -0.401_423_790_643_226_1];
         let start_time_mjd_seconds = 4_895_178_609.486_364;
         let first_sample = start_time_mjd_seconds + 5.0;
         let transit_sample = start_time_mjd_seconds + 43_200.0;
 
         assert!(
-            field_elevation_rad(phase_center, first_sample, &observatory).unwrap()
+            field_elevation_rad(phase_center, first_sample, &observatory, measures.clone(),)
+                .unwrap()
                 < DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD
         );
         assert!(
-            field_elevation_rad(phase_center, transit_sample, &observatory).unwrap()
+            field_elevation_rad(phase_center, transit_sample, &observatory, measures).unwrap()
                 > DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD
         );
     }
@@ -6157,14 +6214,19 @@ mod tests {
 
         let samples = time_sample_count(request.duration_seconds, request.integration_seconds);
         let times = observation_sample_times(&request, samples).unwrap();
-        let observatory =
-            simulation_observatory_position(&request.telescope_name, &request.antennas);
+        let measures = test_measures();
+        let observatory = simulation_observatory_position(
+            &request.telescope_name,
+            &request.antennas,
+            measures.as_ref(),
+        );
         let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
 
         assert_eq!(times.len(), samples);
         assert!(times.windows(2).any(|pair| pair[1] - pair[0] > 3_600.0));
         for time in &times {
-            let elevation = field_elevation_rad(phase_center, *time, &observatory).unwrap();
+            let elevation =
+                field_elevation_rad(phase_center, *time, &observatory, measures.clone()).unwrap();
             assert!(
                 elevation - elevation_margin_rad >= request.elevation_limit_rad,
                 "scheduled sample below elevation limit: {} deg",
@@ -6187,6 +6249,7 @@ mod tests {
             phase_center,
             request.start_time_mjd_seconds,
             &observatory,
+            measures,
         )
         .unwrap()
             + (sessions.len() - 1) as f64 * SIDEREAL_DAY_SECONDS;

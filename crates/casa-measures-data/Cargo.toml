@@ -15,7 +15,8 @@ workspace = true
 update = ["dep:ureq"]
 
 [dependencies]
-casa-table-read = { path = "../casa-table-read" }
+casa-tables = { path = "../casa-tables" }
+casa-types = { path = "../casa-types" }
 flate2 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

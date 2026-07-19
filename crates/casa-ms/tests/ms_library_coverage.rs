@@ -1034,23 +1034,18 @@ fn validation_and_measure_columns_cover_error_paths() {
         Err(MsError::ColumnTypeMismatch { expected, .. }) if expected == "Float64 array"
     ));
 
-    let spw_schema =
-        build_table_schema(casa_ms::schema::spectral_window::REQUIRED_COLUMNS).unwrap();
-    let mut bad_spw_table = Table::with_schema(spw_schema);
-    bad_spw_table
-        .add_row(record_for_defs(
-            casa_ms::schema::spectral_window::REQUIRED_COLUMNS,
-            &[
-                (
-                    "CHAN_FREQ",
-                    Value::Array(ArrayValue::Int32(
-                        ArrayD::from_shape_vec(vec![2], vec![1, 2]).unwrap(),
-                    )),
-                ),
-                ("MEAS_FREQ_REF", Value::Scalar(ScalarValue::Int32(5))),
-            ],
-        ))
-        .unwrap();
+    let bad_spw_table = Table::from_rows(vec![record_for_defs(
+        casa_ms::schema::spectral_window::REQUIRED_COLUMNS,
+        &[
+            (
+                "CHAN_FREQ",
+                Value::Array(ArrayValue::Int32(
+                    ArrayD::from_shape_vec(vec![2], vec![1, 2]).unwrap(),
+                )),
+            ),
+            ("MEAS_FREQ_REF", Value::Scalar(ScalarValue::Int32(5))),
+        ],
+    )]);
     assert!(matches!(
         ChanFreqColumn::new(&bad_spw_table).get_frequencies(0),
         Err(MsError::ColumnTypeMismatch { expected, .. }) if expected == "Float64 array"

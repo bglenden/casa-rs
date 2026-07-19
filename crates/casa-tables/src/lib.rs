@@ -229,9 +229,8 @@
 //!
 //! # Demo program
 //!
-//! A runnable demo (Rust equivalent of the C++ `tTable` test program) is
-//! included. Demo logic lives in the [`demo`] module; a thin example binary
-//! drives it:
+//! A standalone example (Rust equivalent of the C++ `tTable` test program)
+//! exercises the public table API directly:
 //!
 //! ```bash
 //! cargo run -p casa-tables --example t_table
@@ -246,11 +245,9 @@ mod table;
 mod table_impl;
 mod tablebrowser;
 
-pub(crate) mod aipsio;
 pub(crate) mod lock;
 pub(crate) mod storage;
 
-pub mod demo;
 pub mod table_measures;
 pub mod table_quantum;
 pub mod taql;
@@ -275,11 +272,12 @@ pub use storage::{
 };
 pub use table::{
     ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride, ColumnOverrides,
-    DataManagerKind, EndianFormat, GeneratedScalarColumn, GeneratedScalarValueRun, QueryResult,
-    RecordColumnCell, RecordColumnIter, RequiredScalarColumnValues, RowRange,
-    STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray2D,
-    SelectedArray2DCells, Slicer, SortOrder, StreamedScalarColumn, StreamedScalarType,
-    StreamingScalarColumnWriter, Table, TableCell, TableCellMut, TableColumn, TableColumnMut,
-    TableError, TableKind, TableOptions, TableRow, TableRowMut,
+    DataManagerKind, EndianFormat, GeneratedScalarColumn, GeneratedScalarValueRun,
+    PreparedRowAppender, PreparedTableRow, PreparedTableRowMut, QueryResult, RecordColumnCell,
+    RecordColumnIter, RequiredScalarColumnValues, RowRange, STREAMING_SCALAR_COLUMN_BUFFER_BYTES,
+    SelectedArray1DCells, SelectedArray2D, SelectedArray2DCells, Slicer, SortOrder,
+    StreamedScalarColumn, StreamedScalarType, StreamingScalarColumnWriter, Table, TableCell,
+    TableCellMut, TableColumn, TableColumnMut, TableError, TableKind, TableOptions, TableRow,
+    TableRowMut, TableWritePlan,
 };
 pub use tablebrowser::{LinkedTableRef, TableBrowser, TableBrowserError, TableBrowserView};

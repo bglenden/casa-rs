@@ -933,7 +933,7 @@ fn parse_casa_array_config(telescope: &str, path: &Path) -> Result<Vec<Synthetic
         let dish_diameter_m = parse_config_f64(fields[3], path)?;
         let station = fields[4].to_string();
         let position_m = if coordsys.starts_with("LOC") {
-            let observatory_position = config_observatory_position(&observatory).ok_or_else(|| {
+            let observatory_position = config_observatory_position(&observatory)?.ok_or_else(|| {
                 format!(
                     "array_config {} uses local coordinates but observatory {observatory:?} is unknown",
                     path.display()
@@ -1117,14 +1117,18 @@ fn geodetic_to_ecef(
     ]
 }
 
-fn config_observatory_position(name: &str) -> Option<MPosition> {
-    MPosition::from_observatory_name(name).or_else(|| {
-        if name.eq_ignore_ascii_case("ALMASD") {
-            MPosition::from_observatory_name("ALMA")
-        } else {
-            None
-        }
-    })
+fn config_observatory_position(name: &str) -> Result<Option<MPosition>, String> {
+    let measures = crate::open_measures_runtime().map_err(|error| error.to_string())?;
+    MPosition::from_observatory_name(name, measures.as_ref())
+        .map_err(|error| error.to_string())
+        .and_then(|position| {
+            if position.is_some() || !name.eq_ignore_ascii_case("ALMASD") {
+                Ok(position)
+            } else {
+                MPosition::from_observatory_name("ALMA", measures.as_ref())
+                    .map_err(|error| error.to_string())
+            }
+        })
 }
 
 fn parse_config_f64(value: &str, path: &Path) -> Result<f64, String> {
@@ -1268,9 +1272,7 @@ fn synthetic_alma_antennas(
     dish_diameter_m: f64,
     max_radius_m: f64,
 ) -> Vec<SyntheticAntenna> {
-    let center = MPosition::from_observatory_name("ALMA")
-        .map(|position| position.as_itrf())
-        .unwrap_or([-2_223_990.194, -5_440_045.461, -2_481_682.086]);
+    let center = [-2_223_990.194, -5_440_045.461, -2_481_682.086];
     (0..count)
         .map(|index| {
             let radius = if count <= 1 {

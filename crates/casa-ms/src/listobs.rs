@@ -2001,8 +2001,11 @@ fn observatory_position(
         .iter()
         .map(|obs| obs.telescope_name.as_str())
         .find(|name| !name.is_empty());
-    if let Some(position) = telescope_name.and_then(MPosition::from_observatory_name) {
-        return Ok(Some(position));
+    if let Some(name) = telescope_name {
+        let measures = crate::open_measures_runtime()?;
+        if let Some(position) = MPosition::from_observatory_name(name, measures.as_ref())? {
+            return Ok(Some(position));
+        }
     }
 
     for row in 0..antenna.row_count() {

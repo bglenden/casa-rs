@@ -18,6 +18,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+use casa_aipsio::internal::{AipsIoBufferWriter, AipsIoSliceReader, detect_aipsio_byte_order};
 use casa_aipsio::{AipsIo, ByteOrder};
 use ndarray::ShapeBuilder;
 
@@ -41,7 +42,6 @@ use super::{RequiredScalarColumnData, ScalarColumnSource, ScalarColumnSources, S
 
 const SSM_HEADER_SIZE: u64 = 512;
 const DEFAULT_SSM_BUCKET_SIZE: u32 = 32768;
-const AIPSIO_MAGIC: u32 = 0xbebebebe;
 
 type SparseScalarCell = (usize, Option<ScalarValue>);
 type SparseScalarColumn = Option<Vec<SparseScalarCell>>;
@@ -143,158 +143,6 @@ fn ssm_cell_element_count(col_desc: &ColumnDescContents) -> usize {
 // Byte-order-aware buffer reader for in-memory AipsIO parsing
 // ---------------------------------------------------------------------------
 
-/// Minimal reader for AipsIO-framed data in either byte order.
-struct AipsIoBuf<'a> {
-    data: &'a [u8],
-    pos: usize,
-    order: ByteOrder,
-    level: usize,
-}
-
-impl<'a> AipsIoBuf<'a> {
-    fn new(data: &'a [u8], order: ByteOrder) -> Self {
-        Self {
-            data,
-            pos: 0,
-            order,
-            level: 0,
-        }
-    }
-
-    fn read_bytes(&mut self, n: usize) -> Result<&'a [u8], StorageError> {
-        if self.pos + n > self.data.len() {
-            return Err(StorageError::FormatMismatch(
-                "SSM AipsIO buffer underrun".to_string(),
-            ));
-        }
-        let slice = &self.data[self.pos..self.pos + n];
-        self.pos += n;
-        Ok(slice)
-    }
-
-    fn read_u32(&mut self) -> Result<u32, StorageError> {
-        let b = self.read_bytes(4)?;
-        Ok(match self.order {
-            ByteOrder::BigEndian => u32::from_be_bytes([b[0], b[1], b[2], b[3]]),
-            ByteOrder::LittleEndian => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
-        })
-    }
-
-    fn read_i32(&mut self) -> Result<i32, StorageError> {
-        let b = self.read_bytes(4)?;
-        Ok(match self.order {
-            ByteOrder::BigEndian => i32::from_be_bytes([b[0], b[1], b[2], b[3]]),
-            ByteOrder::LittleEndian => i32::from_le_bytes([b[0], b[1], b[2], b[3]]),
-        })
-    }
-
-    fn read_u64(&mut self) -> Result<u64, StorageError> {
-        let b = self.read_bytes(8)?;
-        Ok(match self.order {
-            ByteOrder::BigEndian => {
-                u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-            }
-            ByteOrder::LittleEndian => {
-                u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-            }
-        })
-    }
-
-    fn read_bool(&mut self) -> Result<bool, StorageError> {
-        let b = self.read_bytes(1)?;
-        Ok(b[0] != 0)
-    }
-
-    fn read_string(&mut self) -> Result<String, StorageError> {
-        let len = self.read_u32()? as usize;
-        let b = self.read_bytes(len)?;
-        String::from_utf8(b.to_vec())
-            .map_err(|e| StorageError::FormatMismatch(format!("invalid UTF-8 in SSM: {e}")))
-    }
-
-    /// Read AipsIO getstart: magic at level 0, then obj_len + type + version.
-    fn getstart(&mut self, expected_type: &str) -> Result<u32, StorageError> {
-        if self.level == 0 {
-            let magic = self.read_u32()?;
-            if magic != AIPSIO_MAGIC {
-                return Err(StorageError::FormatMismatch(format!(
-                    "SSM AipsIO magic mismatch: expected 0x{AIPSIO_MAGIC:08x}, got 0x{magic:08x}"
-                )));
-            }
-        }
-        self.level += 1;
-        let _obj_len = self.read_u32()?;
-        let type_name = self.read_string()?;
-        if type_name != expected_type {
-            return Err(StorageError::FormatMismatch(format!(
-                "SSM AipsIO type mismatch: expected '{expected_type}', got '{type_name}'"
-            )));
-        }
-        self.read_u32()
-    }
-
-    /// Finish reading an object (decrements level, no validation).
-    fn getend(&mut self) {
-        if self.level > 0 {
-            self.level -= 1;
-        }
-    }
-
-    /// Read a Block<uInt> (nested AipsIO "Block" object containing u32 values).
-    fn read_block_u32(&mut self) -> Result<Vec<u32>, StorageError> {
-        let _version = self.getstart("Block")?;
-        let count = self.read_u32()?;
-        let mut values = Vec::with_capacity(count as usize);
-        for _ in 0..count {
-            values.push(self.read_u32()?);
-        }
-        self.getend();
-        Ok(values)
-    }
-
-    /// Read a Block<Int64> (nested AipsIO "Block" object containing u64 values).
-    fn read_block_u64(&mut self) -> Result<Vec<u64>, StorageError> {
-        let _version = self.getstart("Block")?;
-        let count = self.read_u32()?;
-        let mut values = Vec::with_capacity(count as usize);
-        for _ in 0..count {
-            values.push(self.read_u64()?);
-        }
-        self.getend();
-        Ok(values)
-    }
-}
-
-/// Detect the byte order of in-memory AipsIO data.
-/// Returns the byte order by checking the object length field after the magic.
-fn detect_aipsio_byte_order(data: &[u8]) -> Result<ByteOrder, StorageError> {
-    if data.len() < 8 {
-        return Err(StorageError::FormatMismatch(
-            "SSM data too short for byte order detection".to_string(),
-        ));
-    }
-    // Bytes 0-3: magic (same in both byte orders for 0xbebebebe)
-    // Bytes 4-7: object length
-    let be_len = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-    let le_len = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
-
-    // A valid object length is small (< 4096 for any reasonable SSM header/index)
-    let be_ok = be_len > 0 && be_len < 4096;
-    let le_ok = le_len > 0 && le_len < 4096;
-
-    match (be_ok, le_ok) {
-        (true, false) => Ok(ByteOrder::BigEndian),
-        (false, true) => Ok(ByteOrder::LittleEndian),
-        (true, true) => {
-            // Both look valid — prefer canonical (big-endian) when ambiguous
-            Ok(ByteOrder::BigEndian)
-        }
-        (false, false) => Err(StorageError::FormatMismatch(format!(
-            "SSM: cannot detect byte order (be_len={be_len}, le_len={le_len})"
-        ))),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Parsed types
 // ---------------------------------------------------------------------------
@@ -348,7 +196,7 @@ fn parse_ssm_header(file: &mut File) -> Result<SsmHeader, StorageError> {
     file.read_exact(&mut header_buf)?;
 
     let io_order = detect_aipsio_byte_order(&header_buf)?;
-    let mut buf = AipsIoBuf::new(&header_buf, io_order);
+    let mut buf = AipsIoSliceReader::new(&header_buf, io_order)?;
     let version = buf.getstart("StandardStMan")?;
 
     let big_endian = if version >= 3 {
@@ -370,6 +218,7 @@ fn parse_ssm_header(file: &mut File) -> Result<SsmHeader, StorageError> {
     let last_string_bucket = buf.read_i32()?;
     let index_length = buf.read_u32()?;
     let nr_indices = buf.read_u32()?;
+    buf.getend()?;
 
     Ok(SsmHeader {
         bucket_size,
@@ -507,7 +356,7 @@ fn parse_ssm_indices(file: &mut File, header: &SsmHeader) -> Result<Vec<SsmIndex
 
     // Parse index data using the same byte order as the header (in-memory AipsIO).
     // Each SSMIndex is a top-level AipsIO object (level 0 → prefixed with magic).
-    let mut buf = AipsIoBuf::new(&index_data, header.io_order);
+    let mut buf = AipsIoSliceReader::new(&index_data, header.io_order)?;
 
     let mut indices = Vec::with_capacity(header.nr_indices as usize);
     for _ in 0..header.nr_indices {
@@ -527,7 +376,7 @@ fn parse_ssm_indices(file: &mut File, header: &SsmHeader) -> Result<Vec<SsmIndex
                 let _key = buf.read_i32()?;
                 let _val = buf.read_i32()?;
             }
-            buf.getend();
+            buf.getend()?;
         }
 
         // Last row numbers: Block<uInt> (v1) or Block<Int64> (v2)
@@ -543,7 +392,7 @@ fn parse_ssm_indices(file: &mut File, header: &SsmHeader) -> Result<Vec<SsmIndex
         // Bucket numbers: Block<uInt>
         let bucket_number = buf.read_block_u32()?;
 
-        buf.getend();
+        buf.getend()?;
 
         indices.push(SsmIndex {
             n_used,
@@ -2518,7 +2367,7 @@ fn write_ssm_file_impl(
         &last_row,
         &bucket_number,
         big_endian,
-    );
+    )?;
 
     // 7. Write the index into index buckets
     let chain_overhead = 8usize; // check number + next bucket pointer
@@ -2553,7 +2402,7 @@ fn write_ssm_file_impl(
         index_data.len() as u32,
         1, // nr_indices (single index for all columns)
         big_endian,
-    );
+    )?;
 
     // 9. Assemble the file
     let mut file = File::create(file_path)?;
@@ -2640,7 +2489,7 @@ fn write_ssm_fixed_scalar_sources_streaming(
         &last_row,
         &bucket_number,
         big_endian,
-    );
+    )?;
     let chain_overhead = 8usize;
     let data_per_index_bucket = bucket_size as usize - chain_overhead;
     let nr_idx_buckets = if index_data.is_empty() {
@@ -2661,7 +2510,7 @@ fn write_ssm_fixed_scalar_sources_streaming(
         index_data.len() as u32,
         1,
         big_endian,
-    );
+    )?;
 
     let mut file = File::create(file_path)?;
     file.write_all(&header)?;
@@ -3249,7 +3098,7 @@ fn serialize_ssm_header(
     index_length: u32,
     nr_indices: u32,
     big_endian: bool,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, StorageError> {
     // AipsIO framing uses the table's byte order (C++ creates CanonicalIO or
     // LECanonicalIO based on asBigEndian()).
     let io_order = if big_endian {
@@ -3257,8 +3106,8 @@ fn serialize_ssm_header(
     } else {
         ByteOrder::LittleEndian
     };
-    let mut buf = AipsIoWriteBuf::new(io_order);
-    buf.putstart("StandardStMan", 3);
+    let mut buf = AipsIoBufferWriter::new(io_order);
+    buf.putstart("StandardStMan", 3)?;
     buf.put_bool(big_endian);
     buf.put_u32(bucket_size);
     buf.put_u32(nr_buckets);
@@ -3271,12 +3120,12 @@ fn serialize_ssm_header(
     buf.put_i32(last_string_bucket);
     buf.put_u32(index_length);
     buf.put_u32(nr_indices);
-    buf.putend();
+    buf.putend()?;
 
     // Pad to 512 bytes
     let mut header = buf.into_bytes();
     header.resize(SSM_HEADER_SIZE as usize, 0);
-    header
+    Ok(header)
 }
 
 /// Serialize SSMIndex to bytes using the table's byte order for AipsIO framing.
@@ -3287,40 +3136,40 @@ fn serialize_ssm_index(
     last_row: &[u64],
     bucket_number: &[u32],
     big_endian: bool,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, StorageError> {
     let io_order = if big_endian {
         ByteOrder::BigEndian
     } else {
         ByteOrder::LittleEndian
     };
-    let mut buf = AipsIoWriteBuf::new(io_order);
+    let mut buf = AipsIoBufferWriter::new(io_order);
     // SSMIndex is a top-level object (level 0 → has magic)
-    buf.putstart("SSMIndex", 2);
+    buf.putstart("SSMIndex", 2)?;
     buf.put_u32(n_used);
     buf.put_u32(rows_per_bucket);
     buf.put_i32(nr_columns);
     // freeSpace map: empty SimpleOrderedMap
-    buf.putstart_nested("SimpleOrderedMap", 1);
+    buf.putstart("SimpleOrderedMap", 1)?;
     buf.put_i32(0); // default_value
     buf.put_u32(0); // nr entries
     buf.put_u32(0); // incr
-    buf.putend_nested();
+    buf.putend()?;
     // lastRow: Block<Int64> (version 2)
-    buf.putstart_nested("Block", 1);
+    buf.putstart("Block", 1)?;
     buf.put_u32(last_row.len() as u32);
     for &v in last_row {
         buf.put_u64(v);
     }
-    buf.putend_nested();
+    buf.putend()?;
     // bucketNumber: Block<uInt>
-    buf.putstart_nested("Block", 1);
+    buf.putstart("Block", 1)?;
     buf.put_u32(bucket_number.len() as u32);
     for &v in bucket_number {
         buf.put_u32(v);
     }
-    buf.putend_nested();
-    buf.putend();
-    buf.into_bytes()
+    buf.putend()?;
+    buf.putend()?;
+    Ok(buf.into_bytes())
 }
 
 /// Serialize the DM data blob ("SSM" v2) using file-based AipsIO (always BE).
@@ -3351,110 +3200,4 @@ fn write_block_u32(io: &mut AipsIo, values: &[u32]) -> Result<(), StorageError> 
     }
     io.putend()?;
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// In-memory AipsIO writer (for SSM header and index data)
-// ---------------------------------------------------------------------------
-
-/// Minimal writer for in-memory AipsIO in the given byte order.
-struct AipsIoWriteBuf {
-    data: Vec<u8>,
-    order: ByteOrder,
-    /// Stack of obj_len placeholder positions for putend backpatching.
-    len_positions: Vec<usize>,
-    level: usize,
-}
-
-impl AipsIoWriteBuf {
-    fn new(order: ByteOrder) -> Self {
-        Self {
-            data: Vec::new(),
-            order,
-            len_positions: Vec::new(),
-            level: 0,
-        }
-    }
-
-    fn into_bytes(self) -> Vec<u8> {
-        self.data
-    }
-
-    fn put_u8(&mut self, val: u8) {
-        self.data.push(val);
-    }
-
-    fn put_u32(&mut self, val: u32) {
-        match self.order {
-            ByteOrder::BigEndian => self.data.extend_from_slice(&val.to_be_bytes()),
-            ByteOrder::LittleEndian => self.data.extend_from_slice(&val.to_le_bytes()),
-        }
-    }
-
-    fn put_i32(&mut self, val: i32) {
-        match self.order {
-            ByteOrder::BigEndian => self.data.extend_from_slice(&val.to_be_bytes()),
-            ByteOrder::LittleEndian => self.data.extend_from_slice(&val.to_le_bytes()),
-        }
-    }
-
-    fn put_u64(&mut self, val: u64) {
-        match self.order {
-            ByteOrder::BigEndian => self.data.extend_from_slice(&val.to_be_bytes()),
-            ByteOrder::LittleEndian => self.data.extend_from_slice(&val.to_le_bytes()),
-        }
-    }
-
-    fn put_bool(&mut self, val: bool) {
-        self.put_u8(if val { 1 } else { 0 });
-    }
-
-    fn put_string(&mut self, s: &str) {
-        self.put_u32(s.len() as u32);
-        self.data.extend_from_slice(s.as_bytes());
-    }
-
-    /// Begin a top-level AipsIO object (writes magic at level 0).
-    fn putstart(&mut self, type_name: &str, version: u32) {
-        // Magic only at level 0
-        self.put_u32(AIPSIO_MAGIC);
-        // Placeholder for obj_len (will be backpatched in putend)
-        let pos = self.data.len();
-        self.put_u32(0); // placeholder
-        self.len_positions.push(pos);
-        self.put_string(type_name);
-        self.put_u32(version);
-        self.level += 1;
-    }
-
-    /// Begin a nested AipsIO object (no magic).
-    fn putstart_nested(&mut self, type_name: &str, version: u32) {
-        let pos = self.data.len();
-        self.put_u32(0); // placeholder for obj_len
-        self.len_positions.push(pos);
-        self.put_string(type_name);
-        self.put_u32(version);
-        self.level += 1;
-    }
-
-    /// End the current object, backpatch obj_len.
-    fn putend(&mut self) {
-        if let Some(pos) = self.len_positions.pop() {
-            // obj_len includes everything from the obj_len field to here
-            let obj_len = (self.data.len() - pos) as u32;
-            let bytes = match self.order {
-                ByteOrder::BigEndian => obj_len.to_be_bytes(),
-                ByteOrder::LittleEndian => obj_len.to_le_bytes(),
-            };
-            self.data[pos..pos + 4].copy_from_slice(&bytes);
-        }
-        if self.level > 0 {
-            self.level -= 1;
-        }
-    }
-
-    /// End a nested object (same as putend, alias for clarity).
-    fn putend_nested(&mut self) {
-        self.putend();
-    }
 }

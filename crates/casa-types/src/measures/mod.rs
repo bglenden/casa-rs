@@ -34,12 +34,17 @@
 //!
 //! ## Examples
 //!
-//! ```
-//! use casa_types::measures::{MEpoch, EpochRef, MeasFrame};
+//! ```no_run
+//! use std::sync::Arc;
+//! use casa_types::measures::{MEpoch, EpochRef, MeasFrame, MeasuresProvider};
+//!
+//! # fn application_measures_provider() -> Arc<dyn MeasuresProvider> {
+//! #     todo!("open and inject the application's measures runtime")
+//! # }
 //!
 //! // Convert J2000.0 from UTC to TAI
 //! let utc = MEpoch::from_mjd(51544.5, EpochRef::UTC);
-//! let frame = MeasFrame::new();
+//! let frame = MeasFrame::new().with_measures(application_measures_provider());
 //! let tai = utc.convert_to(EpochRef::TAI, &frame).unwrap();
 //! let diff_s = (tai.value().as_mjd() - utc.value().as_mjd()) * 86400.0;
 //! assert!((diff_s - 32.0).abs() < 0.01);
@@ -55,6 +60,7 @@ pub mod error;
 pub mod frame;
 pub mod frequency;
 pub mod position;
+pub mod provider;
 pub mod radial_velocity;
 pub mod record;
 
@@ -64,6 +70,7 @@ pub use epoch::{EpochRef, MEpoch, MjdHighPrec};
 pub use error::MeasureError;
 pub use frame::{IauModel, MeasFrame};
 pub use position::{MPosition, PositionRef};
+pub use provider::{EopValues, MeasuresProvider, NamedSourceDirection, ObservatoryPosition};
 pub use record::{
     direction_from_record, direction_to_record, doppler_from_record, doppler_to_record,
     epoch_from_record, epoch_to_record, frequency_from_record, frequency_to_record,

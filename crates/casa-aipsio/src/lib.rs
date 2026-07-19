@@ -3,10 +3,10 @@
 //!
 //! This crate provides two complementary layers:
 //!
-//! - **Primitive codec** — [`AipsWriter`] and [`AipsReader`] encode and decode
-//!   the casacore scalar/array wire format (big-endian by default, matching C++
-//!   `CanonicalIO`). These are lower-level building blocks used by the framing
-//!   layer.
+//! - **Primitive codec** — the private codec core encodes and decodes the
+//!   casacore scalar/array wire format (big-endian by default, matching C++
+//!   `CanonicalIO`). Narrow [`encode_value`] and [`decode_value`] operations
+//!   expose the raw interoperability surface.
 //!
 //! - **Object framing** — the [`aipsio`] module exposes [`aipsio::AipsIo`],
 //!   which adds type-checked object headers (`putstart`/`putend`,
@@ -28,8 +28,8 @@
 //! io.putend().unwrap();
 //! ```
 //!
-//! For lower-level encoding without object headers, use [`AipsWriter`] /
-//! [`AipsReader`] directly.
+//! For lower-level interoperability without object headers, use
+//! [`encode_value`] and [`decode_value`].
 //!
 //! Detailed behavior and C++ mapping notes are in the [`aipsio`] module-level
 //! rustdoc.
@@ -43,9 +43,19 @@ pub use casa_values::{
 use thiserror::Error;
 
 pub mod aipsio;
-pub mod demo;
+mod buffer;
 
 pub use aipsio::{AipsIo, AipsIoObjectError, AipsIoObjectResult, AipsIoStream, AipsOpenOption};
+
+/// Cross-crate storage integration used by `casa-tables`.
+///
+/// This is not an application-developer codec facade; normal callers should
+/// use [`AipsIo`] or the narrow raw [`encode_value`] and [`decode_value`]
+/// operations.
+#[doc(hidden)]
+pub mod internal {
+    pub use super::buffer::{AipsIoBufferWriter, AipsIoSliceReader, detect_aipsio_byte_order};
+}
 
 pub type AipsIoResult<T> = Result<T, AipsIoError>;
 
@@ -53,8 +63,8 @@ pub type AipsIoResult<T> = Result<T, AipsIoError>;
 ///
 /// The casacore canonical format is big-endian (`CanonicalIO` in C++). Little-
 /// endian support (`LECanonicalIO`) exists for files written on little-endian
-/// systems; use [`detect_aipsio_byte_order`] to determine which to use when
-/// the byte order is not known in advance.
+/// systems. Storage formats that lack external byte-order metadata use the
+/// crate's hidden structural frame validator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ByteOrder {
     /// Big-endian byte order — the canonical casacore wire format. This is the
@@ -65,47 +75,36 @@ pub enum ByteOrder {
     LittleEndian,
 }
 
-/// Detect byte order from a raw AipsIO header buffer.
-///
-/// Examines the first 8 bytes after the magic to determine whether the
-/// object-length field makes sense in big-endian or little-endian.
-/// This mirrors the logic used in C++ casacore SSM to pick CanonicalIO vs
-/// LECanonicalIO.
-pub fn detect_aipsio_byte_order(data: &[u8]) -> Result<ByteOrder, AipsIoError> {
-    const MAGIC: u32 = 0xBEBE_BEBE;
-    if data.len() < 8 {
-        return Err(AipsIoError::Other(
-            "buffer too short for AipsIO header".into(),
-        ));
+pub(crate) mod primitive_codec {
+    use super::ByteOrder;
+
+    macro_rules! endian_codec {
+        ($encode:ident, $decode:ident, $type:ty, $width:literal) => {
+            pub(crate) fn $encode(value: $type, order: ByteOrder) -> [u8; $width] {
+                match order {
+                    ByteOrder::BigEndian => value.to_be_bytes(),
+                    ByteOrder::LittleEndian => value.to_le_bytes(),
+                }
+            }
+
+            pub(crate) fn $decode(bytes: [u8; $width], order: ByteOrder) -> $type {
+                match order {
+                    ByteOrder::BigEndian => <$type>::from_be_bytes(bytes),
+                    ByteOrder::LittleEndian => <$type>::from_le_bytes(bytes),
+                }
+            }
+        };
     }
-    let magic = u32::from_be_bytes(data[0..4].try_into().unwrap());
-    if magic != MAGIC {
-        let magic_le = u32::from_le_bytes(data[0..4].try_into().unwrap());
-        if magic_le != MAGIC {
-            return Err(AipsIoError::Other(format!(
-                "AipsIO magic not found: got {magic:#010x}"
-            )));
-        }
-    }
-    // The object-length field follows the magic. In a valid file it should be
-    // a reasonable value (< 1 GiB). Try both byte orders.
-    let obj_len_be = u32::from_be_bytes(data[4..8].try_into().unwrap());
-    let obj_len_le = u32::from_le_bytes(data[4..8].try_into().unwrap());
-    const MAX_REASONABLE_LEN: u32 = 1 << 30; // 1 GiB
-    let be_ok = obj_len_be > 0 && obj_len_be < MAX_REASONABLE_LEN;
-    let le_ok = obj_len_le > 0 && obj_len_le < MAX_REASONABLE_LEN;
-    match (be_ok, le_ok) {
-        (true, false) => Ok(ByteOrder::BigEndian),
-        (false, true) => Ok(ByteOrder::LittleEndian),
-        // Both look reasonable — default to BE (canonical).
-        (true, true) => Ok(ByteOrder::BigEndian),
-        (false, false) => Err(AipsIoError::Other(format!(
-            "cannot determine byte order: obj_len BE={obj_len_be}, LE={obj_len_le}"
-        ))),
-    }
+
+    endian_codec!(encode_i16, decode_i16, i16, 2);
+    endian_codec!(encode_u16, decode_u16, u16, 2);
+    endian_codec!(encode_i32, decode_i32, i32, 4);
+    endian_codec!(encode_u32, decode_u32, u32, 4);
+    endian_codec!(encode_i64, decode_i64, i64, 8);
+    endian_codec!(encode_u64, decode_u64, u64, 8);
 }
 
-/// Errors from [`AipsWriter`] and [`AipsReader`] primitive codec operations.
+/// Errors from primitive codec operations.
 ///
 /// These are the lower-level errors that do not involve object framing. For
 /// object-framing errors see [`aipsio::AipsIoObjectError`].
@@ -125,12 +124,12 @@ pub enum AipsIoError {
     /// format.
     #[error("length {0} exceeds maximum supported length")]
     LengthTooLarge(usize),
-    /// [`AipsWriter::write_array`] was called with an array of rank != 1; the
-    /// primitive codec only supports rank-1 (linear) arrays.
+    /// An array of rank != 1 was supplied to the primitive codec, which only
+    /// supports rank-1 (linear) arrays.
     #[error("unsupported array rank {0}; primitive AipsIO currently supports rank-1 arrays only")]
     UnsupportedArrayRank(usize),
-    /// [`AipsWriter::write_value`] was called with a [`Value`] variant that the
-    /// primitive codec does not support (currently `Record` or `TableRef`).
+    /// A [`Value`] variant that the primitive codec does not support was
+    /// supplied (currently `Record` or `TableRef`).
     #[error("unsupported value kind for primitive AipsIO codec: {0:?}")]
     UnsupportedValueKind(ValueKind),
     /// A catch-all error for miscellaneous string-described failures.
@@ -148,13 +147,14 @@ pub enum AipsIoError {
 /// All multi-byte integers and floats are encoded in the byte order chosen at
 /// construction time. The casacore canonical format is big-endian, which is
 /// the default (see [`ByteOrder::BigEndian`]).
-pub struct AipsWriter<W> {
+pub(crate) struct AipsWriter<W> {
     inner: W,
     byte_order: ByteOrder,
 }
 
 impl<W: Write> AipsWriter<W> {
     /// Create a writer that uses big-endian byte order.
+    #[cfg(test)]
     pub fn new(inner: W) -> Self {
         Self {
             inner,
@@ -165,16 +165,6 @@ impl<W: Write> AipsWriter<W> {
     /// Create a writer with an explicit byte order.
     pub fn with_byte_order(inner: W, byte_order: ByteOrder) -> Self {
         Self { inner, byte_order }
-    }
-
-    /// Return the byte order this writer uses for encoding.
-    pub fn byte_order(&self) -> ByteOrder {
-        self.byte_order
-    }
-
-    /// Consume the writer and return the underlying stream.
-    pub fn into_inner(self) -> W {
-        self.inner
     }
 
     /// Write a boolean value as a single byte (`0` for `false`, `1` for `true`).
@@ -194,50 +184,35 @@ impl<W: Write> AipsWriter<W> {
 
     /// Write an unsigned 16-bit integer in canonical byte order (2 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_u16(&mut self, value: u16) -> AipsIoResult<()> {
-        let bytes = match self.byte_order {
-            ByteOrder::BigEndian => value.to_be_bytes(),
-            ByteOrder::LittleEndian => value.to_le_bytes(),
-        };
+        let bytes = primitive_codec::encode_u16(value, self.byte_order);
         self.inner.write_all(&bytes)?;
         Ok(())
     }
 
     /// Write an unsigned 32-bit integer in canonical byte order (4 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_u32(&mut self, value: u32) -> AipsIoResult<()> {
-        let bytes = match self.byte_order {
-            ByteOrder::BigEndian => value.to_be_bytes(),
-            ByteOrder::LittleEndian => value.to_le_bytes(),
-        };
+        let bytes = primitive_codec::encode_u32(value, self.byte_order);
         self.inner.write_all(&bytes)?;
         Ok(())
     }
 
     /// Write a signed 16-bit integer in canonical byte order (2 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_i16(&mut self, value: i16) -> AipsIoResult<()> {
-        let bytes = match self.byte_order {
-            ByteOrder::BigEndian => value.to_be_bytes(),
-            ByteOrder::LittleEndian => value.to_le_bytes(),
-        };
+        let bytes = primitive_codec::encode_i16(value, self.byte_order);
         self.inner.write_all(&bytes)?;
         Ok(())
     }
 
     /// Write a signed 32-bit integer in canonical byte order (4 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_i32(&mut self, value: i32) -> AipsIoResult<()> {
-        let bytes = match self.byte_order {
-            ByteOrder::BigEndian => value.to_be_bytes(),
-            ByteOrder::LittleEndian => value.to_le_bytes(),
-        };
+        let bytes = primitive_codec::encode_i32(value, self.byte_order);
         self.inner.write_all(&bytes)?;
         Ok(())
     }
 
     /// Write a signed 64-bit integer in canonical byte order (8 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_i64(&mut self, value: i64) -> AipsIoResult<()> {
-        let bytes = match self.byte_order {
-            ByteOrder::BigEndian => value.to_be_bytes(),
-            ByteOrder::LittleEndian => value.to_le_bytes(),
-        };
+        let bytes = primitive_codec::encode_i64(value, self.byte_order);
         self.inner.write_all(&bytes)?;
         Ok(())
     }
@@ -245,10 +220,7 @@ impl<W: Write> AipsWriter<W> {
     /// Write a 32-bit float as its IEEE 754 bit pattern (4 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_f32(&mut self, value: f32) -> AipsIoResult<()> {
         let bits = value.to_bits();
-        let bytes = match self.byte_order {
-            ByteOrder::BigEndian => bits.to_be_bytes(),
-            ByteOrder::LittleEndian => bits.to_le_bytes(),
-        };
+        let bytes = primitive_codec::encode_u32(bits, self.byte_order);
         self.inner.write_all(&bytes)?;
         Ok(())
     }
@@ -256,10 +228,7 @@ impl<W: Write> AipsWriter<W> {
     /// Write a 64-bit float as its IEEE 754 bit pattern (8 bytes). See [`write_bool`](Self::write_bool).
     pub fn write_f64(&mut self, value: f64) -> AipsIoResult<()> {
         let bits = value.to_bits();
-        let bytes = match self.byte_order {
-            ByteOrder::BigEndian => bits.to_be_bytes(),
-            ByteOrder::LittleEndian => bits.to_le_bytes(),
-        };
+        let bytes = primitive_codec::encode_u64(bits, self.byte_order);
         self.inner.write_all(&bytes)?;
         Ok(())
     }
@@ -362,13 +331,14 @@ impl<W: Write> AipsWriter<W> {
 /// The byte order must match the byte order used by the writer that produced
 /// the stream. Use [`ByteOrder::BigEndian`] (the default) for files written
 /// by standard casacore tools.
-pub struct AipsReader<R> {
+pub(crate) struct AipsReader<R> {
     inner: R,
     byte_order: ByteOrder,
 }
 
 impl<R: Read> AipsReader<R> {
     /// Create a reader that uses big-endian byte order.
+    #[cfg(test)]
     pub fn new(inner: R) -> Self {
         Self {
             inner,
@@ -379,16 +349,6 @@ impl<R: Read> AipsReader<R> {
     /// Create a reader with an explicit byte order.
     pub fn with_byte_order(inner: R, byte_order: ByteOrder) -> Self {
         Self { inner, byte_order }
-    }
-
-    /// Return the byte order this reader uses for decoding.
-    pub fn byte_order(&self) -> ByteOrder {
-        self.byte_order
-    }
-
-    /// Consume the reader and return the underlying stream.
-    pub fn into_inner(self) -> R {
-        self.inner
     }
 
     /// Read a boolean value from a single byte (`0` → `false`, `1` → `true`).
@@ -416,46 +376,31 @@ impl<R: Read> AipsReader<R> {
     /// Read an unsigned 16-bit integer in canonical byte order (2 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_u16(&mut self) -> AipsIoResult<u16> {
         let bytes = self.read_exact_array::<2>()?;
-        Ok(match self.byte_order {
-            ByteOrder::BigEndian => u16::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => u16::from_le_bytes(bytes),
-        })
+        Ok(primitive_codec::decode_u16(bytes, self.byte_order))
     }
 
     /// Read an unsigned 32-bit integer in canonical byte order (4 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_u32(&mut self) -> AipsIoResult<u32> {
         let bytes = self.read_exact_array::<4>()?;
-        Ok(match self.byte_order {
-            ByteOrder::BigEndian => u32::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => u32::from_le_bytes(bytes),
-        })
+        Ok(primitive_codec::decode_u32(bytes, self.byte_order))
     }
 
     /// Read a signed 16-bit integer in canonical byte order (2 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_i16(&mut self) -> AipsIoResult<i16> {
         let bytes = self.read_exact_array::<2>()?;
-        Ok(match self.byte_order {
-            ByteOrder::BigEndian => i16::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => i16::from_le_bytes(bytes),
-        })
+        Ok(primitive_codec::decode_i16(bytes, self.byte_order))
     }
 
     /// Read a signed 32-bit integer in canonical byte order (4 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_i32(&mut self) -> AipsIoResult<i32> {
         let bytes = self.read_exact_array::<4>()?;
-        Ok(match self.byte_order {
-            ByteOrder::BigEndian => i32::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => i32::from_le_bytes(bytes),
-        })
+        Ok(primitive_codec::decode_i32(bytes, self.byte_order))
     }
 
     /// Read a signed 64-bit integer in canonical byte order (8 bytes). See [`read_bool`](Self::read_bool).
     pub fn read_i64(&mut self) -> AipsIoResult<i64> {
         let bytes = self.read_exact_array::<8>()?;
-        Ok(match self.byte_order {
-            ByteOrder::BigEndian => i64::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => i64::from_le_bytes(bytes),
-        })
+        Ok(primitive_codec::decode_i64(bytes, self.byte_order))
     }
 
     /// Read a 32-bit float from its IEEE 754 bit pattern (4 bytes). See [`read_bool`](Self::read_bool).
@@ -575,12 +520,9 @@ impl<R: Read> AipsReader<R> {
         }
     }
 
-    fn read_u64(&mut self) -> AipsIoResult<u64> {
+    pub(crate) fn read_u64(&mut self) -> AipsIoResult<u64> {
         let bytes = self.read_exact_array::<8>()?;
-        Ok(match self.byte_order {
-            ByteOrder::BigEndian => u64::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => u64::from_le_bytes(bytes),
-        })
+        Ok(primitive_codec::decode_u64(bytes, self.byte_order))
     }
 
     fn read_exact_array<const N: usize>(&mut self) -> AipsIoResult<[u8; N]> {
@@ -590,12 +532,24 @@ impl<R: Read> AipsReader<R> {
     }
 }
 
+/// Encode one scalar or rank-1 array value without object framing.
+pub fn encode_value(value: &Value, byte_order: ByteOrder) -> AipsIoResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    AipsWriter::with_byte_order(&mut bytes, byte_order).write_value(value)?;
+    Ok(bytes)
+}
+
+/// Decode one scalar or rank-1 array value without object framing.
+pub fn decode_value(bytes: &[u8], type_tag: TypeTag, byte_order: ByteOrder) -> AipsIoResult<Value> {
+    AipsReader::with_byte_order(bytes, byte_order).read_value(type_tag)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::internal::{AipsIoBufferWriter, detect_aipsio_byte_order};
     use super::{
         AipsIoError, AipsReader, AipsWriter, ArrayValue, ByteOrder, Complex32, Complex64,
         PrimitiveType, RecordField, RecordValue, ScalarValue, TypeTag, Value, ValueRank,
-        detect_aipsio_byte_order,
     };
 
     #[test]
@@ -664,17 +618,19 @@ mod tests {
 
     #[test]
     fn byte_order_detection_accepts_canonical_and_little_endian_headers() {
-        let mut be = Vec::new();
-        be.extend_from_slice(&0xBEBE_BEBE_u32.to_be_bytes());
-        be.extend_from_slice(&32_u32.to_be_bytes());
+        let mut be_writer = AipsIoBufferWriter::new(ByteOrder::BigEndian);
+        be_writer.putstart("Object", 1).unwrap();
+        be_writer.putend().unwrap();
+        let be = be_writer.into_bytes();
         assert_eq!(
             detect_aipsio_byte_order(&be).expect("big-endian header"),
             ByteOrder::BigEndian
         );
 
-        let mut le = Vec::new();
-        le.extend_from_slice(&0xBEBE_BEBE_u32.to_le_bytes());
-        le.extend_from_slice(&64_u32.to_le_bytes());
+        let mut le_writer = AipsIoBufferWriter::new(ByteOrder::LittleEndian);
+        le_writer.putstart("Object", 1).unwrap();
+        le_writer.putend().unwrap();
+        let le = le_writer.into_bytes();
         assert_eq!(
             detect_aipsio_byte_order(&le).expect("little-endian header"),
             ByteOrder::LittleEndian

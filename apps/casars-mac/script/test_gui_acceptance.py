@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import gui_acceptance as harness
 
@@ -35,6 +36,14 @@ class GuiAcceptanceHarnessTests(unittest.TestCase):
             with self.subTest(journey=journey["id"]):
                 with self.assertRaises(harness.HarnessError):
                     harness.require_commands(journey, which=lambda _command: None)
+
+    def test_packaged_measures_runtime_is_staged_for_xcode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            runtime = Path(temp) / "casa-measures"
+            with patch.object(harness, "MEASURES_RUNTIME_ROOT", runtime):
+                harness.prepare_measures_runtime()
+            self.assertTrue((runtime / "geodetic/IERSeop2000/table.info").is_file())
+            self.assertTrue((runtime / ".casa-rs-measures-provenance.json").is_file())
 
     def fake_paths(
         self, root: Path, journey: dict, *, create_project: bool = True

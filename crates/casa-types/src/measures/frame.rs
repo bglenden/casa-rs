@@ -8,18 +8,14 @@
 //! It mirrors C++ `MeasFrame` but stores only the subset of fields relevant to
 //! MEpoch, MPosition, MDirection, and MFrequency conversions.
 
-use std::sync::{Arc, LazyLock, Mutex};
-
-use casa_measures_data::EopTable;
+use std::sync::{Arc, Mutex};
 
 use super::direction::MDirection;
 use super::epoch::MEpoch;
 use super::error::MeasureError;
 use super::position::MPosition;
+use super::provider::MeasuresProvider;
 use super::radial_velocity::MRadialVelocity;
-
-static STANDARD_EOP_TABLE: LazyLock<Arc<EopTable>> =
-    LazyLock::new(|| Arc::new(EopTable::bundled().clone()));
 
 /// IAU precession/nutation model selection.
 ///
@@ -70,18 +66,17 @@ pub enum IauModel {
 ///
 /// # EOP data
 ///
-/// Attach an IERS EOP table via [`with_eop`](MeasFrame::with_eop) or
-/// [`with_standard_eop`](MeasFrame::with_standard_eop) to enable automatic
-/// dUT1 and polar-motion lookup. Explicit [`with_dut1`](MeasFrame::with_dut1)
-/// values take priority over EOP table lookups.
+/// Attach an explicit measures provider via
+/// [`with_measures`](MeasFrame::with_measures) to enable automatic dUT1 and
+/// polar-motion lookup. Explicit [`with_dut1`](MeasFrame::with_dut1) values
+/// take priority over provider lookups.
 ///
 /// # Builder pattern
 ///
 /// ```
-/// use casa_types::measures::{MeasFrame, MEpoch, EpochRef, MjdHighPrec};
+/// use casa_types::measures::MeasFrame;
 ///
 /// let frame = MeasFrame::new()
-///     .with_standard_eop()
 ///     .with_dut1(0.3);  // explicit override takes priority
 /// ```
 #[derive(Debug, Clone)]
@@ -91,7 +86,7 @@ pub struct MeasFrame {
     direction: Option<MDirection>,
     radial_velocity: Option<MRadialVelocity>,
     dut1_seconds: Option<f64>,
-    eop_table: Option<Arc<EopTable>>,
+    measures: Option<Arc<dyn MeasuresProvider>>,
     iau_model: IauModel,
     cache: FrameCache,
 }
@@ -130,7 +125,7 @@ impl MeasFrame {
             direction: None,
             radial_velocity: None,
             dut1_seconds: None,
-            eop_table: None,
+            measures: None,
             iau_model: IauModel::default(),
             cache: FrameCache::default(),
         }
@@ -186,29 +181,21 @@ impl MeasFrame {
         self
     }
 
-    /// Attaches an IERS EOP table for automatic dUT1/polar-motion lookup.
+    /// Attaches an explicit provider for runtime measure-conversion data.
     ///
     /// The table is used by [`dut1_for_mjd`] and [`polar_motion_for_mjd`]
     /// to interpolate values at any epoch within the table range.
     ///
     /// [`dut1_for_mjd`]: MeasFrame::dut1_for_mjd
     /// [`polar_motion_for_mjd`]: MeasFrame::polar_motion_for_mjd
-    pub fn with_eop(mut self, eop: Arc<EopTable>) -> Self {
-        self.eop_table = Some(eop);
+    pub fn with_measures(mut self, measures: Arc<dyn MeasuresProvider>) -> Self {
+        self.measures = Some(measures);
         self
     }
 
-    /// Attaches the standard CASA-table-backed IERS EOP data.
-    ///
-    /// Equivalent to attaching the bundled standard EOP table, but shares one
-    /// process-wide table allocation across frames.
-    pub fn with_standard_eop(self) -> Self {
-        self.with_eop(Arc::clone(&STANDARD_EOP_TABLE))
-    }
-
-    /// Compatibility alias for [`with_standard_eop`](Self::with_standard_eop).
-    pub fn with_bundled_eop(self) -> Self {
-        self.with_standard_eop()
+    /// Attach a provider used for EOP and any other available runtime inputs.
+    pub fn with_eop(self, provider: Arc<dyn MeasuresProvider>) -> Self {
+        self.with_measures(provider)
     }
 
     /// Returns the reference epoch, if set.
@@ -245,9 +232,9 @@ impl MeasFrame {
         self.dut1_seconds
     }
 
-    /// Returns the attached EOP table, if any.
-    pub fn eop_table(&self) -> Option<&EopTable> {
-        self.eop_table.as_deref()
+    /// Returns the attached measures-data provider, if any.
+    pub fn measures(&self) -> Option<&dyn MeasuresProvider> {
+        self.measures.as_deref()
     }
 
     /// Get dUT1 (UT1−UTC) for a given MJD.
@@ -256,28 +243,38 @@ impl MeasFrame {
     /// 1. Explicit [`with_dut1()`](MeasFrame::with_dut1) override
     /// 2. EOP table interpolation at the given MJD
     /// 3. `None`
-    pub fn dut1_for_mjd(&self, mjd: f64) -> Option<f64> {
+    pub fn dut1_for_mjd(&self, mjd: f64) -> Result<Option<f64>, MeasureError> {
         // Explicit override wins
         if let Some(dut1) = self.dut1_seconds {
-            return Some(dut1);
+            return Ok(Some(dut1));
         }
-        // Try EOP table
-        if let Some(eop) = &self.eop_table {
-            if let Some(vals) = eop.interpolate(mjd) {
-                return Some(vals.dut1_seconds);
-            }
+        if let Some(provider) = &self.measures {
+            return provider
+                .eop_values(mjd)
+                .map(|values| values.map(|value| value.dut1_seconds))
+                .map_err(|reason| MeasureError::ModelError {
+                    model: "IERS EOP",
+                    reason,
+                });
         }
-        None
+        Ok(None)
     }
 
     /// Get polar motion (xp, yp) in arcseconds for a given MJD.
     ///
     /// Returns `None` if no EOP table is attached or the MJD is outside
     /// the table range.
-    pub fn polar_motion_for_mjd(&self, mjd: f64) -> Option<(f64, f64)> {
-        let eop = self.eop_table.as_ref()?;
-        let vals = eop.interpolate(mjd)?;
-        Some((vals.x_arcsec, vals.y_arcsec))
+    pub fn polar_motion_for_mjd(&self, mjd: f64) -> Result<Option<(f64, f64)>, MeasureError> {
+        let Some(provider) = &self.measures else {
+            return Ok(None);
+        };
+        provider
+            .eop_values(mjd)
+            .map(|values| values.map(|value| (value.x_arcsec, value.y_arcsec)))
+            .map_err(|reason| MeasureError::ModelError {
+                model: "IERS EOP",
+                reason,
+            })
     }
 
     pub(crate) fn cached_tt_jd<F>(&self, compute: F) -> Result<(f64, f64), MeasureError>

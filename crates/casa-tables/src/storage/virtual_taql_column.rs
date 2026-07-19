@@ -88,6 +88,7 @@ impl VirtualColumnEngine for VirtualTaQLColumnEngine {
                     row,
                     row_index: i,
                     style: taql::ast::IndexStyle::default(),
+                    measures: None,
                 };
                 let val = eval_expr(&expr, &eval_ctx).map_err(|e| {
                     StorageError::FormatMismatch(format!(

@@ -54,11 +54,6 @@ impl SourceCatalog {
         Self { entries, by_name }
     }
 
-    /// Return the packaged/runtime standard catalog.
-    pub fn bundled() -> &'static Self {
-        crate::load_sources().0
-    }
-
     /// Iterate over the catalog entries in source order.
     pub fn iter(&self) -> impl Iterator<Item = &SourceEntry> {
         self.entries.iter()

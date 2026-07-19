@@ -38,6 +38,13 @@ jobs:
       - name: Free lint build artifacts
         run: cargo clean
 
+      - name: Install explicit measures runtime for integration tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/casa-measures"
+          tar -xzf crates/casa-measures-data/data/casa-measures-runtime.tar.gz -C "$RUNNER_TEMP/casa-measures"
+          cp crates/casa-measures-data/data/casa-measures-runtime.provenance.json "$RUNNER_TEMP/casa-measures/.casa-rs-measures-provenance.json"
+          echo "CASA_RS_MEASURESPATH=$RUNNER_TEMP/casa-measures" >> "$GITHUB_ENV"
+
       - name: Run tests
         env:
           # casars-imager progress instrumentation is process-global and its

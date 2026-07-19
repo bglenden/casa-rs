@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-07-18
+Last reality check: 2026-07-19
 Verification: just docs-check
 
 ## System purpose
@@ -15,7 +15,7 @@ coordinates, measures, and related workflows.
 | Module | Responsibility | May depend on |
 |---|---|---|
 | core codecs (`casa-values`, `casa-aipsio`) | Internal generic value model and AipsIO-style framing used by higher layers | Rust ecosystem crates only |
-| foundation crates (`casa-types`, `casa-table-read`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures types, minimal read-only table loading, and runtime measures data access | core codecs |
+| foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
@@ -35,10 +35,21 @@ with `casa-test-support` outside the product dependency chain.
 Additional constraints:
 
 - `casa-values` and `casa-aipsio` stay internal implementation crates.
-- `casa-table-read` owns the minimal shared read-only loader used by runtime data loaders.
+- `casa-aipsio` owns the single framed and bounded-buffer AipsIO codec; storage
+  managers select byte order explicitly and do not maintain local detectors or
+  primitive codecs.
+- `casa-types` owns pure measures algorithms and the `MeasuresProvider`
+  contract. `casa-measures-data::MeasuresRuntime` is the explicit fallible I/O
+  implementation; applications acquire one runtime at an operation boundary
+  and pass it inward. Discovery never installs data, and installation is an
+  explicit caller-selected maintenance action.
 - `casa-tables` keeps the broader storage/write path crate-internal even when user-facing table APIs are exposed from the crate.
 - Within `casa-tables`, lazy read paths are safe to share across threads under an in-process multi-reader, single-writer contract; shared tiled reads use a process-wide bounded cache, while dirty write state stays under exclusive mutable ownership.
-- Within `casa-tables`, row/column/cell accessor objects are the public table-data surface; prepared-row accessors provide the reusable selected-column row fast path, and the old table-level convenience wrappers have been removed from the public API.
+- Within `casa-tables`, row/column/cell accessor objects are the public
+  table-data surface. `PreparedRowAppender` and prepared mutable rows compile
+  schema/column slots once for high-throughput mutation, while `TableWritePlan`
+  validates persistence scope before I/O. Public promise-based unchecked write
+  methods are not part of the API.
 - ADR-0008 defines persistent-table writes: per-column casacore data-manager
   bindings are chosen at creation and preserved when opening or mutating an
   existing table; heterogeneous `TiledShapeStMan` rows share one hypercube per
@@ -387,7 +398,9 @@ compatibility block facade or normal-path host full-grid upload is retained.
   `<workspace>/.casa-rs/parameters/<surface-id>/`, optionally redirected by
   `CASA_RS_STATE_DIR`
 - MeasurementSet and CASA image fixtures under the shared dataset root (`../casatestdata` by default, override `CASA_RS_TESTDATA_ROOT`)
-- measures runtime data in a CASA-compatible table tree rooted at `~/.casa/data` (override `CASA_RS_MEASURESPATH`)
+- measures runtime data in an explicitly selected CASA-compatible table tree;
+  discovery may offer complete `CASA_RS_MEASURESPATH` and `~/.casa/data`
+  candidates but never installs or repairs them
 - local casacore C++ installations via Homebrew for parity tests and demos when available
 - GitHub Actions as the canonical CI environment, with `scripts/ci-local.sh` as local reproduction support
 - accepted future notebook state from ADR-0007: visible Markdown and assets

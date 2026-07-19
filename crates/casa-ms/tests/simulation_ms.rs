@@ -365,7 +365,11 @@ fn zenith_transit_schedule_writes_unflagged_vla_track() {
     let temp = tempfile::tempdir().unwrap();
     let model = temp.path().join("ppdisk672_GHz_50pc.fits");
     write_test_fits_model(&model, 16, 16);
-    let vla = MPosition::from_observatory_name("VLA").expect("VLA position");
+    let measures = casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+        .expect("test measures runtime");
+    let vla = MPosition::from_observatory_name("VLA", &measures)
+        .expect("catalog lookup")
+        .expect("VLA position");
     let mut request = SyntheticObservationRequest::vla_ppdisk(
         &model,
         temp.path().join("zenith.synthetic.ms"),

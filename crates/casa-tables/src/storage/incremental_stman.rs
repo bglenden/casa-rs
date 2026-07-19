@@ -22,6 +22,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use casa_aipsio::internal::{AipsIoBufferWriter, AipsIoSliceReader, detect_aipsio_byte_order};
 use casa_aipsio::{AipsIo, ByteOrder};
 use casa_types::ScalarValue;
 
@@ -41,7 +42,6 @@ use super::{RequiredScalarColumnData, ScalarColumnSource, ScalarColumnSources, S
 use crate::table::GeneratedScalarValueRun;
 
 const ISM_HEADER_SIZE: u64 = 512;
-const AIPSIO_MAGIC: u32 = 0xbebebebe;
 
 type SparseScalarRowValues = Vec<(usize, Option<casa_types::ScalarValue>)>;
 
@@ -68,241 +68,6 @@ thread_local! {
 // ---------------------------------------------------------------------------
 // In-memory AipsIO helpers
 // ---------------------------------------------------------------------------
-
-/// Minimal reader for AipsIO-framed data in either byte order.
-struct AipsIoBuf<'a> {
-    data: &'a [u8],
-    pos: usize,
-    order: ByteOrder,
-    level: usize,
-}
-
-impl<'a> AipsIoBuf<'a> {
-    fn new(data: &'a [u8], order: ByteOrder) -> Self {
-        Self {
-            data,
-            pos: 0,
-            order,
-            level: 0,
-        }
-    }
-
-    fn read_bytes(&mut self, n: usize) -> Result<&'a [u8], StorageError> {
-        if self.pos + n > self.data.len() {
-            return Err(StorageError::FormatMismatch(
-                "ISM AipsIO buffer underrun".to_string(),
-            ));
-        }
-        let slice = &self.data[self.pos..self.pos + n];
-        self.pos += n;
-        Ok(slice)
-    }
-
-    fn read_u32(&mut self) -> Result<u32, StorageError> {
-        let b = self.read_bytes(4)?;
-        Ok(match self.order {
-            ByteOrder::BigEndian => u32::from_be_bytes([b[0], b[1], b[2], b[3]]),
-            ByteOrder::LittleEndian => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
-        })
-    }
-
-    fn read_i32(&mut self) -> Result<i32, StorageError> {
-        let b = self.read_bytes(4)?;
-        Ok(match self.order {
-            ByteOrder::BigEndian => i32::from_be_bytes([b[0], b[1], b[2], b[3]]),
-            ByteOrder::LittleEndian => i32::from_le_bytes([b[0], b[1], b[2], b[3]]),
-        })
-    }
-
-    fn read_u64(&mut self) -> Result<u64, StorageError> {
-        let b = self.read_bytes(8)?;
-        Ok(match self.order {
-            ByteOrder::BigEndian => {
-                u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-            }
-            ByteOrder::LittleEndian => {
-                u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-            }
-        })
-    }
-
-    fn read_bool(&mut self) -> Result<bool, StorageError> {
-        let b = self.read_bytes(1)?;
-        Ok(b[0] != 0)
-    }
-
-    fn read_string(&mut self) -> Result<String, StorageError> {
-        let len = self.read_u32()? as usize;
-        let b = self.read_bytes(len)?;
-        String::from_utf8(b.to_vec())
-            .map_err(|e| StorageError::FormatMismatch(format!("invalid UTF-8 in ISM: {e}")))
-    }
-
-    fn getstart(&mut self, expected_type: &str) -> Result<u32, StorageError> {
-        if self.level == 0 {
-            let magic = self.read_u32()?;
-            if magic != AIPSIO_MAGIC {
-                return Err(StorageError::FormatMismatch(format!(
-                    "ISM AipsIO magic mismatch: expected 0x{AIPSIO_MAGIC:08x}, got 0x{magic:08x}"
-                )));
-            }
-        }
-        self.level += 1;
-        let _obj_len = self.read_u32()?;
-        let type_name = self.read_string()?;
-        if type_name != expected_type {
-            return Err(StorageError::FormatMismatch(format!(
-                "ISM AipsIO type mismatch: expected '{expected_type}', got '{type_name}'"
-            )));
-        }
-        self.read_u32()
-    }
-
-    fn getend(&mut self) {
-        if self.level > 0 {
-            self.level -= 1;
-        }
-    }
-
-    fn read_block_u32(&mut self) -> Result<Vec<u32>, StorageError> {
-        let _version = self.getstart("Block")?;
-        let count = self.read_u32()?;
-        let mut values = Vec::with_capacity(count as usize);
-        for _ in 0..count {
-            values.push(self.read_u32()?);
-        }
-        self.getend();
-        Ok(values)
-    }
-
-    fn read_block_u64(&mut self) -> Result<Vec<u64>, StorageError> {
-        let _version = self.getstart("Block")?;
-        let count = self.read_u32()?;
-        let mut values = Vec::with_capacity(count as usize);
-        for _ in 0..count {
-            values.push(self.read_u64()?);
-        }
-        self.getend();
-        Ok(values)
-    }
-}
-
-/// Detect the byte order of in-memory AipsIO data.
-fn detect_aipsio_byte_order(data: &[u8]) -> Result<ByteOrder, StorageError> {
-    if data.len() < 8 {
-        return Err(StorageError::FormatMismatch(
-            "ISM data too short for byte order detection".to_string(),
-        ));
-    }
-    let be_len = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-    let le_len = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
-
-    let be_ok = be_len > 0 && be_len < 4096;
-    let le_ok = le_len > 0 && le_len < 4096;
-
-    match (be_ok, le_ok) {
-        (true, false) => Ok(ByteOrder::BigEndian),
-        (false, true) => Ok(ByteOrder::LittleEndian),
-        (true, true) => Ok(ByteOrder::BigEndian),
-        (false, false) => Err(StorageError::FormatMismatch(format!(
-            "ISM: cannot detect byte order (be_len={be_len}, le_len={le_len})"
-        ))),
-    }
-}
-
-/// Minimal writer for in-memory AipsIO in the given byte order.
-struct AipsIoWriteBuf {
-    data: Vec<u8>,
-    order: ByteOrder,
-    len_positions: Vec<usize>,
-    level: usize,
-}
-
-impl AipsIoWriteBuf {
-    fn new(order: ByteOrder) -> Self {
-        Self {
-            data: Vec::new(),
-            order,
-            len_positions: Vec::new(),
-            level: 0,
-        }
-    }
-
-    fn into_bytes(self) -> Vec<u8> {
-        self.data
-    }
-
-    fn put_u8(&mut self, val: u8) {
-        self.data.push(val);
-    }
-
-    fn put_u32(&mut self, val: u32) {
-        match self.order {
-            ByteOrder::BigEndian => self.data.extend_from_slice(&val.to_be_bytes()),
-            ByteOrder::LittleEndian => self.data.extend_from_slice(&val.to_le_bytes()),
-        }
-    }
-
-    fn put_i32(&mut self, val: i32) {
-        match self.order {
-            ByteOrder::BigEndian => self.data.extend_from_slice(&val.to_be_bytes()),
-            ByteOrder::LittleEndian => self.data.extend_from_slice(&val.to_le_bytes()),
-        }
-    }
-
-    fn put_u64(&mut self, val: u64) {
-        match self.order {
-            ByteOrder::BigEndian => self.data.extend_from_slice(&val.to_be_bytes()),
-            ByteOrder::LittleEndian => self.data.extend_from_slice(&val.to_le_bytes()),
-        }
-    }
-
-    fn put_bool(&mut self, val: bool) {
-        self.put_u8(if val { 1 } else { 0 });
-    }
-
-    fn put_string(&mut self, s: &str) {
-        self.put_u32(s.len() as u32);
-        self.data.extend_from_slice(s.as_bytes());
-    }
-
-    fn putstart(&mut self, type_name: &str, version: u32) {
-        self.put_u32(AIPSIO_MAGIC);
-        let pos = self.data.len();
-        self.put_u32(0);
-        self.len_positions.push(pos);
-        self.put_string(type_name);
-        self.put_u32(version);
-        self.level += 1;
-    }
-
-    fn putstart_nested(&mut self, type_name: &str, version: u32) {
-        let pos = self.data.len();
-        self.put_u32(0);
-        self.len_positions.push(pos);
-        self.put_string(type_name);
-        self.put_u32(version);
-        self.level += 1;
-    }
-
-    fn putend(&mut self) {
-        if let Some(pos) = self.len_positions.pop() {
-            let obj_len = (self.data.len() - pos) as u32;
-            let bytes = match self.order {
-                ByteOrder::BigEndian => obj_len.to_be_bytes(),
-                ByteOrder::LittleEndian => obj_len.to_le_bytes(),
-            };
-            self.data[pos..pos + 4].copy_from_slice(&bytes);
-        }
-        if self.level > 0 {
-            self.level -= 1;
-        }
-    }
-
-    fn putend_nested(&mut self) {
-        self.putend();
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Parsed types
@@ -370,7 +135,7 @@ fn parse_ism_header(file: &mut (impl Read + Seek)) -> Result<IsmHeader, StorageE
     file.read_exact(&mut header_buf)?;
 
     let io_order = detect_aipsio_byte_order(&header_buf)?;
-    let mut buf = AipsIoBuf::new(&header_buf, io_order);
+    let mut buf = AipsIoSliceReader::new(&header_buf, io_order)?;
     let version = buf.getstart("IncrementalStMan")?;
 
     let big_endian = if version >= 5 {
@@ -385,6 +150,7 @@ fn parse_ism_header(file: &mut (impl Read + Seek)) -> Result<IsmHeader, StorageE
     let _uniq_nr = buf.read_u32()?;
     let _nr_free_buckets = buf.read_u32()?;
     let _first_free_bucket = buf.read_i32()?;
+    buf.getend()?;
 
     Ok(IsmHeader {
         bucket_size,
@@ -425,7 +191,7 @@ fn parse_ism_index(file: &mut File, header: &IsmHeader) -> Result<IsmIndex, Stor
         });
     }
 
-    let mut buf = AipsIoBuf::new(&index_data, header.io_order);
+    let mut buf = AipsIoSliceReader::new(&index_data, header.io_order)?;
     let version = buf.getstart("ISMIndex")?;
 
     let _nused = buf.read_u32()?;
@@ -440,7 +206,7 @@ fn parse_ism_index(file: &mut File, header: &IsmHeader) -> Result<IsmIndex, Stor
     };
 
     let bucket_nrs = buf.read_block_u32()?;
-    buf.getend();
+    buf.getend()?;
 
     Ok(IsmIndex { rows, bucket_nrs })
 }
@@ -2510,8 +2276,8 @@ pub(crate) fn write_ism_file_scalar_column_sources(
     }
     ism_rows.push(nrrow as u64);
 
-    let index_data = serialize_ism_index(&ism_rows, &ism_bucket_nrs, big_endian);
-    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian);
+    let index_data = serialize_ism_index(&ism_rows, &ism_bucket_nrs, big_endian)?;
+    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian)?;
 
     file.write_all(&index_data)?;
     file.seek(SeekFrom::Start(0))?;
@@ -2709,8 +2475,8 @@ fn write_ism_file_scalar_run_columns(
     }
     ism_rows.push(nrrow as u64);
 
-    let index_data = serialize_ism_index(&ism_rows, &ism_bucket_nrs, big_endian);
-    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian);
+    let index_data = serialize_ism_index(&ism_rows, &ism_bucket_nrs, big_endian)?;
+    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian)?;
 
     let mut file = File::create(file_path)?;
     file.write_all(&header_buf)?;
@@ -2974,10 +2740,10 @@ fn write_ism_file_impl(
     }
     ism_rows.push(nrrow as u64); // sentinel
 
-    let index_data = serialize_ism_index(&ism_rows, &ism_bucket_nrs, big_endian);
+    let index_data = serialize_ism_index(&ism_rows, &ism_bucket_nrs, big_endian)?;
 
     // Write header
-    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian);
+    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian)?;
 
     // Assemble the file
     let mut file = File::create(file_path)?;
@@ -3459,17 +3225,21 @@ fn serialize_ism_bucket(
 // Serialization helpers
 // ---------------------------------------------------------------------------
 
-fn serialize_ism_header(bucket_size: u32, nr_buckets: u32, big_endian: bool) -> Vec<u8> {
+fn serialize_ism_header(
+    bucket_size: u32,
+    nr_buckets: u32,
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
     let io_order = if big_endian {
         ByteOrder::BigEndian
     } else {
         ByteOrder::LittleEndian
     };
-    let mut buf = AipsIoWriteBuf::new(io_order);
+    let mut buf = AipsIoBufferWriter::new(io_order);
 
     // v5 for LE tables (includes endian flag), v4 for BE tables
     let version = if big_endian { 4 } else { 5 };
-    buf.putstart("IncrementalStMan", version);
+    buf.putstart("IncrementalStMan", version)?;
 
     if version >= 5 {
         buf.put_bool(big_endian);
@@ -3481,44 +3251,48 @@ fn serialize_ism_header(bucket_size: u32, nr_buckets: u32, big_endian: bool) -> 
     buf.put_u32(0); // uniqnr
     buf.put_u32(0); // nFreeBucket
     buf.put_i32(-1); // firstFreeBucket
-    buf.putend();
+    buf.putend()?;
 
     let mut header = buf.into_bytes();
     header.resize(ISM_HEADER_SIZE as usize, 0);
-    header
+    Ok(header)
 }
 
-fn serialize_ism_index(rows: &[u64], bucket_nrs: &[u32], big_endian: bool) -> Vec<u8> {
+fn serialize_ism_index(
+    rows: &[u64],
+    bucket_nrs: &[u32],
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
     let io_order = if big_endian {
         ByteOrder::BigEndian
     } else {
         ByteOrder::LittleEndian
     };
-    let mut buf = AipsIoWriteBuf::new(io_order);
+    let mut buf = AipsIoBufferWriter::new(io_order);
     let nused = bucket_nrs.len() as u32;
 
     // Use version 2 (64-bit row numbers) for safety
-    buf.putstart("ISMIndex", 2);
+    buf.putstart("ISMIndex", 2)?;
     buf.put_u32(nused);
 
     // rows: Block<Int64> (version 2)
-    buf.putstart_nested("Block", 1);
+    buf.putstart("Block", 1)?;
     buf.put_u32(rows.len() as u32);
     for &r in rows {
         buf.put_u64(r);
     }
-    buf.putend_nested();
+    buf.putend()?;
 
     // bucketNr: Block<uInt>
-    buf.putstart_nested("Block", 1);
+    buf.putstart("Block", 1)?;
     buf.put_u32(bucket_nrs.len() as u32);
     for &b in bucket_nrs {
         buf.put_u32(b);
     }
-    buf.putend_nested();
+    buf.putend()?;
 
-    buf.putend();
-    buf.into_bytes()
+    buf.putend()?;
+    Ok(buf.into_bytes())
 }
 
 fn serialize_ism_dm_blob(name: &str) -> Result<Vec<u8>, StorageError> {
@@ -3588,15 +3362,15 @@ mod tests {
     fn parse_header_be() {
         // Synthesize a BE header
         let io_order = ByteOrder::BigEndian;
-        let mut buf = AipsIoWriteBuf::new(io_order);
-        buf.putstart("IncrementalStMan", 4);
+        let mut buf = AipsIoBufferWriter::new(io_order);
+        buf.putstart("IncrementalStMan", 4).unwrap();
         buf.put_u32(32768); // bucket_size
         buf.put_u32(10); // nr_buckets
         buf.put_u32(1); // persCacheSize
         buf.put_u32(0); // uniqnr
         buf.put_u32(0); // nFreeBucket
         buf.put_i32(-1); // firstFreeBucket
-        buf.putend();
+        buf.putend().unwrap();
         let mut header = buf.into_bytes();
         header.resize(512, 0);
 
@@ -3611,8 +3385,8 @@ mod tests {
     #[test]
     fn parse_header_le() {
         let io_order = ByteOrder::LittleEndian;
-        let mut buf = AipsIoWriteBuf::new(io_order);
-        buf.putstart("IncrementalStMan", 5);
+        let mut buf = AipsIoBufferWriter::new(io_order);
+        buf.putstart("IncrementalStMan", 5).unwrap();
         buf.put_bool(false); // LE
         buf.put_u32(16384); // bucket_size
         buf.put_u32(5); // nr_buckets
@@ -3620,7 +3394,7 @@ mod tests {
         buf.put_u32(0); // uniqnr
         buf.put_u32(0); // nFreeBucket
         buf.put_i32(-1); // firstFreeBucket
-        buf.putend();
+        buf.putend().unwrap();
         let mut header = buf.into_bytes();
         header.resize(512, 0);
 

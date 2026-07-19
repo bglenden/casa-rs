@@ -11,6 +11,28 @@ type SparseScalarRowValues = Vec<(usize, Option<ScalarValue>)>;
 type SparseScalarColumns = Vec<Option<SparseScalarRowValues>>;
 
 impl Table {
+    /// Prepare a validated persistence scope.
+    ///
+    /// Individual plan operations validate their complete knowable scope
+    /// before starting I/O. The mutable borrow prevents schema or binding
+    /// changes while the plan is active.
+    ///
+    /// ```compile_fail
+    /// use casa_tables::{ColumnSchema, Table, TableSchema};
+    /// use casa_types::PrimitiveType;
+    ///
+    /// let schema = TableSchema::new(vec![
+    ///     ColumnSchema::scalar("id", PrimitiveType::Int32),
+    /// ]).unwrap();
+    /// let mut table = Table::with_schema(schema.clone());
+    /// let mut plan = table.prepare_write();
+    /// table.set_schema(schema).unwrap(); // cannot mutate schema while borrowed by the plan
+    /// let _ = &mut plan;
+    /// ```
+    pub fn prepare_write(&mut self) -> TableWritePlan<'_> {
+        TableWritePlan { table: self }
+    }
+
     /// Opens an existing table from disk.
     ///
     /// Reads schema, keywords, column keywords, and table metadata eagerly from
@@ -88,6 +110,7 @@ impl Table {
             table_info: info,
             dm_info: snapshot.dm_info,
             external_sync: None,
+            measures: None,
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
@@ -141,6 +164,7 @@ impl Table {
             table_info: snapshot.table_info,
             dm_info: snapshot.dm_info,
             external_sync: None,
+            measures: None,
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
@@ -174,6 +198,7 @@ impl Table {
             table_info: snapshot.table_info,
             dm_info: snapshot.dm_info,
             external_sync: None,
+            measures: None,
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
@@ -191,7 +216,7 @@ impl Table {
     /// Returns [`TableError::Storage`] on I/O failure.
     pub fn save(&self, options: TableOptions) -> Result<(), TableError> {
         self.validate()?;
-        self.save_assuming_valid(options)
+        self.persist_all(options)
     }
 
     /// Saves the table to disk without re-validating every row against the schema.
@@ -206,7 +231,7 @@ impl Table {
     ///
     /// Callers that are unsure whether the table state is valid should keep
     /// using [`save`](Table::save).
-    pub fn save_assuming_valid(&self, options: TableOptions) -> Result<(), TableError> {
+    pub(crate) fn persist_all(&self, options: TableOptions) -> Result<(), TableError> {
         tracing::info!(
             path = %options.path.display(),
             rows = self.inner.row_count(),
@@ -291,9 +316,9 @@ impl Table {
     /// scalars, and large array columns benefit from different storage
     /// managers.
     ///
-    /// If the table state is already known to be schema-valid, prefer
-    /// [`save_with_bindings_assuming_valid`](Self::save_with_bindings_assuming_valid)
-    /// to avoid the extra full-table validation pass before serialization.
+    /// High-throughput mutation code should prepare its rows and then use
+    /// [`prepare_write`](Self::prepare_write) so the persistence scope is
+    /// validated and represented by one exclusive plan.
     ///
     /// # Example
     ///
@@ -321,12 +346,12 @@ impl Table {
         bindings: &std::collections::HashMap<String, ColumnBinding>,
     ) -> Result<(), TableError> {
         self.validate()?;
-        self.save_with_bindings_assuming_valid(options, bindings)
+        self.persist_with_bindings(options, bindings)
     }
 
     /// Save the table with per-column data manager bindings without re-validating rows.
     ///
-    /// This is the bindings-aware counterpart to [`save_assuming_valid`](Self::save_assuming_valid).
+    /// This is the bindings-aware counterpart to [`persist_all`](Self::persist_all).
     /// It preserves the same on-disk layout as [`save_with_bindings`](Self::save_with_bindings),
     /// but skips the extra full-table validation pass and avoids cloning the entire row set
     /// before serialization.
@@ -336,7 +361,7 @@ impl Table {
     /// On large tables it avoids a measurable amount of redundant work while
     /// still using the same bindings-driven storage-manager layout as
     /// [`save_with_bindings`](Self::save_with_bindings).
-    pub fn save_with_bindings_assuming_valid(
+    pub(crate) fn persist_with_bindings(
         &self,
         options: TableOptions,
         bindings: &std::collections::HashMap<String, ColumnBinding>,
@@ -404,10 +429,9 @@ impl Table {
     /// scalar cells, or deferred single-column tiled data-manager groups
     /// installed by a separate streaming path.
     ///
-    /// The caller is responsible for ensuring that override values satisfy the
-    /// table schema; this method intentionally shares the same "assuming
-    /// valid" contract as [`save_with_bindings_assuming_valid`](Self::save_with_bindings_assuming_valid).
-    pub fn save_with_bindings_and_column_overrides_assuming_valid(
+    /// The owning [`TableWritePlan`] validates overrides and bindings before
+    /// entering this persistence backend.
+    pub(crate) fn persist_with_bindings_and_column_overrides(
         &self,
         options: TableOptions,
         bindings: &std::collections::HashMap<String, ColumnBinding>,
@@ -497,11 +521,11 @@ impl Table {
     /// - the table was opened from disk and still points at its source path
     ///
     /// If those conditions do not hold, use the normal save path instead.
-    pub fn save_selected_columns_in_place_assuming_valid(
+    pub(crate) fn persist_selected_columns_in_place(
         &self,
         changed_columns: &[&str],
     ) -> Result<(), TableError> {
-        self.save_selected_rows_in_place_assuming_valid(changed_columns, &[])
+        self.persist_selected_rows_in_place(changed_columns, &[])
     }
 
     /// Saves only the affected storage-manager groups for the given columns,
@@ -509,7 +533,7 @@ impl Table {
     ///
     /// `changed_rows` may be empty, in which case the save falls back to
     /// column-only invalidation semantics.
-    pub fn save_selected_rows_in_place_assuming_valid(
+    pub(crate) fn persist_selected_rows_in_place(
         &self,
         changed_columns: &[&str],
         changed_rows: &[usize],
@@ -925,7 +949,7 @@ impl Table {
     ///
     /// This construction API does not alter on-disk data. It releases the
     /// pending values that were just saved by
-    /// [`Self::save_selected_rows_in_place_assuming_valid`] so a long mutation
+    /// [`Self::persist_selected_rows_in_place`] so a long mutation
     /// does not retain every completed batch.
     #[doc(hidden)]
     pub fn discard_persisted_cell_updates(&mut self, columns: &[&str], rows: &[usize]) {
@@ -943,7 +967,7 @@ impl Table {
     /// Callers must ensure that `target_column` already exists in the in-memory
     /// schema, is not yet present on disk, and has the same primitive array
     /// type as `source_column`.
-    pub fn save_added_tiled_column_clone_in_place_assuming_valid(
+    pub(crate) fn persist_added_tiled_column_clone_in_place(
         &mut self,
         source_column: &str,
         target_column: &str,
@@ -1128,7 +1152,7 @@ impl Table {
     ///
     /// C++ equivalent: `Table::addColumn(desc, TiledShapeStMan(...))` followed
     /// by cell writes.
-    pub fn save_added_tiled_shape_column_in_place_assuming_valid(
+    pub(crate) fn persist_added_tiled_shape_column_in_place(
         &mut self,
         column: &str,
         changed_rows: &[usize],
@@ -1586,6 +1610,166 @@ impl Table {
             opts.endian_format.is_big_endian(),
             opts.tile_shape.as_deref(),
         )?;
+        Ok(())
+    }
+}
+
+impl TableWritePlan<'_> {
+    /// Validate the complete table and save it to `options.path()`.
+    pub fn save(&mut self, options: TableOptions) -> Result<(), TableError> {
+        self.table.validate()?;
+        self.table.persist_all(options)
+    }
+
+    /// Validate the table and per-column bindings, then save it.
+    pub fn save_with_bindings(
+        &mut self,
+        options: TableOptions,
+        bindings: &std::collections::HashMap<String, ColumnBinding>,
+    ) -> Result<(), TableError> {
+        self.validate_bindings(bindings)?;
+        self.table.validate()?;
+        self.table.persist_with_bindings(options, bindings)
+    }
+
+    /// Validate bindings and column overrides, then save without materializing
+    /// deferred override columns into row records.
+    pub fn save_with_column_overrides(
+        &mut self,
+        options: TableOptions,
+        bindings: &std::collections::HashMap<String, ColumnBinding>,
+        overrides: &ColumnOverrides,
+    ) -> Result<(), TableError> {
+        self.validate_bindings(bindings)?;
+        let _ = overrides.effective_row_count(self.table.row_count())?;
+        if let Some(schema) = self.table.schema() {
+            for (column, override_value) in overrides.iter() {
+                let schema_column =
+                    schema
+                        .column(column)
+                        .ok_or_else(|| TableError::SchemaColumnUnknown {
+                            column: column.clone(),
+                        })?;
+                match override_value {
+                    ColumnOverride::Values(values) => {
+                        for (row_index, value) in values.iter().enumerate() {
+                            super::columns::validate_cell_against_schema_column(
+                                row_index,
+                                schema_column,
+                                value.as_ref(),
+                            )?;
+                        }
+                    }
+                    ColumnOverride::GeneratedScalar(column) => {
+                        if let Some(runs) = column.scalar_runs() {
+                            for run in runs {
+                                if let Some(value) = run.value() {
+                                    super::columns::validate_cell_against_schema_column(
+                                        run.start_row(),
+                                        schema_column,
+                                        Some(&Value::Scalar(value.clone())),
+                                    )?;
+                                }
+                            }
+                        }
+                    }
+                    ColumnOverride::StreamedScalar(_) | ColumnOverride::Deferred => {}
+                }
+            }
+        }
+        self.table
+            .persist_with_bindings_and_column_overrides(options, bindings, overrides)
+    }
+
+    /// Persist the data-manager groups containing `columns`.
+    pub fn save_selected_columns(&mut self, columns: &[&str]) -> Result<(), TableError> {
+        self.validate_selection(columns, &[])?;
+        let auto_unlock = self.table.begin_write_operation("save selected columns")?;
+        let result = self.table.persist_selected_columns_in_place(columns);
+        self.table.finish_write_operation(auto_unlock, result)
+    }
+
+    /// Persist the selected rows within the data-manager groups containing
+    /// `columns`.
+    pub fn save_selected_rows(
+        &mut self,
+        columns: &[&str],
+        rows: &[usize],
+    ) -> Result<(), TableError> {
+        self.validate_selection(columns, rows)?;
+        let auto_unlock = self.table.begin_write_operation("save selected rows")?;
+        let result = self.table.persist_selected_rows_in_place(columns, rows);
+        self.table.finish_write_operation(auto_unlock, result)
+    }
+
+    /// Install a newly added tiled column by cloning an existing single-column
+    /// tiled manager.
+    pub fn add_tiled_column_clone(
+        &mut self,
+        source_column: &str,
+        target_column: &str,
+        target_data_manager_name: &str,
+    ) -> Result<(), TableError> {
+        self.table.persist_added_tiled_column_clone_in_place(
+            source_column,
+            target_column,
+            target_data_manager_name,
+        )
+    }
+
+    /// Install a newly added variable-shape tiled column.
+    pub fn add_tiled_shape_column(
+        &mut self,
+        column: &str,
+        changed_rows: &[usize],
+        tile_shape: Option<&[usize]>,
+    ) -> Result<(), TableError> {
+        self.validate_selection(&[column], changed_rows)?;
+        if tile_shape.is_some_and(|shape| shape.is_empty() || shape.contains(&0)) {
+            return Err(TableError::Storage(
+                "tiled shape must contain non-zero dimensions".to_string(),
+            ));
+        }
+        self.table
+            .persist_added_tiled_shape_column_in_place(column, changed_rows, tile_shape)
+    }
+
+    fn validate_bindings(
+        &self,
+        bindings: &std::collections::HashMap<String, ColumnBinding>,
+    ) -> Result<(), TableError> {
+        for (column, binding) in bindings {
+            self.table.require_column(column)?;
+            if binding
+                .tile_shape
+                .as_ref()
+                .is_some_and(|shape| shape.is_empty() || shape.contains(&0))
+            {
+                return Err(TableError::Storage(format!(
+                    "binding for column \"{column}\" has an invalid tile shape"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_selection(&self, columns: &[&str], rows: &[usize]) -> Result<(), TableError> {
+        let mut seen_columns = std::collections::HashSet::with_capacity(columns.len());
+        for &column in columns {
+            self.table.require_column(column)?;
+            if !seen_columns.insert(column) {
+                return Err(TableError::Storage(format!(
+                    "duplicate selected column \"{column}\""
+                )));
+            }
+        }
+        let mut seen_rows = std::collections::HashSet::with_capacity(rows.len());
+        for &row in rows {
+            self.table.require_row_index_without_loading_rows(row)?;
+            if !seen_rows.insert(row) {
+                return Err(TableError::Storage(format!("duplicate selected row {row}")));
+            }
+        }
         Ok(())
     }
 }

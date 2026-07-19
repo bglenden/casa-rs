@@ -6,8 +6,8 @@ use crate::oracle_ffi::*;
 use crate::oracle_runtime::{CasacoreOracleRuntime, OracleError, oracle_operation};
 
 use casa_aipsio::{
-    AipsReader, AipsWriter, ArrayValue, ByteOrder, Complex32, Complex64, ScalarValue, TypeTag,
-    Value,
+    ArrayValue, ByteOrder, Complex32, Complex64, ScalarValue, TypeTag, Value, decode_value,
+    encode_value,
 };
 #[cfg(has_casacore_cpp)]
 use casa_aipsio::{PrimitiveType, ValueRank};
@@ -112,12 +112,7 @@ impl AipsIoBackend for RustBackend {
     }
 
     fn encode_value(&self, value: &Value, byte_order: ByteOrder) -> Result<Vec<u8>, String> {
-        let mut bytes = Vec::new();
-        let mut writer = AipsWriter::with_byte_order(&mut bytes, byte_order);
-        writer
-            .write_value(value)
-            .map_err(|err| format!("write_value failed: {err}"))?;
-        Ok(bytes)
+        encode_value(value, byte_order).map_err(|err| format!("write_value failed: {err}"))
     }
 
     fn decode_value(
@@ -126,10 +121,7 @@ impl AipsIoBackend for RustBackend {
         type_tag: TypeTag,
         byte_order: ByteOrder,
     ) -> Result<Value, String> {
-        let mut reader = AipsReader::with_byte_order(bytes, byte_order);
-        reader
-            .read_value(type_tag)
-            .map_err(|err| format!("read_value failed: {err}"))
+        decode_value(bytes, type_tag, byte_order).map_err(|err| format!("read_value failed: {err}"))
     }
 }
 

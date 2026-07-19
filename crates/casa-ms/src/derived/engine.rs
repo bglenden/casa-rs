@@ -10,13 +10,14 @@
 
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
+use casa_types::measures::MeasuresProvider;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, ScalarValue};
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
@@ -51,6 +52,7 @@ pub struct MsCalEngine {
     observatory_position: MPosition,
     /// Epoch reference used by MAIN.TIME.
     time_reference: EpochRef,
+    measures: Option<Arc<dyn MeasuresProvider>>,
     azel_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     hadec_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     parallactic_angle_cache: RwLock<HashMap<GeometryCacheKey, f64>>,
@@ -102,6 +104,7 @@ impl MsCalEngine {
     /// observatory position from `OBSERVATION::TELESCOPE_NAME` when possible,
     /// falling back to antenna 0 only when no catalog entry is available.
     pub fn new(ms: &MeasurementSet) -> MsResult<Self> {
+        let measures: Arc<dyn MeasuresProvider> = crate::open_measures_runtime()?;
         let ant = ms.antenna()?;
         let n_ant = ant.row_count();
         let mut antenna_positions = Vec::with_capacity(n_ant);
@@ -113,7 +116,8 @@ impl MsCalEngine {
             antenna_mount_alt_az.push(mount.to_ascii_lowercase().starts_with("alt-az"));
         }
 
-        let observatory_position = resolve_observatory_position(ms, &antenna_positions);
+        let observatory_position =
+            resolve_observatory_position(ms, &antenna_positions, measures.as_ref());
         let field = ms.field()?;
         let n_field = field.row_count();
         let mut field_directions = Vec::with_capacity(n_field);
@@ -122,6 +126,7 @@ impl MsCalEngine {
                 ms,
                 row,
                 &observatory_position,
+                Arc::clone(&measures),
             )?);
         }
         let time_reference = detect_time_reference(ms);
@@ -132,6 +137,7 @@ impl MsCalEngine {
             field_directions,
             observatory_position,
             time_reference,
+            measures: Some(measures),
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
             parallactic_angle_cache: RwLock::new(HashMap::new()),
@@ -143,6 +149,7 @@ impl MsCalEngine {
         antenna_positions: Vec<MPosition>,
         field_directions: Vec<MDirection>,
         observatory_position: MPosition,
+        measures: Arc<dyn MeasuresProvider>,
     ) -> Self {
         Self {
             antenna_mount_alt_az: vec![true; antenna_positions.len()],
@@ -150,6 +157,7 @@ impl MsCalEngine {
             field_directions,
             observatory_position,
             time_reference: EpochRef::UTC,
+            measures: Some(measures),
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
             parallactic_angle_cache: RwLock::new(HashMap::new()),
@@ -178,10 +186,11 @@ impl MsCalEngine {
                 context: "antenna_id".to_string(),
             })?
             .clone();
-        Ok(MeasFrame::new()
-            .with_epoch(epoch)
-            .with_position(position)
-            .with_bundled_eop())
+        let frame = MeasFrame::new().with_epoch(epoch).with_position(position);
+        Ok(match &self.measures {
+            Some(measures) => frame.with_measures(Arc::clone(measures)),
+            None => frame,
+        })
     }
 
     /// Build a MeasFrame for the given time and explicit position.
@@ -191,10 +200,11 @@ impl MsCalEngine {
         position: MPosition,
     ) -> MsResult<MeasFrame> {
         let epoch = MEpoch::from_mjd(time_mjd_sec / 86400.0, self.time_reference);
-        Ok(MeasFrame::new()
-            .with_epoch(epoch)
-            .with_position(position)
-            .with_bundled_eop())
+        let frame = MeasFrame::new().with_epoch(epoch).with_position(position);
+        Ok(match &self.measures {
+            Some(measures) => frame.with_measures(Arc::clone(measures)),
+            None => frame,
+        })
     }
 
     /// Build a spectral-conversion frame using the observatory position and field direction.
@@ -773,8 +783,15 @@ pub fn resolve_field_phase_direction_j2000(
         let pos = ant.position(row)?;
         antenna_positions.push(MPosition::new_itrf(pos[0], pos[1], pos[2]));
     }
-    let observatory_position = resolve_observatory_position(ms, &antenna_positions);
-    resolve_field_phase_direction_j2000_with_observatory(ms, field_id, &observatory_position)
+    let measures: Arc<dyn MeasuresProvider> = crate::open_measures_runtime()?;
+    let observatory_position =
+        resolve_observatory_position(ms, &antenna_positions, measures.as_ref());
+    resolve_field_phase_direction_j2000_with_observatory(
+        ms,
+        field_id,
+        &observatory_position,
+        measures,
+    )
 }
 
 fn detect_time_reference(ms: &MeasurementSet) -> EpochRef {
@@ -814,14 +831,22 @@ fn phase_dir_constant(dir: &ArrayValue) -> MsResult<(f64, f64)> {
     }
 }
 
-fn resolve_observatory_position(ms: &MeasurementSet, antenna_positions: &[MPosition]) -> MPosition {
+fn resolve_observatory_position(
+    ms: &MeasurementSet,
+    antenna_positions: &[MPosition],
+    measures: &dyn MeasuresProvider,
+) -> MPosition {
     ms.observation()
         .ok()
         .and_then(|observation| {
             (0..observation.row_count())
                 .find_map(|row| observation.string(row, "TELESCOPE_NAME").ok())
         })
-        .and_then(|name| MPosition::from_observatory_name(&name))
+        .and_then(|name| {
+            MPosition::from_observatory_name(&name, measures)
+                .ok()
+                .flatten()
+        })
         .or_else(|| antenna_positions.first().cloned())
         .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0))
 }
@@ -830,6 +855,7 @@ fn resolve_field_phase_direction_j2000_with_observatory(
     ms: &MeasurementSet,
     field_id: usize,
     observatory_position: &MPosition,
+    measures: Arc<dyn MeasuresProvider>,
 ) -> MsResult<MDirection> {
     let field = ms.field()?;
     let raw = field.phase_dir(field_id)?;
@@ -844,7 +870,7 @@ fn resolve_field_phase_direction_j2000_with_observatory(
     let frame = MeasFrame::new()
         .with_epoch(epoch)
         .with_position(observatory_position.clone())
-        .with_bundled_eop();
+        .with_measures(measures);
     Ok(dir.convert_to(DirectionRef::J2000, &frame)?)
 }
 
@@ -951,7 +977,12 @@ mod tests {
         // Field at RA=0, Dec=+45°
         let dir = MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_4, DirectionRef::J2000);
 
-        MsCalEngine::from_parts(vec![pos0.clone(), pos1], vec![dir], pos0)
+        MsCalEngine::from_parts(
+            vec![pos0.clone(), pos1],
+            vec![dir],
+            pos0,
+            casa_test_support::deterministic_measures_provider(),
+        )
     }
 
     fn add_vla_antenna(ms: &mut MeasurementSet) {
@@ -1081,10 +1112,11 @@ mod tests {
 
         let time_mjd_sec = 59_000.5 * 86_400.0;
         let j2000 = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
+        let measures = crate::open_measures_runtime().expect("test measures runtime");
         let frame = MeasFrame::new()
+            .with_measures(measures)
             .with_epoch(MEpoch::from_mjd(time_mjd_sec / 86_400.0, EpochRef::UTC))
-            .with_position(MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z))
-            .with_bundled_eop();
+            .with_position(MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z));
         let azel = j2000.convert_to(DirectionRef::AZEL, &frame).unwrap();
         add_field_with_direction(&mut ms, azel, time_mjd_sec);
         TableMeasDesc::new_fixed("PHASE_DIR", MeasureType::Direction, "AZEL")
@@ -1104,10 +1136,11 @@ mod tests {
 
         let time_mjd_sec = 59_000.5 * 86_400.0;
         let j2000 = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
+        let measures = crate::open_measures_runtime().expect("test measures runtime");
         let frame = MeasFrame::new()
+            .with_measures(measures)
             .with_epoch(MEpoch::from_mjd(time_mjd_sec / 86_400.0, EpochRef::UTC))
-            .with_position(MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z))
-            .with_bundled_eop();
+            .with_position(MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z));
         let azel = j2000.convert_to(DirectionRef::AZEL, &frame).unwrap();
         add_field_with_direction(&mut ms, azel, time_mjd_sec);
 
@@ -1155,6 +1188,7 @@ mod tests {
                 ),
             ],
             MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+            casa_test_support::deterministic_measures_provider(),
         );
         let (uvw_m, phase_shift_m) = engine
             .reproject_raw_uvw_between_fields([24.4234, -31.0309, 17.6013], 1, 0)
@@ -1195,6 +1229,7 @@ mod tests {
                 ),
             ],
             MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+            casa_test_support::deterministic_measures_provider(),
         );
         let (uvw_m, phase_shift_m) = engine
             .reproject_raw_uvw_between_fields(
@@ -1245,6 +1280,7 @@ mod tests {
                 ),
             ],
             MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+            casa_test_support::deterministic_measures_provider(),
         );
         let (uvw_m, phase_shift_m) = engine
             .reproject_raw_uvw_for_mosaic_between_fields(

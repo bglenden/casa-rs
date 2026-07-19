@@ -26,13 +26,12 @@
 use std::fmt;
 use std::str::FromStr;
 
-use casa_measures_data::SpectralLineCatalog;
-
 use super::casacore_aberration::earth_barycentric_velocity_ms;
 use super::direction::DirectionRef;
 use super::epoch::EpochRef;
 use super::error::MeasureError;
 use super::frame::MeasFrame;
+use super::provider::MeasuresProvider;
 
 /// Speed of light in m/s.
 pub(super) const C_M_PER_S: f64 = 299_792_458.0;
@@ -206,13 +205,20 @@ impl MFrequency {
     /// This mirrors C++ `MeasTable::Line`, using the runtime
     /// `ephemerides/Lines` table bundled with or discovered by
     /// `casa-measures-data`.
-    pub fn from_line_name(line_name: &str) -> Result<Self, MeasureError> {
-        let entry = SpectralLineCatalog::bundled()
-            .get(line_name)
+    pub fn from_line_name(
+        line_name: &str,
+        provider: &dyn MeasuresProvider,
+    ) -> Result<Self, MeasureError> {
+        let frequency_hz = provider
+            .spectral_line_hz(line_name)
+            .map_err(|reason| MeasureError::ModelError {
+                model: "Spectral lines",
+                reason,
+            })?
             .ok_or_else(|| MeasureError::UnknownLineName {
                 input: line_name.to_string(),
             })?;
-        Ok(Self::new(entry.frequency_hz(), FrequencyRef::REST))
+        Ok(Self::new(frequency_hz, FrequencyRef::REST))
     }
 
     /// Returns the frequency in Hz.
@@ -606,6 +612,7 @@ fn apply_freq_hop(
 mod tests {
     use super::*;
     use crate::measures::direction::{DirectionRef, MDirection};
+    use crate::measures::provider::test_measures;
 
     #[test]
     fn frequency_ref_parse_all() {
@@ -647,14 +654,15 @@ mod tests {
 
     #[test]
     fn line_name_hi_resolves_from_runtime_catalog() {
-        let f = MFrequency::from_line_name("HI").unwrap();
+        let f = MFrequency::from_line_name("HI", test_measures().as_ref()).unwrap();
         assert_eq!(f.refer(), FrequencyRef::REST);
         assert!((f.hz() - 1.420_405_752e9).abs() < 5.0e3);
     }
 
     #[test]
     fn line_name_unknown_is_rejected() {
-        let error = MFrequency::from_line_name("NOT_A_REAL_LINE").unwrap_err();
+        let error =
+            MFrequency::from_line_name("NOT_A_REAL_LINE", test_measures().as_ref()).unwrap_err();
         assert!(matches!(error, MeasureError::UnknownLineName { .. }));
     }
 

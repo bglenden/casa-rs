@@ -47,11 +47,6 @@ impl SpectralLineCatalog {
         Self { entries, by_name }
     }
 
-    /// Return the packaged/runtime standard catalog.
-    pub fn bundled() -> &'static Self {
-        crate::load_spectral_lines().0
-    }
-
     /// Iterate over the catalog entries in source order.
     pub fn iter(&self) -> impl Iterator<Item = &SpectralLineEntry> {
         self.entries.iter()

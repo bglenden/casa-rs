@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![allow(dead_code)]
 //! Demo helpers and runnable outputs for `casa-tables`.
 //!
 //! This module mirrors the C++ casacore `tTable.cc` test program. It
@@ -16,7 +17,7 @@ use casa_types::{
 };
 use ndarray::{Array, IxDyn, ShapeBuilder};
 
-use crate::{
+use casa_tables::{
     ColumnSchema, ColumnsIndex, DataManagerKind, EndianFormat, RowRange, Table, TableError,
     TableOptions, TableSchema,
 };
@@ -512,7 +513,7 @@ fn demo_ref_tables(out: &mut String) -> Result<(), TableError> {
 // ── Sorting and grouped iteration ──────────────────────────────────────
 
 fn demo_sorting_and_iteration(out: &mut String) -> Result<(), TableError> {
-    use crate::SortOrder;
+    use casa_tables::SortOrder;
 
     // C++ (Table.h):
     //   Table sorted = tab.sort("ae", Sort::Descending);
@@ -543,7 +544,7 @@ fn demo_sorting_and_iteration(out: &mut String) -> Result<(), TableError> {
 
     // Grouped iteration by "ab".
     {
-        let groups: Vec<crate::TableGroup> = table
+        let groups: Vec<casa_tables::TableGroup> = table
             .iter_groups(&[("ab", SortOrder::Ascending)])?
             .collect();
         appendln(
@@ -562,7 +563,7 @@ fn demo_sorting_and_iteration(out: &mut String) -> Result<(), TableError> {
 // ── Table concatenation and copy ──────────────────────────────────────
 
 fn demo_concat_and_copy(out: &mut String) -> Result<(), TableError> {
-    use crate::ConcatTable;
+    use casa_tables::ConcatTable;
 
     // C++ (Table.h):
     //   Table concat(Block<Table>({t1, t2}), Block<String>(), "");
@@ -728,7 +729,7 @@ fn demo_indexing(out: &mut String) -> Result<(), TableError> {
 
 #[cfg(unix)]
 fn demo_locking(out: &mut String) -> Result<(), TableError> {
-    use crate::{LockMode, LockOptions, LockType};
+    use casa_tables::{LockMode, LockOptions, LockType};
 
     // C++ (Table.h):
     //   Table tab("path", TableLock(TableLock::PermanentLocking));
@@ -828,7 +829,7 @@ fn demo_locking(out: &mut String) -> Result<(), TableError> {
 // ── Memory tables ──────────────────────────────────────────────────────
 
 fn demo_memory_tables(out: &mut String) -> Result<(), TableError> {
-    use crate::SortOrder;
+    use casa_tables::SortOrder;
 
     // C++ (tMemoryTable.cc):
     //   SetupNewTable aNewTab("tmtest", td, Table::New);
@@ -870,7 +871,7 @@ fn demo_memory_tables(out: &mut String) -> Result<(), TableError> {
     // Locking is a no-op.
     #[cfg(unix)]
     {
-        use crate::LockType;
+        use casa_tables::LockType;
         appendln(
             out,
             &format!("  has_lock(Write)={}", mem.has_lock(LockType::Write)),
@@ -1475,7 +1476,7 @@ fn demo_taql(out: &mut String) -> Result<(), TableError> {
     // 7. Parse round-trip
     {
         let query = "SELECT * WHERE flux > 1.0 ORDER BY id ASC";
-        let ast = crate::taql::parse(query).map_err(|e| TableError::Taql(e.to_string()))?;
+        let ast = casa_tables::taql::parse(query).map_err(|e| TableError::Taql(e.to_string()))?;
         let displayed = ast.to_string();
         appendln(out, &format!("parse round-trip: {displayed}"));
     }
@@ -1491,7 +1492,7 @@ fn demo_taql(out: &mut String) -> Result<(), TableError> {
 /// Demonstrates fixed-unit and variable-unit quantum columns for both
 /// scalar and array column types.
 pub fn run_table_quantum_demo() -> Result<String, TableError> {
-    use crate::table_quantum::{
+    use casa_tables::table_quantum::{
         ArrayQuantColumn, ArrayQuantColumnMut, ScalarQuantColumn, ScalarQuantColumnMut,
         TableQuantumDesc,
     };

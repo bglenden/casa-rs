@@ -5,13 +5,15 @@
 //!
 //! If no MJD is given, uses J2000.0 (51544.5).
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mjd: f64 = std::env::args()
         .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(51544.5);
 
-    let (eop, source) = casa_measures_data::load_eop();
+    let runtime = casa_measures_data::MeasuresRuntime::open_discovered(Default::default())?;
+    let eop = runtime.eop()?;
+    let source = runtime.root().display();
     let summary = eop.summary();
     println!("{summary}");
     println!("source: {source}");
@@ -40,4 +42,5 @@ fn main() {
             std::process::exit(1);
         }
     }
+    Ok(())
 }

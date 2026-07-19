@@ -4,8 +4,11 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use casa_aipsio::demo::run_taipsio_like_demo;
 use casa_test_support::casacore_oracle_available;
+
+#[path = "../../casa-aipsio/examples/support/taipsio.rs"]
+mod taipsio;
+use taipsio::run_taipsio_like_demo;
 
 #[test]
 fn taipsio_demo_output_matches_cpp_skip_mode() {

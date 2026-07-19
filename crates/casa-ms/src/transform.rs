@@ -413,7 +413,7 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
     );
     let stage_started_at = Instant::now();
     prepare_output_root(&request.output_ms)?;
-    let output_main =
+    let mut output_main =
         materialize_empty_main_table(&request.input_ms, selected_rows.len(), &request.output_ms)?;
     maybe_log_transform_progress(
         "materialize_selected_main",
@@ -744,11 +744,12 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
                 reason: error.to_string(),
             })?;
     }
+    let output_bindings = measurement_set_main_table_bindings(&output_main);
     let write_telemetry = write_session
         .save_table_and_finish(
-            &output_main,
+            &mut output_main,
             measurement_set_table_options(&request.output_ms),
-            &measurement_set_main_table_bindings(&output_main),
+            &output_bindings,
             &output_column_overrides,
         )
         .map_err(|error| MsTransformError::WriteMeasurementSet {
@@ -1588,6 +1589,12 @@ where
             source: Box::new(source),
         }
     })?;
+    let mut appender = destination.prepare_row_appender().map_err(|source| {
+        MsTransformError::MutateMeasurementSet {
+            path: destination_path.display().to_string(),
+            source: Box::new(source),
+        }
+    })?;
     for &row_index in selected_rows {
         let row = source
             .rows()
@@ -1604,15 +1611,17 @@ where
                     source.row_count()
                 ),
             })?;
-        destination
-            .add_row_assuming_valid(rewrite(row_index, row)?)
+        appender
+            .append(rewrite(row_index, row)?)
             .map_err(|source| MsTransformError::MutateMeasurementSet {
                 path: destination_path.display().to_string(),
                 source: Box::new(source),
             })?;
     }
+    drop(appender);
     destination
-        .save_assuming_valid(TableOptions::new(destination_path))
+        .prepare_write()
+        .save(TableOptions::new(destination_path))
         .map_err(|source| MsTransformError::MutateMeasurementSet {
             path: destination_path.display().to_string(),
             source: Box::new(source),
@@ -2121,7 +2130,7 @@ fn update_spectral_window_metadata(
         spectral_window
             .column_accessor_mut("NUM_CHAN")
             .and_then(|mut column| {
-                column.set_scalar_assuming_valid(row, ScalarValue::Int32(bins.len() as i32))
+                column.set(row, Value::Scalar(ScalarValue::Int32(bins.len() as i32)))
             })
             .map_err(|source| MsTransformError::SpectralMetadata {
                 path: spw_path.display().to_string(),
@@ -2131,9 +2140,7 @@ fn update_spectral_window_metadata(
         if let (Some(first), Some(last)) = (chan_freq.first(), chan_freq.last()) {
             spectral_window
                 .column_accessor_mut("REF_FREQUENCY")
-                .and_then(|mut column| {
-                    column.set_scalar_assuming_valid(row, ScalarValue::Float64(*first))
-                })
+                .and_then(|mut column| column.set(row, Value::Scalar(ScalarValue::Float64(*first))))
                 .map_err(|source| MsTransformError::SpectralMetadata {
                     path: spw_path.display().to_string(),
                     reason: source.to_string(),
@@ -2150,7 +2157,7 @@ fn update_spectral_window_metadata(
             spectral_window
                 .column_accessor_mut("TOTAL_BANDWIDTH")
                 .and_then(|mut column| {
-                    column.set_scalar_assuming_valid(row, ScalarValue::Float64(total_bw))
+                    column.set(row, Value::Scalar(ScalarValue::Float64(total_bw)))
                 })
                 .map_err(|source| MsTransformError::SpectralMetadata {
                     path: spw_path.display().to_string(),
@@ -2159,7 +2166,8 @@ fn update_spectral_window_metadata(
         }
     }
     spectral_window
-        .save_assuming_valid(TableOptions::new(&spw_path))
+        .prepare_write()
+        .save(TableOptions::new(&spw_path))
         .map_err(|source| MsTransformError::MutateMeasurementSet {
             path: spw_path.display().to_string(),
             source: Box::new(source),
@@ -2207,9 +2215,11 @@ fn update_f64_frequency_column(
     spectral_window
         .column_accessor_mut(column)
         .and_then(|mut column| {
-            column.set_array_assuming_valid(
+            column.set(
                 row,
-                ArrayValue::Float64(ndarray::Array1::from(averaged).into_dyn()),
+                Value::Array(ArrayValue::Float64(
+                    ndarray::Array1::from(averaged).into_dyn(),
+                )),
             )
         })
         .map_err(|source| MsTransformError::SpectralMetadata {
@@ -2257,9 +2267,11 @@ fn update_f64_width_column(
     spectral_window
         .column_accessor_mut(column)
         .and_then(|mut column| {
-            column.set_array_assuming_valid(
+            column.set(
                 row,
-                ArrayValue::Float64(ndarray::Array1::from(averaged).into_dyn()),
+                Value::Array(ArrayValue::Float64(
+                    ndarray::Array1::from(averaged).into_dyn(),
+                )),
             )
         })
         .map_err(|source| MsTransformError::SpectralMetadata {

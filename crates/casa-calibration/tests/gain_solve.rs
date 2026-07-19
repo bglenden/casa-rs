@@ -14,7 +14,7 @@ use casa_calibration::{
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_tables::{Table, TableOptions};
-use casa_types::ArrayValue;
+use casa_types::{ArrayValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 fn run_gain_solve(
@@ -309,22 +309,23 @@ fn solve_gain_g_uses_casa_correlation_independent_flags() {
             ms.main_table_mut()
                 .column_accessor_mut("FLAG")
                 .and_then(|mut column| {
-                    column.set_array_assuming_valid(
+                    column.set(
                         row,
-                        ArrayValue::Bool(
+                        Value::Array(ArrayValue::Bool(
                             ArrayD::from_shape_vec(
                                 IxDyn(&[2, 2]).f(),
                                 vec![false, true, false, true],
                             )
                             .expect("flag array"),
-                        ),
+                        )),
                     )
                 })
                 .expect("write asymmetric flags");
         }
         let rows = (0..ms.row_count()).collect::<Vec<_>>();
-        ms.main_table()
-            .save_selected_rows_in_place_assuming_valid(&["FLAG"], &rows)
+        ms.main_table_mut()
+            .prepare_write()
+            .save_selected_rows(&["FLAG"], &rows)
             .expect("save asymmetric flags");
     }
     let caltable_path = dir.path().join("solved-corr-independent.gcal");
@@ -388,22 +389,23 @@ fn solve_gain_t_uses_casa_correlation_independent_flags() {
             ms.main_table_mut()
                 .column_accessor_mut("FLAG")
                 .and_then(|mut column| {
-                    column.set_array_assuming_valid(
+                    column.set(
                         row,
-                        ArrayValue::Bool(
+                        Value::Array(ArrayValue::Bool(
                             ArrayD::from_shape_vec(
                                 IxDyn(&[2, 2]).f(),
                                 vec![false, true, false, true],
                             )
                             .expect("flag array"),
-                        ),
+                        )),
                     )
                 })
                 .expect("write asymmetric flags");
         }
         let rows = (0..ms.row_count()).collect::<Vec<_>>();
-        ms.main_table()
-            .save_selected_rows_in_place_assuming_valid(&["FLAG"], &rows)
+        ms.main_table_mut()
+            .prepare_write()
+            .save_selected_rows(&["FLAG"], &rows)
             .expect("save asymmetric flags");
     }
     let caltable_path = dir.path().join("solved-t-per-corr-flags.tcal");

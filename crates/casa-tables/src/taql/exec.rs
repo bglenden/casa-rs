@@ -121,6 +121,7 @@ fn execute_select(sel: &SelectStatement, table: &crate::Table) -> Result<TaqlRes
                 row,
                 row_index: i,
                 style,
+                measures: table.measures_provider(),
             };
             let val = eval_expr(where_clause, &ctx)?;
             if val.to_bool()? {
@@ -237,6 +238,7 @@ fn materialize_select(
             row,
             row_index: row_idx,
             style,
+            measures: table.measures_provider(),
         };
         let mut fields = Vec::with_capacity(sel.columns.len());
         for (ci, col) in sel.columns.iter().enumerate() {
@@ -371,6 +373,7 @@ fn execute_joins(
                     row: &merged,
                     row_index: left_idx,
                     style,
+                    measures: table.measures_provider(),
                 };
 
                 let passes = if let Some(ref on_expr) = join.on {
@@ -442,6 +445,7 @@ fn execute_update(
                 row,
                 row_index: i,
                 style: ast::IndexStyle::default(),
+                measures: table.measures_provider(),
             };
             let val = eval_expr(where_clause, &ctx)?;
             if val.to_bool()? {
@@ -470,6 +474,7 @@ fn execute_update(
             row,
             row_index: row_idx,
             style: ast::IndexStyle::default(),
+            measures: table.measures_provider(),
         };
         let mut row_updates = Vec::with_capacity(upd.assignments.len());
         for assignment in &upd.assignments {
@@ -526,6 +531,7 @@ fn execute_insert(
             row: &empty_row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: table.measures_provider(),
         };
 
         let mut fields = Vec::new();
@@ -571,6 +577,7 @@ fn execute_delete(
                 row,
                 row_index: i,
                 style: ast::IndexStyle::default(),
+                measures: table.measures_provider(),
             };
             let val = eval_expr(where_clause, &ctx)?;
             if val.to_bool()? {
@@ -618,6 +625,7 @@ fn execute_calc(calc: &CalcStatement, table: &crate::Table) -> Result<TaqlResult
         row,
         row_index: 0,
         style: ast::IndexStyle::default(),
+        measures: table.measures_provider(),
     };
     let _val = eval_expr(&calc.expr, &ctx)?;
 
@@ -707,6 +715,7 @@ fn execute_alter_table(
                 row: &empty_row,
                 row_index: 0,
                 style: ast::IndexStyle::default(),
+                measures: table.measures_provider(),
             };
             let val = eval_expr(value, &ctx)?;
             let kw_val = match val {
@@ -808,6 +817,7 @@ fn execute_group_by(sel: &SelectStatement, table: &crate::Table) -> Result<TaqlR
                 row,
                 row_index: i,
                 style,
+                measures: table.measures_provider(),
             };
             let val = eval_expr(where_clause, &ctx)?;
             if val.to_bool()? {
@@ -908,6 +918,7 @@ fn group_rows(
             row,
             row_index: row_idx,
             style,
+            measures: table.measures_provider(),
         };
         let key = GroupKey(
             group_by
@@ -1004,6 +1015,7 @@ fn eval_aggregate_column(
                     row,
                     row_index: row_idx,
                     style,
+                    measures: table.measures_provider(),
                 };
                 // GROWID collects row indices; others evaluate the expression.
                 if *func == AggregateFunc::RowId {
@@ -1030,6 +1042,7 @@ fn eval_aggregate_column(
                     row,
                     row_index: first_row,
                     style,
+                    measures: table.measures_provider(),
                 };
                 eval_expr(expr, &ctx)
             } else {
@@ -1047,6 +1060,7 @@ fn eval_aggregate_column(
                     row,
                     row_index: first_row,
                     style,
+                    measures: table.measures_provider(),
                 };
                 eval_expr(expr, &ctx)
             } else {
@@ -1078,6 +1092,7 @@ fn eval_aggregate_expr(
                     row: &RecordValue::new(vec![]),
                     row_index: 0,
                     style,
+                    measures: table.measures_provider(),
                 },
             )
         }
@@ -1141,6 +1156,7 @@ fn sort_rows(
             row,
             row_index: row_idx,
             style,
+            measures: table.measures_provider(),
         };
         let keys: Vec<ExprValue> = order_by
             .iter()
@@ -1191,6 +1207,7 @@ fn deduplicate_rows(
             row,
             row_index: row_idx,
             style,
+            measures: table.measures_provider(),
         };
 
         let key = GroupKey(if columns.is_empty() {
@@ -1271,6 +1288,7 @@ fn eval_const_int(expr: &Expr) -> Result<i64, TaqlError> {
         row: &empty,
         row_index: 0,
         style: ast::IndexStyle::default(),
+        measures: None,
     };
     let val = eval_expr(expr, &ctx)?;
     val.to_int()

@@ -14,9 +14,8 @@
 use std::fmt;
 use std::str::FromStr;
 
-use casa_measures_data::load_observatories;
-
 use super::error::MeasureError;
+use super::provider::{MeasuresProvider, ObservatoryPosition};
 
 /// WGS84 ellipsoid identifier for sofars (n=1).
 const WGS84_ELLIPSOID: i32 = 1;
@@ -138,23 +137,25 @@ impl MPosition {
         }
     }
 
-    /// Resolve an observatory name from the bundled/runtime observatory catalog.
-    ///
-    /// This uses the catalog loaded by [`casa_measures_data::load_observatories`]
-    /// and returns `None` when the name is not present or the stored coordinate
-    /// type is unsupported by the Rust measures layer.
-    pub fn from_observatory_name(name: &str) -> Option<Self> {
-        let (catalog, _source) = load_observatories();
-        let entry = catalog.get(name)?;
-        match entry.observatory_type.to_ascii_uppercase().as_str() {
-            "ITRF" => Some(Self::new_itrf(entry.x_m, entry.y_m, entry.z_m)),
-            "WGS84" => Some(Self::new_wgs84(
-                entry.longitude_deg.to_radians(),
-                entry.latitude_deg.to_radians(),
-                entry.height_m,
-            )),
-            _ => None,
-        }
+    /// Resolve an observatory name through an explicit measures provider.
+    pub fn from_observatory_name(
+        name: &str,
+        provider: &dyn MeasuresProvider,
+    ) -> Result<Option<Self>, MeasureError> {
+        let position = provider
+            .observatory(name)
+            .map_err(|reason| MeasureError::ModelError {
+                model: "Observatories",
+                reason,
+            })?;
+        Ok(position.map(|position| match position {
+            ObservatoryPosition::Itrf { x_m, y_m, z_m } => Self::new_itrf(x_m, y_m, z_m),
+            ObservatoryPosition::Wgs84 {
+                longitude_rad,
+                latitude_rad,
+                height_m,
+            } => Self::new_wgs84(longitude_rad, latitude_rad, height_m),
+        }))
     }
 
     /// Returns the raw coordinate triplet.
@@ -295,6 +296,7 @@ impl fmt::Display for MPosition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::measures::provider::test_measures;
 
     #[test]
     fn position_ref_parse() {
@@ -365,8 +367,13 @@ mod tests {
 
     #[test]
     fn observatory_catalog_resolves_known_sites() {
-        let alma = MPosition::from_observatory_name("ALMA").expect("ALMA in catalog");
-        let vla = MPosition::from_observatory_name("vla").expect("VLA in catalog");
+        let measures = test_measures();
+        let alma = MPosition::from_observatory_name("ALMA", measures.as_ref())
+            .expect("catalog read")
+            .expect("ALMA in catalog");
+        let vla = MPosition::from_observatory_name("vla", measures.as_ref())
+            .expect("catalog read")
+            .expect("VLA in catalog");
         assert_eq!(alma.refer(), PositionRef::WGS84);
         assert_eq!(vla.refer(), PositionRef::ITRF);
     }

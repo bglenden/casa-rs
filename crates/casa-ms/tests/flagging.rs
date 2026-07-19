@@ -421,8 +421,7 @@ fn seed_constant_data_with_outliers(
             .set(Value::Array(ArrayValue::Complex32(values)))
             .expect("set DATA");
     }
-    ms.save_main_table_only_assuming_valid()
-        .expect("save seeded DATA");
+    ms.save_main_table_only().expect("save seeded DATA");
 }
 
 fn assert_flag(ms: &MeasurementSet, row: usize, corr: usize, chan: usize) {
@@ -504,15 +503,14 @@ fn set_scan_and_time(ms_path: &std::path::Path, rows: &[(usize, i32, f64)]) {
             )))
             .expect("set TIME");
     }
-    ms.save_main_table_only_assuming_valid()
+    ms.save_main_table_only()
         .expect("save scan/time seeded MAIN");
 }
 
 fn set_flag(ms_path: &std::path::Path, row: usize, corr: usize, chan: usize, value: bool) {
     let mut ms = MeasurementSet::open(ms_path).expect("open MS for flag seed");
     set_flag_on_open_ms(&mut ms, row, corr, chan, value);
-    ms.save_main_table_only_assuming_valid()
-        .expect("save flag seeded MAIN");
+    ms.save_main_table_only().expect("save flag seeded MAIN");
 }
 
 fn set_flag_on_open_ms(ms: &mut MeasurementSet, row: usize, corr: usize, chan: usize, value: bool) {

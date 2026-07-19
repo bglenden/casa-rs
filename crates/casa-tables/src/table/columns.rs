@@ -42,6 +42,7 @@ fn compile_prepared_row_slots(
         slots.push(PreparedRowSlot {
             column: column.to_string(),
             kind,
+            schema_column: schema_column.clone(),
         });
         column_indices
             .entry(column.to_string())
@@ -109,12 +110,13 @@ fn flush_prepared_row_buffer(
     row_index: usize,
 ) -> Result<(), TableError> {
     for (slot, field) in slots.iter().zip(row.fields().iter()) {
+        validate_cell_against_schema_column(row_index, &slot.schema_column, Some(&field.value))?;
         match (slot.kind, &field.value) {
             (PreparedRowSlotKind::Scalar, Value::Scalar(value)) => {
-                table.set_scalar_cell_assuming_valid(row_index, &slot.column, value.clone())?;
+                table.write_scalar_cell_bound(row_index, &slot.column, value.clone())?;
             }
             (PreparedRowSlotKind::Array, Value::Array(value)) => {
-                table.set_array_cell_assuming_valid(row_index, &slot.column, value.clone())?;
+                table.write_array_cell_bound(row_index, &slot.column, value.clone())?;
             }
             (PreparedRowSlotKind::Scalar, value) => {
                 return Err(TableError::ColumnTypeMismatch {
@@ -209,6 +211,18 @@ impl Table {
         TableRowMut { table: self }
     }
 
+    /// Prepare a schema-bound appender for a sequence of rows.
+    pub fn prepare_row_appender(&mut self) -> Result<PreparedRowAppender<'_>, TableError> {
+        let schema = self
+            .schema()
+            .cloned()
+            .ok_or(TableError::PreparedRowRequiresSchema)?;
+        Ok(PreparedRowAppender {
+            table: self,
+            schema,
+        })
+    }
+
     /// Returns the canonical read-only column accessor for `column`.
     pub fn column_accessor(&self, column: &str) -> Result<TableColumn<'_>, TableError> {
         self.require_column(column)?;
@@ -300,8 +314,8 @@ impl Table {
     ///
     /// Callers that are not certain the row is schema-valid should keep using
     /// [`add_row`](Table::add_row).
-    pub fn add_row_assuming_valid(&mut self, row: RecordValue) -> Result<(), TableError> {
-        let auto_unlock = self.begin_write_operation("add_row_assuming_valid")?;
+    pub(crate) fn append_row_bound(&mut self, row: RecordValue) -> Result<(), TableError> {
+        let auto_unlock = self.begin_write_operation("append_row_bound")?;
         let result = (|| {
             let undefined = self
                 .schema()
@@ -313,36 +327,6 @@ impl Table {
                 *set = undefined;
             }
             Ok(())
-        })();
-        self.finish_write_operation(auto_unlock, result)
-    }
-
-    /// Appends rows without re-validating them against the attached schema.
-    ///
-    /// This is the bulk counterpart to [`add_row_assuming_valid`](Table::add_row_assuming_valid)
-    /// for writers that already have schema-compatible records and need to
-    /// avoid per-row write-operation overhead.
-    pub fn add_rows_assuming_valid<I>(&mut self, rows: I) -> Result<usize, TableError>
-    where
-        I: IntoIterator<Item = RecordValue>,
-    {
-        let auto_unlock = self.begin_write_operation("add_rows_assuming_valid")?;
-        let result = (|| {
-            let schema = self.schema().cloned();
-            let mut count = 0usize;
-            for row in rows {
-                let undefined = schema
-                    .as_ref()
-                    .map(|schema| undefined_columns_for_row(&row, schema));
-                self.inner.add_row(row)?;
-                if let Some(undefined) = undefined
-                    && let Some(set) = self.inner.undefined_for_row_mut(self.row_count() - 1)?
-                {
-                    *set = undefined;
-                }
-                count += 1;
-            }
-            Ok(count)
         })();
         self.finish_write_operation(auto_unlock, result)
     }
@@ -1141,7 +1125,7 @@ impl Table {
     /// Compatibility note: new write paths should prefer
     /// [`cell_accessor_mut`](Table::cell_accessor_mut) or
     /// [`column_accessor_mut`](Table::column_accessor_mut).
-    pub(crate) fn set_scalar_cell_assuming_valid(
+    pub(crate) fn write_scalar_cell_bound(
         &mut self,
         row_index: usize,
         column: &str,
@@ -1169,7 +1153,7 @@ impl Table {
     /// Compatibility note: new write paths should prefer
     /// [`cell_accessor_mut`](Table::cell_accessor_mut) or
     /// [`column_accessor_mut`](Table::column_accessor_mut).
-    pub(crate) fn set_array_cell_assuming_valid(
+    pub(crate) fn write_array_cell_bound(
         &mut self,
         row_index: usize,
         column: &str,
@@ -1237,7 +1221,7 @@ impl Table {
         crate::table_quantum::TableQuantumDesc::reconstruct(self, column)
     }
 
-    fn require_column(&self, column: &str) -> Result<(), TableError> {
+    pub(super) fn require_column(&self, column: &str) -> Result<(), TableError> {
         if let Some(schema) = self.schema()
             && !schema.contains_column(column)
         {
@@ -1248,7 +1232,10 @@ impl Table {
         Ok(())
     }
 
-    fn require_row_index_without_loading_rows(&self, row_index: usize) -> Result<(), TableError> {
+    pub(super) fn require_row_index_without_loading_rows(
+        &self,
+        row_index: usize,
+    ) -> Result<(), TableError> {
         if row_index >= self.row_count() {
             return Err(TableError::RowOutOfBounds {
                 row_index,
@@ -1382,27 +1369,36 @@ impl<'a> TableRowMut<'a> {
     ) -> Result<(), TableError> {
         self.table.set_record_cell(row_index, column, value)
     }
+}
 
-    /// Lazily updates a scalar cell while assuming schema validity.
-    pub fn set_scalar_cell_assuming_valid(
-        &mut self,
-        row_index: usize,
-        column: &str,
-        value: ScalarValue,
-    ) -> Result<(), TableError> {
-        self.table
-            .set_scalar_cell_assuming_valid(row_index, column, value)
+impl PreparedRowAppender<'_> {
+    /// Append one row through this schema proof.
+    pub fn append(&mut self, row: RecordValue) -> Result<(), TableError> {
+        let row_index = self.table.row_count();
+        validate_row_against_schema(row_index, &row, &self.schema)?;
+        self.table.append_row_bound(row)
     }
 
-    /// Lazily updates an array cell while assuming schema validity.
-    pub fn set_array_cell_assuming_valid(
-        &mut self,
-        row_index: usize,
-        column: &str,
-        value: ArrayValue,
-    ) -> Result<(), TableError> {
-        self.table
-            .set_array_cell_assuming_valid(row_index, column, value)
+    /// Append a sequence of rows, stopping before the first invalid row.
+    ///
+    /// Rows accepted before a later value-validation error remain appended;
+    /// callers that require transactional construction should prepare and
+    /// validate their values before opening the appender.
+    pub fn extend<I>(&mut self, rows: I) -> Result<usize, TableError>
+    where
+        I: IntoIterator<Item = RecordValue>,
+    {
+        let mut count = 0;
+        for row in rows {
+            self.append(row)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Return the number of rows currently in the table.
+    pub fn row_count(&self) -> usize {
+        self.table.row_count()
     }
 }
 
@@ -1630,6 +1626,7 @@ impl<'a> PreparedTableRowMut<'a> {
             .ok_or_else(|| TableError::SchemaColumnUnknown {
                 column: format!("#{slot_index}"),
             })?;
+        validate_cell_against_schema_column(row_index, &slot.schema_column, Some(&value))?;
         if self.row_materialized
             && let Some(field) = self.row.fields_mut().get_mut(slot_index)
         {
@@ -1638,10 +1635,11 @@ impl<'a> PreparedTableRowMut<'a> {
         match (slot.kind, value) {
             (PreparedRowSlotKind::Scalar, Value::Scalar(value)) => self
                 .table
-                .set_scalar_cell_assuming_valid(row_index, &slot.column, value),
-            (PreparedRowSlotKind::Array, Value::Array(value)) => self
-                .table
-                .set_array_cell_assuming_valid(row_index, &slot.column, value),
+                .write_scalar_cell_bound(row_index, &slot.column, value),
+            (PreparedRowSlotKind::Array, Value::Array(value)) => {
+                self.table
+                    .write_array_cell_bound(row_index, &slot.column, value)
+            }
             (PreparedRowSlotKind::Scalar, value) => Err(TableError::ColumnTypeMismatch {
                 row_index,
                 column: slot.column.clone(),
@@ -1947,26 +1945,6 @@ impl<'a> TableColumnMut<'a> {
         self.table.set_record_cell(row_index, &self.column, value)
     }
 
-    /// Lazily updates a scalar cell while assuming schema validity.
-    pub fn set_scalar_assuming_valid(
-        &mut self,
-        row_index: usize,
-        value: ScalarValue,
-    ) -> Result<(), TableError> {
-        self.table
-            .set_scalar_cell_assuming_valid(row_index, &self.column, value)
-    }
-
-    /// Lazily updates an array cell while assuming schema validity.
-    pub fn set_array_assuming_valid(
-        &mut self,
-        row_index: usize,
-        value: ArrayValue,
-    ) -> Result<(), TableError> {
-        self.table
-            .set_array_cell_assuming_valid(row_index, &self.column, value)
-    }
-
     /// Writes a full column's values.
     pub fn put<I>(&mut self, values: I) -> Result<usize, TableError>
     where
@@ -2077,18 +2055,6 @@ impl<'a> TableCellMut<'a> {
         self.table
             .set_record_cell(self.row_index, &self.column, value)
     }
-
-    /// Lazily updates the cell as a scalar while assuming schema validity.
-    pub fn set_scalar_assuming_valid(&mut self, value: ScalarValue) -> Result<(), TableError> {
-        self.table
-            .set_scalar_cell_assuming_valid(self.row_index, &self.column, value)
-    }
-
-    /// Lazily updates the cell as an array while assuming schema validity.
-    pub fn set_array_assuming_valid(&mut self, value: ArrayValue) -> Result<(), TableError> {
-        self.table
-            .set_array_cell_assuming_valid(self.row_index, &self.column, value)
-    }
 }
 
 // ── Schema validation helpers ─────────────────────────────────────────
@@ -2139,7 +2105,9 @@ pub(super) fn validate_cell_against_schema_column(
     value: Option<&Value>,
 ) -> Result<(), TableError> {
     match (column.column_type(), value) {
-        (ColumnType::Scalar, Some(Value::Scalar(_))) => Ok(()),
+        (ColumnType::Scalar, Some(Value::Scalar(value))) => {
+            validate_primitive_type(row_index, column, value.primitive_type())
+        }
         (ColumnType::Scalar, Some(value)) => Err(TableError::ColumnTypeMismatch {
             row_index,
             column: column.name().to_string(),
@@ -2165,6 +2133,7 @@ pub(super) fn validate_cell_against_schema_column(
         }),
         (ColumnType::Record, None) => Ok(()),
         (ColumnType::Array(contract), Some(Value::Array(array))) => {
+            validate_primitive_type(row_index, column, array.primitive_type())?;
             validate_array_contract(row_index, column.name(), contract, array)
         }
         (ColumnType::Array(_), Some(value)) => Err(TableError::ColumnTypeMismatch {
@@ -2180,6 +2149,26 @@ pub(super) fn validate_cell_against_schema_column(
             })
         }
         (ColumnType::Array(ArrayShapeContract::Variable { .. }), None) => Ok(()),
+    }
+}
+
+fn validate_primitive_type(
+    row_index: usize,
+    column: &ColumnSchema,
+    found: PrimitiveType,
+) -> Result<(), TableError> {
+    let Some(expected) = column.data_type() else {
+        return Ok(());
+    };
+    if found == expected {
+        Ok(())
+    } else {
+        Err(TableError::PrimitiveTypeMismatch {
+            row_index,
+            column: column.name().to_string(),
+            expected,
+            found,
+        })
     }
 }
 

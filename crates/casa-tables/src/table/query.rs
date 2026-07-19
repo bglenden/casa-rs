@@ -362,7 +362,7 @@ impl Table {
         crate::RefTable::from_rows(self, permutation)
     }
 
-    /// Sorts the table by the given key columns, returning a mutable [`RefTableMut`].
+    /// Sorts the table by the given key columns, returning a mutable [`crate::RefTableMut`].
     pub fn sort_mut(
         &mut self,
         keys: &[(&str, SortOrder)],

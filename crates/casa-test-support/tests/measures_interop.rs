@@ -2,14 +2,15 @@
 //! 2x2 interop tests for measures: Rust vs C++ casacore.
 #![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
+use casa_measures_data::MeasuresRuntime;
 use casa_test_support::measures_interop::MeasuresOracle;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
 use casa_types::measures::{
-    EpochRef, IauModel, MEpoch, MPosition, MeasFrame, PositionRef, epoch_to_record,
-    position_to_record,
+    EpochRef, IauModel, MEpoch, MPosition, MeasFrame, MeasuresProvider, PositionRef,
+    epoch_to_record, position_to_record,
 };
 
 const J2000_MJD: f64 = 51544.5;
@@ -22,6 +23,12 @@ const M31_LAT: f64 = 0.722_777_4; // ~41.27° Dec
 const VLA_LON: f64 = -1.878_283_2; // -107.618°
 const VLA_LAT: f64 = 0.595_370_3; // 34.079°
 const VLA_H: f64 = 2124.0;
+
+fn measures_runtime() -> std::sync::Arc<MeasuresRuntime> {
+    std::sync::Arc::new(
+        MeasuresRuntime::open_discovered(Default::default()).expect("test measures runtime"),
+    )
+}
 
 fn close(a: f64, b: f64, tol: f64) -> bool {
     (a - b).abs() < tol
@@ -253,7 +260,8 @@ fn rc_doppler_beta_to_radio() {
 
 #[test]
 fn rc_catalog_line_hi_matches_cpp() {
-    let rust_line = MFrequency::from_line_name("HI").unwrap();
+    let measures = measures_runtime();
+    let rust_line = MFrequency::from_line_name("HI", measures.as_ref()).unwrap();
     let cpp_line_hz = MeasuresOracle::line_frequency("HI").unwrap();
     assert!(
         close(rust_line.hz(), cpp_line_hz, 1.0e-3),
@@ -1808,15 +1816,16 @@ fn cr_epoch_gast_to_last() {
 }
 
 // ==========================================================================
-// Wave 5b: EOP data interop — Rust bundled data vs C++ casacore IERS tables
+// Wave 5b: EOP data interop — Rust explicit runtime data vs C++ casacore IERS tables
 // ==========================================================================
 
 #[test]
 fn eop_dut1_at_j2000() {
-    // Compare dUT1 from Rust bundled EOP data vs C++ casacore's IERS tables
-    let eop = casa_measures_data::EopTable::bundled();
+    // Compare dUT1 from Rust explicit runtime EOP data vs C++ casacore's IERS tables
+    let eop = measures_runtime();
     let rust_vals = eop
-        .interpolate(J2000_MJD)
+        .eop_values(J2000_MJD)
+        .expect("read EOP")
         .expect("J2000 should be in EOP range");
     let (cpp_dut1, _, _) = MeasuresOracle::eop_query(J2000_MJD).unwrap();
 
@@ -1834,9 +1843,10 @@ fn eop_dut1_at_j2000() {
 
 #[test]
 fn eop_polar_motion_at_j2000() {
-    let eop = casa_measures_data::EopTable::bundled();
+    let eop = measures_runtime();
     let rust_vals = eop
-        .interpolate(J2000_MJD)
+        .eop_values(J2000_MJD)
+        .expect("read EOP")
         .expect("J2000 should be in EOP range");
     let (_, cpp_xp, cpp_yp) = MeasuresOracle::eop_query(J2000_MJD).unwrap();
 
@@ -1862,7 +1872,7 @@ fn eop_polar_motion_at_j2000() {
 #[test]
 fn eop_dut1_range_of_dates() {
     // Compare dUT1 across several dates to verify systematic agreement
-    let eop = casa_measures_data::EopTable::bundled();
+    let eop = measures_runtime();
     let test_mjds = [
         48622.0, // Start of finals2000A range (~1992)
         50000.0, // ~1995
@@ -1878,7 +1888,7 @@ fn eop_dut1_range_of_dates() {
     ];
 
     for &mjd in &test_mjds {
-        let rust_vals = match eop.interpolate(mjd) {
+        let rust_vals = match eop.eop_values(mjd).expect("read EOP") {
             Some(v) => v,
             None => continue,
         };
@@ -1916,14 +1926,14 @@ fn eop_dut1_range_of_dates() {
 }
 
 #[test]
-fn eop_epoch_conversion_with_bundled_data() {
-    // Test that epoch conversion using bundled EOP data matches C++ results.
-    // This verifies the full pipeline: bundled data → MeasFrame → dut1_for_mjd → conversion.
-    let eop = casa_measures_data::EopTable::bundled();
+fn eop_epoch_conversion_with_runtime_data() {
+    // Test that epoch conversion using explicit runtime EOP data matches C++ results.
+    // This verifies the full pipeline: explicit runtime data → MeasFrame → dut1_for_mjd → conversion.
+    let eop = measures_runtime();
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
 
-    // Use bundled EOP for dUT1 instead of hardcoded value
-    let frame = MeasFrame::new().with_eop(std::sync::Arc::new(eop.clone()));
+    // Use explicit runtime EOP for dUT1 instead of hardcoded value
+    let frame = MeasFrame::new().with_measures(eop);
 
     let rust_ut1 = utc.convert_to(EpochRef::UT1, &frame).unwrap();
 
@@ -1957,7 +1967,7 @@ fn extract_quantity(rec: &casa_types::RecordValue, field: &str) -> f64 {
 
 // ==========================================================================
 // Wave 5c: EOP-driven interop tests
-// Both Rust (with_bundled_eop) and C++ (internal IERS tables) use their
+// Both Rust (measures provider) and C++ (internal IERS tables) use their
 // own EOP data — no hardcoded dUT1.
 // ==========================================================================
 
@@ -1973,7 +1983,7 @@ fn eop_dir_j2000_to_itrf() {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-        .with_bundled_eop();
+        .with_measures(measures_runtime());
     let rust_itrf = d.convert_to(DirectionRef::ITRF, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_itrf.as_angles();
     let (cpp_lon, cpp_lat) = MeasuresOracle::direction_convert(
@@ -1997,7 +2007,7 @@ fn eop_dir_j2000_to_itrf_2010() {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(MJD_2010, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-        .with_bundled_eop();
+        .with_measures(measures_runtime());
     let rust_itrf = d.convert_to(DirectionRef::ITRF, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_itrf.as_angles();
     let (cpp_lon, cpp_lat) = MeasuresOracle::direction_convert(
@@ -2017,7 +2027,7 @@ fn eop_dir_j2000_to_itrf_2020() {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(MJD_2020, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-        .with_bundled_eop();
+        .with_measures(measures_runtime());
     let rust_itrf = d.convert_to(DirectionRef::ITRF, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_itrf.as_angles();
     let (cpp_lon, cpp_lat) = MeasuresOracle::direction_convert(
@@ -2035,10 +2045,12 @@ fn eop_dir_j2000_to_itrf_2020() {
 
 #[test]
 fn eop_epoch_utc_to_gast() {
-    // Full pipeline: UTC → UT1 (via bundled EOP) → GAST
+    // Full pipeline: UTC → UT1 (via explicit runtime EOP) → GAST
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let vla = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new().with_position(vla).with_bundled_eop();
+    let frame = MeasFrame::new()
+        .with_position(vla)
+        .with_measures(measures_runtime());
     let rust_ut1 = utc.convert_to(EpochRef::UT1, &frame).unwrap();
     let rust_gast = rust_ut1.convert_to(EpochRef::GAST, &frame).unwrap();
 
@@ -2066,10 +2078,12 @@ fn eop_epoch_utc_to_gast() {
 
 #[test]
 fn eop_epoch_utc_to_last() {
-    // Full pipeline: UTC → UT1 (via bundled EOP) → GAST → LAST
+    // Full pipeline: UTC → UT1 (via explicit runtime EOP) → GAST → LAST
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let vla = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new().with_position(vla).with_bundled_eop();
+    let frame = MeasFrame::new()
+        .with_position(vla)
+        .with_measures(measures_runtime());
     let rust_ut1 = utc.convert_to(EpochRef::UT1, &frame).unwrap();
     let rust_gast = rust_ut1.convert_to(EpochRef::GAST, &frame).unwrap();
     let rust_last = rust_gast.convert_to(EpochRef::LAST, &frame).unwrap();
@@ -2108,7 +2122,7 @@ fn eop_dir_j2000_to_hadec() {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-        .with_bundled_eop();
+        .with_measures(measures_runtime());
     let rust_hadec = d.convert_to(DirectionRef::HADEC, &frame).unwrap();
     let (rust_ha, rust_dec) = rust_hadec.as_angles();
     let (cpp_ha, cpp_dec) = MeasuresOracle::direction_convert(
@@ -2134,7 +2148,7 @@ fn eop_dir_j2000_to_azel() {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-        .with_bundled_eop();
+        .with_measures(measures_runtime());
     let rust_azel = d.convert_to(DirectionRef::AZEL, &frame).unwrap();
     let (rust_az, rust_el) = rust_azel.as_angles();
     let (cpp_az, cpp_el) = MeasuresOracle::direction_convert(
@@ -2163,7 +2177,7 @@ fn eop_freq_bary_to_topo() {
         .with_direction(dir)
         .with_epoch(epoch)
         .with_position(obs)
-        .with_bundled_eop();
+        .with_measures(measures_runtime());
     let rust_topo = f.convert_to(FrequencyRef::TOPO, &frame).unwrap();
     let cpp_topo = MeasuresOracle::frequency_convert(
         1.42e9, "BARY", "TOPO", M31_LON, M31_LAT, "J2000", J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
@@ -2188,7 +2202,7 @@ fn eop_rv_bary_to_topo() {
         .with_direction(dir)
         .with_epoch(epoch)
         .with_position(obs)
-        .with_bundled_eop();
+        .with_measures(measures_runtime());
     let rust_topo = rv.convert_to(RadialVelocityRef::TOPO, &frame).unwrap();
     let cpp_topo = MeasuresOracle::radvel_convert(
         50_000.0, "BARY", "TOPO", M31_LON, M31_LAT, "J2000", J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
@@ -2226,7 +2240,7 @@ fn accepted_direction_divergence_routes_are_bounded() {
         let frame = MeasFrame::new()
             .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
             .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-            .with_bundled_eop()
+            .with_measures(measures_runtime())
             .with_iau_model(model);
 
         for route in routes {
@@ -2258,7 +2272,7 @@ fn accepted_direction_divergence_routes_are_bounded() {
 fn eop_full_pipeline_radio_astronomy() {
     // Realistic radio astronomy workflow:
     // UTC epoch at a modern date, a direction near transit for the VLA,
-    // Convert to ITRF, HADEC, AZEL using only with_bundled_eop().
+    // Convert to ITRF, HADEC, AZEL using only measures provider().
     // Compare all three outputs against C++.
     let epoch_mjd = MJD_2010; // 2010-01-01
 
@@ -2272,7 +2286,7 @@ fn eop_full_pipeline_radio_astronomy() {
         .with_epoch(epoch)
         .with_position(obs)
         .with_direction(src.clone())
-        .with_bundled_eop();
+        .with_measures(measures_runtime());
 
     // ITRF
     let rust_itrf = src.convert_to(DirectionRef::ITRF, &frame).unwrap();
@@ -2328,7 +2342,7 @@ fn diag_direction_chain_steps() {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-        .with_bundled_eop();
+        .with_measures(measures_runtime());
 
     let steps = ["JMEAN", "JTRUE", "APP", "HADEC", "AZEL"];
     for step in &steps {
@@ -2380,7 +2394,7 @@ fn iau2000a_dir_j2000_to_hadec() {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-        .with_bundled_eop()
+        .with_measures(measures_runtime())
         .with_iau_model(IauModel::Iau2006_2000A);
     let rust_hadec = d.convert_to(DirectionRef::HADEC, &frame).unwrap();
     let (rust_ha, rust_dec) = rust_hadec.as_angles();
@@ -2403,7 +2417,7 @@ fn iau2000a_dir_j2000_to_azel() {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-        .with_bundled_eop()
+        .with_measures(measures_runtime())
         .with_iau_model(IauModel::Iau2006_2000A);
     let rust_azel = d.convert_to(DirectionRef::AZEL, &frame).unwrap();
     let (rust_az, rust_el) = rust_azel.as_angles();
@@ -2426,7 +2440,7 @@ fn iau2000a_dir_j2000_to_itrf() {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-        .with_bundled_eop()
+        .with_measures(measures_runtime())
         .with_iau_model(IauModel::Iau2006_2000A);
     let rust_itrf = d.convert_to(DirectionRef::ITRF, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_itrf.as_angles();
@@ -2454,7 +2468,7 @@ fn diag_iau2000a_chain_steps() {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-        .with_bundled_eop()
+        .with_measures(measures_runtime())
         .with_iau_model(IauModel::Iau2006_2000A);
 
     let steps = ["JMEAN", "JTRUE", "APP", "HADEC", "AZEL"];
@@ -2509,7 +2523,7 @@ fn diag_iau2000_precession_matrix() {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-        .with_bundled_eop()
+        .with_measures(measures_runtime())
         .with_iau_model(IauModel::Iau2006_2000A);
     let rust_jmean = d.convert_to(DirectionRef::JMEAN, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_jmean.as_angles();
@@ -2545,7 +2559,7 @@ fn diag_aberration_rotation_invariance() {
         let f = MeasFrame::new()
             .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
             .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-            .with_bundled_eop()
+            .with_measures(measures_runtime())
             .with_iau_model(*model);
         let jtrue = d_j2000.convert_to(DirectionRef::JTRUE, &f).unwrap();
         let (jt_lon, jt_lat) = jtrue.as_angles();
@@ -2564,7 +2578,7 @@ fn diag_aberration_rotation_invariance() {
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
-        .with_bundled_eop()
+        .with_measures(measures_runtime())
         .with_iau_model(IauModel::Iau2006_2000A);
 
     // Method 1: normal chain J2000→JMEAN→JTRUE→APP

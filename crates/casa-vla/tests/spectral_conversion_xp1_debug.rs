@@ -11,11 +11,24 @@ use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::position::PositionRef;
-use casa_types::measures::{MPosition, MeasFrame};
+use casa_types::measures::{MPosition, MeasFrame, MeasuresProvider};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use casa_vla::{CdaId, DirectionEpoch, VlaDiskReader};
 use casa_vla::{ImportVlaOptions, import_archive_files_to_measurement_set_from_options};
 use tempfile::TempDir;
+
+fn measures_runtime() -> std::sync::Arc<casa_measures_data::MeasuresRuntime> {
+    std::sync::Arc::new(
+        casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+            .expect("test measures runtime"),
+    )
+}
+
+fn vla_observatory(measures: &dyn MeasuresProvider) -> MPosition {
+    MPosition::from_observatory_name("VLA", measures)
+        .expect("read observatory catalog")
+        .expect("resolve VLA observatory")
+}
 
 fn direction_ref(epoch: DirectionEpoch) -> DirectionRef {
     match epoch {
@@ -235,10 +248,10 @@ fn xp1_first_lsrk_channel_matches_cpp_conversion() {
                     DirectionEpoch::Unknown(_) => DirectionRef::J2000,
                 },
             );
-            let observatory =
-                MPosition::from_observatory_name("VLA").expect("resolve VLA observatory");
+            let measures = measures_runtime();
+            let observatory = vla_observatory(measures.as_ref());
             let frame = MeasFrame::new()
-                .with_bundled_eop()
+                .with_measures(measures.clone())
                 .with_epoch(MEpoch::from_mjd(
                     (f64::from(rca.obs_day().expect("obs day")) * 86_400.0
                         + sda.observation_time_seconds().expect("observation time"))
@@ -322,10 +335,10 @@ fn xp1_compare_direct_and_frame_bound_cpp_conversion() {
             let direction_epoch = sda.direction_epoch().expect("direction epoch");
             let direction =
                 MDirection::from_angles(direction[0], direction[1], direction_ref(direction_epoch));
-            let observatory =
-                MPosition::from_observatory_name("VLA").expect("resolve VLA observatory");
+            let measures = measures_runtime();
+            let observatory = vla_observatory(measures.as_ref());
             let frame = MeasFrame::new()
-                .with_bundled_eop()
+                .with_measures(measures.clone())
                 .with_epoch(MEpoch::from_mjd(
                     (f64::from(rca.obs_day().expect("obs day")) * 86_400.0
                         + sda.observation_time_seconds().expect("observation time"))
@@ -517,10 +530,10 @@ fn xp1_find_record_closest_to_casa_spw_seed() {
             let direction_epoch = sda.direction_epoch().expect("direction epoch");
             let direction =
                 MDirection::from_angles(direction[0], direction[1], direction_ref(direction_epoch));
-            let observatory =
-                MPosition::from_observatory_name("VLA").expect("resolve VLA observatory");
+            let measures = measures_runtime();
+            let observatory = vla_observatory(measures.as_ref());
             let frame = MeasFrame::new()
-                .with_bundled_eop()
+                .with_measures(measures.clone())
                 .with_epoch(MEpoch::from_mjd(
                     (f64::from(rca.obs_day().expect("obs day")) * 86_400.0
                         + sda.observation_time_seconds().expect("observation time"))
@@ -595,10 +608,10 @@ fn xp1_find_any_record_closest_to_casa_spw_seed() {
             let direction_epoch = sda.direction_epoch().expect("direction epoch");
             let direction =
                 MDirection::from_angles(direction[0], direction[1], direction_ref(direction_epoch));
-            let observatory =
-                MPosition::from_observatory_name("VLA").expect("resolve VLA observatory");
+            let measures = measures_runtime();
+            let observatory = vla_observatory(measures.as_ref());
             let frame = MeasFrame::new()
-                .with_bundled_eop()
+                .with_measures(measures.clone())
                 .with_epoch(MEpoch::from_mjd(
                     (f64::from(rca.obs_day().expect("obs day")) * 86_400.0
                         + sda.observation_time_seconds().expect("observation time"))
@@ -680,10 +693,10 @@ fn xp1_print_first_doppler_tracked_candidates() {
             let direction_epoch = sda.direction_epoch().expect("direction epoch");
             let direction =
                 MDirection::from_angles(direction[0], direction[1], direction_ref(direction_epoch));
-            let observatory =
-                MPosition::from_observatory_name("VLA").expect("resolve VLA observatory");
+            let measures = measures_runtime();
+            let observatory = vla_observatory(measures.as_ref());
             let frame = MeasFrame::new()
-                .with_bundled_eop()
+                .with_measures(measures.clone())
                 .with_epoch(MEpoch::from_mjd(
                     (f64::from(rca.obs_day().expect("obs day")) * 86_400.0
                         + sda.observation_time_seconds().expect("observation time"))
@@ -790,8 +803,8 @@ fn xp1_find_time_direction_combo_closest_to_casa_spw_seed() {
         logical_record_index += 1;
     }
 
-    let observatory = MPosition::from_observatory_name("VLA")
-        .expect("resolve VLA observatory")
+    let measures = measures_runtime();
+    let observatory = vla_observatory(measures.as_ref())
         .convert_to(PositionRef::WGS84)
         .expect("observatory WGS84");
     let mut best: Option<(usize, usize, f64, f64)> = None;

@@ -4,9 +4,25 @@
 //! Builds realistic tables and runs end-to-end queries across all
 //! statement types.
 
+use std::sync::Arc;
+
 use casa_tables::taql::{self, TaqlResult};
 use casa_tables::{ColumnSchema, Table, TableSchema};
+use casa_types::measures::MeasuresProvider;
 use casa_types::*;
+
+#[derive(Debug)]
+struct FixedLeapSeconds;
+
+impl MeasuresProvider for FixedLeapSeconds {
+    fn tai_minus_utc_seconds(&self, _utc_mjd: f64) -> Result<f64, String> {
+        Ok(32.0)
+    }
+
+    fn utc_from_tai_mjd(&self, tai_mjd: f64) -> Result<f64, String> {
+        Ok(tai_mjd - 32.0 / 86_400.0)
+    }
+}
 
 /// Build a 50-row astronomy catalog table for testing.
 fn catalog_table() -> Table {
@@ -428,6 +444,7 @@ fn epoch_table() -> Table {
             ]))
             .unwrap();
     }
+    table.set_measures_provider(Arc::new(FixedLeapSeconds));
     table
 }
 

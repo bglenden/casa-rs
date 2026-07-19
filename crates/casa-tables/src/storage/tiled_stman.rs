@@ -12295,20 +12295,25 @@ mod tests {
             Table::open(TableOptions::new(&table_path)).expect("open tiled-data table");
         assert_eq!(reopened.data_manager_info()[0].dm_type, "TiledDataStMan");
 
-        reopened
-            .column_accessor_mut("data")
-            .expect("data column mut")
-            .set_array_assuming_valid(
-                2,
-                ArrayValue::Float32(
-                    ArrayD::from_shape_vec(vec![2, 2], vec![402.0, 412.0, 422.0, 432.0])
-                        .expect("shape updated data"),
-                ),
-            )
-            .expect("set tiled-data array cell lazily");
+        let mut row = reopened
+            .row_accessor_mut()
+            .prepare(&["data"])
+            .expect("prepare data row");
+        row.seek(2).expect("seek tiled-data row");
+        row.set_value_at(
+            0,
+            Value::Array(ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![402.0, 412.0, 422.0, 432.0])
+                    .expect("shape updated data"),
+            )),
+        )
+        .expect("set tiled-data array cell lazily");
+        row.flush().expect("flush tiled-data row");
+        drop(row);
 
         reopened
-            .save_selected_rows_in_place_assuming_valid(&["data"], &[2])
+            .prepare_write()
+            .save_selected_rows(&["data"], &[2])
             .expect("sparse tiled-data partial save");
 
         let verify = Table::open(TableOptions::new(&table_path)).expect("reopen tiled-data table");

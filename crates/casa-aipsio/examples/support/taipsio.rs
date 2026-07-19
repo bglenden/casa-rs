@@ -10,8 +10,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::aipsio::{AipsIo, AipsIoObjectError, AipsOpenOption};
-use crate::{Complex32, Complex64};
+use casa_aipsio::{AipsIo, AipsIoObjectError, AipsOpenOption, Complex32, Complex64};
 
 #[derive(Debug, Error)]
 pub enum AipsIoDemoError {

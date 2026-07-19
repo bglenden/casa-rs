@@ -416,11 +416,16 @@ fn igrf_field_xyz(
     let spherical = position.as_spherical();
     let date = epoch_to_igrf_date(epoch, frame)?;
     let decimal_year = decimal_day_of_year(date);
-    let (coeffs, nmax) = casa_measures_data::igrf_coefficients_for_decimal_year(decimal_year)
-        .map_err(|error| MeasureError::ModelError {
-            model: "IGRF",
-            reason: error.to_string(),
-        })?;
+    let provider = frame.measures().ok_or(MeasureError::MissingFrameData {
+        what: "IGRF measures provider",
+    })?;
+    let (coeffs, nmax) =
+        provider
+            .igrf_coefficients(decimal_year)
+            .map_err(|reason| MeasureError::ModelError {
+                model: "IGRF",
+                reason,
+            })?;
     Ok((earth_field_xyz_itrf(spherical, &coeffs, nmax), spherical.0))
 }
 
@@ -448,13 +453,18 @@ fn norm(v: [f64; 3]) -> f64 {
 }
 
 #[cfg(test)]
-fn igrf12_coefficients_for_date(date: time::Date) -> Result<Vec<f64>, MeasureError> {
+fn igrf12_coefficients_for_date(
+    date: time::Date,
+    provider: &dyn super::provider::MeasuresProvider,
+) -> Result<Vec<f64>, MeasureError> {
     let decimal_year = decimal_day_of_year(date);
-    let (coeffs, _nmax) = casa_measures_data::igrf_coefficients_for_decimal_year(decimal_year)
-        .map_err(|error| MeasureError::ModelError {
-            model: "IGRF",
-            reason: error.to_string(),
-        })?;
+    let (coeffs, _nmax) =
+        provider
+            .igrf_coefficients(decimal_year)
+            .map_err(|reason| MeasureError::ModelError {
+                model: "IGRF",
+                reason,
+            })?;
     Ok(coeffs)
 }
 
@@ -574,14 +584,15 @@ mod tests {
     };
     use crate::measures::direction::{DirectionRef, MDirection};
     use crate::measures::error::MeasureError;
+    use crate::measures::provider::test_measures;
     use crate::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
     use time::{Date, Month};
 
     fn test_frame() -> MeasFrame {
         MeasFrame::new()
+            .with_measures(test_measures())
             .with_epoch(MEpoch::from_mjd(51544.5, EpochRef::UTC))
             .with_position(MPosition::new_wgs84(-1.878_283_2, 0.595_370_3, 2124.0))
-            .with_bundled_eop()
     }
 
     #[test]
@@ -703,16 +714,22 @@ mod tests {
         let non_leap = Date::from_calendar_date(2015, Month::March, 1).unwrap();
         assert!(decimal_day_of_year(leap) > decimal_day_of_year(non_leap));
 
-        let interpolated =
-            igrf12_coefficients_for_date(Date::from_calendar_date(2012, Month::June, 30).unwrap())
-                .unwrap();
-        let extrapolated =
-            igrf12_coefficients_for_date(Date::from_calendar_date(2019, Month::June, 30).unwrap())
-                .unwrap();
+        let measures = test_measures();
+        let interpolated = igrf12_coefficients_for_date(
+            Date::from_calendar_date(2012, Month::June, 30).unwrap(),
+            measures.as_ref(),
+        )
+        .unwrap();
+        let extrapolated = igrf12_coefficients_for_date(
+            Date::from_calendar_date(2019, Month::June, 30).unwrap(),
+            measures.as_ref(),
+        )
+        .unwrap();
         assert_eq!(interpolated.len(), extrapolated.len());
         assert!(matches!(
             igrf12_coefficients_for_date(
-                Date::from_calendar_date(1890, Month::January, 1).unwrap()
+                Date::from_calendar_date(1890, Month::January, 1).unwrap(),
+                measures.as_ref(),
             ),
             Err(MeasureError::ModelError { .. })
         ));
