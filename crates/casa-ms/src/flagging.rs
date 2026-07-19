@@ -1263,23 +1263,6 @@ fn write_touched_flag_updates(
     )?;
     ms.main_table_mut()
         .reserve_array_cell_updates(FLAG_COLUMN, prepared.len());
-    {
-        let mut flag_column = ms
-            .main_table_mut()
-            .column_accessor_mut(FLAG_COLUMN)
-            .map_err(|source| FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("open FLAG column: {source}"),
-            })?;
-        for (row, flags, _) in &prepared {
-            flag_column
-                .set_array_assuming_valid(*row, ArrayValue::Bool(flags.clone()))
-                .map_err(|source| FlaggingError::MutateFlags {
-                    path: path.clone(),
-                    reason: format!("write FLAG row {row}: {source}"),
-                })?;
-        }
-    }
     let flag_row_updates = prepared
         .iter()
         .zip(current_flag_rows.iter())
@@ -1287,17 +1270,38 @@ fn write_touched_flag_updates(
             (*current != *flag_row).then_some((*row, *flag_row))
         })
         .collect::<Vec<_>>();
-    if !flag_row_updates.is_empty() {
-        let mut flag_row_column = ms
+    {
+        let mut writer = ms
             .main_table_mut()
-            .column_accessor_mut(FLAG_ROW_COLUMN)
+            .row_accessor_mut()
+            .prepare(&[FLAG_COLUMN, FLAG_ROW_COLUMN])
             .map_err(|source| FlaggingError::MutateFlags {
                 path: path.clone(),
-                reason: format!("open FLAG_ROW column: {source}"),
+                reason: format!("prepare flag updates: {source}"),
             })?;
+        let flag_slot = writer
+            .column_index(FLAG_COLUMN)
+            .expect("prepared FLAG slot");
+        let flag_row_slot = writer
+            .column_index(FLAG_ROW_COLUMN)
+            .expect("prepared FLAG_ROW slot");
+        for (row, flags, _) in &prepared {
+            writer
+                .seek(*row)
+                .and_then(|()| {
+                    writer.set_value_at(flag_slot, Value::Array(ArrayValue::Bool(flags.clone())))
+                })
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!("write FLAG row {row}: {source}"),
+                })?;
+        }
         for (row, flag_row) in &flag_row_updates {
-            flag_row_column
-                .set_scalar_assuming_valid(*row, ScalarValue::Bool(*flag_row))
+            writer
+                .seek(*row)
+                .and_then(|()| {
+                    writer.set_value_at(flag_row_slot, Value::Scalar(ScalarValue::Bool(*flag_row)))
+                })
                 .map_err(|source| FlaggingError::MutateFlags {
                     path: path.clone(),
                     reason: format!("write FLAG_ROW row {row}: {source}"),

@@ -2657,7 +2657,12 @@ mod tests {
             std::f64::consts::FRAC_PI_4,
             casa_types::measures::direction::DirectionRef::J2000,
         );
-        MsCalEngine::from_parts(vec![observatory.clone()], vec![direction], observatory)
+        MsCalEngine::from_parts(
+            vec![observatory.clone()],
+            vec![direction],
+            observatory,
+            casa_test_support::deterministic_measures_provider(),
+        )
     }
 
     #[test]
@@ -3323,7 +3328,9 @@ mod tests {
 
     #[test]
     fn asymmetric_frame_conversion_matches_manual_direct_hops() {
+        let measures = crate::open_measures_runtime().expect("test measures runtime");
         let source_frame = MeasFrame::new()
+            .with_measures(measures.clone())
             .with_epoch(casa_types::measures::epoch::MEpoch::from_mjd(
                 59_000.0,
                 casa_types::measures::epoch::EpochRef::UTC,
@@ -3337,9 +3344,9 @@ mod tests {
                 1.0,
                 0.5,
                 casa_types::measures::direction::DirectionRef::J2000,
-            ))
-            .with_bundled_eop();
+            ));
         let target_frame = MeasFrame::new()
+            .with_measures(measures)
             .with_epoch(casa_types::measures::epoch::MEpoch::from_mjd(
                 59_001.0,
                 casa_types::measures::epoch::EpochRef::UTC,
@@ -3353,8 +3360,7 @@ mod tests {
                 1.1,
                 0.55,
                 casa_types::measures::direction::DirectionRef::J2000,
-            ))
-            .with_bundled_eop();
+            ));
         let frequency_hz = 6.667_582_296e9;
 
         let converted = convert_frequency_to_frame_with_frames(

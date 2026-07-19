@@ -234,7 +234,7 @@ fn save_preserves_existing_measure_reference_keywords() {
     updated.upsert("MEASINFO", Value::Record(updated_measinfo));
     ms.main_table_mut().set_column_keywords("TIME", updated);
 
-    ms.save_assuming_valid().unwrap();
+    ms.save().unwrap();
 
     let reopened = MeasurementSet::open(&ms_path).unwrap();
     let time_keywords = reopened.main_table().column_keywords("TIME").unwrap();
@@ -272,7 +272,7 @@ fn save_honors_standard_storage_policy_override() {
                 ),
             ],
         );
-        ms.save_assuming_valid().unwrap();
+        ms.save().unwrap();
 
         let reopened = MeasurementSet::open(&ms_path).unwrap();
         let main_dm_types = main_dm_types(&reopened);

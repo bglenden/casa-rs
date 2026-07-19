@@ -203,7 +203,7 @@ use thiserror::Error;
 
 use crate::{
     ArrayValue, ByteOrder, Complex32, Complex64, PrimitiveType, RecordField, RecordValue,
-    ScalarValue, Value, ValueKind,
+    ScalarValue, Value, ValueKind, primitive_codec,
 };
 
 pub type AipsIoObjectResult<T> = Result<T, AipsIoObjectError>;
@@ -341,6 +341,29 @@ pub enum AipsIoObjectError {
     /// decoding a string field.
     #[error("utf-8 decode error: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
+    /// A boolean field contained a byte other than the canonical `0` or `1`.
+    #[error("invalid boolean value {0}; expected 0 or 1")]
+    InvalidBoolean(u8),
+    /// A framed in-memory object was shorter than the required header or payload.
+    #[error("AipsIO frame is too short: need {needed} bytes, have {available}")]
+    FrameTooShort { needed: usize, available: usize },
+    /// An object length was smaller than its header or exceeded its containing buffer/frame.
+    #[error("invalid AipsIO object length {declared}; {available} bytes are available")]
+    InvalidObjectLength { declared: u32, available: usize },
+    /// Both canonical and little-endian interpretations form valid complete frames.
+    #[error(
+        "ambiguous AipsIO byte order: big-endian length {big_endian_length}, little-endian length {little_endian_length}"
+    )]
+    AmbiguousByteOrder {
+        big_endian_length: u32,
+        little_endian_length: u32,
+    },
+    /// Neither endian interpretation formed a structurally valid AipsIO frame.
+    #[error("invalid AipsIO frame: {0}")]
+    InvalidFrame(String),
+    /// A primitive codec operation failed while reading or writing a framed object.
+    #[error("AipsIO primitive codec error: {0}")]
+    PrimitiveCodec(String),
     /// [`AipsIo::putstart`] was called when the stream is not open or is
     /// read-only.
     #[error("AipsIO::putstart: not open or not writable")]
@@ -1082,54 +1105,48 @@ impl AipsIo {
     /// Read exactly `values.len()` signed 16-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_i16_into(&mut self, values: &mut [i16]) -> AipsIoObjectResult<()> {
         let order = self.byte_order;
-        self.read_fixed_width_into(values, move |bytes| match order {
-            ByteOrder::BigEndian => i16::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => i16::from_le_bytes(bytes),
+        self.read_fixed_width_into(values, move |bytes| {
+            primitive_codec::decode_i16(bytes, order)
         })
     }
 
     /// Read exactly `values.len()` unsigned 16-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_u16_into(&mut self, values: &mut [u16]) -> AipsIoObjectResult<()> {
         let order = self.byte_order;
-        self.read_fixed_width_into(values, move |bytes| match order {
-            ByteOrder::BigEndian => u16::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => u16::from_le_bytes(bytes),
+        self.read_fixed_width_into(values, move |bytes| {
+            primitive_codec::decode_u16(bytes, order)
         })
     }
 
     /// Read exactly `values.len()` signed 32-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_i32_into(&mut self, values: &mut [i32]) -> AipsIoObjectResult<()> {
         let order = self.byte_order;
-        self.read_fixed_width_into(values, move |bytes| match order {
-            ByteOrder::BigEndian => i32::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => i32::from_le_bytes(bytes),
+        self.read_fixed_width_into(values, move |bytes| {
+            primitive_codec::decode_i32(bytes, order)
         })
     }
 
     /// Read exactly `values.len()` unsigned 32-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_u32_into(&mut self, values: &mut [u32]) -> AipsIoObjectResult<()> {
         let order = self.byte_order;
-        self.read_fixed_width_into(values, move |bytes| match order {
-            ByteOrder::BigEndian => u32::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => u32::from_le_bytes(bytes),
+        self.read_fixed_width_into(values, move |bytes| {
+            primitive_codec::decode_u32(bytes, order)
         })
     }
 
     /// Read exactly `values.len()` signed 64-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_i64_into(&mut self, values: &mut [i64]) -> AipsIoObjectResult<()> {
         let order = self.byte_order;
-        self.read_fixed_width_into(values, move |bytes| match order {
-            ByteOrder::BigEndian => i64::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => i64::from_le_bytes(bytes),
+        self.read_fixed_width_into(values, move |bytes| {
+            primitive_codec::decode_i64(bytes, order)
         })
     }
 
     /// Read exactly `values.len()` unsigned 64-bit values into the provided slice. See [`get_bool_into`](Self::get_bool_into).
     pub fn get_u64_into(&mut self, values: &mut [u64]) -> AipsIoObjectResult<()> {
         let order = self.byte_order;
-        self.read_fixed_width_into(values, move |bytes| match order {
-            ByteOrder::BigEndian => u64::from_be_bytes(bytes),
-            ByteOrder::LittleEndian => u64::from_le_bytes(bytes),
+        self.read_fixed_width_into(values, move |bytes| {
+            primitive_codec::decode_u64(bytes, order)
         })
     }
 
@@ -1137,10 +1154,7 @@ impl AipsIo {
     pub fn get_f32_into(&mut self, values: &mut [f32]) -> AipsIoObjectResult<()> {
         let order = self.byte_order;
         self.read_fixed_width_into(values, move |bytes| {
-            let bits = match order {
-                ByteOrder::BigEndian => u32::from_be_bytes(bytes),
-                ByteOrder::LittleEndian => u32::from_le_bytes(bytes),
-            };
+            let bits = primitive_codec::decode_u32(bytes, order);
             f32::from_bits(bits)
         })
     }
@@ -1149,10 +1163,7 @@ impl AipsIo {
     pub fn get_f64_into(&mut self, values: &mut [f64]) -> AipsIoObjectResult<()> {
         let order = self.byte_order;
         self.read_fixed_width_into(values, move |bytes| {
-            let bits = match order {
-                ByteOrder::BigEndian => u64::from_be_bytes(bytes),
-                ByteOrder::LittleEndian => u64::from_le_bytes(bytes),
-            };
+            let bits = primitive_codec::decode_u64(bytes, order);
             f64::from_bits(bits)
         })
     }
@@ -1632,76 +1643,40 @@ impl AipsIo {
     }
 
     fn encode_i16(&self, v: i16) -> [u8; 2] {
-        match self.byte_order {
-            ByteOrder::BigEndian => v.to_be_bytes(),
-            ByteOrder::LittleEndian => v.to_le_bytes(),
-        }
+        primitive_codec::encode_i16(v, self.byte_order)
     }
     fn encode_u16(&self, v: u16) -> [u8; 2] {
-        match self.byte_order {
-            ByteOrder::BigEndian => v.to_be_bytes(),
-            ByteOrder::LittleEndian => v.to_le_bytes(),
-        }
+        primitive_codec::encode_u16(v, self.byte_order)
     }
     fn encode_i32(&self, v: i32) -> [u8; 4] {
-        match self.byte_order {
-            ByteOrder::BigEndian => v.to_be_bytes(),
-            ByteOrder::LittleEndian => v.to_le_bytes(),
-        }
+        primitive_codec::encode_i32(v, self.byte_order)
     }
     fn encode_u32(&self, v: u32) -> [u8; 4] {
-        match self.byte_order {
-            ByteOrder::BigEndian => v.to_be_bytes(),
-            ByteOrder::LittleEndian => v.to_le_bytes(),
-        }
+        primitive_codec::encode_u32(v, self.byte_order)
     }
     fn encode_i64(&self, v: i64) -> [u8; 8] {
-        match self.byte_order {
-            ByteOrder::BigEndian => v.to_be_bytes(),
-            ByteOrder::LittleEndian => v.to_le_bytes(),
-        }
+        primitive_codec::encode_i64(v, self.byte_order)
     }
     fn encode_u64(&self, v: u64) -> [u8; 8] {
-        match self.byte_order {
-            ByteOrder::BigEndian => v.to_be_bytes(),
-            ByteOrder::LittleEndian => v.to_le_bytes(),
-        }
+        primitive_codec::encode_u64(v, self.byte_order)
     }
     fn decode_i16(&self, b: [u8; 2]) -> i16 {
-        match self.byte_order {
-            ByteOrder::BigEndian => i16::from_be_bytes(b),
-            ByteOrder::LittleEndian => i16::from_le_bytes(b),
-        }
+        primitive_codec::decode_i16(b, self.byte_order)
     }
     fn decode_u16(&self, b: [u8; 2]) -> u16 {
-        match self.byte_order {
-            ByteOrder::BigEndian => u16::from_be_bytes(b),
-            ByteOrder::LittleEndian => u16::from_le_bytes(b),
-        }
+        primitive_codec::decode_u16(b, self.byte_order)
     }
     fn decode_i32(&self, b: [u8; 4]) -> i32 {
-        match self.byte_order {
-            ByteOrder::BigEndian => i32::from_be_bytes(b),
-            ByteOrder::LittleEndian => i32::from_le_bytes(b),
-        }
+        primitive_codec::decode_i32(b, self.byte_order)
     }
     fn decode_u32(&self, b: [u8; 4]) -> u32 {
-        match self.byte_order {
-            ByteOrder::BigEndian => u32::from_be_bytes(b),
-            ByteOrder::LittleEndian => u32::from_le_bytes(b),
-        }
+        primitive_codec::decode_u32(b, self.byte_order)
     }
     fn decode_i64(&self, b: [u8; 8]) -> i64 {
-        match self.byte_order {
-            ByteOrder::BigEndian => i64::from_be_bytes(b),
-            ByteOrder::LittleEndian => i64::from_le_bytes(b),
-        }
+        primitive_codec::decode_i64(b, self.byte_order)
     }
     fn decode_u64(&self, b: [u8; 8]) -> u64 {
-        match self.byte_order {
-            ByteOrder::BigEndian => u64::from_be_bytes(b),
-            ByteOrder::LittleEndian => u64::from_le_bytes(b),
-        }
+        primitive_codec::decode_u64(b, self.byte_order)
     }
 
     fn read_fixed_width_into<T, const N: usize>(

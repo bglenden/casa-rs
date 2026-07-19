@@ -44,7 +44,9 @@
 //! `meas/MeasUDF/Register.cc`, `EpochUDF.cc`, `DirectionUDF.cc`, etc.
 
 use std::str::FromStr;
+use std::sync::Arc;
 
+use casa_types::measures::MeasuresProvider;
 use casa_types::measures::direction::{DirectionRef, MDirection, rise_set_times_from_name};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::earth_magnetic::{EarthMagneticRef, MEarthMagnetic, calculate_igrf};
@@ -64,55 +66,171 @@ const MEAS_HELP_URL: &str = "See also section 'Special Measures functions' at ht
 /// Dispatch a `meas.*` function call.
 ///
 /// Called from `call_function()` when the function name starts with `"meas."`.
+type MeasuresRef<'a> = Option<&'a Arc<dyn MeasuresProvider>>;
+
+#[cfg(test)]
 pub(crate) fn call_meas_function(name: &str, args: &[ExprValue]) -> Result<ExprValue, TaqlError> {
+    let measures: Arc<dyn MeasuresProvider> = Arc::new(TestMeasuresProvider);
+    call_meas_function_with_provider(name, args, Some(&measures))
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+struct TestMeasuresProvider;
+
+#[cfg(test)]
+impl MeasuresProvider for TestMeasuresProvider {
+    fn eop_values(&self, _utc_mjd: f64) -> Result<Option<casa_types::measures::EopValues>, String> {
+        Ok(Some(casa_types::measures::EopValues {
+            dut1_seconds: 0.0,
+            x_arcsec: 0.0,
+            y_arcsec: 0.0,
+            dx_mas: 0.0,
+            dy_mas: 0.0,
+            is_predicted: false,
+        }))
+    }
+
+    fn tai_minus_utc_seconds(&self, _utc_mjd: f64) -> Result<f64, String> {
+        Ok(32.0)
+    }
+
+    fn utc_from_tai_mjd(&self, tai_mjd: f64) -> Result<f64, String> {
+        Ok(tai_mjd - 32.0 / SECONDS_PER_DAY)
+    }
+
+    fn igrf_coefficients(&self, _decimal_year: f64) -> Result<(Vec<f64>, usize), String> {
+        let mut coefficients = vec![0.0; 13 * 15];
+        coefficients[0] = -29_440.0;
+        coefficients[1] = -1_500.0;
+        coefficients[2] = 4_650.0;
+        Ok((coefficients, 13))
+    }
+
+    fn observatory(
+        &self,
+        name: &str,
+    ) -> Result<Option<casa_types::measures::ObservatoryPosition>, String> {
+        Ok(match name.to_ascii_uppercase().as_str() {
+            "WSRT" => Some(casa_types::measures::ObservatoryPosition::Itrf {
+                x_m: 3_826_577.0,
+                y_m: 461_022.0,
+                z_m: 5_064_892.0,
+            }),
+            "VLA" => Some(casa_types::measures::ObservatoryPosition::Itrf {
+                x_m: -1_601_185.0,
+                y_m: -5_041_977.0,
+                z_m: 3_554_875.0,
+            }),
+            _ => None,
+        })
+    }
+
+    fn source(
+        &self,
+        name: &str,
+    ) -> Result<Option<casa_types::measures::NamedSourceDirection>, String> {
+        Ok(name.eq_ignore_ascii_case("CasA").then_some(
+            casa_types::measures::NamedSourceDirection {
+                reference: "J2000".to_string(),
+                longitude_rad: 6.123_487_680_622_104,
+                latitude_rad: 1.026_515_399_560_464_8,
+            },
+        ))
+    }
+}
+
+pub(crate) fn call_meas_function_with_provider(
+    name: &str,
+    args: &[ExprValue],
+    measures: MeasuresRef<'_>,
+) -> Result<ExprValue, TaqlError> {
     let suffix = &name[5..]; // strip "meas."
     match suffix {
-        "epoch" => meas_epoch(args, name),
-        "last" | "lst" => meas_last(args, name),
+        "epoch" => meas_epoch(args, name, measures),
+        "last" | "lst" => meas_last(args, name, measures),
         "help" => meas_help(args, name),
-        "dir" | "direction" => meas_dir(args, name),
-        "dircos" | "directioncosine" => meas_dircos(args, name),
-        "riset" | "riseset" => meas_riseset(args, name),
-        "em" | "earthmagnetic" | "emxyz" => meas_earthmag(args, EarthMagneticOutput::Xyz, name),
-        "emang" | "emangles" => meas_earthmag(args, EarthMagneticOutput::Angles, name),
-        "emlen" | "emlength" => meas_earthmag(args, EarthMagneticOutput::Length, name),
-        "igrf" | "igrfxyz" => meas_igrf(args, IgrfOutput::Xyz, name),
-        "igrfang" | "igrfangles" => meas_igrf(args, IgrfOutput::Angles, name),
-        "igrflen" | "igrflength" => meas_igrf(args, IgrfOutput::Length, name),
-        "igrflos" => meas_igrf(args, IgrfOutput::Los, name),
-        "igrflong" => meas_igrf(args, IgrfOutput::Long, name),
-        "pos" | "position" => meas_pos(args, name),
-        "itrfxyz" => meas_pos_extract(args, PositionRef::ITRF, PositionOutput::Xyz, name),
-        "itrfll" | "itrflonlat" => {
-            meas_pos_extract(args, PositionRef::ITRF, PositionOutput::LonLat, name)
+        "dir" | "direction" => meas_dir(args, name, measures),
+        "dircos" | "directioncosine" => meas_dircos(args, name, measures),
+        "riset" | "riseset" => meas_riseset(args, name, measures),
+        "em" | "earthmagnetic" | "emxyz" => {
+            meas_earthmag(args, EarthMagneticOutput::Xyz, name, measures)
         }
-        "itrfh" | "itrfheight" => {
-            meas_pos_extract(args, PositionRef::ITRF, PositionOutput::Height, name)
-        }
-        "itrfllh" => meas_pos_extract(args, PositionRef::ITRF, PositionOutput::LonLatHeight, name),
-        "wgs" | "wgsxyz" => meas_pos_extract(args, PositionRef::WGS84, PositionOutput::Xyz, name),
-        "wgsll" | "wgslonlat" => {
-            meas_pos_extract(args, PositionRef::WGS84, PositionOutput::LonLat, name)
-        }
-        "wgsh" | "wgsheight" => {
-            meas_pos_extract(args, PositionRef::WGS84, PositionOutput::Height, name)
-        }
-        "wgsllh" => meas_pos_extract(args, PositionRef::WGS84, PositionOutput::LonLatHeight, name),
-        "freq" | "frequency" => meas_freq(args, name),
-        "rest" | "restfreq" | "restfrequency" => meas_rest(args, name),
-        "shift" | "shiftfreq" | "shiftfrequency" => meas_shift(args, name),
+        "emang" | "emangles" => meas_earthmag(args, EarthMagneticOutput::Angles, name, measures),
+        "emlen" | "emlength" => meas_earthmag(args, EarthMagneticOutput::Length, name, measures),
+        "igrf" | "igrfxyz" => meas_igrf(args, IgrfOutput::Xyz, name, measures),
+        "igrfang" | "igrfangles" => meas_igrf(args, IgrfOutput::Angles, name, measures),
+        "igrflen" | "igrflength" => meas_igrf(args, IgrfOutput::Length, name, measures),
+        "igrflos" => meas_igrf(args, IgrfOutput::Los, name, measures),
+        "igrflong" => meas_igrf(args, IgrfOutput::Long, name, measures),
+        "pos" | "position" => meas_pos(args, name, measures),
+        "itrfxyz" => meas_pos_extract(args, PositionRef::ITRF, PositionOutput::Xyz, name, measures),
+        "itrfll" | "itrflonlat" => meas_pos_extract(
+            args,
+            PositionRef::ITRF,
+            PositionOutput::LonLat,
+            name,
+            measures,
+        ),
+        "itrfh" | "itrfheight" => meas_pos_extract(
+            args,
+            PositionRef::ITRF,
+            PositionOutput::Height,
+            name,
+            measures,
+        ),
+        "itrfllh" => meas_pos_extract(
+            args,
+            PositionRef::ITRF,
+            PositionOutput::LonLatHeight,
+            name,
+            measures,
+        ),
+        "wgs" | "wgsxyz" => meas_pos_extract(
+            args,
+            PositionRef::WGS84,
+            PositionOutput::Xyz,
+            name,
+            measures,
+        ),
+        "wgsll" | "wgslonlat" => meas_pos_extract(
+            args,
+            PositionRef::WGS84,
+            PositionOutput::LonLat,
+            name,
+            measures,
+        ),
+        "wgsh" | "wgsheight" => meas_pos_extract(
+            args,
+            PositionRef::WGS84,
+            PositionOutput::Height,
+            name,
+            measures,
+        ),
+        "wgsllh" => meas_pos_extract(
+            args,
+            PositionRef::WGS84,
+            PositionOutput::LonLatHeight,
+            name,
+            measures,
+        ),
+        "freq" | "frequency" => meas_freq(args, name, measures),
+        "rest" | "restfreq" | "restfrequency" => meas_rest(args, name, measures),
+        "shift" | "shiftfreq" | "shiftfrequency" => meas_shift(args, name, measures),
         "doppler" | "redshift" => meas_doppler(args, name),
-        "radvel" | "radialvelocity" => meas_radvel(args, name),
-        "hadec" => meas_dir_shortcut(args, "HADEC", name),
-        "azel" => meas_dir_shortcut(args, "AZEL", name),
-        "app" | "apparent" => meas_dir_shortcut(args, "APP", name),
-        "j2000" => meas_dir_shortcut(args, "J2000", name),
-        "galactic" => meas_dir_shortcut(args, "GALACTIC", name),
-        "b1950" => meas_dir_shortcut(args, "B1950", name),
-        "ecl" | "ecliptic" => meas_dir_shortcut(args, "ECLIPTIC", name),
-        "gal" => meas_dir_shortcut(args, "GALACTIC", name),
-        "sgal" | "supergal" | "supergalactic" => meas_dir_shortcut(args, "SUPERGAL", name),
-        "itrfd" | "itrfdir" | "itrfdirection" => meas_dir_shortcut(args, "ITRF", name),
+        "radvel" | "radialvelocity" => meas_radvel(args, name, measures),
+        "hadec" => meas_dir_shortcut(args, "HADEC", name, measures),
+        "azel" => meas_dir_shortcut(args, "AZEL", name, measures),
+        "app" | "apparent" => meas_dir_shortcut(args, "APP", name, measures),
+        "j2000" => meas_dir_shortcut(args, "J2000", name, measures),
+        "galactic" => meas_dir_shortcut(args, "GALACTIC", name, measures),
+        "b1950" => meas_dir_shortcut(args, "B1950", name, measures),
+        "ecl" | "ecliptic" => meas_dir_shortcut(args, "ECLIPTIC", name, measures),
+        "gal" => meas_dir_shortcut(args, "GALACTIC", name, measures),
+        "sgal" | "supergal" | "supergalactic" => {
+            meas_dir_shortcut(args, "SUPERGAL", name, measures)
+        }
+        "itrfd" | "itrfdir" | "itrfdirection" => meas_dir_shortcut(args, "ITRF", name, measures),
         _ => Err(TaqlError::UnknownFunction {
             name: name.to_string(),
         }),
@@ -442,16 +560,24 @@ fn any_null(args: &[ExprValue]) -> bool {
 /// The interpretation depends on the calling function:
 /// - For direction UDFs: `[epoch, position]`
 /// - For numeric helpers: `[epoch, px, py, pz]`
-fn build_frame_with_epoch_pos(extra: &[ExprValue], fn_name: &str) -> Result<MeasFrame, TaqlError> {
-    let mut frame = MeasFrame::new();
+fn meas_frame(measures: MeasuresRef<'_>) -> MeasFrame {
+    measures.cloned().map_or_else(MeasFrame::new, |provider| {
+        MeasFrame::new().with_measures(provider)
+    })
+}
+
+fn build_frame_with_epoch_pos(
+    extra: &[ExprValue],
+    fn_name: &str,
+    measures: MeasuresRef<'_>,
+) -> Result<MeasFrame, TaqlError> {
+    let mut frame = meas_frame(measures);
     if !extra.is_empty() {
         let epoch_mjd = expr_to_mjd_days(&extra[0], fn_name)?;
-        frame = frame
-            .with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC))
-            .with_standard_eop();
+        frame = frame.with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC));
     }
     if extra.len() > 1 {
-        frame = frame.with_position(parse_position_input(&extra[1..], fn_name)?);
+        frame = frame.with_position(parse_position_input(&extra[1..], fn_name, measures)?);
     }
     Ok(frame)
 }
@@ -459,8 +585,11 @@ fn build_frame_with_epoch_pos(extra: &[ExprValue], fn_name: &str) -> Result<Meas
 /// Build a full `MeasFrame` from optional direction + epoch + position args.
 ///
 /// For frequency/radvel: `[dir_lon, dir_lat, epoch, px, py, pz]`
-fn build_frame_with_dir_epoch_pos(extra: &[ExprValue]) -> Result<MeasFrame, TaqlError> {
-    let mut frame = MeasFrame::new();
+fn build_frame_with_dir_epoch_pos(
+    extra: &[ExprValue],
+    measures: MeasuresRef<'_>,
+) -> Result<MeasFrame, TaqlError> {
+    let mut frame = meas_frame(measures);
     if extra.len() >= 2 {
         let lon = expr_to_angle_rad(&extra[0], "meas frame direction")?;
         let lat = expr_to_angle_rad(&extra[1], "meas frame direction")?;
@@ -468,12 +597,10 @@ fn build_frame_with_dir_epoch_pos(extra: &[ExprValue]) -> Result<MeasFrame, Taql
     }
     if extra.len() >= 3 {
         let epoch_mjd = expr_to_mjd_days(&extra[2], "meas frame epoch")?;
-        frame = frame
-            .with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC))
-            .with_standard_eop();
+        frame = frame.with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC));
     }
     if extra.len() > 3 {
-        frame = frame.with_position(parse_position_input(&extra[3..], "meas frame")?);
+        frame = frame.with_position(parse_position_input(&extra[3..], "meas frame", measures)?);
     }
     Ok(frame)
 }
@@ -537,13 +664,22 @@ fn expr_to_mjd_days(value: &ExprValue, fn_name: &str) -> Result<f64, TaqlError> 
     expr_to_unit_value(value, "d", "d", "epoch", fn_name)
 }
 
-fn parse_position_input(args: &[ExprValue], fn_name: &str) -> Result<MPosition, TaqlError> {
+fn parse_position_input(
+    args: &[ExprValue],
+    fn_name: &str,
+    measures: MeasuresRef<'_>,
+) -> Result<MPosition, TaqlError> {
     match args {
         [name] => {
             let observatory = name.to_string_val()?;
-            MPosition::from_observatory_name(&observatory).ok_or(TaqlError::TypeError {
-                message: format!("{fn_name}: unknown observatory \"{observatory}\""),
-            })
+            let provider = measures.ok_or_else(|| TaqlError::TypeError {
+                message: format!("{fn_name}: observatory name {observatory:?} requires an explicit measures provider"),
+            })?;
+            MPosition::from_observatory_name(&observatory, provider.as_ref())
+                .map_err(|error| measure_err(fn_name, error))?
+                .ok_or_else(|| TaqlError::TypeError {
+                    message: format!("{fn_name}: unknown observatory {observatory:?}"),
+                })
         }
         [x, y, z] => Ok(MPosition::new_itrf(
             expr_to_length_m(x, fn_name)?,
@@ -878,7 +1014,11 @@ fn casacore_wgs_xyz_values(position: &MPosition) -> [f64; 3] {
 /// # Returns
 ///
 /// `Float` — MJD in the target time scale.
-fn meas_epoch(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
+fn meas_epoch(
+    args: &[ExprValue],
+    fn_name: &str,
+    measures: MeasuresRef<'_>,
+) -> Result<ExprValue, TaqlError> {
     check_arity_range(fn_name, args, 2, 3)?;
     if any_null(args) {
         return Ok(ExprValue::Null);
@@ -891,7 +1031,7 @@ fn meas_epoch(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError>
         EpochRef::UTC
     };
     let epoch = MEpoch::from_mjd(mjd, src);
-    let frame = MeasFrame::new();
+    let frame = meas_frame(measures);
     let converted = epoch
         .convert_to(target, &frame)
         .map_err(|e| measure_err(fn_name, e))?;
@@ -908,7 +1048,11 @@ fn meas_epoch(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError>
 ///
 /// Returns the sidereal time as seconds into the local sidereal day, matching
 /// C++ TaQL `meas.last` / `meas.lst`.
-fn meas_last(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
+fn meas_last(
+    args: &[ExprValue],
+    fn_name: &str,
+    measures: MeasuresRef<'_>,
+) -> Result<ExprValue, TaqlError> {
     if !(args.len() == 2 || args.len() == 4 || args.len() == 5) {
         return Err(TaqlError::ArgumentCount {
             name: fn_name.to_string(),
@@ -920,11 +1064,10 @@ fn meas_last(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> 
         return Ok(ExprValue::Null);
     }
     let mjd = expr_to_mjd_days(&args[0], fn_name)?;
-    let position = parse_position_input(&args[1..], fn_name)?;
+    let position = parse_position_input(&args[1..], fn_name, measures)?;
     let epoch = MEpoch::from_mjd(mjd, EpochRef::UTC);
-    let frame = MeasFrame::new()
+    let frame = meas_frame(measures)
         .with_position(position)
-        .with_standard_eop()
         .with_epoch(epoch.clone());
     let converted = epoch
         .convert_to(EpochRef::LAST, &frame)
@@ -948,7 +1091,11 @@ fn meas_last(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> 
 /// # Returns
 ///
 /// `Array([lon, lat])` — direction in the target frame (radians).
-fn meas_dir(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
+fn meas_dir(
+    args: &[ExprValue],
+    fn_name: &str,
+    measures: MeasuresRef<'_>,
+) -> Result<ExprValue, TaqlError> {
     check_arity_range(fn_name, args, 2, 8)?;
     if any_null(args) {
         return Ok(ExprValue::Null);
@@ -956,9 +1103,9 @@ fn meas_dir(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
     let target: DirectionRef = parse_ref(&args[0], fn_name)?;
     if let ExprValue::String(name) = &args[1] {
         let frame = if args.len() > 2 {
-            build_frame_with_epoch_pos(&args[2..], fn_name)?
+            build_frame_with_epoch_pos(&args[2..], fn_name, measures)?
         } else {
-            MeasFrame::new()
+            meas_frame(measures)
         };
         let dir =
             MDirection::from_source_name(name, &frame).map_err(|e| measure_err(fn_name, e))?;
@@ -977,9 +1124,9 @@ fn meas_dir(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
         DirectionRef::J2000
     };
     let frame = if args.len() > 4 {
-        build_frame_with_epoch_pos(&args[4..], fn_name)?
+        build_frame_with_epoch_pos(&args[4..], fn_name, measures)?
     } else {
-        MeasFrame::new()
+        meas_frame(measures)
     };
     let dir = MDirection::from_angles(lon, lat, src);
     let converted = dir
@@ -990,7 +1137,11 @@ fn meas_dir(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
 
 /// `meas.dircos(target_ref, lon, lat [, src_ref [, epoch, px, py, pz]])`
 /// returns direction cosines in the target frame.
-fn meas_dircos(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
+fn meas_dircos(
+    args: &[ExprValue],
+    fn_name: &str,
+    measures: MeasuresRef<'_>,
+) -> Result<ExprValue, TaqlError> {
     check_arity_range(fn_name, args, 2, 8)?;
     if any_null(args) {
         return Ok(ExprValue::Null);
@@ -998,9 +1149,9 @@ fn meas_dircos(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError
     let target: DirectionRef = parse_ref(&args[0], fn_name)?;
     if let ExprValue::String(name) = &args[1] {
         let frame = if args.len() > 2 {
-            build_frame_with_epoch_pos(&args[2..], fn_name)?
+            build_frame_with_epoch_pos(&args[2..], fn_name, measures)?
         } else {
-            MeasFrame::new()
+            meas_frame(measures)
         };
         let dir =
             MDirection::from_source_name(name, &frame).map_err(|e| measure_err(fn_name, e))?;
@@ -1019,9 +1170,9 @@ fn meas_dircos(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError
         DirectionRef::J2000
     };
     let frame = if args.len() > 4 {
-        build_frame_with_epoch_pos(&args[4..], fn_name)?
+        build_frame_with_epoch_pos(&args[4..], fn_name, measures)?
     } else {
-        MeasFrame::new()
+        meas_frame(measures)
     };
     let dir = MDirection::from_angles(lon, lat, src);
     let converted = dir
@@ -1035,6 +1186,7 @@ fn meas_dir_shortcut(
     args: &[ExprValue],
     target_name: &str,
     fn_name: &str,
+    measures: MeasuresRef<'_>,
 ) -> Result<ExprValue, TaqlError> {
     check_arity_range(fn_name, args, 1, 7)?;
     if any_null(args) {
@@ -1044,9 +1196,9 @@ fn meas_dir_shortcut(
         DirectionRef::from_str(target_name).expect("hardcoded target must parse");
     if let Some(ExprValue::String(name)) = args.first() {
         let frame = if args.len() > 1 {
-            build_frame_with_epoch_pos(&args[1..], fn_name)?
+            build_frame_with_epoch_pos(&args[1..], fn_name, measures)?
         } else {
-            MeasFrame::new()
+            meas_frame(measures)
         };
         let dir =
             MDirection::from_source_name(name, &frame).map_err(|e| measure_err(fn_name, e))?;
@@ -1065,9 +1217,9 @@ fn meas_dir_shortcut(
         DirectionRef::J2000
     };
     let frame = if args.len() > 3 {
-        build_frame_with_epoch_pos(&args[3..], fn_name)?
+        build_frame_with_epoch_pos(&args[3..], fn_name, measures)?
     } else {
-        MeasFrame::new()
+        meas_frame(measures)
     };
     let dir = MDirection::from_angles(lon, lat, src);
     let converted = dir
@@ -1078,7 +1230,11 @@ fn meas_dir_shortcut(
 
 /// `meas.riset(direction, epoch, position)` / `meas.riseset(...)` — rise and
 /// set UTC datetimes for a source.
-fn meas_riseset(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
+fn meas_riseset(
+    args: &[ExprValue],
+    fn_name: &str,
+    measures: MeasuresRef<'_>,
+) -> Result<ExprValue, TaqlError> {
     if any_null(args) {
         return Ok(ExprValue::Null);
     }
@@ -1091,7 +1247,7 @@ fn meas_riseset(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlErro
     }
 
     let riseset = if let ExprValue::String(name) = &args[0] {
-        let frame = build_frame_with_epoch_pos(&args[1..], fn_name)?;
+        let frame = build_frame_with_epoch_pos(&args[1..], fn_name, measures)?;
         rise_set_times_from_name(name, &frame).map_err(|e| measure_err(fn_name, e))?
     } else {
         if args.len() < 3 {
@@ -1108,7 +1264,7 @@ fn meas_riseset(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlErro
         } else {
             (DirectionRef::J2000, 2)
         };
-        let frame = build_frame_with_epoch_pos(&args[tail_start..], fn_name)?;
+        let frame = build_frame_with_epoch_pos(&args[tail_start..], fn_name, measures)?;
         let dir = MDirection::from_angles(lon, lat, src);
         dir.rise_set_times(&frame)
             .map_err(|e| measure_err(fn_name, e))?
@@ -1129,6 +1285,7 @@ fn meas_earthmag(
     args: &[ExprValue],
     output: EarthMagneticOutput,
     fn_name: &str,
+    measures: MeasuresRef<'_>,
 ) -> Result<ExprValue, TaqlError> {
     check_arity_range(fn_name, args, 1, 9)?;
     if any_null(args) {
@@ -1163,9 +1320,9 @@ fn meas_earthmag(
     }
 
     let frame = if args.len() > start + consumed {
-        build_frame_with_epoch_pos(&args[start + consumed..], fn_name)?
+        build_frame_with_epoch_pos(&args[start + consumed..], fn_name, measures)?
     } else {
-        MeasFrame::new()
+        meas_frame(measures)
     };
     let field = match parsed {
         EarthMagneticParsedInput::Xyz(xyz) => {
@@ -1188,6 +1345,7 @@ fn meas_igrf(
     args: &[ExprValue],
     output: IgrfOutput,
     fn_name: &str,
+    measures: MeasuresRef<'_>,
 ) -> Result<ExprValue, TaqlError> {
     check_arity_range(fn_name, args, 2, 8)?;
     if any_null(args) {
@@ -1230,9 +1388,9 @@ fn meas_igrf(
     let height_m = expr_to_length_m(&args[start], fn_name)?;
     let (direction_input, consumed) = parse_direction_input(&args[start + 1..], fn_name)?;
     let frame = if args.len() > start + 1 + consumed {
-        build_frame_with_epoch_pos(&args[start + 1 + consumed..], fn_name)?
+        build_frame_with_epoch_pos(&args[start + 1 + consumed..], fn_name, measures)?
     } else {
-        MeasFrame::new()
+        meas_frame(measures)
     };
     let direction = direction_input.materialize(&frame)?;
     let sample =
@@ -1272,13 +1430,17 @@ fn meas_igrf(
 /// # Returns
 ///
 /// `Array([x, y, z])` — position in the target frame.
-fn meas_pos(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
+fn meas_pos(
+    args: &[ExprValue],
+    fn_name: &str,
+    measures: MeasuresRef<'_>,
+) -> Result<ExprValue, TaqlError> {
     check_arity_range(fn_name, args, 2, 5)?;
     if any_null(args) {
         return Ok(ExprValue::Null);
     }
     let target: PositionRef = parse_ref(&args[0], fn_name)?;
-    let pos = parse_position_input(&args[1..], fn_name)?;
+    let pos = parse_position_input(&args[1..], fn_name, measures)?;
     let converted = pos
         .convert_to(target)
         .map_err(|e| measure_err(fn_name, e))?;
@@ -1291,6 +1453,7 @@ fn meas_pos_extract(
     target: PositionRef,
     output: PositionOutput,
     fn_name: &str,
+    measures: MeasuresRef<'_>,
 ) -> Result<ExprValue, TaqlError> {
     if !(args.len() == 1 || args.len() == 3 || args.len() == 4) {
         return Err(TaqlError::ArgumentCount {
@@ -1302,7 +1465,7 @@ fn meas_pos_extract(
     if any_null(args) {
         return Ok(ExprValue::Null);
     }
-    let input = parse_position_input(args, fn_name)?;
+    let input = parse_position_input(args, fn_name, measures)?;
     let converted = input
         .convert_to(target)
         .map_err(|e| measure_err(fn_name, e))?;
@@ -1350,7 +1513,11 @@ fn meas_pos_extract(
 /// # Returns
 ///
 /// `Float` — frequency in Hz in the target frame.
-fn meas_freq(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
+fn meas_freq(
+    args: &[ExprValue],
+    fn_name: &str,
+    measures: MeasuresRef<'_>,
+) -> Result<ExprValue, TaqlError> {
     check_arity_range(fn_name, args, 2, 11)?;
     if any_null(args) {
         return Ok(ExprValue::Null);
@@ -1372,16 +1539,16 @@ fn meas_freq(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> 
         }
         let rv = parse_radvel_input(&args[3], &args[4], fn_name)?;
         let mut frame = if args.len() > 5 {
-            build_frame_with_dir_epoch_pos(&args[5..])?
+            build_frame_with_dir_epoch_pos(&args[5..], measures)?
         } else {
-            MeasFrame::new()
+            meas_frame(measures)
         };
         frame = frame.with_radial_velocity(rv);
         frame
     } else if args.len() > 3 {
-        build_frame_with_dir_epoch_pos(&args[3..])?
+        build_frame_with_dir_epoch_pos(&args[3..], measures)?
     } else {
-        MeasFrame::new()
+        meas_frame(measures)
     };
     let freq = MFrequency::new(hz, src);
     let converted = freq
@@ -1392,7 +1559,11 @@ fn meas_freq(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> 
 
 /// `meas.rest(hz, src_ref, doppler [, doppler_ref])`
 /// or `meas.rest(hz, src_ref, rv_ms, rv_ref [, dir_lon, dir_lat, epoch, px, py, pz])`.
-fn meas_rest(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
+fn meas_rest(
+    args: &[ExprValue],
+    fn_name: &str,
+    measures: MeasuresRef<'_>,
+) -> Result<ExprValue, TaqlError> {
     check_arity_range(fn_name, args, 3, 10)?;
     if any_null(args) {
         return Ok(ExprValue::Null);
@@ -1424,9 +1595,9 @@ fn meas_rest(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> 
 
     let rv = parse_radvel_input(&args[2], &args[3], fn_name)?;
     let mut frame = if args.len() > 4 {
-        build_frame_with_dir_epoch_pos(&args[4..])?
+        build_frame_with_dir_epoch_pos(&args[4..], measures)?
     } else {
-        MeasFrame::new()
+        meas_frame(measures)
     };
     frame = frame.with_radial_velocity(rv);
 
@@ -1437,7 +1608,11 @@ fn meas_rest(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> 
 }
 
 /// `meas.shift(hz, src_ref, doppler [, doppler_ref])` — apply a Doppler shift.
-fn meas_shift(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
+fn meas_shift(
+    args: &[ExprValue],
+    fn_name: &str,
+    _measures: MeasuresRef<'_>,
+) -> Result<ExprValue, TaqlError> {
     check_arity_range(fn_name, args, 3, 4)?;
     if any_null(args) {
         return Ok(ExprValue::Null);
@@ -1497,7 +1672,11 @@ fn meas_doppler(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlErro
 /// # Returns
 ///
 /// `Float` — velocity in m/s in the target frame.
-fn meas_radvel(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError> {
+fn meas_radvel(
+    args: &[ExprValue],
+    fn_name: &str,
+    measures: MeasuresRef<'_>,
+) -> Result<ExprValue, TaqlError> {
     check_arity_range(fn_name, args, 2, 9)?;
     if any_null(args) {
         return Ok(ExprValue::Null);
@@ -1510,9 +1689,9 @@ fn meas_radvel(args: &[ExprValue], fn_name: &str) -> Result<ExprValue, TaqlError
         RadialVelocityRef::LSRK
     };
     let frame = if args.len() > 3 {
-        build_frame_with_dir_epoch_pos(&args[3..])?
+        build_frame_with_dir_epoch_pos(&args[3..], measures)?
     } else {
-        MeasFrame::new()
+        meas_frame(measures)
     };
     let rv = MRadialVelocity::new(ms, src);
     let converted = rv
@@ -1628,12 +1807,12 @@ mod tests {
     fn last_with_position() {
         let epoch = MEpoch::from_mjd(50217.625, EpochRef::UTC);
         let frame = MeasFrame::new()
+            .with_measures(Arc::new(TestMeasuresProvider))
             .with_position(MPosition::new_wgs84(
                 6.60417_f64.to_radians(),
                 52.8_f64.to_radians(),
                 10.0,
-            ))
-            .with_standard_eop();
+            ));
         let expected = epoch
             .convert_to(EpochRef::LAST, &frame)
             .unwrap()

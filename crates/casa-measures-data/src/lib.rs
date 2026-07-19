@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA-table-backed measures runtime data for astronomical conversions.
 //!
-//! The runtime model follows CASA's layout and defaults:
-//!
-//! - default measures path: `~/.casa/data`
-//! - preferred source: an existing CASA/casaconfig-populated tree
-//! - fallback for the default path only: a packaged CASA-table snapshot shipped
-//!   with `casa-rs` and unpacked into `~/.casa/data` on first use
-//! - explicit override: `CASA_RS_MEASURESPATH` (with deprecated compatibility
-//!   alias `CASA_RS_DATA`)
+//! [`MeasuresRuntime`] validates and lazily reads one explicit CASA measures
+//! tree. Discovery and packaged-snapshot installation are separate, fallible
+//! operations; scientific calls never mutate a user's data directory.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use casa_table_read::{PlainTable, TableReadError};
+use casa_tables::{Table, TableOptions};
+use casa_types::measures::{
+    EopValues as ProviderEopValues, MeasuresProvider, NamedSourceDirection, ObservatoryPosition,
+};
+use casa_types::{ArrayValue, ScalarValue};
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use tar::Archive;
@@ -33,12 +32,13 @@ pub use source::{SourceCatalog, SourceEntry};
 pub use spectral_line::{SpectralLineCatalog, SpectralLineEntry};
 
 const DEFAULT_MEASURES_ENV: &str = "CASA_RS_MEASURESPATH";
-const LEGACY_MEASURES_ENV: &str = "CASA_RS_DATA";
 const DEFAULT_MEASURES_RELATIVE: &str = ".casa/data";
+const INSTALLED_PROVENANCE_FILE: &str = ".casa-rs-measures-provenance.json";
 const PACKAGED_SNAPSHOT_ARCHIVE: &[u8] = include_bytes!("../data/casa-measures-runtime.tar.gz");
 const PACKAGED_SNAPSHOT_PROVENANCE_JSON: &str =
     include_str!("../data/casa-measures-runtime.provenance.json");
-const REQUIRED_RELATIVE_PATHS: &[&str] = &[
+/// One shared manifest for validation and packaged-snapshot installation.
+pub const REQUIRED_RELATIVE_PATHS: &[&str] = &[
     "geodetic/IERSeop2000/table.dat",
     "geodetic/IERSpredict2000/table.dat",
     "geodetic/TAI_UTC/table.dat",
@@ -51,9 +51,21 @@ const REQUIRED_RELATIVE_PATHS: &[&str] = &[
     "ephemerides/Sources/table.dat",
     "ephemerides/Lines/table.dat",
 ];
-const REQUIRED_NONEMPTY_DIRS: &[&str] = &["ephemerides/JPL-Horizons"];
+pub const REQUIRED_NONEMPTY_DIRS: &[&str] = &["ephemerides/JPL-Horizons"];
+/// Relative paths included when producing the packaged runtime snapshot.
+pub const PACKAGED_SNAPSHOT_PATHS: &[&str] = &[
+    "readme.txt",
+    "geodetic",
+    "ephemerides/DE200",
+    "ephemerides/DE405",
+    "ephemerides/VGEO",
+    "ephemerides/VTOP",
+    "ephemerides/JPL-Horizons",
+    "ephemerides/Sources",
+    "ephemerides/Lines",
+];
 
-/// Errors from raw `finals2000A.data` operations kept for compatibility.
+/// Errors from explicitly parsing raw `finals2000A.data` input.
 #[derive(Debug, Clone)]
 pub enum EopError {
     /// A parsing error in the data file.
@@ -78,12 +90,16 @@ impl std::error::Error for EopError {}
 pub enum MeasuresDataError {
     /// The runtime measures path is unavailable or incomplete.
     RuntimePath(String),
+    /// The runtime tree exists but does not satisfy the shared manifest.
+    IncompleteTree(String),
     /// A packaged snapshot bootstrap step failed.
     Bootstrap(String),
     /// Reading a CASA table failed.
     TableRead(String),
     /// The packaged provenance metadata is invalid.
     Provenance(String),
+    /// The caller's explicit freshness threshold was exceeded.
+    Stale { age_days: f64, maximum_days: f64 },
     /// The requested data is unavailable from the runtime tree.
     MissingData(String),
 }
@@ -92,9 +108,17 @@ impl fmt::Display for MeasuresDataError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RuntimePath(msg) => write!(f, "measures runtime path error: {msg}"),
+            Self::IncompleteTree(msg) => write!(f, "incomplete measures runtime: {msg}"),
             Self::Bootstrap(msg) => write!(f, "measures bootstrap error: {msg}"),
             Self::TableRead(msg) => write!(f, "measures table read error: {msg}"),
             Self::Provenance(msg) => write!(f, "measures provenance error: {msg}"),
+            Self::Stale {
+                age_days,
+                maximum_days,
+            } => write!(
+                f,
+                "measures runtime is {age_days:.0} days old (maximum {maximum_days:.0})"
+            ),
             Self::MissingData(msg) => write!(f, "measures data missing: {msg}"),
         }
     }
@@ -102,13 +126,78 @@ impl fmt::Display for MeasuresDataError {
 
 impl std::error::Error for MeasuresDataError {}
 
-impl From<TableReadError> for MeasuresDataError {
-    fn from(value: TableReadError) -> Self {
+impl From<casa_tables::TableError> for MeasuresDataError {
+    fn from(value: casa_tables::TableError) -> Self {
         Self::TableRead(value.to_string())
     }
 }
 
-/// Provenance for the packaged fallback snapshot.
+#[derive(Debug)]
+struct RuntimeTable {
+    table: Table,
+}
+
+impl RuntimeTable {
+    fn open(path: &Path) -> Result<Self, MeasuresDataError> {
+        Ok(Self {
+            table: Table::open(TableOptions::new(path))?,
+        })
+    }
+
+    fn row_count(&self) -> usize {
+        self.table.row_count()
+    }
+
+    fn scalar_f64(&self, name: &str) -> Result<Vec<f64>, MeasuresDataError> {
+        self.table
+            .column_accessor(name)?
+            .scalar_cells_owned()?
+            .into_iter()
+            .enumerate()
+            .map(|(row, value)| match value {
+                Some(ScalarValue::Float64(value)) => Ok(value),
+                Some(value) => Err(MeasuresDataError::TableRead(format!(
+                    "column {name:?} row {row} is {:?}, expected f64",
+                    value.primitive_type()
+                ))),
+                None => Err(MeasuresDataError::TableRead(format!(
+                    "column {name:?} row {row} is undefined"
+                ))),
+            })
+            .collect()
+    }
+
+    fn scalar_string(&self, name: &str) -> Result<Vec<String>, MeasuresDataError> {
+        self.table
+            .column_accessor(name)?
+            .scalar_cells_owned()?
+            .into_iter()
+            .enumerate()
+            .map(|(row, value)| match value {
+                Some(ScalarValue::String(value)) => Ok(value),
+                Some(value) => Err(MeasuresDataError::TableRead(format!(
+                    "column {name:?} row {row} is {:?}, expected string",
+                    value.primitive_type()
+                ))),
+                None => Err(MeasuresDataError::TableRead(format!(
+                    "column {name:?} row {row} is undefined"
+                ))),
+            })
+            .collect()
+    }
+
+    fn array_f64_cell(&self, name: &str, row: usize) -> Result<Vec<f64>, MeasuresDataError> {
+        match self.table.column_accessor(name)?.array_cell(row)? {
+            ArrayValue::Float64(values) => Ok(values.iter().copied().collect()),
+            values => Err(MeasuresDataError::TableRead(format!(
+                "column {name:?} row {row} is {:?}, expected f64 array",
+                values.primitive_type()
+            ))),
+        }
+    }
+}
+
+/// Provenance for the explicitly installable packaged snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotProvenance {
     /// When the packaged snapshot was generated.
@@ -219,11 +308,6 @@ impl EopTable {
         let content = std::fs::read_to_string(path.as_ref())
             .map_err(|error| EopError::IoError(format!("{}: {error}", path.as_ref().display())))?;
         Self::from_finals2000a(&content)
-    }
-
-    /// Return the standard runtime EOP table.
-    pub fn bundled() -> &'static Self {
-        load_eop().0
     }
 
     fn from_entries(entries: Vec<EopEntry>) -> Result<Self, MeasuresDataError> {
@@ -385,20 +469,260 @@ impl IgrfTable {
     }
 }
 
-static STANDARD_MEASURES_ROOT: OnceLock<Result<(PathBuf, &'static str), String>> = OnceLock::new();
-static STANDARD_EOP: OnceLock<Result<(EopTable, &'static str), String>> = OnceLock::new();
-static STANDARD_OBSERVATORIES: OnceLock<Result<(ObservatoryCatalog, &'static str), String>> =
-    OnceLock::new();
-static STANDARD_SOURCES: OnceLock<Result<(SourceCatalog, &'static str), String>> = OnceLock::new();
-static STANDARD_SPECTRAL_LINES: OnceLock<Result<(SpectralLineCatalog, &'static str), String>> =
-    OnceLock::new();
-static STANDARD_TAI_UTC: OnceLock<Result<TaiUtcTable, String>> = OnceLock::new();
-static STANDARD_IGRF: OnceLock<Result<IgrfTable, String>> = OnceLock::new();
 static PACKAGED_PROVENANCE: OnceLock<Result<SnapshotProvenance, String>> = OnceLock::new();
 
-/// Maximum age (in days) of the packaged snapshot's measures date before it is
-/// considered stale.
-pub const PACKAGED_STALENESS_THRESHOLD_DAYS: f64 = 180.0;
+/// Validation policy applied when opening an explicit runtime root.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RuntimePolicy {
+    /// Require installed provenance metadata.
+    pub require_provenance: bool,
+    /// Optional `(current_mjd, maximum_age_days)` freshness check.
+    pub freshness: Option<(f64, f64)>,
+}
+
+/// A non-mutating candidate returned by runtime discovery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeCandidate {
+    pub path: PathBuf,
+    pub source: &'static str,
+    pub complete: bool,
+}
+
+/// Fallible handle for one explicitly selected measures-data tree.
+#[derive(Debug)]
+pub struct MeasuresRuntime {
+    root: PathBuf,
+    provenance: Option<SnapshotProvenance>,
+    eop: OnceLock<Result<EopTable, String>>,
+    observatories: OnceLock<Result<ObservatoryCatalog, String>>,
+    sources: OnceLock<Result<SourceCatalog, String>>,
+    spectral_lines: OnceLock<Result<SpectralLineCatalog, String>>,
+    tai_utc: OnceLock<Result<TaiUtcTable, String>>,
+    igrf: OnceLock<Result<IgrfTable, String>>,
+}
+
+impl MeasuresRuntime {
+    /// Validate and open one root. Construction and later reads never write.
+    pub fn open(
+        root: impl Into<PathBuf>,
+        policy: RuntimePolicy,
+    ) -> Result<Self, MeasuresDataError> {
+        let root = root.into();
+        validate_measures_tree(&root)?;
+        let provenance_path = root.join(INSTALLED_PROVENANCE_FILE);
+        let provenance = if provenance_path.is_file() {
+            let bytes = std::fs::read(&provenance_path).map_err(|error| {
+                MeasuresDataError::Provenance(format!("{}: {error}", provenance_path.display()))
+            })?;
+            Some(
+                serde_json::from_slice::<SnapshotProvenance>(&bytes).map_err(|error| {
+                    MeasuresDataError::Provenance(format!("{}: {error}", provenance_path.display()))
+                })?,
+            )
+        } else if policy.require_provenance {
+            return Err(MeasuresDataError::Provenance(format!(
+                "{} is missing",
+                provenance_path.display()
+            )));
+        } else {
+            None
+        };
+        if let Some((current_mjd, maximum_days)) = policy.freshness {
+            let provenance = provenance.as_ref().ok_or_else(|| {
+                MeasuresDataError::Provenance("freshness requires installed provenance".to_string())
+            })?;
+            let age_days =
+                parse_measures_version_mjd_age(&provenance.measures_version, current_mjd)
+                    .ok_or_else(|| {
+                        MeasuresDataError::Provenance(format!(
+                            "invalid measures version {:?}",
+                            provenance.measures_version
+                        ))
+                    })?;
+            if age_days > maximum_days {
+                return Err(MeasuresDataError::Stale {
+                    age_days,
+                    maximum_days,
+                });
+            }
+        }
+        Ok(Self {
+            root,
+            provenance,
+            eop: OnceLock::new(),
+            observatories: OnceLock::new(),
+            sources: OnceLock::new(),
+            spectral_lines: OnceLock::new(),
+            tai_utc: OnceLock::new(),
+            igrf: OnceLock::new(),
+        })
+    }
+
+    /// Discover the configured and conventional candidates without opening,
+    /// installing, or otherwise mutating them.
+    pub fn discover_candidates() -> Result<Vec<RuntimeCandidate>, MeasuresDataError> {
+        let mut candidates = Vec::new();
+        if let Some(path) = std::env::var_os(DEFAULT_MEASURES_ENV).map(PathBuf::from) {
+            candidates.push(RuntimeCandidate {
+                complete: measures_tree_complete(&path),
+                path,
+                source: "$CASA_RS_MEASURESPATH",
+            });
+        }
+        let path = default_measures_path()?;
+        if candidates.iter().all(|candidate| candidate.path != path) {
+            candidates.push(RuntimeCandidate {
+                complete: measures_tree_complete(&path),
+                path,
+                source: "~/.casa/data",
+            });
+        }
+        Ok(candidates)
+    }
+
+    /// Open the first complete discovered candidate using an explicit policy.
+    pub fn open_discovered(policy: RuntimePolicy) -> Result<Self, MeasuresDataError> {
+        let candidates = Self::discover_candidates()?;
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.complete)
+            .ok_or_else(|| {
+                MeasuresDataError::RuntimePath(format!(
+                    "no complete measures runtime found; checked {}",
+                    candidates
+                        .iter()
+                        .map(|candidate| candidate.path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })?;
+        Self::open(candidate.path.clone(), policy)
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn provenance(&self) -> Option<&SnapshotProvenance> {
+        self.provenance.as_ref()
+    }
+
+    pub fn eop(&self) -> Result<&EopTable, MeasuresDataError> {
+        cached(&self.eop, || load_eop_from(&self.root))
+    }
+
+    pub fn observatories(&self) -> Result<&ObservatoryCatalog, MeasuresDataError> {
+        cached(&self.observatories, || load_observatories_from(&self.root))
+    }
+
+    pub fn sources(&self) -> Result<&SourceCatalog, MeasuresDataError> {
+        cached(&self.sources, || load_sources_from(&self.root))
+    }
+
+    pub fn spectral_lines(&self) -> Result<&SpectralLineCatalog, MeasuresDataError> {
+        cached(&self.spectral_lines, || {
+            load_spectral_lines_from(&self.root)
+        })
+    }
+
+    pub fn tai_minus_utc_seconds(&self, utc_mjd: f64) -> Result<f64, MeasuresDataError> {
+        cached(&self.tai_utc, || load_tai_utc_from(&self.root))?.tai_minus_utc_seconds(utc_mjd)
+    }
+
+    pub fn utc_from_tai_mjd(&self, tai_mjd: f64) -> Result<f64, MeasuresDataError> {
+        cached(&self.tai_utc, || load_tai_utc_from(&self.root))?.utc_mjd_from_tai_mjd(tai_mjd)
+    }
+
+    pub fn igrf_coefficients(
+        &self,
+        decimal_year: f64,
+    ) -> Result<(Vec<f64>, usize), MeasuresDataError> {
+        cached(&self.igrf, || load_igrf_from(&self.root))?
+            .coefficients_for_decimal_year(decimal_year)
+    }
+}
+
+fn cached<T>(
+    cell: &OnceLock<Result<T, String>>,
+    load: impl FnOnce() -> Result<T, MeasuresDataError>,
+) -> Result<&T, MeasuresDataError> {
+    match cell.get_or_init(|| load().map_err(|error| error.to_string())) {
+        Ok(value) => Ok(value),
+        Err(error) => Err(MeasuresDataError::TableRead(error.clone())),
+    }
+}
+
+impl MeasuresProvider for MeasuresRuntime {
+    fn eop_values(&self, utc_mjd: f64) -> Result<Option<ProviderEopValues>, String> {
+        self.eop()
+            .map(|table| {
+                table.interpolate(utc_mjd).map(|value| ProviderEopValues {
+                    dut1_seconds: value.dut1_seconds,
+                    x_arcsec: value.x_arcsec,
+                    y_arcsec: value.y_arcsec,
+                    dx_mas: value.dx_mas,
+                    dy_mas: value.dy_mas,
+                    is_predicted: value.is_predicted,
+                })
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    fn tai_minus_utc_seconds(&self, utc_mjd: f64) -> Result<f64, String> {
+        self.tai_minus_utc_seconds(utc_mjd)
+            .map_err(|error| error.to_string())
+    }
+
+    fn utc_from_tai_mjd(&self, tai_mjd: f64) -> Result<f64, String> {
+        self.utc_from_tai_mjd(tai_mjd)
+            .map_err(|error| error.to_string())
+    }
+
+    fn igrf_coefficients(&self, decimal_year: f64) -> Result<(Vec<f64>, usize), String> {
+        self.igrf_coefficients(decimal_year)
+            .map_err(|error| error.to_string())
+    }
+
+    fn observatory(&self, name: &str) -> Result<Option<ObservatoryPosition>, String> {
+        self.observatories()
+            .map(|catalog| {
+                catalog.get(name).and_then(|entry| {
+                    match entry.observatory_type.to_ascii_uppercase().as_str() {
+                        "ITRF" => Some(ObservatoryPosition::Itrf {
+                            x_m: entry.x_m,
+                            y_m: entry.y_m,
+                            z_m: entry.z_m,
+                        }),
+                        "WGS84" => Some(ObservatoryPosition::Wgs84 {
+                            longitude_rad: entry.longitude_deg.to_radians(),
+                            latitude_rad: entry.latitude_deg.to_radians(),
+                            height_m: entry.height_m,
+                        }),
+                        _ => None,
+                    }
+                })
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    fn source(&self, name: &str) -> Result<Option<NamedSourceDirection>, String> {
+        self.sources()
+            .map(|catalog| {
+                catalog.get(name).map(|entry| NamedSourceDirection {
+                    reference: entry.direction_type.clone(),
+                    longitude_rad: entry.longitude_rad(),
+                    latitude_rad: entry.latitude_rad(),
+                })
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    fn spectral_line_hz(&self, name: &str) -> Result<Option<f64>, String> {
+        self.spectral_lines()
+            .map(|catalog| catalog.get(name).map(SpectralLineEntry::frequency_hz))
+            .map_err(|error| error.to_string())
+    }
+}
 
 /// Return the packaged snapshot provenance.
 pub fn packaged_snapshot_provenance() -> Result<&'static SnapshotProvenance, MeasuresDataError> {
@@ -408,169 +732,6 @@ pub fn packaged_snapshot_provenance() -> Result<&'static SnapshotProvenance, Mea
         Ok(provenance) => Ok(provenance),
         Err(error) => Err(MeasuresDataError::Provenance(error.clone())),
     }
-}
-
-/// Check whether the packaged snapshot is stale relative to the given MJD.
-pub fn check_packaged_snapshot_freshness(current_mjd: f64) -> Result<f64, f64> {
-    let version = packaged_snapshot_provenance()
-        .ok()
-        .map(|provenance| provenance.measures_version.clone())
-        .unwrap_or_default();
-    let days_old = parse_measures_version_mjd_age(&version, current_mjd).unwrap_or(f64::INFINITY);
-    if days_old > PACKAGED_STALENESS_THRESHOLD_DAYS {
-        Err(days_old)
-    } else {
-        Ok(days_old)
-    }
-}
-
-/// Discover the standard measures path and its provenance label.
-pub fn standard_measures_path() -> Result<(&'static Path, &'static str), MeasuresDataError> {
-    match STANDARD_MEASURES_ROOT
-        .get_or_init(|| resolve_standard_measures_root().map_err(|error| error.to_string()))
-    {
-        Ok((path, source)) => Ok((path.as_path(), *source)),
-        Err(error) => Err(MeasuresDataError::RuntimePath(error.clone())),
-    }
-}
-
-/// Load the standard runtime EOP table.
-pub fn try_load_eop() -> Result<(&'static EopTable, &'static str), MeasuresDataError> {
-    match STANDARD_EOP.get_or_init(|| load_standard_eop().map_err(|error| error.to_string())) {
-        Ok((table, source)) => Ok((table, *source)),
-        Err(error) => Err(MeasuresDataError::TableRead(error.clone())),
-    }
-}
-
-/// Infallible compatibility wrapper for callers that expect a standard table.
-pub fn load_eop() -> (&'static EopTable, &'static str) {
-    try_load_eop().unwrap_or_else(|error| panic!("failed to load standard EOP runtime: {error}"))
-}
-
-/// Load the standard runtime observatory catalog.
-pub fn try_load_observatories()
--> Result<(&'static ObservatoryCatalog, &'static str), MeasuresDataError> {
-    match STANDARD_OBSERVATORIES
-        .get_or_init(|| load_standard_observatories().map_err(|error| error.to_string()))
-    {
-        Ok((catalog, source)) => Ok((catalog, *source)),
-        Err(error) => Err(MeasuresDataError::TableRead(error.clone())),
-    }
-}
-
-/// Infallible compatibility wrapper for callers that expect a standard catalog.
-pub fn load_observatories() -> (&'static ObservatoryCatalog, &'static str) {
-    try_load_observatories()
-        .unwrap_or_else(|error| panic!("failed to load standard observatory runtime: {error}"))
-}
-
-/// Load the standard runtime source catalog.
-pub fn try_load_sources() -> Result<(&'static SourceCatalog, &'static str), MeasuresDataError> {
-    match STANDARD_SOURCES
-        .get_or_init(|| load_standard_sources().map_err(|error| error.to_string()))
-    {
-        Ok((catalog, source)) => Ok((catalog, *source)),
-        Err(error) => Err(MeasuresDataError::TableRead(error.clone())),
-    }
-}
-
-/// Infallible compatibility wrapper for callers that expect a standard catalog.
-pub fn load_sources() -> (&'static SourceCatalog, &'static str) {
-    try_load_sources()
-        .unwrap_or_else(|error| panic!("failed to load standard source runtime: {error}"))
-}
-
-/// Load the standard runtime spectral-line catalog.
-pub fn try_load_spectral_lines()
--> Result<(&'static SpectralLineCatalog, &'static str), MeasuresDataError> {
-    match STANDARD_SPECTRAL_LINES
-        .get_or_init(|| load_standard_spectral_lines().map_err(|error| error.to_string()))
-    {
-        Ok((catalog, source)) => Ok((catalog, *source)),
-        Err(error) => Err(MeasuresDataError::TableRead(error.clone())),
-    }
-}
-
-/// Infallible compatibility wrapper for callers that expect a standard catalog.
-pub fn load_spectral_lines() -> (&'static SpectralLineCatalog, &'static str) {
-    try_load_spectral_lines()
-        .unwrap_or_else(|error| panic!("failed to load standard spectral-line runtime: {error}"))
-}
-
-/// Compute `TAI-UTC` in seconds from the standard `geodetic/TAI_UTC` table.
-pub fn tai_minus_utc_seconds(utc_mjd: f64) -> Result<f64, MeasuresDataError> {
-    let table = match STANDARD_TAI_UTC
-        .get_or_init(|| load_standard_tai_utc().map_err(|error| error.to_string()))
-    {
-        Ok(table) => table,
-        Err(error) => return Err(MeasuresDataError::TableRead(error.clone())),
-    };
-    table.tai_minus_utc_seconds(utc_mjd)
-}
-
-/// Invert `TAI = UTC + (TAI-UTC)` using the standard `geodetic/TAI_UTC` table.
-pub fn utc_from_tai_mjd(tai_mjd: f64) -> Result<f64, MeasuresDataError> {
-    let table = match STANDARD_TAI_UTC
-        .get_or_init(|| load_standard_tai_utc().map_err(|error| error.to_string()))
-    {
-        Ok(table) => table,
-        Err(error) => return Err(MeasuresDataError::TableRead(error.clone())),
-    };
-    table.utc_mjd_from_tai_mjd(tai_mjd)
-}
-
-/// Load IGRF coefficients for a given decimal year from the standard runtime.
-pub fn igrf_coefficients_for_decimal_year(
-    decimal_year: f64,
-) -> Result<(Vec<f64>, usize), MeasuresDataError> {
-    let table = match STANDARD_IGRF
-        .get_or_init(|| load_standard_igrf().map_err(|error| error.to_string()))
-    {
-        Ok(table) => table,
-        Err(error) => return Err(MeasuresDataError::TableRead(error.clone())),
-    };
-    table.coefficients_for_decimal_year(decimal_year)
-}
-
-fn resolve_standard_measures_root() -> Result<(PathBuf, &'static str), MeasuresDataError> {
-    let default_path = default_measures_path()?;
-    resolve_standard_measures_root_inner(
-        std::env::var(DEFAULT_MEASURES_ENV).ok().map(PathBuf::from),
-        std::env::var(LEGACY_MEASURES_ENV).ok().map(PathBuf::from),
-        default_path,
-    )
-}
-
-fn resolve_standard_measures_root_inner(
-    explicit_override: Option<PathBuf>,
-    legacy_override: Option<PathBuf>,
-    default_path: PathBuf,
-) -> Result<(PathBuf, &'static str), MeasuresDataError> {
-    if let Some(path) = explicit_override {
-        if measures_tree_complete(&path) {
-            return Ok((path, "$CASA_RS_MEASURESPATH"));
-        }
-        return Err(MeasuresDataError::RuntimePath(format!(
-            "{DEFAULT_MEASURES_ENV} points to an incomplete measures tree"
-        )));
-    }
-
-    if let Some(path) = legacy_override {
-        if measures_tree_complete(&path) {
-            return Ok((path, "$CASA_RS_DATA"));
-        }
-        return Err(MeasuresDataError::RuntimePath(format!(
-            "{LEGACY_MEASURES_ENV} points to an incomplete measures tree"
-        )));
-    }
-
-    let source = if measures_tree_complete(&default_path) {
-        "~/.casa/data"
-    } else {
-        bootstrap_packaged_snapshot(&default_path)?;
-        "~/.casa/data (bootstrapped)"
-    };
-    Ok((default_path, source))
 }
 
 fn default_measures_path() -> Result<PathBuf, MeasuresDataError> {
@@ -596,7 +757,18 @@ fn measures_tree_complete(root: &Path) -> bool {
         })
 }
 
-fn bootstrap_packaged_snapshot(root: &Path) -> Result<(), MeasuresDataError> {
+fn validate_measures_tree(root: &Path) -> Result<(), MeasuresDataError> {
+    if measures_tree_complete(root) {
+        Ok(())
+    } else {
+        Err(MeasuresDataError::IncompleteTree(
+            root.display().to_string(),
+        ))
+    }
+}
+
+/// Explicitly install the packaged snapshot at a caller-selected destination.
+pub fn install_packaged_snapshot(root: &Path) -> Result<SnapshotProvenance, MeasuresDataError> {
     std::fs::create_dir_all(root).map_err(|error| {
         MeasuresDataError::Bootstrap(format!("creating {}: {error}", root.display()))
     })?;
@@ -616,13 +788,18 @@ fn bootstrap_packaged_snapshot(root: &Path) -> Result<(), MeasuresDataError> {
             root.display()
         )));
     }
-    Ok(())
+    let provenance = packaged_snapshot_provenance()?.clone();
+    let provenance_bytes = serde_json::to_vec_pretty(&provenance)
+        .map_err(|error| MeasuresDataError::Provenance(error.to_string()))?;
+    std::fs::write(root.join(INSTALLED_PROVENANCE_FILE), provenance_bytes).map_err(|error| {
+        MeasuresDataError::Bootstrap(format!("writing installed provenance: {error}"))
+    })?;
+    Ok(provenance)
 }
 
-fn load_standard_eop() -> Result<(EopTable, &'static str), MeasuresDataError> {
-    let (root, source) = standard_measures_path()?;
-    let measured = PlainTable::open(&root.join("geodetic/IERSeop2000"))?;
-    let predicted = PlainTable::open(&root.join("geodetic/IERSpredict2000"))?;
+fn load_eop_from(root: &Path) -> Result<EopTable, MeasuresDataError> {
+    let measured = RuntimeTable::open(&root.join("geodetic/IERSeop2000"))?;
+    let predicted = RuntimeTable::open(&root.join("geodetic/IERSpredict2000"))?;
 
     let measured_rows = eop_entries_from_table(&measured, false)?;
     let mut combined = measured_rows;
@@ -636,11 +813,11 @@ fn load_standard_eop() -> Result<(EopTable, &'static str), MeasuresDataError> {
         }
     }
 
-    Ok((EopTable::from_entries(combined)?, source))
+    EopTable::from_entries(combined)
 }
 
 fn eop_entries_from_table(
-    table: &PlainTable,
+    table: &RuntimeTable,
     is_predicted: bool,
 ) -> Result<Vec<EopEntry>, MeasuresDataError> {
     let mjd = table.scalar_f64("MJD")?;
@@ -666,9 +843,8 @@ fn eop_entries_from_table(
     Ok(entries)
 }
 
-fn load_standard_observatories() -> Result<(ObservatoryCatalog, &'static str), MeasuresDataError> {
-    let (root, source) = standard_measures_path()?;
-    let table = PlainTable::open(&root.join("geodetic/Observatories"))?;
+fn load_observatories_from(root: &Path) -> Result<ObservatoryCatalog, MeasuresDataError> {
+    let table = RuntimeTable::open(&root.join("geodetic/Observatories"))?;
     let mjd = table.scalar_f64("MJD")?;
     let name = table.scalar_string("Name")?;
     let observatory_type = table.scalar_string("Type")?;
@@ -700,12 +876,11 @@ fn load_standard_observatories() -> Result<(ObservatoryCatalog, &'static str), M
         });
     }
 
-    Ok((ObservatoryCatalog::from_entries(entries), source))
+    Ok(ObservatoryCatalog::from_entries(entries))
 }
 
-fn load_standard_sources() -> Result<(SourceCatalog, &'static str), MeasuresDataError> {
-    let (root, source) = standard_measures_path()?;
-    let table = PlainTable::open(&root.join("ephemerides/Sources"))?;
+fn load_sources_from(root: &Path) -> Result<SourceCatalog, MeasuresDataError> {
+    let table = RuntimeTable::open(&root.join("ephemerides/Sources"))?;
     let mjd = table.scalar_f64("MJD")?;
     let name = table.scalar_string("Name")?;
     let direction_type = table.scalar_string("Type")?;
@@ -727,13 +902,11 @@ fn load_standard_sources() -> Result<(SourceCatalog, &'static str), MeasuresData
         });
     }
 
-    Ok((SourceCatalog::from_entries(entries), source))
+    Ok(SourceCatalog::from_entries(entries))
 }
 
-fn load_standard_spectral_lines() -> Result<(SpectralLineCatalog, &'static str), MeasuresDataError>
-{
-    let (root, source) = standard_measures_path()?;
-    let table = PlainTable::open(&root.join("ephemerides/Lines"))?;
+fn load_spectral_lines_from(root: &Path) -> Result<SpectralLineCatalog, MeasuresDataError> {
+    let table = RuntimeTable::open(&root.join("ephemerides/Lines"))?;
     let mjd = table.scalar_f64("MJD")?;
     let name = table.scalar_string("Name")?;
     let frequency_type = table.scalar_string("Type")?;
@@ -753,12 +926,11 @@ fn load_standard_spectral_lines() -> Result<(SpectralLineCatalog, &'static str),
         });
     }
 
-    Ok((SpectralLineCatalog::from_entries(entries), source))
+    Ok(SpectralLineCatalog::from_entries(entries))
 }
 
-fn load_standard_tai_utc() -> Result<TaiUtcTable, MeasuresDataError> {
-    let (root, _source) = standard_measures_path()?;
-    let table = PlainTable::open(&root.join("geodetic/TAI_UTC"))?;
+fn load_tai_utc_from(root: &Path) -> Result<TaiUtcTable, MeasuresDataError> {
+    let table = RuntimeTable::open(&root.join("geodetic/TAI_UTC"))?;
     let mjd = table.scalar_f64("MJD")?;
     let d_utc = table.scalar_f64("dUTC")?;
     let offset = table.scalar_f64("Offset")?;
@@ -775,9 +947,8 @@ fn load_standard_tai_utc() -> Result<TaiUtcTable, MeasuresDataError> {
     Ok(TaiUtcTable { entries })
 }
 
-fn load_standard_igrf() -> Result<IgrfTable, MeasuresDataError> {
-    let (root, _source) = standard_measures_path()?;
-    let table = PlainTable::open(&root.join("geodetic/IGRF"))?;
+fn load_igrf_from(root: &Path) -> Result<IgrfTable, MeasuresDataError> {
+    let table = RuntimeTable::open(&root.join("geodetic/IGRF"))?;
     let mjd = table.scalar_f64("MJD")?;
     let mut years = Vec::with_capacity(table.row_count());
     let mut coeffs_by_year = Vec::with_capacity(table.row_count());
@@ -786,7 +957,7 @@ fn load_standard_igrf() -> Result<IgrfTable, MeasuresDataError> {
 
     for (row, mjd_value) in mjd.iter().copied().enumerate().take(table.row_count()) {
         years.push(decimal_year_from_mjd(mjd_value));
-        let coeffs = table.array_f64_cell("COEF", row)?.to_vec();
+        let coeffs = table.array_f64_cell("COEF", row)?;
         nmax = solve_igrf_nmax(coeffs.len())?;
         coeffs_by_year.push(coeffs);
         secular_variation = table.array_f64_cell("dCOEF", row)?.to_vec();
@@ -892,70 +1063,50 @@ fn mjd_from_calendar(year: i32, month: u32, day: u32) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
-    fn current_mjd() -> f64 {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs_f64();
-        40_587.0 + now / 86_400.0
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn installed_runtime() -> (TempDir, MeasuresRuntime) {
+        let temp = TempDir::new().expect("tempdir");
+        install_packaged_snapshot(temp.path()).expect("install snapshot");
+        let runtime = MeasuresRuntime::open(
+            temp.path(),
+            RuntimePolicy {
+                require_provenance: true,
+                freshness: None,
+            },
+        )
+        .expect("open runtime");
+        (temp, runtime)
     }
 
     #[test]
-    fn standard_measures_path_resolves() {
-        let (path, source) = standard_measures_path().expect("measures path");
-        assert!(path.is_dir());
-        assert!(!source.is_empty());
-    }
-
-    #[test]
-    fn standard_eop_table_loads() {
-        let (table, source) = try_load_eop().expect("eop");
-        assert!(table.entries().len() > 10_000);
-        assert!(!source.is_empty());
-    }
-
-    #[test]
-    fn standard_observatory_catalog_loads() {
-        let (catalog, source) = try_load_observatories().expect("observatories");
+    fn explicit_runtime_loads_every_catalog_through_casa_tables() {
+        let (_temp, runtime) = installed_runtime();
+        assert!(runtime.eop().expect("eop").entries().len() > 10_000);
+        let catalog = runtime.observatories().expect("observatories");
         assert!(catalog.entries().len() > 40);
         assert!(catalog.get("ALMA").is_some());
-        assert!(!source.is_empty());
-    }
-
-    #[test]
-    fn standard_source_catalog_loads() {
-        let (catalog, source) = try_load_sources().expect("sources");
+        let catalog = runtime.sources().expect("sources");
         assert!(catalog.entries().len() > 100);
         let source_0002 = catalog.get("0002-478").expect("catalog source");
         assert_eq!(source_0002.direction_type, "ICRS");
         assert!((source_0002.longitude_rad() - 0.020_046_3).abs() < 1.0e-6);
         assert!((source_0002.latitude_rad() - (-0.830_872)).abs() < 1.0e-6);
-        assert!(!source.is_empty());
-    }
-
-    #[test]
-    fn standard_spectral_line_catalog_loads() {
-        let (catalog, source) = try_load_spectral_lines().expect("lines");
+        let catalog = runtime.spectral_lines().expect("lines");
         assert!(catalog.entries().len() >= 18);
         let hi = catalog.get("HI").expect("HI line");
         assert_eq!(hi.frequency_type, "REST");
         assert!((hi.frequency_hz() - 1.420_405_752e9).abs() < 5.0e3);
-        assert!(!source.is_empty());
-    }
-
-    #[test]
-    fn tai_utc_lookup_is_reasonable() {
-        let tai_minus_utc = tai_minus_utc_seconds(51_544.5).expect("TAI-UTC");
+        let tai_minus_utc = runtime.tai_minus_utc_seconds(51_544.5).expect("TAI-UTC");
         assert!((tai_minus_utc - 32.0).abs() < 1e-6);
-        let utc = utc_from_tai_mjd(51_544.5 + tai_minus_utc / 86_400.0).expect("UTC");
+        let utc = runtime
+            .utc_from_tai_mjd(51_544.5 + tai_minus_utc / 86_400.0)
+            .expect("UTC");
         assert!((utc - 51_544.5).abs() < 1e-10);
-    }
-
-    #[test]
-    fn igrf_coefficients_load_from_runtime_table() {
-        let (coeffs, nmax) = igrf_coefficients_for_decimal_year(2012.5).expect("IGRF");
+        let (coeffs, nmax) = runtime.igrf_coefficients(2012.5).expect("IGRF");
         assert_eq!(nmax, 13);
         assert_eq!(coeffs.len(), 195);
     }
@@ -969,73 +1120,98 @@ mod tests {
     }
 
     #[test]
-    fn packaged_snapshot_not_stale() {
-        let age = check_packaged_snapshot_freshness(current_mjd()).unwrap_or_else(|age| {
-            panic!(
-                "packaged measures snapshot is {age:.0} days old; refresh crates/casa-measures-data/data/casa-measures-runtime.tar.gz"
-            )
-        });
-        assert!(age <= PACKAGED_STALENESS_THRESHOLD_DAYS);
+    fn construction_never_installs_or_repairs_an_incomplete_root() {
+        let temp = TempDir::new().expect("tempdir");
+        let marker = temp.path().join("unchanged");
+        std::fs::write(&marker, b"marker").unwrap();
+        let error = MeasuresRuntime::open(temp.path(), RuntimePolicy::default())
+            .expect_err("incomplete root must fail");
+        assert!(matches!(error, MeasuresDataError::IncompleteTree(_)));
+        assert_eq!(std::fs::read(marker).unwrap(), b"marker");
+        assert!(!temp.path().join("geodetic").exists());
     }
 
     #[test]
-    fn measures_path_override_wins_over_legacy_and_default() {
-        let temp = TempDir::new().expect("tempdir");
-        let explicit = temp.path().join("explicit");
-        let legacy = temp.path().join("legacy");
-        let default = temp.path().join("default");
-        bootstrap_packaged_snapshot(&explicit).expect("bootstrap explicit");
-        bootstrap_packaged_snapshot(&legacy).expect("bootstrap legacy");
-
-        let (resolved, source) =
-            resolve_standard_measures_root_inner(Some(explicit.clone()), Some(legacy), default)
-                .expect("resolved measures path");
-
-        assert_eq!(resolved, explicit);
-        assert_eq!(source, "$CASA_RS_MEASURESPATH");
-    }
-
-    #[test]
-    fn deprecated_legacy_alias_still_works() {
-        let temp = TempDir::new().expect("tempdir");
-        let legacy = temp.path().join("legacy");
-        bootstrap_packaged_snapshot(&legacy).expect("bootstrap legacy");
-
-        let (resolved, source) =
-            resolve_standard_measures_root_inner(None, Some(legacy.clone()), temp.path().join("d"))
-                .expect("resolved measures path");
-
-        assert_eq!(resolved, legacy);
-        assert_eq!(source, "$CASA_RS_DATA");
-    }
-
-    #[test]
-    fn missing_default_path_bootstraps_packaged_snapshot() {
-        let temp = TempDir::new().expect("tempdir");
-        let default = temp.path().join("default");
-
-        let (resolved, source) = resolve_standard_measures_root_inner(None, None, default.clone())
-            .expect("resolved measures path");
-
-        assert_eq!(resolved, default);
-        assert_eq!(source, "~/.casa/data (bootstrapped)");
-        assert!(measures_tree_complete(&resolved));
-    }
-
-    #[test]
-    fn explicit_override_is_not_auto_populated() {
-        let temp = TempDir::new().expect("tempdir");
-        let explicit = temp.path().join("explicit");
-        std::fs::create_dir_all(&explicit).expect("create explicit");
-
-        let error = resolve_standard_measures_root_inner(
-            Some(explicit.clone()),
-            None,
-            temp.path().join("default"),
+    fn corrupt_catalog_is_distinct_from_incomplete_tree() {
+        let (temp, _runtime) = installed_runtime();
+        std::fs::write(
+            temp.path().join("geodetic/Observatories/table.dat"),
+            b"not a casacore table",
         )
-        .expect_err("incomplete override should fail");
+        .expect("corrupt observatory table");
+        let runtime = MeasuresRuntime::open(temp.path(), RuntimePolicy::default())
+            .expect("manifest remains complete");
+        assert!(matches!(
+            runtime.observatories(),
+            Err(MeasuresDataError::TableRead(_))
+        ));
+    }
 
-        assert!(matches!(error, MeasuresDataError::RuntimePath(_)));
-        assert!(!measures_tree_complete(&explicit));
+    #[test]
+    fn discovery_reports_missing_home_without_mutation_or_fallback() {
+        let _guard = ENV_LOCK.lock().expect("environment lock");
+        let old_home = std::env::var_os("HOME");
+        let old_explicit = std::env::var_os(DEFAULT_MEASURES_ENV);
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var(DEFAULT_MEASURES_ENV);
+        }
+
+        let result = MeasuresRuntime::discover_candidates();
+
+        unsafe {
+            match old_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match old_explicit {
+                Some(value) => std::env::set_var(DEFAULT_MEASURES_ENV, value),
+                None => std::env::remove_var(DEFAULT_MEASURES_ENV),
+            }
+        }
+        assert!(matches!(result, Err(MeasuresDataError::RuntimePath(_))));
+    }
+
+    #[test]
+    fn freshness_errors_preserve_invalid_provenance_and_stale_state() {
+        let (temp, _runtime) = installed_runtime();
+        assert!(matches!(
+            MeasuresRuntime::open(
+                temp.path(),
+                RuntimePolicy {
+                    require_provenance: true,
+                    freshness: Some((70_000.0, 180.0)),
+                }
+            ),
+            Err(MeasuresDataError::Stale { .. })
+        ));
+        std::fs::write(temp.path().join(INSTALLED_PROVENANCE_FILE), b"not json").unwrap();
+        assert!(matches!(
+            MeasuresRuntime::open(
+                temp.path(),
+                RuntimePolicy {
+                    require_provenance: true,
+                    freshness: Some((60_000.0, 180.0)),
+                }
+            ),
+            Err(MeasuresDataError::Provenance(_))
+        ));
+    }
+
+    #[test]
+    fn concurrent_catalog_access_reuses_per_runtime_cache() {
+        let (_temp, runtime) = installed_runtime();
+        let runtime = Arc::new(runtime);
+        let handles = (0..4)
+            .map(|_| {
+                let runtime = Arc::clone(&runtime);
+                std::thread::spawn(move || runtime.eop().unwrap().entries().len())
+            })
+            .collect::<Vec<_>>();
+        let lengths = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+        assert!(lengths.iter().all(|length| *length == lengths[0]));
     }
 }

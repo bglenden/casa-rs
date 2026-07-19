@@ -74,6 +74,10 @@ pub enum MsError {
     #[error("measure conversion: {0}")]
     Measure(#[from] MeasureError),
 
+    /// Measures runtime discovery, validation, or table loading failed.
+    #[error("measures runtime: {0}")]
+    MeasuresRuntime(String),
+
     /// A schema construction error.
     #[error("schema error: {0}")]
     Schema(#[from] casa_tables::SchemaError),

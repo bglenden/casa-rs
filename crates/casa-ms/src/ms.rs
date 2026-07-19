@@ -162,7 +162,7 @@ impl MeasurementSet {
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
         let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
-        save_main_table_with_policy(&self.main, &path, false)?;
+        save_main_table_with_policy(&mut self.main, &path)?;
 
         for (id, table) in &self.subtables {
             let subtable_path = self
@@ -178,50 +178,7 @@ impl MeasurementSet {
         Ok(())
     }
 
-    /// Save the MS to its path without re-validating each table against its schema.
-    ///
-    /// This preserves the same on-disk layout as [`save`](Self::save), but
-    /// skips the extra full-table validation pass for the main table and every
-    /// subtable. It is intended for advanced writers that already route all
-    /// mutations through schema-aware code paths and want to avoid rechecking
-    /// every row during the final serialization step.
-    pub fn save_assuming_valid(&mut self) -> MsResult<()> {
-        let path = self
-            .path
-            .as_ref()
-            .ok_or_else(|| MsError::VersionError("MS has no path; use save_as()".to_string()))?
-            .clone();
-        tracing::info!(
-            path = %path.display(),
-            rows = self.row_count(),
-            subtables = self.subtable_ids().len(),
-            "saving MeasurementSet without validation"
-        );
-
-        self.refresh_subtable_paths(&path);
-        self.sync_main_metadata(&path);
-        let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
-        save_main_table_with_policy(&self.main, &path, true)?;
-
-        for (id, table) in &self.subtables {
-            let subtable_path = self
-                .subtable_paths
-                .get(id)
-                .cloned()
-                .unwrap_or_else(|| path.join(id.name()));
-            table.save_assuming_valid(measurement_set_table_options(&subtable_path))?;
-        }
-        crate::write_session::complete_in_place_write(incomplete_marker)?;
-
-        tracing::info!(
-            path = %path.display(),
-            rows = self.row_count(),
-            "saved MeasurementSet without validation"
-        );
-        Ok(())
-    }
-
-    pub(crate) fn save_assuming_valid_with_main_column_overrides(
+    pub(crate) fn save_with_main_column_overrides(
         &mut self,
         column_overrides: &ColumnOverrides,
     ) -> MsResult<()> {
@@ -234,15 +191,17 @@ impl MeasurementSet {
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
         let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
-        save_main_table_with_policy_and_column_overrides(&self.main, &path, column_overrides)?;
+        save_main_table_with_policy_and_column_overrides(&mut self.main, &path, column_overrides)?;
 
-        for (id, table) in &self.subtables {
+        for (id, table) in &mut self.subtables {
             let subtable_path = self
                 .subtable_paths
                 .get(id)
                 .cloned()
                 .unwrap_or_else(|| path.join(id.name()));
-            table.save_assuming_valid(measurement_set_table_options(&subtable_path))?;
+            table
+                .prepare_write()
+                .save(measurement_set_table_options(&subtable_path))?;
         }
         crate::write_session::complete_in_place_write(incomplete_marker)?;
 
@@ -266,35 +225,8 @@ impl MeasurementSet {
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
         let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
-        save_main_table_with_policy(&self.main, &path, false)?;
+        save_main_table_with_policy(&mut self.main, &path)?;
         crate::write_session::complete_in_place_write(incomplete_marker)?;
-        Ok(())
-    }
-
-    /// Save only the MS main table back to disk, assuming MAIN is already schema-valid.
-    ///
-    /// This preserves the same on-disk layout as [`save_main_table_only`](Self::save_main_table_only)
-    /// but skips the extra full-table validation pass before serializing the
-    /// main table. It is intended for write paths that mutate MAIN only
-    /// through validating APIs and want to avoid rechecking every row.
-    pub fn save_main_table_only_assuming_valid(&mut self) -> MsResult<()> {
-        let path = self
-            .path
-            .as_ref()
-            .ok_or_else(|| MsError::VersionError("MS has no path; use save_as()".to_string()))?
-            .clone();
-        tracing::info!(
-            path = %path.display(),
-            rows = self.row_count(),
-            "saving MeasurementSet MAIN table"
-        );
-
-        self.refresh_subtable_paths(&path);
-        self.sync_main_metadata(&path);
-        let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
-        save_main_table_with_policy(&self.main, &path, true)?;
-        crate::write_session::complete_in_place_write(incomplete_marker)?;
-        tracing::info!(path = %path.display(), rows = self.row_count(), "saved MeasurementSet MAIN table");
         Ok(())
     }
 
@@ -309,27 +241,6 @@ impl MeasurementSet {
         self.path = Some(target.staging_path().to_path_buf());
         self.rebase_subtable_paths(target.staging_path());
         self.save()?;
-        target
-            .commit()
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        self.path = Some(path.clone());
-        self.rebase_subtable_paths(&path);
-        Ok(())
-    }
-
-    /// Save the MS to a new path without re-validating every table row.
-    ///
-    /// This is the rebasing counterpart to [`save_assuming_valid`](Self::save_assuming_valid).
-    /// It is intended for workflows that mutate through schema-aware APIs but
-    /// need to preserve legacy or externally-written cells that are readable by
-    /// the storage layer yet fail strict full-row validation.
-    pub fn save_as_assuming_valid(&mut self, path: impl AsRef<Path>) -> MsResult<()> {
-        let path = path.as_ref().to_path_buf();
-        let target = crate::write_session::MeasurementSetCreateTarget::prepare(&path, true)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        self.path = Some(target.staging_path().to_path_buf());
-        self.rebase_subtable_paths(target.staging_path());
-        self.save_assuming_valid()?;
         target
             .commit()
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
@@ -917,40 +828,28 @@ fn measurement_set_save_policy() -> MeasurementSetSavePolicy {
     }
 }
 
-fn save_main_table_with_policy(main: &Table, path: &Path, assume_valid: bool) -> MsResult<()> {
+fn save_main_table_with_policy(main: &mut Table, path: &Path) -> MsResult<()> {
     let options = measurement_set_table_options(path);
     match measurement_set_save_policy() {
-        MeasurementSetSavePolicy::Standard => {
-            if assume_valid {
-                main.save_assuming_valid(options)?;
-            } else {
-                main.save(options)?;
-            }
-        }
+        MeasurementSetSavePolicy::Standard => main.prepare_write().save(options)?,
         MeasurementSetSavePolicy::CasaLikeMixed => {
             let bindings = measurement_set_main_table_bindings(main);
-            if assume_valid {
-                main.save_with_bindings_assuming_valid(options, &bindings)?;
-            } else {
-                main.save_with_bindings(options, &bindings)?;
-            }
+            main.prepare_write()
+                .save_with_bindings(options, &bindings)?;
         }
     }
     Ok(())
 }
 
 fn save_main_table_with_policy_and_column_overrides(
-    main: &Table,
+    main: &mut Table,
     path: &Path,
     column_overrides: &ColumnOverrides,
 ) -> MsResult<()> {
     let options = measurement_set_table_options(path);
     let bindings = measurement_set_main_table_bindings(main);
-    main.save_with_bindings_and_column_overrides_assuming_valid(
-        options,
-        &bindings,
-        column_overrides,
-    )?;
+    main.prepare_write()
+        .save_with_column_overrides(options, &bindings, column_overrides)?;
     Ok(())
 }
 

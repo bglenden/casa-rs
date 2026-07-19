@@ -1,20 +1,50 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Integration tests for the measures module.
 
+use std::sync::Arc;
+
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::{
-    EpochRef, MEpoch, MPosition, MeasFrame, MeasureError, MjdHighPrec, PositionRef,
-    direction_from_record, direction_to_record, doppler_from_record, doppler_to_record,
-    epoch_from_record, epoch_to_record, frequency_from_record, frequency_to_record,
-    position_from_record, position_to_record,
+    EpochRef, MEpoch, MPosition, MeasFrame, MeasureError, MeasuresProvider, MjdHighPrec,
+    PositionRef, direction_from_record, direction_to_record, doppler_from_record,
+    doppler_to_record, epoch_from_record, epoch_to_record, frequency_from_record,
+    frequency_to_record, position_from_record, position_to_record,
 };
 
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
 // J2000.0 epoch: 2000 January 1.5 TT = MJD 51544.5
 const J2000_MJD: f64 = 51544.5;
+
+#[derive(Debug)]
+struct FixedLeapSeconds;
+
+impl MeasuresProvider for FixedLeapSeconds {
+    fn eop_values(&self, _utc_mjd: f64) -> Result<Option<casa_types::measures::EopValues>, String> {
+        Ok(Some(casa_types::measures::EopValues {
+            dut1_seconds: 0.0,
+            x_arcsec: 0.0,
+            y_arcsec: 0.0,
+            dx_mas: 0.0,
+            dy_mas: 0.0,
+            is_predicted: false,
+        }))
+    }
+
+    fn tai_minus_utc_seconds(&self, _utc_mjd: f64) -> Result<f64, String> {
+        Ok(32.0)
+    }
+
+    fn utc_from_tai_mjd(&self, tai_mjd: f64) -> Result<f64, String> {
+        Ok(tai_mjd - 32.0 / SECONDS_PER_DAY)
+    }
+}
+
+fn test_measures() -> Arc<dyn MeasuresProvider> {
+    Arc::new(FixedLeapSeconds)
+}
 
 fn close(a: f64, b: f64, tol: f64) -> bool {
     (a - b).abs() < tol
@@ -76,7 +106,7 @@ fn epoch_ref_case_insensitive() {
 fn utc_to_tai_j2000() {
     // At J2000.0, TAI−UTC = 32 seconds (leap seconds accumulated by 1999-01-01).
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new();
+    let frame = MeasFrame::new().with_measures(test_measures());
     let tai = utc.convert_to(EpochRef::TAI, &frame).unwrap();
 
     let diff_s = (tai.value().as_mjd() - utc.value().as_mjd()) * SECONDS_PER_DAY;
@@ -104,7 +134,7 @@ fn tai_to_tt() {
 fn utc_to_tt_chained() {
     // UTC → TAI → TT: total offset = 32 + 32.184 = 64.184s
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new();
+    let frame = MeasFrame::new().with_measures(test_measures());
     let tt = utc.convert_to(EpochRef::TT, &frame).unwrap();
 
     let diff_s = (tt.value().as_mjd() - utc.value().as_mjd()) * SECONDS_PER_DAY;
@@ -159,7 +189,7 @@ fn tdb_to_tcb() {
 #[test]
 fn roundtrip_utc_tai_tt_tdb_and_back() {
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new();
+    let frame = MeasFrame::new().with_measures(test_measures());
 
     let tai = utc.convert_to(EpochRef::TAI, &frame).unwrap();
     let tt = tai.convert_to(EpochRef::TT, &frame).unwrap();
@@ -215,7 +245,10 @@ fn ut1_to_gmst1() {
     // UT1 → GMST1 requires dUT1 (for the UT1→UTC→TAI→TT chain inside gmst06).
     let vla = MPosition::new_itrf(-1601185.4, -5041977.5, 3554875.9);
     let ut1 = MEpoch::from_mjd(J2000_MJD, EpochRef::UT1);
-    let frame = MeasFrame::new().with_dut1(0.3).with_position(vla);
+    let frame = MeasFrame::new()
+        .with_dut1(0.3)
+        .with_position(vla)
+        .with_measures(test_measures());
 
     let gmst = ut1.convert_to(EpochRef::GMST1, &frame).unwrap();
     // GMST should be a fractional-day value — check it's in [0, 1)
@@ -230,7 +263,10 @@ fn ut1_to_gmst1() {
 fn gmst1_to_lmst_with_position() {
     let vla = MPosition::new_itrf(-1601185.4, -5041977.5, 3554875.9);
     let ut1 = MEpoch::from_mjd(J2000_MJD, EpochRef::UT1);
-    let frame = MeasFrame::new().with_dut1(0.3).with_position(vla.clone());
+    let frame = MeasFrame::new()
+        .with_dut1(0.3)
+        .with_position(vla.clone())
+        .with_measures(test_measures());
 
     let gmst = ut1.convert_to(EpochRef::GMST1, &frame).unwrap();
     let lmst = gmst.convert_to(EpochRef::LMST, &frame).unwrap();
@@ -253,7 +289,10 @@ fn gmst1_to_lmst_with_position() {
 fn ut1_to_gast() {
     let vla = MPosition::new_itrf(-1601185.4, -5041977.5, 3554875.9);
     let ut1 = MEpoch::from_mjd(J2000_MJD, EpochRef::UT1);
-    let frame = MeasFrame::new().with_dut1(0.3).with_position(vla);
+    let frame = MeasFrame::new()
+        .with_dut1(0.3)
+        .with_position(vla)
+        .with_measures(test_measures());
 
     let gast = ut1.convert_to(EpochRef::GAST, &frame).unwrap();
     // GAST should be a fractional-day value — check it's in [0, 1)
@@ -297,7 +336,10 @@ fn gast_to_last_with_position() {
 fn gmst1_to_ut1_roundtrip() {
     let vla = MPosition::new_itrf(-1601185.4, -5041977.5, 3554875.9);
     let ut1 = MEpoch::from_mjd(J2000_MJD, EpochRef::UT1);
-    let frame = MeasFrame::new().with_dut1(0.3).with_position(vla);
+    let frame = MeasFrame::new()
+        .with_dut1(0.3)
+        .with_position(vla)
+        .with_measures(test_measures());
 
     let gmst = ut1.convert_to(EpochRef::GMST1, &frame).unwrap();
     let ut1_back = gmst.convert_to(EpochRef::UT1, &frame).unwrap();
@@ -721,7 +763,9 @@ fn direction_j2000_jmean_needs_epoch() {
 fn direction_jmean_jtrue_roundtrip() {
     let dir = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_epoch(epoch);
+    let frame = MeasFrame::new()
+        .with_epoch(epoch)
+        .with_measures(test_measures());
 
     let jmean = dir.convert_to(DirectionRef::JMEAN, &frame).unwrap();
     let jtrue = jmean.convert_to(DirectionRef::JTRUE, &frame).unwrap();
@@ -979,7 +1023,8 @@ fn direction_j2000_itrf_roundtrip() {
     let frame = MeasFrame::new()
         .with_epoch(epoch)
         .with_position(obs)
-        .with_dut1(0.3);
+        .with_dut1(0.3)
+        .with_measures(test_measures());
     let itrf = dir.convert_to(DirectionRef::ITRF, &frame).unwrap();
     let back = itrf.convert_to(DirectionRef::J2000, &frame).unwrap();
     let sep = angular_sep(&dir.cosines(), &back.cosines());

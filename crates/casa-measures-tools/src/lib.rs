@@ -4,49 +4,20 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use casa_measures_data::{
+    PACKAGED_SNAPSHOT_PATHS, REQUIRED_NONEMPTY_DIRS, REQUIRED_RELATIVE_PATHS,
+};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use tar::Builder;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-/// Relative paths included in the packaged fallback snapshot.
-pub const PACKAGED_SNAPSHOT_PATHS: &[&str] = &[
-    "readme.txt",
-    "geodetic",
-    "ephemerides/DE200",
-    "ephemerides/DE405",
-    "ephemerides/VGEO",
-    "ephemerides/VTOP",
-    "ephemerides/JPL-Horizons",
-    "ephemerides/Sources",
-    "ephemerides/Lines",
-];
-
-const REQUIRED_RELATIVE_PATHS: &[&str] = &[
-    "geodetic/IERSeop2000/table.dat",
-    "geodetic/IERSpredict2000/table.dat",
-    "geodetic/TAI_UTC/table.dat",
-    "geodetic/Observatories/table.dat",
-    "geodetic/IGRF/table.dat",
-    "ephemerides/DE200/table.dat",
-    "ephemerides/DE405/table.dat",
-    "ephemerides/VGEO/table.dat",
-    "ephemerides/VTOP/table.dat",
-    "ephemerides/Sources/table.dat",
-    "ephemerides/Lines/table.dat",
-];
-
-const REQUIRED_NONEMPTY_DIRS: &[&str] = &["ephemerides/JPL-Horizons"];
-
 /// Candidate runtime roots suitable for packaging.
 pub fn runtime_root_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Ok(path) = std::env::var("CASA_RS_MEASURESPATH") {
-        candidates.push(PathBuf::from(path));
-    }
-    if let Ok(path) = std::env::var("CASA_RS_DATA") {
         candidates.push(PathBuf::from(path));
     }
     if let Ok(home) = std::env::var("HOME") {
@@ -110,12 +81,12 @@ pub fn create_packaged_snapshot(
         generated_at_utc: OffsetDateTime::now_utc()
             .format(&Rfc3339)
             .map_err(|error| error.to_string())?,
-        casarundata_version: read_manifest_value(&runtime_root.join("readme.txt"), "version")
-            .unwrap_or_else(|| "unknown".to_string()),
-        measures_version: read_manifest_value(&runtime_root.join("geodetic/readme.txt"), "version")
-            .unwrap_or_else(|| "unknown".to_string()),
-        measures_site: read_manifest_value(&runtime_root.join("geodetic/readme.txt"), "site")
-            .unwrap_or_else(|| "unknown".to_string()),
+        casarundata_version: required_manifest_value(&runtime_root.join("readme.txt"), "version")?,
+        measures_version: required_manifest_value(
+            &runtime_root.join("geodetic/readme.txt"),
+            "version",
+        )?,
+        measures_site: required_manifest_value(&runtime_root.join("geodetic/readme.txt"), "site")?,
         included_paths: PACKAGED_SNAPSHOT_PATHS
             .iter()
             .map(|path| (*path).to_string())
@@ -161,6 +132,12 @@ fn read_manifest_value(path: &Path, key: &str) -> Option<String> {
         let (found_key, value) = line.split_once(':')?;
         (found_key.trim() == key).then(|| value.trim().to_string())
     })
+}
+
+fn required_manifest_value(path: &Path, key: &str) -> Result<String, String> {
+    read_manifest_value(path, key)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("missing required provenance {key:?} in {}", path.display()))
 }
 
 #[cfg(test)]
@@ -218,39 +195,29 @@ mod tests {
     }
 
     #[test]
-    fn runtime_root_candidates_include_env_and_home_fallbacks() {
+    fn runtime_root_candidates_include_configured_and_home_paths() {
         let _guard = ENV_LOCK.lock().unwrap();
 
         let tmp = temp_root("casa-measures-tools-root-candidates");
         fs::create_dir_all(&tmp).unwrap();
         let measures = tmp.join("measures");
-        let legacy = tmp.join("legacy");
         let home = tmp.join("home");
 
         let old_measures = std::env::var_os("CASA_RS_MEASURESPATH");
-        let old_legacy = std::env::var_os("CASA_RS_DATA");
         let old_home = std::env::var_os("HOME");
 
         unsafe {
             std::env::set_var("CASA_RS_MEASURESPATH", &measures);
-            std::env::set_var("CASA_RS_DATA", &legacy);
             std::env::set_var("HOME", &home);
         }
 
         let candidates = runtime_root_candidates();
-        assert_eq!(
-            candidates,
-            vec![measures.clone(), legacy.clone(), home.join(".casa/data")]
-        );
+        assert_eq!(candidates, vec![measures.clone(), home.join(".casa/data")]);
 
         unsafe {
             match old_measures {
                 Some(value) => std::env::set_var("CASA_RS_MEASURESPATH", value),
                 None => std::env::remove_var("CASA_RS_MEASURESPATH"),
-            }
-            match old_legacy {
-                Some(value) => std::env::set_var("CASA_RS_DATA", value),
-                None => std::env::remove_var("CASA_RS_DATA"),
             }
             match old_home {
                 Some(value) => std::env::set_var("HOME", value),

@@ -800,7 +800,7 @@ impl ColumnOverride {
     }
 }
 
-/// Column overrides for [`Table::save_with_bindings_and_column_overrides_assuming_valid`].
+/// Column overrides for [`TableWritePlan::save_with_column_overrides`].
 #[derive(Clone, Debug, Default)]
 pub struct ColumnOverrides {
     row_count: Option<usize>,
@@ -1291,7 +1291,6 @@ impl<'a> Iterator for ColumnChunkIter<'a> {
 /// Read-only row accessor for a [`Table`].
 ///
 /// This is the canonical row-oriented read surface for normal clients.
-/// Table-level `row`/`cell` helpers remain available as compatibility methods.
 #[derive(Debug, Clone, Copy)]
 pub struct TableRow<'a> {
     pub(crate) table: &'a Table,
@@ -1300,7 +1299,7 @@ pub struct TableRow<'a> {
 /// Mutable row accessor for a [`Table`].
 ///
 /// Use this for row-oriented updates instead of reaching directly into storage
-/// internals. Table-level setters remain available as compatibility methods.
+/// internals.
 #[derive(Debug)]
 pub struct TableRowMut<'a> {
     pub(crate) table: &'a mut Table,
@@ -1316,6 +1315,7 @@ pub(crate) enum PreparedRowSlotKind {
 pub(crate) struct PreparedRowSlot {
     pub(crate) column: String,
     pub(crate) kind: PreparedRowSlotKind,
+    pub(crate) schema_column: ColumnSchema,
 }
 
 /// Read-only reusable row buffer for selected scalar/array columns.
@@ -1349,6 +1349,55 @@ pub struct PreparedTableRowMut<'a> {
     pub(crate) row: RecordValue,
     pub(crate) row_materialized: bool,
     pub(crate) dirty: bool,
+}
+
+/// Schema-bound high-throughput row appender.
+///
+/// Construction borrows the table mutably, so its schema cannot change while
+/// the appender exists. Each future row receives only the value checks that
+/// cannot be proven until the row is supplied.
+#[derive(Debug)]
+pub struct PreparedRowAppender<'a> {
+    pub(crate) table: &'a mut Table,
+    pub(crate) schema: TableSchema,
+}
+
+/// Validated persistence scope for a table write.
+///
+/// Each save operation validates all knowable bindings, columns, rows, and
+/// layout constraints before beginning I/O. An I/O error leaves the in-memory
+/// table and pending sparse updates intact, so callers may fix the destination
+/// and retry through the same plan.
+///
+/// The plan holds an exclusive table borrow for its lifetime. Consequently,
+/// Rust prevents schema changes between validation and persistence rather than
+/// relying on a runtime invalidation convention.
+///
+/// # Safe fast path
+///
+/// ```no_run
+/// use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
+/// use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+///
+/// let schema = TableSchema::new(vec![
+///     ColumnSchema::scalar("id", PrimitiveType::Int32),
+/// ])?;
+/// let mut table = Table::with_schema(schema);
+/// table.prepare_row_appender()?.append(RecordValue::new(vec![
+///     RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+/// ]))?;
+/// {
+///     let mut row = table.row_accessor_mut().prepare(&["id"])?;
+///     row.seek(0)?;
+///     row.set_value_at(0, Value::Scalar(ScalarValue::Int32(2)))?;
+///     row.flush()?;
+/// }
+/// table.prepare_write().save(TableOptions::new("example.table"))?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug)]
+pub struct TableWritePlan<'a> {
+    pub(crate) table: &'a mut Table,
 }
 
 /// Read-only column accessor for a [`Table`].
@@ -1549,6 +1598,16 @@ pub enum TableError {
         expected: &'static str,
         found: ValueKind,
     },
+    /// A scalar or array had the wrong primitive element type.
+    #[error(
+        "row {row_index} column \"{column}\" has primitive type {found:?}; expected {expected:?}"
+    )]
+    PrimitiveTypeMismatch {
+        row_index: usize,
+        column: String,
+        expected: PrimitiveType,
+        found: PrimitiveType,
+    },
     /// An array cell had a shape that did not match the schema's fixed shape.
     #[error("row {row_index} column \"{column}\" has shape {found:?}; expected {expected:?}")]
     ArrayShapeMismatch {
@@ -1565,10 +1624,10 @@ pub enum TableError {
         expected: usize,
         found: usize,
     },
-    /// [`Table::put_column`] or [`Table::put_column_range`] received fewer values than rows.
+    /// [`TableColumnMut::put`] or [`TableColumnMut::put_range`] received fewer values than rows.
     #[error("column write received too few values: expected {expected}, provided {provided}")]
     ColumnWriteTooFewValues { expected: usize, provided: usize },
-    /// [`Table::put_column`] or [`Table::put_column_range`] received more values than rows.
+    /// [`TableColumnMut::put`] or [`TableColumnMut::put_range`] received more values than rows.
     #[error("column write received too many values: expected {expected}")]
     ColumnWriteTooManyValues { expected: usize },
     /// Generated scalar run starts were malformed.
@@ -1740,7 +1799,7 @@ impl std::fmt::Debug for LockState {
 /// # Lifecycle
 ///
 /// * **Open** — [`Table::open`] reads an existing table directory.
-/// * **Create** — [`Table::create`] builds a new table from a schema.
+/// * **Create** — [`Table::with_schema`] builds a new table from a schema.
 /// * **Save** — [`Table::save`] flushes deferred writes to disk.
 ///
 /// # C++ equivalent
@@ -1765,6 +1824,8 @@ pub struct Table {
     dm_info: Vec<crate::storage::DataManagerInfo>,
     /// Optional external lock synchronization hook.
     external_sync: Option<Box<dyn crate::lock::ExternalLockSync>>,
+    /// Explicit scientific-data provider used by TaQL `meas.*` functions.
+    measures: Option<Arc<dyn casa_types::measures::MeasuresProvider>>,
     /// When `true`, the table directory is deleted on [`Drop`].
     ///
     /// Set via [`mark_for_delete`](Table::mark_for_delete), cleared via
@@ -1807,6 +1868,7 @@ impl Table {
             table_info: TableInfo::default(),
             dm_info: vec![],
             external_sync: None,
+            measures: None,
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
@@ -1829,6 +1891,7 @@ impl Table {
             table_info: TableInfo::default(),
             dm_info: vec![],
             external_sync: None,
+            measures: None,
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
@@ -1849,6 +1912,7 @@ impl Table {
             table_info: TableInfo::default(),
             dm_info: vec![],
             external_sync: None,
+            measures: None,
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
@@ -1879,6 +1943,7 @@ impl Table {
             table_info: TableInfo::default(),
             dm_info: vec![],
             external_sync: None,
+            measures: None,
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
@@ -1908,6 +1973,7 @@ impl Table {
             table_info: TableInfo::default(),
             dm_info: vec![],
             external_sync: None,
+            measures: None,
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
@@ -1933,6 +1999,7 @@ impl Table {
             table_info: TableInfo::default(),
             dm_info: vec![],
             external_sync: None,
+            measures: None,
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
@@ -1952,6 +2019,7 @@ impl Table {
             table_info: TableInfo::default(),
             dm_info: vec![],
             external_sync: None,
+            measures: None,
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
@@ -1983,6 +2051,7 @@ impl Table {
             table_info: TableInfo::default(),
             dm_info: vec![],
             external_sync: None,
+            measures: None,
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
@@ -2007,6 +2076,21 @@ impl Table {
     /// Equivalent to `self.table_kind() == TableKind::Memory`.
     pub fn is_memory(&self) -> bool {
         self.kind == TableKind::Memory
+    }
+
+    /// Attach the explicit scientific-data provider used by TaQL `meas.*`.
+    pub fn set_measures_provider(
+        &mut self,
+        measures: Arc<dyn casa_types::measures::MeasuresProvider>,
+    ) {
+        self.measures = Some(measures);
+    }
+
+    /// Return the scientific-data provider attached to this table, if any.
+    pub(crate) fn measures_provider(
+        &self,
+    ) -> Option<&Arc<dyn casa_types::measures::MeasuresProvider>> {
+        self.measures.as_ref()
     }
 
     /// Creates an in-memory copy of this table.
@@ -2035,6 +2119,7 @@ impl Table {
             table_info: self.table_info.clone(),
             dm_info: vec![],
             external_sync: None,
+            measures: self.measures.clone(),
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,

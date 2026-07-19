@@ -52,11 +52,6 @@ impl ObservatoryCatalog {
         Self { entries, by_name }
     }
 
-    /// Return the packaged/runtime standard catalog.
-    pub fn bundled() -> &'static Self {
-        crate::load_observatories().0
-    }
-
     /// Iterate over the catalog entries in source order.
     pub fn iter(&self) -> impl Iterator<Item = &ObservatoryEntry> {
         self.entries.iter()

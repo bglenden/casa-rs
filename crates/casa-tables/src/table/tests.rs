@@ -132,26 +132,28 @@ where
         .put_range(row_range, values)
 }
 
-fn table_set_scalar_assuming_valid(
+fn table_write_scalar_bound(
     table: &mut Table,
     row_index: usize,
     column: &str,
     value: ScalarValue,
 ) -> Result<(), TableError> {
-    table
-        .column_accessor_mut(column)?
-        .set_scalar_assuming_valid(row_index, value)
+    let mut row = table.row_accessor_mut().prepare(&[column])?;
+    row.seek(row_index)?;
+    row.set_value_at(0, Value::Scalar(value))?;
+    row.flush()
 }
 
-fn table_set_array_assuming_valid(
+fn table_write_array_bound(
     table: &mut Table,
     row_index: usize,
     column: &str,
     value: ArrayValue,
 ) -> Result<(), TableError> {
-    table
-        .column_accessor_mut(column)?
-        .set_array_assuming_valid(row_index, value)
+    let mut row = table.row_accessor_mut().prepare(&[column])?;
+    row.seek(row_index)?;
+    row.set_value_at(0, Value::Array(value))?;
+    row.flush()
 }
 
 fn table_scalar_cells_owned(
@@ -315,13 +317,13 @@ fn mutable_accessors_update_rows_columns_and_cells() {
     table
         .cell_accessor_mut(1, "id")
         .expect("scalar cell accessor")
-        .set_scalar_assuming_valid(ScalarValue::Int32(11))
+        .set(Value::Scalar(ScalarValue::Int32(11)))
         .expect("set scalar");
 
     table
         .column_accessor_mut("data")
         .expect("column accessor mut")
-        .set_array_assuming_valid(1, ArrayValue::from_i32_vec(vec![13, 21]))
+        .set(1, Value::Array(ArrayValue::from_i32_vec(vec![13, 21])))
         .expect("set array");
 
     table
@@ -1110,6 +1112,179 @@ fn fixed_array_schema_enforces_defined_shape() {
 }
 
 #[test]
+fn prepared_appender_rejects_invalid_rows_before_mutation() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Float32, vec![2]),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    let mut appender = table.prepare_row_appender().expect("prepare appender");
+
+    let missing = appender.append(RecordValue::new(vec![RecordField::new(
+        "id",
+        Value::Scalar(ScalarValue::Int32(1)),
+    )]));
+    assert!(matches!(
+        missing,
+        Err(TableError::SchemaColumnMissing { .. })
+    ));
+    assert_eq!(appender.row_count(), 0);
+
+    let wrong_primitive = appender.append(RecordValue::new(vec![
+        RecordField::new("id", Value::Scalar(ScalarValue::Float64(1.0))),
+        RecordField::new(
+            "data",
+            Value::Array(ArrayValue::from_f32_vec(vec![1.0, 2.0])),
+        ),
+    ]));
+    assert!(matches!(
+        wrong_primitive,
+        Err(TableError::PrimitiveTypeMismatch { .. })
+    ));
+    assert_eq!(appender.row_count(), 0);
+
+    let wrong_shape = appender.append(RecordValue::new(vec![
+        RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+        RecordField::new("data", Value::Array(ArrayValue::from_f32_vec(vec![1.0]))),
+    ]));
+    assert!(matches!(
+        wrong_shape,
+        Err(TableError::ArrayShapeMismatch { .. })
+    ));
+    assert_eq!(appender.row_count(), 0);
+
+    let extra = appender.append(RecordValue::new(vec![
+        RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+        RecordField::new(
+            "data",
+            Value::Array(ArrayValue::from_f32_vec(vec![1.0, 2.0])),
+        ),
+        RecordField::new("extra", Value::Scalar(ScalarValue::Bool(true))),
+    ]));
+    assert!(matches!(
+        extra,
+        Err(TableError::RowContainsUnknownColumn { .. })
+    ));
+    assert_eq!(appender.row_count(), 0);
+}
+
+#[test]
+fn prepared_mutable_row_rejects_value_before_sparse_update() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Float32, vec![2]),
+        ColumnSchema::array_variable("payload", PrimitiveType::Int32, Some(2)),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(7))),
+            RecordField::new(
+                "data",
+                Value::Array(ArrayValue::from_f32_vec(vec![1.0, 2.0])),
+            ),
+            RecordField::new(
+                "payload",
+                Value::Array(ArrayValue::Int32(
+                    ArrayD::from_shape_vec(vec![1, 2], vec![1, 2]).expect("payload shape"),
+                )),
+            ),
+        ]))
+        .expect("row");
+
+    let mut row = table
+        .row_accessor_mut()
+        .prepare(&["id", "data", "payload"])
+        .expect("prepare row");
+    row.seek(0).expect("seek row");
+    assert!(matches!(
+        row.set_value_at(0, Value::Scalar(ScalarValue::Float64(7.0))),
+        Err(TableError::PrimitiveTypeMismatch { .. })
+    ));
+    assert!(matches!(
+        row.set_value_at(1, Value::Array(ArrayValue::from_f32_vec(vec![3.0]))),
+        Err(TableError::ArrayShapeMismatch { .. })
+    ));
+    assert!(matches!(
+        row.set_value_at(2, Value::Array(ArrayValue::from_i32_vec(vec![3, 4]))),
+        Err(TableError::ArrayNdimMismatch { .. })
+    ));
+    assert_eq!(
+        table_scalar(&table, 0, "id").expect("unchanged id"),
+        &ScalarValue::Int32(7)
+    );
+}
+
+#[test]
+fn write_plan_validates_scope_and_can_retry_after_io_failure() {
+    let schema =
+        TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).expect("schema");
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(7)),
+        )]))
+        .expect("row");
+
+    let base = unique_test_dir("write_plan_retry");
+    std::fs::create_dir_all(&base).expect("create base");
+    let blocker = base.join("not_a_directory");
+    std::fs::write(&blocker, b"block").expect("create blocker");
+    let valid = base.join("valid");
+
+    {
+        let mut plan = table.prepare_write();
+        assert!(matches!(
+            plan.save_selected_rows(&["id", "id"], &[0]),
+            Err(TableError::Storage(_))
+        ));
+        assert!(matches!(
+            plan.save_selected_rows(&["id"], &[1]),
+            Err(TableError::RowOutOfBounds { .. })
+        ));
+        assert!(plan.save(TableOptions::new(blocker.join("table"))).is_err());
+        plan.save(TableOptions::new(&valid))
+            .expect("retry same plan");
+    }
+
+    let reopened = Table::open(TableOptions::new(&valid)).expect("open retried save");
+    assert_eq!(
+        table_scalar(&reopened, 0, "id").expect("saved id"),
+        &ScalarValue::Int32(7)
+    );
+}
+
+#[test]
+fn write_plan_rejects_invalid_override_before_io() {
+    let schema =
+        TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).expect("schema");
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(7)),
+        )]))
+        .expect("row");
+    let mut overrides = ColumnOverrides::for_row_count(1);
+    overrides.insert_values("id", vec![Some(Value::Scalar(ScalarValue::Float64(7.0)))]);
+    let destination = unique_test_dir("invalid_write_override");
+
+    let result = table.prepare_write().save_with_column_overrides(
+        TableOptions::new(&destination),
+        &HashMap::new(),
+        &overrides,
+    );
+    assert!(matches!(
+        result,
+        Err(TableError::PrimitiveTypeMismatch { .. })
+    ));
+    assert!(!destination.exists());
+}
+
+#[test]
 fn variable_array_schema_allows_undefined_and_checks_ndim() {
     let schema = TableSchema::new(vec![ColumnSchema::array_variable(
         "payload",
@@ -1637,7 +1812,7 @@ fn prepared_row_writer_reuses_buffer_and_keeps_sparse_updates() {
         );
 
         reopened
-            .save_selected_rows_in_place_assuming_valid(&["id", "data"], &[0, 1])
+            .persist_selected_rows_in_place(&["id", "data"], &[0, 1])
             .expect("save prepared row updates");
 
         let verify = Table::open(TableOptions::new(&root)).expect("reopen after prepared writes");
@@ -1739,7 +1914,7 @@ fn prepared_row_writer_seek_keeps_buffer_unmaterialized_and_direct_writes_cohere
         );
 
         reopened
-            .save_selected_rows_in_place_assuming_valid(&["id", "data"], &[0, 1])
+            .persist_selected_rows_in_place(&["id", "data"], &[0, 1])
             .expect("save prepared row updates");
 
         let verify = Table::open(TableOptions::new(&root)).expect("reopen after prepared writes");
@@ -1793,9 +1968,9 @@ fn prepared_row_reader_sees_pending_and_cached_lazy_updates() {
             .expect("save disk-backed table");
 
         let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
-        table_set_scalar_assuming_valid(&mut reopened, 0, "id", ScalarValue::Int32(10))
+        table_write_scalar_bound(&mut reopened, 0, "id", ScalarValue::Int32(10))
             .expect("pending scalar update");
-        table_set_array_assuming_valid(
+        table_write_array_bound(
             &mut reopened,
             0,
             "data",
@@ -1805,9 +1980,9 @@ fn prepared_row_reader_sees_pending_and_cached_lazy_updates() {
 
         table_scalar(&reopened, 1, "id").expect("prime scalar cache");
         table_array(&reopened, 1, "data").expect("prime array cache");
-        table_set_scalar_assuming_valid(&mut reopened, 1, "id", ScalarValue::Int32(20))
+        table_write_scalar_bound(&mut reopened, 1, "id", ScalarValue::Int32(20))
             .expect("cached scalar update");
-        table_set_array_assuming_valid(
+        table_write_array_bound(
             &mut reopened,
             1,
             "data",
@@ -2137,9 +2312,9 @@ fn lazy_disk_open_mutates_and_partially_saves_without_materializing_rows() {
             &ScalarValue::Int32(20)
         );
 
-        table_set_scalar_assuming_valid(&mut reopened, 1, "id", ScalarValue::Int32(22))
+        table_write_scalar_bound(&mut reopened, 1, "id", ScalarValue::Int32(22))
             .expect("set scalar cell lazily");
-        table_set_array_assuming_valid(
+        table_write_array_bound(
             &mut reopened,
             0,
             "data",
@@ -2160,7 +2335,7 @@ fn lazy_disk_open_mutates_and_partially_saves_without_materializing_rows() {
         );
 
         reopened
-            .save_selected_columns_in_place_assuming_valid(&["id", "data"])
+            .persist_selected_columns_in_place(&["id", "data"])
             .expect("partial save");
         assert!(
             !reopened.inner.has_loaded_rows(),
@@ -2596,7 +2771,7 @@ fn tiled_shared_read_cache_is_invalidated_after_in_place_save() {
     );
 
     reopened
-        .set_array_cell_assuming_valid(
+        .write_array_cell_bound(
             2,
             "data",
             ArrayValue::Float32(
@@ -2605,7 +2780,7 @@ fn tiled_shared_read_cache_is_invalidated_after_in_place_save() {
         )
         .expect("mutate cached row");
     reopened
-        .save_selected_rows_in_place_assuming_valid(&["data"], &[2])
+        .persist_selected_rows_in_place(&["data"], &[2])
         .expect("partial save");
 
     let verify = Table::open(TableOptions::new(&root)).expect("reopen after partial save");
@@ -2722,9 +2897,9 @@ fn partial_save_with_changed_rows_patches_stman_aipsio_indirect_arrays() {
         .expect("save disk-backed table");
 
     let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
-    table_set_scalar_assuming_valid(&mut reopened, 1, "flag_row", ScalarValue::Bool(true))
+    table_write_scalar_bound(&mut reopened, 1, "flag_row", ScalarValue::Bool(true))
         .expect("set flag_row");
-    table_set_array_assuming_valid(
+    table_write_array_bound(
         &mut reopened,
         1,
         "data",
@@ -2739,7 +2914,7 @@ fn partial_save_with_changed_rows_patches_stman_aipsio_indirect_arrays() {
     assert!(reopened.inner.has_pending_array_cells("data"));
 
     reopened
-        .save_selected_rows_in_place_assuming_valid(&["flag_row", "data"], &[1])
+        .persist_selected_rows_in_place(&["flag_row", "data"], &[1])
         .expect("partial sparse save");
 
     let verify = Table::open(TableOptions::new(&root)).expect("reopen after partial save");
@@ -2862,7 +3037,7 @@ fn partial_save_with_changed_rows_patches_only_touched_tiled_rows() {
         .expect("save tiled-shape table");
 
     let mut reopened = Table::open(TableOptions::new(&root)).expect("open tiled-shape table");
-    table_set_array_assuming_valid(
+    table_write_array_bound(
         &mut reopened,
         2,
         "data",
@@ -2873,7 +3048,7 @@ fn partial_save_with_changed_rows_patches_only_touched_tiled_rows() {
     )
     .expect("set array cell lazily");
     reopened
-        .save_selected_rows_in_place_assuming_valid(&["data"], &[2])
+        .persist_selected_rows_in_place(&["data"], &[2])
         .expect("partial save with row hint");
 
     let verify = Table::open(TableOptions::new(&root)).expect("reopen after sparse partial save");
@@ -2978,7 +3153,7 @@ fn partial_save_with_changed_rows_patches_only_touched_multi_column_tiled_rows()
             .any(|column| column == "WEIGHT")
     );
 
-    table_set_array_assuming_valid(
+    table_write_array_bound(
         &mut reopened,
         1,
         "DATA",
@@ -2988,7 +3163,7 @@ fn partial_save_with_changed_rows_patches_only_touched_multi_column_tiled_rows()
         ),
     )
     .expect("set DATA lazily");
-    table_set_array_assuming_valid(
+    table_write_array_bound(
         &mut reopened,
         2,
         "WEIGHT",
@@ -3005,7 +3180,7 @@ fn partial_save_with_changed_rows_patches_only_touched_multi_column_tiled_rows()
     assert!(!reopened.inner.has_loaded_array_column("WEIGHT"));
 
     reopened
-        .save_selected_rows_in_place_assuming_valid(&["DATA", "WEIGHT"], &[1, 2])
+        .persist_selected_rows_in_place(&["DATA", "WEIGHT"], &[1, 2])
         .expect("partial save with tiled group row hints");
     assert!(
         !reopened.inner.has_loaded_rows(),
@@ -3098,7 +3273,7 @@ fn partial_save_with_changed_rows_patches_only_touched_tiled_cell_rows() {
         .expect("save tiled-cell table");
 
     let mut reopened = Table::open(TableOptions::new(&root)).expect("open tiled-cell table");
-    table_set_array_assuming_valid(
+    table_write_array_bound(
         &mut reopened,
         2,
         "data",
@@ -3113,7 +3288,7 @@ fn partial_save_with_changed_rows_patches_only_touched_tiled_cell_rows() {
     assert!(!reopened.inner.has_loaded_array_column("data"));
 
     reopened
-        .save_selected_rows_in_place_assuming_valid(&["data"], &[2])
+        .persist_selected_rows_in_place(&["data"], &[2])
         .expect("partial save with tiled-cell row hint");
     assert!(
         !reopened.inner.has_loaded_rows(),
@@ -3178,12 +3353,12 @@ fn partial_save_with_changed_rows_patches_only_touched_incremental_rows() {
 
     let mut reopened = Table::open(TableOptions::new(&root)).expect("open incremental table");
     assert!(!reopened.inner.has_loaded_rows());
-    table_set_scalar_assuming_valid(&mut reopened, 2, "id", ScalarValue::Int32(2002))
+    table_write_scalar_bound(&mut reopened, 2, "id", ScalarValue::Int32(2002))
         .expect("set row 2 id");
-    table_set_scalar_assuming_valid(&mut reopened, 41, "scan", ScalarValue::Int32(9041))
+    table_write_scalar_bound(&mut reopened, 41, "scan", ScalarValue::Int32(9041))
         .expect("set row 41 scan");
     reopened
-        .save_selected_rows_in_place_assuming_valid(&["id", "scan"], &[2, 41])
+        .persist_selected_rows_in_place(&["id", "scan"], &[2, 41])
         .expect("sparse incremental partial save");
     assert!(
         !reopened.inner.has_loaded_rows(),
@@ -3264,14 +3439,14 @@ fn partial_save_with_changed_rows_patches_only_touched_standard_rows() {
         .len();
 
     let mut reopened = Table::open(TableOptions::new(&root)).expect("open standard table");
-    table_set_scalar_assuming_valid(&mut reopened, 7, "flag_row", ScalarValue::Bool(true))
+    table_write_scalar_bound(&mut reopened, 7, "flag_row", ScalarValue::Bool(true))
         .expect("set bit before byte boundary");
-    table_set_scalar_assuming_valid(&mut reopened, 8, "flag_row", ScalarValue::Bool(true))
+    table_write_scalar_bound(&mut reopened, 8, "flag_row", ScalarValue::Bool(true))
         .expect("set bit after byte boundary");
-    table_set_scalar_assuming_valid(&mut reopened, 9_001, "id", ScalarValue::Int32(42))
+    table_write_scalar_bound(&mut reopened, 9_001, "id", ScalarValue::Int32(42))
         .expect("set distant id");
     reopened
-        .save_selected_rows_in_place_assuming_valid(&["flag_row", "id"], &[7, 8, 9_001])
+        .persist_selected_rows_in_place(&["flag_row", "id"], &[7, 8, 9_001])
         .expect("sparse standard partial save");
     assert!(!reopened.inner.has_loaded_rows());
     assert!(!reopened.inner.has_loaded_scalar_column("flag_row"));
@@ -3618,7 +3793,8 @@ fn save_with_bindings_column_overrides_write_single_tiled_array_column() {
     );
 
     table
-        .save_with_bindings_and_column_overrides_assuming_valid(
+        .prepare_write()
+        .save_with_column_overrides(
             TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan),
             &bindings,
             &overrides,
@@ -3649,7 +3825,7 @@ fn save_with_bindings_generated_scalar_overrides_define_row_count() {
         ColumnSchema::scalar("FLAG_ROW", PrimitiveType::Bool),
     ])
     .expect("schema");
-    let table = Table::with_schema(schema);
+    let mut table = Table::with_schema(schema);
 
     let root = unique_test_dir("save_with_bindings_generated_scalar_overrides");
     std::fs::create_dir_all(&root).expect("mkdir");
@@ -3687,7 +3863,8 @@ fn save_with_bindings_generated_scalar_overrides_define_row_count() {
     );
 
     table
-        .save_with_bindings_and_column_overrides_assuming_valid(
+        .prepare_write()
+        .save_with_column_overrides(
             TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan),
             &bindings,
             &overrides,
@@ -3730,7 +3907,7 @@ fn streamed_scalar_overrides_round_trip_standard_and_incremental_managers() {
         ColumnSchema::scalar("TIME", PrimitiveType::Float64),
     ])
     .expect("schema");
-    let table = Table::with_schema(schema);
+    let mut table = Table::with_schema(schema);
     let root = unique_test_dir("streamed_scalar_overrides_round_trip");
     std::fs::create_dir_all(&root).expect("mkdir");
 
@@ -3807,7 +3984,8 @@ fn streamed_scalar_overrides_round_trip_standard_and_incremental_managers() {
         ),
     ]);
     table
-        .save_with_bindings_and_column_overrides_assuming_valid(
+        .prepare_write()
+        .save_with_column_overrides(
             TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan),
             &bindings,
             &overrides,
@@ -3895,7 +4073,7 @@ fn save_with_bindings_generated_scalar_run_overrides_round_trip_ism() {
         ColumnSchema::scalar("TIME", PrimitiveType::Float64),
     ])
     .expect("schema");
-    let table = Table::with_schema(schema);
+    let mut table = Table::with_schema(schema);
 
     let root = unique_test_dir("save_with_bindings_generated_scalar_run_overrides");
     std::fs::create_dir_all(&root).expect("mkdir");
@@ -3955,7 +4133,8 @@ fn save_with_bindings_generated_scalar_run_overrides_round_trip_ism() {
     );
 
     table
-        .save_with_bindings_and_column_overrides_assuming_valid(
+        .prepare_write()
+        .save_with_column_overrides(
             TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan),
             &bindings,
             &overrides,
@@ -4351,7 +4530,7 @@ fn add_variable_shape_tiled_column_in_place_persists_defined_rows_only() {
     )
     .expect("set row 2");
     table
-        .save_added_tiled_shape_column_in_place_assuming_valid("vis", &[1, 2], Some(&[2, 2, 8]))
+        .persist_added_tiled_shape_column_in_place("vis", &[1, 2], Some(&[2, 2, 8]))
         .expect("save added tiled column");
 
     let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
@@ -4427,11 +4606,7 @@ fn clone_tiled_array_column_in_place_preserves_source_values_and_allows_sparse_p
         )
         .expect("add corrected column");
     reopened
-        .save_added_tiled_column_clone_in_place_assuming_valid(
-            "DATA",
-            "CORRECTED_DATA",
-            "TiledCorrected",
-        )
+        .persist_added_tiled_column_clone_in_place("DATA", "CORRECTED_DATA", "TiledCorrected")
         .expect("clone DATA to CORRECTED_DATA");
     table_set_cell(
         &mut reopened,
@@ -4452,7 +4627,7 @@ fn clone_tiled_array_column_in_place_preserves_source_values_and_allows_sparse_p
     )
     .expect("patch row");
     reopened
-        .save_selected_rows_in_place_assuming_valid(&["CORRECTED_DATA"], &[2])
+        .persist_selected_rows_in_place(&["CORRECTED_DATA"], &[2])
         .expect("sparse patch corrected");
 
     let patched = Table::open(TableOptions::new(&root)).expect("reopen patched table");
@@ -4894,6 +5069,27 @@ mod lock_tests {
                 RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
                 RecordField::new("name", Value::Scalar(ScalarValue::String("bob".into()))),
             ]))
+            .unwrap();
+        table.unlock().unwrap();
+    }
+
+    #[test]
+    fn write_plan_partial_save_obeys_user_locking() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let lock_opts = LockOptions::new(LockMode::UserLocking);
+        let mut table = Table::open_with_lock(opts, lock_opts).unwrap();
+
+        let error = table
+            .prepare_write()
+            .save_selected_rows(&["id"], &[0])
+            .unwrap_err();
+        assert!(matches!(error, TableError::LockFailed { .. }));
+
+        assert!(table.lock(LockType::Write, 1).unwrap());
+        table
+            .prepare_write()
+            .save_selected_rows(&["id"], &[0])
             .unwrap();
         table.unlock().unwrap();
     }

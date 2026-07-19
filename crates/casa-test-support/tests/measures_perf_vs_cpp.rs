@@ -19,6 +19,13 @@ const J2000_MJD: f64 = 51544.5;
 const COUNT: i32 = 10_000;
 const ITERATIONS: i32 = 1;
 
+fn measures_runtime() -> std::sync::Arc<casa_measures_data::MeasuresRuntime> {
+    std::sync::Arc::new(
+        casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+            .expect("performance measures runtime"),
+    )
+}
+
 fn bench_epoch(ref_in: EpochRef, ref_out: EpochRef) -> f64 {
     let frame = MeasFrame::new();
     let ref_in_str = ref_in.as_str();
@@ -249,7 +256,7 @@ fn bench_direction(ref_in: DirectionRef, ref_out: DirectionRef, epoch_mjd: f64) 
     let frame = if epoch_mjd != 0.0 {
         let mut f = MeasFrame::new()
             .with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC))
-            .with_bundled_eop();
+            .with_measures(measures_runtime());
         if needs_position {
             f = f.with_position(MPosition::new_wgs84(obs_lon, obs_lat, obs_h));
         }

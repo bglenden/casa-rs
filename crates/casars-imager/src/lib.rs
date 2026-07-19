@@ -20437,27 +20437,35 @@ fn write_joint_outlier_model_column(
     }
 
     let changed_rows = rows.keys().copied().collect::<Vec<_>>();
-    for (row_index, row_model) in rows {
-        ms.main_table_mut()
-            .column_accessor_mut(VisibilityDataColumn::ModelData.name())
-            .and_then(|mut column| {
-                column.set_array_assuming_valid(row_index, ArrayValue::Complex32(row_model))
-            })
-            .map_err(|error| format!("write MODEL_DATA row {row_index}: {error}"))?;
+    {
+        let mut writer = ms
+            .main_table_mut()
+            .row_accessor_mut()
+            .prepare(&[VisibilityDataColumn::ModelData.name()])
+            .map_err(|error| format!("prepare MODEL_DATA writes: {error}"))?;
+        let slot = writer
+            .column_index(VisibilityDataColumn::ModelData.name())
+            .expect("prepared MODEL_DATA slot");
+        for (row_index, row_model) in rows {
+            writer
+                .seek(row_index)
+                .and_then(|()| {
+                    writer.set_value_at(slot, Value::Array(ArrayValue::Complex32(row_model)))
+                })
+                .map_err(|error| format!("write MODEL_DATA row {row_index}: {error}"))?;
+        }
     }
     let ms_path = ms
         .path()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "<memory>".to_string());
     if created_model_data_column {
-        ms.save_main_table_only_assuming_valid()
+        ms.save_main_table_only()
             .map_err(|error| format!("save MODEL_DATA updates to {ms_path}: {error}"))?;
     } else {
-        ms.main_table()
-            .save_selected_rows_in_place_assuming_valid(
-                &[VisibilityDataColumn::ModelData.name()],
-                &changed_rows,
-            )
+        ms.main_table_mut()
+            .prepare_write()
+            .save_selected_rows(&[VisibilityDataColumn::ModelData.name()], &changed_rows)
             .map_err(|error| format!("save MODEL_DATA updates to {ms_path}: {error}"))?;
     }
     Ok(written_samples)
@@ -50000,7 +50008,7 @@ mod tests {
         ms.main_table_mut()
             .column_accessor_mut("FLAG_ROW")
             .unwrap()
-            .set_scalar_assuming_valid(1, ScalarValue::Bool(true))
+            .set(1, Value::Scalar(ScalarValue::Bool(true)))
             .unwrap();
         ms.save().expect("save columnar prepared source test MS");
         let ms = MeasurementSet::open(&ms_path).expect("reopen columnar prepared source test MS");
@@ -56240,6 +56248,7 @@ mod tests {
                 MDirection::from_angles(1.01, 0.48, DirectionRef::J2000),
             ],
             observatory,
+            casa_test_support::deterministic_measures_provider(),
         );
         let rows = vec![
             SelectedMainRow {
@@ -58250,10 +58259,14 @@ deconvolver=mtmfs
         add_vla_antenna_row(&mut ms);
         let time_mjd_sec = 59_000.5 * 86_400.0;
         let j2000 = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
+        let measures = std::sync::Arc::new(
+            casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+                .expect("test measures runtime"),
+        );
         let frame = MeasFrame::new()
+            .with_measures(measures)
             .with_epoch(MEpoch::from_mjd(time_mjd_sec / 86_400.0, EpochRef::UTC))
-            .with_position(MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z))
-            .with_bundled_eop();
+            .with_position(MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z));
         let azel = j2000.convert_to(DirectionRef::AZEL, &frame).unwrap();
         add_field_row_with_direction(&mut ms, azel, time_mjd_sec);
         let field_table = ms.subtable_mut(SubtableId::Field).unwrap();

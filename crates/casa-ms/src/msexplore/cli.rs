@@ -302,7 +302,7 @@ fn run(options: CliOptions) -> Result<(), String> {
                 preview
             };
             if options.flag_apply {
-                ms.save_main_table_only_assuming_valid()
+                ms.save_main_table_only()
                     .map_err(|error| error.to_string())?;
             }
             write_or_log_flag_preview(&options, &preview)?;
@@ -313,7 +313,7 @@ fn run(options: CliOptions) -> Result<(), String> {
             let preview = if options.flag_apply {
                 let preview =
                     apply_msexplore_flag_edit_for_request(&mut ms, explore_spec, flag_edit)?;
-                ms.save_main_table_only_assuming_valid()
+                ms.save_main_table_only()
                     .map_err(|error| error.to_string())?;
                 preview
             } else {

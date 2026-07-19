@@ -53,6 +53,7 @@ impl Table {
             table_info: info,
             dm_info: snapshot.dm_info,
             external_sync: None,
+            measures: None,
             marked_for_delete: false,
             lock_state: None,
         };

@@ -193,3 +193,10 @@ pub use write_session::{
     MeasurementSetWriteTelemetry, maximum_visibility_cell_elements,
     standard_main_scalar_column_plans,
 };
+
+pub(crate) fn open_measures_runtime()
+-> MsResult<std::sync::Arc<casa_measures_data::MeasuresRuntime>> {
+    casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+        .map(std::sync::Arc::new)
+        .map_err(|error| MsError::MeasuresRuntime(error.to_string()))
+}

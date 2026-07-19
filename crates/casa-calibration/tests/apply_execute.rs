@@ -11,7 +11,7 @@ use casa_calibration::{
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::MsSelection;
-use casa_types::{ArrayValue, ScalarValue};
+use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 #[test]
@@ -608,20 +608,21 @@ fn execute_apply_calflag_does_not_rewrite_unchanged_flags_or_flag_row() {
         ms.main_table_mut()
             .column_accessor_mut("FLAG")
             .and_then(|mut column| {
-                column.set_array_assuming_valid(
+                column.set(
                     0,
-                    ArrayValue::Bool(
+                    Value::Array(ArrayValue::Bool(
                         ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![true; 4]).unwrap(),
-                    ),
+                    )),
                 )
             })
             .expect("seed fully flagged samples");
         ms.main_table_mut()
             .column_accessor_mut("FLAG_ROW")
-            .and_then(|mut column| column.set_scalar_assuming_valid(0, ScalarValue::Bool(false)))
+            .and_then(|mut column| column.set(0, Value::Scalar(ScalarValue::Bool(false))))
             .expect("seed unflagged row flag");
-        ms.main_table()
-            .save_selected_rows_in_place_assuming_valid(&["FLAG", "FLAG_ROW"], &[0])
+        ms.main_table_mut()
+            .prepare_write()
+            .save_selected_rows(&["FLAG", "FLAG_ROW"], &[0])
             .expect("save seeded flags");
     }
     let caltable_path = common::create_apply_gain_caltable(

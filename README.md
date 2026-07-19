@@ -386,16 +386,12 @@ let metadata = Value::Record(RecordValue::new(vec![
 casa-rs now uses a CASA-table-backed runtime tree for measures data instead of
 embedded raw text snapshots.
 
-The runtime policy is:
-
-1. `$CASA_RS_MEASURESPATH` if set
-2. deprecated `$CASA_RS_DATA` compatibility alias
-3. `~/.casa/data`
-
-At the default location, casa-rs prefers an existing CASA/casaconfig-populated
-tree and reuses it as-is. If `~/.casa/data` is missing or incomplete, casa-rs
-bootstraps it from the packaged fallback snapshot shipped in
-`crates/casa-measures-data/data/`.
+Applications open one fallible `MeasuresRuntime` at a task or operation
+boundary and pass it into measure frames and catalog lookups. They may select
+an explicit root with `MeasuresRuntime::open`; discovery reports complete
+`$CASA_RS_MEASURESPATH` and `~/.casa/data` candidates but never writes or
+installs data. Missing, incomplete, corrupt, stale, and invalid-provenance
+trees are distinct errors.
 
 The standard runtime currently loads:
 
@@ -412,13 +408,14 @@ The standard runtime currently loads:
 - `ephemerides/Sources`
 - `ephemerides/Lines`
 
-`MeasFrame::with_standard_eop()` is the canonical convenience for attaching the
-runtime EOP tables. `with_bundled_eop()` remains as a compatibility alias.
+Attach the selected runtime explicitly with `MeasFrame::with_measures`. The
+same handle supplies EOP, leap-second, IGRF, observatory, source, and spectral
+line data and caches each catalog per runtime instance.
 
 ### Refreshing a runtime tree
 
-To populate or refresh a custom measures path from the upstream CASA bundle
-sources:
+Installation is a separate explicit action with a caller-selected destination.
+To populate or refresh a custom measures path from the upstream CASA sources:
 
 ```bash
 cargo run --example update_measures -p casa-measures-data --features update

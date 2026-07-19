@@ -12,7 +12,6 @@ workspace = true
 
 [dependencies]
 casa-values = { path = "../casa-values" }
-casa-measures-data = { path = "../casa-measures-data" }
 sofars.workspace = true
 time = "0.3"
 

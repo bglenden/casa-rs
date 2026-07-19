@@ -14,7 +14,6 @@ members = [
     "crates/casa-vla",
     "crates/casa-values",
     "crates/casa-aipsio",
-    "crates/casa-table-read",
     "crates/casa-logging",
     "crates/casa-calibration",
     "crates/casa-measures-tools",

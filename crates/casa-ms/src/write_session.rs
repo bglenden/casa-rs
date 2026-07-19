@@ -20,7 +20,7 @@ use casa_tables::{
     install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
     install_streamed_tiled_shape_primitive_column,
 };
-use casa_types::{ArrayValue, PrimitiveType, ScalarValue};
+use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use num_complex::Complex32;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -1690,7 +1690,7 @@ impl MeasurementSetWriteSession {
         let scalar_finalize_seconds = scalar_finalize_started.elapsed().as_secs_f64();
         let save_started = Instant::now();
         measurement_set
-            .save_assuming_valid_with_main_column_overrides(&scalar_columns.overrides)
+            .save_with_main_column_overrides(&scalar_columns.overrides)
             .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
         let save_seconds = save_started.elapsed().as_secs_f64();
         let telemetry = self.finish(measurement_set.main_table())?;
@@ -1704,7 +1704,7 @@ impl MeasurementSetWriteSession {
 
     pub(crate) fn save_table_and_finish(
         mut self,
-        main: &Table,
+        main: &mut Table,
         options: TableOptions,
         bindings: &HashMap<String, ColumnBinding>,
         column_overrides: &ColumnOverrides,
@@ -1713,12 +1713,9 @@ impl MeasurementSetWriteSession {
         let scalar_columns = self.finish_scalar_columns(column_overrides)?;
         let scalar_finalize_seconds = scalar_finalize_started.elapsed().as_secs_f64();
         let save_started = Instant::now();
-        main.save_with_bindings_and_column_overrides_assuming_valid(
-            options,
-            bindings,
-            &scalar_columns.overrides,
-        )
-        .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+        main.prepare_write()
+            .save_with_column_overrides(options, bindings, &scalar_columns.overrides)
+            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
         let save_seconds = save_started.elapsed().as_secs_f64();
         let telemetry = self.finish(main)?;
         complete_scalar_finalization(
@@ -1851,7 +1848,8 @@ impl MeasurementSetWriteSession {
                     if let Some(source) = &column.create_source_column {
                         measurement_set
                             .main_table_mut()
-                            .save_added_tiled_column_clone_in_place_assuming_valid(
+                            .prepare_write()
+                            .add_tiled_column_clone(
                                 source,
                                 &column.name,
                                 &format!("Tiled{}", column.name),
@@ -1859,11 +1857,8 @@ impl MeasurementSetWriteSession {
                     } else {
                         measurement_set
                             .main_table_mut()
-                            .save_added_tiled_shape_column_in_place_assuming_valid(
-                                &column.name,
-                                &[],
-                                column.tile_shape.as_deref(),
-                            )
+                            .prepare_write()
+                            .add_tiled_shape_column(&column.name, &[], column.tile_shape.as_deref())
                     }
                     .map_err(|error| MeasurementSetWriteError::Install {
                         column: column.name.clone(),
@@ -1985,40 +1980,50 @@ impl MeasurementSetWriteSession {
         }
 
         let write_started = Instant::now();
-        for column in &batch.columns {
-            match &column.values {
-                MeasurementSetMutationColumnValues::Scalars(values) => {
-                    let mut target = measurement_set
-                        .main_table_mut()
-                        .column_accessor_mut(&column.name)
-                        .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                    for (&row, value) in batch.row_indices.iter().zip(values) {
-                        target
-                            .set_scalar_assuming_valid(row, value.clone())
-                            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                    }
-                }
-                MeasurementSetMutationColumnValues::Arrays(values) => {
-                    let mut target = measurement_set
-                        .main_table_mut()
-                        .column_accessor_mut(&column.name)
-                        .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                    for (&row, value) in batch.row_indices.iter().zip(values) {
-                        target
-                            .set_array_assuming_valid(row, value.clone())
-                            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                    }
-                }
-            }
-        }
         let column_names = batch
             .columns
             .iter()
             .map(|column| column.name.as_str())
             .collect::<Vec<_>>();
+        let mut writer = measurement_set
+            .main_table_mut()
+            .row_accessor_mut()
+            .prepare(&column_names)
+            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+        for column in &batch.columns {
+            let slot = writer.column_index(&column.name).ok_or_else(|| {
+                MeasurementSetWriteError::Column(format!(
+                    "prepared mutation slot missing for {}",
+                    column.name
+                ))
+            })?;
+            match &column.values {
+                MeasurementSetMutationColumnValues::Scalars(values) => {
+                    for (&row, value) in batch.row_indices.iter().zip(values) {
+                        writer
+                            .seek(row)
+                            .and_then(|()| writer.set_value_at(slot, Value::Scalar(value.clone())))
+                            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                    }
+                }
+                MeasurementSetMutationColumnValues::Arrays(values) => {
+                    for (&row, value) in batch.row_indices.iter().zip(values) {
+                        writer
+                            .seek(row)
+                            .and_then(|()| writer.set_value_at(slot, Value::Array(value.clone())))
+                            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                    }
+                }
+            }
+        }
+        writer
+            .flush()
+            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+        drop(writer);
         measurement_set
-            .main_table()
-            .save_selected_rows_in_place_assuming_valid(&column_names, &batch.row_indices)
+            .main_table_mut()
+            .prepare_write()
+            .save_selected_rows(&column_names, &batch.row_indices)
             .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
         measurement_set
             .main_table_mut()

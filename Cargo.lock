@@ -649,7 +649,8 @@ dependencies = [
 name = "casa-measures-data"
 version = "0.25.0"
 dependencies = [
- "casa-table-read",
+ "casa-tables",
+ "casa-types",
  "flate2",
  "serde",
  "serde_json",
@@ -677,6 +678,7 @@ dependencies = [
  "casa-coordinates",
  "casa-imaging",
  "casa-logging",
+ "casa-measures-data",
  "casa-provider-contracts",
  "casa-tables",
  "casa-task-runtime",
@@ -727,13 +729,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "casa-table-read"
-version = "0.25.0"
-dependencies = [
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -798,7 +793,6 @@ dependencies = [
 name = "casa-types"
 version = "0.25.0"
 dependencies = [
- "casa-measures-data",
  "casa-values",
  "criterion",
  "sofars",
@@ -818,6 +812,7 @@ name = "casa-vla"
 version = "0.25.0"
 dependencies = [
  "casa-logging",
+ "casa-measures-data",
  "casa-ms",
  "casa-provider-contracts",
  "casa-tables",
@@ -922,6 +917,7 @@ dependencies = [
  "casa-images",
  "casa-imaging",
  "casa-logging",
+ "casa-measures-data",
  "casa-ms",
  "casa-provider-contracts",
  "casa-tables",

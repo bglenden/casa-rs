@@ -1477,7 +1477,9 @@ pub fn call_function(
             Ok(ExprValue::String(sql_like_to_regex(&s)))
         }
 
-        _ if lower.starts_with("meas.") => super::meas_udf::call_meas_function(&lower, args),
+        _ if lower.starts_with("meas.") => {
+            super::meas_udf::call_meas_function_with_provider(&lower, args, ctx.measures)
+        }
 
         _ => Err(TaqlError::UnknownFunction {
             name: name.to_string(),
@@ -2134,6 +2136,7 @@ mod tests {
             row: &row,
             row_index: idx,
             style: crate::taql::ast::IndexStyle::default(),
+            measures: None,
         };
         call_function(name, &args, &ctx).unwrap()
     }
@@ -2144,6 +2147,7 @@ mod tests {
             row: &row,
             row_index: idx,
             style: crate::taql::ast::IndexStyle::default(),
+            measures: None,
         };
         call_function(name, args, &ctx)
     }
@@ -3597,6 +3601,7 @@ mod tests {
             row: &casa_types::RecordValue::default(),
             row_index: 0,
             style: crate::taql::ast::IndexStyle::default(),
+            measures: None,
         };
         let result = super::call_function("nonexistent_udf_xyz", &[], &ctx);
         assert!(result.is_err());
@@ -3612,6 +3617,7 @@ mod tests {
             row: &casa_types::RecordValue::default(),
             row_index: 0,
             style: crate::taql::ast::IndexStyle::default(),
+            measures: None,
         };
         assert!(super::call_function("tmp_udf1", &[], &ctx).is_err());
         assert!(super::call_function("tmp_udf2", &[], &ctx).is_err());

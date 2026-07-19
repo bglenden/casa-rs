@@ -39,7 +39,7 @@ use casa_ms::{
     MeasurementSetWriteSession, MsError, MsResult,
 };
 use casa_tables::{ColumnSchema, Table, TableError, TableOptions};
-use casa_types::{ArrayValue, Complex32, ScalarValue};
+use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -4423,15 +4423,26 @@ fn ensure_corrected_data_column(
     }
 
     if ms.path().is_none() {
-        for row_index in 0..ms.row_count() {
-            let data = ms
-                .main_table()
-                .column_accessor(VisibilityDataColumn::Data.name())?
-                .array_cell(row_index)?
-                .clone();
-            ms.main_table_mut()
-                .column_accessor_mut(VisibilityDataColumn::CorrectedData.name())?
-                .set_array_assuming_valid(row_index, data)?;
+        let data_rows = (0..ms.row_count())
+            .map(|row_index| {
+                let data = ms
+                    .main_table()
+                    .column_accessor(VisibilityDataColumn::Data.name())?
+                    .array_cell(row_index)?
+                    .clone();
+                Ok(data)
+            })
+            .collect::<Result<Vec<_>, casa_tables::TableError>>()?;
+        let mut writer = ms
+            .main_table_mut()
+            .row_accessor_mut()
+            .prepare(&[VisibilityDataColumn::CorrectedData.name()])?;
+        let slot = writer
+            .column_index(VisibilityDataColumn::CorrectedData.name())
+            .expect("prepared CORRECTED_DATA slot");
+        for (row_index, data) in data_rows.into_iter().enumerate() {
+            writer.seek(row_index)?;
+            writer.set_value_at(slot, Value::Array(data))?;
         }
     }
 
@@ -4982,6 +4993,7 @@ mod tests {
                 vec![MPosition::new_itrf(0.0, 0.0, 0.0)],
                 vec![MDirection::from_angles(1.0, 0.5, DirectionRef::J2000)],
                 MPosition::new_itrf(0.0, 0.0, 0.0),
+                casa_test_support::deterministic_measures_provider(),
             ),
             feed_rows: HashMap::from([(
                 (0, 0),
@@ -5021,6 +5033,7 @@ mod tests {
                     DirectionRef::J2000,
                 )],
                 MPosition::new_itrf(-1_601_185.4, -5_041_977.5, 3_554_875.9),
+                casa_test_support::deterministic_measures_provider(),
             ),
             feed_rows: HashMap::from([(
                 (0, 0),

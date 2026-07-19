@@ -298,18 +298,24 @@ fn bench_sparse_partial_writes(c: &mut Criterion) {
         b.iter_batched(
             || Table::open(TableOptions::new(&incremental_path)).expect("open table"),
             |mut table| {
-                table
-                    .cell_accessor_mut(2, "id")
-                    .expect("row 2 id accessor")
-                    .set_scalar_assuming_valid(ScalarValue::Int32(2002))
+                let mut writer = table
+                    .row_accessor_mut()
+                    .prepare(&["id", "scan"])
+                    .expect("prepare scalar writes");
+                let id = writer.column_index("id").expect("id slot");
+                let scan = writer.column_index("scan").expect("scan slot");
+                writer.seek(2).expect("seek row 2");
+                writer
+                    .set_value_at(id, Value::Scalar(ScalarValue::Int32(2002)))
                     .expect("set row 2 id");
-                table
-                    .cell_accessor_mut(4097, "scan")
-                    .expect("row 4097 scan accessor")
-                    .set_scalar_assuming_valid(ScalarValue::Int32(9041))
+                writer.seek(4097).expect("seek row 4097");
+                writer
+                    .set_value_at(scan, Value::Scalar(ScalarValue::Int32(9041)))
                     .expect("set row 4097 scan");
+                drop(writer);
                 table
-                    .save_selected_rows_in_place_assuming_valid(&["id", "scan"], &[2, 4097])
+                    .prepare_write()
+                    .save_selected_rows(&["id", "scan"], &[2, 4097])
                     .expect("sparse incremental partial save");
                 black_box(table.row_count())
             },
@@ -324,16 +330,25 @@ fn bench_sparse_partial_writes(c: &mut Criterion) {
                 let values = (0..64)
                     .map(|offset| 20_000.0 + offset as f32)
                     .collect::<Vec<_>>();
-                table
-                    .cell_accessor_mut(1024, "data")
-                    .expect("row 1024 data accessor")
-                    .set_array_assuming_valid(ArrayValue::Float32(
-                        ArrayD::from_shape_vec(vec![16, 4], values)
-                            .expect("updated sparse tiled shape"),
-                    ))
+                let mut writer = table
+                    .row_accessor_mut()
+                    .prepare(&["data"])
+                    .expect("prepare tiled write");
+                let data = writer.column_index("data").expect("data slot");
+                writer.seek(1024).expect("seek row 1024");
+                writer
+                    .set_value_at(
+                        data,
+                        Value::Array(ArrayValue::Float32(
+                            ArrayD::from_shape_vec(vec![16, 4], values)
+                                .expect("updated sparse tiled shape"),
+                        )),
+                    )
                     .expect("set sparse tiled cell");
+                drop(writer);
                 table
-                    .save_selected_rows_in_place_assuming_valid(&["data"], &[1024])
+                    .prepare_write()
+                    .save_selected_rows(&["data"], &[1024])
                     .expect("sparse tiled partial save");
                 black_box(table.row_count())
             },

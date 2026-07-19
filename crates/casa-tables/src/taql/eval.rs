@@ -460,6 +460,8 @@ pub struct EvalContext<'a> {
     pub row_index: usize,
     /// Index style (Glish=1-based or Python=0-based).
     pub style: ast::IndexStyle,
+    /// Explicit measures provider attached to the table being evaluated.
+    pub measures: Option<&'a std::sync::Arc<dyn casa_types::measures::MeasuresProvider>>,
 }
 
 /// Evaluate an expression against a row context.
@@ -1322,6 +1324,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
 
         // Evaluate: flux * 2.0
@@ -1344,6 +1347,7 @@ mod tests {
             row: &row,
             row_index: 42,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let result = eval_expr(&Expr::RowNumber, &ctx).unwrap();
         assert_eq!(result, ExprValue::Int(42));
@@ -1578,6 +1582,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         assert_eq!(
             eval_expr(&Expr::Literal(Literal::Int(42)), &ctx).unwrap(),
@@ -1617,6 +1622,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::Unary {
             op: UnaryOp::Not,
@@ -1632,6 +1638,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::Unary {
             op: UnaryOp::Negate,
@@ -1663,6 +1670,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::IsNull {
             expr: Box::new(Expr::Literal(Literal::Null)),
@@ -1684,6 +1692,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::Between {
             expr: Box::new(Expr::Literal(Literal::Int(5))),
@@ -1712,6 +1721,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::In {
             expr: Box::new(Expr::Literal(Literal::Int(2))),
@@ -1739,6 +1749,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::Binary {
             left: Box::new(Expr::Literal(Literal::Int(3))),
@@ -1755,6 +1766,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::FunctionCall {
             name: "abs".to_string(),
@@ -1801,6 +1813,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::RegexMatch {
             expr: Box::new(Expr::Literal(Literal::String("hello world".to_string()))),
@@ -1820,6 +1833,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::RegexMatch {
             expr: Box::new(Expr::Literal(Literal::String("hello".to_string()))),
@@ -1839,6 +1853,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::RegexMatch {
             expr: Box::new(Expr::Literal(Literal::String("HELLO".to_string()))),
@@ -1860,6 +1875,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::InSet {
             expr: Box::new(Expr::Literal(Literal::Int(5))),
@@ -1880,6 +1896,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::InSet {
             expr: Box::new(Expr::Literal(Literal::Int(15))),
@@ -1900,6 +1917,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::default(),
+            measures: None,
         };
         let expr = Expr::InSet {
             expr: Box::new(Expr::Literal(Literal::Int(2))),
@@ -1938,6 +1956,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::Glish,
+            measures: None,
         };
         let arr = make_1d_array(vec![10, 20, 30]);
         let result = eval_array_index(
@@ -1956,6 +1975,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::Python,
+            measures: None,
         };
         let arr = make_1d_array(vec![10, 20, 30]);
         let result = eval_array_index(
@@ -1974,6 +1994,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::Python,
+            measures: None,
         };
         let arr = make_1d_array(vec![10, 20, 30]);
         let result = eval_array_index(
@@ -1992,6 +2013,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::Glish,
+            measures: None,
         };
         let arr = make_1d_array(vec![10, 20, 30, 40, 50]);
         // Glish: 2:4 → indices 2,3,4 (1-based) → elements 1,2,3 (0-based)
@@ -2024,6 +2046,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::Python,
+            measures: None,
         };
         let arr = make_1d_array(vec![10, 20, 30, 40, 50]);
         // Python: 1:4 → indices 1,2,3 (0-based, end exclusive)
@@ -2056,6 +2079,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::Glish,
+            measures: None,
         };
         let arr = make_1d_array(vec![10, 20, 30, 40, 50]);
         // Glish: 1:5:2 → indices 1,3,5 (1-based) → elements 0,2,4
@@ -2088,6 +2112,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::Python,
+            measures: None,
         };
         let arr = make_1d_array(vec![10, 20, 30, 40, 50]);
         // Python: 0:5:2 → indices 0,2,4
@@ -2120,6 +2145,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::Glish,
+            measures: None,
         };
         // 2x3 array: [[1,2,3],[4,5,6]]
         let arr = make_2d_array(2, 3, vec![1, 2, 3, 4, 5, 6]);
@@ -2143,6 +2169,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::Python,
+            measures: None,
         };
         // 2x3 array: [[1,2,3],[4,5,6]] in column-major flat order
         let arr = make_2d_array(2, 3, vec![1, 4, 2, 5, 3, 6]);
@@ -2172,6 +2199,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::Python,
+            measures: None,
         };
         let arr = make_1d_array(vec![10, 20, 30]);
         let result = eval_array_index(
@@ -2189,6 +2217,7 @@ mod tests {
             row: &row,
             row_index: 0,
             style: ast::IndexStyle::Python,
+            measures: None,
         };
         let arr = make_1d_array(vec![10, 20, 30]);
         let result = eval_array_index(

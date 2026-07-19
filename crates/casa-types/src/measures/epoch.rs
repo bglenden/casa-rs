@@ -345,11 +345,16 @@ impl fmt::Display for EpochRef {
 ///
 /// # Examples
 ///
-/// ```
-/// use casa_types::measures::{MEpoch, EpochRef, MjdHighPrec, MeasFrame};
+/// ```no_run
+/// use std::sync::Arc;
+/// use casa_types::measures::{MEpoch, EpochRef, MeasFrame, MeasuresProvider};
+///
+/// # fn application_measures_provider() -> Arc<dyn MeasuresProvider> {
+/// #     todo!("open and inject the application's measures runtime")
+/// # }
 ///
 /// let utc = MEpoch::from_mjd(51544.5, EpochRef::UTC);
-/// let frame = MeasFrame::new();
+/// let frame = MeasFrame::new().with_measures(application_measures_provider());
 /// let tai = utc.convert_to(EpochRef::TAI, &frame).unwrap();
 /// // TAI = UTC + 32s at J2000
 /// let diff_s = (tai.value().as_mjd() - utc.value().as_mjd()) * 86400.0;
@@ -615,23 +620,28 @@ fn apply_hop(
     match (from_ref, to_ref) {
         // UTC → TAI
         (UTC, TAI) => {
+            let provider = frame.measures().ok_or(MeasureError::MissingFrameData {
+                what: "TAI-UTC measures provider",
+            })?;
             let tai_minus_utc =
-                casa_measures_data::tai_minus_utc_seconds(value.as_mjd()).map_err(|error| {
-                    MeasureError::ModelError {
+                provider
+                    .tai_minus_utc_seconds(value.as_mjd())
+                    .map_err(|reason| MeasureError::ModelError {
                         model: "TAI_UTC",
-                        reason: error.to_string(),
-                    }
-                })?;
+                        reason,
+                    })?;
             Ok(value + tai_minus_utc / SECONDS_PER_DAY)
         }
         // TAI → UTC
         (TAI, UTC) => {
-            let utc_mjd =
-                casa_measures_data::utc_from_tai_mjd(value.as_mjd()).map_err(|error| {
-                    MeasureError::ModelError {
-                        model: "TAI_UTC",
-                        reason: error.to_string(),
-                    }
+            let provider = frame.measures().ok_or(MeasureError::MissingFrameData {
+                what: "TAI-UTC measures provider",
+            })?;
+            let utc_mjd = provider
+                .utc_from_tai_mjd(value.as_mjd())
+                .map_err(|reason| MeasureError::ModelError {
+                    model: "TAI_UTC",
+                    reason,
                 })?;
             Ok(MjdHighPrec::from_mjd(utc_mjd))
         }
@@ -690,7 +700,7 @@ fn apply_hop(
         (UT1, UTC) => {
             let dut1 =
                 frame
-                    .dut1_for_mjd(value.as_mjd())
+                    .dut1_for_mjd(value.as_mjd())?
                     .ok_or(MeasureError::MissingFrameData {
                         what: "dUT1 (UT1-UTC offset in seconds; set with_dut1() or with_eop())",
                     })?;
@@ -701,7 +711,7 @@ fn apply_hop(
         (UTC, UT1) => {
             let dut1 =
                 frame
-                    .dut1_for_mjd(value.as_mjd())
+                    .dut1_for_mjd(value.as_mjd())?
                     .ok_or(MeasureError::MissingFrameData {
                         what: "dUT1 (UT1-UTC offset in seconds; set with_dut1() or with_eop())",
                     })?;

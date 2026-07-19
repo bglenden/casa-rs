@@ -6,6 +6,7 @@ use std::f64::consts::PI;
 use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use casa_ms::builder::MeasurementSetBuilder;
@@ -21,7 +22,7 @@ use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::{MPosition, MeasFrame};
+use casa_types::measures::{MPosition, MeasFrame, MeasuresProvider};
 use casa_types::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
@@ -374,7 +375,8 @@ pub fn import_archive_files_to_measurement_set_from_options(
         while let Some(record) = reader.next_record()? {
             writer.logical_records_seen += 1;
             let normalize_started = Instant::now();
-            if let Some(normalized) = normalize_record(&record, options)? {
+            if let Some(normalized) = normalize_record(&record, options, writer.measures.as_ref())?
+            {
                 writer.perf_summary.normalize_record_ns +=
                     normalize_started.elapsed().as_nanos() as u64;
                 writer.logical_records_imported += 1;
@@ -675,6 +677,7 @@ fn test_import_write_plan(
 fn normalize_record(
     record: &LogicalRecord,
     options: &ImportVlaOptions,
+    measures: &dyn MeasuresProvider,
 ) -> Result<Option<NormalizedRecord>, VlaError> {
     if !record_is_selected_for_import(record, options)? {
         return Ok(None);
@@ -711,7 +714,7 @@ fn normalize_record(
         .integration_time_seconds()
         .map_err(|error| VlaError::import(format!("decode integration time: {error}")))?;
 
-    let antennas = normalize_antennas(record, options.antnamescheme)?;
+    let antennas = normalize_antennas(record, options.antnamescheme, measures)?;
     let groups = normalize_groups(record, options, antennas.len())?;
     if groups.is_empty() {
         return Ok(None);
@@ -784,6 +787,7 @@ fn is_supported_observation_mode(code: &str) -> bool {
 fn normalize_antennas(
     record: &LogicalRecord,
     naming: AntennaNameScheme,
+    measures: &dyn MeasuresProvider,
 ) -> Result<Vec<NormalizedAntenna>, VlaError> {
     let n_antennas = usize::from(
         record
@@ -791,8 +795,9 @@ fn normalize_antennas(
             .n_antennas()
             .map_err(|error| VlaError::import(format!("decode antenna count: {error}")))?,
     );
-    let observatory =
-        MPosition::from_observatory_name(DEFAULT_TELESCOPE_NAME).ok_or_else(|| {
+    let observatory = MPosition::from_observatory_name(DEFAULT_TELESCOPE_NAME, measures)
+        .map_err(|error| VlaError::import(error.to_string()))?
+        .ok_or_else(|| {
             VlaError::import("resolve observatory position for VLA from measures catalog")
         })?;
     let [obs_x, obs_y, obs_z] = observatory.as_itrf();
@@ -1276,6 +1281,7 @@ fn spectral_window_matches(
     source_direction: [f64; 2],
     direction_epoch: DirectionEpoch,
     tolerance_hz: f64,
+    measures: Arc<dyn MeasuresProvider>,
 ) -> Result<bool, VlaError> {
     if !same_spectral_window_shape(&existing.descriptor, descriptor, tolerance_hz) {
         return Ok(false);
@@ -1285,8 +1291,10 @@ fn spectral_window_matches(
         existing.time_seconds,
         existing.source_direction,
         existing.direction_epoch,
+        measures.clone(),
     )?;
-    let current_frame = spectral_conversion_frame(time_seconds, source_direction, direction_epoch)?;
+    let current_frame =
+        spectral_conversion_frame(time_seconds, source_direction, direction_epoch, measures)?;
     let existing_topo = spectral_reference_frequency(&existing.descriptor)
         .convert_to(FrequencyRef::TOPO, &existing_frame)
         .map_err(|error| {
@@ -1487,6 +1495,7 @@ fn time_from_archive(obs_day: u32, obs_seconds: f64) -> f64 {
 struct VlaImportState {
     options: ImportVlaOptions,
     ms: MeasurementSet,
+    measures: Arc<casa_measures_data::MeasuresRuntime>,
     logical_records_seen: usize,
     logical_records_imported: usize,
     logical_records_skipped: usize,
@@ -1543,9 +1552,13 @@ impl VlaImportState {
         ms: MeasurementSet,
         main_write_session: MeasurementSetWriteSession,
     ) -> Result<Self, VlaError> {
+        let measures = casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+            .map(Arc::new)
+            .map_err(|error| VlaError::import(error.to_string()))?;
         let mut writer = Self {
             options,
             ms,
+            measures,
             logical_records_seen: 0,
             logical_records_imported: 0,
             logical_records_skipped: 0,
@@ -1916,7 +1929,8 @@ impl VlaImportState {
             ],
         )?;
         feed_table
-            .add_row_assuming_valid(row)
+            .prepare_row_appender()
+            .and_then(|mut appender| appender.append(row))
             .map_err(|error| VlaError::import(format!("add FEED row: {error}")))
     }
 
@@ -1975,7 +1989,8 @@ impl VlaImportState {
                 ],
             )?;
             table
-                .add_row_assuming_valid(row)
+                .prepare_row_appender()
+                .and_then(|mut appender| appender.append(row))
                 .map_err(|error| VlaError::import(format!("add OBSERVATION row: {error}")))?;
             row_index
         };
@@ -2050,7 +2065,8 @@ impl VlaImportState {
                 ],
             )?;
             table
-                .add_row_assuming_valid(row)
+                .prepare_row_appender()
+                .and_then(|mut appender| appender.append(row))
                 .map_err(|error| VlaError::import(format!("add SOURCE row: {error}")))?;
             row_index
         };
@@ -2107,7 +2123,8 @@ impl VlaImportState {
                 ],
             )?;
             table
-                .add_row_assuming_valid(row)
+                .prepare_row_appender()
+                .and_then(|mut appender| appender.append(row))
                 .map_err(|error| VlaError::import(format!("add FIELD row: {error}")))?;
             row_index
         };
@@ -2151,7 +2168,8 @@ impl VlaImportState {
                 ],
             )?;
             table
-                .add_row_assuming_valid(row)
+                .prepare_row_appender()
+                .and_then(|mut appender| appender.append(row))
                 .map_err(|error| VlaError::import(format!("add POLARIZATION row: {error}")))?;
             row_index
         };
@@ -2199,7 +2217,8 @@ impl VlaImportState {
                 ],
             )?;
             table
-                .add_row_assuming_valid(row)
+                .prepare_row_appender()
+                .and_then(|mut appender| appender.append(row))
                 .map_err(|error| VlaError::import(format!("add DOPPLER row: {error}")))?;
             row_index
         };
@@ -2216,6 +2235,7 @@ impl VlaImportState {
         source_direction: [f64; 2],
         direction_epoch: DirectionEpoch,
     ) -> Result<i32, VlaError> {
+        let measures: Arc<dyn MeasuresProvider> = self.measures.clone();
         for entry in &self.spectral_windows {
             if spectral_window_matches(
                 entry,
@@ -2224,6 +2244,7 @@ impl VlaImportState {
                 source_direction,
                 direction_epoch,
                 self.options.frequencytol_hz,
+                measures.clone(),
             )? {
                 return Ok(entry.row);
             }
@@ -2236,7 +2257,8 @@ impl VlaImportState {
             self.current_freq_group
         };
 
-        let frame = spectral_conversion_frame(time_seconds, source_direction, direction_epoch)?;
+        let frame =
+            spectral_conversion_frame(time_seconds, source_direction, direction_epoch, measures)?;
         let ref_freq = spectral_reference_frequency(descriptor);
         let meas_freq_ref = frequency_reference_for_descriptor(descriptor);
         let chan_freq: Vec<f64> = (0..descriptor.num_chan)
@@ -2272,7 +2294,7 @@ impl VlaImportState {
                 .ok_or_else(|| VlaError::import("missing SPECTRAL_WINDOW subtable"))?;
             let row_index = i32::try_from(table.row_count())
                 .map_err(|_| VlaError::import("SPECTRAL_WINDOW row count too large"))?;
-            let row = make_row_from_columns(
+            let mut row = make_row_from_columns(
                 casa_ms::schema::spectral_window::REQUIRED_COLUMNS,
                 &[
                     (
@@ -2328,30 +2350,16 @@ impl VlaImportState {
                     ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
                 ],
             )?;
+            row.push(RecordField::new(
+                "DOPPLER_ID",
+                Value::Scalar(ScalarValue::Int32(doppler_id)),
+            ));
             table
-                .add_row_assuming_valid(row)
+                .prepare_row_appender()
+                .and_then(|mut appender| appender.append(row))
                 .map_err(|error| VlaError::import(format!("add SPECTRAL_WINDOW row: {error}")))?;
             row_index
         };
-        {
-            let mut spw = self.ms.spectral_window_mut().map_err(|error| {
-                VlaError::import(format!("open SPECTRAL_WINDOW mutator: {error}"))
-            })?;
-            let has_doppler_id = spw
-                .as_ref()
-                .table()
-                .schema()
-                .map(|schema| schema.contains_column("DOPPLER_ID"))
-                .unwrap_or(false);
-            if has_doppler_id {
-                spw.set_i32(
-                    usize::try_from(row).map_err(|_| VlaError::import("negative SPW row"))?,
-                    "DOPPLER_ID",
-                    doppler_id,
-                )
-                .map_err(|error| VlaError::import(format!("set SPW.DOPPLER_ID: {error}")))?;
-            }
-        }
         self.spectral_windows.push(SpectralWindowEntry {
             descriptor: descriptor.clone(),
             row,
@@ -2396,7 +2404,8 @@ impl VlaImportState {
                 ],
             )?;
             table
-                .add_row_assuming_valid(row)
+                .prepare_row_appender()
+                .and_then(|mut appender| appender.append(row))
                 .map_err(|error| VlaError::import(format!("add DATA_DESCRIPTION row: {error}")))?;
             row_index
         };
@@ -2958,9 +2967,11 @@ fn spectral_conversion_frame(
     time_seconds: f64,
     source_direction: [f64; 2],
     direction_epoch: DirectionEpoch,
+    measures: Arc<dyn MeasuresProvider>,
 ) -> Result<MeasFrame, VlaError> {
-    let observatory =
-        MPosition::from_observatory_name(DEFAULT_TELESCOPE_NAME).ok_or_else(|| {
+    let observatory = MPosition::from_observatory_name(DEFAULT_TELESCOPE_NAME, measures.as_ref())
+        .map_err(|error| VlaError::import(format!("read VLA observatory position: {error}")))?
+        .ok_or_else(|| {
             VlaError::import("resolve observatory position for VLA from measures catalog")
         })?;
     let direction = MDirection::from_angles(
@@ -2969,7 +2980,7 @@ fn spectral_conversion_frame(
         direction_reference_for_epoch(direction_epoch),
     );
     Ok(MeasFrame::new()
-        .with_bundled_eop()
+        .with_measures(measures)
         .with_epoch(MEpoch::from_mjd(time_seconds / 86_400.0, EpochRef::TAI))
         .with_position(observatory)
         .with_direction(direction))
@@ -3229,6 +3240,13 @@ mod tests {
 
     use crate::VlaDiskReader;
     use tempfile::tempdir;
+
+    fn test_measures() -> Arc<dyn MeasuresProvider> {
+        Arc::new(
+            casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+                .expect("test measures runtime"),
+        )
+    }
 
     #[test]
     fn import_perf_tracer_from_env_writes_jsonl_and_summary_log() {
@@ -3840,9 +3858,13 @@ mod tests {
         };
         let source_direction = [1.0, 0.5];
         let time_seconds = 4_558_040_657.5;
-        let frame =
-            spectral_conversion_frame(time_seconds, source_direction, DirectionEpoch::J2000)
-                .unwrap();
+        let frame = spectral_conversion_frame(
+            time_seconds,
+            source_direction,
+            DirectionEpoch::J2000,
+            test_measures(),
+        )
+        .unwrap();
         let lsrk_frequency_hz = convert_topocentric_frequency(
             topo_descriptor.observed_frequency_hz,
             FrequencyRef::LSRK,
@@ -3900,9 +3922,13 @@ mod tests {
     fn spectral_conversion_frame_uses_tai_like_casa_vlafiller() {
         let time_seconds = 4_558_025_017.500007;
         let source_direction = [1.4439993710957795, 0.23617770712489528];
-        let frame =
-            spectral_conversion_frame(time_seconds, source_direction, DirectionEpoch::J2000)
-                .unwrap();
+        let frame = spectral_conversion_frame(
+            time_seconds,
+            source_direction,
+            DirectionEpoch::J2000,
+            test_measures(),
+        )
+        .unwrap();
         let converted =
             convert_topocentric_frequency(23_689_651_393.610_19, FrequencyRef::LSRK, &frame)
                 .unwrap();
@@ -4538,9 +4564,11 @@ mod tests {
         let mut reader = VlaDiskReader::open(&path).expect("open archive");
         let mut row_base = 0usize;
         let mut logical_record_index = 0usize;
+        let measures = test_measures();
 
         while let Some(record) = reader.next_record().expect("read logical record") {
-            let Some(normalized) = normalize_record(&record, &options).expect("normalize record")
+            let Some(normalized) =
+                normalize_record(&record, &options, measures.as_ref()).expect("normalize record")
             else {
                 logical_record_index += 1;
                 continue;

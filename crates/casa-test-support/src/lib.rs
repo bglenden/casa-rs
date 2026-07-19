@@ -37,5 +37,38 @@ pub use table_oracle_impl::{
 };
 pub use test_data::*;
 
+/// Deterministic, filesystem-free measures inputs for cross-crate tests.
+pub fn deterministic_measures_provider()
+-> std::sync::Arc<dyn casa_types::measures::MeasuresProvider> {
+    #[derive(Debug)]
+    struct Provider;
+
+    impl casa_types::measures::MeasuresProvider for Provider {
+        fn eop_values(
+            &self,
+            _utc_mjd: f64,
+        ) -> Result<Option<casa_types::measures::EopValues>, String> {
+            Ok(Some(casa_types::measures::EopValues {
+                dut1_seconds: 0.0,
+                x_arcsec: 0.0,
+                y_arcsec: 0.0,
+                dx_mas: 0.0,
+                dy_mas: 0.0,
+                is_predicted: false,
+            }))
+        }
+
+        fn tai_minus_utc_seconds(&self, _utc_mjd: f64) -> Result<f64, String> {
+            Ok(32.0)
+        }
+
+        fn utc_from_tai_mjd(&self, tai_mjd: f64) -> Result<f64, String> {
+            Ok(tai_mjd - 32.0 / 86_400.0)
+        }
+    }
+
+    std::sync::Arc::new(Provider)
+}
+
 #[cfg(test)]
 mod tests;
