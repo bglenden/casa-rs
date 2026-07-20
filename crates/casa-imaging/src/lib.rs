@@ -131,7 +131,6 @@ type MosaicProjectorKey = ((u8, u64, u64), u64, u8);
 type MosaicProjectorCache = BTreeMap<MosaicProjectorKey, ScreenProjector>;
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
-#[cfg(all(target_os = "macos", not(coverage)))]
 #[cfg(any(test, all(target_os = "macos", not(coverage))))]
 const DEFAULT_STANDARD_MFS_METAL_MINOR_CYCLE_TARGET_MS: f64 = 2_000.0;
 #[cfg(any(test, all(target_os = "macos", not(coverage))))]
@@ -34637,7 +34636,6 @@ mod tests {
     use ndarray::{Array2, Array4, s};
     use num_complex::{Complex32, Complex64};
     use serial_test::serial;
-    #[cfg(all(target_os = "macos", not(coverage)))]
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -34751,6 +34749,7 @@ mod tests {
         correctness_execution_config().with_standard_mfs(standard_mfs)
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn fft_execution_config(
         precision: FftPrecisionChoice,
         backend: FftBackendChoice,
