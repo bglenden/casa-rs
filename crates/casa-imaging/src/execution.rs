@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Internal imaging execution plans and CPU workspaces.
 
-#[cfg(all(target_os = "macos", not(coverage)))]
 use std::{
     cmp::Ordering as CmpOrdering,
     collections::{BTreeMap, BinaryHeap, VecDeque},
@@ -10561,7 +10560,10 @@ pub(crate) struct StandardMfsMetalGroupedInputCachePrefill;
 #[cfg(any(not(target_os = "macos"), coverage))]
 impl StandardMfsMetalGroupedInputCachePrefill {
     /// Return an unsupported error on non-macOS platforms.
-    pub fn new(_geometry: ImageGeometry) -> Result<Self, ImagingError> {
+    pub(crate) fn new_with_execution_plan(
+        _geometry: ImageGeometry,
+        _execution_config: &StandardMfsExecutionPlan,
+    ) -> Result<Self, ImagingError> {
         Err(ImagingError::Unsupported(
             "standard MFS Metal grouped input cache prefill requires macOS Metal".to_string(),
         ))
