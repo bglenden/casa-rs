@@ -4,18 +4,46 @@
 #![cfg(feature = "cpp-interop-tests")]
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::expr_parser::{HashMapResolver, parse_image_expr, parse_mask_expr};
 use casa_images::image::ImageInterface;
-use casa_images::{ImageExpr, ImageExprBinaryOp, ImageExprUnaryOp, PagedImage};
-use casa_lattices::Lattice;
+use casa_images::image_expr::ImageExprValue;
+use casa_images::{
+    ImageExprBinaryOp, ImageExprBuilder, ImageExprUnaryOp, MaskExprBuilder, PagedImage,
+};
 use casa_test_support::{
     CppImageExprBinaryOp, CppImageExprCompareOp, CppImageExprUnaryOp, CppMaskLogicalOp,
     ImageOracle, casacore_oracle_available,
 };
 use casa_types::ArrayD;
 use ndarray::{IxDyn, ShapeBuilder};
+
+trait CanonicalNumericEval<T: ImageExprValue> {
+    fn get(&self) -> Result<ArrayD<T>, casa_images::ImageError>;
+    fn save_as(&self, path: impl AsRef<Path>) -> Result<PagedImage<T>, casa_images::ImageError>;
+}
+
+impl<T: ImageExprValue> CanonicalNumericEval<T> for ImageExprBuilder<'_, T> {
+    fn get(&self) -> Result<ArrayD<T>, casa_images::ImageError> {
+        self.compile()?.get()
+    }
+
+    fn save_as(&self, path: impl AsRef<Path>) -> Result<PagedImage<T>, casa_images::ImageError> {
+        self.compile()?.save_as(path)
+    }
+}
+
+trait CanonicalMaskEval {
+    fn get(&self) -> Result<ArrayD<bool>, casa_images::ImageError>;
+}
+
+impl<T: ImageExprValue + PartialOrd> CanonicalMaskEval for MaskExprBuilder<'_, T> {
+    fn get(&self) -> Result<ArrayD<bool>, casa_images::ImageError> {
+        self.compile()?.get()
+    }
+}
 
 fn flatten_fortran<T: Clone>(array: &ArrayD<T>) -> Vec<T> {
     let shape = array.shape();
@@ -89,7 +117,7 @@ fn rust_lazy_binary_add_matches_cpp_expr() {
     let lhs = PagedImage::<f32>::open(&lhs_path).unwrap();
     let rhs = PagedImage::<f32>::open(&rhs_path).unwrap();
 
-    let rust = ImageExpr::from_image(&lhs)
+    let rust = ImageExprBuilder::from_image(&lhs)
         .unwrap()
         .add_image(&rhs)
         .unwrap()
@@ -117,7 +145,7 @@ fn rust_lazy_scalar_multiply_matches_cpp_expr() {
     let n: usize = shape.iter().product();
 
     let image = make_image(&path, &shape, (0..n).map(|i| i as f32 - 2.0).collect()).unwrap();
-    let rust = ImageExpr::from_image(&image)
+    let rust = ImageExprBuilder::from_image(&image)
         .unwrap()
         .multiply_scalar(3.0)
         .get()
@@ -144,7 +172,7 @@ fn rust_lazy_unary_and_transcendental_match_cpp_expr() {
 
     let image = make_image(&path, &shape, (0..n).map(|i| 0.25 * i as f32).collect()).unwrap();
 
-    let rust_neg = ImageExpr::from_image(&image)
+    let rust_neg = ImageExprBuilder::from_image(&image)
         .unwrap()
         .negate()
         .get()
@@ -153,7 +181,7 @@ fn rust_lazy_unary_and_transcendental_match_cpp_expr() {
         ImageOracle::eval_image_expr_unary(&path, CppImageExprUnaryOp::Negate, n).unwrap();
     assert_eq!(flatten_fortran(&rust_neg), cpp_neg);
 
-    let rust_exp = ImageExpr::from_image(&image)
+    let rust_exp = ImageExprBuilder::from_image(&image)
         .unwrap()
         .unary(ImageExprUnaryOp::Exp)
         .get()
@@ -186,10 +214,10 @@ fn rust_lazy_mask_range_matches_cpp_expr() {
     )
     .unwrap();
     let image = PagedImage::<f32>::open(&path).unwrap();
-    let rust = ImageExpr::from_image(&image)
+    let rust = ImageExprBuilder::from_image(&image)
         .unwrap()
         .gt_scalar(1.5)
-        .and(ImageExpr::from_image(&image).unwrap().lt_scalar(6.5))
+        .and(ImageExprBuilder::from_image(&image).unwrap().lt_scalar(6.5))
         .unwrap()
         .get()
         .unwrap();
@@ -221,7 +249,7 @@ fn saved_lazy_expr_is_cpp_readable() {
     let n: usize = shape.iter().product();
 
     let image = make_image(&in_path, &shape, (0..n).map(|i| i as f32 + 1.0).collect()).unwrap();
-    let expr = ImageExpr::from_image(&image)
+    let expr = ImageExprBuilder::from_image(&image)
         .unwrap()
         .multiply_scalar(2.0)
         .add_scalar(1.0);
@@ -276,7 +304,7 @@ fn rust_lazy_transcendental_unary_ops_match_cpp() {
     ];
 
     for (rust_op, cpp_op) in cases {
-        let rust = ImageExpr::from_image(&image)
+        let rust = ImageExprBuilder::from_image(&image)
             .unwrap()
             .unary(*rust_op)
             .get()
@@ -334,7 +362,7 @@ fn rust_lazy_binary_subtract_divide_match_cpp() {
     ];
 
     for (rust_op, cpp_op) in cases {
-        let rust = ImageExpr::from_image(&lhs)
+        let rust = ImageExprBuilder::from_image(&lhs)
             .unwrap()
             .binary_image(&rhs, *rust_op)
             .unwrap()
@@ -380,7 +408,7 @@ fn rust_lazy_scalar_subtract_divide_match_cpp() {
     ];
 
     for (rust_op, cpp_op, scalar) in cases {
-        let rust = ImageExpr::from_image(&image)
+        let rust = ImageExprBuilder::from_image(&image)
             .unwrap()
             .binary_scalar(*scalar, *rust_op)
             .get()
@@ -419,10 +447,10 @@ fn rust_lazy_extended_comparisons_match_cpp() {
     let image = PagedImage::<f32>::open(&path).unwrap();
 
     // ge(3.0) && le(6.0)
-    let rust = ImageExpr::from_image(&image)
+    let rust = ImageExprBuilder::from_image(&image)
         .unwrap()
         .ge_scalar(3.0)
-        .and(ImageExpr::from_image(&image).unwrap().le_scalar(6.0))
+        .and(ImageExprBuilder::from_image(&image).unwrap().le_scalar(6.0))
         .unwrap()
         .get()
         .unwrap();
@@ -439,10 +467,10 @@ fn rust_lazy_extended_comparisons_match_cpp() {
     assert_eq!(flatten_fortran(&rust), cpp);
 
     // eq(4.0) || ne(4.0) should always be true
-    let rust = ImageExpr::from_image(&image)
+    let rust = ImageExprBuilder::from_image(&image)
         .unwrap()
         .eq_scalar(4.0)
-        .or(ImageExpr::from_image(&image).unwrap().ne_scalar(4.0))
+        .or(ImageExprBuilder::from_image(&image).unwrap().ne_scalar(4.0))
         .unwrap()
         .get()
         .unwrap();
@@ -906,7 +934,7 @@ fn save_expr_without_string_errors() {
         casa_lattices::TempStoragePolicy::Memory,
     )
     .unwrap();
-    let expr = ImageExpr::from_image(&img).unwrap();
+    let expr = ImageExprBuilder::from_image(&img).unwrap();
     // Programmatic expression — no expr_string set.
     let dir = tempfile::tempdir().unwrap();
     let result = expr.save_expr(dir.path().join("should_fail.imgexpr"));

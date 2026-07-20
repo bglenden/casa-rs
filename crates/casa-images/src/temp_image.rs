@@ -42,7 +42,7 @@ use casa_types::{ArrayD, RecordValue};
 
 use crate::error::ImageError;
 use crate::image::{ImageInterface, ImagePixel, MutableImageInterface, PagedImage};
-use crate::image_expr::ImageExpr;
+use crate::image_expr::ImageExprBuilder;
 use crate::image_info::ImageInfo;
 use crate::subimage::{SubImage, SubImageMut};
 
@@ -458,7 +458,7 @@ impl<T: ImagePixel> TempImage<T> {
     }
 
     /// Starts a lazy expression rooted at this image.
-    pub fn expr(&self) -> Result<ImageExpr<'_, T>, ImageError>
+    pub fn expr(&self) -> Result<ImageExprBuilder<'_, T>, ImageError>
     where
         T: crate::image_expr::ImageExprValue + PartialOrd,
     {
@@ -466,7 +466,7 @@ impl<T: ImagePixel> TempImage<T> {
     }
 
     /// Creates a lazy expression by mapping a function over this image.
-    pub fn expr_map<F>(&self, f: F) -> Result<ImageExpr<'_, T>, ImageError>
+    pub fn expr_map<F>(&self, f: F) -> Result<ImageExprBuilder<'_, T>, ImageError>
     where
         T: crate::image_expr::ImageExprValue + PartialOrd,
         F: Fn(T) -> T + Send + Sync + 'static,
@@ -919,7 +919,7 @@ mod tests {
         img.set(2.0).unwrap();
 
         let expr = img.expr().unwrap().multiply_scalar(3.0);
-        assert_eq!(expr.get_at(&[0, 0]).unwrap(), 6.0);
+        assert_eq!(expr.compile().unwrap().get_at(&[0, 0]).unwrap(), 6.0);
     }
 
     #[test]

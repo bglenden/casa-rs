@@ -277,6 +277,7 @@ impl StandardMfsStreamingWeightingPlan {
                     self.density_convention,
                     trace_weighting_enabled(),
                     mode,
+                    1,
                 ))
             }
         }
@@ -769,10 +770,6 @@ fn standard_mfs_density_float_sample(
     }
 }
 
-fn standard_mfs_worker_threads() -> usize {
-    crate::standard_mfs_thread_count_from_env()
-}
-
 fn visibility_sample_count(batches: &[VisibilityBatch]) -> usize {
     batches.iter().map(VisibilityBatch::len).sum()
 }
@@ -828,6 +825,7 @@ fn log_weighting_stage(
 pub(crate) fn apply_weighting(
     request: &ImagingRequest,
     gridder: &StandardGridder,
+    requested_threads: usize,
 ) -> Result<Vec<VisibilityBatch>, crate::ImagingError> {
     apply_weighting_with_density_source(
         request.weighting,
@@ -837,6 +835,7 @@ pub(crate) fn apply_weighting(
         &request.visibility_batches,
         &request.visibility_batches,
         gridder,
+        requested_threads,
     )
 }
 
@@ -844,6 +843,7 @@ pub(crate) fn apply_weighting_to_owned_batches(
     request: &ImagingRequest,
     gridder: &StandardGridder,
     batches: Vec<VisibilityBatch>,
+    requested_threads: usize,
 ) -> Result<Vec<VisibilityBatch>, crate::ImagingError> {
     apply_weighting_to_owned_batches_with_options(
         request.weighting,
@@ -851,6 +851,7 @@ pub(crate) fn apply_weighting_to_owned_batches(
         fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz),
         batches,
         gridder,
+        requested_threads,
     )
 }
 
@@ -860,6 +861,7 @@ pub(crate) fn apply_weighting_to_owned_batches_with_options(
     fractional_bandwidth: f64,
     batches: Vec<VisibilityBatch>,
     gridder: &StandardGridder,
+    requested_threads: usize,
 ) -> Result<Vec<VisibilityBatch>, crate::ImagingError> {
     let density_convention = density_cell_convention(weighting, WeightDensityMode::Combined);
     let density_build_convention =
@@ -875,6 +877,7 @@ pub(crate) fn apply_weighting_to_owned_batches_with_options(
                 gridder,
                 density_includes_conjugates(density_build_convention),
                 density_build_convention,
+                requested_threads,
             );
             let density_elapsed = profile::elapsed_since(density_started);
             let reweight_started = profile::maybe_profile_now();
@@ -885,6 +888,7 @@ pub(crate) fn apply_weighting_to_owned_batches_with_options(
                 density_convention,
                 trace_weighting,
                 DensityReweightMode::Uniform,
+                requested_threads,
             );
             let reweight_elapsed = profile::elapsed_since(reweight_started);
             let samples_total = visibility_sample_count(&weighted);
@@ -908,6 +912,7 @@ pub(crate) fn apply_weighting_to_owned_batches_with_options(
                 gridder,
                 density_includes_conjugates(density_build_convention),
                 density_build_convention,
+                requested_threads,
             );
             let density_elapsed = profile::elapsed_since(density_started);
             let robust_started = profile::maybe_profile_now();
@@ -947,6 +952,7 @@ pub(crate) fn apply_weighting_to_owned_batches_with_options(
                     use_bandwidth_taper: matches!(weighting, WeightingMode::BriggsBwTaper { .. }),
                     fractional_bandwidth,
                 },
+                requested_threads,
             );
             let reweight_elapsed = profile::elapsed_since(reweight_started);
             let samples_total = visibility_sample_count(&weighted);
@@ -965,6 +971,7 @@ pub(crate) fn apply_weighting_to_owned_batches_with_options(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_weighting_with_density_source(
     weighting: WeightingMode,
     weight_density_mode: WeightDensityMode,
@@ -973,6 +980,7 @@ pub(crate) fn apply_weighting_with_density_source(
     target_batches: &[VisibilityBatch],
     density_batches: &[VisibilityBatch],
     gridder: &StandardGridder,
+    requested_threads: usize,
 ) -> Result<Vec<VisibilityBatch>, crate::ImagingError> {
     let density_convention = density_cell_convention(weighting, weight_density_mode);
     let density_build_convention = density_build_cell_convention(weighting, weight_density_mode);
@@ -992,6 +1000,7 @@ pub(crate) fn apply_weighting_with_density_source(
                 gridder,
                 density_includes_conjugates(density_build_convention),
                 density_build_convention,
+                requested_threads,
             );
             Ok(apply_optional_uv_taper(
                 target_batches
@@ -1023,6 +1032,7 @@ pub(crate) fn apply_weighting_with_density_source(
                 gridder,
                 density_includes_conjugates(density_build_convention),
                 density_build_convention,
+                requested_threads,
             );
             let density_weight_sum = density.iter().map(|value| f64::from(*value)).sum::<f64>();
             let total_density_weight =
@@ -1276,6 +1286,7 @@ pub(crate) fn trace_weighting_with_density_source(
             gridder,
             density_includes_conjugates(density_build_convention),
             density_build_convention,
+            1,
         )),
     };
     let weighted_batches = apply_weighting_with_density_source(
@@ -1286,6 +1297,7 @@ pub(crate) fn trace_weighting_with_density_source(
         target_batches,
         density_batches,
         gridder,
+        1,
     )?;
     let mut samples = Vec::new();
     let mut gridded_samples = 0usize;
@@ -1474,9 +1486,9 @@ fn build_density_grid(
     gridder: &StandardGridder,
     mirror_hermitian: bool,
     convention: DensityCellConvention,
+    requested_threads: usize,
 ) -> Array2<f32> {
     let sample_count = batches.iter().map(VisibilityBatch::len).sum::<usize>();
-    let requested_threads = standard_mfs_worker_threads();
     let thread_count = requested_threads
         .min(thread::available_parallelism().map_or(1, |value| value.get()))
         .max(1);
@@ -1498,6 +1510,7 @@ fn build_density_grid(
             mirror_hermitian,
             convention,
             thread_count,
+            requested_threads,
         );
     }
     build_density_grid_serial(batches, gridder, mirror_hermitian, convention)
@@ -1738,8 +1751,8 @@ fn build_density_grid_parallel(
     mirror_hermitian: bool,
     convention: DensityCellConvention,
     thread_count: usize,
+    requested_threads: usize,
 ) -> Array2<f32> {
-    let requested_threads = standard_mfs_worker_threads();
     let [nx, ny] = gridder.density_grid_shape();
     if batches.len() == 1 {
         return build_density_grid_parallel_single_batch(
@@ -2043,8 +2056,8 @@ fn reweight_owned_batches(
     convention: DensityCellConvention,
     trace_weighting: bool,
     mode: DensityReweightMode,
+    requested_threads: usize,
 ) -> Vec<VisibilityBatch> {
-    let requested_threads = standard_mfs_worker_threads();
     let thread_count = requested_threads
         .min(batches.len())
         .min(thread::available_parallelism().map_or(1, |value| value.get()))
@@ -2792,7 +2805,7 @@ mod tests {
     fn uniform_weighting_downweights_dense_uv_regions() {
         let request = request_for(WeightingMode::Uniform);
         let gridder = StandardGridder::new(request.geometry).unwrap();
-        let weighted = apply_weighting(&request, &gridder).unwrap();
+        let weighted = apply_weighting(&request, &gridder, 1).unwrap();
         let dense_weight = weighted[0].weight[0];
         let sparse_weight = weighted[0].weight[4];
         assert!(dense_weight < sparse_weight);
@@ -2802,16 +2815,18 @@ mod tests {
     fn briggs_extremes_interpolate_between_natural_and_uniform() {
         let geometry = request_for(WeightingMode::Natural).geometry;
         let gridder = StandardGridder::new(geometry).unwrap();
-        let natural = apply_weighting(&request_for(WeightingMode::Natural), &gridder).unwrap();
-        let uniform = apply_weighting(&request_for(WeightingMode::Uniform), &gridder).unwrap();
+        let natural = apply_weighting(&request_for(WeightingMode::Natural), &gridder, 1).unwrap();
+        let uniform = apply_weighting(&request_for(WeightingMode::Uniform), &gridder, 1).unwrap();
         let briggs_naturalish = apply_weighting(
             &request_for(WeightingMode::Briggs { robust: 2.0 }),
             &gridder,
+            1,
         )
         .unwrap();
         let briggs_uniformish = apply_weighting(
             &request_for(WeightingMode::Briggs { robust: -2.0 }),
             &gridder,
+            1,
         )
         .unwrap();
 
@@ -2843,8 +2858,8 @@ mod tests {
         let mut tapered_request = request_for(WeightingMode::BriggsBwTaper { robust: 0.0 });
         tapered_request.selected_frequency_range_hz = briggs_request.selected_frequency_range_hz;
 
-        let briggs = apply_weighting(&briggs_request, &gridder).unwrap();
-        let tapered = apply_weighting(&tapered_request, &gridder).unwrap();
+        let briggs = apply_weighting(&briggs_request, &gridder, 1).unwrap();
+        let tapered = apply_weighting(&tapered_request, &gridder, 1).unwrap();
 
         let center_index = 0usize;
         let outer_index = 4usize;
@@ -2857,11 +2872,12 @@ mod tests {
         let request = request_for(WeightingMode::Briggs { robust: 0.5 });
         let gridder = StandardGridder::new(request.geometry).unwrap();
 
-        let borrowed = apply_weighting(&request, &gridder).unwrap();
+        let borrowed = apply_weighting(&request, &gridder, 1).unwrap();
         let owned = apply_weighting_to_owned_batches(
             &request,
             &gridder,
             request.visibility_batches.clone(),
+            1,
         )
         .unwrap();
 
@@ -2926,6 +2942,7 @@ mod tests {
                 std::slice::from_ref(&group_batch),
                 std::slice::from_ref(&group_batch),
                 &gridder,
+                1,
             )
             .unwrap();
             for (group_index, &(_, sample_index)) in positions.iter().enumerate() {
@@ -3269,6 +3286,7 @@ mod tests {
             &gridder,
             true,
             DensityCellConvention::VisImagingWeight,
+            1,
         );
         assert_eq!(density[(17, 17)], 2.0);
         assert_eq!(density[(14, 14)], 2.0);

@@ -195,12 +195,13 @@ pub fn trace_w_project_plan(request: &ImagingRequest) -> Result<WProjectDiagnost
         ));
     }
     let gridder = StandardGridder::new(request.geometry)?;
-    let weighted = apply_weighting(request, &gridder)?;
+    let weighted = apply_weighting(request, &gridder, 1)?;
     let prepared = prepare_w_project_data(
         request.geometry,
         &weighted,
         &gridder,
         request.w_project_planes,
+        1,
     )?;
     Ok(public_w_project_diagnostics(prepared))
 }
@@ -214,6 +215,7 @@ pub fn trace_w_project_plan(request: &ImagingRequest) -> Result<WProjectDiagnost
 pub fn trace_residual_refresh(
     request: &ImagingRequest,
     model: &Array2<f32>,
+    execution: &ImagingExecutionPlan,
 ) -> Result<ResidualRefreshDiagnostics, ImagingError> {
     request.validate()?;
     if model.dim()
@@ -236,9 +238,15 @@ pub fn trace_residual_refresh(
     let gridder = StandardGridder::new(request.geometry)?;
     let mut stage_timings = ImagingStageTimings::default();
     let weighting_started = Instant::now();
-    let weighted_batches = apply_weighting(request, &gridder)?;
+    let weighted_batches = apply_weighting(request, &gridder, 1)?;
     stage_timings.weighting += weighting_started.elapsed();
-    let psf_state = compute_psf(request, &weighted_batches, &gridder, &mut stage_timings)?;
+    let psf_state = compute_psf(
+        request,
+        &weighted_batches,
+        &gridder,
+        execution,
+        &mut stage_timings,
+    )?;
     let trace = compute_residual_trace_standard(
         request.geometry,
         &weighted_batches,
@@ -263,6 +271,7 @@ pub fn trace_cube_channel_residual_refresh(
     identity_model_channel_index: usize,
     model_planes: &[Array2<f32>],
     model_channel_frequencies_hz: &[f64],
+    execution: &ImagingExecutionPlan,
 ) -> Result<ResidualRefreshDiagnostics, ImagingError> {
     trace_cube_channel_residual_refresh_with_mode(
         request,
@@ -270,6 +279,7 @@ pub fn trace_cube_channel_residual_refresh(
         identity_model_channel_index,
         model_planes,
         model_channel_frequencies_hz,
+        execution,
         CubePredictionLambdaMode::OutputChannel,
     )
 }
@@ -285,6 +295,7 @@ pub fn trace_cube_channel_residual_refresh_model_channel_lambda(
     identity_model_channel_index: usize,
     model_planes: &[Array2<f32>],
     model_channel_frequencies_hz: &[f64],
+    execution: &ImagingExecutionPlan,
 ) -> Result<ResidualRefreshDiagnostics, ImagingError> {
     trace_cube_channel_residual_refresh_with_mode(
         request,
@@ -292,6 +303,7 @@ pub fn trace_cube_channel_residual_refresh_model_channel_lambda(
         identity_model_channel_index,
         model_planes,
         model_channel_frequencies_hz,
+        execution,
         CubePredictionLambdaMode::ModelChannel,
     )
 }
@@ -302,6 +314,7 @@ fn trace_cube_channel_residual_refresh_with_mode(
     identity_model_channel_index: usize,
     model_planes: &[Array2<f32>],
     model_channel_frequencies_hz: &[f64],
+    execution: &ImagingExecutionPlan,
     prediction_lambda_mode: CubePredictionLambdaMode,
 ) -> Result<ResidualRefreshDiagnostics, ImagingError> {
     request.validate()?;
@@ -340,9 +353,15 @@ fn trace_cube_channel_residual_refresh_with_mode(
     let gridder = StandardGridder::new(request.geometry)?;
     let mut stage_timings = ImagingStageTimings::default();
     let weighting_started = Instant::now();
-    let weighted_batches = apply_weighting(request, &gridder)?;
+    let weighted_batches = apply_weighting(request, &gridder, 1)?;
     stage_timings.weighting += weighting_started.elapsed();
-    let psf_state = compute_psf(request, &weighted_batches, &gridder, &mut stage_timings)?;
+    let psf_state = compute_psf(
+        request,
+        &weighted_batches,
+        &gridder,
+        execution,
+        &mut stage_timings,
+    )?;
     let trace = compute_residual_trace_cube_standard(
         &weighted_batches,
         model_interpolation_batches,

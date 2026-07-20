@@ -18,8 +18,8 @@
 //!   sinh, cosh, tanh, log, log10, sqrt
 //! - **Binary math functions**: pow, fmod, atan2, min, max
 //! - **Comparison and logical composition**: `>`, `<`, `>=`, `<=`, `==`,
-//!   `!=`, AND, OR, NOT via [`MaskExpr`]
-//! - **NaN test**: `isnan(expr)` via [`MaskExpr`]
+//!   `!=`, AND, OR, NOT via [`MaskExprBuilder`]
+//! - **NaN test**: `isnan(expr)` via [`MaskExprBuilder`]
 //! - **Metadata queries**: `ndim`, `nelem`, `length`
 //! - **Reductions**: `sum`, `min1d`, `max1d`, `mean1d`, `median1d`,
 //!   `fractile1d`, `fractilerange1d`
@@ -54,8 +54,8 @@
 //!   non-elementwise nodes still fall back to all-true.
 //!
 //! ² The parser is monomorphic in `T`; type-changing functions require
-//!   calling [`ImageExpr::real_part`], [`ImageExpr::imag_part`],
-//!   [`ImageExpr::arg_phase`], or [`ImageExpr::to_complex`] directly.
+//!   calling [`ImageExprBuilder::real_part`], [`ImageExprBuilder::imag_part`],
+//!   [`ImageExprBuilder::arg_phase`], or [`ImageExprBuilder::to_complex`] directly.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -63,38 +63,20 @@ use std::sync::Arc;
 use std::thread;
 
 use casa_coordinates::CoordinateSystem;
-use casa_lattices::execution::{
-    ParallelReadChunkConfig, ReadChunkExecutionStrategy, try_fold_traversal_cursors,
-    try_for_each_traversal_cursor, try_reduce_read_chunks,
-};
-use casa_lattices::{
-    Lattice, LatticeError, LatticeStatistics, Statistic, TraversalCursorIter, TraversalSpec,
-};
+use casa_lattices::LatticeError;
 use casa_types::ArrayD;
 use ndarray::{IxDyn, Zip};
 
 use crate::error::ImageError;
-use crate::image::{ImageInterface, ImagePixel, PagedImage};
+use crate::image::{ImageInterface, ImagePixel};
 use crate::image_info::ImageInfo;
 
 #[path = "image_expr_compiled.rs"]
 mod compiled;
-pub use compiled::{CompiledImageExpr, CompiledMaskExpr};
+pub use compiled::{ImageExpression, MaskExpression};
 
 type UnaryExprFn<T> = Arc<dyn Fn(T) -> T + Send + Sync>;
 type BinaryExprFn<T> = Arc<dyn Fn(T, T) -> T + Send + Sync>;
-
-#[derive(Clone, Copy)]
-struct ExprReductionPartial<T> {
-    seen: bool,
-    value: T,
-}
-
-impl<T> ExprReductionPartial<T> {
-    fn new(value: T) -> Self {
-        Self { seen: false, value }
-    }
-}
 
 /// Numeric operations supported by the lazy image expression DAG.
 ///
@@ -150,17 +132,6 @@ pub trait ImageExprValue:
 
     /// Lossily convert to `f64`.  Used by sorting in median/fractile.
     fn to_f64_lossy(&self) -> f64;
-
-    /// Optional fast path for direct source-backed global reductions.
-    fn reduction_from_source(
-        _op: ReductionOp,
-        _image: &dyn ImageInterface<Self>,
-    ) -> Option<Result<Self, LatticeError>>
-    where
-        Self: Sized,
-    {
-        None
-    }
 
     /// Compare two values using LEL-style scalar comparison semantics.
     fn expr_compare(self, rhs: Self, op: ImageExprCompareOp) -> bool;
@@ -253,13 +224,6 @@ impl ImageExprValue for f32 {
     }
     fn to_f64_lossy(&self) -> f64 {
         *self as f64
-    }
-
-    fn reduction_from_source(
-        op: ReductionOp,
-        image: &dyn ImageInterface<Self>,
-    ) -> Option<Result<Self, LatticeError>> {
-        Some(source_numeric_reduction_value(op, image))
     }
 
     fn expr_compare(self, rhs: Self, op: ImageExprCompareOp) -> bool {
@@ -361,13 +325,6 @@ impl ImageExprValue for f64 {
     }
     fn to_f64_lossy(&self) -> f64 {
         *self
-    }
-
-    fn reduction_from_source(
-        op: ReductionOp,
-        image: &dyn ImageInterface<Self>,
-    ) -> Option<Result<Self, LatticeError>> {
-        Some(source_numeric_reduction_value(op, image))
     }
 
     fn expr_compare(self, rhs: Self, op: ImageExprCompareOp) -> bool {
@@ -823,25 +780,6 @@ enum NumericExprNode<'a, T: ImageExprValue> {
 }
 
 impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
-    fn preferred_cursor_shape(&self, full_shape: &[usize]) -> Vec<usize> {
-        match self {
-            Self::Source(image) => clamp_cursor_shape(&image.nice_cursor_shape(), full_shape),
-            Self::UnaryOp { child, .. }
-            | Self::CustomUnary { child, .. }
-            | Self::Reduction { child, .. }
-            | Self::Fractile { child, .. }
-            | Self::FractileRange { child, .. } => child.preferred_cursor_shape(full_shape),
-            Self::BinaryOp { lhs, .. } | Self::CustomBinary { lhs, .. } => {
-                lhs.preferred_cursor_shape(full_shape)
-            }
-            Self::Conditional { if_true, .. } => if_true.preferred_cursor_shape(full_shape),
-            Self::Replace { primary, .. } => primary.preferred_cursor_shape(full_shape),
-            Self::Scalar(_) | Self::MaskCount { .. } | Self::TypeBridge { .. } => {
-                advised_cursor_shape(full_shape)
-            }
-        }
-    }
-
     fn try_shape(&self) -> Option<Vec<usize>> {
         match self {
             Self::Source(image) => Some(image.shape().to_vec()),
@@ -902,409 +840,6 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
         }
     }
 
-    fn eval_slice(
-        &self,
-        start: &[usize],
-        shape: &[usize],
-        stride: &[usize],
-    ) -> Result<ArrayD<T>, LatticeError> {
-        match self {
-            Self::Source(image) => image.get_slice(start, shape, stride),
-            Self::Scalar(value) => Ok(ArrayD::from_elem(IxDyn(shape), *value)),
-            Self::UnaryOp { op, child } => {
-                let mut out = child.eval_slice(start, shape, stride)?;
-                out.mapv_inplace(|value| match op {
-                    ImageExprUnaryOp::Negate => -value,
-                    ImageExprUnaryOp::Exp => value.expr_exp(),
-                    ImageExprUnaryOp::Sin => value.expr_sin(),
-                    ImageExprUnaryOp::Cos => value.expr_cos(),
-                    ImageExprUnaryOp::Tan => value.expr_tan(),
-                    ImageExprUnaryOp::Asin => value.expr_asin(),
-                    ImageExprUnaryOp::Acos => value.expr_acos(),
-                    ImageExprUnaryOp::Atan => value.expr_atan(),
-                    ImageExprUnaryOp::Sinh => value.expr_sinh(),
-                    ImageExprUnaryOp::Cosh => value.expr_cosh(),
-                    ImageExprUnaryOp::Tanh => value.expr_tanh(),
-                    ImageExprUnaryOp::Log => value.expr_log(),
-                    ImageExprUnaryOp::Log10 => value.expr_log10(),
-                    ImageExprUnaryOp::Sqrt => value.expr_sqrt(),
-                    ImageExprUnaryOp::Abs => value.expr_abs(),
-                    ImageExprUnaryOp::Ceil => value.expr_ceil(),
-                    ImageExprUnaryOp::Floor => value.expr_floor(),
-                    ImageExprUnaryOp::Round => value.expr_round(),
-                    ImageExprUnaryOp::Sign => value.expr_sign(),
-                    ImageExprUnaryOp::Conj => value.expr_conj(),
-                });
-                Ok(out)
-            }
-            Self::BinaryOp { op, lhs, rhs } => {
-                let lhs_data = lhs.eval_slice(start, shape, stride)?;
-                let rhs_data = rhs.eval_slice(start, shape, stride)?;
-                Ok(Zip::from(&lhs_data)
-                    .and(&rhs_data)
-                    .map_collect(|&left, &right| match op {
-                        ImageExprBinaryOp::Add => left + right,
-                        ImageExprBinaryOp::Subtract => left - right,
-                        ImageExprBinaryOp::Multiply => left * right,
-                        ImageExprBinaryOp::Divide => left / right,
-                        ImageExprBinaryOp::Pow => left.expr_pow(right),
-                        ImageExprBinaryOp::Fmod => left.expr_fmod(right),
-                        ImageExprBinaryOp::Atan2 => left.expr_atan2(right),
-                        ImageExprBinaryOp::Min => left.expr_min(right),
-                        ImageExprBinaryOp::Max => left.expr_max(right),
-                    }))
-            }
-            Self::CustomUnary {
-                name: _name,
-                child,
-                func,
-            } => {
-                let mut out = child.eval_slice(start, shape, stride)?;
-                let func = Arc::clone(func);
-                out.mapv_inplace(|value| (func)(value));
-                Ok(out)
-            }
-            Self::CustomBinary {
-                name: _name,
-                lhs,
-                rhs,
-                func,
-            } => {
-                let lhs_data = lhs.eval_slice(start, shape, stride)?;
-                let rhs_data = rhs.eval_slice(start, shape, stride)?;
-                let func = Arc::clone(func);
-                Ok(Zip::from(&lhs_data)
-                    .and(&rhs_data)
-                    .map_collect(|&lhs, &rhs| (func)(lhs, rhs)))
-            }
-            Self::Reduction {
-                op,
-                child,
-                child_shape,
-            } => {
-                let result = match op {
-                    ReductionOp::Sum => reduce_numeric_expr(
-                        child,
-                        ReductionPlan {
-                            source_stat_op: Some(ReductionOp::Sum),
-                            full_shape: child_shape,
-                            per_worker_state_bytes: std::mem::size_of::<T>(),
-                            large_work_threshold: 1_048_576,
-                        },
-                        T::default_value,
-                        |acc, chunk| {
-                            for &v in chunk.iter() {
-                                *acc = *acc + v;
-                            }
-                            Ok(())
-                        },
-                        |acc, other| {
-                            *acc = *acc + other;
-                            Ok(())
-                        },
-                    )?,
-                    ReductionOp::Min => {
-                        let partial = reduce_numeric_expr(
-                            child,
-                            ReductionPlan {
-                                source_stat_op: Some(ReductionOp::Min),
-                                full_shape: child_shape,
-                                per_worker_state_bytes: std::mem::size_of::<ExprReductionPartial<T>>(
-                                ),
-                                large_work_threshold: 1_048_576,
-                            },
-                            || ExprReductionPartial::new(T::default_value()),
-                            |partial, chunk| {
-                                for &v in chunk.iter() {
-                                    if !partial.seen {
-                                        partial.value = v;
-                                        partial.seen = true;
-                                    } else {
-                                        partial.value = partial.value.expr_min(v);
-                                    }
-                                }
-                                Ok(())
-                            },
-                            |partial, other| {
-                                if other.seen {
-                                    if !partial.seen {
-                                        *partial = other;
-                                    } else {
-                                        partial.value = partial.value.expr_min(other.value);
-                                    }
-                                }
-                                Ok(())
-                            },
-                        )?;
-                        if partial.seen {
-                            partial.value
-                        } else {
-                            T::default_value()
-                        }
-                    }
-                    ReductionOp::Max => {
-                        let partial = reduce_numeric_expr(
-                            child,
-                            ReductionPlan {
-                                source_stat_op: Some(ReductionOp::Max),
-                                full_shape: child_shape,
-                                per_worker_state_bytes: std::mem::size_of::<ExprReductionPartial<T>>(
-                                ),
-                                large_work_threshold: 1_048_576,
-                            },
-                            || ExprReductionPartial::new(T::default_value()),
-                            |partial, chunk| {
-                                for &v in chunk.iter() {
-                                    if !partial.seen {
-                                        partial.value = v;
-                                        partial.seen = true;
-                                    } else {
-                                        partial.value = partial.value.expr_max(v);
-                                    }
-                                }
-                                Ok(())
-                            },
-                            |partial, other| {
-                                if other.seen {
-                                    if !partial.seen {
-                                        *partial = other;
-                                    } else {
-                                        partial.value = partial.value.expr_max(other.value);
-                                    }
-                                }
-                                Ok(())
-                            },
-                        )?;
-                        if partial.seen {
-                            partial.value
-                        } else {
-                            T::default_value()
-                        }
-                    }
-                    ReductionOp::Mean => {
-                        let (mut acc, n) = reduce_numeric_expr(
-                            child,
-                            ReductionPlan {
-                                source_stat_op: Some(ReductionOp::Mean),
-                                full_shape: child_shape,
-                                per_worker_state_bytes: std::mem::size_of::<T>()
-                                    + std::mem::size_of::<usize>(),
-                                large_work_threshold: 1_048_576,
-                            },
-                            || (T::default_value(), 0usize),
-                            |partial, chunk| {
-                                partial.1 += chunk.len();
-                                for &v in chunk.iter() {
-                                    partial.0 = partial.0 + v;
-                                }
-                                Ok(())
-                            },
-                            |partial, other| {
-                                partial.0 = partial.0 + other.0;
-                                partial.1 += other.1;
-                                Ok(())
-                            },
-                        )?;
-                        if n > 0 {
-                            acc = acc * T::from_f64_lossy(1.0 / n as f64);
-                        }
-                        acc
-                    }
-                    ReductionOp::Median => {
-                        let reserve = child_shape.iter().product::<usize>();
-                        let mut vals = reduce_numeric_expr(
-                            child,
-                            ReductionPlan {
-                                source_stat_op: Some(ReductionOp::Median),
-                                full_shape: child_shape,
-                                per_worker_state_bytes: reserve
-                                    .saturating_mul(std::mem::size_of::<T>()),
-                                large_work_threshold: 4 * 1024 * 1024,
-                            },
-                            || Vec::with_capacity(reserve / thread_parallelism().max(1)),
-                            |vals, chunk| {
-                                vals.extend(chunk.iter().copied());
-                                Ok(())
-                            },
-                            |vals, other| {
-                                vals.extend(other);
-                                Ok(())
-                            },
-                        )?;
-                        vals.sort_by(|a, b| {
-                            a.to_f64_lossy()
-                                .partial_cmp(&b.to_f64_lossy())
-                                .unwrap_or(std::cmp::Ordering::Equal)
-                        });
-                        let n = vals.len();
-                        if n == 0 {
-                            T::default_value()
-                        } else if n % 2 == 1 {
-                            vals[n / 2]
-                        } else {
-                            let a = vals[n / 2 - 1];
-                            let b = vals[n / 2];
-                            (a + b) * T::from_f64_lossy(0.5)
-                        }
-                    }
-                };
-                Ok(ArrayD::from_elem(IxDyn(shape), result))
-            }
-            Self::Fractile {
-                child,
-                child_shape,
-                fraction,
-            } => {
-                let reserve = child_shape.iter().product::<usize>();
-                let mut vals = reduce_numeric_expr(
-                    child,
-                    ReductionPlan {
-                        source_stat_op: None,
-                        full_shape: child_shape,
-                        per_worker_state_bytes: reserve.saturating_mul(std::mem::size_of::<T>()),
-                        large_work_threshold: 4 * 1024 * 1024,
-                    },
-                    || Vec::with_capacity(reserve / thread_parallelism().max(1)),
-                    |vals, chunk| {
-                        vals.extend(chunk.iter().copied());
-                        Ok(())
-                    },
-                    |vals, other| {
-                        vals.extend(other);
-                        Ok(())
-                    },
-                )?;
-                vals.sort_by(|a, b| {
-                    a.to_f64_lossy()
-                        .partial_cmp(&b.to_f64_lossy())
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-                let n = vals.len();
-                let idx = (fraction * (n.saturating_sub(1)) as f64).floor() as usize;
-                let result = vals
-                    .get(idx.min(n.saturating_sub(1)))
-                    .cloned()
-                    .unwrap_or_else(T::default_value);
-                Ok(ArrayD::from_elem(IxDyn(shape), result))
-            }
-            Self::FractileRange {
-                child,
-                child_shape,
-                fraction1,
-                fraction2,
-            } => {
-                let reserve = child_shape.iter().product::<usize>();
-                let mut vals = reduce_numeric_expr(
-                    child,
-                    ReductionPlan {
-                        source_stat_op: None,
-                        full_shape: child_shape,
-                        per_worker_state_bytes: reserve.saturating_mul(std::mem::size_of::<T>()),
-                        large_work_threshold: 4 * 1024 * 1024,
-                    },
-                    || Vec::with_capacity(reserve / thread_parallelism().max(1)),
-                    |vals, chunk| {
-                        vals.extend(chunk.iter().copied());
-                        Ok(())
-                    },
-                    |vals, other| {
-                        vals.extend(other);
-                        Ok(())
-                    },
-                )?;
-                vals.sort_by(|a, b| {
-                    a.to_f64_lossy()
-                        .partial_cmp(&b.to_f64_lossy())
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-                let n = vals.len();
-                let idx1 = (fraction1 * (n.saturating_sub(1)) as f64).floor() as usize;
-                let idx2 = (fraction2 * (n.saturating_sub(1)) as f64).floor() as usize;
-                let v1 = vals
-                    .get(idx1.min(n.saturating_sub(1)))
-                    .cloned()
-                    .unwrap_or_else(T::default_value);
-                let v2 = vals
-                    .get(idx2.min(n.saturating_sub(1)))
-                    .cloned()
-                    .unwrap_or_else(T::default_value);
-                let result = v2 - v1;
-                Ok(ArrayD::from_elem(IxDyn(shape), result))
-            }
-            Self::Conditional {
-                condition,
-                if_true,
-                if_false,
-            } => {
-                let cond = condition.eval_slice(start, shape, stride)?;
-                let t_data = if_true.eval_slice(start, shape, stride)?;
-                let f_data = if_false.eval_slice(start, shape, stride)?;
-                Ok(Zip::from(&cond).and(&t_data).and(&f_data).map_collect(
-                    |&cond, &if_true, &if_false| {
-                        if cond { if_true } else { if_false }
-                    },
-                ))
-            }
-            Self::MaskCount {
-                count_true,
-                mask,
-                mask_shape,
-            } => {
-                let mut count = 0usize;
-                let cursor_shape = advised_cursor_shape(mask_shape);
-                let cursors = TraversalCursorIter::new(
-                    mask_shape.to_vec(),
-                    cursor_shape.clone(),
-                    TraversalSpec::chunks(cursor_shape),
-                );
-                for cursor in cursors {
-                    let cursor = cursor?;
-                    let stride = vec![1; cursor.position.len()];
-                    let chunk = mask.eval_slice(&cursor.position, &cursor.shape, &stride)?;
-                    count += if *count_true {
-                        chunk.iter().filter(|&&v| v).count()
-                    } else {
-                        chunk.iter().filter(|&&v| !v).count()
-                    };
-                }
-                Ok(ArrayD::from_elem(
-                    IxDyn(shape),
-                    T::from_f64_lossy(count as f64),
-                ))
-            }
-            Self::Replace {
-                primary,
-                replacement,
-                mask,
-            } => {
-                let p_data = primary.eval_slice(start, shape, stride)?;
-                let r_data = replacement.eval_slice(start, shape, stride)?;
-                // Slice the mask to the requested region
-                let ndim = mask.ndim();
-                let slice_info: Vec<ndarray::SliceInfoElem> = (0..ndim)
-                    .map(|ax| {
-                        let end = start[ax] + shape[ax] * stride[ax];
-                        ndarray::SliceInfoElem::Slice {
-                            start: start[ax] as isize,
-                            end: Some(end as isize),
-                            step: stride[ax] as isize,
-                        }
-                    })
-                    .collect();
-                let mask_slice = mask.slice(slice_info.as_slice());
-                Ok(Zip::from(&mask_slice)
-                    .and(&p_data)
-                    .and(&r_data)
-                    .map_collect(
-                        |&mask, &primary, &replacement| {
-                            if mask { primary } else { replacement }
-                        },
-                    ))
-            }
-            Self::TypeBridge { eval_fn } => eval_fn(start, shape, stride),
-        }
-    }
-
     fn kind_name(&self) -> &'static str {
         match self {
             Self::Source(_) => "source",
@@ -1360,18 +895,6 @@ enum MaskExprNode<'a, T: ImageExprValue> {
 }
 
 impl<'a, T: ImageExprValue> MaskExprNode<'a, T> {
-    fn preferred_cursor_shape(&self, full_shape: &[usize]) -> Vec<usize> {
-        match self {
-            Self::CompareScalar { expr, .. } => expr.preferred_cursor_shape(full_shape),
-            Self::Logical { lhs, .. } => lhs.preferred_cursor_shape(full_shape),
-            Self::Not { child } | Self::AllReduce { child, .. } | Self::AnyReduce { child, .. } => {
-                child.preferred_cursor_shape(full_shape)
-            }
-            Self::IsNan { child } => child.preferred_cursor_shape(full_shape),
-            Self::ConstantMask { .. } => advised_cursor_shape(full_shape),
-        }
-    }
-
     fn try_shape(&self) -> Option<Vec<usize>> {
         match self {
             Self::CompareScalar { expr, .. } | Self::IsNan { child: expr } => expr.try_shape(),
@@ -1383,74 +906,6 @@ impl<'a, T: ImageExprValue> MaskExprNode<'a, T> {
             Self::Not { child } => child.try_shape(),
             Self::ConstantMask { mask } => Some(mask.shape().to_vec()),
             Self::AllReduce { .. } | Self::AnyReduce { .. } => Some(vec![]),
-        }
-    }
-
-    fn eval_slice(
-        &self,
-        start: &[usize],
-        shape: &[usize],
-        stride: &[usize],
-    ) -> Result<ArrayD<bool>, LatticeError> {
-        match self {
-            Self::CompareScalar { op, expr, scalar } => {
-                let data = expr.eval_slice(start, shape, stride)?;
-                Ok(data.mapv(|value| value.expr_compare(*scalar, *op)))
-            }
-            Self::Logical { op, lhs, rhs } => {
-                let lhs_mask = lhs.eval_slice(start, shape, stride)?;
-                let rhs_mask = rhs.eval_slice(start, shape, stride)?;
-                Ok(Zip::from(&lhs_mask)
-                    .and(&rhs_mask)
-                    .map_collect(|&lhs, &rhs| match op {
-                        MaskLogicalOp::And => lhs && rhs,
-                        MaskLogicalOp::Or => lhs || rhs,
-                    }))
-            }
-            Self::Not { child } => {
-                let mut out = child.eval_slice(start, shape, stride)?;
-                out.mapv_inplace(|value| !value);
-                Ok(out)
-            }
-            Self::IsNan { child } => {
-                let data = child.eval_slice(start, shape, stride)?;
-                Ok(data.mapv(|v| v.expr_isnan()))
-            }
-            Self::ConstantMask { mask } => {
-                // Slice the constant mask to the requested region.
-                let ndim = mask.ndim();
-                let slice_info: Vec<ndarray::SliceInfoElem> = (0..ndim)
-                    .map(|ax| {
-                        let end = start[ax] + shape[ax] * stride[ax];
-                        ndarray::SliceInfoElem::Slice {
-                            start: start[ax] as isize,
-                            end: Some(end as isize),
-                            step: stride[ax] as isize,
-                        }
-                    })
-                    .collect();
-                Ok(mask.slice(slice_info.as_slice()).to_owned())
-            }
-            Self::AllReduce { child, child_shape } => {
-                let mut result = true;
-                for_each_mask_chunk(child, child_shape, |chunk| {
-                    if !chunk.iter().all(|&v| v) {
-                        result = false;
-                    }
-                    Ok(())
-                })?;
-                Ok(ArrayD::from_elem(IxDyn(shape), result))
-            }
-            Self::AnyReduce { child, child_shape } => {
-                let mut result = false;
-                for_each_mask_chunk(child, child_shape, |chunk| {
-                    if chunk.iter().any(|&v| v) {
-                        result = true;
-                    }
-                    Ok(())
-                })?;
-                Ok(ArrayD::from_elem(IxDyn(shape), result))
-            }
         }
     }
 }
@@ -1581,27 +1036,36 @@ fn combine_optional_masks(
     }
 }
 
-fn advised_cursor_shape(shape: &[usize]) -> Vec<usize> {
-    let max_pixels = 1_048_576usize;
+fn work_balanced_cursor_shape(
+    shape: &[usize],
+    worker_limit: usize,
+) -> Result<Vec<usize>, ImageError> {
     if shape.is_empty() {
-        return vec![];
+        return Ok(vec![]);
     }
+    let total_pixels = shape
+        .iter()
+        .try_fold(1usize, |product, &extent| product.checked_mul(extent))
+        .ok_or_else(|| ImageError::Lattice("expression shape product overflow".into()))?;
+    let target_pixels = total_pixels.div_ceil(worker_limit.max(1)).max(1);
     let mut cursor = vec![1usize; shape.len()];
     let mut product = 1usize;
     for (axis, &extent) in shape.iter().enumerate() {
-        let can_fit = max_pixels / product;
+        let can_fit = target_pixels / product;
         if can_fit == 0 {
             break;
         }
         cursor[axis] = extent.min(can_fit);
-        product *= cursor[axis];
+        product = product
+            .checked_mul(cursor[axis])
+            .ok_or_else(|| ImageError::Lattice("expression cursor product overflow".into()))?;
     }
-    cursor
+    Ok(cursor)
 }
 
 fn clamp_cursor_shape(cursor_shape: &[usize], full_shape: &[usize]) -> Vec<usize> {
     if cursor_shape.len() != full_shape.len() {
-        return advised_cursor_shape(full_shape);
+        return vec![1; full_shape.len()];
     }
     cursor_shape
         .iter()
@@ -1614,365 +1078,6 @@ fn thread_parallelism() -> usize {
     thread::available_parallelism()
         .map(|parallelism| parallelism.get())
         .unwrap_or(1)
-}
-
-fn reduction_execution_strategy(
-    full_shape: &[usize],
-    cursor_shape: &[usize],
-    per_worker_state_bytes: usize,
-    large_work_threshold: usize,
-) -> ReadChunkExecutionStrategy {
-    let available = thread_parallelism();
-    if available < 2 {
-        return ReadChunkExecutionStrategy::Serial;
-    }
-
-    let task_count = TraversalCursorIter::new(
-        full_shape.to_vec(),
-        cursor_shape.to_vec(),
-        TraversalSpec::chunks(cursor_shape.to_vec()),
-    )
-    .size_hint()
-    .1
-    .unwrap_or(0);
-    if task_count < 4 || full_shape.iter().product::<usize>() < large_work_threshold {
-        return ReadChunkExecutionStrategy::Serial;
-    }
-
-    if per_worker_state_bytes > 256 * 1024 * 1024 {
-        return ReadChunkExecutionStrategy::Serial;
-    }
-
-    let workers = available.min(task_count.max(1));
-    ReadChunkExecutionStrategy::Parallel(ParallelReadChunkConfig {
-        workers,
-        prefetch_depth: workers * 2,
-    })
-}
-
-fn source_stats_reduction_value<T>(
-    op: ReductionOp,
-    image: &dyn ImageInterface<T>,
-) -> Result<T, LatticeError>
-where
-    T: ImageExprValue + casa_lattices::statistics::StatsElement,
-{
-    let stats = LatticeStatistics::new(image as &dyn Lattice<T>);
-    let stat = match op {
-        ReductionOp::Sum => Statistic::Sum,
-        ReductionOp::Min => Statistic::Min,
-        ReductionOp::Max => Statistic::Max,
-        ReductionOp::Mean => Statistic::Mean,
-        ReductionOp::Median => Statistic::Median,
-    };
-    let value = stats
-        .get_statistic(stat)?
-        .iter()
-        .copied()
-        .next()
-        .unwrap_or_default();
-    Ok(T::from_f64_lossy(value))
-}
-
-fn source_numeric_reduction_value<T>(
-    op: ReductionOp,
-    image: &dyn ImageInterface<T>,
-) -> Result<T, LatticeError>
-where
-    T: ImageExprValue + casa_lattices::statistics::StatsElement + Send + Sync,
-{
-    if image.shape().is_empty() {
-        return image.get_at(&[]);
-    }
-
-    let full_shape = image.shape();
-    let payload_bytes = full_shape
-        .iter()
-        .product::<usize>()
-        .saturating_mul(std::mem::size_of::<T>());
-    // Deferred: Phase 5 backlog item 12.3 tracks a tighter dedicated serial
-    // scalar reduction kernel for this small-image path.
-    if !matches!(op, ReductionOp::Median) && payload_bytes <= 4 * 1024 * 1024 {
-        return source_stats_reduction_value(op, image);
-    }
-
-    let cursor_shape = clamp_cursor_shape(&image.nice_cursor_shape(), full_shape);
-    let spec = TraversalSpec::chunks(cursor_shape.clone());
-
-    match op {
-        ReductionOp::Sum => try_reduce_read_chunks(
-            image,
-            spec,
-            reduction_execution_strategy(
-                full_shape,
-                &cursor_shape,
-                std::mem::size_of::<T>(),
-                1_048_576,
-            ),
-            T::default_value,
-            |acc, chunk| {
-                for &v in &chunk.data {
-                    *acc = *acc + v;
-                }
-                Ok(())
-            },
-            |acc, other| {
-                *acc = *acc + other;
-                Ok(())
-            },
-        ),
-        ReductionOp::Mean => {
-            let (mut sum, count) = try_reduce_read_chunks(
-                image,
-                spec,
-                reduction_execution_strategy(
-                    full_shape,
-                    &cursor_shape,
-                    std::mem::size_of::<T>() + std::mem::size_of::<usize>(),
-                    1_048_576,
-                ),
-                || (T::default_value(), 0usize),
-                |partial, chunk| {
-                    partial.1 += chunk.data.len();
-                    for &v in &chunk.data {
-                        partial.0 = partial.0 + v;
-                    }
-                    Ok(())
-                },
-                |partial, other| {
-                    partial.0 = partial.0 + other.0;
-                    partial.1 += other.1;
-                    Ok(())
-                },
-            )?;
-            if count > 0 {
-                sum = sum * T::from_f64_lossy(1.0 / count as f64);
-            }
-            Ok(sum)
-        }
-        ReductionOp::Min => {
-            let partial = try_reduce_read_chunks(
-                image,
-                spec,
-                reduction_execution_strategy(
-                    full_shape,
-                    &cursor_shape,
-                    std::mem::size_of::<ExprReductionPartial<T>>(),
-                    1_048_576,
-                ),
-                || ExprReductionPartial::new(T::default_value()),
-                |partial, chunk| {
-                    for &v in &chunk.data {
-                        if !partial.seen {
-                            partial.value = v;
-                            partial.seen = true;
-                        } else {
-                            partial.value = partial.value.expr_min(v);
-                        }
-                    }
-                    Ok(())
-                },
-                |partial, other| {
-                    if other.seen {
-                        if !partial.seen {
-                            *partial = other;
-                        } else {
-                            partial.value = partial.value.expr_min(other.value);
-                        }
-                    }
-                    Ok(())
-                },
-            )?;
-            Ok(if partial.seen {
-                partial.value
-            } else {
-                T::default_value()
-            })
-        }
-        ReductionOp::Max => {
-            let partial = try_reduce_read_chunks(
-                image,
-                spec,
-                reduction_execution_strategy(
-                    full_shape,
-                    &cursor_shape,
-                    std::mem::size_of::<ExprReductionPartial<T>>(),
-                    1_048_576,
-                ),
-                || ExprReductionPartial::new(T::default_value()),
-                |partial, chunk| {
-                    for &v in &chunk.data {
-                        if !partial.seen {
-                            partial.value = v;
-                            partial.seen = true;
-                        } else {
-                            partial.value = partial.value.expr_max(v);
-                        }
-                    }
-                    Ok(())
-                },
-                |partial, other| {
-                    if other.seen {
-                        if !partial.seen {
-                            *partial = other;
-                        } else {
-                            partial.value = partial.value.expr_max(other.value);
-                        }
-                    }
-                    Ok(())
-                },
-            )?;
-            Ok(if partial.seen {
-                partial.value
-            } else {
-                T::default_value()
-            })
-        }
-        ReductionOp::Median => source_stats_reduction_value(op, image),
-    }
-}
-
-fn for_each_numeric_chunk<'a, T: ImageExprValue>(
-    node: &NumericExprNode<'a, T>,
-    full_shape: &[usize],
-    mut f: impl FnMut(&ArrayD<T>) -> Result<(), LatticeError>,
-) -> Result<(), LatticeError> {
-    if full_shape.is_empty() {
-        let empty = node.eval_slice(&[], &[], &[])?;
-        return f(&empty);
-    }
-    let cursor_shape = node.preferred_cursor_shape(full_shape);
-    try_for_each_traversal_cursor(
-        full_shape,
-        &cursor_shape,
-        TraversalSpec::chunks(cursor_shape.clone()),
-        |cursor| {
-            let stride = vec![1; cursor.position.len()];
-            let chunk = node.eval_slice(&cursor.position, &cursor.shape, &stride)?;
-            f(&chunk)?;
-            Ok(())
-        },
-    )
-}
-
-fn reduce_source_lattice<T, Part, Init, Process, Merge>(
-    image: &dyn ImageInterface<T>,
-    plan: ReductionPlan<'_>,
-    make_partial: Init,
-    process_chunk: Process,
-    merge_partials: Merge,
-) -> Result<Part, LatticeError>
-where
-    T: ImageExprValue,
-    Part: Send,
-    Init: Fn() -> Part + Sync + Send,
-    Process: Fn(&mut Part, &ArrayD<T>) -> Result<(), LatticeError> + Sync + Send,
-    Merge: Fn(&mut Part, Part) -> Result<(), LatticeError> + Sync,
-{
-    let ReductionPlan {
-        full_shape,
-        per_worker_state_bytes,
-        large_work_threshold,
-        ..
-    } = plan;
-    if full_shape.is_empty() {
-        let chunk = image.get_slice(&[], &[], &[])?;
-        let mut partial = make_partial();
-        process_chunk(&mut partial, &chunk)?;
-        return Ok(partial);
-    }
-
-    let payload_bytes = full_shape
-        .iter()
-        .product::<usize>()
-        .saturating_mul(std::mem::size_of::<T>());
-    if payload_bytes <= 16 * 1024 * 1024 {
-        let chunk = image.get()?;
-        let mut partial = make_partial();
-        process_chunk(&mut partial, &chunk)?;
-        return Ok(partial);
-    }
-
-    let cursor_shape = clamp_cursor_shape(&image.nice_cursor_shape(), full_shape);
-    try_reduce_read_chunks(
-        image,
-        TraversalSpec::chunks(cursor_shape.clone()),
-        reduction_execution_strategy(
-            full_shape,
-            &cursor_shape,
-            per_worker_state_bytes,
-            large_work_threshold,
-        ),
-        make_partial,
-        |partial, chunk| process_chunk(partial, &chunk.data),
-        merge_partials,
-    )
-}
-
-#[derive(Clone, Copy)]
-struct ReductionPlan<'a> {
-    source_stat_op: Option<ReductionOp>,
-    full_shape: &'a [usize],
-    per_worker_state_bytes: usize,
-    large_work_threshold: usize,
-}
-
-fn reduce_numeric_expr<'a, T, Part, Init, Process, Merge>(
-    node: &NumericExprNode<'a, T>,
-    plan: ReductionPlan<'_>,
-    make_partial: Init,
-    process_chunk: Process,
-    merge_partials: Merge,
-) -> Result<Part, LatticeError>
-where
-    T: ImageExprValue,
-    Part: Send,
-    Init: Fn() -> Part + Sync + Send,
-    Process: Fn(&mut Part, &ArrayD<T>) -> Result<(), LatticeError> + Sync + Send,
-    Merge: Fn(&mut Part, Part) -> Result<(), LatticeError> + Sync,
-{
-    if let NumericExprNode::Source(image) = node {
-        if let Some(op) = plan.source_stat_op
-            && let Some(result) = T::reduction_from_source(op, *image)
-        {
-            let value = result?;
-            let mut partial = make_partial();
-            let chunk = ArrayD::from_elem(IxDyn(&[]), value);
-            process_chunk(&mut partial, &chunk)?;
-            return Ok(partial);
-        }
-        return reduce_source_lattice(*image, plan, make_partial, process_chunk, merge_partials);
-    }
-
-    let mut partial = make_partial();
-    for_each_numeric_chunk(node, plan.full_shape, |chunk| {
-        process_chunk(&mut partial, chunk)
-    })?;
-    Ok(partial)
-}
-
-fn for_each_mask_chunk<'a, T: ImageExprValue>(
-    node: &MaskExprNode<'a, T>,
-    full_shape: &[usize],
-    mut f: impl FnMut(&ArrayD<bool>) -> Result<(), LatticeError>,
-) -> Result<(), LatticeError> {
-    if full_shape.is_empty() {
-        let empty = node.eval_slice(&[], &[], &[])?;
-        return f(&empty);
-    }
-    let cursor_shape = node.preferred_cursor_shape(full_shape);
-    let cursors = TraversalCursorIter::new(
-        full_shape.to_vec(),
-        cursor_shape.clone(),
-        TraversalSpec::chunks(cursor_shape),
-    );
-    for cursor in cursors {
-        let cursor = cursor?;
-        let stride = vec![1; cursor.position.len()];
-        let chunk = node.eval_slice(&cursor.position, &cursor.shape, &stride)?;
-        f(&chunk)?;
-    }
-    Ok(())
 }
 
 fn write_chunk_into_array<T: Clone>(
@@ -2005,13 +1110,13 @@ fn write_chunk_into_array<T: Clone>(
 /// This is the Rust analogue of C++ `casacore::ImageExpr<T>`. It borrows its
 /// source images and evaluates requested slices on demand rather than
 /// precomputing a full result array.
-pub struct ImageExpr<'a, T: ImageExprValue> {
+pub struct ImageExprBuilder<'a, T: ImageExprValue> {
     node: NumericExprNode<'a, T>,
     meta: ImageExprMeta,
     expr_string: Option<String>,
 }
 
-impl<'a, T: ImageExprValue> Clone for ImageExpr<'a, T> {
+impl<'a, T: ImageExprValue> Clone for ImageExprBuilder<'a, T> {
     fn clone(&self) -> Self {
         Self {
             node: self.node.clone(),
@@ -2021,9 +1126,9 @@ impl<'a, T: ImageExprValue> Clone for ImageExpr<'a, T> {
     }
 }
 
-impl<'a, T: ImageExprValue> fmt::Debug for ImageExpr<'a, T> {
+impl<'a, T: ImageExprValue> fmt::Debug for ImageExprBuilder<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ImageExpr")
+        f.debug_struct("ImageExprBuilder")
             .field("shape", &self.meta.shape)
             .field("pixel_type", &T::PRIMITIVE_TYPE)
             .field("root", &self.node.kind_name())
@@ -2031,7 +1136,12 @@ impl<'a, T: ImageExprValue> fmt::Debug for ImageExpr<'a, T> {
     }
 }
 
-impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
+impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
+    /// Returns the shape that the canonical expression will produce.
+    pub fn shape(&self) -> &[usize] {
+        &self.meta.shape
+    }
+
     /// Creates a lazy expression rooted at a source image.
     pub fn from_image<I>(image: &'a I) -> Result<Self, ImageError>
     where
@@ -2474,38 +1584,12 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
         self.binary_image(rhs, ImageExprBinaryOp::Atan2)
     }
 
-    /// Reads the full evaluated array.
-    pub fn get(&self) -> Result<ArrayD<T>, ImageError> {
-        <Self as Lattice<T>>::get(self).map_err(Into::into)
-    }
-
-    /// Reads a single pixel from the expression.
-    pub fn get_at(&self, position: &[usize]) -> Result<T, ImageError> {
-        <Self as Lattice<T>>::get_at(self, position).map_err(Into::into)
-    }
-
-    /// Reads a unit-stride slice from the expression.
-    pub fn get_slice(&self, start: &[usize], shape: &[usize]) -> Result<ArrayD<T>, ImageError> {
-        <Self as Lattice<T>>::get_slice(self, start, shape, &vec![1; self.ndim()])
-            .map_err(Into::into)
-    }
-
-    /// Reads a strided slice from the expression.
-    pub fn get_slice_with_stride(
-        &self,
-        start: &[usize],
-        shape: &[usize],
-        stride: &[usize],
-    ) -> Result<ArrayD<T>, ImageError> {
-        <Self as Lattice<T>>::get_slice(self, start, shape, stride).map_err(Into::into)
-    }
-
     /// Comparison helper producing a lazy boolean mask expression.
-    pub fn compare_scalar(self, scalar: T, op: ImageExprCompareOp) -> MaskExpr<'a, T>
+    pub fn compare_scalar(self, scalar: T, op: ImageExprCompareOp) -> MaskExprBuilder<'a, T>
     where
         T: PartialOrd,
     {
-        MaskExpr {
+        MaskExprBuilder {
             node: MaskExprNode::CompareScalar {
                 op,
                 expr: Box::new(self.node),
@@ -2516,7 +1600,7 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     }
 
     /// Convenience `>` comparison against a scalar.
-    pub fn gt_scalar(self, scalar: T) -> MaskExpr<'a, T>
+    pub fn gt_scalar(self, scalar: T) -> MaskExprBuilder<'a, T>
     where
         T: PartialOrd,
     {
@@ -2524,7 +1608,7 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     }
 
     /// Convenience `<` comparison against a scalar.
-    pub fn lt_scalar(self, scalar: T) -> MaskExpr<'a, T>
+    pub fn lt_scalar(self, scalar: T) -> MaskExprBuilder<'a, T>
     where
         T: PartialOrd,
     {
@@ -2532,7 +1616,7 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     }
 
     /// Convenience `>=` comparison against a scalar.
-    pub fn ge_scalar(self, scalar: T) -> MaskExpr<'a, T>
+    pub fn ge_scalar(self, scalar: T) -> MaskExprBuilder<'a, T>
     where
         T: PartialOrd,
     {
@@ -2540,7 +1624,7 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     }
 
     /// Convenience `<=` comparison against a scalar.
-    pub fn le_scalar(self, scalar: T) -> MaskExpr<'a, T>
+    pub fn le_scalar(self, scalar: T) -> MaskExprBuilder<'a, T>
     where
         T: PartialOrd,
     {
@@ -2548,7 +1632,7 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     }
 
     /// Convenience `==` comparison against a scalar.
-    pub fn eq_scalar(self, scalar: T) -> MaskExpr<'a, T>
+    pub fn eq_scalar(self, scalar: T) -> MaskExprBuilder<'a, T>
     where
         T: PartialOrd,
     {
@@ -2556,7 +1640,7 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     }
 
     /// Convenience `!=` comparison against a scalar.
-    pub fn ne_scalar(self, scalar: T) -> MaskExpr<'a, T>
+    pub fn ne_scalar(self, scalar: T) -> MaskExprBuilder<'a, T>
     where
         T: PartialOrd,
     {
@@ -2568,11 +1652,11 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     /// Element-wise NaN test producing a boolean mask.
     ///
     /// Corresponds to C++ LEL `isnan(expr)`.
-    pub fn isnan(self) -> MaskExpr<'a, T>
+    pub fn isnan(self) -> MaskExprBuilder<'a, T>
     where
         T: PartialOrd,
     {
-        MaskExpr {
+        MaskExprBuilder {
             shape: self.meta.shape.clone(),
             node: MaskExprNode::IsNan {
                 child: Box::new(self.node),
@@ -2713,7 +1797,7 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     ///
     /// Corresponds to C++ LEL `iif(cond, true, false)`.
     pub fn iif(
-        condition: MaskExpr<'a, T>,
+        condition: MaskExprBuilder<'a, T>,
         if_true: Self,
         if_false: Self,
     ) -> Result<Self, ImageError>
@@ -2745,7 +1829,7 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     /// Counts true values in a boolean mask, returning a scalar (0-D) count.
     ///
     /// Corresponds to C++ LEL `ntrue(mask)`.
-    pub fn ntrue(mask: MaskExpr<'a, T>) -> Self
+    pub fn ntrue(mask: MaskExprBuilder<'a, T>) -> Self
     where
         T: PartialOrd,
     {
@@ -2755,14 +1839,14 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     /// Counts false values in a boolean mask, returning a scalar (0-D) count.
     ///
     /// Corresponds to C++ LEL `nfalse(mask)`.
-    pub fn nfalse(mask: MaskExpr<'a, T>) -> Self
+    pub fn nfalse(mask: MaskExprBuilder<'a, T>) -> Self
     where
         T: PartialOrd,
     {
         Self::mask_count(mask, false)
     }
 
-    fn mask_count(mask: MaskExpr<'a, T>, count_true: bool) -> Self
+    fn mask_count(mask: MaskExprBuilder<'a, T>, count_true: bool) -> Self
     where
         T: PartialOrd,
     {
@@ -2811,46 +1895,6 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
         })
     }
 
-    /// Attempts to mutate a read-only expression, returning an explicit error.
-    pub fn put_at(&mut self, _value: T, _position: &[usize]) -> Result<(), ImageError> {
-        Err(ImageError::ReadOnly("ImageExpr"))
-    }
-
-    /// Attempts to mutate a read-only expression, returning an explicit error.
-    pub fn put_slice(&mut self, _data: &ArrayD<T>, _start: &[usize]) -> Result<(), ImageError> {
-        Err(ImageError::ReadOnly("ImageExpr"))
-    }
-
-    /// Attempts to mutate a read-only expression, returning an explicit error.
-    pub fn set(&mut self, _value: T) -> Result<(), ImageError> {
-        Err(ImageError::ReadOnly("ImageExpr"))
-    }
-
-    /// Persists the evaluated expression as a new paged image.
-    ///
-    /// This materializes the expression into a standard `PagedImage` table
-    /// that remains readable by casacore C++.
-    ///
-    /// The compiled expression runtime has a faster output path for some
-    /// workloads, but its on-disk layout is still an internal optimization.
-    /// The borrowed API stays on the conservative compatibility path here.
-    pub fn save_as(&self, path: impl AsRef<Path>) -> Result<PagedImage<T>, ImageError> {
-        let path = path.as_ref();
-        let data = self.get()?;
-        let mut image =
-            PagedImage::create(self.meta.shape.clone(), self.meta.coords.clone(), path)?;
-        image.put_slice(&data, &vec![0; self.meta.shape.len()])?;
-        image.set_units(self.meta.units.clone())?;
-        image.set_misc_info(self.meta.misc_info.clone())?;
-        image.set_image_info(&self.meta.image_info)?;
-        if let Some(mask) = self.source_mask()? {
-            image.put_mask("expr_mask", &mask)?;
-            image.set_default_mask("expr_mask")?;
-        }
-        image.save()?;
-        PagedImage::open(path)
-    }
-
     /// Persists the expression string in casacore-compatible `.imgexpr` format.
     ///
     /// Creates a directory at `path` containing `imageexpr.json` with the
@@ -2869,7 +1913,7 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     pub fn save_expr(&self, path: impl AsRef<Path>) -> Result<(), ImageError> {
         let expr_str = self.expr_string.as_deref().ok_or_else(|| {
             ImageError::InvalidMetadata(
-                "ImageExpr cannot be persisted: no expression string is set".into(),
+                "ImageExprBuilder cannot be persisted: no expression string is set".into(),
             )
         })?;
         crate::expr_file::save(path, expr_str, T::PRIMITIVE_TYPE, &self.meta.misc_info)
@@ -2894,17 +1938,21 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
 
 // -- Wave 14d: Type-changing methods (typed API only) --
 
-impl<'a> ImageExpr<'a, casa_types::Complex32> {
+impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
     /// Extracts the real part of a Complex32 expression, producing an f32 expression.
     ///
     /// Corresponds to C++ LEL `real(expr)`.
-    pub fn real_part(self) -> ImageExpr<'a, f32> {
-        let node = self.node;
+    pub fn real_part(self) -> ImageExprBuilder<'a, f32> {
+        let compiled = self.compile().map_err(|error| error.to_string());
         let meta = self.meta;
-        ImageExpr {
+        ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
                 eval_fn: Arc::new(move |start, shape, stride| {
-                    let data = node.eval_slice(start, shape, stride)?;
+                    let data = compiled
+                        .as_ref()
+                        .map_err(|error| LatticeError::Table(error.clone()))?
+                        .get_slice_with_stride(start, shape, stride)
+                        .map_err(|error| LatticeError::Table(error.to_string()))?;
                     Ok(data.mapv(|v| v.re))
                 }),
             },
@@ -2923,13 +1971,17 @@ impl<'a> ImageExpr<'a, casa_types::Complex32> {
     /// Extracts the imaginary part of a Complex32 expression, producing an f32 expression.
     ///
     /// Corresponds to C++ LEL `imag(expr)`.
-    pub fn imag_part(self) -> ImageExpr<'a, f32> {
-        let node = self.node;
+    pub fn imag_part(self) -> ImageExprBuilder<'a, f32> {
+        let compiled = self.compile().map_err(|error| error.to_string());
         let meta = self.meta;
-        ImageExpr {
+        ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
                 eval_fn: Arc::new(move |start, shape, stride| {
-                    let data = node.eval_slice(start, shape, stride)?;
+                    let data = compiled
+                        .as_ref()
+                        .map_err(|error| LatticeError::Table(error.clone()))?
+                        .get_slice_with_stride(start, shape, stride)
+                        .map_err(|error| LatticeError::Table(error.to_string()))?;
                     Ok(data.mapv(|v| v.im))
                 }),
             },
@@ -2948,13 +2000,17 @@ impl<'a> ImageExpr<'a, casa_types::Complex32> {
     /// Extracts the argument (phase angle) of a Complex32 expression, producing an f32 expression.
     ///
     /// Corresponds to C++ LEL `arg(expr)` = `atan2(im, re)`.
-    pub fn arg_phase(self) -> ImageExpr<'a, f32> {
-        let node = self.node;
+    pub fn arg_phase(self) -> ImageExprBuilder<'a, f32> {
+        let compiled = self.compile().map_err(|error| error.to_string());
         let meta = self.meta;
-        ImageExpr {
+        ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
                 eval_fn: Arc::new(move |start, shape, stride| {
-                    let data = node.eval_slice(start, shape, stride)?;
+                    let data = compiled
+                        .as_ref()
+                        .map_err(|error| LatticeError::Table(error.clone()))?
+                        .get_slice_with_stride(start, shape, stride)
+                        .map_err(|error| LatticeError::Table(error.to_string()))?;
                     Ok(data.mapv(|v| v.im.atan2(v.re)))
                 }),
             },
@@ -2971,15 +2027,19 @@ impl<'a> ImageExpr<'a, casa_types::Complex32> {
     }
 }
 
-impl<'a> ImageExpr<'a, casa_types::Complex64> {
+impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
     /// Extracts the real part of a Complex64 expression, producing an f64 expression.
-    pub fn real_part(self) -> ImageExpr<'a, f64> {
-        let node = self.node;
+    pub fn real_part(self) -> ImageExprBuilder<'a, f64> {
+        let compiled = self.compile().map_err(|error| error.to_string());
         let meta = self.meta;
-        ImageExpr {
+        ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
                 eval_fn: Arc::new(move |start, shape, stride| {
-                    let data = node.eval_slice(start, shape, stride)?;
+                    let data = compiled
+                        .as_ref()
+                        .map_err(|error| LatticeError::Table(error.clone()))?
+                        .get_slice_with_stride(start, shape, stride)
+                        .map_err(|error| LatticeError::Table(error.to_string()))?;
                     Ok(data.mapv(|v| v.re))
                 }),
             },
@@ -2996,13 +2056,17 @@ impl<'a> ImageExpr<'a, casa_types::Complex64> {
     }
 
     /// Extracts the imaginary part of a Complex64 expression, producing an f64 expression.
-    pub fn imag_part(self) -> ImageExpr<'a, f64> {
-        let node = self.node;
+    pub fn imag_part(self) -> ImageExprBuilder<'a, f64> {
+        let compiled = self.compile().map_err(|error| error.to_string());
         let meta = self.meta;
-        ImageExpr {
+        ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
                 eval_fn: Arc::new(move |start, shape, stride| {
-                    let data = node.eval_slice(start, shape, stride)?;
+                    let data = compiled
+                        .as_ref()
+                        .map_err(|error| LatticeError::Table(error.clone()))?
+                        .get_slice_with_stride(start, shape, stride)
+                        .map_err(|error| LatticeError::Table(error.to_string()))?;
                     Ok(data.mapv(|v| v.im))
                 }),
             },
@@ -3019,13 +2083,17 @@ impl<'a> ImageExpr<'a, casa_types::Complex64> {
     }
 
     /// Extracts the argument (phase angle) of a Complex64 expression, producing an f64 expression.
-    pub fn arg_phase(self) -> ImageExpr<'a, f64> {
-        let node = self.node;
+    pub fn arg_phase(self) -> ImageExprBuilder<'a, f64> {
+        let compiled = self.compile().map_err(|error| error.to_string());
         let meta = self.meta;
-        ImageExpr {
+        ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
                 eval_fn: Arc::new(move |start, shape, stride| {
-                    let data = node.eval_slice(start, shape, stride)?;
+                    let data = compiled
+                        .as_ref()
+                        .map_err(|error| LatticeError::Table(error.clone()))?
+                        .get_slice_with_stride(start, shape, stride)
+                        .map_err(|error| LatticeError::Table(error.to_string()))?;
                     Ok(data.mapv(|v| v.im.atan2(v.re)))
                 }),
             },
@@ -3042,23 +2110,31 @@ impl<'a> ImageExpr<'a, casa_types::Complex64> {
     }
 }
 
-impl<'a> ImageExpr<'a, f32> {
+impl<'a> ImageExprBuilder<'a, f32> {
     /// Combines two f32 expressions into a Complex32 expression.
     ///
     /// Corresponds to C++ LEL `complex(real, imag)`.
     pub fn to_complex(
         self,
         imag: Self,
-    ) -> Result<ImageExpr<'a, casa_types::Complex32>, ImageError> {
+    ) -> Result<ImageExprBuilder<'a, casa_types::Complex32>, ImageError> {
         validate_same_shape(self.shape(), imag.shape())?;
-        let real_node = self.node;
-        let imag_node = imag.node;
+        let real_compiled = self.compile().map_err(|error| error.to_string());
+        let imag_compiled = imag.compile().map_err(|error| error.to_string());
         let meta = self.meta;
-        Ok(ImageExpr {
+        Ok(ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
                 eval_fn: Arc::new(move |start, shape, stride| {
-                    let re = real_node.eval_slice(start, shape, stride)?;
-                    let im = imag_node.eval_slice(start, shape, stride)?;
+                    let re = real_compiled
+                        .as_ref()
+                        .map_err(|error| LatticeError::Table(error.clone()))?
+                        .get_slice_with_stride(start, shape, stride)
+                        .map_err(|error| LatticeError::Table(error.to_string()))?;
+                    let im = imag_compiled
+                        .as_ref()
+                        .map_err(|error| LatticeError::Table(error.clone()))?
+                        .get_slice_with_stride(start, shape, stride)
+                        .map_err(|error| LatticeError::Table(error.to_string()))?;
                     Ok(Zip::from(&re)
                         .and(&im)
                         .map_collect(|&re, &im| casa_types::Complex32::new(re, im)))
@@ -3077,21 +2153,29 @@ impl<'a> ImageExpr<'a, f32> {
     }
 }
 
-impl<'a> ImageExpr<'a, f64> {
+impl<'a> ImageExprBuilder<'a, f64> {
     /// Combines two f64 expressions into a Complex64 expression.
     pub fn to_complex(
         self,
         imag: Self,
-    ) -> Result<ImageExpr<'a, casa_types::Complex64>, ImageError> {
+    ) -> Result<ImageExprBuilder<'a, casa_types::Complex64>, ImageError> {
         validate_same_shape(self.shape(), imag.shape())?;
-        let real_node = self.node;
-        let imag_node = imag.node;
+        let real_compiled = self.compile().map_err(|error| error.to_string());
+        let imag_compiled = imag.compile().map_err(|error| error.to_string());
         let meta = self.meta;
-        Ok(ImageExpr {
+        Ok(ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
                 eval_fn: Arc::new(move |start, shape, stride| {
-                    let re = real_node.eval_slice(start, shape, stride)?;
-                    let im = imag_node.eval_slice(start, shape, stride)?;
+                    let re = real_compiled
+                        .as_ref()
+                        .map_err(|error| LatticeError::Table(error.clone()))?
+                        .get_slice_with_stride(start, shape, stride)
+                        .map_err(|error| LatticeError::Table(error.to_string()))?;
+                    let im = imag_compiled
+                        .as_ref()
+                        .map_err(|error| LatticeError::Table(error.clone()))?
+                        .get_slice_with_stride(start, shape, stride)
+                        .map_err(|error| LatticeError::Table(error.to_string()))?;
                     Ok(Zip::from(&re)
                         .and(&im)
                         .map_collect(|&re, &im| casa_types::Complex64::new(re, im)))
@@ -3110,94 +2194,13 @@ impl<'a> ImageExpr<'a, f64> {
     }
 }
 
-impl<'a, T: ImageExprValue> Lattice<T> for ImageExpr<'a, T> {
-    fn shape(&self) -> &[usize] {
-        &self.meta.shape
-    }
-
-    fn is_writable(&self) -> bool {
-        false
-    }
-
-    fn get_at(&self, position: &[usize]) -> Result<T, LatticeError> {
-        validate_slice_request(
-            self.shape(),
-            position,
-            &vec![1; self.ndim()],
-            &vec![1; self.ndim()],
-        )?;
-        let one = self
-            .node
-            .eval_slice(position, &vec![1; self.ndim()], &vec![1; self.ndim()])?;
-        Ok(one[IxDyn(&vec![0; self.ndim()])])
-    }
-
-    fn get_slice(
-        &self,
-        start: &[usize],
-        shape: &[usize],
-        stride: &[usize],
-    ) -> Result<ArrayD<T>, LatticeError> {
-        validate_slice_request(self.shape(), start, shape, stride)?;
-        self.node.eval_slice(start, shape, stride)
-    }
-
-    fn get(&self) -> Result<ArrayD<T>, LatticeError> {
-        if self.ndim() == 0 {
-            return self.node.eval_slice(&[], &[], &[]);
-        }
-
-        let full_shape = self.shape().to_vec();
-        let cursor_shape = self.node.preferred_cursor_shape(&full_shape);
-        try_fold_traversal_cursors(
-            &full_shape,
-            &cursor_shape,
-            TraversalSpec::chunks(cursor_shape.clone()),
-            ArrayD::from_elem(IxDyn(&full_shape), T::default_value()),
-            |out, cursor| {
-                let stride = vec![1; cursor.position.len()];
-                let chunk = self
-                    .node
-                    .eval_slice(&cursor.position, &cursor.shape, &stride)?;
-                write_chunk_into_array(out, &cursor.position, &chunk)
-            },
-        )
-    }
-}
-
-impl<'a, T: ImageExprValue> ImageInterface<T> for ImageExpr<'a, T> {
-    fn as_any(&self) -> Option<&dyn std::any::Any> {
-        None
-    }
-
-    fn coordinates(&self) -> &CoordinateSystem {
-        &self.meta.coords
-    }
-
-    fn units(&self) -> &str {
-        &self.meta.units
-    }
-
-    fn misc_info(&self) -> casa_types::RecordValue {
-        self.meta.misc_info.clone()
-    }
-
-    fn image_info(&self) -> Result<ImageInfo, ImageError> {
-        Ok(self.meta.image_info.clone())
-    }
-
-    fn name(&self) -> Option<&Path> {
-        self.meta.name.as_deref()
-    }
-}
-
 /// Lazy boolean mask expression built from numeric image expressions.
-pub struct MaskExpr<'a, T: ImageExprValue> {
+pub struct MaskExprBuilder<'a, T: ImageExprValue> {
     node: MaskExprNode<'a, T>,
     shape: Vec<usize>,
 }
 
-impl<'a, T: ImageExprValue> Clone for MaskExpr<'a, T> {
+impl<'a, T: ImageExprValue> Clone for MaskExprBuilder<'a, T> {
     fn clone(&self) -> Self {
         Self {
             node: self.node.clone(),
@@ -3206,29 +2209,18 @@ impl<'a, T: ImageExprValue> Clone for MaskExpr<'a, T> {
     }
 }
 
-impl<'a, T: ImageExprValue> fmt::Debug for MaskExpr<'a, T> {
+impl<'a, T: ImageExprValue> fmt::Debug for MaskExprBuilder<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MaskExpr")
+        f.debug_struct("MaskExprBuilder")
             .field("shape", &self.shape)
             .finish()
     }
 }
 
-impl<'a, T: ImageExprValue + PartialOrd> MaskExpr<'a, T> {
-    /// Reads the full evaluated boolean mask.
-    pub fn get(&self) -> Result<ArrayD<bool>, ImageError> {
-        <Self as Lattice<bool>>::get(self).map_err(Into::into)
-    }
-
-    /// Reads a single mask element.
-    pub fn get_at(&self, position: &[usize]) -> Result<bool, ImageError> {
-        <Self as Lattice<bool>>::get_at(self, position).map_err(Into::into)
-    }
-
-    /// Reads a unit-stride slice of the mask.
-    pub fn get_slice(&self, start: &[usize], shape: &[usize]) -> Result<ArrayD<bool>, ImageError> {
-        <Self as Lattice<bool>>::get_slice(self, start, shape, &vec![1; self.ndim()])
-            .map_err(Into::into)
+impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
+    /// Returns the shape that the canonical mask expression will produce.
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
     }
 
     /// Combines two same-shaped masks with a logical operator.
@@ -3305,61 +2297,6 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExpr<'a, T> {
     }
 }
 
-impl<'a, T: ImageExprValue + PartialOrd> Lattice<bool> for MaskExpr<'a, T> {
-    fn shape(&self) -> &[usize] {
-        &self.shape
-    }
-
-    fn is_writable(&self) -> bool {
-        false
-    }
-
-    fn get_at(&self, position: &[usize]) -> Result<bool, LatticeError> {
-        validate_slice_request(
-            self.shape(),
-            position,
-            &vec![1; self.ndim()],
-            &vec![1; self.ndim()],
-        )?;
-        let one = self
-            .node
-            .eval_slice(position, &vec![1; self.ndim()], &vec![1; self.ndim()])?;
-        Ok(one[IxDyn(&vec![0; self.ndim()])])
-    }
-
-    fn get_slice(
-        &self,
-        start: &[usize],
-        shape: &[usize],
-        stride: &[usize],
-    ) -> Result<ArrayD<bool>, LatticeError> {
-        validate_slice_request(self.shape(), start, shape, stride)?;
-        self.node.eval_slice(start, shape, stride)
-    }
-
-    fn get(&self) -> Result<ArrayD<bool>, LatticeError> {
-        if self.ndim() == 0 {
-            return self.node.eval_slice(&[], &[], &[]);
-        }
-
-        let full_shape = self.shape().to_vec();
-        let cursor_shape = self.node.preferred_cursor_shape(&full_shape);
-        try_fold_traversal_cursors(
-            &full_shape,
-            &cursor_shape,
-            TraversalSpec::chunks(cursor_shape.clone()),
-            ArrayD::from_elem(IxDyn(&full_shape), false),
-            |out, cursor| {
-                let stride = vec![1; cursor.position.len()];
-                let chunk = self
-                    .node
-                    .eval_slice(&cursor.position, &cursor.shape, &stride)?;
-                write_chunk_into_array(out, &cursor.position, &chunk)
-            },
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -3367,8 +2304,44 @@ mod tests {
 
     use super::*;
     use casa_coordinates::CoordinateSystem;
+    use casa_lattices::Lattice;
     use casa_types::{Complex32, Complex64, RecordValue};
     use ndarray::{Dimension, IxDyn};
+
+    trait CanonicalNumericEval<T: ImageExprValue> {
+        fn get(&self) -> Result<ArrayD<T>, ImageError>;
+        fn get_at(&self, position: &[usize]) -> Result<T, ImageError>;
+        fn get_slice(&self, start: &[usize], shape: &[usize]) -> Result<ArrayD<T>, ImageError>;
+        fn save_as(&self, path: impl AsRef<Path>) -> Result<crate::PagedImage<T>, ImageError>;
+    }
+
+    impl<T: ImageExprValue> CanonicalNumericEval<T> for ImageExprBuilder<'_, T> {
+        fn get(&self) -> Result<ArrayD<T>, ImageError> {
+            self.compile()?.get()
+        }
+
+        fn get_at(&self, position: &[usize]) -> Result<T, ImageError> {
+            self.compile()?.get_at(position)
+        }
+
+        fn get_slice(&self, start: &[usize], shape: &[usize]) -> Result<ArrayD<T>, ImageError> {
+            self.compile()?.get_slice(start, shape)
+        }
+
+        fn save_as(&self, path: impl AsRef<Path>) -> Result<crate::PagedImage<T>, ImageError> {
+            self.compile()?.save_as(path)
+        }
+    }
+
+    trait CanonicalMaskEval {
+        fn get(&self) -> Result<ArrayD<bool>, ImageError>;
+    }
+
+    impl<T: ImageExprValue + PartialOrd> CanonicalMaskEval for MaskExprBuilder<'_, T> {
+        fn get(&self) -> Result<ArrayD<bool>, ImageError> {
+            self.compile()?.get()
+        }
+    }
 
     struct CountingImage<T: ImageExprValue> {
         data: ArrayD<T>,
@@ -3478,12 +2451,12 @@ mod tests {
     }
 
     #[test]
-    fn reduction_reads_source_in_chunks() {
+    fn nonpersistent_reduction_snapshots_source_once() {
         let shape = vec![4097, 1024];
         let data = ArrayD::from_elem(IxDyn(&shape), 1.0f32);
         let (image, slice_shapes) =
             CountingImage::new_with_cursor_shape(data, Some(vec![256, 128]));
-        let expr = ImageExpr::from_image(&image)
+        let expr = ImageExprBuilder::from_image(&image)
             .unwrap()
             .add_scalar(0.0)
             .sum_reduce();
@@ -3492,22 +2465,23 @@ mod tests {
         assert_eq!(got[IxDyn(&[])], (shape[0] * shape[1]) as f32);
 
         let seen = slice_shapes.borrow();
-        assert!(seen.len() > 1);
-        assert!(seen.iter().all(|shape| shape[0] <= 256 && shape[1] <= 128));
+        assert_eq!(seen.as_slice(), &[shape]);
     }
 
     #[test]
-    fn representative_lazy_slice_stays_local() {
+    fn nonpersistent_slice_reuses_owned_snapshot() {
         let data = ArrayD::from_shape_fn(IxDyn(&[8, 8]), |idx| (idx[0] * 10 + idx[1]) as f32);
         let (image, slice_shapes) = CountingImage::new(data);
 
-        let expr = ImageExpr::from_image(&image).unwrap().add_scalar(2.0).exp();
+        let expr = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .add_scalar(2.0)
+            .exp();
         let slice = expr.get_slice(&[3, 4], &[1, 2]).unwrap();
 
         assert_eq!(slice.shape(), &[1, 2]);
         let recorded = slice_shapes.borrow();
-        assert!(!recorded.is_empty());
-        assert!(recorded.iter().all(|shape| shape == &vec![1, 2]));
+        assert_eq!(recorded.as_slice(), &[vec![8, 8]]);
     }
 
     #[test]
@@ -3525,7 +2499,7 @@ mod tests {
         )
         .unwrap();
 
-        let expr = ImageExpr::from_image(&lhs)
+        let expr = ImageExprBuilder::from_image(&lhs)
             .unwrap()
             .add_image(&rhs)
             .unwrap()
@@ -3571,7 +2545,7 @@ mod tests {
         )
         .unwrap();
 
-        let expr = ImageExpr::from_image(&lhs)
+        let expr = ImageExprBuilder::from_image(&lhs)
             .unwrap()
             .add_image(&rhs)
             .unwrap()
@@ -3591,7 +2565,7 @@ mod tests {
         lhs.set(3.0).unwrap();
         rhs.set(4.0).unwrap();
 
-        let expr = ImageExpr::zip(&lhs, &rhs, |a, b| a * b - 2.0).unwrap();
+        let expr = ImageExprBuilder::zip(&lhs, &rhs, |a, b| a * b - 2.0).unwrap();
         assert_eq!(expr.get_at(&[1, 1]).unwrap(), 10.0);
     }
 
@@ -3600,7 +2574,7 @@ mod tests {
         let mut image = make_persistent_image::<Complex64>(vec![2, 2]);
         image.set(Complex64::new(1.0, 2.0)).unwrap();
 
-        let expr = ImageExpr::map(&image, |value| value * Complex64::new(2.0, 0.0)).unwrap();
+        let expr = ImageExprBuilder::map(&image, |value| value * Complex64::new(2.0, 0.0)).unwrap();
         assert_eq!(expr.get_at(&[0, 0]).unwrap(), Complex64::new(2.0, 4.0));
     }
 
@@ -3615,10 +2589,10 @@ mod tests {
             )
             .unwrap();
 
-        let mask = ImageExpr::from_image(&image)
+        let mask = ImageExprBuilder::from_image(&image)
             .unwrap()
             .gt_scalar(1.0)
-            .and(ImageExpr::from_image(&image).unwrap().lt_scalar(4.5))
+            .and(ImageExprBuilder::from_image(&image).unwrap().lt_scalar(4.5))
             .unwrap()
             .logical_not();
 
@@ -3636,7 +2610,9 @@ mod tests {
         let mut image = make_persistent_image::<f32>(vec![2, 2]);
         image.set(2.0).unwrap();
 
-        let expr = ImageExpr::from_image(&image).unwrap().multiply_scalar(3.0);
+        let expr = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .multiply_scalar(3.0);
         let compiled = expr.compile().unwrap();
         assert_eq!(compiled.get().unwrap().sum(), 24.0);
         let saved = compiled.save_as(&out).unwrap();
@@ -3668,7 +2644,9 @@ mod tests {
             )
             .unwrap();
 
-        let expr = ImageExpr::from_image(&image).unwrap().multiply_scalar(2.0);
+        let expr = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .multiply_scalar(2.0);
         let compiled = expr.compile().unwrap();
         assert_eq!(
             compiled.source_mask().unwrap(),
@@ -3711,14 +2689,16 @@ mod tests {
             )
             .unwrap();
 
-        let expr = ImageExpr::from_image(&image).unwrap().multiply_scalar(3.0);
+        let expr = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .multiply_scalar(3.0);
         let saved = expr.save_as(&out).unwrap();
 
         assert_eq!(
             saved.get().unwrap(),
             ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![3.0, 6.0, 9.0, 12.0]).unwrap()
         );
-        assert_eq!(saved.default_mask_name().as_deref(), Some("expr_mask"));
+        assert_eq!(saved.default_mask_name().as_deref(), Some("compiled_mask"));
         assert_eq!(
             saved.get_mask().unwrap().unwrap(),
             ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![true, false, false, true]).unwrap()
@@ -3729,16 +2709,13 @@ mod tests {
     fn read_only_mutation_paths_are_explicit() {
         let mut image = make_persistent_image::<f32>(vec![1, 1]);
         image.set(1.0).unwrap();
-        let mut expr = ImageExpr::from_image(&image).unwrap().add_scalar(2.0);
+        let expr = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .add_scalar(2.0)
+            .compile()
+            .unwrap();
 
-        assert!(matches!(
-            expr.set(0.0),
-            Err(ImageError::ReadOnly("ImageExpr"))
-        ));
-        assert!(matches!(
-            expr.put_at(0.0, &[0, 0]),
-            Err(ImageError::ReadOnly("ImageExpr"))
-        ));
+        assert!(!Lattice::is_writable(&expr));
     }
 
     // ---- Wave 11b: exhaustive operator matrix tests ----
@@ -3753,7 +2730,7 @@ mod tests {
             )
             .unwrap();
 
-        let e = |op| ImageExpr::from_image(&image).unwrap().unary(op);
+        let e = |op| ImageExprBuilder::from_image(&image).unwrap().unary(op);
 
         let check = |op: ImageExprUnaryOp, expected_fn: fn(f32) -> f32| {
             let got = e(op).get().unwrap();
@@ -3806,13 +2783,21 @@ mod tests {
             )
             .unwrap();
 
-        let got_sqrt = ImageExpr::from_image(&image).unwrap().sqrt().get().unwrap();
+        let got_sqrt = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .sqrt()
+            .get()
+            .unwrap();
         let src = image.get().unwrap();
         for (g, s) in got_sqrt.iter().zip(src.iter()) {
             assert!((g - s.sqrt()).abs() < 1e-14);
         }
 
-        let got_log = ImageExpr::from_image(&image).unwrap().log().get().unwrap();
+        let got_log = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .log()
+            .get()
+            .unwrap();
         for (g, s) in got_log.iter().zip(src.iter()) {
             assert!((g - s.ln()).abs() < 1e-14);
         }
@@ -3840,28 +2825,44 @@ mod tests {
         let src = image.get().unwrap();
 
         // sin
-        let got = ImageExpr::from_image(&image).unwrap().sin().get().unwrap();
+        let got = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .sin()
+            .get()
+            .unwrap();
         for (g, s) in got.iter().zip(src.iter()) {
             let want = s.sin();
             assert!((g - want).norm() < 1e-5, "sin: got {g}, want {want}");
         }
 
         // sqrt
-        let got = ImageExpr::from_image(&image).unwrap().sqrt().get().unwrap();
+        let got = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .sqrt()
+            .get()
+            .unwrap();
         for (g, s) in got.iter().zip(src.iter()) {
             let want = s.sqrt();
             assert!((g - want).norm() < 1e-5, "sqrt: got {g}, want {want}");
         }
 
         // conj
-        let got = ImageExpr::from_image(&image).unwrap().conj().get().unwrap();
+        let got = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .conj()
+            .get()
+            .unwrap();
         for (g, s) in got.iter().zip(src.iter()) {
             let want = s.conj();
             assert_eq!(*g, want);
         }
 
         // abs returns Complex(|z|, 0)
-        let got = ImageExpr::from_image(&image).unwrap().abs().get().unwrap();
+        let got = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .abs()
+            .get()
+            .unwrap();
         for (g, s) in got.iter().zip(src.iter()) {
             assert!((g.re - s.norm()).abs() < 1e-5);
             assert_eq!(g.im, 0.0);
@@ -3884,7 +2885,7 @@ mod tests {
         .unwrap();
 
         // pow
-        let got = ImageExpr::from_image(&lhs)
+        let got = ImageExprBuilder::from_image(&lhs)
             .unwrap()
             .pow_scalar(0.5)
             .get()
@@ -3895,7 +2896,7 @@ mod tests {
         }
 
         // min
-        let got = ImageExpr::from_image(&lhs)
+        let got = ImageExprBuilder::from_image(&lhs)
             .unwrap()
             .min_scalar(10.0)
             .get()
@@ -3904,7 +2905,7 @@ mod tests {
         assert_eq!(got, expected);
 
         // max
-        let got = ImageExpr::from_image(&lhs)
+        let got = ImageExprBuilder::from_image(&lhs)
             .unwrap()
             .max_scalar(10.0)
             .get()
@@ -3914,7 +2915,7 @@ mod tests {
         assert_eq!(got, expected);
 
         // fmod
-        let got = ImageExpr::from_image(&lhs)
+        let got = ImageExprBuilder::from_image(&lhs)
             .unwrap()
             .fmod_scalar(7.0)
             .get()
@@ -3923,9 +2924,9 @@ mod tests {
         assert_eq!(got, expected);
 
         // atan2 (expr variant)
-        let got = ImageExpr::from_image(&lhs)
+        let got = ImageExprBuilder::from_image(&lhs)
             .unwrap()
-            .atan2_expr(ImageExpr::from_image(&rhs).unwrap())
+            .atan2_expr(ImageExprBuilder::from_image(&rhs).unwrap())
             .unwrap()
             .get()
             .unwrap();
@@ -3951,7 +2952,7 @@ mod tests {
         )
         .unwrap();
 
-        let sub = ImageExpr::from_image(&lhs)
+        let sub = ImageExprBuilder::from_image(&lhs)
             .unwrap()
             .subtract_image(&rhs)
             .unwrap()
@@ -3960,7 +2961,7 @@ mod tests {
         let expected = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![9.0, 18.0, 27.0, 36.0]).unwrap();
         assert_eq!(sub, expected);
 
-        let div = ImageExpr::from_image(&lhs)
+        let div = ImageExprBuilder::from_image(&lhs)
             .unwrap()
             .divide_scalar(10.0)
             .get()
@@ -3981,7 +2982,7 @@ mod tests {
             .unwrap();
 
         // ge
-        let got = ImageExpr::from_image(&image)
+        let got = ImageExprBuilder::from_image(&image)
             .unwrap()
             .ge_scalar(3.0)
             .get()
@@ -3992,7 +2993,7 @@ mod tests {
         assert_eq!(got, expected);
 
         // le
-        let got = ImageExpr::from_image(&image)
+        let got = ImageExprBuilder::from_image(&image)
             .unwrap()
             .le_scalar(3.0)
             .get()
@@ -4003,7 +3004,7 @@ mod tests {
         assert_eq!(got, expected);
 
         // eq
-        let got = ImageExpr::from_image(&image)
+        let got = ImageExprBuilder::from_image(&image)
             .unwrap()
             .eq_scalar(3.0)
             .get()
@@ -4014,7 +3015,7 @@ mod tests {
         assert_eq!(got, expected);
 
         // ne
-        let got = ImageExpr::from_image(&image)
+        let got = ImageExprBuilder::from_image(&image)
             .unwrap()
             .ne_scalar(3.0)
             .get()
@@ -4026,12 +3027,12 @@ mod tests {
     }
 
     #[test]
-    fn chained_transcendental_stays_lazy() {
+    fn chained_transcendental_reuses_owned_snapshot() {
         let data = ArrayD::from_shape_fn(IxDyn(&[4, 4]), |idx| (idx[0] * 4 + idx[1]) as f32 * 0.1);
         let (image, slice_shapes) = CountingImage::new(data.clone());
 
         // sin(sqrt(x + 1.0))
-        let expr = ImageExpr::from_image(&image)
+        let expr = ImageExprBuilder::from_image(&image)
             .unwrap()
             .add_scalar(1.0)
             .sqrt()
@@ -4040,7 +3041,7 @@ mod tests {
 
         assert_eq!(slice.shape(), &[2, 2]);
         let recorded = slice_shapes.borrow();
-        assert!(recorded.iter().all(|shape| shape == &vec![2, 2]));
+        assert_eq!(recorded.as_slice(), &[vec![4, 4]]);
 
         // Verify values
         for i in 0..2 {
@@ -4058,7 +3059,11 @@ mod tests {
         let mut image = make_persistent_image::<f32>(vec![1, 1]);
         image.set(4.0).unwrap();
 
-        let got = ImageExpr::from_image(&image).unwrap().sqrt().get().unwrap();
+        let got = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .sqrt()
+            .get()
+            .unwrap();
         assert_eq!(got[IxDyn(&[0, 0])], 2.0);
 
         // Check that sign works on negative values
@@ -4068,7 +3073,11 @@ mod tests {
             &[0, 0],
         )
         .unwrap();
-        let got = ImageExpr::from_image(&neg).unwrap().sign().get().unwrap();
+        let got = ImageExprBuilder::from_image(&neg)
+            .unwrap()
+            .sign()
+            .get()
+            .unwrap();
         let expected = ArrayD::from_shape_vec(IxDyn(&[1, 3]), vec![-1.0, 0.0, 1.0]).unwrap();
         assert_eq!(got, expected);
     }
@@ -4088,18 +3097,18 @@ mod tests {
         )
         .unwrap();
 
-        let got = ImageExpr::from_image(&a)
+        let got = ImageExprBuilder::from_image(&a)
             .unwrap()
-            .min_expr(ImageExpr::from_image(&b).unwrap())
+            .min_expr(ImageExprBuilder::from_image(&b).unwrap())
             .unwrap()
             .get()
             .unwrap();
         let expected = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 3.0, 0.0]).unwrap();
         assert_eq!(got, expected);
 
-        let got = ImageExpr::from_image(&a)
+        let got = ImageExprBuilder::from_image(&a)
             .unwrap()
-            .max_expr(ImageExpr::from_image(&b).unwrap())
+            .max_expr(ImageExprBuilder::from_image(&b).unwrap())
             .unwrap()
             .get()
             .unwrap();
@@ -4122,19 +3131,19 @@ mod tests {
         )
         .unwrap();
 
-        let pow = ImageExpr::from_image(&lhs)
+        let pow = ImageExprBuilder::from_image(&lhs)
             .unwrap()
             .pow_image(&rhs)
             .unwrap()
             .get()
             .unwrap();
-        let fmod = ImageExpr::from_image(&lhs)
+        let fmod = ImageExprBuilder::from_image(&lhs)
             .unwrap()
             .fmod_image(&rhs)
             .unwrap()
             .get()
             .unwrap();
-        let atan2 = ImageExpr::from_image(&lhs)
+        let atan2 = ImageExprBuilder::from_image(&lhs)
             .unwrap()
             .atan2_image(&rhs)
             .unwrap()
@@ -4164,7 +3173,7 @@ mod tests {
         let data =
             ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0f32, f32::NAN, 3.0, f32::NAN]).unwrap();
         let (image, _) = CountingImage::new(data);
-        let mask = ImageExpr::from_image(&image).unwrap().isnan();
+        let mask = ImageExprBuilder::from_image(&image).unwrap().isnan();
         let result = mask.get().unwrap();
         assert_eq!(
             result,
@@ -4174,7 +3183,7 @@ mod tests {
 
     #[test]
     fn expr_isnan_complex32_trait() {
-        // Complex32 lacks PartialOrd so MaskExpr evaluation isn't available.
+        // Complex32 lacks PartialOrd so MaskExprBuilder evaluation isn't available.
         // Test the underlying trait method directly.
         assert!(!Complex32::new(1.0, 2.0).expr_isnan());
         assert!(Complex32::new(f32::NAN, 0.0).expr_isnan());
@@ -4187,7 +3196,7 @@ mod tests {
     fn ndim_length_nelem() {
         let data = ArrayD::from_elem(IxDyn(&[4, 5, 6]), 1.0f32);
         let (image, _) = CountingImage::new(data);
-        let expr = ImageExpr::from_image(&image).unwrap();
+        let expr = ImageExprBuilder::from_image(&image).unwrap();
         assert_eq!(expr.ndim_value(), 3);
         assert_eq!(expr.nelem_value(), 120);
         assert_eq!(expr.length_value(0), Some(4));
@@ -4200,7 +3209,7 @@ mod tests {
     // ========================================================================
 
     /// Extract the single scalar from a 0-D reduction result.
-    fn scalar(expr: &ImageExpr<f32>) -> f32 {
+    fn scalar(expr: &ImageExprBuilder<f32>) -> f32 {
         assert!(expr.shape().is_empty(), "expected 0-D reduction");
         expr.get().unwrap()[IxDyn(&[])]
     }
@@ -4209,7 +3218,7 @@ mod tests {
     fn sum_reduce() {
         let data = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0f32, 2.0, 3.0, 4.0]).unwrap();
         let (image, _) = CountingImage::new(data);
-        let expr = ImageExpr::from_image(&image).unwrap().sum_reduce();
+        let expr = ImageExprBuilder::from_image(&image).unwrap().sum_reduce();
         assert!((scalar(&expr) - 10.0).abs() < 1e-5);
     }
 
@@ -4217,9 +3226,9 @@ mod tests {
     fn min_max_reduce() {
         let data = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![3.0f32, 1.0, 4.0, 2.0]).unwrap();
         let (image, _) = CountingImage::new(data);
-        let min_expr = ImageExpr::from_image(&image).unwrap().min_reduce();
+        let min_expr = ImageExprBuilder::from_image(&image).unwrap().min_reduce();
         assert!((scalar(&min_expr) - 1.0).abs() < 1e-5);
-        let max_expr = ImageExpr::from_image(&image).unwrap().max_reduce();
+        let max_expr = ImageExprBuilder::from_image(&image).unwrap().max_reduce();
         assert!((scalar(&max_expr) - 4.0).abs() < 1e-5);
     }
 
@@ -4227,7 +3236,7 @@ mod tests {
     fn mean_reduce() {
         let data = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0f32, 2.0, 3.0, 4.0]).unwrap();
         let (image, _) = CountingImage::new(data);
-        let expr = ImageExpr::from_image(&image).unwrap().mean_reduce();
+        let expr = ImageExprBuilder::from_image(&image).unwrap().mean_reduce();
         assert!((scalar(&expr) - 2.5).abs() < 1e-5);
     }
 
@@ -4235,7 +3244,9 @@ mod tests {
     fn median_reduce() {
         let data = ArrayD::from_shape_vec(IxDyn(&[5]), vec![5.0f32, 1.0, 3.0, 4.0, 2.0]).unwrap();
         let (image, _) = CountingImage::new(data);
-        let expr = ImageExpr::from_image(&image).unwrap().median_reduce();
+        let expr = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .median_reduce();
         assert!((scalar(&expr) - 3.0).abs() < 1e-5);
     }
 
@@ -4243,7 +3254,7 @@ mod tests {
     fn fractile_is_median_at_half() {
         let data = ArrayD::from_shape_vec(IxDyn(&[5]), vec![5.0f32, 1.0, 3.0, 4.0, 2.0]).unwrap();
         let (image, _) = CountingImage::new(data);
-        let expr = ImageExpr::from_image(&image).unwrap().fractile(0.5);
+        let expr = ImageExprBuilder::from_image(&image).unwrap().fractile(0.5);
         assert!((scalar(&expr) - 3.0).abs() < 1e-5);
     }
 
@@ -4252,7 +3263,7 @@ mod tests {
         let data =
             ArrayD::from_shape_vec(IxDyn(&[5]), vec![10.0f32, 20.0, 30.0, 40.0, 50.0]).unwrap();
         let (image, _) = CountingImage::new(data);
-        let expr = ImageExpr::from_image(&image)
+        let expr = ImageExprBuilder::from_image(&image)
             .unwrap()
             .fractile_range(0.25, 0.75);
         // fractile(0.25) = data[1] = 20, fractile(0.75) = data[3] = 40, range = 20
@@ -4263,12 +3274,16 @@ mod tests {
     fn single_element_reduction() {
         let data = ArrayD::from_shape_vec(IxDyn(&[1]), vec![42.0f32]).unwrap();
         let (image, _) = CountingImage::new(data);
-        let check = |expr: ImageExpr<f32>| assert!((scalar(&expr) - 42.0).abs() < 1e-5);
-        check(ImageExpr::from_image(&image).unwrap().sum_reduce());
-        check(ImageExpr::from_image(&image).unwrap().min_reduce());
-        check(ImageExpr::from_image(&image).unwrap().max_reduce());
-        check(ImageExpr::from_image(&image).unwrap().mean_reduce());
-        check(ImageExpr::from_image(&image).unwrap().median_reduce());
+        let check = |expr: ImageExprBuilder<f32>| assert!((scalar(&expr) - 42.0).abs() < 1e-5);
+        check(ImageExprBuilder::from_image(&image).unwrap().sum_reduce());
+        check(ImageExprBuilder::from_image(&image).unwrap().min_reduce());
+        check(ImageExprBuilder::from_image(&image).unwrap().max_reduce());
+        check(ImageExprBuilder::from_image(&image).unwrap().mean_reduce());
+        check(
+            ImageExprBuilder::from_image(&image)
+                .unwrap()
+                .median_reduce(),
+        );
     }
 
     #[test]
@@ -4276,8 +3291,8 @@ mod tests {
         // sum(a) + a should broadcast scalar to [2,2]
         let data = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0f32, 2.0, 3.0, 4.0]).unwrap();
         let (image, _) = CountingImage::new(data);
-        let sum_expr = ImageExpr::from_image(&image).unwrap().sum_reduce();
-        let img_expr = ImageExpr::from_image(&image).unwrap();
+        let sum_expr = ImageExprBuilder::from_image(&image).unwrap().sum_reduce();
+        let img_expr = ImageExprBuilder::from_image(&image).unwrap();
         let combined = sum_expr.add_expr(img_expr).unwrap();
         assert_eq!(combined.shape(), &[2, 2]);
         let result = combined.get().unwrap();
@@ -4295,12 +3310,19 @@ mod tests {
     fn iif_conditional() {
         let data = ArrayD::from_shape_vec(IxDyn(&[4]), vec![1.0f32, 5.0, 3.0, 7.0]).unwrap();
         let (image, _) = CountingImage::new(data);
-        let mask = ImageExpr::from_image(&image)
+        let mask = ImageExprBuilder::from_image(&image)
             .unwrap()
             .compare_scalar(4.0, ImageExprCompareOp::GreaterThan);
-        let t_val = ImageExpr::from_image(&image).unwrap().add_scalar(100.0);
-        let f_val = ImageExpr::from_image(&image).unwrap().add_scalar(0.0);
-        let result = ImageExpr::iif(mask, t_val, f_val).unwrap().get().unwrap();
+        let t_val = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .add_scalar(100.0);
+        let f_val = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .add_scalar(0.0);
+        let result = ImageExprBuilder::iif(mask, t_val, f_val)
+            .unwrap()
+            .get()
+            .unwrap();
         // [1>4?=F, 5>4?=T, 3>4?=F, 7>4?=T] → [1, 105, 3, 107]
         let expected =
             ArrayD::from_shape_vec(IxDyn(&[4]), vec![1.0f32, 105.0, 3.0, 107.0]).unwrap();
@@ -4312,30 +3334,30 @@ mod tests {
         let data = ArrayD::from_shape_vec(IxDyn(&[4]), vec![1.0f32, 2.0, 3.0, 4.0]).unwrap();
         let (image, _) = CountingImage::new(data);
 
-        let mask_scalar = |m: MaskExpr<f32>| -> bool {
+        let mask_scalar = |m: MaskExprBuilder<f32>| -> bool {
             assert!(m.shape().is_empty(), "expected 0-D mask");
             m.get().unwrap()[IxDyn(&[])]
         };
 
-        let all_gt_0 = ImageExpr::from_image(&image)
+        let all_gt_0 = ImageExprBuilder::from_image(&image)
             .unwrap()
             .compare_scalar(0.0, ImageExprCompareOp::GreaterThan)
             .all_reduce();
         assert!(mask_scalar(all_gt_0));
 
-        let all_gt_2 = ImageExpr::from_image(&image)
+        let all_gt_2 = ImageExprBuilder::from_image(&image)
             .unwrap()
             .compare_scalar(2.0, ImageExprCompareOp::GreaterThan)
             .all_reduce();
         assert!(!mask_scalar(all_gt_2));
 
-        let any_gt_3 = ImageExpr::from_image(&image)
+        let any_gt_3 = ImageExprBuilder::from_image(&image)
             .unwrap()
             .compare_scalar(3.0, ImageExprCompareOp::GreaterThan)
             .any_reduce();
         assert!(mask_scalar(any_gt_3));
 
-        let any_gt_10 = ImageExpr::from_image(&image)
+        let any_gt_10 = ImageExprBuilder::from_image(&image)
             .unwrap()
             .compare_scalar(10.0, ImageExprCompareOp::GreaterThan)
             .any_reduce();
@@ -4346,14 +3368,14 @@ mod tests {
     fn ntrue_nfalse() {
         let data = ArrayD::from_shape_vec(IxDyn(&[4]), vec![1.0f32, 5.0, 3.0, 7.0]).unwrap();
         let (image, _) = CountingImage::new(data);
-        let mask_t = ImageExpr::from_image(&image)
+        let mask_t = ImageExprBuilder::from_image(&image)
             .unwrap()
             .compare_scalar(4.0, ImageExprCompareOp::GreaterThan);
-        let mask_f = ImageExpr::from_image(&image)
+        let mask_f = ImageExprBuilder::from_image(&image)
             .unwrap()
             .compare_scalar(4.0, ImageExprCompareOp::GreaterThan);
-        let ntrue_expr = ImageExpr::<f32>::ntrue(mask_t);
-        let nfalse_expr = ImageExpr::<f32>::nfalse(mask_f);
+        let ntrue_expr = ImageExprBuilder::<f32>::ntrue(mask_t);
+        let nfalse_expr = ImageExprBuilder::<f32>::nfalse(mask_f);
         assert!((scalar(&ntrue_expr) - 2.0).abs() < 1e-5);
         assert!((scalar(&nfalse_expr) - 2.0).abs() < 1e-5);
     }
@@ -4362,7 +3384,7 @@ mod tests {
     fn constant_mask() {
         let mask_data =
             ArrayD::from_shape_vec(IxDyn(&[4]), vec![true, false, true, false]).unwrap();
-        let mask = MaskExpr::<f32>::from_constant(mask_data.clone());
+        let mask = MaskExprBuilder::<f32>::from_constant(mask_data.clone());
         let result = mask.get().unwrap();
         assert_eq!(result, mask_data);
     }
@@ -4375,9 +3397,12 @@ mod tests {
         let replacement_data = ArrayD::from_elem(IxDyn(&[4]), 0.0f32);
         let (replacement_img, _) = CountingImage::new(replacement_data);
         let mask = ArrayD::from_shape_vec(IxDyn(&[4]), vec![true, false, true, false]).unwrap();
-        let result = ImageExpr::from_image(&primary_img)
+        let result = ImageExprBuilder::from_image(&primary_img)
             .unwrap()
-            .replace(ImageExpr::from_image(&replacement_img).unwrap(), mask)
+            .replace(
+                ImageExprBuilder::from_image(&replacement_img).unwrap(),
+                mask,
+            )
             .unwrap()
             .get()
             .unwrap();
@@ -4398,7 +3423,7 @@ mod tests {
         )
         .unwrap();
         let (image, _) = CountingImage::new(data);
-        let result = ImageExpr::from_image(&image)
+        let result = ImageExprBuilder::from_image(&image)
             .unwrap()
             .real_part()
             .get()
@@ -4415,7 +3440,7 @@ mod tests {
         )
         .unwrap();
         let (image, _) = CountingImage::new(data);
-        let result = ImageExpr::from_image(&image)
+        let result = ImageExprBuilder::from_image(&image)
             .unwrap()
             .imag_part()
             .get()
@@ -4432,7 +3457,7 @@ mod tests {
         )
         .unwrap();
         let (image, _) = CountingImage::new(data);
-        let result = ImageExpr::from_image(&image)
+        let result = ImageExprBuilder::from_image(&image)
             .unwrap()
             .arg_phase()
             .get()
@@ -4445,17 +3470,17 @@ mod tests {
     fn complex64_real_imag_arg() {
         let data = ArrayD::from_shape_vec(IxDyn(&[1]), vec![Complex64::new(3.0, 4.0)]).unwrap();
         let (image, _) = CountingImage::new(data);
-        let re = ImageExpr::from_image(&image)
+        let re = ImageExprBuilder::from_image(&image)
             .unwrap()
             .real_part()
             .get_at(&[0])
             .unwrap();
-        let im = ImageExpr::from_image(&image)
+        let im = ImageExprBuilder::from_image(&image)
             .unwrap()
             .imag_part()
             .get_at(&[0])
             .unwrap();
-        let arg = ImageExpr::from_image(&image)
+        let arg = ImageExprBuilder::from_image(&image)
             .unwrap()
             .arg_phase()
             .get_at(&[0])
@@ -4471,9 +3496,9 @@ mod tests {
         let im_data = ArrayD::from_shape_vec(IxDyn(&[2]), vec![2.0f32, 4.0]).unwrap();
         let (re_img, _) = CountingImage::new(re_data);
         let (im_img, _) = CountingImage::new(im_data);
-        let result = ImageExpr::from_image(&re_img)
+        let result = ImageExprBuilder::from_image(&re_img)
             .unwrap()
-            .to_complex(ImageExpr::from_image(&im_img).unwrap())
+            .to_complex(ImageExprBuilder::from_image(&im_img).unwrap())
             .unwrap()
             .get()
             .unwrap();
@@ -4487,9 +3512,9 @@ mod tests {
         let im_data = ArrayD::from_shape_vec(IxDyn(&[2]), vec![2.0f64, 4.0]).unwrap();
         let (re_img, _) = CountingImage::new(re_data);
         let (im_img, _) = CountingImage::new(im_data);
-        let result = ImageExpr::from_image(&re_img)
+        let result = ImageExprBuilder::from_image(&re_img)
             .unwrap()
-            .to_complex(ImageExpr::from_image(&im_img).unwrap())
+            .to_complex(ImageExprBuilder::from_image(&im_img).unwrap())
             .unwrap()
             .get()
             .unwrap();

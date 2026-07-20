@@ -49,7 +49,11 @@ Additional constraints:
   `TileLayoutPlanner` is the sole checked byte-aware physical-layout policy,
   with a 4 MiB default I/O target and exact preservation of legal explicit
   tile shapes. `casa-lattices` exposes one `TraversalSpec` traversal contract
-  and byte-based `TempStoragePolicy`/`TempStoragePlan`; `casa-coordinates`
+  and one checked byte-aware execution planner used by lattice statistics and
+  image expressions, plus byte-based `TempStoragePolicy`/`TempStoragePlan`.
+  `casa-images` expressions use construction-only builders and one owned
+  compiled numeric/mask evaluator; parsed and persisted expressions compile
+  once into that same graph. `casa-coordinates`
   stores its five supported kinds in the closed `CoordinateModel` enum and
   serializes `CoordinateSystem` through one strict casacore codec.
 - Within `casa-tables`, lazy read paths are safe to share across threads under an in-process multi-reader, single-writer contract; shared tiled reads use a process-wide bounded cache, while dirty write state stays under exclusive mutable ownership.
@@ -293,16 +297,31 @@ dispatch, runtime policy, protocol telemetry, and persisted product writing.
 weighting, gridding/degridding, FFTs, normalization, deconvolution, restoration,
 and product semantics.
 
+The application admits one immutable `ImagingResolvedPlan` from explicit task
+policy, workload shape, and a reservation in its process resource ledger.
+Pure checked formulas live in `casa-imaging`; core execution consumes the
+admitted workers, ingest blocks, FFT chunks, tile/queue residency, spectral
+schedule, caches, and Metal schedule without reading process environment or
+host availability. Operating-system available/reclaimable memory is an
+application runtime input, and an explicit memory control caps that assignment.
+On heterogeneous Apple Silicon, the application assigns the performance-core
+slice to the latency-critical single-owner mosaic grid topology; independently
+tiled work may use the complete logical CPU slice. Explicit worker controls are
+still caps within the assigned topology resources.
+Reusable buffers may reduce allocation churn but do not form a second memory
+budget or admission authority.
+
 The app uses one shared bounded producer/consumer primitive for source
 read-ahead across standard MFS, mosaic MFS replay, supported mosaic MT-MFS,
 standard and mosaic cube slabs, cubedata preparation, and trace preparation.
 `imaging_read_ahead_blocks` is a maximum live row-block count, not a queue-depth
-request. The current implementation caps it at two: one producer-owned block
-and one consumer-owned block. Queue capacity is `max_live_row_blocks - 2`, so
-the two-block case uses a rendezvous channel and cannot retain a third queued
-block. A value of one runs synchronously. Full-slab spectral routes remain
-single-block by default and accept explicit two-block read-ahead only when the
-memory planner does not lose plane residency or row locality. Consumer failure
+request. The default is two: one producer-owned block and one consumer-owned
+block. An explicit larger cap is admitted only within the assigned CPU and
+memory slice. Queue capacity is `max_live_row_blocks - 2`, so the default
+two-block case uses a rendezvous channel and cannot retain a third queued block.
+A value of one runs synchronously. Full-slab spectral routes remain single-block
+by default and accept explicit read-ahead only when the planner does not lose
+plane residency or row locality. Consumer failure
 sets a shared cancellation token, drops the rendezvous receiver to wake a
 blocked producer, and prevents another bounded source read after the current
 in-flight read; the original consumer error remains the returned context.

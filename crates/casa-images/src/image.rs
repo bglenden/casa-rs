@@ -31,7 +31,7 @@ use casa_types::{
 use ndarray::{ArrayViewD, IxDyn, Slice, SliceInfoElem};
 
 use crate::error::ImageError;
-use crate::image_expr::ImageExpr;
+use crate::image_expr::ImageExprBuilder;
 use crate::image_info::ImageInfo;
 use crate::subimage::{SubImage, SubImageMut};
 
@@ -471,22 +471,22 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
     }
 
     /// Starts a lazy expression rooted at this image.
-    fn expr(&self) -> Result<ImageExpr<'_, T>, ImageError>
+    fn expr(&self) -> Result<ImageExprBuilder<'_, T>, ImageError>
     where
         Self: Sized,
         T: crate::image_expr::ImageExprValue + PartialOrd,
     {
-        ImageExpr::from_image(self)
+        ImageExprBuilder::from_image(self)
     }
 
     /// Creates a lazy expression by mapping a function over this image.
-    fn expr_map<F>(&self, f: F) -> Result<ImageExpr<'_, T>, ImageError>
+    fn expr_map<F>(&self, f: F) -> Result<ImageExprBuilder<'_, T>, ImageError>
     where
         Self: Sized,
         T: crate::image_expr::ImageExprValue + PartialOrd,
         F: Fn(T) -> T + Send + Sync + 'static,
     {
-        ImageExpr::map(self, f)
+        ImageExprBuilder::map(self, f)
     }
 }
 
@@ -637,6 +637,19 @@ impl<T: ImagePixel> std::fmt::Debug for PagedImage<T> {
 }
 
 impl<T: ImagePixel> PagedImage<T> {
+    /// Flushes pixel mutations so an owned expression can safely reopen this
+    /// persistent source from worker-local handles.
+    pub(crate) fn flush_pixels_for_reopen(&self) -> Result<(), ImageError> {
+        if let Some(tiled_io) = &self.tiled_io {
+            tiled_io
+                .borrow_mut()
+                .flush()
+                .map_err(|error| ImageError::Io(error.to_string()))
+        } else {
+            self.flush_table()
+        }
+    }
+
     fn map_column_primitive_type(
         table: &Table,
         tiled_io: Option<&RefCell<TiledArrayStorage>>,
@@ -1382,7 +1395,7 @@ impl<T: ImagePixel> PagedImage<T> {
 
     /// Creates a read-only expression by mapping a function over this image.
     /// Starts a lazy expression rooted at this image.
-    pub fn expr(&self) -> Result<ImageExpr<'_, T>, ImageError>
+    pub fn expr(&self) -> Result<ImageExprBuilder<'_, T>, ImageError>
     where
         T: crate::image_expr::ImageExprValue + PartialOrd,
     {
@@ -1390,7 +1403,7 @@ impl<T: ImagePixel> PagedImage<T> {
     }
 
     /// Creates a lazy read-only expression by mapping a function over this image.
-    pub fn expr_map<F>(&self, f: F) -> Result<ImageExpr<'_, T>, ImageError>
+    pub fn expr_map<F>(&self, f: F) -> Result<ImageExprBuilder<'_, T>, ImageError>
     where
         T: crate::image_expr::ImageExprValue + PartialOrd,
         F: Fn(T) -> T + Send + Sync + 'static,
@@ -3273,10 +3286,13 @@ mod tests {
         );
 
         let expr = image.expr().unwrap().multiply_scalar(2.0);
-        assert_eq!(expr.get().unwrap(), ArrayD::from_elem(IxDyn(&[4, 4]), 2.0));
+        assert_eq!(
+            expr.compile().unwrap().get().unwrap(),
+            ArrayD::from_elem(IxDyn(&[4, 4]), 2.0)
+        );
         drop(expr);
         let expr_map = image.expr_map(|value| value + 3.0).unwrap();
-        assert_eq!(expr_map.get_at(&[0, 0]).unwrap(), 4.0);
+        assert_eq!(expr_map.compile().unwrap().get_at(&[0, 0]).unwrap(), 4.0);
         drop(expr_map);
 
         {

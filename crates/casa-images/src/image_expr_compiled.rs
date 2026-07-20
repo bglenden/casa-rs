@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use casa_coordinates::CoordinateSystem;
 use casa_lattices::execution::{
-    CursorMapWriteConfig, OrderedCursorMapWriteExecutionStrategy, ParallelReadChunkConfig,
-    try_map_traversal_cursors_ordered_with_strategy,
+    CursorMapWriteConfig, ExecutionInputs, ExecutionMode, ExecutionResources,
+    OrderedCursorMapWriteExecutionStrategy, ParallelReadChunkConfig, SourceResidency,
+    plan_execution, try_map_traversal_cursors_ordered_with_strategy,
 };
 use casa_lattices::{ExecutionPolicy, Lattice, LatticeError, TraversalCursorIter, TraversalSpec};
 use casa_tables::{TilePixel, TiledArrayStorage};
@@ -17,14 +18,15 @@ use ndarray::{IxDyn, Zip};
 
 use crate::error::ImageError;
 use crate::image::{ImageInterface, PagedImage};
+use crate::image_expr_ops::{apply_binary, apply_unary};
 use crate::image_info::ImageInfo;
 use crate::temp_image::TempImage;
 
 use super::{
-    BinaryExprFn, ImageExpr, ImageExprBinaryOp, ImageExprCompareOp, ImageExprMeta,
-    ImageExprUnaryOp, ImageExprValue, MaskExpr, MaskExprNode, MaskLogicalOp, NumericExprNode,
-    ReductionOp, advised_cursor_shape, clamp_cursor_shape, thread_parallelism,
-    validate_slice_request, write_chunk_into_array,
+    BinaryExprFn, ImageExprBinaryOp, ImageExprBuilder, ImageExprCompareOp, ImageExprMeta,
+    ImageExprUnaryOp, ImageExprValue, MaskExprBuilder, MaskExprNode, MaskLogicalOp,
+    NumericExprNode, ReductionOp, clamp_cursor_shape, thread_parallelism, validate_slice_request,
+    work_balanced_cursor_shape, write_chunk_into_array,
 };
 
 #[derive(Clone)]
@@ -41,6 +43,7 @@ struct CompiledImageSource<T: ImageExprValue> {
     kind: CompiledImageSourceKind<T>,
     cursor_shape: Vec<usize>,
     tile_shape: Option<Vec<usize>>,
+    reference_count: usize,
 }
 
 #[derive(Clone, Default)]
@@ -53,6 +56,13 @@ impl<T: ImageExprValue> CompiledImageArena<T> {
         self.sources
             .iter()
             .any(|source| matches!(source.kind, CompiledImageSourceKind::Paged { .. }))
+    }
+
+    fn repeated_source_count(&self) -> usize {
+        self.sources
+            .iter()
+            .filter(|source| source.reference_count > 1)
+            .count()
     }
 }
 
@@ -128,6 +138,33 @@ impl<T: ImageExprValue> CompiledEvalContext<T> {
 }
 
 impl<T: ImageExprValue> CompiledImageSource<T> {
+    fn read_slice_uncached(
+        &self,
+        arena: &CompiledImageArena<T>,
+        ctx: &mut CompiledEvalContext<T>,
+        source_id: usize,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<T>, LatticeError>
+    where
+        T: TilePixel,
+    {
+        match &self.kind {
+            CompiledImageSourceKind::Snapshot(data) => {
+                slice_array_owned(data.as_ref(), start, shape, stride)
+            }
+            CompiledImageSourceKind::Paged { .. } if stride.iter().all(|&step| step == 1) => ctx
+                .source_tiled_io_mut(arena, source_id)?
+                .get_slice::<T>(start, shape)
+                .map_err(|e| LatticeError::Table(e.to_string())),
+            CompiledImageSourceKind::Paged { .. } => ctx
+                .source_image_mut(arena, source_id)?
+                .get_slice_with_stride(start, shape, stride)
+                .map_err(|e| LatticeError::Table(e.to_string())),
+        }
+    }
+
     fn eval_slice(
         &self,
         arena: &CompiledImageArena<T>,
@@ -140,6 +177,9 @@ impl<T: ImageExprValue> CompiledImageSource<T> {
     where
         T: TilePixel,
     {
+        if self.reference_count <= 1 {
+            return self.read_slice_uncached(arena, ctx, source_id, start, shape, stride);
+        }
         if let Some(cached) = &ctx.cached_source_slices[source_id]
             && cached.start == start
             && cached.shape == shape
@@ -147,24 +187,7 @@ impl<T: ImageExprValue> CompiledImageSource<T> {
         {
             return Ok(cached.data.clone());
         }
-
-        let data = match &self.kind {
-            CompiledImageSourceKind::Snapshot(data) => {
-                slice_array_owned(data.as_ref(), start, shape, stride)
-            }
-            CompiledImageSourceKind::Paged { .. } => {
-                if stride.iter().all(|&step| step == 1) {
-                    ctx.source_tiled_io_mut(arena, source_id)?
-                        .get_slice::<T>(start, shape)
-                        .map_err(|e| LatticeError::Table(e.to_string()))
-                } else {
-                    ctx.source_image_mut(arena, source_id)?
-                        .get_slice_with_stride(start, shape, stride)
-                        .map_err(|e| LatticeError::Table(e.to_string()))
-                }
-            }
-        }?;
-
+        let data = self.read_slice_uncached(arena, ctx, source_id, start, shape, stride)?;
         ctx.cached_source_slices[source_id] = Some(CachedSourceSlice {
             start: start.to_vec(),
             shape: shape.to_vec(),
@@ -276,6 +299,7 @@ struct EvaluatedChunk<T> {
 struct CompileCtx<T: ImageExprValue> {
     sources: Vec<CompiledImageSource<T>>,
     paged_source_ids: std::collections::HashMap<PathBuf, usize>,
+    transient_source_ids: std::collections::HashMap<usize, usize>,
 }
 
 impl<T: ImageExprValue> Default for CompileCtx<T> {
@@ -283,6 +307,7 @@ impl<T: ImageExprValue> Default for CompileCtx<T> {
         Self {
             sources: Vec::new(),
             paged_source_ids: std::collections::HashMap::new(),
+            transient_source_ids: std::collections::HashMap::new(),
         }
     }
 }
@@ -294,6 +319,7 @@ impl<T: ImageExprValue> CompileCtx<T> {
             cursor_shape,
             tile_shape: None,
             kind: CompiledImageSourceKind::Snapshot(Arc::new(data)),
+            reference_count: 1,
         });
         source_id
     }
@@ -302,11 +328,14 @@ impl<T: ImageExprValue> CompileCtx<T> {
         &mut self,
         image: &dyn ImageInterface<T>,
     ) -> Result<usize, ImageError> {
+        let source_key = image as *const dyn ImageInterface<T> as *const () as usize;
         if let Some(any) = image.as_any() {
             if let Some(paged) = any.downcast_ref::<PagedImage<T>>()
                 && let Some(path) = paged.name()
             {
+                paged.flush_pixels_for_reopen()?;
                 if let Some(&source_id) = self.paged_source_ids.get(path) {
+                    self.sources[source_id].reference_count += 1;
                     return Ok(source_id);
                 }
                 let cursor_shape = clamp_cursor_shape(&paged.nice_cursor_shape(), paged.shape());
@@ -317,25 +346,38 @@ impl<T: ImageExprValue> CompileCtx<T> {
                         cache_bytes: compiled_source_cache_bytes::<T>(
                             &cursor_shape,
                             paged.cache_bytes(),
-                        ),
+                        )?,
                     },
                     cursor_shape,
                     tile_shape: Some(paged.tile_shape().to_vec()),
+                    reference_count: 1,
                 });
                 self.paged_source_ids.insert(path.to_path_buf(), source_id);
                 return Ok(source_id);
             }
 
             if let Some(temp) = any.downcast_ref::<TempImage<T>>() {
+                if let Some(&source_id) = self.transient_source_ids.get(&source_key) {
+                    self.sources[source_id].reference_count += 1;
+                    return Ok(source_id);
+                }
                 let data = temp.get()?;
                 let cursor_shape = clamp_cursor_shape(&temp.nice_cursor_shape(), temp.shape());
-                return Ok(self.register_snapshot_source(data, cursor_shape));
+                let source_id = self.register_snapshot_source(data, cursor_shape);
+                self.transient_source_ids.insert(source_key, source_id);
+                return Ok(source_id);
             }
         }
 
+        if let Some(&source_id) = self.transient_source_ids.get(&source_key) {
+            self.sources[source_id].reference_count += 1;
+            return Ok(source_id);
+        }
         let data = image.get()?;
         let cursor_shape = clamp_cursor_shape(&image.nice_cursor_shape(), image.shape());
-        Ok(self.register_snapshot_source(data, cursor_shape))
+        let source_id = self.register_snapshot_source(data, cursor_shape);
+        self.transient_source_ids.insert(source_key, source_id);
+        Ok(source_id)
     }
 
     fn compile_numeric(
@@ -466,8 +508,10 @@ impl<T: ImageExprValue> CompileCtx<T> {
             NumericExprNode::TypeBridge { eval_fn } => {
                 let stride = vec![1; node_shape.len()];
                 let data = eval_fn(&vec![0; node_shape.len()], node_shape, &stride)?;
-                let source_id =
-                    self.register_snapshot_source(data, advised_cursor_shape(node_shape));
+                let source_id = self.register_snapshot_source(
+                    data,
+                    work_balanced_cursor_shape(node_shape, thread_parallelism())?,
+                );
                 CompiledNumericExprNode::Source(source_id)
             }
         })
@@ -529,30 +573,35 @@ impl<T: ImageExprValue> CompileCtx<T> {
     }
 }
 
-fn compiled_source_cache_bytes<T>(cursor_shape: &[usize], requested_cache_bytes: usize) -> usize {
+fn compiled_source_cache_bytes<T>(
+    cursor_shape: &[usize],
+    requested_cache_bytes: usize,
+) -> Result<usize, ImageError> {
     if requested_cache_bytes > 0 {
-        return requested_cache_bytes;
+        return Ok(requested_cache_bytes);
     }
 
     let tile_bytes = cursor_shape
         .iter()
-        .product::<usize>()
-        .saturating_mul(std::mem::size_of::<T>());
+        .try_fold(1usize, |product, &extent| product.checked_mul(extent))
+        .and_then(|pixels| pixels.checked_mul(std::mem::size_of::<T>().max(1)))
+        .ok_or_else(|| ImageError::Lattice("expression source cache byte overflow".into()))?;
 
     // Compiled evaluation reads the source chunk by chunk. Reusing the
     // unbounded `0` cache from `PagedImage::open()` would push reopened worker
     // handles through the flat-cache path, which is the wrong shape for this
-    // workload. Use a small bounded cache instead.
-    tile_bytes.saturating_mul(4).max(tile_bytes)
+    // workload. One exact cursor buffer is the owned cache allocation; queue
+    // and worker buffers are budgeted separately by the execution planner.
+    Ok(tile_bytes)
 }
 
 fn expand_tile_aligned_cursor_shape(
     full_shape: &[usize],
     tile_shape: &[usize],
     max_pixels: usize,
-) -> Vec<usize> {
+) -> Result<Vec<usize>, ImageError> {
     if full_shape.is_empty() {
-        return vec![];
+        return Ok(vec![]);
     }
 
     let mut cursor = tile_shape
@@ -560,14 +609,23 @@ fn expand_tile_aligned_cursor_shape(
         .zip(full_shape.iter())
         .map(|(&tile, &extent)| tile.min(extent).max(1))
         .collect::<Vec<_>>();
-    let mut product = cursor.iter().product::<usize>().max(1);
+    let mut product = cursor
+        .iter()
+        .try_fold(1usize, |product, &extent| product.checked_mul(extent))
+        .ok_or_else(|| ImageError::Lattice("tile cursor product overflow".into()))?
+        .max(1);
 
     for axis in 0..cursor.len() {
         let tile = tile_shape[axis].max(1);
         let extent = full_shape[axis];
         while cursor[axis] < extent {
-            let next = cursor[axis].saturating_add(tile).min(extent);
-            let next_product = product / cursor[axis].max(1) * next;
+            let next = cursor[axis]
+                .checked_add(tile)
+                .ok_or_else(|| ImageError::Lattice("tile cursor step overflow".into()))?
+                .min(extent);
+            let next_product = (product / cursor[axis].max(1))
+                .checked_mul(next)
+                .ok_or_else(|| ImageError::Lattice("tile cursor expansion overflow".into()))?;
             if next_product > max_pixels {
                 break;
             }
@@ -576,7 +634,18 @@ fn expand_tile_aligned_cursor_shape(
         }
     }
 
-    cursor
+    Ok(cursor)
+}
+
+fn work_balanced_pixel_target(
+    full_shape: &[usize],
+    worker_limit: usize,
+) -> Result<usize, ImageError> {
+    let total_pixels = full_shape
+        .iter()
+        .try_fold(1usize, |product, &extent| product.checked_mul(extent))
+        .ok_or_else(|| ImageError::Lattice("expression shape product overflow".into()))?;
+    Ok(total_pixels.div_ceil(worker_limit.max(1)).max(1))
 }
 
 fn mask_chunk_all(mask: &ArrayD<bool>) -> bool {
@@ -600,41 +669,44 @@ fn mask_chunk_none(mask: &ArrayD<bool>) -> bool {
 /// The statistical or image values produced are unchanged; only the execution
 /// strategy changes.
 #[derive(Clone)]
-pub struct CompiledImageExpr<T: ImageExprValue> {
+pub struct ImageExpression<T: ImageExprValue> {
     node: CompiledNumericExprNode<T>,
     arena: Arc<CompiledImageArena<T>>,
     meta: ImageExprMeta,
     execution_policy: ExecutionPolicy,
+    execution_resources: ExecutionResources,
     output_mask: Option<Arc<ArrayD<bool>>>,
+    expr_string: Option<Arc<str>>,
 }
 
 /// Owned, compiled boolean mask expression sharing the same compiled source arena.
 #[derive(Clone)]
-pub struct CompiledMaskExpr<T: ImageExprValue> {
+pub struct MaskExpression<T: ImageExprValue> {
     node: CompiledMaskExprNode<T>,
     arena: Arc<CompiledImageArena<T>>,
     shape: Vec<usize>,
     execution_policy: ExecutionPolicy,
+    execution_resources: ExecutionResources,
 }
 
-impl<T: ImageExprValue> std::fmt::Debug for CompiledImageExpr<T> {
+impl<T: ImageExprValue> std::fmt::Debug for ImageExpression<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CompiledImageExpr")
+        f.debug_struct("ImageExpression")
             .field("shape", &self.meta.shape)
             .field("pixel_type", &T::PRIMITIVE_TYPE)
             .finish()
     }
 }
 
-impl<T: ImageExprValue> std::fmt::Debug for CompiledMaskExpr<T> {
+impl<T: ImageExprValue> std::fmt::Debug for MaskExpression<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CompiledMaskExpr")
+        f.debug_struct("MaskExpression")
             .field("shape", &self.shape)
             .finish()
     }
 }
 
-impl<T: ImageExprValue> CompiledImageExpr<T> {
+impl<T: ImageExprValue> ImageExpression<T> {
     /// Overrides the execution policy used by [`get`](Self::get),
     /// [`get_slice`](Self::get_slice), and [`save_as`](Self::save_as).
     ///
@@ -643,6 +715,11 @@ impl<T: ImageExprValue> CompiledImageExpr<T> {
     /// values it produces.
     pub fn set_execution_policy(&mut self, policy: ExecutionPolicy) {
         self.execution_policy = policy;
+    }
+
+    /// Assigns the resource slice used by automatic and explicit planning.
+    pub fn set_execution_resources(&mut self, resources: ExecutionResources) {
+        self.execution_resources = resources;
     }
 
     /// Reads the full compiled expression.
@@ -680,14 +757,24 @@ impl<T: ImageExprValue> CompiledImageExpr<T> {
                 .map_err(Into::into);
         }
 
-        let cursor_shape =
-            clamp_cursor_shape(&self.node.preferred_cursor_shape(shape, &self.arena), shape);
-        let strategy = compiled_map_strategy(
-            self.execution_policy,
+        let cursor_shape = clamp_cursor_shape(
+            &self.node.preferred_cursor_shape(
+                shape,
+                &self.arena,
+                self.execution_resources.worker_limit,
+            )?,
             shape,
-            &cursor_shape,
-            self.arena.has_paged_sources(),
         );
+        let strategy = compiled_map_strategy::<T>(CompiledMapInputs {
+            policy: self.execution_policy,
+            full_shape: shape,
+            cursor_shape: &cursor_shape,
+            has_paged_sources: self.arena.has_paged_sources(),
+            source_count: self.arena.sources.len(),
+            repeated_source_count: self.arena.repeated_source_count(),
+            output_element_bytes: std::mem::size_of::<T>(),
+            resources: self.execution_resources,
+        })?;
         let mut out = ArrayD::from_elem(IxDyn(shape), T::default_value());
         let base_start = start.to_vec();
 
@@ -744,15 +831,23 @@ impl<T: ImageExprValue> CompiledImageExpr<T> {
     pub fn save_as(&self, path: impl AsRef<Path>) -> Result<PagedImage<T>, ImageError> {
         let full_shape = self.meta.shape.clone();
         let cursor_shape = clamp_cursor_shape(
-            &self.node.preferred_cursor_shape(&full_shape, &self.arena),
+            &self.node.preferred_cursor_shape(
+                &full_shape,
+                &self.arena,
+                self.execution_resources.worker_limit,
+            )?,
             &full_shape,
         );
-        let strategy = compiled_map_strategy(
-            self.execution_policy,
-            &full_shape,
-            &cursor_shape,
-            self.arena.has_paged_sources(),
-        );
+        let strategy = compiled_map_strategy::<T>(CompiledMapInputs {
+            policy: self.execution_policy,
+            full_shape: &full_shape,
+            cursor_shape: &cursor_shape,
+            has_paged_sources: self.arena.has_paged_sources(),
+            source_count: self.arena.sources.len(),
+            repeated_source_count: self.arena.repeated_source_count(),
+            output_element_bytes: std::mem::size_of::<T>(),
+            resources: self.execution_resources,
+        })?;
 
         let mut image = PagedImage::create_with_tile_shape(
             full_shape.clone(),
@@ -821,13 +916,39 @@ impl<T: ImageExprValue> CompiledImageExpr<T> {
     pub fn source_mask(&self) -> Option<ArrayD<bool>> {
         self.output_mask.as_deref().cloned()
     }
+
+    /// Returns the original LEL text when this graph was produced by the
+    /// parser or reopened from a persisted expression.
+    pub fn expr_string(&self) -> Option<&str> {
+        self.expr_string.as_deref()
+    }
+
+    /// Persists this expression graph as an `.imgexpr` descriptor.
+    pub fn save_expr(&self, path: impl AsRef<Path>) -> Result<(), ImageError> {
+        let expr_string = self.expr_string().ok_or_else(|| {
+            ImageError::InvalidMetadata(
+                "ImageExpression cannot be persisted: no expression string is set".into(),
+            )
+        })?;
+        crate::expr_file::save(path, expr_string, T::PRIMITIVE_TYPE, &self.meta.misc_info)
+    }
+
+    pub(crate) fn set_persisted_metadata(&mut self, path: PathBuf, misc_info: RecordValue) {
+        self.meta.name = Some(path);
+        self.meta.misc_info = misc_info;
+    }
 }
 
-impl<T: ImageExprValue> CompiledMaskExpr<T> {
+impl<T: ImageExprValue> MaskExpression<T> {
     /// Overrides the execution policy used by [`get`](Self::get) and
     /// [`get_slice`](Self::get_slice).
     pub fn set_execution_policy(&mut self, policy: ExecutionPolicy) {
         self.execution_policy = policy;
+    }
+
+    /// Assigns the resource slice used by automatic and explicit planning.
+    pub fn set_execution_resources(&mut self, resources: ExecutionResources) {
+        self.execution_resources = resources;
     }
 
     pub fn get(&self) -> Result<ArrayD<bool>, ImageError> {
@@ -862,14 +983,24 @@ impl<T: ImageExprValue> CompiledMaskExpr<T> {
                 .map_err(Into::into);
         }
 
-        let cursor_shape =
-            clamp_cursor_shape(&self.node.preferred_cursor_shape(shape, &self.arena), shape);
-        let strategy = compiled_map_strategy(
-            self.execution_policy,
+        let cursor_shape = clamp_cursor_shape(
+            &self.node.preferred_cursor_shape(
+                shape,
+                &self.arena,
+                self.execution_resources.worker_limit,
+            )?,
             shape,
-            &cursor_shape,
-            self.arena.has_paged_sources(),
         );
+        let strategy = compiled_map_strategy::<T>(CompiledMapInputs {
+            policy: self.execution_policy,
+            full_shape: shape,
+            cursor_shape: &cursor_shape,
+            has_paged_sources: self.arena.has_paged_sources(),
+            source_count: self.arena.sources.len(),
+            repeated_source_count: self.arena.repeated_source_count(),
+            output_element_bytes: std::mem::size_of::<bool>(),
+            resources: self.execution_resources,
+        })?;
         let mut out = ArrayD::from_elem(IxDyn(shape), false);
         let base_start = start.to_vec();
 
@@ -914,14 +1045,17 @@ impl<T: ImageExprValue> CompiledNumericExprNode<T> {
         &self,
         full_shape: &[usize],
         arena: &CompiledImageArena<T>,
-    ) -> Vec<usize> {
-        match self {
+        worker_limit: usize,
+    ) -> Result<Vec<usize>, ImageError> {
+        Ok(match self {
             Self::Source(source_id) => {
                 let source = &arena.sources[*source_id];
                 match &source.tile_shape {
-                    Some(tile_shape) => {
-                        expand_tile_aligned_cursor_shape(full_shape, tile_shape, 1_048_576)
-                    }
+                    Some(tile_shape) => expand_tile_aligned_cursor_shape(
+                        full_shape,
+                        tile_shape,
+                        work_balanced_pixel_target(full_shape, worker_limit)?,
+                    )?,
                     None => source.cursor_shape.clone(),
                 }
             }
@@ -929,14 +1063,22 @@ impl<T: ImageExprValue> CompiledNumericExprNode<T> {
             | Self::CustomUnary { child, .. }
             | Self::Reduction { child, .. }
             | Self::Fractile { child, .. }
-            | Self::FractileRange { child, .. } => child.preferred_cursor_shape(full_shape, arena),
-            Self::BinaryOp { lhs, .. } | Self::CustomBinary { lhs, .. } => {
-                lhs.preferred_cursor_shape(full_shape, arena)
+            | Self::FractileRange { child, .. } => {
+                return child.preferred_cursor_shape(full_shape, arena, worker_limit);
             }
-            Self::Conditional { if_true, .. } => if_true.preferred_cursor_shape(full_shape, arena),
-            Self::Replace { primary, .. } => primary.preferred_cursor_shape(full_shape, arena),
-            Self::Scalar(_) | Self::MaskCount { .. } => advised_cursor_shape(full_shape),
-        }
+            Self::BinaryOp { lhs, .. } | Self::CustomBinary { lhs, .. } => {
+                return lhs.preferred_cursor_shape(full_shape, arena, worker_limit);
+            }
+            Self::Conditional { if_true, .. } => {
+                return if_true.preferred_cursor_shape(full_shape, arena, worker_limit);
+            }
+            Self::Replace { primary, .. } => {
+                return primary.preferred_cursor_shape(full_shape, arena, worker_limit);
+            }
+            Self::Scalar(_) | Self::MaskCount { .. } => {
+                work_balanced_cursor_shape(full_shape, worker_limit)?
+            }
+        })
     }
 
     fn eval_slice(
@@ -953,8 +1095,9 @@ impl<T: ImageExprValue> CompiledNumericExprNode<T> {
             }
             Self::Scalar(value) => Ok(ArrayD::from_elem(IxDyn(shape), *value)),
             Self::UnaryOp { op, child } => {
-                let data = child.eval_slice(arena, ctx, start, shape, stride)?;
-                Ok(data.mapv(|value| apply_unary(*op, value)))
+                let mut data = child.eval_slice(arena, ctx, start, shape, stride)?;
+                data.mapv_inplace(|value| apply_unary(*op, value));
+                Ok(data)
             }
             Self::BinaryOp { op, lhs, rhs } => {
                 let lhs_data = lhs.eval_slice(arena, ctx, start, shape, stride)?;
@@ -964,11 +1107,12 @@ impl<T: ImageExprValue> CompiledNumericExprNode<T> {
                     .map_collect(|&lhs, &rhs| apply_binary(*op, lhs, rhs)))
             }
             Self::CustomUnary { child, func } => {
-                let data = child.eval_slice(arena, ctx, start, shape, stride)?;
+                let mut data = child.eval_slice(arena, ctx, start, shape, stride)?;
                 let BinaryOrUnary::Unary(func) = func else {
                     unreachable!("custom unary node stored binary function")
                 };
-                Ok(data.mapv(|value| func(value)))
+                data.mapv_inplace(|value| func(value));
+                Ok(data)
             }
             Self::CustomBinary { lhs, rhs, func } => {
                 let lhs_data = lhs.eval_slice(arena, ctx, start, shape, stride)?;
@@ -1017,22 +1161,13 @@ impl<T: ImageExprValue> CompiledNumericExprNode<T> {
                 if_false,
             } => {
                 let cond = condition.eval_slice(arena, ctx, start, shape, stride)?;
-                if mask_chunk_all(&cond) {
-                    return if_true.eval_slice(arena, ctx, start, shape, stride);
-                }
-                if mask_chunk_none(&cond) {
-                    return if_false.eval_slice(arena, ctx, start, shape, stride);
-                }
-                let mut out = if_true.eval_slice(arena, ctx, start, shape, stride)?;
+                let if_true = if_true.eval_slice(arena, ctx, start, shape, stride)?;
                 let f_data = if_false.eval_slice(arena, ctx, start, shape, stride)?;
-                Zip::from(&cond).and(out.view_mut()).and(&f_data).for_each(
-                    |&cond, out, &if_false| {
-                        if !cond {
-                            *out = if_false;
-                        }
+                Ok(Zip::from(&cond).and(&if_true).and(&f_data).map_collect(
+                    |&condition, &if_true, &if_false| {
+                        if condition { if_true } else { if_false }
                     },
-                );
-                Ok(out)
+                ))
             }
             Self::MaskCount {
                 count_true,
@@ -1086,17 +1221,20 @@ impl<T: ImageExprValue> CompiledMaskExprNode<T> {
         &self,
         full_shape: &[usize],
         arena: &CompiledImageArena<T>,
-    ) -> Vec<usize> {
-        match self {
+        worker_limit: usize,
+    ) -> Result<Vec<usize>, ImageError> {
+        Ok(match self {
             Self::CompareScalar { expr, .. } | Self::IsNan { child: expr } => {
-                expr.preferred_cursor_shape(full_shape, arena)
+                return expr.preferred_cursor_shape(full_shape, arena, worker_limit);
             }
-            Self::Logical { lhs, .. } => lhs.preferred_cursor_shape(full_shape, arena),
+            Self::Logical { lhs, .. } => {
+                return lhs.preferred_cursor_shape(full_shape, arena, worker_limit);
+            }
             Self::Not { child } | Self::AllReduce { child, .. } | Self::AnyReduce { child, .. } => {
-                child.preferred_cursor_shape(full_shape, arena)
+                return child.preferred_cursor_shape(full_shape, arena, worker_limit);
             }
-            Self::ConstantMask { .. } => advised_cursor_shape(full_shape),
-        }
+            Self::ConstantMask { .. } => work_balanced_cursor_shape(full_shape, worker_limit)?,
+        })
     }
 
     fn eval_slice(
@@ -1176,11 +1314,11 @@ impl<T: ImageExprValue> CompiledMaskExprNode<T> {
     }
 }
 
-impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
+impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     /// Compiles a borrowed lazy expression into an owned execution form.
     ///
     /// Compilation is Rust-specific functionality beyond C++ casacore's
-    /// borrowed `ImageExpr<T>` surface. Persistent paged sources remain lazy
+    /// borrowed `ImageExprBuilder<T>` surface. Persistent paged sources remain lazy
     /// and reopenable; non-persistent or non-downcastable sources are
     /// snapshotted so the compiled expression can be evaluated on worker
     /// threads safely.
@@ -1189,13 +1327,13 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     ///
     /// ```rust
     /// use casa_coordinates::CoordinateSystem;
-    /// use casa_images::{ImageExpr, TempImage};
+    /// use casa_images::{ImageExprBuilder, TempImage};
     /// use casa_lattices::{ExecutionPolicy, LatticeMut};
     ///
     /// let mut image = TempImage::<f32>::new(vec![16, 16], CoordinateSystem::new(), casa_lattices::TempStoragePolicy::Memory).unwrap();
     /// image.set(2.0).unwrap();
     ///
-    /// let mut compiled = ImageExpr::from_image(&image)
+    /// let mut compiled = ImageExprBuilder::from_image(&image)
     ///     .unwrap()
     ///     .multiply_scalar(2.0)
     ///     .compile()
@@ -1206,38 +1344,41 @@ impl<'a, T: ImageExprValue> ImageExpr<'a, T> {
     /// });
     /// assert_eq!(compiled.get_at(&[0, 0]).unwrap(), 4.0);
     /// ```
-    pub fn compile(&self) -> Result<CompiledImageExpr<T>, ImageError> {
+    pub fn compile(&self) -> Result<ImageExpression<T>, ImageError> {
         let mut ctx = CompileCtx::default();
         let node = ctx.compile_numeric(&self.node, &self.meta.shape)?;
-        Ok(CompiledImageExpr {
+        Ok(ImageExpression {
             node,
             arena: Arc::new(CompiledImageArena {
                 sources: ctx.sources,
             }),
             meta: self.meta.clone(),
             execution_policy: ExecutionPolicy::Auto,
+            execution_resources: ExecutionResources::default(),
             output_mask: self.source_mask()?.map(Arc::new),
+            expr_string: self.expr_string.as_deref().map(Arc::from),
         })
     }
 }
 
-impl<'a, T: ImageExprValue + PartialOrd> MaskExpr<'a, T> {
+impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
     /// Compiles a borrowed lazy boolean mask into an owned execution form.
-    pub fn compile(&self) -> Result<CompiledMaskExpr<T>, ImageError> {
+    pub fn compile(&self) -> Result<MaskExpression<T>, ImageError> {
         let mut ctx = CompileCtx::default();
         let node = ctx.compile_mask(&self.node, &self.shape)?;
-        Ok(CompiledMaskExpr {
+        Ok(MaskExpression {
             node,
             arena: Arc::new(CompiledImageArena {
                 sources: ctx.sources,
             }),
             shape: self.shape.clone(),
             execution_policy: ExecutionPolicy::Auto,
+            execution_resources: ExecutionResources::default(),
         })
     }
 }
 
-impl<T: ImageExprValue> Lattice<T> for CompiledImageExpr<T> {
+impl<T: ImageExprValue> Lattice<T> for ImageExpression<T> {
     fn shape(&self) -> &[usize] {
         &self.meta.shape
     }
@@ -1247,7 +1388,7 @@ impl<T: ImageExprValue> Lattice<T> for CompiledImageExpr<T> {
     }
 
     fn get_at(&self, position: &[usize]) -> Result<T, LatticeError> {
-        CompiledImageExpr::get_at(self, position).map_err(|e| LatticeError::Table(e.to_string()))
+        ImageExpression::get_at(self, position).map_err(|e| LatticeError::Table(e.to_string()))
     }
 
     fn get_slice(
@@ -1257,20 +1398,20 @@ impl<T: ImageExprValue> Lattice<T> for CompiledImageExpr<T> {
         stride: &[usize],
     ) -> Result<ArrayD<T>, LatticeError> {
         if stride.iter().all(|&value| value == 1) {
-            CompiledImageExpr::get_slice(self, start, shape)
+            ImageExpression::get_slice(self, start, shape)
                 .map_err(|e| LatticeError::Table(e.to_string()))
         } else {
-            CompiledImageExpr::get_slice_with_stride(self, start, shape, stride)
+            ImageExpression::get_slice_with_stride(self, start, shape, stride)
                 .map_err(|e| LatticeError::Table(e.to_string()))
         }
     }
 
     fn get(&self) -> Result<ArrayD<T>, LatticeError> {
-        CompiledImageExpr::get(self).map_err(|e| LatticeError::Table(e.to_string()))
+        ImageExpression::get(self).map_err(|e| LatticeError::Table(e.to_string()))
     }
 }
 
-impl<T: ImageExprValue> ImageInterface<T> for CompiledImageExpr<T> {
+impl<T: ImageExprValue> ImageInterface<T> for ImageExpression<T> {
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
     }
@@ -1300,7 +1441,7 @@ impl<T: ImageExprValue> ImageInterface<T> for CompiledImageExpr<T> {
     }
 }
 
-impl<T: ImageExprValue> Lattice<bool> for CompiledMaskExpr<T> {
+impl<T: ImageExprValue> Lattice<bool> for MaskExpression<T> {
     fn shape(&self) -> &[usize] {
         &self.shape
     }
@@ -1310,7 +1451,7 @@ impl<T: ImageExprValue> Lattice<bool> for CompiledMaskExpr<T> {
     }
 
     fn get_at(&self, position: &[usize]) -> Result<bool, LatticeError> {
-        CompiledMaskExpr::get_at(self, position).map_err(|e| LatticeError::Table(e.to_string()))
+        MaskExpression::get_at(self, position).map_err(|e| LatticeError::Table(e.to_string()))
     }
 
     fn get_slice(
@@ -1320,7 +1461,7 @@ impl<T: ImageExprValue> Lattice<bool> for CompiledMaskExpr<T> {
         stride: &[usize],
     ) -> Result<ArrayD<bool>, LatticeError> {
         if stride.iter().all(|&value| value == 1) {
-            CompiledMaskExpr::get_slice(self, start, shape)
+            MaskExpression::get_slice(self, start, shape)
                 .map_err(|e| LatticeError::Table(e.to_string()))
         } else {
             validate_slice_request(&self.shape, start, shape, stride)?;
@@ -1331,86 +1472,93 @@ impl<T: ImageExprValue> Lattice<bool> for CompiledMaskExpr<T> {
     }
 
     fn get(&self) -> Result<ArrayD<bool>, LatticeError> {
-        CompiledMaskExpr::get(self).map_err(|e| LatticeError::Table(e.to_string()))
+        MaskExpression::get(self).map_err(|e| LatticeError::Table(e.to_string()))
     }
 }
 
-fn compiled_map_strategy(
+struct CompiledMapInputs<'a> {
     policy: ExecutionPolicy,
-    full_shape: &[usize],
-    cursor_shape: &[usize],
+    full_shape: &'a [usize],
+    cursor_shape: &'a [usize],
     has_paged_sources: bool,
-) -> OrderedCursorMapWriteExecutionStrategy {
-    match policy {
-        ExecutionPolicy::Serial => OrderedCursorMapWriteExecutionStrategy::Serial,
-        ExecutionPolicy::Pipelined { prefetch_depth } => {
+    source_count: usize,
+    repeated_source_count: usize,
+    output_element_bytes: usize,
+    resources: ExecutionResources,
+}
+
+fn compiled_map_strategy<T: ImageExprValue>(
+    inputs: CompiledMapInputs<'_>,
+) -> Result<OrderedCursorMapWriteExecutionStrategy, ImageError> {
+    let task_count = TraversalCursorIter::new(
+        inputs.full_shape.to_vec(),
+        inputs.cursor_shape.to_vec(),
+        TraversalSpec::chunks(inputs.cursor_shape.to_vec()),
+    )
+    .size_hint()
+    .1
+    .unwrap_or(0);
+    let chunk_elements = inputs
+        .cursor_shape
+        .iter()
+        .try_fold(1usize, |product, &extent| product.checked_mul(extent));
+    let chunk_bytes = chunk_elements
+        .and_then(|elements| elements.checked_mul(inputs.output_element_bytes.max(1)))
+        .ok_or_else(|| ImageError::Lattice("compiled expression chunk byte overflow".into()))?;
+    let context_slots = inputs
+        .source_count
+        .checked_mul(
+            std::mem::size_of::<Option<PagedImage<T>>>()
+                + std::mem::size_of::<Option<TiledArrayStorage>>()
+                + std::mem::size_of::<Option<CachedSourceSlice<T>>>(),
+        )
+        .ok_or_else(|| ImageError::Lattice("compiled expression context overflow".into()))?;
+    let cached_source_bytes = inputs
+        .repeated_source_count
+        .checked_mul(
+            chunk_elements
+                .and_then(|elements| elements.checked_mul(std::mem::size_of::<T>().max(1)))
+                .ok_or_else(|| {
+                    ImageError::Lattice("compiled expression source cache byte overflow".into())
+                })?,
+        )
+        .ok_or_else(|| ImageError::Lattice("compiled expression source cache overflow".into()))?;
+    let per_worker_state_bytes = context_slots
+        .checked_add(cached_source_bytes)
+        .ok_or_else(|| ImageError::Lattice("compiled expression worker state overflow".into()))?;
+    let plan = plan_execution(
+        inputs.policy,
+        ExecutionInputs {
+            task_count,
+            chunk_bytes,
+            per_worker_state_bytes,
+            memory_budget_bytes: inputs.resources.memory_budget_bytes,
+            available_workers: inputs.resources.worker_limit,
+            requested_worker_limit: inputs.resources.worker_limit,
+            source_residency: if inputs.has_paged_sources {
+                SourceResidency::Persistent
+            } else {
+                SourceResidency::Resident
+            },
+            prefetch_capability: true,
+            configured_prefetch_cap: inputs.resources.prefetch_cap,
+        },
+    )
+    .map_err(|error| ImageError::Lattice(error.to_string()))?;
+    Ok(match plan.mode {
+        ExecutionMode::Serial => OrderedCursorMapWriteExecutionStrategy::Serial,
+        ExecutionMode::Pipelined => {
             OrderedCursorMapWriteExecutionStrategy::Pipelined(CursorMapWriteConfig {
-                prefetch_depth: prefetch_depth.max(1),
+                prefetch_depth: plan.prefetch_depth,
             })
         }
-        ExecutionPolicy::Parallel {
-            workers,
-            prefetch_depth,
-        } => {
-            let workers = workers.max(1);
-            if workers <= 1 {
-                OrderedCursorMapWriteExecutionStrategy::Pipelined(CursorMapWriteConfig {
-                    prefetch_depth: prefetch_depth.max(1),
-                })
-            } else {
-                OrderedCursorMapWriteExecutionStrategy::Parallel(ParallelReadChunkConfig {
-                    workers,
-                    prefetch_depth: prefetch_depth.max(workers),
-                })
-            }
+        ExecutionMode::Parallel => {
+            OrderedCursorMapWriteExecutionStrategy::Parallel(ParallelReadChunkConfig {
+                workers: plan.workers,
+                prefetch_depth: plan.prefetch_depth,
+            })
         }
-        ExecutionPolicy::Auto => {
-            let available = thread_parallelism();
-            if available < 2 || full_shape.is_empty() {
-                return OrderedCursorMapWriteExecutionStrategy::Serial;
-            }
-            let total_pixels = full_shape.iter().product::<usize>();
-            let task_count = TraversalCursorIter::new(
-                full_shape.to_vec(),
-                cursor_shape.to_vec(),
-                TraversalSpec::chunks(cursor_shape.to_vec()),
-            )
-            .size_hint()
-            .1
-            .unwrap_or(0);
-            if task_count < 2 || total_pixels < 131_072 {
-                return OrderedCursorMapWriteExecutionStrategy::Serial;
-            }
-
-            // Parallel chunk execution pays off only once there is enough work
-            // per worker to amortize task scheduling and per-chunk evaluation
-            // overhead. Moderate paged cubes like 64^3 benefit more from
-            // overlap-only pipelining than from a full worker pool.
-            let pixels_per_worker_threshold = if has_paged_sources { 200_000 } else { 150_000 };
-            let parallel_threshold = available.saturating_mul(pixels_per_worker_threshold);
-            let min_parallel_tasks = if has_paged_sources {
-                2
-            } else {
-                available.saturating_mul(2)
-            };
-            let enough_parallel_work =
-                total_pixels >= parallel_threshold && task_count >= min_parallel_tasks;
-
-            if has_paged_sources && !enough_parallel_work {
-                OrderedCursorMapWriteExecutionStrategy::Pipelined(CursorMapWriteConfig {
-                    prefetch_depth: available.max(2),
-                })
-            } else if !enough_parallel_work {
-                OrderedCursorMapWriteExecutionStrategy::Serial
-            } else {
-                let workers = available.min(task_count.max(1));
-                OrderedCursorMapWriteExecutionStrategy::Parallel(ParallelReadChunkConfig {
-                    workers,
-                    prefetch_depth: workers * 2,
-                })
-            }
-        }
-    }
+    })
 }
 
 fn reduce_numeric_child<T: ImageExprValue>(
@@ -1498,7 +1646,11 @@ fn collect_numeric_child<T: ImageExprValue>(
     child_shape: &[usize],
     arena: &CompiledImageArena<T>,
 ) -> Result<Vec<T>, LatticeError> {
-    let mut values = Vec::with_capacity(child_shape.iter().product());
+    let capacity = child_shape
+        .iter()
+        .try_fold(1usize, |product, &extent| product.checked_mul(extent))
+        .ok_or_else(|| LatticeError::InvalidTraversal("reduction capacity overflow".to_string()))?;
+    let mut values = Vec::with_capacity(capacity);
     for_each_compiled_numeric_chunk(child, child_shape, arena, |chunk| {
         values.extend(chunk.iter().copied());
         Ok(())
@@ -1517,8 +1669,12 @@ fn for_each_compiled_numeric_chunk<T: ImageExprValue>(
         let empty = node.eval_slice(arena, &mut ctx, &[], &[], &[])?;
         return f(&empty);
     }
-    let cursor_shape =
-        clamp_cursor_shape(&node.preferred_cursor_shape(full_shape, arena), full_shape);
+    let cursor_shape = clamp_cursor_shape(
+        &node
+            .preferred_cursor_shape(full_shape, arena, thread_parallelism())
+            .map_err(|error| LatticeError::InvalidTraversal(error.to_string()))?,
+        full_shape,
+    );
     let mut ctx = CompiledEvalContext::new(arena.sources.len());
     for cursor in TraversalCursorIter::new(
         full_shape.to_vec(),
@@ -1544,8 +1700,12 @@ fn for_each_compiled_mask_chunk<T: ImageExprValue>(
         let empty = node.eval_slice(arena, &mut ctx, &[], &[], &[])?;
         return f(&empty);
     }
-    let cursor_shape =
-        clamp_cursor_shape(&node.preferred_cursor_shape(full_shape, arena), full_shape);
+    let cursor_shape = clamp_cursor_shape(
+        &node
+            .preferred_cursor_shape(full_shape, arena, thread_parallelism())
+            .map_err(|error| LatticeError::InvalidTraversal(error.to_string()))?,
+        full_shape,
+    );
     let mut ctx = CompiledEvalContext::new(arena.sources.len());
     for cursor in TraversalCursorIter::new(
         full_shape.to_vec(),
@@ -1586,45 +1746,6 @@ fn slice_array_owned<T: Clone>(
         })
         .collect();
     Ok(array.slice(slice_info.as_slice()).to_owned())
-}
-
-fn apply_unary<T: ImageExprValue>(op: ImageExprUnaryOp, value: T) -> T {
-    match op {
-        ImageExprUnaryOp::Negate => -value,
-        ImageExprUnaryOp::Exp => value.expr_exp(),
-        ImageExprUnaryOp::Sin => value.expr_sin(),
-        ImageExprUnaryOp::Cos => value.expr_cos(),
-        ImageExprUnaryOp::Tan => value.expr_tan(),
-        ImageExprUnaryOp::Asin => value.expr_asin(),
-        ImageExprUnaryOp::Acos => value.expr_acos(),
-        ImageExprUnaryOp::Atan => value.expr_atan(),
-        ImageExprUnaryOp::Sinh => value.expr_sinh(),
-        ImageExprUnaryOp::Cosh => value.expr_cosh(),
-        ImageExprUnaryOp::Tanh => value.expr_tanh(),
-        ImageExprUnaryOp::Log => value.expr_log(),
-        ImageExprUnaryOp::Log10 => value.expr_log10(),
-        ImageExprUnaryOp::Sqrt => value.expr_sqrt(),
-        ImageExprUnaryOp::Abs => value.expr_abs(),
-        ImageExprUnaryOp::Ceil => value.expr_ceil(),
-        ImageExprUnaryOp::Floor => value.expr_floor(),
-        ImageExprUnaryOp::Round => value.expr_round(),
-        ImageExprUnaryOp::Sign => value.expr_sign(),
-        ImageExprUnaryOp::Conj => value.expr_conj(),
-    }
-}
-
-fn apply_binary<T: ImageExprValue>(op: ImageExprBinaryOp, lhs: T, rhs: T) -> T {
-    match op {
-        ImageExprBinaryOp::Add => lhs + rhs,
-        ImageExprBinaryOp::Subtract => lhs - rhs,
-        ImageExprBinaryOp::Multiply => lhs * rhs,
-        ImageExprBinaryOp::Divide => lhs / rhs,
-        ImageExprBinaryOp::Pow => lhs.expr_pow(rhs),
-        ImageExprBinaryOp::Fmod => lhs.expr_fmod(rhs),
-        ImageExprBinaryOp::Atan2 => lhs.expr_atan2(rhs),
-        ImageExprBinaryOp::Min => lhs.expr_min(rhs),
-        ImageExprBinaryOp::Max => lhs.expr_max(rhs),
-    }
 }
 
 fn array_fractile_values<T: ImageExprValue>(values: &mut [T], fraction: f64) -> Option<T> {
@@ -1698,26 +1819,53 @@ mod tests {
         let available = thread_parallelism();
 
         assert_eq!(
-            compiled_source_cache_bytes::<f32>(&[16, 16, 16], 1234),
+            compiled_source_cache_bytes::<f32>(&[16, 16, 16], 1234).unwrap(),
             1234
         );
         assert_eq!(
-            compiled_source_cache_bytes::<f32>(&[16, 16, 16], 0),
-            16 * 16 * 16 * std::mem::size_of::<f32>() * 4
+            compiled_source_cache_bytes::<f32>(&[16, 16, 16], 0).unwrap(),
+            16 * 16 * 16 * std::mem::size_of::<f32>()
         );
 
+        let shape = [1024, 1024, 256];
+        let target = work_balanced_pixel_target(&shape, 256).unwrap();
         assert_eq!(
-            expand_tile_aligned_cursor_shape(&[1024, 1024, 256], &[16, 16, 16], 1_048_576),
+            expand_tile_aligned_cursor_shape(&shape, &[16, 16, 16], target).unwrap(),
             vec![1024, 64, 16]
         );
 
-        let serial = compiled_map_strategy(ExecutionPolicy::Auto, &[64, 64], &[64, 64], false);
+        let resources = ExecutionResources {
+            memory_budget_bytes: 64 * 1024 * 1024,
+            worker_limit: 4,
+            prefetch_cap: 8,
+        };
+        let serial = compiled_map_strategy::<f32>(CompiledMapInputs {
+            policy: ExecutionPolicy::Auto,
+            full_shape: &[64, 64],
+            cursor_shape: &[64, 64],
+            has_paged_sources: false,
+            source_count: 1,
+            repeated_source_count: 0,
+            output_element_bytes: std::mem::size_of::<f32>(),
+            resources,
+        })
+        .unwrap();
         assert!(matches!(
             serial,
             OrderedCursorMapWriteExecutionStrategy::Serial
         ));
 
-        let pipe = compiled_map_strategy(ExecutionPolicy::Auto, &[512, 512], &[256, 256], true);
+        let pipe = compiled_map_strategy::<f32>(CompiledMapInputs {
+            policy: ExecutionPolicy::Auto,
+            full_shape: &[512, 512],
+            cursor_shape: &[256, 256],
+            has_paged_sources: true,
+            source_count: 1,
+            repeated_source_count: 0,
+            output_element_bytes: std::mem::size_of::<f32>(),
+            resources,
+        })
+        .unwrap();
         if available < 2 {
             assert!(matches!(
                 pipe,
@@ -1726,11 +1874,21 @@ mod tests {
         } else {
             assert!(matches!(
                 pipe,
-                OrderedCursorMapWriteExecutionStrategy::Pipelined(_)
+                OrderedCursorMapWriteExecutionStrategy::Parallel(_)
             ));
         }
 
-        let par = compiled_map_strategy(ExecutionPolicy::Auto, &[2048, 2048], &[256, 256], true);
+        let par = compiled_map_strategy::<f32>(CompiledMapInputs {
+            policy: ExecutionPolicy::Auto,
+            full_shape: &[2048, 2048],
+            cursor_shape: &[256, 256],
+            has_paged_sources: true,
+            source_count: 1,
+            repeated_source_count: 0,
+            output_element_bytes: std::mem::size_of::<f32>(),
+            resources,
+        })
+        .unwrap();
         if available < 2 {
             assert!(matches!(
                 par,
@@ -1747,7 +1905,7 @@ mod tests {
     #[test]
     fn compile_uses_snapshot_for_temp_and_dedups_paged_sources() {
         let temp = make_temp_image(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]);
-        let compiled = ImageExpr::from_image(&temp)
+        let compiled = ImageExprBuilder::from_image(&temp)
             .unwrap()
             .add_scalar(1.0)
             .compile()
@@ -1766,7 +1924,7 @@ mod tests {
             vec![2, 2, 2],
             (0..8 * 8 * 4).map(|v| v as f32).collect(),
         );
-        let compiled = ImageExpr::from_image(&paged)
+        let compiled = ImageExprBuilder::from_image(&paged)
             .unwrap()
             .add_image(&paged)
             .unwrap()
@@ -1786,21 +1944,14 @@ mod tests {
     #[test]
     fn compiled_numeric_expr_supports_all_read_paths() {
         let image = make_temp_image(vec![3, 3], (0..9).map(|v| v as f32).collect());
-        let mut compiled = ImageExpr::from_image(&image)
+        let mut compiled = ImageExprBuilder::from_image(&image)
             .unwrap()
             .multiply_scalar(2.0)
             .add_scalar(1.0)
             .compile()
             .unwrap();
 
-        for policy in [
-            ExecutionPolicy::Serial,
-            ExecutionPolicy::Pipelined { prefetch_depth: 2 },
-            ExecutionPolicy::Parallel {
-                workers: 2,
-                prefetch_depth: 4,
-            },
-        ] {
+        for policy in [ExecutionPolicy::Serial, ExecutionPolicy::Auto] {
             compiled.set_execution_policy(policy);
             assert_eq!(compiled.get_at(&[1, 2]).unwrap(), 11.0);
             assert_eq!(
@@ -1814,7 +1965,7 @@ mod tests {
                 ArrayD::from_shape_vec(IxDyn(&[1, 2]), vec![1.0, 3.0]).unwrap()
             );
             assert_eq!(
-                <CompiledImageExpr<f32> as Lattice<f32>>::get_slice(
+                <ImageExpression<f32> as Lattice<f32>>::get_slice(
                     &compiled,
                     &[0, 0],
                     &[2, 1],
@@ -1829,10 +1980,10 @@ mod tests {
     #[test]
     fn compiled_mask_expr_covers_logical_and_reduction_paths() {
         let image = make_temp_image(vec![2, 3], vec![0.0, 1.0, f32::NAN, 3.0, 4.0, 5.0]);
-        let mask = ImageExpr::from_image(&image)
+        let mask = ImageExprBuilder::from_image(&image)
             .unwrap()
             .gt_scalar(1.0)
-            .or(ImageExpr::from_image(&image).unwrap().isnan())
+            .or(ImageExprBuilder::from_image(&image).unwrap().isnan())
             .unwrap()
             .logical_not()
             .compile()
@@ -1845,12 +1996,12 @@ mod tests {
         );
         assert!(mask.get_at(&[0, 0]).unwrap());
         assert_eq!(
-            <CompiledMaskExpr<f32> as Lattice<bool>>::get_slice(&mask, &[0, 0], &[2, 1], &[1, 2])
+            <MaskExpression<f32> as Lattice<bool>>::get_slice(&mask, &[0, 0], &[2, 1], &[1, 2])
                 .unwrap(),
             ArrayD::from_shape_vec(IxDyn(&[2, 1]), vec![true, false]).unwrap()
         );
 
-        let all = ImageExpr::from_image(&image)
+        let all = ImageExprBuilder::from_image(&image)
             .unwrap()
             .gt_scalar(-1.0)
             .all_reduce()
@@ -1858,7 +2009,7 @@ mod tests {
             .unwrap();
         assert!(!all.get_at(&[]).unwrap());
 
-        let any = ImageExpr::from_image(&image)
+        let any = ImageExprBuilder::from_image(&image)
             .unwrap()
             .gt_scalar(4.5)
             .any_reduce()
@@ -1870,12 +2021,14 @@ mod tests {
     #[test]
     fn compiled_conditional_replace_and_mask_counts_work() {
         let image = make_temp_image(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]);
-        let mask = ImageExpr::from_image(&image).unwrap().gt_scalar(2.0);
+        let mask = ImageExprBuilder::from_image(&image).unwrap().gt_scalar(2.0);
 
-        let conditional = ImageExpr::iif(
+        let conditional = ImageExprBuilder::iif(
             mask.clone(),
-            ImageExpr::from_image(&image).unwrap().add_scalar(100.0),
-            ImageExpr::from_image(&image).unwrap(),
+            ImageExprBuilder::from_image(&image)
+                .unwrap()
+                .add_scalar(100.0),
+            ImageExprBuilder::from_image(&image).unwrap(),
         )
         .unwrap()
         .compile()
@@ -1887,10 +2040,12 @@ mod tests {
 
         let replacement_mask =
             ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![true, false, true, false]).unwrap();
-        let replace = ImageExpr::from_image(&image)
+        let replace = ImageExprBuilder::from_image(&image)
             .unwrap()
             .replace(
-                ImageExpr::from_image(&image).unwrap().add_scalar(10.0),
+                ImageExprBuilder::from_image(&image)
+                    .unwrap()
+                    .add_scalar(10.0),
                 replacement_mask,
             )
             .unwrap()
@@ -1901,8 +2056,8 @@ mod tests {
             ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 12.0, 3.0, 14.0]).unwrap()
         );
 
-        let ntrue = ImageExpr::ntrue(mask.clone()).compile().unwrap();
-        let nfalse = ImageExpr::nfalse(mask).compile().unwrap();
+        let ntrue = ImageExprBuilder::ntrue(mask.clone()).compile().unwrap();
+        let nfalse = ImageExprBuilder::nfalse(mask).compile().unwrap();
         assert_eq!(ntrue.get_at(&[]).unwrap(), 2.0);
         assert_eq!(nfalse.get_at(&[]).unwrap(), 2.0);
     }
@@ -1910,7 +2065,7 @@ mod tests {
     #[test]
     fn compiled_custom_ops_and_reductions_work() {
         let image = make_temp_image(vec![2, 2], vec![10.0, 20.0, 30.0, 40.0]);
-        let mapped = ImageExpr::map(&image, |value| value + 1.0)
+        let mapped = ImageExprBuilder::map(&image, |value| value + 1.0)
             .unwrap()
             .compile()
             .unwrap();
@@ -1919,43 +2074,43 @@ mod tests {
             ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![11.0, 21.0, 31.0, 41.0]).unwrap()
         );
 
-        let zipped = ImageExpr::zip(&image, &image, |lhs, rhs| lhs + rhs * 0.5)
+        let zipped = ImageExprBuilder::zip(&image, &image, |lhs, rhs| lhs + rhs * 0.5)
             .unwrap()
             .compile()
             .unwrap();
         assert_eq!(zipped.get_at(&[1, 0]).unwrap(), 45.0);
 
-        let sum = ImageExpr::from_image(&image)
+        let sum = ImageExprBuilder::from_image(&image)
             .unwrap()
             .sum_reduce()
             .compile()
             .unwrap();
-        let mean = ImageExpr::from_image(&image)
+        let mean = ImageExprBuilder::from_image(&image)
             .unwrap()
             .mean_reduce()
             .compile()
             .unwrap();
-        let min = ImageExpr::from_image(&image)
+        let min = ImageExprBuilder::from_image(&image)
             .unwrap()
             .min_reduce()
             .compile()
             .unwrap();
-        let max = ImageExpr::from_image(&image)
+        let max = ImageExprBuilder::from_image(&image)
             .unwrap()
             .max_reduce()
             .compile()
             .unwrap();
-        let median = ImageExpr::from_image(&image)
+        let median = ImageExprBuilder::from_image(&image)
             .unwrap()
             .median_reduce()
             .compile()
             .unwrap();
-        let fractile = ImageExpr::from_image(&image)
+        let fractile = ImageExprBuilder::from_image(&image)
             .unwrap()
             .fractile(0.5)
             .compile()
             .unwrap();
-        let fractile_range = ImageExpr::from_image(&image)
+        let fractile_range = ImageExprBuilder::from_image(&image)
             .unwrap()
             .fractile_range(0.25, 0.75)
             .compile()
@@ -1993,15 +2148,12 @@ mod tests {
             )
             .unwrap();
 
-        let mut compiled = ImageExpr::from_image(&image)
+        let mut compiled = ImageExprBuilder::from_image(&image)
             .unwrap()
             .add_scalar(5.0)
             .compile()
             .unwrap();
-        compiled.set_execution_policy(ExecutionPolicy::Parallel {
-            workers: 2,
-            prefetch_depth: 4,
-        });
+        compiled.set_execution_policy(ExecutionPolicy::Serial);
         let saved = compiled.save_as(&path).unwrap();
 
         assert_eq!(saved.default_mask_name().as_deref(), Some("compiled_mask"));

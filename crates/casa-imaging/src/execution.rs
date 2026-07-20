@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Internal imaging execution plans and CPU workspaces.
 
-#[cfg(all(target_os = "macos", not(coverage)))]
-use std::env;
 use std::{
     cmp::Ordering as CmpOrdering,
     collections::{BTreeMap, BinaryHeap, VecDeque},
@@ -18,7 +16,7 @@ use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
 use crate::{
-    ImageGeometry, ImagingError, StandardMfsExecutionConfig, StandardMfsObservabilityCallback,
+    ImageGeometry, ImagingError, StandardMfsExecutionPlan, StandardMfsObservabilityCallback,
     StandardMfsObservabilityEvent, StandardMfsPairCollapseTransform,
     StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
     StandardMfsQueueProgress, StandardMfsQueueProgressConfidence, StandardMfsRoutedVisibilityRow,
@@ -98,16 +96,6 @@ impl StandardMfsDirtyAccumulation {
     }
 }
 
-const STANDARD_MFS_TILE_BUCKET_PROBE_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_BUCKET_PROBE";
-const STANDARD_MFS_TILE_EDGE_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_EDGE";
-const STANDARD_MFS_TILE_ANCHOR_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_ANCHOR";
-const STANDARD_MFS_TILE_FLUSH_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_FLUSH";
-const STANDARD_MFS_TILE_RESIDENT_LIMIT_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT";
-const STANDARD_MFS_GRID_THREADS_ENV: &str = "CASA_RS_STANDARD_MFS_GRID_THREADS";
-const STANDARD_MFS_FORCE_TILED_ONE_WORKER_ENV: &str = "CASA_RS_STANDARD_MFS_FORCE_TILED_ONE_WORKER";
-const DEFAULT_STANDARD_MFS_TILE_EDGE: usize = 256;
-const STANDARD_MFS_TILE_QUEUE_INITIAL_RUN_CAP: usize = 64;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct StandardMfsTileId(u32);
 
@@ -178,6 +166,7 @@ impl StandardMfsFixedTilePartition {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn new_center_quadrants(
         gridder: &StandardGridder,
         halo: usize,
@@ -716,6 +705,7 @@ impl StandardMfsTileBucketSample {
         self.flags & STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY != 0
     }
 
+    #[cfg(test)]
     pub(crate) fn psf_only(self) -> bool {
         self.flags & STANDARD_MFS_TILE_FLAG_PSF_ONLY != 0
     }
@@ -1014,6 +1004,7 @@ impl StandardMfsBlockTileBuckets {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn samples(&self) -> &[StandardMfsTileBucketSample] {
         &self.samples
     }
@@ -1043,6 +1034,7 @@ impl StandardMfsBlockTileBuckets {
         self.sample_refs.len()
     }
 
+    #[cfg(any(test, all(target_os = "macos", not(coverage))))]
     pub(crate) fn nonempty_tiles(&self) -> &[StandardMfsTileId] {
         &self.nonempty_tiles
     }
@@ -1455,314 +1447,6 @@ impl<'a> StandardMfsTileSampleRouter<'a> {
     }
 }
 
-fn maybe_probe_standard_mfs_tile_buckets(
-    gridder: &StandardGridder,
-    batches: &[VisibilityBatch],
-) -> Result<(), ImagingError> {
-    if !standard_mfs_tile_bucket_probe_enabled() {
-        return Ok(());
-    }
-    let partition = standard_mfs_tile_partition_for_gridder(gridder)?;
-    probe_standard_mfs_tile_buckets_with_partition(gridder, &partition, batches)
-}
-
-fn probe_standard_mfs_tile_buckets_with_partition(
-    gridder: &StandardGridder,
-    partition: &StandardMfsFixedTilePartition,
-    batches: &[VisibilityBatch],
-) -> Result<(), ImagingError> {
-    if !standard_mfs_tile_bucket_probe_enabled() {
-        return Ok(());
-    }
-
-    let grid_shape = gridder.grid_shape();
-    let tile_shape = partition.tile_shape();
-    let tile_origin = partition.tile_origin();
-    let halo = gridder.positive_tap_halo();
-    let buckets = StandardMfsBlockTileBuckets::build_for_dirty(gridder, partition, batches)?;
-
-    let mut finite_visibility_samples = 0usize;
-    let mut psf_only_samples = 0usize;
-    for sample in buckets.samples() {
-        if sample.finite_visibility() {
-            finite_visibility_samples += 1;
-        }
-        if sample.psf_only() {
-            psf_only_samples += 1;
-        }
-    }
-
-    let mut all_tile_counts = vec![0usize; partition.tile_count()];
-    let mut max_bucket_samples = 0usize;
-    let mut resident_bytes_if_all_nonempty = 0usize;
-    let mut interior_cells_if_all_nonempty = 0usize;
-    for &tile_id in buckets.nonempty_tiles() {
-        let bucket_samples = buckets.tile_samples(tile_id).len();
-        all_tile_counts[tile_id.index()] = bucket_samples;
-        max_bucket_samples = max_bucket_samples.max(bucket_samples);
-        resident_bytes_if_all_nonempty = resident_bytes_if_all_nonempty
-            .saturating_add(partition.resident_tile_bytes(tile_id, 2).unwrap_or(0));
-        if let Some(tile) = partition.tile(tile_id) {
-            debug_assert_eq!(tile.id, tile_id);
-            interior_cells_if_all_nonempty = interior_cells_if_all_nonempty
-                .saturating_add(tile.interior.width().saturating_mul(tile.interior.height()));
-        }
-    }
-    let touched_tile_counts = all_tile_counts
-        .iter()
-        .copied()
-        .filter(|count| *count > 0)
-        .collect::<Vec<_>>();
-    let all_distribution = tile_bucket_distribution_stats(&all_tile_counts);
-    let touched_distribution = tile_bucket_distribution_stats(&touched_tile_counts);
-    let top_tile_counts = top_tile_bucket_counts(&all_tile_counts, 8);
-    let per_block_summary = per_row_block_tile_probe_summary(gridder, partition, batches)?;
-    let near_origin_summary = near_origin_tile_probe_summary(gridder, partition, batches);
-
-    eprintln!(
-        "standard_mfs_tile_bucket_probe \
-         grid_shape={}x{} \
-         tile_shape={}x{} \
-         tile_anchor={} \
-         tile_origin={}x{} \
-         gridder_center={}x{} \
-         halo={} \
-         tiles={} \
-         accepted_samples={} \
-         skipped_samples={} \
-         finite_visibility_samples={} \
-         psf_only_samples={} \
-         bucket_bytes={} \
-         nonempty_tiles={} \
-         max_bucket_samples={} \
-         all_tile_mean={:.3} \
-         all_tile_p50={} \
-         all_tile_p90={} \
-         all_tile_p99={} \
-         all_tile_zero_fraction={:.6} \
-         all_tile_max_over_mean={:.3} \
-         all_tile_gini={:.6} \
-         touched_tile_mean={:.3} \
-         touched_tile_p50={} \
-         touched_tile_p90={} \
-         touched_tile_p99={} \
-         touched_tile_max_over_mean={:.3} \
-         touched_tile_gini={:.6} \
-         top_tile_counts={} \
-         per_row_block={} \
-         near_origin={} \
-         interior_cells_if_all_nonempty={} \
-         resident_bytes_if_all_nonempty={}",
-        grid_shape[0],
-        grid_shape[1],
-        tile_shape[0],
-        tile_shape[1],
-        partition.anchor_label(),
-        tile_origin[0],
-        tile_origin[1],
-        gridder.positive_tap_grid_center()[0],
-        gridder.positive_tap_grid_center()[1],
-        halo,
-        partition.tile_count(),
-        buckets.accepted_samples(),
-        buckets.skipped_samples(),
-        finite_visibility_samples,
-        psf_only_samples,
-        buckets.estimated_bytes(),
-        buckets.nonempty_tiles().len(),
-        max_bucket_samples,
-        all_distribution.mean,
-        all_distribution.p50,
-        all_distribution.p90,
-        all_distribution.p99,
-        all_distribution.zero_fraction,
-        all_distribution.max_over_mean,
-        all_distribution.gini,
-        touched_distribution.mean,
-        touched_distribution.p50,
-        touched_distribution.p90,
-        touched_distribution.p99,
-        touched_distribution.max_over_mean,
-        touched_distribution.gini,
-        top_tile_counts,
-        per_block_summary,
-        near_origin_summary,
-        interior_cells_if_all_nonempty,
-        resident_bytes_if_all_nonempty
-    );
-
-    Ok(())
-}
-
-fn per_row_block_tile_probe_summary(
-    gridder: &StandardGridder,
-    partition: &StandardMfsFixedTilePartition,
-    batches: &[VisibilityBatch],
-) -> Result<String, ImagingError> {
-    if batches.is_empty() {
-        return Ok("blocks=0".to_string());
-    }
-    let mut nonempty_tiles = Vec::with_capacity(batches.len());
-    let mut hottest_share_bps = Vec::with_capacity(batches.len());
-    let mut top4_share_bps = Vec::with_capacity(batches.len());
-    let mut top8_share_bps = Vec::with_capacity(batches.len());
-    let mut task_counts = Vec::with_capacity(batches.len());
-    let mut largest_task_samples = Vec::with_capacity(batches.len());
-    let mut largest_task_tap_visits = Vec::with_capacity(batches.len());
-
-    for batch in batches {
-        let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
-            gridder,
-            partition,
-            std::slice::from_ref(batch),
-        )?;
-        let accepted = buckets.accepted_samples().max(1);
-        let mut counts = buckets
-            .nonempty_tiles()
-            .iter()
-            .map(|&tile_id| buckets.tile_samples(tile_id).len())
-            .collect::<Vec<_>>();
-        counts.sort_unstable_by(|lhs, rhs| rhs.cmp(lhs));
-        nonempty_tiles.push(counts.len());
-        task_counts.push(counts.len());
-        largest_task_samples.push(counts.first().copied().unwrap_or(0));
-        hottest_share_bps
-            .push(counts.first().copied().unwrap_or(0).saturating_mul(10_000) / accepted);
-        top4_share_bps.push(counts.iter().take(4).sum::<usize>().saturating_mul(10_000) / accepted);
-        top8_share_bps.push(counts.iter().take(8).sum::<usize>().saturating_mul(10_000) / accepted);
-        largest_task_tap_visits.push(
-            buckets
-                .tile_tasks_descending()
-                .first()
-                .map(|task| task.estimated_tap_visits)
-                .unwrap_or(0),
-        );
-    }
-
-    Ok(format!(
-        "blocks={},nonempty_tiles={},hottest_bps={},top4_bps={},top8_bps={},task_count={},largest_task_samples={},largest_task_tap_visits={}",
-        batches.len(),
-        stats_triplet(&nonempty_tiles),
-        stats_triplet(&hottest_share_bps),
-        stats_triplet(&top4_share_bps),
-        stats_triplet(&top8_share_bps),
-        stats_triplet(&task_counts),
-        stats_triplet(&largest_task_samples),
-        stats_triplet(&largest_task_tap_visits),
-    ))
-}
-
-fn near_origin_tile_probe_summary(
-    gridder: &StandardGridder,
-    partition: &StandardMfsFixedTilePartition,
-    batches: &[VisibilityBatch],
-) -> String {
-    let center = gridder.positive_tap_grid_center();
-    let mut window_counts = [0usize; 25];
-    let mut quadrant_counts = [0usize; 4];
-    let mut quadrant_owner_counts = BTreeMap::<(usize, usize), usize>::new();
-
-    for batch in batches {
-        for sample_index in 0..batch.len() {
-            let Some(planned) = plan_dirty_tile_sample(gridder, partition, batch, sample_index)
-            else {
-                continue;
-            };
-            let tile_id = planned.tile_id;
-            let sample_center = planned.center;
-            let dx = sample_center[0] as isize - center[0] as isize;
-            let dy = sample_center[1] as isize - center[1] as isize;
-            if !((-2..=2).contains(&dx) && (-2..=2).contains(&dy)) {
-                continue;
-            }
-            let window_index = ((dx + 2) as usize) * 5 + (dy + 2) as usize;
-            window_counts[window_index] += 1;
-            let quadrant = match (
-                batch.u_lambda[sample_index].is_sign_negative(),
-                batch.v_lambda[sample_index].is_sign_negative(),
-            ) {
-                (false, false) => 0,
-                (true, false) => 1,
-                (true, true) => 2,
-                (false, true) => 3,
-            };
-            quadrant_counts[quadrant] += 1;
-            *quadrant_owner_counts
-                .entry((quadrant, tile_id.index()))
-                .or_insert(0) += 1;
-        }
-    }
-
-    let mut window = Vec::new();
-    for dx in -2isize..=2 {
-        for dy in -2isize..=2 {
-            let count = window_counts[((dx + 2) as usize) * 5 + (dy + 2) as usize];
-            if count > 0 {
-                window.push(format!("{dx}:{dy}:{count}"));
-            }
-        }
-    }
-    let mut owner_counts = quadrant_owner_counts
-        .into_iter()
-        .map(|((quadrant, tile), count)| (quadrant, tile, count))
-        .collect::<Vec<_>>();
-    owner_counts.sort_unstable_by(|lhs, rhs| {
-        rhs.2
-            .cmp(&lhs.2)
-            .then_with(|| lhs.0.cmp(&rhs.0))
-            .then_with(|| lhs.1.cmp(&rhs.1))
-    });
-    let owners = owner_counts
-        .into_iter()
-        .take(12)
-        .map(|(quadrant, tile, count)| format!("q{quadrant}:t{tile}:{count}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!(
-        "center={}x{},window={},quadrants={},{},{},{},owners={}",
-        center[0],
-        center[1],
-        window.join(","),
-        quadrant_counts[0],
-        quadrant_counts[1],
-        quadrant_counts[2],
-        quadrant_counts[3],
-        owners,
-    )
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct TileBucketDistributionStats {
-    mean: f64,
-    p50: usize,
-    p90: usize,
-    p99: usize,
-    zero_fraction: f64,
-    max_over_mean: f64,
-    gini: f64,
-}
-
-fn tile_bucket_distribution_stats(counts: &[usize]) -> TileBucketDistributionStats {
-    if counts.is_empty() {
-        return TileBucketDistributionStats::default();
-    }
-    let mut sorted = counts.to_vec();
-    sorted.sort_unstable();
-    let total = sorted.iter().sum::<usize>();
-    let mean = total as f64 / sorted.len() as f64;
-    let max = sorted.last().copied().unwrap_or(0);
-    let zero_count = sorted.iter().take_while(|count| **count == 0).count();
-    TileBucketDistributionStats {
-        mean,
-        p50: percentile_sorted_usize(&sorted, 0.50),
-        p90: percentile_sorted_usize(&sorted, 0.90),
-        p99: percentile_sorted_usize(&sorted, 0.99),
-        zero_fraction: zero_count as f64 / sorted.len() as f64,
-        max_over_mean: if mean > 0.0 { max as f64 / mean } else { 0.0 },
-        gini: gini_sorted_usize(&sorted, total),
-    }
-}
-
 fn percentile_sorted_usize(sorted: &[usize], percentile: f64) -> usize {
     debug_assert!(!sorted.is_empty());
     let rank = ((sorted.len() - 1) as f64 * percentile).ceil() as usize;
@@ -1943,97 +1627,20 @@ fn per_second_or_zero(count: usize, duration: Duration) -> f64 {
     }
 }
 
-fn gini_sorted_usize(sorted: &[usize], total: usize) -> f64 {
-    if sorted.is_empty() || total == 0 {
-        return 0.0;
-    }
-    let weighted_sum = sorted
-        .iter()
-        .enumerate()
-        .map(|(index, count)| (index + 1) as f64 * *count as f64)
-        .sum::<f64>();
-    (2.0 * weighted_sum) / (sorted.len() as f64 * total as f64)
-        - (sorted.len() as f64 + 1.0) / sorted.len() as f64
-}
-
-fn top_tile_bucket_counts(counts: &[usize], limit: usize) -> String {
-    let mut ranked = counts
-        .iter()
-        .copied()
-        .enumerate()
-        .filter(|(_, count)| *count > 0)
-        .collect::<Vec<_>>();
-    ranked.sort_unstable_by(|lhs, rhs| rhs.1.cmp(&lhs.1).then_with(|| lhs.0.cmp(&rhs.0)));
-    ranked
-        .into_iter()
-        .take(limit)
-        .map(|(tile_index, count)| format!("{tile_index}:{count}"))
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-fn standard_mfs_tile_bucket_probe_enabled() -> bool {
-    std::env::var(STANDARD_MFS_TILE_BUCKET_PROBE_ENV)
-        .map(|value| {
-            let value = value.trim();
-            !(value.is_empty()
-                || value == "0"
-                || value.eq_ignore_ascii_case("false")
-                || value.eq_ignore_ascii_case("no")
-                || value.eq_ignore_ascii_case("off"))
-        })
-        .unwrap_or(false)
-}
-
 fn standard_mfs_tile_edge_with_config(config_edge: Option<usize>) -> usize {
-    std::env::var(STANDARD_MFS_TILE_EDGE_ENV)
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|edge| *edge > 0)
-        .or(config_edge.filter(|edge| *edge > 0))
-        .unwrap_or(DEFAULT_STANDARD_MFS_TILE_EDGE)
-}
-
-fn standard_mfs_tile_partition_for_gridder(
-    gridder: &StandardGridder,
-) -> Result<StandardMfsFixedTilePartition, ImagingError> {
-    standard_mfs_tile_partition_for_gridder_with_config(
-        gridder,
-        StandardMfsExecutionConfig::default(),
-    )
+    config_edge.filter(|edge| *edge > 0).unwrap_or(1)
 }
 
 fn standard_mfs_tile_partition_for_gridder_with_config(
     gridder: &StandardGridder,
-    execution_config: StandardMfsExecutionConfig,
+    execution_config: StandardMfsExecutionPlan,
 ) -> Result<StandardMfsFixedTilePartition, ImagingError> {
     let grid_shape = gridder.grid_shape();
-    let tile_edge = standard_mfs_tile_edge_with_config(execution_config.fixed_tile_edge)
+    let tile_edge = standard_mfs_tile_edge_with_config(Some(execution_config.resolved.tile.edge))
         .min(grid_shape[0].max(grid_shape[1]));
     let tile_shape = [tile_edge, tile_edge];
     let halo = gridder.positive_tap_halo();
-    if let Ok(anchor) = std::env::var(STANDARD_MFS_TILE_ANCHOR_ENV) {
-        match anchor.trim().to_ascii_lowercase().as_str() {
-            "zero" | "grid_zero" | "origin" => {
-                return StandardMfsFixedTilePartition::new(grid_shape, tile_shape, halo);
-            }
-            "center_boundary" | "center-boundary" | "center" => {
-                return StandardMfsFixedTilePartition::new_center_boundary(
-                    gridder, tile_shape, halo,
-                );
-            }
-            "center_quadrants" | "center-quadrants" | "center_quadrant" | "center-quadrant"
-            | "quadrants" | "quadrant" | "four" | "4" => {
-                return StandardMfsFixedTilePartition::new_center_quadrants(gridder, halo);
-            }
-            other => {
-                return Err(ImagingError::InvalidRequest(format!(
-                    "unsupported standard MFS tile anchor '{other}'"
-                )));
-            }
-        }
-    }
-    if execution_config.fixed_tile_center_boundary {
+    if execution_config.resolved.tile.anchor != super::ImagingTileAnchor::Zero {
         StandardMfsFixedTilePartition::new_center_boundary(gridder, tile_shape, halo)
     } else {
         StandardMfsFixedTilePartition::new(grid_shape, tile_shape, halo)
@@ -2045,13 +1652,6 @@ fn standard_mfs_tile_resident_limit(
     resident_bytes: Option<usize>,
 ) -> usize {
     let tile_count = partition.tile_count();
-    if let Some(limit) = std::env::var(STANDARD_MFS_TILE_RESIDENT_LIMIT_ENV)
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|limit| *limit > 0)
-    {
-        return limit.min(tile_count).max(1);
-    }
     resident_bytes
         .and_then(|bytes| {
             let max_tile_bytes = partition
@@ -2066,42 +1666,6 @@ fn standard_mfs_tile_resident_limit(
         .max(1)
 }
 
-fn standard_mfs_grid_threads() -> usize {
-    std::env::var(STANDARD_MFS_GRID_THREADS_ENV)
-        .ok()
-        .and_then(|value| {
-            let value = value.trim();
-            if value.eq_ignore_ascii_case("auto") {
-                Some(std::thread::available_parallelism().map_or(1, |value| value.get()))
-            } else {
-                value.parse::<usize>().ok()
-            }
-        })
-        .filter(|threads| *threads > 0)
-        .unwrap_or(1)
-}
-
-fn standard_mfs_force_tiled_one_worker() -> bool {
-    std::env::var(STANDARD_MFS_FORCE_TILED_ONE_WORKER_ENV)
-        .map(|value| {
-            let value = value.trim();
-            value == "1"
-                || value.eq_ignore_ascii_case("true")
-                || value.eq_ignore_ascii_case("yes")
-                || value.eq_ignore_ascii_case("on")
-        })
-        .unwrap_or(false)
-}
-
-fn standard_mfs_per_block_flush_enabled() -> bool {
-    std::env::var(STANDARD_MFS_TILE_FLUSH_ENV)
-        .map(|value| {
-            let value = value.trim();
-            value.eq_ignore_ascii_case("per_block") || value.eq_ignore_ascii_case("per-block")
-        })
-        .unwrap_or(false)
-}
-
 /// CPU executor for bounded fixed-tile standard MFS gridding.
 ///
 /// This executor routes only the current caller-supplied block into compact
@@ -2111,6 +1675,10 @@ pub(crate) struct StandardMfsTiledCpuExecutor<'a> {
     partition: StandardMfsFixedTilePartition,
     resident_tile_limit: usize,
     observability_callback: Option<StandardMfsObservabilityCallback>,
+    worker_count: usize,
+    force_tiled_one_worker: bool,
+    per_block_tile_flush: bool,
+    tile_inbox_ready_samples: usize,
 }
 
 /// Immutable summary of tiled standard-MFS residual refresh samples.
@@ -2186,18 +1754,6 @@ impl StandardMfsTileWorkerProfile {
     }
 }
 
-const STANDARD_MFS_QUEUE_SAMPLE_SLOP_BYTES: usize = 16;
-const STANDARD_MFS_QUEUE_RUN_SLOP_BYTES: usize = 64;
-const STANDARD_MFS_INBOX_READY_SAMPLE_MIN_DEFAULT: usize = 1024;
-
-fn standard_mfs_tile_inbox_ready_sample_min() -> usize {
-    std::env::var("CASA_RS_STANDARD_MFS_TILE_INBOX_READY_SAMPLE_MIN")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(STANDARD_MFS_INBOX_READY_SAMPLE_MIN_DEFAULT)
-}
-
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct StandardMfsTileQueueSample {
@@ -2261,7 +1817,7 @@ impl StandardMfsTileQueueSample {
     }
 
     fn queue_bytes() -> usize {
-        std::mem::size_of::<Self>().saturating_add(STANDARD_MFS_QUEUE_SAMPLE_SLOP_BYTES)
+        std::mem::size_of::<Self>()
     }
 
     #[inline]
@@ -2442,7 +1998,7 @@ impl StandardMfsTileVisibilityRun {
         let len = source_slot_range
             .end
             .saturating_sub(source_slot_range.start);
-        let bytes = std::mem::size_of::<Self>().saturating_add(STANDARD_MFS_QUEUE_RUN_SLOP_BYTES);
+        let bytes = std::mem::size_of::<Self>();
         Self {
             row: Some(Arc::clone(&run.row)),
             source_slot_range,
@@ -2491,7 +2047,7 @@ impl StandardMfsTileVisibilityRun {
     }
 
     fn queue_bytes(&self) -> usize {
-        self.bytes.saturating_add(STANDARD_MFS_QUEUE_RUN_SLOP_BYTES)
+        self.bytes
     }
 
     fn len(&self) -> usize {
@@ -2757,6 +2313,11 @@ impl StandardMfsTileVisibilityRun {
             visibility,
         }))
     }
+}
+
+pub(crate) const fn standard_mfs_tile_queue_entry_bytes() -> usize {
+    std::mem::size_of::<StandardMfsTileVisibilityRun>()
+        + std::mem::size_of::<StandardMfsTileQueueSample>()
 }
 
 fn collapse_standard_mfs_pair_visibility(
@@ -3134,9 +2695,6 @@ impl StandardMfsTileInboxShared {
         force_ready: bool,
     ) -> StandardMfsTileInboxPublishStats {
         let mut stats = StandardMfsTileInboxPublishStats::default();
-        if !runs.is_empty() && queue.runs.capacity() == 0 {
-            queue.runs.reserve(STANDARD_MFS_TILE_QUEUE_INITIAL_RUN_CAP);
-        }
         while let Some(run) = runs.pop_front() {
             let run_bytes = run.queue_bytes();
             stats.runs += 1;
@@ -3180,9 +2738,6 @@ impl StandardMfsTileInboxShared {
         let run_bytes = run.queue_bytes();
         let run_len = run.len();
         let estimated_work = run.estimated_work;
-        if queue.runs.capacity() == 0 {
-            queue.runs.reserve(STANDARD_MFS_TILE_QUEUE_INITIAL_RUN_CAP);
-        }
         queue.profile.enqueued_runs += 1;
         queue.profile.enqueued_samples += run_len;
         queue.profile.enqueued_bytes = queue.profile.enqueued_bytes.saturating_add(run_bytes);
@@ -3792,6 +3347,7 @@ impl<'a> StandardMfsTileRunAccumulator<'a> {
 fn run_standard_mfs_tile_inbox_scheduler<T, P, E>(
     partition: &StandardMfsFixedTilePartition,
     worker_count: usize,
+    ready_sample_min: usize,
     stage: &'static str,
     observability_callback: Option<&StandardMfsObservabilityCallback>,
     mut produce_runs: P,
@@ -3809,7 +3365,6 @@ where
         + Sync,
 {
     let worker_count = worker_count.max(1);
-    let ready_sample_min = standard_mfs_tile_inbox_ready_sample_min();
     let shared = Arc::new(StandardMfsTileInboxShared::new(
         partition.tile_count(),
         ready_sample_min,
@@ -4763,7 +4318,7 @@ impl StandardMfsTileSchedulerStageProfile {
             .iter()
             .map(|block| block.requested_threads)
             .max()
-            .unwrap_or_else(standard_mfs_grid_threads);
+            .unwrap_or(1);
         let actual_threads = self
             .blocks
             .iter()
@@ -4988,19 +4543,23 @@ impl StandardMfsTileSchedulerStageProfile {
 impl<'a> StandardMfsTiledCpuExecutor<'a> {
     pub(crate) fn new_with_execution_config(
         gridder: &'a StandardGridder,
-        execution_config: StandardMfsExecutionConfig,
+        execution_config: StandardMfsExecutionPlan,
     ) -> Result<Self, ImagingError> {
         let partition =
             standard_mfs_tile_partition_for_gridder_with_config(gridder, execution_config.clone())?;
         let resident_tile_limit = standard_mfs_tile_resident_limit(
             &partition,
-            execution_config.fixed_tile_resident_bytes,
+            Some(execution_config.resolved.tile.resident_bytes),
         );
         Ok(Self {
             gridder,
             partition,
             resident_tile_limit,
             observability_callback: execution_config.observability_callback,
+            worker_count: execution_config.resolved.workers.max(1),
+            force_tiled_one_worker: execution_config.force_tiled_one_worker,
+            per_block_tile_flush: execution_config.resolved.tile.flush_after_source_block,
+            tile_inbox_ready_samples: execution_config.resolved.tile.ready_sample_threshold,
         })
     }
 
@@ -5022,7 +4581,6 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             skipped_samples: 0,
             max_abs_w_lambda: 0.0,
         };
-        probe_standard_mfs_tile_buckets_with_partition(self.gridder, &self.partition, batches)?;
         if self.resident_tile_limit >= self.partition.tile_count() {
             return self.accumulate_dirty_grids_direct(batches, psf_grid, residual_grid);
         }
@@ -5065,7 +4623,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             )?;
             scheduler_profile.record(block_profile);
         }
-        if standard_mfs_per_block_flush_enabled() {
+        if self.per_block_tile_flush {
             let flush_started = Instant::now();
             cache.flush_all();
             scheduler_profile.add_flush_duration(flush_started.elapsed());
@@ -5128,7 +4686,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             )?;
             scheduler_profile.record(block_profile);
         }
-        if standard_mfs_per_block_flush_enabled() {
+        if self.per_block_tile_flush {
             let flush_started = Instant::now();
             cache.flush_all();
             scheduler_profile.add_flush_duration(flush_started.elapsed());
@@ -5150,7 +4708,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         bucket_build: Duration,
     ) -> Result<StandardMfsTileSchedulerBlockProfile, ImagingError> {
         let tasks = buckets.tile_tasks_descending();
-        let worker_count = standard_mfs_grid_threads().min(tasks.len().max(1));
+        let worker_count = self.worker_count.min(tasks.len().max(1));
         let started = Instant::now();
         if worker_count <= 1 || tasks.len() <= 1 {
             let mut task_timing = StandardMfsTileTaskTiming::default();
@@ -5260,7 +4818,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         psf_grid: &mut Array2<Complex64>,
         residual_grid: &mut Array2<Complex64>,
     ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
-        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
+        if self.worker_count <= 1 && !self.force_tiled_one_worker {
             return self.accumulate_dirty_grids_global_serial(batches, psf_grid, residual_grid);
         }
         let mut accumulation = StandardMfsDirtyAccumulation {
@@ -5324,7 +4882,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
         ) -> Result<(), ImagingError>,
     {
-        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
+        if self.worker_count <= 1 && !self.force_tiled_one_worker {
             return self.accumulate_dirty_grids_global_serial_replay(
                 replay_weighted_batches,
                 psf_grid,
@@ -6018,7 +5576,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
         ) -> Result<(), ImagingError>,
     {
-        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
+        if self.worker_count <= 1 && !self.force_tiled_one_worker {
             let mut borrowed_replay =
                 |consumer: &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>| {
                     replay_weighted_batches(&mut |batches| consumer(&batches))
@@ -6033,11 +5591,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsDirtyAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "dirty",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -6093,11 +5652,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsDirtyAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "planned_dirty",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -6152,11 +5712,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsDirtyAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "planned_run_dirty",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -6218,11 +5779,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsDirtyAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "routed_run_dirty",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -6285,11 +5847,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsDirtyAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "routed_visibility_run_dirty",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -6339,7 +5902,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         batches: &[VisibilityBatch],
         psf_grid: &mut Array2<Complex64>,
     ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
-        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
+        if self.worker_count <= 1 && !self.force_tiled_one_worker {
             return self.accumulate_psf_grid_global_serial(batches, psf_grid);
         }
         let mut accumulation = StandardMfsDirtyAccumulation {
@@ -6402,7 +5965,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
         ) -> Result<(), ImagingError>,
     {
-        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
+        if self.worker_count <= 1 && !self.force_tiled_one_worker {
             return self
                 .accumulate_psf_grid_global_serial_replay(replay_weighted_batches, psf_grid);
         }
@@ -6474,11 +6037,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsDirtyAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "planned_psf",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -6532,11 +6096,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsDirtyAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "planned_run_psf",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -6597,11 +6162,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsDirtyAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "routed_run_psf",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -6663,11 +6229,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsDirtyAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "routed_visibility_run_psf",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -6825,7 +6392,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
         ) -> Result<(), ImagingError>,
     {
-        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
+        if self.worker_count <= 1 && !self.force_tiled_one_worker {
             let mut borrowed_replay =
                 |consumer: &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>| {
                     replay_weighted_batches(&mut |batches| consumer(&batches))
@@ -6836,11 +6403,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsDirtyAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "psf",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -6973,7 +6541,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         bucket_build: Duration,
     ) -> Result<StandardMfsTileSchedulerBlockProfile, ImagingError> {
         let tasks = buckets.tile_tasks_descending();
-        let worker_count = standard_mfs_grid_threads().min(tasks.len().max(1));
+        let worker_count = self.worker_count.min(tasks.len().max(1));
         let started = Instant::now();
         let mut outputs =
             Vec::<Vec<(StandardMfsDirtyAccumulation, StandardMfsTileTaskTiming)>>::new();
@@ -7453,7 +7021,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         bucket_build: Duration,
     ) -> Result<StandardMfsTileSchedulerBlockProfile, ImagingError> {
         let tasks = buckets.tile_tasks_descending();
-        let worker_count = standard_mfs_grid_threads().min(tasks.len().max(1));
+        let worker_count = self.worker_count.min(tasks.len().max(1));
         let started = Instant::now();
         if worker_count <= 1 || tasks.len() <= 1 {
             let mut task_timing = StandardMfsTileTaskTiming::default();
@@ -7626,7 +7194,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         bucket_build: Duration,
     ) -> Result<StandardMfsTileSchedulerBlockProfile, ImagingError> {
         let tasks = buckets.tile_tasks_descending();
-        let worker_count = standard_mfs_grid_threads().min(tasks.len().max(1));
+        let worker_count = self.worker_count.min(tasks.len().max(1));
         let started = Instant::now();
         let mut outputs =
             Vec::<Vec<(StandardMfsDirtyAccumulation, StandardMfsTileTaskTiming)>>::new();
@@ -7805,7 +7373,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             )?;
             scheduler_profile.record(block_profile);
         }
-        if standard_mfs_per_block_flush_enabled() {
+        if self.per_block_tile_flush {
             let flush_started = Instant::now();
             cache.flush_all();
             scheduler_profile.add_flush_duration(flush_started.elapsed());
@@ -7828,7 +7396,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         bucket_build: Duration,
     ) -> Result<StandardMfsTileSchedulerBlockProfile, ImagingError> {
         let tasks = buckets.tile_tasks_descending();
-        let worker_count = standard_mfs_grid_threads().min(tasks.len().max(1));
+        let worker_count = self.worker_count.min(tasks.len().max(1));
         let started = Instant::now();
         if worker_count <= 1 || tasks.len() <= 1 {
             let mut task_timing = StandardMfsTileTaskTiming::default();
@@ -7999,7 +7567,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         model_grid: Option<&Array2<Complex32>>,
         residual_grid: &mut Array2<Complex64>,
     ) -> Result<StandardMfsTiledResidualAccumulation, ImagingError> {
-        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
+        if self.worker_count <= 1 && !self.force_tiled_one_worker {
             return self.accumulate_residual_grid_global_serial(batches, model_grid, residual_grid);
         }
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
@@ -8056,7 +7624,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
         ) -> Result<(), ImagingError>,
     {
-        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
+        if self.worker_count <= 1 && !self.force_tiled_one_worker {
             return self.accumulate_residual_grid_global_serial_replay(
                 replay_weighted_batches,
                 model_grid,
@@ -8329,7 +7897,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
         ) -> Result<(), ImagingError>,
     {
-        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
+        if self.worker_count <= 1 && !self.force_tiled_one_worker {
             let mut borrowed_replay =
                 |consumer: &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>| {
                     replay_weighted_batches(&mut |batches| consumer(&batches))
@@ -8344,11 +7912,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "residual",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -8405,11 +7974,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "planned_residual",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -8465,11 +8035,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "planned_run_residual",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -8532,11 +8103,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "routed_run_residual",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -8604,11 +8176,12 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
         let mut producer_preprocess = Duration::ZERO;
         let mut next_input_seq = 0u64;
-        let worker_count = standard_mfs_grid_threads();
+        let worker_count = self.worker_count;
         let stage_started = Instant::now();
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            self.tile_inbox_ready_samples,
             "routed_visibility_run_residual",
             self.observability_callback.as_ref(),
             |enqueue| {
@@ -8995,7 +8568,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         bucket_build: Duration,
     ) -> Result<StandardMfsTileSchedulerBlockProfile, ImagingError> {
         let tasks = buckets.tile_tasks_descending();
-        let worker_count = standard_mfs_grid_threads().min(tasks.len().max(1));
+        let worker_count = self.worker_count.min(tasks.len().max(1));
         let started = Instant::now();
         let mut outputs = Vec::<Vec<(usize, StandardMfsTileTaskTiming)>>::new();
         if worker_count <= 1 || tasks.len() <= 1 {
@@ -9423,30 +8996,34 @@ impl<'a> StandardMfsMetalExecutor<'a> {
     pub(crate) fn new_with_resident_bytes(
         gridder: &'a StandardGridder,
         resident_bytes: Option<usize>,
+        execution_config: &StandardMfsExecutionPlan,
     ) -> Result<Self, ImagingError> {
-        Self::new_with_options(gridder, resident_bytes, false)
+        Self::new_with_options(gridder, resident_bytes, false, execution_config)
     }
 
     pub(crate) fn new_with_initial_dirty_grouped(
         gridder: &'a StandardGridder,
         resident_bytes: Option<usize>,
+        execution_config: &StandardMfsExecutionPlan,
     ) -> Result<Self, ImagingError> {
-        Self::new_with_options(gridder, resident_bytes, true)
+        Self::new_with_options(gridder, resident_bytes, true, execution_config)
     }
 
     fn new_with_options(
         gridder: &'a StandardGridder,
         _resident_bytes: Option<usize>,
         enable_initial_dirty_grouped: bool,
+        execution_config: &StandardMfsExecutionPlan,
     ) -> Result<Self, ImagingError> {
-        let partition = standard_mfs_tile_partition_for_gridder(gridder)?;
+        let partition =
+            standard_mfs_tile_partition_for_gridder_with_config(gridder, execution_config.clone())?;
         Ok(Self {
             gridder,
             partition,
             backend: if enable_initial_dirty_grouped {
-                MetalDirtyBackend::new_with_initial_dirty_grouped(true)?
+                MetalDirtyBackend::new_with_initial_dirty_grouped(true, execution_config)?
             } else {
-                MetalDirtyBackend::new()?
+                MetalDirtyBackend::new(execution_config)?
             },
         })
     }
@@ -9972,6 +9549,30 @@ struct MetalResidualGroupedTileDesc {
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+pub(crate) const fn standard_mfs_metal_grouped_cache_bytes_per_lane(
+    correlation_count: usize,
+) -> usize {
+    // A one-lane run and a one-lane tile group are the exact worst case.  Real
+    // runs and groups amortize their descriptors across multiple lanes.
+    std::mem::size_of::<MetalResidualRowRunDesc>()
+        + std::mem::size_of::<MetalResidualRowRunLane>()
+        + correlation_count * std::mem::size_of::<MetalComplex32>()
+        + correlation_count * std::mem::size_of::<u8>()
+        + correlation_count * std::mem::size_of::<f32>()
+        + std::mem::size_of::<u32>() // lane_group_ids
+        + std::mem::size_of::<u32>() // group_counts
+        + std::mem::size_of::<MetalResidualGroupedTileDesc>()
+        + std::mem::size_of::<u32>() // lane_refs
+}
+
+#[cfg(any(not(target_os = "macos"), coverage))]
+pub(crate) const fn standard_mfs_metal_grouped_cache_bytes_per_lane(
+    _correlation_count: usize,
+) -> usize {
+    0
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug)]
 struct MetalResidualGroupedTilePartition {
     grid_width: usize,
@@ -10125,6 +9726,7 @@ struct MetalResidualRowRunParams {
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 enum MetalResidualRowRunDiagnosticMode {
     Exact,
     DegridOnly,
@@ -10135,27 +9737,8 @@ enum MetalResidualRowRunDiagnosticMode {
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 impl MetalResidualRowRunDiagnosticMode {
-    fn from_env() -> Result<Self, ImagingError> {
-        match env::var("CASA_RS_STANDARD_MFS_METAL_ROW_RUN_DIAGNOSTIC") {
-            Ok(value) => {
-                let normalized = value.trim().to_ascii_lowercase();
-                match normalized.as_str() {
-                    "" | "exact" | "off" | "none" => Ok(Self::Exact),
-                    "degrid-only" | "degrid_only" | "degrid" | "model-read" | "model_read" => {
-                        Ok(Self::DegridOnly)
-                    }
-                    "grid-only" | "grid_only" | "atomics" | "atomic" => Ok(Self::GridOnly),
-                    "single-tap" | "single_tap" | "one-tap" | "one_tap" => Ok(Self::SingleTap),
-                    "tap-plan-only" | "tap_plan_only" | "tap-plan" | "tap_plan" => {
-                        Ok(Self::TapPlanOnly)
-                    }
-                    _ => Err(ImagingError::Unsupported(format!(
-                        "standard MFS Metal row-run diagnostic mode '{value}' is not recognized; expected exact, degrid-only, grid-only, single-tap, or tap-plan-only"
-                    ))),
-                }
-            }
-            Err(_) => Ok(Self::Exact),
-        }
+    fn exact() -> Result<Self, ImagingError> {
+        Ok(Self::Exact)
     }
 
     fn code(self) -> u32 {
@@ -10269,15 +9852,13 @@ fn build_mtmfs_metal_grouped_chunks(
     grid_width: usize,
     grid_height: usize,
     chunk_capacity: usize,
+    group_tile_edge: usize,
 ) -> Result<Vec<MtmfsMetalGroupedChunk>, ImagingError> {
     if samples.is_empty() {
         return Ok(Vec::new());
     }
-    let partition = MetalResidualGroupedTilePartition::new(
-        grid_width,
-        grid_height,
-        standard_mfs_metal_group_tile_edge(),
-    )?;
+    let partition =
+        MetalResidualGroupedTilePartition::new(grid_width, grid_height, group_tile_edge)?;
     let mut chunks = Vec::new();
     for (chunk_index, chunk_samples) in samples.chunks(chunk_capacity).enumerate() {
         let sample_start = chunk_index.checked_mul(chunk_capacity).ok_or_else(|| {
@@ -10673,17 +10254,19 @@ pub(crate) struct StandardMfsMetalGroupedInputCachePrefill {
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 impl StandardMfsMetalGroupedInputCachePrefill {
-    /// Create an empty prefill builder for one standard-MFS image geometry.
-    pub fn new(geometry: ImageGeometry) -> Result<Self, ImagingError> {
+    pub(crate) fn new_with_execution_plan(
+        geometry: ImageGeometry,
+        execution_config: &StandardMfsExecutionPlan,
+    ) -> Result<Self, ImagingError> {
         let gridder = StandardGridder::new(geometry)?;
         let [grid_width, grid_height] = gridder.grid_shape();
-        let group_tile_edge = standard_mfs_metal_group_tile_edge();
+        let group_tile_edge = execution_config.resolved.tile.edge.max(1);
         let partition =
             MetalResidualGroupedTilePartition::new(grid_width, grid_height, group_tile_edge)?;
         Ok(Self {
             gridder,
-            backend: MetalDirtyBackend::new()?,
-            chunk_lane_capacity: standard_mfs_metal_residual_chunk_samples(),
+            backend: MetalDirtyBackend::new(execution_config)?,
+            chunk_lane_capacity: execution_config.resolved.metal.command_samples.max(1),
             chunk: MetalResidualGroupedRowRunChunk::new(partition.tile_count()),
             partition,
             chunks: Vec::new(),
@@ -10978,7 +10561,10 @@ pub(crate) struct StandardMfsMetalGroupedInputCachePrefill;
 #[cfg(any(not(target_os = "macos"), coverage))]
 impl StandardMfsMetalGroupedInputCachePrefill {
     /// Return an unsupported error on non-macOS platforms.
-    pub fn new(_geometry: ImageGeometry) -> Result<Self, ImagingError> {
+    pub(crate) fn new_with_execution_plan(
+        _geometry: ImageGeometry,
+        _execution_config: &StandardMfsExecutionPlan,
+    ) -> Result<Self, ImagingError> {
         Err(ImagingError::Unsupported(
             "standard MFS Metal grouped input cache prefill requires macOS Metal".to_string(),
         ))
@@ -11187,6 +10773,10 @@ struct MetalComplex32 {
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 struct MetalDirtyBackend {
+    metal_command_samples: usize,
+    metal_group_tile_edge: usize,
+    metal_resident_grouped_inputs: bool,
+    mtmfs_grouped_terms: bool,
     device: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>>,
     queue: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandQueue>>,
     pipeline: objc2::rc::Retained<
@@ -11341,12 +10931,13 @@ fn read_mtmfs_term_grids(
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 impl MetalDirtyBackend {
-    fn new() -> Result<Self, ImagingError> {
-        Self::new_with_initial_dirty_grouped(false)
+    fn new(execution_config: &StandardMfsExecutionPlan) -> Result<Self, ImagingError> {
+        Self::new_with_initial_dirty_grouped(false, execution_config)
     }
 
     fn new_with_initial_dirty_grouped(
         enable_initial_dirty_grouped: bool,
+        execution_config: &StandardMfsExecutionPlan,
     ) -> Result<Self, ImagingError> {
         use objc2_metal::{
             MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary, MTLResourceOptions,
@@ -11595,6 +11186,10 @@ impl MetalDirtyBackend {
         };
         let _ = MTLResourceOptions::StorageModeShared;
         Ok(Self {
+            metal_command_samples: execution_config.resolved.metal.command_samples.max(1),
+            metal_group_tile_edge: execution_config.resolved.tile.edge.max(1),
+            metal_resident_grouped_inputs: execution_config.resolved.metal.eligible,
+            mtmfs_grouped_terms: execution_config.resolved.metal.eligible,
             device,
             queue,
             pipeline,
@@ -11888,13 +11483,14 @@ impl MetalDirtyBackend {
         let sample_buffer_time =
             sample_buffer_started.map_or(Duration::ZERO, |started| started.elapsed());
         let [grid_width, grid_height] = gridder.grid_shape();
-        let grouped_chunks = if mtmfs_metal_grouped_terms_enabled() {
+        let grouped_chunks = if self.mtmfs_grouped_terms {
             let grouping_started = collect_profile.then(Instant::now);
             let chunks = build_mtmfs_metal_grouped_chunks(
                 &samples,
                 grid_width,
                 grid_height,
-                standard_mfs_metal_residual_chunk_samples(),
+                self.metal_command_samples,
+                self.metal_group_tile_edge,
             )?;
             if let Some(started) = grouping_started {
                 grouping_time += started.elapsed();
@@ -11974,7 +11570,7 @@ impl MetalDirtyBackend {
         })?;
         let storage_options = MTLResourceOptions::StorageModeShared;
         let mut timings = MtmfsMetalTermTimings::default();
-        let chunk_capacity = standard_mfs_metal_residual_chunk_samples();
+        let chunk_capacity = self.metal_command_samples;
         let params_buffer_started = Instant::now();
         let params_buffer = self
             .device
@@ -11995,8 +11591,7 @@ impl MetalDirtyBackend {
         let grid_re_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
         let grid_im_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
         timings.grid_buffer += grid_buffer_started.elapsed();
-        let use_grouped_psf =
-            mtmfs_metal_grouped_terms_enabled() && !cache.grouped_chunks.is_empty();
+        let use_grouped_psf = self.mtmfs_grouped_terms && !cache.grouped_chunks.is_empty();
         let mut chunks_dispatched = 0usize;
         if use_grouped_psf {
             for chunk in &cache.grouped_chunks {
@@ -12163,7 +11758,7 @@ impl MetalDirtyBackend {
         })?;
         let storage_options = MTLResourceOptions::StorageModeShared;
         let mut timings = MtmfsMetalTermTimings::default();
-        let chunk_capacity = standard_mfs_metal_residual_chunk_samples();
+        let chunk_capacity = self.metal_command_samples;
         let params_buffer_started = Instant::now();
         let params_buffer = self
             .device
@@ -12221,9 +11816,8 @@ impl MetalDirtyBackend {
         let grid_re_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
         let grid_im_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
         timings.grid_buffer += grid_buffer_started.elapsed();
-        let use_grouped_residual = term_count == 2
-            && mtmfs_metal_grouped_terms_enabled()
-            && !cache.grouped_chunks.is_empty();
+        let use_grouped_residual =
+            term_count == 2 && self.mtmfs_grouped_terms && !cache.grouped_chunks.is_empty();
         let mut chunks_dispatched = 0usize;
         if use_grouped_residual {
             for chunk in &cache.grouped_chunks {
@@ -12942,7 +12536,7 @@ impl MetalDirtyBackend {
                     "standard MFS Metal residual tap-weight table exceeds u32".to_string(),
                 )
             })?;
-        let chunk_capacity = standard_mfs_metal_residual_chunk_samples();
+        let chunk_capacity = self.metal_command_samples;
         let sample_buffer_bytes = chunk_capacity
             .checked_mul(mem::size_of::<MetalResidualSample>())
             .ok_or_else(|| {
@@ -12968,7 +12562,7 @@ impl MetalDirtyBackend {
                         .to_string(),
                 )
             })?;
-        let sample_stride = standard_mfs_metal_residual_staging_sample_stride();
+        let sample_stride = 0usize;
         let mut chunk = Vec::<MetalResidualSample>::with_capacity(chunk_capacity);
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
         let mut chunks_dispatched = 0usize;
@@ -13175,7 +12769,7 @@ impl MetalDirtyBackend {
         };
 
         let storage_options = MTLResourceOptions::StorageModeShared;
-        let diagnostic_mode = MetalResidualRowRunDiagnosticMode::from_env()?;
+        let diagnostic_mode = MetalResidualRowRunDiagnosticMode::exact()?;
         let mut timings = MetalResidualRowRunRefreshTimings::default();
         let model_pack_started = Instant::now();
         let mut model_re = Vec::<f32>::with_capacity(cell_count);
@@ -13243,7 +12837,7 @@ impl MetalDirtyBackend {
         };
         let [du_lambda, dv_lambda] = gridder.grid_spacing_lambda();
         let density_params = gridder.density_grid_coordinate_params();
-        let chunk_lane_capacity = standard_mfs_metal_residual_chunk_samples();
+        let chunk_lane_capacity = self.metal_command_samples;
         let mut chunk = MetalResidualRowRunChunk::default();
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
         let mut chunks_dispatched = 0usize;
@@ -13508,7 +13102,7 @@ impl MetalDirtyBackend {
         };
 
         let storage_options = MTLResourceOptions::StorageModeShared;
-        let group_tile_edge = standard_mfs_metal_group_tile_edge();
+        let group_tile_edge = self.metal_group_tile_edge;
         let partition =
             MetalResidualGroupedTilePartition::new(grid_width, grid_height, group_tile_edge)?;
         let mut timings = MetalResidualRowRunRefreshTimings {
@@ -13583,7 +13177,7 @@ impl MetalDirtyBackend {
         };
         let [du_lambda, dv_lambda] = gridder.grid_spacing_lambda();
         let density_params = gridder.density_grid_coordinate_params();
-        let chunk_lane_capacity = standard_mfs_metal_residual_chunk_samples();
+        let chunk_lane_capacity = self.metal_command_samples;
         let cache_key = MetalResidualGroupedInputCacheKey {
             lane_layout_version: METAL_RESIDUAL_ROW_RUN_LANE_LAYOUT_VERSION,
             grid_width,
@@ -14545,12 +14139,12 @@ impl MetalDirtyBackend {
                     )
                 }
             };
-        let group_tile_edge = standard_mfs_metal_group_tile_edge();
+        let group_tile_edge = self.metal_group_tile_edge;
         let partition =
             MetalResidualGroupedTilePartition::new(grid_width, grid_height, group_tile_edge)?;
         let [du_lambda, dv_lambda] = gridder.grid_spacing_lambda();
         let density_params = gridder.density_grid_coordinate_params();
-        let chunk_lane_capacity = standard_mfs_metal_residual_chunk_samples();
+        let chunk_lane_capacity = self.metal_command_samples;
         let oversampling = gridder.oversampling();
         let tap_weight_count = gridder.normalized_tap_weights().len();
         let key = MetalResidualGroupedInputCacheKey {
@@ -15710,7 +15304,7 @@ impl MetalDirtyBackend {
         storage_options: objc2_metal::MTLResourceOptions,
     ) -> Result<MetalResidualGroupedCachedChunk, ImagingError> {
         let metrics = MetalResidualGroupedChunkMetrics::from_chunk(&chunk);
-        if standard_mfs_metal_resident_grouped_input_buffers_enabled() {
+        if self.metal_resident_grouped_inputs {
             let buffers = self.cached_grouped_chunk_buffers(&chunk, params, storage_options)?;
             Ok(MetalResidualGroupedCachedChunk {
                 params,
@@ -16193,58 +15787,6 @@ fn metal_pair_transform_code(transform: StandardMfsPairCollapseTransform) -> u32
         StandardMfsPairCollapseTransform::PositiveHalfImagDifference => 2,
         StandardMfsPairCollapseTransform::NegativeHalfImagDifference => 3,
     }
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-fn standard_mfs_metal_residual_chunk_samples() -> usize {
-    const DEFAULT_CHUNK_SAMPLES: usize = 16_000_000;
-    env::var("CASA_RS_STANDARD_MFS_METAL_CHUNK_SAMPLES")
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_CHUNK_SAMPLES)
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-fn standard_mfs_metal_residual_staging_sample_stride() -> usize {
-    env::var("CASA_RS_STANDARD_MFS_METAL_STAGING_SAMPLE_STRIDE")
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .unwrap_or(0)
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-fn standard_mfs_metal_group_tile_edge() -> usize {
-    const DEFAULT_GROUP_TILE_EDGE: usize = 1;
-    env::var("CASA_RS_STANDARD_MFS_METAL_GROUP_TILE_EDGE")
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_GROUP_TILE_EDGE)
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-fn standard_mfs_metal_resident_grouped_input_buffers_enabled() -> bool {
-    env::var("CASA_RS_STANDARD_MFS_METAL_RESIDENT_GROUPED_INPUT_BUFFERS")
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-fn mtmfs_metal_grouped_terms_enabled() -> bool {
-    env::var("CASA_RS_MTMFS_METAL_GROUPED_TERMS")
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(true)
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -18316,7 +17858,7 @@ fn tiled_scheduler_block_profile(
     input: StandardMfsTileSchedulerBlockInputs<'_>,
 ) -> StandardMfsTileSchedulerBlockProfile {
     StandardMfsTileSchedulerBlockProfile {
-        requested_threads: standard_mfs_grid_threads(),
+        requested_threads: input.worker_count,
         actual_threads: input.worker_count,
         task_count: input.tasks.len(),
         sample_count: input
@@ -18529,8 +18071,6 @@ impl StandardMfsDirtyCpuExecutor {
                     max_abs_w_lambda.max(w_lambda.abs())
                 });
         }
-
-        maybe_probe_standard_mfs_tile_buckets(&self.gridder, batches)?;
 
         let gridder = &self.gridder;
         let (psf_grid, residual_grid) = self.workspace.dirty_grids_mut();
@@ -18823,54 +18363,32 @@ mod tests {
         StandardMfsTiledCpuExecutor,
     };
     use crate::{
-        ImageGeometry, StandardMfsExecutionConfig, StandardMfsMinorCycleBackend,
-        StandardMfsPlannedWeightedSample, StandardMfsRoutedVisibilityRow,
-        StandardMfsRoutedVisibilityRun, StandardMfsVisibilityPolarization, VisibilityBatch,
-        gridder::StandardGridder,
+        ImageGeometry, StandardMfsExecutionPlan, StandardMfsPlannedWeightedSample,
+        StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
+        StandardMfsVisibilityPolarization, VisibilityBatch, gridder::StandardGridder,
     };
     use num_complex::{Complex32, Complex64};
-    use std::{
-        ffi::OsString,
-        mem::size_of,
-        sync::{Arc, Mutex},
-        time::Duration,
-    };
+    use std::{mem::size_of, sync::Arc, time::Duration};
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvVarGuard {
-        key: &'static str,
-        previous: Option<OsString>,
-    }
-
-    impl EnvVarGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let previous = std::env::var_os(key);
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            Self { key, previous }
-        }
-
-        fn remove(key: &'static str) -> Self {
-            let previous = std::env::var_os(key);
-            unsafe {
-                std::env::remove_var(key);
-            }
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            unsafe {
-                if let Some(previous) = &self.previous {
-                    std::env::set_var(self.key, previous);
-                } else {
-                    std::env::remove_var(self.key);
-                }
-            }
-        }
+    #[allow(clippy::field_reassign_with_default)]
+    fn fixed_tile_execution_plan(
+        resident_bytes: usize,
+        tile_edge: usize,
+        max_live_row_blocks: usize,
+        workers: usize,
+        queue_capacity: usize,
+        use_planned_run_blocks: bool,
+    ) -> StandardMfsExecutionPlan {
+        let mut plan = StandardMfsExecutionPlan::default();
+        plan.grid_backend = crate::StandardMfsBackend::FixedTile;
+        plan.force_tiled_one_worker = true;
+        plan.resolved.tile.resident_bytes = resident_bytes;
+        plan.resolved.tile.edge = tile_edge;
+        plan.resolved.ingest.max_live_row_blocks = max_live_row_blocks;
+        plan.resolved.workers = workers;
+        plan.resolved.tile.queue_capacity = queue_capacity;
+        plan.fixed_tile_use_planned_run_blocks = use_planned_run_blocks;
+        plan
     }
 
     #[test]
@@ -19141,57 +18659,6 @@ mod tests {
             error.to_string().contains("invalid y tap center"),
             "{error}"
         );
-    }
-
-    #[test]
-    fn standard_mfs_environment_parsers_reject_empty_and_invalid_values() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let _probe = EnvVarGuard::remove(super::STANDARD_MFS_TILE_BUCKET_PROBE_ENV);
-        let _edge = EnvVarGuard::remove(super::STANDARD_MFS_TILE_EDGE_ENV);
-        let _threads = EnvVarGuard::remove(super::STANDARD_MFS_GRID_THREADS_ENV);
-        let _force = EnvVarGuard::remove(super::STANDARD_MFS_FORCE_TILED_ONE_WORKER_ENV);
-        let _flush = EnvVarGuard::remove(super::STANDARD_MFS_TILE_FLUSH_ENV);
-        let _inbox = EnvVarGuard::remove("CASA_RS_STANDARD_MFS_TILE_INBOX_READY_SAMPLE_MIN");
-
-        assert!(!super::standard_mfs_tile_bucket_probe_enabled());
-        assert_eq!(super::standard_mfs_tile_edge_with_config(Some(64)), 64);
-        assert_eq!(super::standard_mfs_tile_edge_with_config(Some(0)), 256);
-        assert_eq!(super::standard_mfs_grid_threads(), 1);
-        assert!(!super::standard_mfs_force_tiled_one_worker());
-        assert!(!super::standard_mfs_per_block_flush_enabled());
-        assert_eq!(super::standard_mfs_tile_inbox_ready_sample_min(), 1024);
-
-        let _probe = EnvVarGuard::set(super::STANDARD_MFS_TILE_BUCKET_PROBE_ENV, "off");
-        let _edge = EnvVarGuard::set(super::STANDARD_MFS_TILE_EDGE_ENV, "not-a-number");
-        let _threads = EnvVarGuard::set(super::STANDARD_MFS_GRID_THREADS_ENV, "0");
-        let _force = EnvVarGuard::set(super::STANDARD_MFS_FORCE_TILED_ONE_WORKER_ENV, "no");
-        let _flush = EnvVarGuard::set(super::STANDARD_MFS_TILE_FLUSH_ENV, "block");
-        let _inbox = EnvVarGuard::set("CASA_RS_STANDARD_MFS_TILE_INBOX_READY_SAMPLE_MIN", "0");
-
-        assert!(!super::standard_mfs_tile_bucket_probe_enabled());
-        assert_eq!(super::standard_mfs_tile_edge_with_config(Some(64)), 64);
-        assert_eq!(super::standard_mfs_grid_threads(), 1);
-        assert!(!super::standard_mfs_force_tiled_one_worker());
-        assert!(!super::standard_mfs_per_block_flush_enabled());
-        assert_eq!(super::standard_mfs_tile_inbox_ready_sample_min(), 1024);
-    }
-
-    #[test]
-    fn standard_mfs_environment_parsers_accept_explicit_overrides() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let _probe = EnvVarGuard::set(super::STANDARD_MFS_TILE_BUCKET_PROBE_ENV, "yes");
-        let _edge = EnvVarGuard::set(super::STANDARD_MFS_TILE_EDGE_ENV, "48");
-        let _threads = EnvVarGuard::set(super::STANDARD_MFS_GRID_THREADS_ENV, "3");
-        let _force = EnvVarGuard::set(super::STANDARD_MFS_FORCE_TILED_ONE_WORKER_ENV, "on");
-        let _flush = EnvVarGuard::set(super::STANDARD_MFS_TILE_FLUSH_ENV, "per-block");
-        let _inbox = EnvVarGuard::set("CASA_RS_STANDARD_MFS_TILE_INBOX_READY_SAMPLE_MIN", "7");
-
-        assert!(super::standard_mfs_tile_bucket_probe_enabled());
-        assert_eq!(super::standard_mfs_tile_edge_with_config(Some(64)), 48);
-        assert_eq!(super::standard_mfs_grid_threads(), 3);
-        assert!(super::standard_mfs_force_tiled_one_worker());
-        assert!(super::standard_mfs_per_block_flush_enabled());
-        assert_eq!(super::standard_mfs_tile_inbox_ready_sample_min(), 7);
     }
 
     #[test]
@@ -19728,36 +19195,12 @@ mod tests {
         ];
         let evicted = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
-            StandardMfsExecutionConfig {
-                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
-                fixed_tile_resident_bytes: Some(1),
-                fixed_tile_edge: Some(16),
-                fixed_tile_center_boundary: false,
-                fixed_tile_max_live_row_blocks: 1,
-                fixed_tile_use_planned_run_blocks: false,
-                metal_grouped_input_cache: false,
-                materialized_sample_plan_budget_bytes: None,
-                w_project_max_abs_w_lambda: None,
-                progress_callback: None,
-                observability_callback: None,
-            },
+            fixed_tile_execution_plan(1, 16, 1, 1, 1, false),
         )
         .unwrap();
         let direct = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
-            StandardMfsExecutionConfig {
-                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
-                fixed_tile_resident_bytes: Some(usize::MAX),
-                fixed_tile_edge: Some(16),
-                fixed_tile_center_boundary: false,
-                fixed_tile_max_live_row_blocks: 1,
-                fixed_tile_use_planned_run_blocks: false,
-                metal_grouped_input_cache: false,
-                materialized_sample_plan_budget_bytes: None,
-                w_project_max_abs_w_lambda: None,
-                progress_callback: None,
-                observability_callback: None,
-            },
+            fixed_tile_execution_plan(usize::MAX, 16, 1, 1, 1, false),
         )
         .unwrap();
         let shape = gridder.grid_shape();
@@ -19895,19 +19338,7 @@ mod tests {
         let gridder = StandardGridder::new_unpadded(geometry).unwrap();
         let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
-            StandardMfsExecutionConfig {
-                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
-                fixed_tile_resident_bytes: Some(usize::MAX),
-                fixed_tile_edge: Some(16),
-                fixed_tile_center_boundary: false,
-                fixed_tile_max_live_row_blocks: 1,
-                fixed_tile_use_planned_run_blocks: true,
-                metal_grouped_input_cache: false,
-                materialized_sample_plan_budget_bytes: None,
-                w_project_max_abs_w_lambda: None,
-                progress_callback: None,
-                observability_callback: None,
-            },
+            fixed_tile_execution_plan(usize::MAX, 16, 1, 1, 1, true),
         )
         .unwrap();
         let samples = vec![
@@ -19951,6 +19382,7 @@ mod tests {
         let output = super::run_standard_mfs_tile_inbox_scheduler(
             &partition,
             2,
+            1,
             "test",
             Some(&observability_callback),
             |enqueue| {
@@ -20064,19 +19496,7 @@ mod tests {
         ];
         let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
-            StandardMfsExecutionConfig {
-                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
-                fixed_tile_resident_bytes: Some(usize::MAX),
-                fixed_tile_edge: Some(16),
-                fixed_tile_center_boundary: false,
-                fixed_tile_max_live_row_blocks: 2,
-                fixed_tile_use_planned_run_blocks: false,
-                metal_grouped_input_cache: false,
-                materialized_sample_plan_budget_bytes: None,
-                w_project_max_abs_w_lambda: None,
-                progress_callback: None,
-                observability_callback: None,
-            },
+            fixed_tile_execution_plan(usize::MAX, 16, 2, 2, 2, false),
         )
         .unwrap();
         let shape = gridder.grid_shape();
@@ -20183,19 +19603,7 @@ mod tests {
         ];
         let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
-            StandardMfsExecutionConfig {
-                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
-                fixed_tile_resident_bytes: Some(usize::MAX),
-                fixed_tile_edge: Some(16),
-                fixed_tile_center_boundary: false,
-                fixed_tile_max_live_row_blocks: 2,
-                fixed_tile_use_planned_run_blocks: false,
-                metal_grouped_input_cache: false,
-                materialized_sample_plan_budget_bytes: None,
-                w_project_max_abs_w_lambda: None,
-                progress_callback: None,
-                observability_callback: None,
-            },
+            fixed_tile_execution_plan(usize::MAX, 16, 2, 2, 2, false),
         )
         .unwrap();
         let planner = crate::StandardMfsPlannedSampleBuilder::new(geometry).unwrap();
@@ -20379,19 +19787,7 @@ mod tests {
         ];
         let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
-            StandardMfsExecutionConfig {
-                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
-                fixed_tile_resident_bytes: Some(usize::MAX),
-                fixed_tile_edge: Some(16),
-                fixed_tile_center_boundary: false,
-                fixed_tile_max_live_row_blocks: 2,
-                fixed_tile_use_planned_run_blocks: false,
-                metal_grouped_input_cache: false,
-                materialized_sample_plan_budget_bytes: None,
-                w_project_max_abs_w_lambda: None,
-                progress_callback: None,
-                observability_callback: None,
-            },
+            fixed_tile_execution_plan(usize::MAX, 16, 2, 2, 2, false),
         )
         .unwrap();
         let shape = gridder.grid_shape();

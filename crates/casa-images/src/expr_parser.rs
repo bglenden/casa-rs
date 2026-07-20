@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Parser for casacore-compatible Lattice Expression Language (LEL) strings.
 //!
-//! Converts a LEL expression string into the lazy [`ImageExpr`] / [`MaskExpr`]
+//! Converts a LEL expression string into the lazy [`ImageExprBuilder`] / [`MaskExprBuilder`]
 //! DAG.  The supported grammar covers the full C++ LEL surface (Waves 11-14):
 //!
 //! - **Arithmetic**: `+`, `-`, `*`, `/`, `^` (power, right-associative)
@@ -21,7 +21,7 @@
 //! - **0-arg constants**: `pi()`, `e()`
 //!
 //! Type-changing functions (`real`, `imag`, `arg`, `complex`) are available
-//! only via the typed API on [`ImageExpr`], not through the parser (the parser
+//! only via the typed API on [`ImageExprBuilder`], not through the parser (the parser
 //! is monomorphic in T). `indexin` is deferred (requires array literal syntax).
 //! - **Numeric literals**: integers, floats (e.g. `1.5e-3`)
 //! - **Image references**: quoted paths (`'path'`, `"path"`) or unquoted
@@ -82,7 +82,7 @@
 //! ```rust
 //! use std::collections::HashMap;
 //! use casa_coordinates::CoordinateSystem;
-//! use casa_images::{ImageExpr, TempImage};
+//! use casa_images::{ImageExprBuilder, TempImage};
 //! use casa_images::expr_parser::{parse_image_expr, HashMapResolver};
 //! use casa_lattices::LatticeMut;
 //!
@@ -101,15 +101,16 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use casa_lattices::Lattice;
 use casa_types::ArrayD;
 use ndarray::IxDyn;
 
 use crate::error::ImageError;
 use crate::image::ImageInterface;
 use crate::image_expr::{
-    ImageExpr, ImageExprBinaryOp, ImageExprCompareOp, ImageExprUnaryOp, ImageExprValue, MaskExpr,
+    ImageExprBinaryOp, ImageExprBuilder, ImageExprCompareOp, ImageExprUnaryOp, ImageExprValue,
+    ImageExpression, MaskExprBuilder, MaskExpression,
 };
+use crate::image_expr_ops::{apply_binary, apply_unary};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -501,13 +502,13 @@ impl<'s> Lexer<'s> {
 
 /// Intermediate parse result: either a numeric expression or a boolean mask.
 enum ExprNode<'a, T: ImageExprValue + PartialOrd + ExprValueConvert> {
-    Numeric(Box<ImageExpr<'a, T>>),
+    Numeric(Box<ImageExprBuilder<'a, T>>),
     Scalar(f64),
-    Mask(MaskExpr<'a, T>),
+    Mask(MaskExprBuilder<'a, T>),
 }
 
 impl<'a, T: ImageExprValue + PartialOrd + ExprValueConvert> ExprNode<'a, T> {
-    fn into_numeric(self, pos: usize) -> Result<ImageExpr<'a, T>, ExprParseError> {
+    fn into_numeric(self, pos: usize) -> Result<ImageExprBuilder<'a, T>, ExprParseError> {
         match self {
             Self::Numeric(e) => Ok(*e),
             Self::Scalar(_) => Err(ExprParseError {
@@ -522,7 +523,7 @@ impl<'a, T: ImageExprValue + PartialOrd + ExprValueConvert> ExprNode<'a, T> {
         }
     }
 
-    fn into_mask(self, pos: usize) -> Result<MaskExpr<'a, T>, ExprParseError> {
+    fn into_mask(self, pos: usize) -> Result<MaskExprBuilder<'a, T>, ExprParseError> {
         match self {
             Self::Mask(m) => Ok(m),
             _ => Err(ExprParseError {
@@ -597,7 +598,7 @@ where
                 // Both scalars: compute at parse time
                 let a_t = Self::convert_f64_to_t(*a);
                 let b_t = Self::convert_f64_to_t(*b);
-                let result = apply_binary_op(a_t, b_t, op);
+                let result = apply_binary(op, a_t, b_t);
                 Ok(ExprNode::Scalar(result.to_f64()))
             }
             (ExprNode::Scalar(s), ExprNode::Numeric(img)) => {
@@ -613,11 +614,13 @@ where
                             .binary_scalar(Self::convert_f64_to_t(*s), op),
                     ))),
                     // Non-commutative: use scalar_left_binary for correct Inf/NaN handling
-                    _ => Ok(ExprNode::Numeric(Box::new(ImageExpr::scalar_left_binary(
-                        Self::convert_f64_to_t(*s),
-                        (**img).clone(),
-                        op,
-                    )))),
+                    _ => Ok(ExprNode::Numeric(Box::new(
+                        ImageExprBuilder::scalar_left_binary(
+                            Self::convert_f64_to_t(*s),
+                            (**img).clone(),
+                            op,
+                        ),
+                    ))),
                 }
             }
             (ExprNode::Numeric(img), ExprNode::Scalar(s)) => Ok(ExprNode::Numeric(Box::new(
@@ -934,7 +937,7 @@ where
             match arg {
                 ExprNode::Scalar(v) => {
                     let t = Self::convert_f64_to_t(v);
-                    let result = apply_unary_op(t, op);
+                    let result = apply_unary(op, t);
                     Ok(ExprNode::Scalar(result.to_f64()))
                 }
                 ExprNode::Numeric(expr) => Ok(ExprNode::Numeric(Box::new((*expr).unary(op)))),
@@ -950,7 +953,7 @@ where
                     ExprNode::Scalar(v) => {
                         // Constant-fold: isnan of a literal
                         let is_nan = v.is_nan();
-                        // We need a shape context to produce a MaskExpr; without an image
+                        // We need a shape context to produce a MaskExprBuilder; without an image
                         // we cannot create one. Return error like other scalar-only cases.
                         Err(ExprParseError {
                             message: if is_nan {
@@ -1007,11 +1010,11 @@ where
                 }
                 "ntrue" => {
                     let mask = arg.into_mask(pos)?;
-                    Ok(ExprNode::Numeric(Box::new(ImageExpr::ntrue(mask))))
+                    Ok(ExprNode::Numeric(Box::new(ImageExprBuilder::ntrue(mask))))
                 }
                 "nfalse" => {
                     let mask = arg.into_mask(pos)?;
-                    Ok(ExprNode::Numeric(Box::new(ImageExpr::nfalse(mask))))
+                    Ok(ExprNode::Numeric(Box::new(ImageExprBuilder::nfalse(mask))))
                 }
                 "mask" => {
                     // Returns the default pixel mask of the argument image.
@@ -1023,7 +1026,7 @@ where
                         Ok(Some(m)) => m,
                         _ => ArrayD::from_elem(IxDyn(&shape), true),
                     };
-                    Ok(ExprNode::Mask(MaskExpr::from_constant(mask)))
+                    Ok(ExprNode::Mask(MaskExprBuilder::from_constant(mask)))
                 }
                 "value" => {
                     // Identity: return the expression unchanged (strips mask).
@@ -1134,7 +1137,7 @@ where
                 let primary = arg1.into_numeric(pos)?;
                 let shape = primary.shape().to_vec();
                 let replacement = match arg2 {
-                    ExprNode::Scalar(s) => ImageExpr::scalar(T::from_f64(s)),
+                    ExprNode::Scalar(s) => ImageExprBuilder::scalar(T::from_f64(s)),
                     ExprNode::Numeric(r) => *r,
                     ExprNode::Mask(_) => {
                         return Err(ExprParseError {
@@ -1177,7 +1180,7 @@ where
                 let condition = arg1.into_mask(pos)?;
                 let if_true = arg2.into_numeric(pos)?;
                 let if_false = arg3.into_numeric(pos)?;
-                ImageExpr::iif(condition, if_true, if_false)
+                ImageExprBuilder::iif(condition, if_true, if_false)
                     .map_err(|e| ExprParseError {
                         message: e.to_string(),
                         position: pos,
@@ -1221,7 +1224,7 @@ where
             message: e.to_string(),
             position: pos,
         })?;
-        let expr = ImageExpr::from_dyn(image).map_err(|e| ExprParseError {
+        let expr = ImageExprBuilder::from_dyn(image).map_err(|e| ExprParseError {
             message: e.to_string(),
             position: pos,
         })?;
@@ -1253,49 +1256,6 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Operator application helpers
-// ---------------------------------------------------------------------------
-
-fn apply_unary_op<T: ImageExprValue>(value: T, op: ImageExprUnaryOp) -> T {
-    match op {
-        ImageExprUnaryOp::Negate => -value,
-        ImageExprUnaryOp::Exp => value.expr_exp(),
-        ImageExprUnaryOp::Sin => value.expr_sin(),
-        ImageExprUnaryOp::Cos => value.expr_cos(),
-        ImageExprUnaryOp::Tan => value.expr_tan(),
-        ImageExprUnaryOp::Asin => value.expr_asin(),
-        ImageExprUnaryOp::Acos => value.expr_acos(),
-        ImageExprUnaryOp::Atan => value.expr_atan(),
-        ImageExprUnaryOp::Sinh => value.expr_sinh(),
-        ImageExprUnaryOp::Cosh => value.expr_cosh(),
-        ImageExprUnaryOp::Tanh => value.expr_tanh(),
-        ImageExprUnaryOp::Log => value.expr_log(),
-        ImageExprUnaryOp::Log10 => value.expr_log10(),
-        ImageExprUnaryOp::Sqrt => value.expr_sqrt(),
-        ImageExprUnaryOp::Abs => value.expr_abs(),
-        ImageExprUnaryOp::Ceil => value.expr_ceil(),
-        ImageExprUnaryOp::Floor => value.expr_floor(),
-        ImageExprUnaryOp::Round => value.expr_round(),
-        ImageExprUnaryOp::Sign => value.expr_sign(),
-        ImageExprUnaryOp::Conj => value.expr_conj(),
-    }
-}
-
-fn apply_binary_op<T: ImageExprValue>(lhs: T, rhs: T, op: ImageExprBinaryOp) -> T {
-    match op {
-        ImageExprBinaryOp::Add => lhs + rhs,
-        ImageExprBinaryOp::Subtract => lhs - rhs,
-        ImageExprBinaryOp::Multiply => lhs * rhs,
-        ImageExprBinaryOp::Divide => lhs / rhs,
-        ImageExprBinaryOp::Pow => lhs.expr_pow(rhs),
-        ImageExprBinaryOp::Fmod => lhs.expr_fmod(rhs),
-        ImageExprBinaryOp::Atan2 => lhs.expr_atan2(rhs),
-        ImageExprBinaryOp::Min => lhs.expr_min(rhs),
-        ImageExprBinaryOp::Max => lhs.expr_max(rhs),
-    }
-}
-
 fn flip_compare_op(op: ImageExprCompareOp) -> ImageExprCompareOp {
     match op {
         ImageExprCompareOp::GreaterThan => ImageExprCompareOp::LessThan,
@@ -1311,7 +1271,7 @@ fn flip_compare_op(op: ImageExprCompareOp) -> ImageExprCompareOp {
 // Public entrypoints
 // ---------------------------------------------------------------------------
 
-/// Parses a LEL expression string and returns a numeric [`ImageExpr`].
+/// Parses a LEL expression string and returns a numeric [`ImageExprBuilder`].
 ///
 /// The expression must evaluate to a numeric (non-boolean) result. Image
 /// references in the expression are resolved via the provided [`ImageResolver`].
@@ -1334,10 +1294,10 @@ fn flip_compare_op(op: ImageExprCompareOp) -> ImageExprCompareOp {
 /// let resolver = HashMapResolver(map);
 /// let expr = parse_image_expr("'a.image' * 2.0 + 1.0", &resolver).unwrap();
 /// ```
-pub fn parse_image_expr<'a, T, R>(
+fn parse_image_expr_builder<'a, T, R>(
     expr: &str,
     resolver: &R,
-) -> Result<ImageExpr<'a, T>, ExprParseError>
+) -> Result<ImageExprBuilder<'a, T>, ExprParseError>
 where
     T: ImageExprValue + PartialOrd + ExprValueConvert,
     R: ImageResolver<'a, T>,
@@ -1361,7 +1321,25 @@ where
     Ok(image_expr)
 }
 
-/// Parses a LEL expression string and returns a boolean [`MaskExpr`].
+/// Parses and compiles a LEL numeric expression into the canonical owned
+/// evaluator. Parsing and source capture happen exactly once in this call.
+pub fn parse_image_expr<'a, T, R>(
+    expr: &str,
+    resolver: &R,
+) -> Result<ImageExpression<T>, ExprParseError>
+where
+    T: ImageExprValue + PartialOrd + ExprValueConvert,
+    R: ImageResolver<'a, T>,
+{
+    parse_image_expr_builder(expr, resolver)?
+        .compile()
+        .map_err(|error| ExprParseError {
+            message: error.to_string(),
+            position: 0,
+        })
+}
+
+/// Parses a LEL expression string and returns a boolean [`MaskExprBuilder`].
 ///
 /// The expression must evaluate to a boolean result (via comparison operators
 /// and/or logical connectives). Image references are resolved via the
@@ -1384,10 +1362,10 @@ where
 /// let resolver = HashMapResolver(map);
 /// let mask = parse_mask_expr("'a.image' > 0.5 && 'a.image' < 10.0", &resolver).unwrap();
 /// ```
-pub fn parse_mask_expr<'a, T, R>(
+fn parse_mask_expr_builder<'a, T, R>(
     expr: &str,
     resolver: &R,
-) -> Result<MaskExpr<'a, T>, ExprParseError>
+) -> Result<MaskExprBuilder<'a, T>, ExprParseError>
 where
     T: ImageExprValue + PartialOrd + ExprValueConvert,
     R: ImageResolver<'a, T>,
@@ -1407,6 +1385,24 @@ where
         });
     }
     result.into_mask(0)
+}
+
+/// Parses and compiles a LEL mask expression into the canonical owned
+/// evaluator. Parsing and source capture happen exactly once in this call.
+pub fn parse_mask_expr<'a, T, R>(
+    expr: &str,
+    resolver: &R,
+) -> Result<MaskExpression<T>, ExprParseError>
+where
+    T: ImageExprValue + PartialOrd + ExprValueConvert,
+    R: ImageResolver<'a, T>,
+{
+    parse_mask_expr_builder(expr, resolver)?
+        .compile()
+        .map_err(|error| ExprParseError {
+            message: error.to_string(),
+            position: 0,
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -1915,7 +1911,7 @@ mod tests {
     }
 
     /// Extract scalar from a 0-D reduction result.
-    fn scalar_of(expr: &ImageExpr<f32>) -> f32 {
+    fn scalar_of(expr: &ImageExpression<f32>) -> f32 {
         assert!(
             expr.shape().is_empty(),
             "expected 0-D reduction, got {:?}",

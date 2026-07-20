@@ -32,10 +32,10 @@
 //!
 //! ## Reopen semantics
 //!
-//! When an expression file is reopened, the expression string is re-parsed
-//! and all source images referenced in the expression must still exist at
-//! the paths embedded in the string.  Coordinates and shape are derived from
-//! the source images, not stored in the JSON.
+//! When an expression file is reopened, the expression string is parsed and
+//! compiled once; all source images referenced in it must still exist at the
+//! embedded paths. Repeated reads reuse that owned graph. Coordinates and
+//! shape are derived from the source images, not stored in the JSON.
 //!
 //! ## Cross-language interop
 //!
@@ -54,7 +54,7 @@ use casa_types::{ArrayD, PrimitiveType, RecordField, RecordValue, ScalarValue, V
 use crate::error::ImageError;
 use crate::expr_parser::{self, ExprValueConvert, HashMapResolver};
 use crate::image::{ImageInterface, ImagePixelType, PagedImage, image_pixel_type};
-use crate::image_expr::{ImageExpr, ImageExprValue};
+use crate::image_expr::{ImageExprValue, ImageExpression};
 use crate::image_info::ImageInfo;
 
 // ---------------------------------------------------------------------------
@@ -94,7 +94,8 @@ fn parse_data_type(s: &str) -> Result<PrimitiveType, ImageError> {
 /// A source image that may be native, pixel-type-converted, or a nested
 /// expression image.
 ///
-/// Used internally by [`OwnedImageExpr`] to hold heterogeneous sources.
+/// Used internally by [`open`] to hold heterogeneous sources while the
+/// canonical graph captures them.
 enum SourceImage<T: ImageExprValue + PartialOrd + ExprValueConvert> {
     /// Source image with matching pixel type `T`.
     Native(PagedImage<T>),
@@ -103,11 +104,11 @@ enum SourceImage<T: ImageExprValue + PartialOrd + ExprValueConvert> {
     /// Source image stored as f64 on disk, pixels converted to `T` on read.
     ConvertedF64(PagedImage<f64>),
     /// A nested expression image (another `.imgexpr` file).
-    Expr(Box<OwnedImageExpr<T>>),
+    Expr(Box<ImageExpression<T>>),
     /// Nested `.imgexpr` with f32 pixels converted to `T` on read.
-    ConvertedExprF32(Box<OwnedImageExpr<f32>>),
+    ConvertedExprF32(Box<ImageExpression<f32>>),
     /// Nested `.imgexpr` with f64 pixels converted to `T` on read.
-    ConvertedExprF64(Box<OwnedImageExpr<f64>>),
+    ConvertedExprF64(Box<ImageExpression<f64>>),
 }
 
 impl<T: ImageExprValue + PartialOrd + ExprValueConvert> Lattice<T> for SourceImage<T> {
@@ -116,7 +117,7 @@ impl<T: ImageExprValue + PartialOrd + ExprValueConvert> Lattice<T> for SourceIma
             Self::Native(img) => img.shape(),
             Self::ConvertedF32(img) => img.shape(),
             Self::ConvertedF64(img) => img.shape(),
-            Self::Expr(expr) => &expr.shape,
+            Self::Expr(expr) => expr.shape(),
             Self::ConvertedExprF32(expr) => expr.shape(),
             Self::ConvertedExprF64(expr) => expr.shape(),
         }
@@ -137,12 +138,7 @@ impl<T: ImageExprValue + PartialOrd + ExprValueConvert> Lattice<T> for SourceIma
                 let val = Lattice::get_at(img, position)?;
                 Ok(T::from_f64(val.to_f64()))
             }
-            Self::Expr(expr) => {
-                let e = expr
-                    .make_expr()
-                    .map_err(|e| LatticeError::Table(e.to_string()))?;
-                Lattice::get_at(&e, position)
-            }
+            Self::Expr(expr) => Lattice::get_at(&**expr, position),
             Self::ConvertedExprF32(expr) => {
                 let val = expr
                     .get_at(position)
@@ -174,12 +170,7 @@ impl<T: ImageExprValue + PartialOrd + ExprValueConvert> Lattice<T> for SourceIma
                 let data = Lattice::get_slice(img, start, shape, stride)?;
                 Ok(data.mapv(|v| T::from_f64(v.to_f64())))
             }
-            Self::Expr(expr) => {
-                let e = expr
-                    .make_expr()
-                    .map_err(|e| LatticeError::Table(e.to_string()))?;
-                Lattice::get_slice(&e, start, shape, stride)
-            }
+            Self::Expr(expr) => Lattice::get_slice(&**expr, start, shape, stride),
             Self::ConvertedExprF32(expr) => {
                 let data = Lattice::get_slice(&**expr, start, shape, stride)?;
                 Ok(data.mapv(|v| T::from_f64(v.to_f64())))
@@ -202,7 +193,7 @@ impl<T: ImageExprValue + PartialOrd + ExprValueConvert> ImageInterface<T> for So
             Self::Native(img) => img.coordinates(),
             Self::ConvertedF32(img) => img.coordinates(),
             Self::ConvertedF64(img) => img.coordinates(),
-            Self::Expr(expr) => &expr.coords,
+            Self::Expr(expr) => expr.coordinates(),
             Self::ConvertedExprF32(expr) => expr.coordinates(),
             Self::ConvertedExprF64(expr) => expr.coordinates(),
         }
@@ -213,7 +204,7 @@ impl<T: ImageExprValue + PartialOrd + ExprValueConvert> ImageInterface<T> for So
             Self::Native(img) => img.units(),
             Self::ConvertedF32(img) => img.units(),
             Self::ConvertedF64(img) => img.units(),
-            Self::Expr(expr) => &expr.units,
+            Self::Expr(expr) => expr.units(),
             Self::ConvertedExprF32(expr) => expr.units(),
             Self::ConvertedExprF64(expr) => expr.units(),
         }
@@ -224,9 +215,9 @@ impl<T: ImageExprValue + PartialOrd + ExprValueConvert> ImageInterface<T> for So
             Self::Native(img) => img.misc_info(),
             Self::ConvertedF32(img) => img.misc_info(),
             Self::ConvertedF64(img) => img.misc_info(),
-            Self::Expr(expr) => expr.misc_info.clone(),
-            Self::ConvertedExprF32(expr) => expr.misc_info().clone(),
-            Self::ConvertedExprF64(expr) => expr.misc_info().clone(),
+            Self::Expr(expr) => expr.misc_info(),
+            Self::ConvertedExprF32(expr) => expr.misc_info(),
+            Self::ConvertedExprF64(expr) => expr.misc_info(),
         }
     }
 
@@ -235,7 +226,7 @@ impl<T: ImageExprValue + PartialOrd + ExprValueConvert> ImageInterface<T> for So
             Self::Native(img) => img.image_info(),
             Self::ConvertedF32(img) => img.image_info(),
             Self::ConvertedF64(img) => img.image_info(),
-            Self::Expr(expr) => Ok(expr.image_info.clone()),
+            Self::Expr(expr) => expr.image_info(),
             Self::ConvertedExprF32(expr) => expr.image_info(),
             Self::ConvertedExprF64(expr) => expr.image_info(),
         }
@@ -246,7 +237,7 @@ impl<T: ImageExprValue + PartialOrd + ExprValueConvert> ImageInterface<T> for So
             Self::Native(img) => img.name(),
             Self::ConvertedF32(img) => img.name(),
             Self::ConvertedF64(img) => img.name(),
-            Self::Expr(expr) => expr.path.as_deref(),
+            Self::Expr(expr) => expr.name(),
             Self::ConvertedExprF32(expr) => expr.name(),
             Self::ConvertedExprF64(expr) => expr.name(),
         }
@@ -458,159 +449,13 @@ pub fn read_info(path: impl AsRef<Path>) -> Result<ExprFileInfo, ImageError> {
 }
 
 // ---------------------------------------------------------------------------
-// OwnedImageExpr — owns source images and provides lazy evaluation
-// ---------------------------------------------------------------------------
-
-/// An expression image that owns its source images.
-///
-/// Created by [`open`] when reading an `.imgexpr` file.  Source images
-/// referenced in the expression string are opened as [`PagedImage<T>`],
-/// pixel-type-converted wrappers, or nested [`OwnedImageExpr<T>`] and
-/// kept alive.  Each call to [`get`](OwnedImageExpr::get) or
-/// [`get_slice`](OwnedImageExpr::get_slice) re-parses the expression
-/// (microseconds) and evaluates the requested region lazily.
-///
-/// Implements [`Lattice<T>`] and [`ImageInterface<T>`] so it can itself
-/// serve as a source in nested expression chains.
-///
-/// Corresponds to a C++ `ImageExpr<T>` reopened from a persistent file.
-pub struct OwnedImageExpr<T: ImageExprValue + PartialOrd + ExprValueConvert> {
-    sources: Vec<SourceImage<T>>,
-    source_names: Vec<String>,
-    expr_string: String,
-    shape: Vec<usize>,
-    coords: CoordinateSystem,
-    units: String,
-    misc_info: RecordValue,
-    image_info: ImageInfo,
-    path: Option<std::path::PathBuf>,
-}
-
-impl<T: ImageExprValue + PartialOrd + ExprValueConvert> OwnedImageExpr<T> {
-    /// Returns the image shape.
-    pub fn shape(&self) -> &[usize] {
-        &self.shape
-    }
-
-    /// Returns the expression string.
-    pub fn expr_string(&self) -> &str {
-        &self.expr_string
-    }
-
-    /// Returns the file path this expression was opened from, if any.
-    pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
-    }
-
-    /// Returns the miscellaneous metadata record.
-    pub fn misc_info(&self) -> &RecordValue {
-        &self.misc_info
-    }
-
-    /// Evaluates the full expression and returns the result array.
-    pub fn get(&self) -> Result<casa_types::ArrayD<T>, ImageError> {
-        self.make_expr()?.get()
-    }
-
-    /// Evaluates a sub-slice of the expression.
-    pub fn get_slice(
-        &self,
-        start: &[usize],
-        shape: &[usize],
-    ) -> Result<casa_types::ArrayD<T>, ImageError> {
-        self.make_expr()?.get_slice(start, shape)
-    }
-
-    /// Evaluates a single pixel.
-    pub fn get_at(&self, position: &[usize]) -> Result<T, ImageError> {
-        self.make_expr()?.get_at(position)
-    }
-
-    fn make_expr(&self) -> Result<ImageExpr<'_, T>, ImageError> {
-        let mut images: HashMap<String, &dyn ImageInterface<T>> = HashMap::new();
-        for (name, src) in self.source_names.iter().zip(self.sources.iter()) {
-            images.insert(name.clone(), src);
-        }
-        let resolver = HashMapResolver(images);
-        let expr = expr_parser::parse_image_expr(&self.expr_string, &resolver)?;
-        Ok(expr)
-    }
-}
-
-impl<T: ImageExprValue + PartialOrd + ExprValueConvert> Lattice<T> for OwnedImageExpr<T> {
-    fn shape(&self) -> &[usize] {
-        &self.shape
-    }
-
-    fn is_writable(&self) -> bool {
-        false
-    }
-
-    fn get_at(&self, position: &[usize]) -> Result<T, LatticeError> {
-        let expr = self
-            .make_expr()
-            .map_err(|e| LatticeError::Table(e.to_string()))?;
-        Lattice::get_at(&expr, position)
-    }
-
-    fn get_slice(
-        &self,
-        start: &[usize],
-        shape: &[usize],
-        stride: &[usize],
-    ) -> Result<ArrayD<T>, LatticeError> {
-        let expr = self
-            .make_expr()
-            .map_err(|e| LatticeError::Table(e.to_string()))?;
-        Lattice::get_slice(&expr, start, shape, stride)
-    }
-}
-
-impl<T: ImageExprValue + PartialOrd + ExprValueConvert> ImageInterface<T> for OwnedImageExpr<T> {
-    fn as_any(&self) -> Option<&dyn std::any::Any> {
-        None
-    }
-
-    fn coordinates(&self) -> &CoordinateSystem {
-        &self.coords
-    }
-
-    fn units(&self) -> &str {
-        &self.units
-    }
-
-    fn misc_info(&self) -> RecordValue {
-        self.misc_info.clone()
-    }
-
-    fn image_info(&self) -> Result<ImageInfo, ImageError> {
-        Ok(self.image_info.clone())
-    }
-
-    fn name(&self) -> Option<&Path> {
-        self.path.as_deref()
-    }
-}
-
-impl<T: ImageExprValue + PartialOrd + ExprValueConvert> std::fmt::Debug for OwnedImageExpr<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OwnedImageExpr")
-            .field("shape", &self.shape)
-            .field("expr", &self.expr_string)
-            .field("sources", &self.source_names)
-            .finish()
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Open
 // ---------------------------------------------------------------------------
 
 /// Opens an expression image from an `.imgexpr` directory.
 ///
 /// Reads `imageexpr.json`, opens all source images referenced in the
-/// expression string, and returns an [`OwnedImageExpr`] that can evaluate
-/// the expression lazily.
+/// expression string, and returns the canonical owned [`ImageExpression`].
 ///
 /// Source images may be:
 /// - `PagedImage<T>` with matching pixel type,
@@ -625,7 +470,7 @@ impl<T: ImageExprValue + PartialOrd + ExprValueConvert> std::fmt::Debug for Owne
 /// Returns an error if the JSON is malformed, the pixel type doesn't match
 /// `T`, any referenced source image cannot be opened, or the expression
 /// string fails to parse.
-pub fn open<T>(path: impl AsRef<Path>) -> Result<OwnedImageExpr<T>, ImageError>
+pub fn open<T>(path: impl AsRef<Path>) -> Result<ImageExpression<T>, ImageError>
 where
     T: ImageExprValue + PartialOrd + ExprValueConvert,
 {
@@ -672,21 +517,17 @@ where
     }
     let first: &dyn ImageInterface<T> = &sources[0];
     let shape = first.shape().to_vec();
-    let coords = first.coordinates().clone();
-    let units = first.units().to_string();
-    let image_info = first.image_info()?;
-
-    Ok(OwnedImageExpr {
-        sources,
-        source_names,
-        expr_string: info.expr_string,
-        shape,
-        coords,
-        units,
-        misc_info: info.misc_info,
-        image_info,
-        path: Some(path.to_path_buf()),
-    })
+    let mut compiled = {
+        let mut images: HashMap<String, &dyn ImageInterface<T>> = HashMap::new();
+        for (name, source) in source_names.iter().zip(sources.iter()) {
+            images.insert(name.clone(), source);
+        }
+        let resolver = HashMapResolver(images);
+        expr_parser::parse_image_expr(&info.expr_string, &resolver)?
+    };
+    debug_assert_eq!(compiled.shape(), shape);
+    compiled.set_persisted_metadata(path.to_path_buf(), info.misc_info);
+    Ok(compiled)
 }
 
 /// Extracts image name tokens from a LEL expression string.
@@ -823,6 +664,24 @@ mod tests {
     }
 
     #[test]
+    fn persisted_manifest_keeps_the_casacore_image_expr_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("schema.imgexpr");
+        save(
+            &path,
+            "'source.image' + 1.0",
+            PrimitiveType::Float32,
+            &RecordValue::default(),
+        )
+        .unwrap();
+
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path.join("imageexpr.json")).unwrap()).unwrap();
+        assert_eq!(manifest["ImageExpr"], "'source.image' + 1.0");
+        assert!(manifest.get("ImageExprBuilder").is_none());
+    }
+
+    #[test]
     fn misc_info_json_round_trip() {
         let mut record = RecordValue::default();
         record.push(RecordField::new(
@@ -953,6 +812,57 @@ mod tests {
         // Reopen — extract_image_names must find "myimg".
         let expr = open::<f32>(&expr_path).unwrap();
         assert_eq!(expr.get_at(&[0, 0]).unwrap(), 6.0);
+    }
+
+    #[test]
+    fn builder_parser_and_persisted_paths_share_one_evaluator_contract() {
+        use std::collections::HashMap;
+
+        use casa_coordinates::CoordinateSystem;
+        use ndarray::{ArrayD, IxDyn};
+
+        use crate::ImageExprBuilder;
+        use crate::expr_parser::{HashMapResolver, parse_image_expr};
+        use crate::image::ImageInterface;
+
+        let dir = tempfile::tempdir().unwrap();
+        let image_path = dir.path().join("src.image");
+        let mut image =
+            PagedImage::<f32>::create(vec![2, 3], CoordinateSystem::new(), &image_path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(IxDyn(&[2, 3]), vec![-4.0, 1.0, 2.0, 3.0, 9.0, 16.0])
+                    .unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let condition = ImageExprBuilder::from_image(&image).unwrap().gt_scalar(2.0);
+        let if_true = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .abs()
+            .sqrt()
+            .add_scalar(3.0);
+        let if_false = ImageExprBuilder::from_image(&image)
+            .unwrap()
+            .multiply_scalar(2.0);
+        let built = ImageExprBuilder::iif(condition, if_true, if_false)
+            .unwrap()
+            .compile()
+            .unwrap();
+
+        let expression = "iif('src.image' > 2.0, sqrt(abs('src.image')) + 3.0, 'src.image' * 2.0)";
+        let mut sources = HashMap::new();
+        sources.insert("src.image".to_string(), &image as &dyn ImageInterface<f32>);
+        let parsed = parse_image_expr(expression, &HashMapResolver(sources)).unwrap();
+        let descriptor = dir.path().join("parity.imgexpr");
+        parsed.save_expr(&descriptor).unwrap();
+        let reopened = open::<f32>(&descriptor).unwrap();
+
+        let expected = built.get().unwrap();
+        assert_eq!(parsed.get().unwrap(), expected);
+        assert_eq!(reopened.get().unwrap(), expected);
     }
 
     #[test]

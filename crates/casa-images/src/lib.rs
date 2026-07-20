@@ -9,9 +9,9 @@
 //! |--------------------------|-------------------------|------------------------------------|
 //! | [`PagedImage<T>`]        | `PagedImage<T>`         | Persistent, table-backed image     |
 //! | [`TempImage<T>`]         | `TempImage<T>`          | In-memory or scratch-disk image    |
-//! | [`ImageExpr<T>`]         | `ImageExpr<T>`          | Lazy read-only expression image    |
+//! | [`ImageExprBuilder<T>`]         | `ImageExpr<T>`                 | Builds an owned compiled evaluator |
 //! | [`SubImage`]/[`SubImageMut`] | `SubImage<T>`       | View-style image sections          |
-//! | [`MaskExpr<T>`]          | `LatticeExprNode`       | Lazy boolean expression            |
+//! | [`MaskExprBuilder<T>`]          | `LatticeExprNode`       | Lazy boolean expression            |
 //! | [`ImageInfo`]            | `ImageInfo`             | Image metadata (beam, type, etc.)  |
 //! | [`ImageBeamSet`]         | `ImageBeamSet`          | Beam descriptions                  |
 //!
@@ -21,8 +21,8 @@
 //!   and metadata in member fields — no `Table` involved. Small images stay
 //!   in memory; larger ones spill to scratch disk. Convert to `PagedImage`
 //!   via [`save_as()`](TempImage::save_as) or [`into_paged()`](TempImage::into_paged).
-//! - [`ImageExpr<T>`] evaluates lazily; pixels are computed only for the
-//!   requested point or region.
+//! - [`ImageExprBuilder<T>`] compiles to an owned lazy evaluator; pixels are
+//!   computed only for the requested point or region.
 //! - [`SubImage`] and [`SubImageMut`] are view-style image sections.
 //! - Current parity boundary: full `CoordinateSystem` persistence and
 //!   cross-language reconstruction are still incomplete. Pixel data, units,
@@ -38,17 +38,19 @@
 //!
 //! ```rust
 //! use casa_coordinates::CoordinateSystem;
-//! use casa_images::{ImageExpr, ImageExprBinaryOp, ImageExprUnaryOp, ImageType, TempImage};
+//! use casa_images::{ImageExprBuilder, ImageExprBinaryOp, ImageExprUnaryOp, ImageType, TempImage};
 //! use casa_lattices::{Lattice, LatticeIterExt, LatticeMut, TraversalSpec};
 //! use casa_types::Complex32;
 //!
 //! let mut image = TempImage::<f32>::new(vec![8, 8], CoordinateSystem::new(), casa_lattices::TempStoragePolicy::Memory).unwrap();
 //! image.set(1.0).unwrap();
 //!
-//! let expr = ImageExpr::from_image(&image)
+//! let expr = ImageExprBuilder::from_image(&image)
 //!     .unwrap()
 //!     .binary_scalar(2.0, ImageExprBinaryOp::Multiply)
-//!     .unary(ImageExprUnaryOp::Negate);
+//!     .unary(ImageExprUnaryOp::Negate)
+//!     .compile()
+//!     .unwrap();
 //! assert_eq!(expr.get_at(&[0, 0]).unwrap(), -2.0);
 //!
 //! let complex = TempImage::<Complex32>::new(vec![4, 4], CoordinateSystem::new(), casa_lattices::TempStoragePolicy::Memory).unwrap();
@@ -63,6 +65,7 @@ pub mod expr_file;
 pub mod expr_parser;
 pub mod image;
 pub mod image_expr;
+mod image_expr_ops;
 pub mod image_info;
 pub mod image_view;
 pub mod subimage;
@@ -89,8 +92,8 @@ pub use image::{
     PagedImage, image_pixel_type,
 };
 pub use image_expr::{
-    CompiledImageExpr, CompiledMaskExpr, ImageExpr, ImageExprBinaryOp, ImageExprCompareOp,
-    ImageExprUnaryOp, MaskExpr, MaskLogicalOp, ReductionOp,
+    ImageExprBinaryOp, ImageExprBuilder, ImageExprCompareOp, ImageExprUnaryOp, ImageExpression,
+    MaskExprBuilder, MaskExpression, MaskLogicalOp, ReductionOp,
 };
 pub use image_info::{ImageInfo, ImageType};
 pub use image_view::{

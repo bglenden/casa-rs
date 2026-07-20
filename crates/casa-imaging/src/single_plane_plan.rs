@@ -202,8 +202,6 @@ pub struct SinglePlaneExecutionPlanInput {
     pub(crate) dirty_or_zero_niter: bool,
     /// Whether pointing-table based projection is requested.
     pub(crate) use_pointing: bool,
-    /// Whether model saving is requested.
-    pub(crate) save_model: bool,
     /// Whether the clean mask mode is the simple user-mask mode.
     pub(crate) user_mask_only: bool,
     /// W-term mode requested by the app.
@@ -235,7 +233,6 @@ impl SinglePlaneExecutionPlanInput {
         cube_interpolation: SinglePlaneCubeInterpolation,
         dirty_or_zero_niter: bool,
         use_pointing: bool,
-        save_model: bool,
         user_mask_only: bool,
         w_term_mode: WTermMode,
     ) -> Self {
@@ -261,7 +258,6 @@ impl SinglePlaneExecutionPlanInput {
             cube_interpolation,
             dirty_or_zero_niter,
             use_pointing,
-            save_model,
             user_mask_only,
             w_term_mode,
         }
@@ -544,9 +540,6 @@ fn shared_strategy_gap_reason(input: &SinglePlaneExecutionPlanInput) -> String {
     if input.use_pointing || matches!(input.w_term_mode, WTermMode::Direct) {
         return "shared-strategy-not-yet-adapted-to-projection-family".to_string();
     }
-    if input.save_model {
-        return "savemodel-requires-traced-path".to_string();
-    }
     if !input.user_mask_only {
         return "automask-not-supported-by-shared-strategy".to_string();
     }
@@ -580,7 +573,6 @@ mod tests {
             cube_interpolation: SinglePlaneCubeInterpolation::Nearest,
             dirty_or_zero_niter: false,
             use_pointing: false,
-            save_model: false,
             user_mask_only: true,
             w_term_mode: WTermMode::None,
         }
