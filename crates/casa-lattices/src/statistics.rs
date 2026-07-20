@@ -195,18 +195,25 @@ pub enum Statistic {
 /// use casa_lattices::{ArrayLattice, ExecutionPolicy, LatticeStatistics, Statistic};
 /// use ndarray::{ArrayD, IxDyn};
 ///
-/// let data = ArrayD::from_shape_fn(IxDyn(&[64, 64, 16]), |idx| {
-///     (idx[0] + idx[1] * 64 + idx[2] * 64 * 64) as f32
+/// let workers = std::thread::available_parallelism()
+///     .map(|parallelism| parallelism.get())
+///     .unwrap_or(1)
+///     .min(2);
+/// if workers < 2 {
+///     return;
+/// }
+/// let data = ArrayD::from_shape_fn(IxDyn(&[1024, 1024, 4]), |idx| {
+///     (idx[0] + idx[1] * 1024 + idx[2] * 1024 * 1024) as f32
 /// });
 /// let lattice = ArrayLattice::new(data);
 /// let mut stats = LatticeStatistics::new(&lattice);
 /// stats.set_axes(vec![0, 1]);
 /// stats.set_execution_policy(ExecutionPolicy::Parallel {
-///     workers: 4,
-///     prefetch_depth: 8,
+///     workers,
+///     prefetch_depth: 2,
 /// });
 /// let mean = stats.get_statistic(Statistic::Mean).unwrap();
-/// assert_eq!(mean.shape(), &[16]);
+/// assert_eq!(mean.shape(), &[4]);
 /// ```
 ///
 /// For a large paged lattice, overlap-only execution can be a useful middle
