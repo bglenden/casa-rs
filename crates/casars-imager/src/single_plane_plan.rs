@@ -11,10 +11,10 @@ use casa_imaging::{
 use casa_ms::CubeInterpolation;
 
 use crate::{
-    CleanMaskMode, CliConfig, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
+    CleanMaskMode, CliConfig, SpectralMode, StandardMfsAccelerationPolicy,
     can_plan_mosaic_mfs_acceleration, can_plan_standard_mfs_acceleration,
-    needs_single_field_primary_beam_products, standard_mfs_auto_grid_threads,
-    standard_mfs_wproject_auto_grid_threads,
+    needs_single_field_primary_beam_products, phasecenter_field_matches_single_selected_field,
+    standard_mfs_auto_grid_threads, standard_mfs_wproject_auto_grid_threads,
 };
 
 pub(crate) fn build_single_plane_execution_plan(
@@ -48,7 +48,6 @@ pub(crate) fn build_single_plane_execution_plan(
         cube_interpolation(config.cube_axis.interpolation),
         config.dirty_only || config.niter == 0,
         config.use_pointing,
-        config.save_model != SaveModelMode::None,
         config.use_mask == CleanMaskMode::User,
         config.w_term_mode,
     ))
@@ -99,7 +98,8 @@ fn projection_plan(config: &CliConfig, force_standard_gridder: bool) -> SinglePl
     if !force_standard_gridder
         && !config.force_standard_gridder
         && (config.field_ids.as_ref().is_some_and(|ids| ids.len() > 1)
-            || config.phasecenter_field.is_some()
+            || (config.phasecenter_field.is_some()
+                && !phasecenter_field_matches_single_selected_field(config))
             || config.phasecenter.is_some())
     {
         return SinglePlaneProjectionPlan::Mosaic;
@@ -496,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn representative_standard_rejection_keeps_explicit_reason() {
+    fn bounded_model_writeback_keeps_standard_acceleration_eligible() {
         let config = parse([
             "--gridder",
             "standard",
@@ -507,12 +507,12 @@ mod tests {
         ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
-        assert!(!plan.cpu_multi_worker.eligible);
-        assert_eq!(
-            plan.cpu_multi_worker.reason,
-            "savemodel-requires-traced-path"
+        assert!(plan.cpu_multi_worker.eligible);
+        assert!(
+            plan.cpu_multi_worker
+                .reason
+                .starts_with("standard-mfs-fixed-tile-workers-")
         );
-        assert_eq!(plan.gpu_metal.reason, "savemodel-requires-traced-path");
     }
 
     #[test]

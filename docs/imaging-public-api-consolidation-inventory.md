@@ -1,7 +1,7 @@
 # Imaging Public API Consolidation Inventory
 
 Truth class: implementation inventory
-Last reality check: 2026-07-10
+Last reality check: 2026-07-19
 Verification: targeted `rg` call-site searches; `python3 -m py_compile tools/perf/imager/imaging_interface_metrics.py`; `python3 tools/perf/imager/imaging_interface_metrics.py --base origin/main --format markdown`; `cargo fmt --all -- --check`; `cargo check -p casa-imaging -p casa-ms -p casars-imager`; focused `casa-imaging`, `casa-ms`, and `casars-imager` regression tests for source views, auto-multithresh, PB products, coordinate systems, density translation, product-plane helpers, cube-Briggs formulas, clean-cycle/Hogbom helpers, and standard-MFS/mosaic/PB app routes; `just quick`; `just docs-check`; `just verify`; `tools/perf/imager/run_workload.py --artifact-root target/imperformance-interface-consolidation-final-r3/artifacts --repeats 3 --run-label imaging-interface-consolidation-final-r3 --storage-label local-testdata --output-dir target/imperformance-interface-consolidation-final-r3/smoke wave1-standard-mfs-dirty-smoke`; same three-repeat workload at `origin/main` commit `e5df883d1b465f87661322fec875dacd05e5fc0f` in `/private/tmp/casa-rs-origin-imaging-interface-20260702`
 
 ## Scope
@@ -156,14 +156,14 @@ mosaic slice; the core validates the same projection and weighting constraints.
 | `StandardMfsRoutedSample`, `StandardMfsRoutedSampleRunBlock` | `pub(crate)` | `casa-imaging` only | Make private | Routed-sample backend IR is not crate-root API. |
 | `StandardMfsRoutableSample` | Removed | none | Remove without replacement | Dead compatibility shape. |
 | `StandardMfsRoutedVisibilityRunBlock`, `StandardMfsRoutedVisibilityRunBlockSource` | Removed | none | Remove without replacement | Dead row-run block wrapper after the routed-run source facade moved to direct runs. |
-| `StandardMfsExecutionConfig` | Public | `casa-imaging`, `casars-imager` | Keep public | User-visible execution knobs still cross the app/library boundary. |
+| `StandardMfsExecutionPlan` | Public | `casa-imaging`, `casars-imager` | Keep public | User-visible execution knobs still cross the app/library boundary. |
 | `PlaneStokes::derive_pair_selection`, `StandardMfsPairCollapseTransform::collapse`, `ParallelHandBatch::collapse_with_transform`, `PlaneStokes::paired_sumwt_factor` | Public methods | `casars-imager`, tests | Keep public | Paired-hand Stokes-like collapse is imaging math; apps should select a transform, not duplicate the pair-selection rule, operation, or batch reduction. |
 | `ScalarVisibilitySample`, `StandardMfsPlannedSampleBlock`, `StandardMfsVisibilityRow`, `StandardMfsRoutedVisibilityBlock`, `StandardMfsRoutedInputCache*` | Public | `casars-imager` streaming/replay paths | Keep public | Explicit source/cache facade replaces public standard-MFS backend payloads while preserving bounded replay and Metal prefill performance. |
 | `StandardMfsWeightedSample`, `StandardMfsPlannedWeightedSample*`, `StandardMfsRoutedVisibility*`, `StandardMfsMetalGroupedInputCache*` | `pub(crate)` | `casa-imaging` only | Make private | Backend IR is internal; apps append scalar/row inputs to opaque planned/routed/cache blocks. |
 | `CubeAutoMultiThresholdConfig::build_cube_clean_mask` | Public method | tests, future shared CLEAN controllers | Keep public | Clean-mask array generation is imaging computation; apps should pass parameters and selected beams, not own the threshold/grow/prune algorithm. |
 | `PrimaryBeamProductRequest` / `primary_beam_product` and PB cutoff helpers | Public | `casars-imager`, tests | Keep public | PB array generation, support masks, pbcor division, and alpha PB products are imaging math; apps should keep MS inference and file writing. |
 | `SinglePlaneExecutionPlan` and `SinglePlaneExecutionPlanInput` | Public | `casars-imager`, tests | Keep public | Library-owned projection/product/backend-capability plan; app only maps CLI/runtime facts into the input. |
-| `ImagingWorkerPlan` and `ImagingWorkerPlanInput` | Public | `casars-imager`, spectral slab planner tests | Keep public | Shared worker-count and backend-command-target model used by app/runtime planners. |
+| `ImagingWorkerPlan` and `ImagingWorkerPlanInput` | Removed | none | Remove without replacement | Worker count and backend command targets are fields of the admitted `ImagingResolvedPlan`; there is no independent worker planner. |
 | MFS image-product plane helpers and `ImageProductSet` | Public | `casars-imager`, tests | Keep public | Product-plane extraction/expansion, masked peak measurement, clean-mask pixel counting, product membership, and product metadata are product semantics; the app serializes supplied products rather than owning product-selection logic. |
 | CASA cube-Briggs formula helpers | Public | `casars-imager`, tests | Keep public | Cube Briggs density-cell lookup, f2, and preweighting denominator formulas are imaging weighting math; apps should not duplicate them. |
 | `clean_cycle_threshold` and `run_hogbom_plane_minor_cycle` | Public | `casars-imager`, tests | Transitional public | Shared clean-control policy and the finite masked Hogbom plane loop now live with the deconvolution code; a future concept-level clean session should absorb these helpers. |
@@ -264,6 +264,41 @@ single-plane mosaic block facade without replacement. Most growth is private or
 `pub(crate)` implementation for bounded replay, planner telemetry, exact-plan
 compaction, and Metal tile execution. The app still does not construct or
 observe planned/routed/Metal backend IR directly.
+
+## Wave 8 Execution-Planning Consolidation
+
+Wave 8 replaces the remaining independent performance-policy paths with one
+immutable typed `ImagingResolvedPlan`. The application translates CLI intent,
+workload shape, and a reservation from its process resource ledger exactly
+once; `casa-imaging` consumes the admitted workers, row blocks, FFT chunks,
+tile residency and queue depth, spectral schedule, caches, and Metal command
+schedule without consulting environment variables or inventing fallback
+budgets. Explicit CLI memory is a cap on the application reservation. Automatic
+assignment uses operating-system available/reclaimable memory as a runtime
+fact, rather than a fixed percentage heuristic.
+
+The former `ImagingWorkerPlan`, `ImagingWorkerPlanInput`, and
+`worker_plan.rs` boundary has been removed. Fixed row, batch, tile, queue,
+flush, sample, and worker-penalty policies have also been removed from the core
+execution paths. Buffer reuse remains an allocation optimization only: pools
+do not reserve memory independently and cannot override the admitted plan.
+Exact byte formulas for queue entries, grouped Metal cache lanes, FFT planes,
+row blocks, tiles, and standard-gridder halo are owned by `casa-imaging` and
+shared with the application planner.
+
+The workload shape distinguishes tiled and full-grid execution. Mosaic's
+single full-grid owner does not reserve a tile queue or one Fourier grid per
+helper worker; its pointing-density maps are charged once as topology-owned
+state. On heterogeneous Apple Silicon the process ledger assigns that
+latency-critical topology the performance-core slice, while independently
+tiled work may use all logical CPUs. This keeps CPU assignment a machine
+resource fact rather than restoring the removed worker-penalty model.
+
+`casa-lattices` now provides the shared byte-aware chunk planner used by
+lattice statistics and the canonical compiled image-expression evaluator.
+Explicit worker and prefetch values are caps bounded by available work and the
+assigned resource slice. Compiled image sources are deduplicated, and only
+sources referenced more than once retain a per-worker slice cache.
 
 ## Performance Smoke Snapshot
 

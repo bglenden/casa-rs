@@ -517,18 +517,10 @@ fn maybe_print_standard_mfs_profile_run(
     if env::var_os("CASA_RS_STANDARD_MFS_PROFILE_DETAIL").is_none() {
         return;
     }
-    let thread_env =
-        env::var("CASA_RS_STANDARD_MFS_GRID_THREADS").unwrap_or_else(|_| "unset".to_string());
-    let row_block_env =
-        env::var("CASA_RS_IMAGING_PREPARE_ROW_BLOCK").unwrap_or_else(|_| "auto".to_string());
-    let prepare_workers_env =
-        env::var("CASA_RS_IMAGING_PREPARE_WORKERS").unwrap_or_else(|_| "auto".to_string());
-    let ms_read_threads_env =
-        env::var("CASA_RS_MS_IMAGING_READ_THREADS").unwrap_or_else(|_| "auto".to_string());
     let io_time = frontend_io_time(summary);
     let wall_io_ratio = wall_to_io_ratio(summary.frontend_timings.total, io_time);
     println!(
-        "standard_mfs_profile_run run={} workload_ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} spectral_mode={:?} weighting={:?} deconvolver={:?} nterms={} imsize={} niter={} dirty_only={} gridded_samples={} major_cycles={} minor_iterations={} thread_env={} row_block_rows_env={} prepare_workers_env={} ms_read_threads_env={} frontend_total_ms={:.3} io_time_ms={:.3} wall_to_io_ratio={} core_total_ms={:.3} prepare_plane_input_ms={:.3} source_read_ms={:.3} source_prepare_ms={:.3} weighting_ms={:.3} executor_build_ms={:.3} psf_grid_ms={:.3} residual_degrid_grid_ms={:.3} major_cycle_refresh_ms={:.3} peak_rss_bytes={} product_status=written",
+        "standard_mfs_profile_run run={} workload_ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} spectral_mode={:?} weighting={:?} deconvolver={:?} nterms={} imsize={} niter={} dirty_only={} gridded_samples={} major_cycles={} minor_iterations={} grid_threads={:?} row_block_rows={:?} prepare_workers={:?} read_ahead_blocks={:?} memory_target_mb={:?} frontend_total_ms={:.3} io_time_ms={:.3} wall_to_io_ratio={} core_total_ms={:.3} prepare_plane_input_ms={:.3} source_read_ms={:.3} source_prepare_ms={:.3} weighting_ms={:.3} executor_build_ms={:.3} psf_grid_ms={:.3} residual_degrid_grid_ms={:.3} major_cycle_refresh_ms={:.3} peak_rss_bytes={} product_status=written",
         run_number,
         options.ms.display(),
         options.field_ids,
@@ -547,10 +539,11 @@ fn maybe_print_standard_mfs_profile_run(
         summary.gridded_samples,
         summary.major_cycles,
         summary.minor_iterations,
-        thread_env,
-        row_block_env,
-        prepare_workers_env,
-        ms_read_threads_env,
+        options.standard_mfs_grid_threads,
+        options.imaging_row_block_rows,
+        options.imaging_prepare_workers,
+        options.imaging_read_ahead_blocks,
+        options.imaging_memory_target_mb,
         millis(summary.frontend_timings.total),
         millis(io_time),
         format_optional_ratio(wall_io_ratio),

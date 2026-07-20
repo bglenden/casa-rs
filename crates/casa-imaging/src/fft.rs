@@ -24,11 +24,6 @@ type DirtyF64Pair = (Array2<Complex64>, Array2<Complex64>);
 static FFT32_CACHE: FftCache<FftPlan32> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static FFT64_CACHE: FftCache<FftPlan64> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-const DIRTY_F32_FFT_BATCH_CHUNK_ENV: &str = "CASA_RS_DIRTY_F32_FFT_BATCH_CHUNK";
-const DIRTY_F32_FFT_BATCH_TARGET_BYTES_ENV: &str = "CASA_RS_DIRTY_F32_FFT_BATCH_TARGET_BYTES";
-const DEFAULT_DIRTY_F32_FFT_BATCH_TARGET_BYTES: usize = 256 * 1024 * 1024;
-const DEFAULT_DIRTY_F32_FFT_BATCH_MAX_CHUNK: usize = 8;
-
 pub(crate) fn fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     let mut transformed = input.clone();
     transform_axis(&mut transformed, Axis(0), false);
@@ -620,30 +615,23 @@ pub(crate) fn centered_ifft2_dirty_f64_pair_to_f32(
 }
 
 pub(crate) fn dirty_f32_fft_batch_chunk_size(
-    rows: usize,
-    columns: usize,
     transform_count: usize,
-) -> usize {
+    max_batch_products: Option<usize>,
+) -> Result<usize, crate::ImagingError> {
     if transform_count <= 1 {
-        return transform_count.max(1);
+        return Ok(transform_count.max(1));
     }
-    if let Ok(value) = std::env::var(DIRTY_F32_FFT_BATCH_CHUNK_ENV) {
-        if let Ok(parsed) = value.trim().parse::<usize>() {
-            return parsed.max(1).min(transform_count);
-        }
-    }
-    let target_bytes = std::env::var(DIRTY_F32_FFT_BATCH_TARGET_BYTES_ENV)
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_DIRTY_F32_FFT_BATCH_TARGET_BYTES);
-    let bytes_per_transform = rows
-        .saturating_mul(columns)
-        .saturating_mul(std::mem::size_of::<Complex32>())
-        .max(1);
-    let estimated =
-        (target_bytes / bytes_per_transform).clamp(2, DEFAULT_DIRTY_F32_FFT_BATCH_MAX_CHUNK);
-    estimated.min(transform_count)
+    let transform_limit = max_batch_products
+        .map(|products| {
+            products.checked_mul(2).ok_or_else(|| {
+                crate::ImagingError::InvalidRequest(
+                    "dirty-product FFT batch limit overflow".to_string(),
+                )
+            })
+        })
+        .transpose()?
+        .unwrap_or(transform_count);
+    Ok(transform_limit.max(1).min(transform_count))
 }
 
 pub(crate) fn maybe_emit_dirty_f32_batch_fft_timing(

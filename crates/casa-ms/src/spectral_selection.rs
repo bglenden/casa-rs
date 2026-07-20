@@ -2628,11 +2628,12 @@ fn cube_source_channel_support(
             last_index = Some(last_index.map_or(source_index, |current| current.max(source_index)));
         }
     }
-    let mut first_index = first_index.ok_or_else(|| {
-        MsError::VersionError(
-            "cube channel selection produced no supporting source channels".to_string(),
-        )
-    })?;
+    let Some(mut first_index) = first_index else {
+        return Ok(ResolvedChannelSelection {
+            indices: Vec::new(),
+            frequencies_hz: Vec::new(),
+        });
+    };
     let mut last_index = last_index.expect("first_index implies last_index");
     first_index = first_index.saturating_sub(1);
     last_index = (last_index + 2).min(all_source_frequencies_hz.len().saturating_sub(1));
@@ -3584,6 +3585,33 @@ mod tests {
     fn nearest_channel_index_requires_points_to_stay_within_half_spacing() {
         assert_eq!(nearest_channel_index(&[10.0, 20.0, 30.0], 25.0), Some(1));
         assert_eq!(nearest_channel_index(&[10.0, 20.0, 30.0], 35.1), None);
+    }
+
+    #[test]
+    fn cube_source_support_is_empty_for_output_planes_outside_the_source_axis() {
+        let setup = CubeSpectralSetup {
+            source_freq_ref: FrequencyRef::TOPO,
+            output_freq_ref: FrequencyRef::TOPO,
+            interpolation: CubeInterpolation::Linear,
+            interpolation_uses_native_source_frequencies: false,
+            output_frame_reference_time_mjd_sec: 59_000.0 * 86_400.0,
+            output_frame_field_id: 0,
+            output_channel_frequencies_hz: vec![2.0e9],
+            output_channel_widths_hz: vec![1.0e6],
+        };
+
+        let support = cube_source_channel_support(
+            &[1.0e9, 1.01e9, 1.02e9],
+            &[1.0e6, 1.0e6, 1.0e6],
+            &setup,
+            [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
+            0,
+            &test_engine(),
+        )
+        .unwrap();
+
+        assert!(support.indices.is_empty());
+        assert!(support.frequencies_hz.is_empty());
     }
 
     #[test]

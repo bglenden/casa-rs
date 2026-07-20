@@ -62,8 +62,9 @@ use noisy_float::types::n64;
 use ordered_float::OrderedFloat;
 
 use crate::execution::{
-    ChunkTask, ParallelReadChunkConfig, PipelinedReadChunkConfig, ReadChunkExecutionStrategy,
-    try_reduce_read_chunks,
+    ChunkTask, ExecutionInputs, ExecutionMode, ExecutionPolicy, ExecutionResources,
+    ParallelReadChunkConfig, PipelinedReadChunkConfig, ReadChunkExecutionStrategy, SourceResidency,
+    plan_execution, try_reduce_read_chunks,
 };
 use crate::{Lattice, LatticeElement, LatticeError, TraversalCursorIter, TraversalSpec};
 
@@ -182,12 +183,9 @@ pub enum Statistic {
 /// - [`Parallel`](Self::Parallel): use one producer plus a worker pool. This
 ///   combines the same I/O overlap as `Pipelined` with threaded compute.
 ///
-/// `workers` and `prefetch_depth` are normalized internally so that obviously
-/// degenerate values still behave sensibly:
-///
-/// - `prefetch_depth == 0` behaves as `1`
-/// - `workers == 0` behaves as `1`
-/// - `Parallel { workers: 1, .. }` behaves like `Pipelined`
+/// Explicit policies are validated against the assigned resources and amount
+/// of work. Invalid worker or prefetch requests return an error rather than
+/// silently selecting another execution mode.
 ///
 /// # Examples
 ///
@@ -227,22 +225,6 @@ pub enum Statistic {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum ExecutionPolicy {
-    /// Choose an execution strategy automatically from the workload.
-    #[default]
-    Auto,
-    /// Force a plain serial traversal and reduction.
-    Serial,
-    /// Overlap chunk reads and reduction work with a bounded queue.
-    Pipelined { prefetch_depth: usize },
-    /// Overlap reads and fan reduction work out across multiple workers.
-    Parallel {
-        workers: usize,
-        prefetch_depth: usize,
-    },
-}
-
 /// Computes statistics over an N-dimensional lattice.
 ///
 /// Mirrors C++ `LatticeStatistics<T>` from
@@ -268,6 +250,7 @@ pub struct LatticeStatistics<'a, T> {
     exclude_range: Option<[f64; 2]>,
     mask: Option<ArrayD<bool>>,
     execution_policy: ExecutionPolicy,
+    execution_resources: ExecutionResources,
     basic_cache: RefCell<Option<BasicStatsCache>>,
     order_cache: RefCell<Option<OrderStatsCache>>,
 }
@@ -282,6 +265,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
             exclude_range: None,
             mask: None,
             execution_policy: ExecutionPolicy::Auto,
+            execution_resources: ExecutionResources::default(),
             basic_cache: RefCell::new(None),
             order_cache: RefCell::new(None),
         }
@@ -347,6 +331,14 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
     pub fn set_execution_policy(&mut self, policy: ExecutionPolicy) {
         self.execution_policy = policy;
         self.invalidate_caches();
+    }
+
+    /// Assigns the memory/worker slice available to future cache builds.
+    pub fn set_execution_resources(&mut self, resources: ExecutionResources) {
+        if self.execution_resources != resources {
+            self.execution_resources = resources;
+            self.invalidate_caches();
+        }
     }
 
     /// Switch to a different lattice, resetting all data-selection state.
@@ -434,15 +426,15 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
     fn basic_execution_strategy(
         &self,
         per_worker_state_bytes: usize,
-    ) -> ReadChunkExecutionStrategy {
-        self.execution_strategy(per_worker_state_bytes, 32 * 1024 * 1024, 64 * 1024 * 1024)
+    ) -> Result<ReadChunkExecutionStrategy, LatticeError> {
+        self.execution_strategy(per_worker_state_bytes)
     }
 
     fn order_execution_strategy(
         &self,
         per_worker_state_bytes: usize,
-    ) -> ReadChunkExecutionStrategy {
-        self.execution_strategy(per_worker_state_bytes, 16 * 1024 * 1024, 256 * 1024 * 1024)
+    ) -> Result<ReadChunkExecutionStrategy, LatticeError> {
+        self.execution_strategy(per_worker_state_bytes)
     }
 
     fn build_basic_cache(&self) -> Result<BasicStatsCache, LatticeError> {
@@ -472,12 +464,11 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
         });
         let filters = self.filter_state(mask_strides.as_deref());
 
+        let strategy = self.basic_execution_strategy(std::mem::size_of::<GlobalBasicPartial>())?;
         let partial = try_reduce_read_chunks(
             self.lattice,
-            self.traversal_spec_for_strategy(
-                self.basic_execution_strategy(std::mem::size_of::<GlobalBasicPartial>()),
-            ),
-            self.basic_execution_strategy(std::mem::size_of::<GlobalBasicPartial>()),
+            self.traversal_spec_for_strategy(strategy),
+            strategy,
             GlobalBasicPartial::default,
             |partial, chunk| accumulate_global_basic_chunk(partial, &chunk, &filters),
             |partial, other| {
@@ -507,7 +498,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
         let per_worker_state_bytes = layout
             .n_out
             .saturating_mul(std::mem::size_of::<RunningStats>());
-        let strategy = self.basic_execution_strategy(per_worker_state_bytes);
+        let strategy = self.basic_execution_strategy(per_worker_state_bytes)?;
         let accumulators = try_reduce_read_chunks(
             self.lattice,
             self.traversal_spec_for_strategy(strategy),
@@ -537,8 +528,13 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
         });
         let filters = self.filter_state(mask_strides.as_deref());
         let reserve = global_order_reserve(self.lattice.nelements(), self.has_sparse_filter());
-        let strategy =
-            self.order_execution_strategy(reserve.saturating_mul(std::mem::size_of::<f64>()));
+        let strategy = self.order_execution_strategy(
+            reserve
+                .checked_mul(std::mem::size_of::<f64>())
+                .ok_or_else(|| {
+                    LatticeError::InvalidTraversal("statistics state byte overflow".into())
+                })?,
+        )?;
         let values = try_reduce_read_chunks(
             self.lattice,
             self.traversal_spec_for_strategy(strategy),
@@ -572,9 +568,12 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
         );
         let per_worker_state_bytes = layout
             .n_out
-            .saturating_mul(reserve_per_bucket)
-            .saturating_mul(std::mem::size_of::<f64>());
-        let strategy = self.order_execution_strategy(per_worker_state_bytes);
+            .checked_mul(reserve_per_bucket)
+            .and_then(|value| value.checked_mul(std::mem::size_of::<f64>()))
+            .ok_or_else(|| {
+                LatticeError::InvalidTraversal("statistics state byte overflow".into())
+            })?;
+        let strategy = self.order_execution_strategy(per_worker_state_bytes)?;
         let buckets = try_reduce_read_chunks(
             self.lattice,
             self.traversal_spec_for_strategy(strategy),
@@ -609,78 +608,55 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
     fn execution_strategy(
         &self,
         per_worker_state_bytes: usize,
-        large_work_threshold: usize,
-        max_parallel_state_bytes: usize,
-    ) -> ReadChunkExecutionStrategy {
-        match self.execution_policy {
-            ExecutionPolicy::Auto => self.auto_execution_strategy(
-                per_worker_state_bytes,
-                large_work_threshold,
-                max_parallel_state_bytes,
-            ),
-            ExecutionPolicy::Serial => ReadChunkExecutionStrategy::Serial,
-            ExecutionPolicy::Pipelined { prefetch_depth } => {
-                ReadChunkExecutionStrategy::Pipelined(PipelinedReadChunkConfig {
-                    prefetch_depth: prefetch_depth.max(1),
-                })
-            }
-            ExecutionPolicy::Parallel {
-                workers,
-                prefetch_depth,
-            } => {
-                let workers = workers.max(1);
-                if workers == 1 {
-                    ReadChunkExecutionStrategy::Pipelined(PipelinedReadChunkConfig {
-                        prefetch_depth: prefetch_depth.max(1),
-                    })
-                } else {
-                    ReadChunkExecutionStrategy::Parallel(ParallelReadChunkConfig {
-                        workers,
-                        prefetch_depth: prefetch_depth.max(workers),
-                    })
-                }
-            }
-        }
-    }
-
-    fn auto_execution_strategy(
-        &self,
-        per_worker_state_bytes: usize,
-        large_work_threshold: usize,
-        max_parallel_state_bytes: usize,
-    ) -> ReadChunkExecutionStrategy {
+    ) -> Result<ReadChunkExecutionStrategy, LatticeError> {
         let available = thread_parallelism();
         let task_count = self.chunked_task_count();
-        if task_count < 2 || self.lattice.nelements() < large_work_threshold {
-            return ReadChunkExecutionStrategy::Serial;
-        }
-
-        let io_bound = self.lattice.is_paged() || self.lattice.is_persistent();
-        if available < 2 {
-            return if io_bound {
+        let cursor_shape = if self.lattice.is_paged() || self.lattice.is_persistent() {
+            self.lattice.nice_cursor_shape()
+        } else {
+            self.parallel_cursor_shape()
+        };
+        let chunk_elements = cursor_shape
+            .iter()
+            .try_fold(1usize, |product, &extent| product.checked_mul(extent));
+        let chunk_bytes = chunk_elements
+            .and_then(|elements| elements.checked_mul(std::mem::size_of::<T>()))
+            .ok_or_else(|| {
+                LatticeError::InvalidTraversal("statistics chunk byte overflow".into())
+            })?;
+        let persistent = self.lattice.is_paged() || self.lattice.is_persistent();
+        let plan = plan_execution(
+            self.execution_policy,
+            ExecutionInputs {
+                task_count,
+                chunk_bytes,
+                per_worker_state_bytes,
+                memory_budget_bytes: self.execution_resources.memory_budget_bytes,
+                available_workers: available,
+                requested_worker_limit: self.execution_resources.worker_limit,
+                source_residency: if persistent {
+                    SourceResidency::Persistent
+                } else {
+                    SourceResidency::Resident
+                },
+                prefetch_capability: true,
+                configured_prefetch_cap: self.execution_resources.prefetch_cap,
+            },
+        )
+        .map_err(|error| LatticeError::InvalidTraversal(error.to_string()))?;
+        Ok(match plan.mode {
+            ExecutionMode::Serial => ReadChunkExecutionStrategy::Serial,
+            ExecutionMode::Pipelined => {
                 ReadChunkExecutionStrategy::Pipelined(PipelinedReadChunkConfig {
-                    prefetch_depth: 2,
+                    prefetch_depth: plan.prefetch_depth,
                 })
-            } else {
-                ReadChunkExecutionStrategy::Serial
-            };
-        }
-
-        let total_state_bytes = per_worker_state_bytes.saturating_mul(available);
-        if total_state_bytes > max_parallel_state_bytes {
-            return if io_bound {
-                ReadChunkExecutionStrategy::Pipelined(PipelinedReadChunkConfig {
-                    prefetch_depth: available.max(2),
+            }
+            ExecutionMode::Parallel => {
+                ReadChunkExecutionStrategy::Parallel(ParallelReadChunkConfig {
+                    workers: plan.workers,
+                    prefetch_depth: plan.prefetch_depth,
                 })
-            } else {
-                ReadChunkExecutionStrategy::Serial
-            };
-        }
-
-        let workers = available.min(task_count.max(1));
-        ReadChunkExecutionStrategy::Parallel(ParallelReadChunkConfig {
-            workers,
-            prefetch_depth: workers * 2,
+            }
         })
     }
 
@@ -1568,7 +1544,7 @@ mod tests {
         let mut stats = LatticeStatistics::new(&lat);
 
         let baseline = stats.get_statistic(Statistic::Mean).unwrap();
-        stats.set_execution_policy(ExecutionPolicy::Pipelined { prefetch_depth: 2 });
+        stats.set_execution_policy(ExecutionPolicy::Serial);
         let rebuilt = stats.get_statistic(Statistic::Mean).unwrap();
 
         assert_eq!(baseline[IxDyn(&[0])], rebuilt[IxDyn(&[0])]);
@@ -1585,7 +1561,7 @@ mod tests {
         stats.set_axes(vec![0, 1]);
         stats.set_execution_policy(ExecutionPolicy::Parallel {
             workers: 2,
-            prefetch_depth: 4,
+            prefetch_depth: 2,
         });
 
         let mean = stats.get_statistic(Statistic::Mean).unwrap();
@@ -1710,7 +1686,7 @@ mod tests {
         }));
         let mut stats = LatticeStatistics::new(&first);
         stats.set_include_range(8.0, 15.0);
-        stats.set_execution_policy(ExecutionPolicy::Pipelined { prefetch_depth: 2 });
+        stats.set_execution_policy(ExecutionPolicy::Serial);
 
         assert_eq!(
             stats.get_statistic(Statistic::Mean).unwrap()[IxDyn(&[0])],

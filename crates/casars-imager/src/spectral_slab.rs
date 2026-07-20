@@ -9,10 +9,6 @@ use std::{
     fmt,
 };
 
-use casa_imaging::{
-    ImagingWorkerPlanInput, modeled_worker_runtime_cost_units, plan_imaging_worker_count,
-};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[allow(dead_code)]
 pub(crate) enum ImagingPassKind {
@@ -211,7 +207,7 @@ pub(crate) enum PlaneComponent {
 }
 
 impl PlaneComponent {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Model => "model",
             Self::Image => "image",
@@ -678,7 +674,7 @@ const ALL_IMAGING_SCHEDULES: [ImagingScheduleKind; 3] = [
 ];
 
 impl ImagingScheduleKind {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::SourceFirst => "source_first",
             Self::SlabFirst => "slab_first",
@@ -876,7 +872,7 @@ impl VisibilityChannelReadGranularity {
 }
 
 impl VisibilitySourceShape {
-    fn row_channel_bytes(&self) -> usize {
+    pub(crate) fn row_channel_bytes(&self) -> usize {
         self.corr_count
             .saturating_mul(self.data_element_bytes)
             .saturating_add(self.corr_count.saturating_mul(self.flag_element_bytes))
@@ -887,7 +883,7 @@ impl VisibilitySourceShape {
             )
     }
 
-    fn row_fixed_physical_read_bytes(&self) -> usize {
+    pub(crate) fn row_fixed_physical_read_bytes(&self) -> usize {
         self.corr_count
             .saturating_mul(self.weight_element_bytes)
             .saturating_add(3usize.saturating_mul(self.uvw_element_bytes))
@@ -896,11 +892,11 @@ impl VisibilitySourceShape {
             .saturating_add(self.pointing_id_element_bytes.unwrap_or(0))
     }
 
-    fn row_fixed_resident_bytes(&self) -> usize {
+    pub(crate) fn row_fixed_resident_bytes(&self) -> usize {
         self.resident_layout.bytes_per_row()
     }
 
-    fn row_cache_overhead_bytes(&self) -> usize {
+    pub(crate) fn row_cache_overhead_bytes(&self) -> usize {
         self.row_fixed_resident_bytes()
             .saturating_sub(self.row_fixed_physical_read_bytes())
     }
@@ -959,7 +955,11 @@ impl VisibilitySourceShape {
             .saturating_add(weight_spectrum_channel_bytes)
     }
 
-    fn source_read_bytes(&self, logical_channel_visits: usize, fixed_row_reads: usize) -> usize {
+    pub(crate) fn source_read_bytes(
+        &self,
+        logical_channel_visits: usize,
+        fixed_row_reads: usize,
+    ) -> usize {
         self.active_rows.saturating_mul(
             self.source_read_channel_bytes(logical_channel_visits, fixed_row_reads)
                 .saturating_add(
@@ -1281,7 +1281,7 @@ impl ImagingOutputShape {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SpectralMemoryPlan {
+pub(crate) struct SpectralCandidateModel {
     pub(crate) best_modeled_schedule_kind: ImagingScheduleKind,
     pub(crate) schedule_kind: ImagingScheduleKind,
     pub(crate) executor_capabilities: SpectralExecutorCapabilities,
@@ -1357,7 +1357,7 @@ pub(crate) struct SpectralMemoryPlan {
     pub(crate) warnings: Vec<String>,
 }
 
-impl SpectralMemoryPlan {
+impl SpectralCandidateModel {
     pub(crate) fn log_line(&self) -> String {
         format!(
             "spectral_slab_plan schedule={} best_modeled_schedule={} executor_capabilities={} nplanes={} image_shape={}x{} active_planes={} slab_count={} row_block_rows={} cache_budget_bytes={} cache_kind={} visibility_cache_policy={} prepared_residency={} visibility_cache_bytes={} visibility_cache_source_channels={} worker_count={} worker_model={} modeled_worker_runtime_cost_units={} backend={} memory_target_bytes={} fixed_frontend_bytes={} source_stream_buffer_bytes={} worker_staging_bytes={} per_plane_state_bytes={} component_memory_bytes={} visibility_staging_bytes_per_plane={} prepared_visibility_staging_bytes={} live_prepared_visibility_bytes={} live_bucket_bytes={} product_scratch_bytes={} product_batch_planes={} resident_plane_state_bytes={} plane_state_residency={} source_buffer_residency={} gpu_staging_bytes={} safety_margin_bytes={} planned_active_bytes={} source_channel_visits={} max_slab_source_channels={} full_source_channel_count={} source_cell_channel_count={} corr_count={} visibility_data_element_bytes={} data_channel_read_granularity={} flag_channel_read_granularity={} weight_spectrum_channel_read_granularity={} visibility_row_channel_bytes={} visibility_row_fixed_bytes={} visibility_row_fixed_resident_bytes={} visibility_row_cache_overhead_bytes={} visibility_resident_cache_layout={} best_modeled_total_io_bytes={} best_modeled_source_read_bytes={} best_modeled_visibility_cache_io_bytes={} best_modeled_output_spill_io_bytes={} best_modeled_product_write_bytes={} best_modeled_active_planes={} best_modeled_slab_count={} best_modeled_source_channel_visits={} modeled_total_io_bytes={} modeled_source_read_bytes={} modeled_visibility_cache_fill_bytes={} modeled_visibility_cache_read_bytes={} modeled_visibility_cache_io_bytes={} modeled_output_spill_read_bytes={} modeled_output_spill_write_bytes={} modeled_output_spill_io_bytes={} modeled_product_write_bytes={} modeled_no_cache_source_read_bytes={} modeled_full_cache_source_read_bytes={} visibility_cache_saved_read_bytes={} candidate_io_costs={} warnings={}",
@@ -1442,33 +1442,10 @@ impl SpectralMemoryPlan {
             },
         )
     }
-
-    #[cfg(test)]
-    pub(crate) fn with_active_planes_for_testing(
-        mut self,
-        active_planes: usize,
-    ) -> Result<Self, String> {
-        if active_planes == 0 || active_planes > self.nplanes {
-            return Err(format!(
-                "test spectral slab override active_planes={active_planes} outside 1..={}",
-                self.nplanes
-            ));
-        }
-        self.active_planes = active_planes;
-        self.slab_count = self.nplanes.div_ceil(active_planes);
-        self.slab_manifest = SpectralSlabManifest::for_planes(self.nplanes, active_planes);
-        self.worker_count = self.worker_count.min(active_planes).max(1);
-        if self.slab_count > 1 {
-            self.schedule_kind = ImagingScheduleKind::SlabFirst;
-        }
-        self.warnings
-            .push(format!("test_forced_active_planes={active_planes}"));
-        Ok(self)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SpectralMemoryPlannerInput {
+pub(crate) struct SpectralCandidateInput {
     pub(crate) output: ImagingOutputShape,
     pub(crate) visibility: VisibilitySourceShape,
     pub(crate) executor_capabilities: SpectralExecutorCapabilities,
@@ -1482,7 +1459,7 @@ pub(crate) struct SpectralMemoryPlannerInput {
     pub(crate) product_write_bytes_per_plane: usize,
     pub(crate) max_row_block_rows: usize,
     pub(crate) max_worker_count: usize,
-    pub(crate) worker_plan_input: ImagingWorkerPlanInput,
+    pub(crate) worker_work_units_per_plane: usize,
     pub(crate) requirements: PlaneStateRequirements,
     pub(crate) prepared_residency: PreparedVisibilityResidency,
 }
@@ -1600,9 +1577,9 @@ impl SpectralExecutorCapabilities {
     }
 }
 
-pub(crate) fn plan_spectral_memory(
-    input: SpectralMemoryPlannerInput,
-) -> Result<SpectralMemoryPlan, String> {
+pub(crate) fn model_spectral_candidates(
+    input: SpectralCandidateInput,
+) -> Result<SpectralCandidateModel, String> {
     if input.output.plane_count == 0 {
         return Err("imaging memory planner requires at least one output plane".to_string());
     }
@@ -1922,7 +1899,7 @@ pub(crate) fn plan_spectral_memory(
         best_modeled,
         input.visibility.full_source_channel_count,
     );
-    Ok(SpectralMemoryPlan {
+    Ok(SpectralCandidateModel {
         best_modeled_schedule_kind: best_modeled.schedule_kind,
         schedule_kind: best.schedule_kind,
         executor_capabilities: input.executor_capabilities,
@@ -1939,7 +1916,7 @@ pub(crate) fn plan_spectral_memory(
         visibility_cache_bytes: best.visibility_cache_bytes,
         visibility_cache_source_channels: best.visibility_cache_source_channels,
         worker_count: best.worker_count,
-        worker_model: plan_imaging_worker_count(input.worker_plan_input).model,
+        worker_model: "work_units_per_worker_wave",
         modeled_worker_runtime_cost_units: best.modeled_worker_runtime_cost_units,
         backend: "cpu_slab",
         memory_target_bytes: input.memory_target_bytes,
@@ -2059,7 +2036,7 @@ fn build_streaming_candidate(
     modeled_product_write_bytes: usize,
     max_row_block_rows: usize,
     product_batch_planes: usize,
-    input: &SpectralMemoryPlannerInput,
+    input: &SpectralCandidateInput,
 ) -> Option<CandidatePlan> {
     let static_plus_cache_bytes = static_resident_bytes.saturating_add(visibility_cache_bytes);
     if static_plus_cache_bytes >= input.memory_target_bytes {
@@ -2164,12 +2141,10 @@ fn build_streaming_candidate(
         .output
         .plane_count
         .div_ceil(product_batch_planes.max(1));
-    let mut worker_plan_input = input.worker_plan_input;
-    worker_plan_input.output_planes = input.output.plane_count;
-    worker_plan_input.image_pixels = input.output.image_pixels();
-    worker_plan_input.max_workers = input.max_worker_count.max(1);
-    let modeled_worker_runtime_cost =
-        modeled_worker_runtime_cost_units(worker_plan_input, worker_count);
+    let modeled_worker_runtime_cost = (input.worker_work_units_per_plane as u128).saturating_mul(
+        total_plane_worker_waves(input.output.plane_count, shape.active_planes, worker_count)
+            as u128,
+    );
     Some(CandidatePlan {
         schedule_kind,
         shape,
@@ -2546,7 +2521,6 @@ impl fmt::Display for SpectralPlaneDescriptorKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_imaging::{ImagingWorkerBackend, ImagingWorkerParallelism};
 
     #[test]
     fn observability_log_line_uses_stable_labels() {
@@ -3024,9 +2998,9 @@ mod tests {
         image_shape: [usize; 2],
         visibility: VisibilitySourceShape,
         memory_target_bytes: usize,
-    ) -> SpectralMemoryPlannerInput {
+    ) -> SpectralCandidateInput {
         let corr_count = visibility.corr_count;
-        SpectralMemoryPlannerInput {
+        SpectralCandidateInput {
             output: ImagingOutputShape {
                 plane_count: nplanes,
                 image_shape,
@@ -3059,16 +3033,7 @@ mod tests {
                 .saturating_add(std::mem::size_of::<f32>()),
             max_row_block_rows: 32_768,
             max_worker_count: 4,
-            worker_plan_input: ImagingWorkerPlanInput {
-                output_planes: nplanes,
-                image_pixels: image_shape[0].saturating_mul(image_shape[1]),
-                work_iterations_per_plane: 1,
-                scale_count: 1,
-                max_workers: 4,
-                hardware_threads: 4,
-                parallelism: ImagingWorkerParallelism::PlaneParallel,
-                backend: ImagingWorkerBackend::Cpu,
-            },
+            worker_work_units_per_plane: image_shape[0].saturating_mul(image_shape[1]),
             requirements: PlaneStateRequirements::dirty_standard(),
             prepared_residency: PreparedVisibilityResidency {
                 sample_lanes_per_source_channel: corr_count,
@@ -3082,7 +3047,7 @@ mod tests {
     fn memory_planner_fits_minimum_planes_and_logs_breakdown() {
         let visibility = test_visibility_shape(10_000, 10, 4, 8, false, test_slab_shapes(10, 1));
         let plan =
-            plan_spectral_memory(planner_input(10, [512, 512], visibility, 512 * 1024 * 1024))
+            model_spectral_candidates(planner_input(10, [512, 512], visibility, 512 * 1024 * 1024))
                 .unwrap();
         assert!(plan.active_planes >= 2);
         assert!(plan.active_planes >= 4);
@@ -3127,7 +3092,7 @@ mod tests {
         let visibility =
             test_visibility_shape(10_000, 8, 4, 8, false, reread_all_source_slab_shapes(8, 8));
         let plan =
-            plan_spectral_memory(planner_input(8, [128, 128], visibility, 512 * 1024 * 1024))
+            model_spectral_candidates(planner_input(8, [128, 128], visibility, 512 * 1024 * 1024))
                 .unwrap();
         assert_eq!(plan.schedule_kind, ImagingScheduleKind::SourceFirst);
         assert_eq!(plan.active_planes, 8);
@@ -3155,7 +3120,7 @@ mod tests {
         let mut input = planner_input(10, [128, 128], visibility, 512 * 1024 * 1024);
         input.max_worker_count = 16;
 
-        let plan = plan_spectral_memory(input).unwrap();
+        let plan = model_spectral_candidates(input).unwrap();
 
         assert_eq!(plan.active_planes, 10);
         assert_eq!(plan.worker_count, 10);
@@ -3168,7 +3133,7 @@ mod tests {
         let mut input = planner_input(8, [512, 512], visibility, 10 * 1024 * 1024);
         input.max_worker_count = 16;
 
-        let plan = plan_spectral_memory(input).unwrap();
+        let plan = model_spectral_candidates(input).unwrap();
 
         assert!(plan.active_planes < 8);
         assert_eq!(plan.worker_count, plan.active_planes);
@@ -3265,8 +3230,9 @@ mod tests {
     fn memory_planner_uses_slab_first_only_when_spill_exceeds_rereads() {
         let visibility =
             test_visibility_shape(64, 8, 1, 8, false, reread_all_source_slab_shapes(8, 8));
-        let plan = plan_spectral_memory(planner_input(8, [512, 512], visibility, 10 * 1024 * 1024))
-            .unwrap();
+        let plan =
+            model_spectral_candidates(planner_input(8, [512, 512], visibility, 10 * 1024 * 1024))
+                .unwrap();
         assert_eq!(plan.schedule_kind, ImagingScheduleKind::SlabFirst);
         assert!(plan.active_planes < 8);
         assert_eq!(plan.modeled_output_spill_io_bytes, 0);
@@ -3299,7 +3265,7 @@ mod tests {
         input.executor_capabilities =
             SpectralExecutorCapabilities::slab_runner_without_output_spill_or_full_source_cache();
 
-        let plan = plan_spectral_memory(input).unwrap();
+        let plan = model_spectral_candidates(input).unwrap();
 
         assert_eq!(
             plan.best_modeled_schedule_kind,
@@ -3323,7 +3289,7 @@ mod tests {
     #[test]
     fn memory_planner_does_not_cap_large_image_slabs_by_image_size_alone() {
         let visibility = test_visibility_shape(10_000, 512, 4, 8, false, test_slab_shapes(512, 1));
-        let plan = plan_spectral_memory(planner_input(
+        let plan = model_spectral_candidates(planner_input(
             512,
             [2048, 2048],
             visibility,
@@ -3369,7 +3335,7 @@ mod tests {
         };
 
         let max_worker_count = input.max_worker_count;
-        let plan = plan_spectral_memory(input).unwrap();
+        let plan = model_spectral_candidates(input).unwrap();
 
         assert!(plan.active_planes >= 45);
         assert!(plan.slab_count <= 23);
@@ -3414,7 +3380,7 @@ mod tests {
         input.max_row_block_rows = 3_086_235;
         input.max_worker_count = 10;
 
-        let plan = plan_spectral_memory(input).unwrap();
+        let plan = model_spectral_candidates(input).unwrap();
 
         assert_eq!(plan.active_planes, 64);
         assert_eq!(plan.slab_count, 1);
@@ -3453,7 +3419,7 @@ mod tests {
         input.max_row_block_rows = 3_086_235;
         input.max_worker_count = 10;
 
-        let plan = plan_spectral_memory(input).unwrap();
+        let plan = model_spectral_candidates(input).unwrap();
 
         assert_eq!(plan.active_planes, 64);
         assert_eq!(plan.slab_count, 1);
@@ -3476,7 +3442,7 @@ mod tests {
             false,
             reread_all_source_slab_shapes(128, 64),
         );
-        let plan = plan_spectral_memory(planner_input(
+        let plan = model_spectral_candidates(planner_input(
             128,
             [1024, 1024],
             visibility,
@@ -3532,7 +3498,7 @@ mod tests {
         input.max_row_block_rows = 3_086_235;
         input.max_worker_count = 10;
 
-        let plan = plan_spectral_memory(input).unwrap();
+        let plan = model_spectral_candidates(input).unwrap();
 
         assert!(plan.active_planes >= 100);
         assert!(plan.slab_count <= 5);
@@ -3575,7 +3541,7 @@ mod tests {
         input.max_row_block_rows = 866_313;
         input.max_worker_count = 10;
 
-        let plan = plan_spectral_memory(input).unwrap();
+        let plan = model_spectral_candidates(input).unwrap();
 
         assert_eq!(plan.product_batch_planes, 1, "{}", plan.log_line());
         assert!(plan.worker_count >= 8, "{}", plan.log_line());
@@ -3662,7 +3628,7 @@ mod tests {
             true,
             reread_all_source_slab_shapes(64, 64),
         );
-        let plan = plan_spectral_memory(planner_input(
+        let plan = model_spectral_candidates(planner_input(
             64,
             [2048, 2048],
             visibility,
@@ -3684,7 +3650,7 @@ mod tests {
             true,
             overlapping_channel_slab_shapes(64, 64),
         );
-        let plan = plan_spectral_memory(planner_input(
+        let plan = model_spectral_candidates(planner_input(
             64,
             [1024, 1024],
             visibility,
@@ -3707,14 +3673,14 @@ mod tests {
         let shapes = reread_all_source_slab_shapes(8, 128);
         let complex32 = test_visibility_shape(10_000, 128, 4, 8, true, shapes.clone());
         let complex64 = test_visibility_shape(10_000, 128, 4, 16, true, shapes);
-        let plan32 = plan_spectral_memory(planner_input(
+        let plan32 = model_spectral_candidates(planner_input(
             8,
             [256, 256],
             complex32,
             4 * 1024 * 1024 * 1024,
         ))
         .unwrap();
-        let plan64 = plan_spectral_memory(planner_input(
+        let plan64 = model_spectral_candidates(planner_input(
             8,
             [256, 256],
             complex64,
@@ -3738,7 +3704,7 @@ mod tests {
             1024,
         );
         input.requirements = PlaneStateRequirements::mosaic_pb_aware();
-        let error = plan_spectral_memory(input).unwrap_err();
+        let error = model_spectral_candidates(input).unwrap_err();
         assert!(error.contains("cannot fit any source/output schedule candidate"));
     }
 }

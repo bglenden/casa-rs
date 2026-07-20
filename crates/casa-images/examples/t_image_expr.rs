@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Demonstration of `ImageExpr` — lazy image expressions.
+//! Demonstration of `ImageExprBuilder` — lazy image expressions.
 //!
 //! Corresponds to C++ `tImageExpr.cc`.  All operations evaluate lazily;
 //! pixels are computed only when read.
@@ -13,7 +13,7 @@ use casa_coordinates::CoordinateSystem;
 use casa_images::expr_file;
 use casa_images::expr_parser::{HashMapResolver, parse_image_expr, parse_mask_expr};
 use casa_images::image::ImageInterface;
-use casa_images::{ImageExpr, ImageExprUnaryOp, TempImage};
+use casa_images::{ImageExprBuilder, ImageExprUnaryOp, TempImage};
 
 fn main() {
     let mut lhs = TempImage::<f32>::new(
@@ -34,41 +34,49 @@ fn main() {
     // --- Programmatic API (Wave 11) ---
 
     // Arithmetic + unary negate
-    let expr = ImageExpr::from_image(&lhs)
+    let expr = ImageExprBuilder::from_image(&lhs)
         .unwrap()
         .add_image(&rhs)
         .unwrap()
-        .unary(ImageExprUnaryOp::Negate);
+        .unary(ImageExprUnaryOp::Negate)
+        .compile()
+        .unwrap();
     println!("-(lhs + rhs)[0,0] = {}", expr.get_at(&[0, 0]).unwrap());
 
     // Transcendental chain: sqrt(lhs^2 + rhs^2)
-    let magnitude = ImageExpr::from_image(&lhs)
+    let magnitude = ImageExprBuilder::from_image(&lhs)
         .unwrap()
         .pow_scalar(2.0)
-        .add_expr(ImageExpr::from_image(&rhs).unwrap().pow_scalar(2.0))
+        .add_expr(ImageExprBuilder::from_image(&rhs).unwrap().pow_scalar(2.0))
         .unwrap()
-        .sqrt();
+        .sqrt()
+        .compile()
+        .unwrap();
     println!(
         "sqrt(lhs^2 + rhs^2)[0,0] = {}",
         magnitude.get_at(&[0, 0]).unwrap()
     );
 
     // Clamp via min/max
-    let clamped = ImageExpr::from_image(&lhs)
+    let clamped = ImageExprBuilder::from_image(&lhs)
         .unwrap()
         .multiply_scalar(10.0)
         .min_scalar(12.0)
-        .max_scalar(5.0);
+        .max_scalar(5.0)
+        .compile()
+        .unwrap();
     println!(
         "clamp(lhs*10, 5, 12)[0,0] = {}",
         clamped.get_at(&[0, 0]).unwrap()
     );
 
     // Comparison mask: which pixels > 1.0 && <= 2.0?
-    let mask = ImageExpr::from_image(&lhs)
+    let mask = ImageExprBuilder::from_image(&lhs)
         .unwrap()
         .gt_scalar(1.0)
-        .and(ImageExpr::from_image(&lhs).unwrap().le_scalar(2.0))
+        .and(ImageExprBuilder::from_image(&lhs).unwrap().le_scalar(2.0))
+        .unwrap()
+        .compile()
         .unwrap();
     println!(
         "mask (1.0 < lhs <= 2.0)[0,0] = {}",

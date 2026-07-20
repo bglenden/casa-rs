@@ -4,7 +4,6 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, hash_map::Entry},
-    env,
     ffi::c_void,
     marker::PhantomData,
     mem,
@@ -64,9 +63,6 @@ fn shared_input_execution_failure_forced_for_test() -> bool {
 type MetalCommandBuffer = Retained<ProtocolObject<dyn MTLCommandBuffer>>;
 type MetalComputePipeline = Retained<ProtocolObject<dyn MTLComputePipelineState>>;
 
-const APPLE_FFT_PACK_THREADS_ENV: &str = "CASA_RS_APPLE_FFT_PACK_THREADS";
-const APPLE_FFT_FUSED_PACK_ENV: &str = "CASA_RS_APPLE_FFT_FUSED_PACK";
-const APPLE_FFT_PARALLEL_PACK_MIN_ELEMENTS: usize = 1_000_000;
 const APPLE_FFT_FUSED_PACK_SHADER: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
@@ -3314,30 +3310,16 @@ fn unpack_interleaved_f32_as_complex32(values: &[f32], output: &mut [Complex32])
     }
 }
 
-fn apple_fft_pack_threads(work_items: usize) -> usize {
-    if work_items < APPLE_FFT_PARALLEL_PACK_MIN_ELEMENTS {
-        return 1;
-    }
-    if let Ok(value) = env::var(APPLE_FFT_PACK_THREADS_ENV) {
-        if let Ok(parsed) = value.trim().parse::<usize>() {
-            return parsed.max(1);
-        }
-    }
-    thread::available_parallelism().map_or(1, |count| count.get().max(1))
+fn apple_fft_pack_threads(_work_items: usize) -> usize {
+    1
 }
 
 fn apple_fft_fused_pack_enabled() -> bool {
-    apple_fft_fused_pack_env_override().unwrap_or(false)
+    false
 }
 
 fn apple_fft_dirty_product_fused_pack_enabled() -> bool {
-    apple_fft_fused_pack_env_override().unwrap_or(true)
-}
-
-fn apple_fft_fused_pack_env_override() -> Option<bool> {
-    let value = env::var(APPLE_FFT_FUSED_PACK_ENV).ok()?;
-    let normalized = value.trim().to_ascii_lowercase();
-    Some(!matches!(normalized.as_str(), "0" | "false" | "off" | "no"))
+    true
 }
 
 fn selection_for_fused_pack(

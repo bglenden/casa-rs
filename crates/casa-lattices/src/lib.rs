@@ -64,6 +64,10 @@ pub use array_math::{
 };
 pub use element::LatticeElement;
 pub use error::LatticeError;
+pub use execution::{
+    ExecutionInputs, ExecutionMode, ExecutionPlan, ExecutionPlanError, ExecutionPolicy,
+    ExecutionResources, SourceResidency, plan_execution,
+};
 pub use iterator::LatticeIterExt;
 pub use lattice::{Lattice, LatticeMut};
 pub use lc_box::LCBox;
@@ -71,7 +75,7 @@ pub use lc_ellipsoid::LCEllipsoid;
 pub use lc_operations::{LCComplement, LCDifference, LCIntersection, LCUnion};
 pub use paged_array::PagedArray;
 pub use region::LCRegion;
-pub use statistics::{ExecutionPolicy, LatticeStatistics, Statistic, StatsElement};
+pub use statistics::{LatticeStatistics, Statistic, StatsElement};
 pub use sub_lattice::{SubLattice, SubLatticeMut};
 pub use temp_lattice::{ScratchSpace, TempLattice, TempStoragePlan, TempStoragePolicy};
 pub use tiled_shape::TiledShape;

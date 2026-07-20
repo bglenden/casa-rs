@@ -20,7 +20,255 @@ use crate::traversal::{
     TraversalChunk, TraversalCursor, TraversalCursorIter, TraversalIter, TraversalSpec,
 };
 
-/// Internal read-only chunk execution strategy.
+/// Caller-selected execution policy for lattice and image work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ExecutionPolicy {
+    /// Derive a plan from explicit workload and resource inputs.
+    #[default]
+    Auto,
+    /// Force a plain serial traversal.
+    Serial,
+    /// Use one worker and a bounded producer/consumer queue.
+    Pipelined { prefetch_depth: usize },
+    /// Use exactly the requested worker count and queue depth.
+    Parallel {
+        workers: usize,
+        prefetch_depth: usize,
+    },
+}
+
+/// Whether the source can benefit from producer/consumer overlap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SourceResidency {
+    Resident,
+    Persistent,
+}
+
+/// Resource limits assigned to an execution owner.
+///
+/// Application runtimes can reserve a slice from their process-level memory
+/// ledger and pass it here. The planner never samples host state or competes
+/// with other consumers on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionResources {
+    pub memory_budget_bytes: usize,
+    pub worker_limit: usize,
+    pub prefetch_cap: usize,
+}
+
+impl ExecutionResources {
+    /// Resources that preserve the historical unconstrained library default.
+    /// Applications should prefer an explicitly reserved budget.
+    pub fn library_default() -> Self {
+        Self {
+            memory_budget_bytes: usize::MAX,
+            worker_limit: std::thread::available_parallelism()
+                .map(std::num::NonZeroUsize::get)
+                .unwrap_or(1),
+            prefetch_cap: usize::MAX,
+        }
+    }
+}
+
+impl Default for ExecutionResources {
+    fn default() -> Self {
+        Self::library_default()
+    }
+}
+
+/// Exact workload and resource facts consumed by [`plan_execution`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionInputs {
+    pub task_count: usize,
+    pub chunk_bytes: usize,
+    pub per_worker_state_bytes: usize,
+    pub memory_budget_bytes: usize,
+    pub available_workers: usize,
+    pub requested_worker_limit: usize,
+    pub source_residency: SourceResidency,
+    pub prefetch_capability: bool,
+    pub configured_prefetch_cap: usize,
+}
+
+/// Resolved execution mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionMode {
+    Serial,
+    Pipelined,
+    Parallel,
+}
+
+/// Deterministic byte-aware execution plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionPlan {
+    pub mode: ExecutionMode,
+    pub workers: usize,
+    pub prefetch_depth: usize,
+    pub worker_state_bytes: usize,
+    pub prefetch_bytes: usize,
+    pub planned_resident_bytes: usize,
+}
+
+/// Invalid workload, policy, or resource inputs.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ExecutionPlanError {
+    #[error("execution planning overflow while computing {0}")]
+    Overflow(&'static str),
+    #[error("invalid execution policy: {0}")]
+    InvalidPolicy(String),
+    #[error("execution needs {required_bytes} bytes but only {budget_bytes} bytes were assigned")]
+    InsufficientMemory {
+        required_bytes: usize,
+        budget_bytes: usize,
+    },
+}
+
+/// Resolves one execution plan from checked workload/resource formulas.
+pub fn plan_execution(
+    policy: ExecutionPolicy,
+    inputs: ExecutionInputs,
+) -> Result<ExecutionPlan, ExecutionPlanError> {
+    if inputs.task_count == 0 {
+        return Ok(ExecutionPlan {
+            mode: ExecutionMode::Serial,
+            workers: 0,
+            prefetch_depth: 0,
+            worker_state_bytes: 0,
+            prefetch_bytes: 0,
+            planned_resident_bytes: 0,
+        });
+    }
+    if inputs.available_workers == 0 || inputs.requested_worker_limit == 0 {
+        return Err(ExecutionPlanError::InvalidPolicy(
+            "worker availability and caller worker limit must be positive".to_string(),
+        ));
+    }
+
+    let state_charge = inputs.per_worker_state_bytes.max(1);
+    let chunk_charge = inputs.chunk_bytes.max(1);
+    let worker_cap = inputs
+        .available_workers
+        .min(inputs.requested_worker_limit)
+        .min(inputs.task_count);
+
+    let finish = |mode, workers: usize, prefetch_depth: usize| {
+        let worker_state_bytes = workers
+            .checked_mul(state_charge)
+            .ok_or(ExecutionPlanError::Overflow("worker state bytes"))?;
+        let prefetch_bytes = prefetch_depth
+            .checked_mul(chunk_charge)
+            .ok_or(ExecutionPlanError::Overflow("prefetch bytes"))?;
+        let planned_resident_bytes = worker_state_bytes
+            .checked_add(prefetch_bytes)
+            .ok_or(ExecutionPlanError::Overflow("planned resident bytes"))?;
+        if planned_resident_bytes > inputs.memory_budget_bytes {
+            return Err(ExecutionPlanError::InsufficientMemory {
+                required_bytes: planned_resident_bytes,
+                budget_bytes: inputs.memory_budget_bytes,
+            });
+        }
+        Ok(ExecutionPlan {
+            mode,
+            workers,
+            prefetch_depth,
+            worker_state_bytes,
+            prefetch_bytes,
+            planned_resident_bytes,
+        })
+    };
+
+    match policy {
+        ExecutionPolicy::Serial => finish(ExecutionMode::Serial, 1, 0),
+        ExecutionPolicy::Pipelined { prefetch_depth } => {
+            if !inputs.prefetch_capability || inputs.source_residency != SourceResidency::Persistent
+            {
+                return Err(ExecutionPlanError::InvalidPolicy(
+                    "pipelining requires a persistent source with prefetch support".to_string(),
+                ));
+            }
+            if prefetch_depth == 0 {
+                return Err(ExecutionPlanError::InvalidPolicy(
+                    "pipelined prefetch depth must be positive".to_string(),
+                ));
+            }
+            if prefetch_depth > inputs.configured_prefetch_cap {
+                return Err(ExecutionPlanError::InvalidPolicy(format!(
+                    "prefetch depth {prefetch_depth} exceeds the configured cap"
+                )));
+            }
+            if prefetch_depth > inputs.task_count {
+                return Err(ExecutionPlanError::InvalidPolicy(format!(
+                    "pipelined prefetch depth {prefetch_depth} exceeds {} available tasks",
+                    inputs.task_count
+                )));
+            }
+            finish(ExecutionMode::Pipelined, 1, prefetch_depth)
+        }
+        ExecutionPolicy::Parallel {
+            workers,
+            prefetch_depth,
+        } => {
+            if workers < 2 {
+                return Err(ExecutionPlanError::InvalidPolicy(
+                    "parallel execution requires at least two workers".to_string(),
+                ));
+            }
+            if workers > worker_cap {
+                return Err(ExecutionPlanError::InvalidPolicy(format!(
+                    "parallel worker count {workers} exceeds the assigned work/resource cap {worker_cap}",
+                )));
+            }
+            if prefetch_depth == 0 {
+                return Err(ExecutionPlanError::InvalidPolicy(
+                    "parallel prefetch depth must be positive".to_string(),
+                ));
+            }
+            if prefetch_depth > inputs.configured_prefetch_cap {
+                return Err(ExecutionPlanError::InvalidPolicy(format!(
+                    "prefetch depth {prefetch_depth} exceeds the configured cap"
+                )));
+            }
+            if prefetch_depth > inputs.task_count {
+                return Err(ExecutionPlanError::InvalidPolicy(format!(
+                    "parallel prefetch depth {prefetch_depth} exceeds {} available tasks",
+                    inputs.task_count
+                )));
+            }
+            finish(ExecutionMode::Parallel, workers, prefetch_depth)
+        }
+        ExecutionPolicy::Auto => {
+            let memory_workers = inputs.memory_budget_bytes / state_charge;
+            let workers = worker_cap.min(memory_workers);
+            if workers == 0 {
+                return Err(ExecutionPlanError::InsufficientMemory {
+                    required_bytes: state_charge,
+                    budget_bytes: inputs.memory_budget_bytes,
+                });
+            }
+            let worker_state_bytes = workers
+                .checked_mul(state_charge)
+                .ok_or(ExecutionPlanError::Overflow("worker state bytes"))?;
+            let remaining_budget = inputs.memory_budget_bytes - worker_state_bytes;
+            let remaining_tasks = inputs.task_count.saturating_sub(workers);
+            let prefetch_depth = if inputs.prefetch_capability {
+                inputs
+                    .configured_prefetch_cap
+                    .min(remaining_tasks)
+                    .min(remaining_budget / chunk_charge)
+            } else {
+                0
+            };
+            if workers >= 2 {
+                finish(ExecutionMode::Parallel, workers, prefetch_depth)
+            } else if inputs.source_residency == SourceResidency::Persistent && prefetch_depth > 0 {
+                finish(ExecutionMode::Pipelined, 1, prefetch_depth)
+            } else {
+                finish(ExecutionMode::Serial, 1, 0)
+            }
+        }
+    }
+}
+
 /// Internal strategy selector for owned read-chunk execution.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,7 +285,6 @@ pub struct PipelinedReadChunkConfig {
     pub prefetch_depth: usize,
 }
 
-/// Configuration for the internal parallel read-chunk pipeline.
 /// Configuration for the internal parallel read-chunk pipeline.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,7 +318,6 @@ pub enum OrderedCursorMapWriteExecutionStrategy {
     Parallel(ParallelReadChunkConfig),
 }
 
-/// Owned read-only chunk task passed to internal execution helpers.
 /// Owned read-only chunk task passed to internal execution helpers.
 #[doc(hidden)]
 #[derive(Debug)]
@@ -1029,5 +1275,105 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, LatticeError::InvalidTraversal(_)));
+    }
+
+    fn planner_inputs() -> ExecutionInputs {
+        ExecutionInputs {
+            task_count: 8,
+            chunk_bytes: 1_024,
+            per_worker_state_bytes: 2_048,
+            memory_budget_bytes: 32_768,
+            available_workers: 8,
+            requested_worker_limit: 4,
+            source_residency: SourceResidency::Persistent,
+            prefetch_capability: true,
+            configured_prefetch_cap: 8,
+        }
+    }
+
+    #[test]
+    fn execution_planner_is_formula_driven_and_byte_bounded() {
+        let plan = plan_execution(ExecutionPolicy::Auto, planner_inputs()).unwrap();
+        assert_eq!(plan.mode, ExecutionMode::Parallel);
+        assert_eq!(plan.workers, 4);
+        assert_eq!(plan.prefetch_depth, 4);
+        assert_eq!(plan.worker_state_bytes, 8_192);
+        assert_eq!(plan.prefetch_bytes, 4_096);
+        assert!(plan.planned_resident_bytes <= 32_768);
+    }
+
+    #[test]
+    fn execution_planner_handles_zero_work_and_one_worker_deliberately() {
+        let mut inputs = planner_inputs();
+        inputs.task_count = 0;
+        assert_eq!(
+            plan_execution(ExecutionPolicy::Auto, inputs)
+                .unwrap()
+                .workers,
+            0
+        );
+
+        let mut inputs = planner_inputs();
+        inputs.available_workers = 1;
+        inputs.requested_worker_limit = 1;
+        let plan = plan_execution(ExecutionPolicy::Auto, inputs).unwrap();
+        assert_eq!(plan.mode, ExecutionMode::Pipelined);
+        assert_eq!(plan.workers, 1);
+    }
+
+    #[test]
+    fn explicit_policies_reject_requests_that_exceed_available_work() {
+        let mut inputs = planner_inputs();
+        inputs.task_count = 1;
+        inputs.requested_worker_limit = 8;
+
+        assert!(matches!(
+            plan_execution(ExecutionPolicy::Pipelined { prefetch_depth: 4 }, inputs),
+            Err(ExecutionPlanError::InvalidPolicy(_))
+        ));
+
+        assert!(matches!(
+            plan_execution(
+                ExecutionPolicy::Parallel {
+                    workers: 8,
+                    prefetch_depth: 16,
+                },
+                ExecutionInputs {
+                    configured_prefetch_cap: 16,
+                    ..inputs
+                },
+            ),
+            Err(ExecutionPlanError::InvalidPolicy(_))
+        ));
+    }
+
+    #[test]
+    fn execution_planner_rejects_budget_policy_and_overflow_errors() {
+        let mut inputs = planner_inputs();
+        inputs.memory_budget_bytes = 2_047;
+        assert!(matches!(
+            plan_execution(ExecutionPolicy::Auto, inputs),
+            Err(ExecutionPlanError::InsufficientMemory { .. })
+        ));
+
+        let inputs = planner_inputs();
+        assert!(matches!(
+            plan_execution(
+                ExecutionPolicy::Parallel {
+                    workers: 7,
+                    prefetch_depth: 1,
+                },
+                inputs
+            ),
+            Err(ExecutionPlanError::InvalidPolicy(_))
+        ));
+
+        let mut inputs = planner_inputs();
+        inputs.chunk_bytes = usize::MAX;
+        inputs.memory_budget_bytes = usize::MAX;
+        assert!(matches!(
+            plan_execution(ExecutionPolicy::Pipelined { prefetch_depth: 2 }, inputs),
+            Err(ExecutionPlanError::Overflow("prefetch bytes"))
+        ));
     }
 }

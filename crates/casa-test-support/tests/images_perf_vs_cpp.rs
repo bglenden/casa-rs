@@ -16,7 +16,7 @@ use casa_coordinates::CoordinateSystem;
 use casa_images::expr_file;
 use casa_images::expr_parser::{HashMapResolver, parse_image_expr};
 use casa_images::image::ImageInterface;
-use casa_images::{Image, ImageExpr, PagedImage};
+use casa_images::{Image, ImageExprBuilder, PagedImage};
 use casa_lattices::{
     ExecutionPolicy, Lattice, LatticeIterExt, LatticeStatistics, Statistic, TraversalSpec,
 };
@@ -346,12 +346,12 @@ fn run_lazy_image_expr_closeout_slice_perf_vs_cpp(case_name: &str, size: usize, 
     ImageOracle::create_image(&cpp_path, &shape_i32, &data, "").unwrap();
 
     let image = Image::open(&rust_path).unwrap();
-    let expr = ImageExpr::from_image(&image)
+    let expr = ImageExprBuilder::from_image(&image)
         .unwrap()
         .add_scalar(1.0)
         .sqrt()
         .atan2_expr(
-            ImageExpr::from_image(&image)
+            ImageExprBuilder::from_image(&image)
                 .unwrap()
                 .add_scalar(0.5)
                 .pow_scalar(2.0)
@@ -389,7 +389,7 @@ fn run_lazy_image_expr_closeout_slice_perf_vs_cpp(case_name: &str, size: usize, 
     );
 
     eprintln!(
-        "Lazy ImageExpr closeout slice ({size}x{size}, slice {}x{}, {passes} passes, {slice_n} pixels/pass):\n  \
+        "Lazy ImageExprBuilder closeout slice ({size}x{size}, slice {}x{}, {passes} passes, {slice_n} pixels/pass):\n  \
          C++:  {cpp_ms:.1} ms\n  \
          Rust: {rust_ms:.1} ms\n  \
          Ratio: {ratio:.2}×",
@@ -398,13 +398,13 @@ fn run_lazy_image_expr_closeout_slice_perf_vs_cpp(case_name: &str, size: usize, 
 
     if ratio > 2.0 {
         eprintln!(
-            "WARNING: Rust lazy ImageExpr slice is {ratio:.1}× slower than C++ (threshold: 2.0×)"
+            "WARNING: Rust lazy ImageExprBuilder slice is {ratio:.1}× slower than C++ (threshold: 2.0×)"
         );
     }
     if std::env::var("CASA_RS_ENFORCE_PERF").is_ok() {
         assert!(
             ratio <= 2.0,
-            "Rust lazy ImageExpr slice ratio {ratio:.2}× exceeds 2.0×"
+            "Rust lazy ImageExprBuilder slice ratio {ratio:.2}× exceeds 2.0×"
         );
     }
 }
@@ -419,7 +419,7 @@ fn lazy_image_expr_closeout_slice_perf_vs_cpp() {
 }
 
 #[test]
-#[ignore = "large lazy ImageExpr slice perf comparison; run explicitly when evaluating steady-state performance"]
+#[ignore = "large lazy ImageExprBuilder slice perf comparison; run explicitly when evaluating steady-state performance"]
 fn lazy_image_expr_closeout_slice_large_perf_vs_cpp() {
     run_lazy_image_expr_closeout_slice_perf_vs_cpp(
         "lazy_image_expr_closeout_slice_large_perf_vs_cpp",
@@ -1053,8 +1053,8 @@ fn run_reduction_breakdown(size: usize, passes: usize) {
     }
     let stats_reused_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-    let sum_expr = ImageExpr::from_image(&image).unwrap().sum_reduce();
-    let mean_expr = ImageExpr::from_image(&image).unwrap().mean_reduce();
+    let sum_expr = ImageExprBuilder::from_image(&image).unwrap().sum_reduce();
+    let mean_expr = ImageExprBuilder::from_image(&image).unwrap().mean_reduce();
     let t0 = Instant::now();
     for _ in 0..passes {
         let _ = sum_expr.get_at(&[]).unwrap();
@@ -1209,7 +1209,7 @@ fn perf_wave14_type_projection_48_cube() {
     let passes = 5;
     let t0 = Instant::now();
     for _ in 0..passes {
-        let expr = ImageExpr::from_image(&img).unwrap().real_part();
+        let expr = ImageExprBuilder::from_image(&img).unwrap().real_part();
         let _ = expr.get().unwrap();
     }
     let rust_ms = t0.elapsed().as_secs_f64() * 1000.0;
