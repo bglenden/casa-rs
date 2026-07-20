@@ -813,7 +813,7 @@ capability flags so future mutation commands can target the same objects
 without redesigning the wire format.</p>
 <h2 id="transport">Transport<a class="headerlink" href="#transport" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Producer: <code>tablebrowser --session</code></li>
+<li>Producer: <code>tablebrowser --session</code> from the <code>casars</code> runtime package</li>
 <li>Consumer: <code>casars</code></li>
 <li>Encoding: UTF-8 JSON</li>
 <li>Framing: one object per line</li>
@@ -826,6 +826,26 @@ without redesigning the wire format.</p>
 <li><code>crates/casars-tablebrowser-protocol/schemas/request.schema.json</code></li>
 <li><code>crates/casars-tablebrowser-protocol/schemas/response.schema.json</code></li>
 </ul>
+<p>The paired image-browser session uses the same transport/envelope foundation
+and commits its domain-specific schemas at:</p>
+<ul>
+<li><code>crates/casars-imagebrowser-protocol/schemas/request.schema.json</code></li>
+<li><code>crates/casars-imagebrowser-protocol/schemas/response.schema.json</code></li>
+</ul>
+<p><code>casa-provider-contracts::session_protocol</code> owns the shared JSONL session
+metadata, envelope/error definitions, version access, deterministic schema
+rendering, and stale checks. The two protocol crates retain distinct typed
+commands and response payloads. <code>casars</code> owns one generic process client that
+classifies provider, serialization, malformed-response, version, unexpected-
+variant, timeout, process-exit, configuration, and transport failures without
+fabricating a successful response.</p>
+<p>Regenerate both committed schema pairs with:</p>
+<div class="codehilite"><pre><span></span><code><span class="nv">CASA_RS_REGENERATE_SESSION_SCHEMAS</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="nv">CARGO_INCREMENTAL</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>casars-tablebrowser-protocol<span class="w"> </span>-p<span class="w"> </span>casars-imagebrowser-protocol
+</code></pre></div>
+
+<p>Run the command a second time without the environment variable to perform the
+normal stale check.</p>
 <p>The canonical schema bundle now wraps those envelope schemas with:</p>
 <ul>
 <li>protocol metadata including <code>surface_kind: "session"</code></li>

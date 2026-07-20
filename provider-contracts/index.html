@@ -1026,6 +1026,13 @@ idiomatic Rust request.</p>
 </ul>
 <p>The contract is a versioned command/event/state protocol, not a one-shot task
 request/result pair.</p>
+<p>The table and image browser protocols instantiate one shared JSONL session
+foundation in <code>casa-provider-contracts::session_protocol</code>. That owner provides
+the common envelope/error shape, protocol metadata, deterministic schema
+generation, and version access; each protocol crate owns only its typed domain
+commands and payloads. The <code>casars</code> runtime package owns the browser executables,
+session engines, and generic subprocess client. Reusable <code>casa-tables</code> and
+<code>casa-images</code> code does not depend on these protocol crates.</p>
 <p>A session <code>SurfaceDefinition</code> may additionally define durable startup
 parameters. Those parameters open or configure the session; they do not turn
 cursor movement, scrolling, viewport updates, caches, or commands into task
@@ -1303,6 +1310,10 @@ surfaces.</p>
 <li>Keep protocol names and protocol versions explicit and machine-checkable.</li>
 <li>Add CI parity tests so catalog coverage, wrappers, docs, sparse profiles, and
   projections cannot drift from the canonical schema bundle.</li>
+<li>Regenerate committed browser-session schemas only through
+  <code>CASA_RS_REGENERATE_SESSION_SCHEMAS=1 cargo test -p
+  casars-tablebrowser-protocol -p casars-imagebrowser-protocol</code>, then rerun the
+  tests normally to prove the artifacts are current.</li>
 </ul>
 <p>This preserves one source of truth while still supporting:</p>
 <ul>

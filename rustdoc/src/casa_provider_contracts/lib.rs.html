@@ -12,29 +12,34 @@
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">mod </span>projection;
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">mod </span>provider;
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">mod </span>semantic;
-<a href=#15 id=15 data-nosnippet>15</a>
-<a href=#16 id=16 data-nosnippet>16</a><span class="kw">pub use </span>components::{ProviderComponentSchemas, merged_components};
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">pub use </span>parameters::<span class="kw-2">*</span>;
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">pub use </span>projection::{
-<a href=#19 id=19 data-nosnippet>19</a>    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata, project_ui_form,
-<a href=#20 id=20 data-nosnippet>20</a>};
-<a href=#21 id=21 data-nosnippet>21</a><span class="kw">pub use </span>provider::{
-<a href=#22 id=22 data-nosnippet>22</a>    NoAdditionalProviderSchemas, ProviderContractEnvelope, ProviderContractValidationError,
-<a href=#23 id=23 data-nosnippet>23</a>    ProviderProtocolDescriptor, SessionProviderContract, SessionProviderSchemas,
-<a href=#24 id=24 data-nosnippet>24</a>    TaskProviderContract, TaskProviderSchemas,
-<a href=#25 id=25 data-nosnippet>25</a>};
-<a href=#26 id=26 data-nosnippet>26</a><span class="kw">pub use </span>semantic::{
-<a href=#27 id=27 data-nosnippet>27</a>    ObjectConstructorDescriptor, ObjectMethodDescriptor, ObjectPropertyDescriptor,
-<a href=#28 id=28 data-nosnippet>28</a>    ObjectSemanticContract, ObjectTypeContract, ProviderSurfaceKind, SessionSemanticContract,
-<a href=#29 id=29 data-nosnippet>29</a>    TaskOperationDescriptor, TaskSemanticContract,
-<a href=#30 id=30 data-nosnippet>30</a>};
-<a href=#31 id=31 data-nosnippet>31</a>
-<a href=#32 id=32 data-nosnippet>32</a><span class="attr">#[cfg(test)]
-<a href=#33 id=33 data-nosnippet>33</a></span><span class="kw">mod </span>tests;
-<a href=#34 id=34 data-nosnippet>34</a><span class="kw">pub use </span>application::{
-<a href=#35 id=35 data-nosnippet>35</a>    ApplicationBrowserKind, ApplicationCatalog, ApplicationDefinition, ApplicationInteraction,
-<a href=#36 id=36 data-nosnippet>36</a>    ApplicationKind, ApplicationLaunchDescriptor, ApplicationLaunchMode, ApplicationShellKind,
-<a href=#37 id=37 data-nosnippet>37</a>    builtin_application_catalog,
-<a href=#38 id=38 data-nosnippet>38</a>};
-<a href=#39 id=39 data-nosnippet>39</a><span class="kw">pub use </span>builtin::{builtin_surface_bundle, builtin_surface_catalog};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">mod </span>session_protocol;
+<a href=#16 id=16 data-nosnippet>16</a>
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">pub use </span>components::{ProviderComponentSchemas, merged_components};
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">pub use </span>parameters::<span class="kw-2">*</span>;
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">pub use </span>projection::{
+<a href=#20 id=20 data-nosnippet>20</a>    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata, project_ui_form,
+<a href=#21 id=21 data-nosnippet>21</a>};
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">pub use </span>provider::{
+<a href=#23 id=23 data-nosnippet>23</a>    NoAdditionalProviderSchemas, ProviderContractEnvelope, ProviderContractValidationError,
+<a href=#24 id=24 data-nosnippet>24</a>    ProviderProtocolDescriptor, SessionProviderContract, SessionProviderSchemas,
+<a href=#25 id=25 data-nosnippet>25</a>    TaskProviderContract, TaskProviderSchemas,
+<a href=#26 id=26 data-nosnippet>26</a>};
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">pub use </span>semantic::{
+<a href=#28 id=28 data-nosnippet>28</a>    ObjectConstructorDescriptor, ObjectMethodDescriptor, ObjectPropertyDescriptor,
+<a href=#29 id=29 data-nosnippet>29</a>    ObjectSemanticContract, ObjectTypeContract, ProviderSurfaceKind, SessionSemanticContract,
+<a href=#30 id=30 data-nosnippet>30</a>    TaskOperationDescriptor, TaskSemanticContract,
+<a href=#31 id=31 data-nosnippet>31</a>};
+<a href=#32 id=32 data-nosnippet>32</a><span class="kw">pub use </span>session_protocol::{
+<a href=#33 id=33 data-nosnippet>33</a>    JSONL_STDIO_TRANSPORT, VersionedSessionEnvelope, encode_session_message,
+<a href=#34 id=34 data-nosnippet>34</a>    jsonl_session_contract, session_contract_json, session_schema_json,
+<a href=#35 id=35 data-nosnippet>35</a>};
+<a href=#36 id=36 data-nosnippet>36</a>
+<a href=#37 id=37 data-nosnippet>37</a><span class="attr">#[cfg(test)]
+<a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">mod </span>tests;
+<a href=#39 id=39 data-nosnippet>39</a><span class="kw">pub use </span>application::{
+<a href=#40 id=40 data-nosnippet>40</a>    ApplicationBrowserKind, ApplicationCatalog, ApplicationDefinition, ApplicationInteraction,
+<a href=#41 id=41 data-nosnippet>41</a>    ApplicationKind, ApplicationLaunchDescriptor, ApplicationLaunchMode, ApplicationShellKind,
+<a href=#42 id=42 data-nosnippet>42</a>    builtin_application_catalog,
+<a href=#43 id=43 data-nosnippet>43</a>};
+<a href=#44 id=44 data-nosnippet>44</a><span class="kw">pub use </span>builtin::{builtin_surface_bundle, builtin_surface_catalog};
 </code></pre></div></section></main></body></html>

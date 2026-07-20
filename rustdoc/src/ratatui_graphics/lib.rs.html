@@ -24,18 +24,17 @@
 <a href=#24 id=24 data-nosnippet>24</a>};
 <a href=#25 id=25 data-nosnippet>25</a><span class="attr">#[cfg(feature = <span class="string">"panel"</span>)]
 <a href=#26 id=26 data-nosnippet>26</a></span><span class="kw">pub use </span>panel::{
-<a href=#27 id=27 data-nosnippet>27</a>    PanelInitError, PanelRenderError, PanelRenderJob, PanelRenderPool, PanelRenderPoolDrain,
-<a href=#28 id=28 data-nosnippet>28</a>    PanelRenderPoolError, PanelRenderPoolJob, PanelRenderPoolSubmitError, PanelRenderer,
-<a href=#29 id=29 data-nosnippet>29</a>    PanelSubmitError, PanelWorkerError, PreparedPanelProtocol, PreparedPanelProtocolOnly,
-<a href=#30 id=30 data-nosnippet>30</a>    PreparedPanelRender, build_panel_protocol_from_rgba, build_panel_protocol_from_rgba_owned,
-<a href=#31 id=31 data-nosnippet>31</a>    render_panel_protocol,
-<a href=#32 id=32 data-nosnippet>32</a>};
-<a href=#33 id=33 data-nosnippet>33</a><span class="attr">#[cfg(any(feature = <span class="string">"panel"</span>, feature = <span class="string">"kitty"</span>))]
-<a href=#34 id=34 data-nosnippet>34</a></span><span class="kw">pub use </span>ratatui_image::picker::{Picker, ProtocolType};
-<a href=#35 id=35 data-nosnippet>35</a><span class="attr">#[cfg(feature = <span class="string">"panel"</span>)]
-<a href=#36 id=36 data-nosnippet>36</a></span><span class="kw">pub use </span>ratatui_image::{Resize, protocol::Protocol <span class="kw">as </span>PanelProtocol};
-<a href=#37 id=37 data-nosnippet>37</a><span class="attr">#[cfg(any(feature = <span class="string">"panel"</span>, feature = <span class="string">"kitty"</span>))]
-<a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">pub use </span>terminal::TerminalCapabilities;
-<a href=#39 id=39 data-nosnippet>39</a><span class="attr">#[cfg(feature = <span class="string">"terminal-detect"</span>)]
-<a href=#40 id=40 data-nosnippet>40</a></span><span class="kw">pub use </span>terminal::{TerminalDetectError, detect_terminal_background};
+<a href=#27 id=27 data-nosnippet>27</a>    PanelCompletion, PanelDrain, PanelInitError, PanelJob, PanelProtocolRenderError,
+<a href=#28 id=28 data-nosnippet>28</a>    PanelProtocolRequest, PanelSchedulePolicy, PanelScheduler, PanelSchedulerError,
+<a href=#29 id=29 data-nosnippet>29</a>    PanelSubmitError, PreparedPanelProtocol, PreparedPanelProtocolOnly,
+<a href=#30 id=30 data-nosnippet>30</a>    build_panel_protocol_from_rgba_owned, render_panel_protocol,
+<a href=#31 id=31 data-nosnippet>31</a>};
+<a href=#32 id=32 data-nosnippet>32</a><span class="attr">#[cfg(any(feature = <span class="string">"panel"</span>, feature = <span class="string">"kitty"</span>))]
+<a href=#33 id=33 data-nosnippet>33</a></span><span class="kw">pub use </span>ratatui_image::picker::{Picker, ProtocolType};
+<a href=#34 id=34 data-nosnippet>34</a><span class="attr">#[cfg(feature = <span class="string">"panel"</span>)]
+<a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">pub use </span>ratatui_image::{Resize, protocol::Protocol <span class="kw">as </span>PanelProtocol};
+<a href=#36 id=36 data-nosnippet>36</a><span class="attr">#[cfg(any(feature = <span class="string">"panel"</span>, feature = <span class="string">"kitty"</span>))]
+<a href=#37 id=37 data-nosnippet>37</a></span><span class="kw">pub use </span>terminal::TerminalCapabilities;
+<a href=#38 id=38 data-nosnippet>38</a><span class="attr">#[cfg(feature = <span class="string">"terminal-detect"</span>)]
+<a href=#39 id=39 data-nosnippet>39</a></span><span class="kw">pub use </span>terminal::{TerminalDetectError, detect_terminal_background};
 </code></pre></div></section></main></body></html>

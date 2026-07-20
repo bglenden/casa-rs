@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["CasarsError"],"fn":["run","run_with_app","run_with_cli_args"]};
+window.SIDEBAR_ITEMS = {"enum":["CasarsError"],"fn":["run","run_with_app","run_with_cli_args"],"mod":["browser_render","imagebrowser_runtime","movie","tablebrowser_runtime"]};
