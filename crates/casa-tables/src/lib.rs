@@ -243,7 +243,6 @@ mod schema;
 mod sorting;
 mod table;
 mod table_impl;
-mod tablebrowser;
 
 pub(crate) mod lock;
 pub(crate) mod storage;
@@ -282,4 +281,3 @@ pub use table::{
     TableCellMut, TableColumn, TableColumnMut, TableError, TableKind, TableOptions, TableRow,
     TableRowMut, TableWritePlan,
 };
-pub use tablebrowser::{LinkedTableRef, TableBrowser, TableBrowserError, TableBrowserView};

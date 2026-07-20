@@ -5,36 +5,51 @@ use ndarray::Array2;
 
 /// Timing breakdown for a single plane-raster build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct PlaneRenderTelemetry {
+pub struct PlaneRenderTelemetry {
+    /// Time spent reading and selecting the source plane.
     pub plane_extract_ns: u64,
+    /// Time spent collecting finite-value statistics.
     pub stat_collection_ns: u64,
+    /// Time spent constructing histogram data.
     pub histogram_ns: u64,
+    /// Time spent producing the output raster.
     pub rasterize_ns: u64,
+    /// Total plane-rendering time.
     pub total_plane_ns: u64,
 }
 
 /// Backend-controlled stretch preset for 2D plane rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum PlaneStretchPreset {
+pub enum PlaneStretchPreset {
+    /// Clip at the first and ninety-ninth percentiles.
     Percentile99,
+    /// Clip at the fifth and ninety-fifth percentiles.
     Percentile95,
+    /// Use the complete finite data range.
     MinMax,
+    /// Use a robust zscale-like range.
     ZScale,
+    /// Use caller-supplied clip bounds.
     Manual,
 }
 
 /// Autoscaling policy for plane rendering across cube stepping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum PlaneAutoscaleMode {
+pub enum PlaneAutoscaleMode {
+    /// Recompute clip bounds for each selected plane.
     PerPlane,
+    /// Reuse frozen clip bounds across plane changes.
     Frozen,
 }
 
 /// Normalized plane stretch settings applied by the image browser backend.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PlaneStretchSettings {
+pub struct PlaneStretchSettings {
+    /// Stretch algorithm.
     pub preset: PlaneStretchPreset,
+    /// Per-plane or frozen autoscaling behavior.
     pub autoscale: PlaneAutoscaleMode,
+    /// Manual clip bounds when `preset` is [`PlaneStretchPreset::Manual`].
     pub manual_clip: Option<(f64, f64)>,
 }
 

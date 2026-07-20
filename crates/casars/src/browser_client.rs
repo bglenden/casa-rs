@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::io::{BufRead, BufReader, Write};
+use std::marker::PhantomData;
 use std::process::{Child, ChildStdin, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use casa_provider_contracts::{VersionedSessionEnvelope, encode_session_message};
 use casars_imagebrowser_protocol::{
     ImageBrowserCommand, ImageBrowserPreviewPayload, ImageBrowserRequestEnvelope,
     ImageBrowserResponse, ImageBrowserResponseEnvelope, ImageBrowserSnapshot,
+    PROTOCOL_VERSION as IMAGE_BROWSER_PROTOCOL_VERSION,
 };
 use casars_tablebrowser_protocol::{
     BrowserCommand, BrowserRequestEnvelope, BrowserResponse, BrowserResponseEnvelope,
-    BrowserSnapshot,
+    BrowserSnapshot, PROTOCOL_VERSION as TABLE_BROWSER_PROTOCOL_VERSION,
 };
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::registry::ResolvedCommand;
 
@@ -22,35 +27,129 @@ const DEFAULT_STARTUP_TIMEOUT_MS: u64 = 120_000;
 
 #[derive(Debug, Clone)]
 pub(crate) enum SessionRequestError {
-    Backend(String),
+    Provider { code: String, message: String },
+    Serialization(String),
+    MalformedResponse(String),
+    ProtocolVersion { expected: u32, actual: u32 },
+    UnexpectedResponse(String),
+    Timeout(String),
+    ProcessExit(String),
+    Configuration(String),
     Transport(String),
 }
 
 impl SessionRequestError {
     pub(crate) fn message(&self) -> &str {
         match self {
-            Self::Backend(message) | Self::Transport(message) => message,
+            Self::Provider { message, .. }
+            | Self::Serialization(message)
+            | Self::MalformedResponse(message)
+            | Self::UnexpectedResponse(message)
+            | Self::Timeout(message)
+            | Self::ProcessExit(message)
+            | Self::Configuration(message)
+            | Self::Transport(message) => message,
+            Self::ProtocolVersion { .. } => "session protocol version mismatch",
         }
     }
 
     pub(crate) fn is_transport(&self) -> bool {
-        matches!(self, Self::Transport(_))
+        !matches!(self, Self::Provider { .. })
     }
 
     #[cfg(test)]
     fn contains(&self, needle: &str) -> bool {
-        self.message().contains(needle)
+        self.to_string().contains(needle)
+    }
+}
+
+impl std::fmt::Display for SessionRequestError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Provider { code, message } => write!(formatter, "{code}: {message}"),
+            Self::MalformedResponse(message) => {
+                write!(formatter, "invalid_response: {message}")
+            }
+            Self::ProtocolVersion { expected, actual } => write!(
+                formatter,
+                "session protocol version mismatch: expected {expected}, received {actual}"
+            ),
+            _ => formatter.write_str(self.message()),
+        }
+    }
+}
+
+impl std::error::Error for SessionRequestError {}
+
+pub(crate) trait JsonlSessionProtocol {
+    type Command;
+    type Request: Serialize;
+    type Response: DeserializeOwned + VersionedSessionEnvelope;
+
+    const NAME: &'static str;
+    const VERSION: u32;
+
+    fn request(command: Self::Command) -> Self::Request;
+}
+
+#[derive(Debug)]
+pub(crate) struct TableBrowserProtocol;
+
+#[derive(Debug)]
+pub(crate) struct ImageBrowserProtocol;
+
+impl JsonlSessionProtocol for TableBrowserProtocol {
+    type Command = BrowserCommand;
+    type Request = BrowserRequestEnvelope;
+    type Response = BrowserResponseEnvelope;
+
+    const NAME: &'static str = "tablebrowser";
+    const VERSION: u32 = TABLE_BROWSER_PROTOCOL_VERSION;
+
+    fn request(command: Self::Command) -> Self::Request {
+        BrowserRequestEnvelope::new(command)
+    }
+}
+
+impl JsonlSessionProtocol for ImageBrowserProtocol {
+    type Command = ImageBrowserCommand;
+    type Request = ImageBrowserRequestEnvelope;
+    type Response = ImageBrowserResponseEnvelope;
+
+    const NAME: &'static str = "imexplore";
+    const VERSION: u32 = IMAGE_BROWSER_PROTOCOL_VERSION;
+
+    fn request(command: Self::Command) -> Self::Request {
+        ImageBrowserRequestEnvelope::new(command)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SessionTimeouts {
+    request: Duration,
+    startup: Duration,
+}
+
+impl SessionTimeouts {
+    fn from_env() -> Result<Self, SessionRequestError> {
+        Ok(Self {
+            request: duration_from_env(
+                "CASARS_BROWSER_REQUEST_TIMEOUT_MS",
+                DEFAULT_REQUEST_TIMEOUT_MS,
+            )?,
+            startup: duration_from_env(
+                "CASARS_BROWSER_STARTUP_TIMEOUT_MS",
+                DEFAULT_STARTUP_TIMEOUT_MS,
+            )?,
+        })
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct BrowserClient {
+pub(crate) struct JsonlSessionClient<P> {
     process: SessionProcessClient,
-}
-
-#[derive(Debug)]
-pub(crate) struct ImageBrowserClient {
-    process: SessionProcessClient,
+    timeouts: SessionTimeouts,
+    protocol: PhantomData<P>,
 }
 
 #[derive(Debug)]
@@ -63,7 +162,7 @@ struct SessionProcessClient {
 }
 
 impl SessionProcessClient {
-    fn spawn(command: &ResolvedCommand, session_name: &str) -> Result<Self, String> {
+    fn spawn(command: &ResolvedCommand, session_name: &str) -> Result<Self, SessionRequestError> {
         let mut process = command.command();
         process
             .arg("--session")
@@ -71,21 +170,22 @@ impl SessionProcessClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = process
-            .spawn()
-            .map_err(|error| format!("spawn {session_name} session: {error}"))?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| format!("{session_name} session stdin was not captured"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| format!("{session_name} session stdout was not captured"))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| format!("{session_name} session stderr was not captured"))?;
+        let mut child = process.spawn().map_err(|error| {
+            SessionRequestError::Transport(format!("spawn {session_name} session: {error}"))
+        })?;
+        let stdin = child.stdin.take().ok_or_else(|| {
+            SessionRequestError::Transport(format!("{session_name} session stdin was not captured"))
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            SessionRequestError::Transport(format!(
+                "{session_name} session stdout was not captured"
+            ))
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            SessionRequestError::Transport(format!(
+                "{session_name} session stderr was not captured"
+            ))
+        })?;
 
         let child = Arc::new(Mutex::new(child));
         let stdin = Arc::new(Mutex::new(stdin));
@@ -137,17 +237,18 @@ impl SessionProcessClient {
         payload: &str,
         timeout: Duration,
         session_name: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, SessionRequestError> {
         {
-            let mut stdin = self
-                .stdin
-                .lock()
-                .map_err(|_| "failed to acquire browser stdin lock".to_string())?;
+            let mut stdin = self.stdin.lock().map_err(|_| {
+                SessionRequestError::Transport("failed to acquire browser stdin lock".to_string())
+            })?;
             stdin
                 .write_all(payload.as_bytes())
                 .and_then(|_| stdin.write_all(b"\n"))
                 .and_then(|_| stdin.flush())
-                .map_err(|error| format!("write {session_name} request: {error}"))?;
+                .map_err(|error| {
+                    SessionRequestError::Transport(format!("write {session_name} request: {error}"))
+                })?;
         }
 
         self.responses
@@ -155,19 +256,19 @@ impl SessionProcessClient {
             .map_err(|error| match error {
                 RecvTimeoutError::Timeout => {
                     let _ = self.terminate_and_wait();
-                    format_browser_failure(
+                    SessionRequestError::Timeout(format_browser_failure(
                         &format!("timed out waiting for {session_name} response"),
                         self.stderr_text_after_drain(),
                         None,
-                    )
+                    ))
                 }
                 RecvTimeoutError::Disconnected => {
                     let status = self.reap_exit_status();
-                    format_browser_failure(
+                    SessionRequestError::ProcessExit(format_browser_failure(
                         &format!("{session_name} session exited"),
                         self.stderr_text_after_drain(),
                         status,
-                    )
+                    ))
                 }
             })
     }
@@ -214,37 +315,24 @@ impl SessionProcessClient {
     }
 }
 
-impl Drop for BrowserClient {
+impl<P> Drop for JsonlSessionClient<P> {
     fn drop(&mut self) {
         let _ = self.process.terminate_and_wait();
     }
 }
 
-impl Drop for ImageBrowserClient {
-    fn drop(&mut self) {
-        let _ = self.process.terminate_and_wait();
-    }
-}
-
-impl BrowserClient {
-    pub(crate) fn spawn(command: &ResolvedCommand) -> Result<Self, String> {
+impl<P> JsonlSessionClient<P>
+where
+    P: JsonlSessionProtocol,
+{
+    pub(crate) fn spawn(command: &ResolvedCommand) -> Result<Self, SessionRequestError> {
+        let timeouts = SessionTimeouts::from_env()?;
+        let process = SessionProcessClient::spawn(command, P::NAME)?;
         Ok(Self {
-            process: SessionProcessClient::spawn(command, "tablebrowser")?,
+            process,
+            timeouts,
+            protocol: PhantomData,
         })
-    }
-
-    pub(crate) fn request(
-        &self,
-        command: BrowserCommand,
-    ) -> Result<BrowserSnapshot, SessionRequestError> {
-        self.request_with_timeout(command, request_timeout())
-    }
-
-    pub(crate) fn request_startup(
-        &self,
-        command: BrowserCommand,
-    ) -> Result<BrowserSnapshot, SessionRequestError> {
-        self.request_with_timeout(command, startup_timeout())
     }
 
     pub(crate) fn cancel(&self) -> Result<(), String> {
@@ -256,11 +344,53 @@ impl BrowserClient {
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn for_test() -> Self {
         Self {
-            process: SessionProcessClient::spawn_stub("tablebrowser"),
+            process: SessionProcessClient::spawn_stub(P::NAME),
+            timeouts: SessionTimeouts {
+                request: Duration::from_millis(DEFAULT_REQUEST_TIMEOUT_MS),
+                startup: Duration::from_millis(DEFAULT_STARTUP_TIMEOUT_MS),
+            },
+            protocol: PhantomData,
         }
+    }
+
+    fn exchange(
+        &self,
+        command: P::Command,
+        timeout: Duration,
+    ) -> Result<P::Response, SessionRequestError> {
+        let payload = encode_session_message(&P::request(command)).map_err(|error| {
+            SessionRequestError::Serialization(format!("serialize {} request: {error}", P::NAME))
+        })?;
+        let line = self.process.request_raw(&payload, timeout, P::NAME)?;
+        let response = serde_json::from_str::<P::Response>(&line).map_err(|error| {
+            SessionRequestError::MalformedResponse(format!("parse {} response: {error}", P::NAME))
+        })?;
+        let actual = response.protocol_version();
+        if actual != P::VERSION {
+            return Err(SessionRequestError::ProtocolVersion {
+                expected: P::VERSION,
+                actual,
+            });
+        }
+        Ok(response)
+    }
+}
+
+impl JsonlSessionClient<TableBrowserProtocol> {
+    pub(crate) fn request(
+        &self,
+        command: BrowserCommand,
+    ) -> Result<BrowserSnapshot, SessionRequestError> {
+        self.request_with_timeout(command, self.timeouts.request)
+    }
+
+    pub(crate) fn request_startup(
+        &self,
+        command: BrowserCommand,
+    ) -> Result<BrowserSnapshot, SessionRequestError> {
+        self.request_with_timeout(command, self.timeouts.startup)
     }
 
     fn request_with_timeout(
@@ -268,72 +398,37 @@ impl BrowserClient {
         command: BrowserCommand,
         timeout: Duration,
     ) -> Result<BrowserSnapshot, SessionRequestError> {
-        let payload =
-            serde_json::to_string(&BrowserRequestEnvelope::new(command)).map_err(|error| {
-                SessionRequestError::Transport(format!("serialize tablebrowser request: {error}"))
-            })?;
-        let line = self
-            .process
-            .request_raw(&payload, timeout, "tablebrowser")
-            .map_err(SessionRequestError::Transport)?;
-        let response =
-            serde_json::from_str::<BrowserResponseEnvelope>(&line).unwrap_or_else(|error| {
-                BrowserResponseEnvelope::error(
-                    "invalid_response",
-                    format!("parse browser response: {error}"),
-                )
-            });
+        let response = self.exchange(command, timeout)?;
         match response.response {
             BrowserResponse::Snapshot(snapshot) => Ok(*snapshot),
-            BrowserResponse::Error(error) => Err(SessionRequestError::Backend(format!(
-                "{}: {}",
-                error.code, error.message
-            ))),
+            BrowserResponse::Error(error) => Err(SessionRequestError::Provider {
+                code: error.code,
+                message: error.message,
+            }),
         }
     }
 }
 
-impl ImageBrowserClient {
-    pub(crate) fn spawn(command: &ResolvedCommand) -> Result<Self, String> {
-        Ok(Self {
-            process: SessionProcessClient::spawn(command, "imexplore")?,
-        })
-    }
-
+impl JsonlSessionClient<ImageBrowserProtocol> {
     pub(crate) fn request(
         &self,
         command: ImageBrowserCommand,
     ) -> Result<ImageBrowserSnapshot, SessionRequestError> {
-        self.request_with_timeout(command, request_timeout())
+        self.request_with_timeout(command, self.timeouts.request)
     }
 
     pub(crate) fn request_startup(
         &self,
         command: ImageBrowserCommand,
     ) -> Result<ImageBrowserSnapshot, SessionRequestError> {
-        self.request_with_timeout(command, startup_timeout())
+        self.request_with_timeout(command, self.timeouts.startup)
     }
 
     pub(crate) fn request_preview(
         &self,
         command: ImageBrowserCommand,
     ) -> Result<ImageBrowserPreviewPayload, SessionRequestError> {
-        self.request_preview_with_timeout(command, request_timeout())
-    }
-
-    pub(crate) fn cancel(&self) -> Result<(), String> {
-        self.process.cancel()
-    }
-
-    pub(crate) fn stderr_text(&self) -> String {
-        self.process.stderr_text()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test() -> Self {
-        Self {
-            process: SessionProcessClient::spawn_stub("imexplore"),
-        }
+        self.request_preview_with_timeout(command, self.timeouts.request)
     }
 
     fn request_with_timeout(
@@ -341,30 +436,16 @@ impl ImageBrowserClient {
         command: ImageBrowserCommand,
         timeout: Duration,
     ) -> Result<ImageBrowserSnapshot, SessionRequestError> {
-        let payload =
-            serde_json::to_string(&ImageBrowserRequestEnvelope::new(command)).map_err(|error| {
-                SessionRequestError::Transport(format!("serialize imexplore request: {error}"))
-            })?;
-        let line = self
-            .process
-            .request_raw(&payload, timeout, "imexplore")
-            .map_err(SessionRequestError::Transport)?;
-        let response =
-            serde_json::from_str::<ImageBrowserResponseEnvelope>(&line).unwrap_or_else(|error| {
-                ImageBrowserResponseEnvelope::error(
-                    "invalid_response",
-                    format!("parse imexplore response: {error}"),
-                )
-            });
+        let response = self.exchange(command, timeout)?;
         match response.response {
             ImageBrowserResponse::Snapshot(snapshot) => Ok(*snapshot),
-            ImageBrowserResponse::Preview(_) => Err(SessionRequestError::Transport(
-                "unexpected imexplore preview response".to_string(),
+            ImageBrowserResponse::Preview(_) => Err(SessionRequestError::UnexpectedResponse(
+                "unexpected imexplore preview response for snapshot request".to_string(),
             )),
-            ImageBrowserResponse::Error(error) => Err(SessionRequestError::Backend(format!(
-                "{}: {}",
-                error.code, error.message
-            ))),
+            ImageBrowserResponse::Error(error) => Err(SessionRequestError::Provider {
+                code: error.code,
+                message: error.message,
+            }),
         }
     }
 
@@ -373,31 +454,16 @@ impl ImageBrowserClient {
         command: ImageBrowserCommand,
         timeout: Duration,
     ) -> Result<ImageBrowserPreviewPayload, SessionRequestError> {
-        let payload =
-            serde_json::to_string(&ImageBrowserRequestEnvelope::new(command)).map_err(|error| {
-                SessionRequestError::Transport(format!("serialize imexplore request: {error}"))
-            })?;
-        let line = self
-            .process
-            .request_raw(&payload, timeout, "imexplore")
-            .map_err(SessionRequestError::Transport)?;
-        let response =
-            serde_json::from_str::<ImageBrowserResponseEnvelope>(&line).unwrap_or_else(|error| {
-                ImageBrowserResponseEnvelope::error(
-                    "invalid_response",
-                    format!("parse imexplore response: {error}"),
-                )
-            });
+        let response = self.exchange(command, timeout)?;
         match response.response {
             ImageBrowserResponse::Preview(preview) => Ok(*preview),
-            ImageBrowserResponse::Snapshot(snapshot) => Ok(ImageBrowserPreviewPayload {
-                non_display_indices: Vec::new(),
-                snapshot,
+            ImageBrowserResponse::Snapshot(_) => Err(SessionRequestError::UnexpectedResponse(
+                "unexpected imexplore snapshot response for preview request".to_string(),
+            )),
+            ImageBrowserResponse::Error(error) => Err(SessionRequestError::Provider {
+                code: error.code,
+                message: error.message,
             }),
-            ImageBrowserResponse::Error(error) => Err(SessionRequestError::Backend(format!(
-                "{}: {}",
-                error.code, error.message
-            ))),
         }
     }
 }
@@ -470,27 +536,24 @@ impl SessionProcessClient {
     }
 }
 
-fn request_timeout() -> Duration {
-    duration_from_env(
-        "CASARS_BROWSER_REQUEST_TIMEOUT_MS",
-        DEFAULT_REQUEST_TIMEOUT_MS,
-    )
-}
-
-fn startup_timeout() -> Duration {
-    duration_from_env(
-        "CASARS_BROWSER_STARTUP_TIMEOUT_MS",
-        DEFAULT_STARTUP_TIMEOUT_MS,
-    )
-}
-
-fn duration_from_env(name: &str, default_ms: u64) -> Duration {
-    let millis = std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default_ms);
-    Duration::from_millis(millis)
+fn duration_from_env(name: &str, default_ms: u64) -> Result<Duration, SessionRequestError> {
+    let Some(value) = std::env::var_os(name) else {
+        return Ok(Duration::from_millis(default_ms));
+    };
+    let text = value.into_string().map_err(|_| {
+        SessionRequestError::Configuration(format!(
+            "{name} must contain a positive UTF-8 integer number of milliseconds"
+        ))
+    })?;
+    let millis = text.parse::<u64>().map_err(|error| {
+        SessionRequestError::Configuration(format!("invalid {name} value {text:?}: {error}"))
+    })?;
+    if millis == 0 {
+        return Err(SessionRequestError::Configuration(format!(
+            "invalid {name} value {text:?}: timeout must be positive"
+        )));
+    }
+    Ok(Duration::from_millis(millis))
 }
 
 fn format_browser_failure(prefix: &str, stderr: String, status: Option<ExitStatus>) -> String {
@@ -560,8 +623,54 @@ mod tests {
         let error = client
             .request(BrowserCommand::GetSnapshot { viewport: None })
             .expect_err("invalid response should fail");
-        assert!(error.contains("invalid_response"));
-        assert!(error.contains("parse browser response"));
+        assert!(matches!(error, SessionRequestError::MalformedResponse(_)));
+        assert!(error.contains("parse tablebrowser response"));
+    }
+
+    #[test]
+    fn response_version_mismatch_is_distinct_from_provider_errors() {
+        let _guard = crate::test_env_lock();
+        let temp = tempdir().expect("tempdir");
+        let mut response =
+            serde_json::to_value(BrowserResponseEnvelope::snapshot(empty_browser_snapshot()))
+                .expect("serialize response");
+        response["version"] = serde_json::json!(TABLE_BROWSER_PROTOCOL_VERSION + 1);
+        let script = write_browser_script(
+            temp.path(),
+            &format!(
+                "#!/bin/sh\nwhile IFS= read -r _line; do\n  printf '%s\\n' '{}'\ndone\n",
+                serde_json::to_string(&response).expect("encode response")
+            ),
+        );
+        let client = spawn_test_browser(script);
+
+        let error = client
+            .request(BrowserCommand::GetSnapshot { viewport: None })
+            .expect_err("version mismatch should fail");
+        assert!(matches!(
+            error,
+            SessionRequestError::ProtocolVersion {
+                expected: TABLE_BROWSER_PROTOCOL_VERSION,
+                actual
+            } if actual == TABLE_BROWSER_PROTOCOL_VERSION + 1
+        ));
+    }
+
+    #[test]
+    fn invalid_timeout_configuration_is_rejected_before_spawn() {
+        let _guard = crate::test_env_lock();
+        unsafe {
+            std::env::set_var("CASARS_BROWSER_REQUEST_TIMEOUT_MS", "not-a-duration");
+        }
+        let result = JsonlSessionClient::<TableBrowserProtocol>::spawn(&ResolvedCommand::direct(
+            PathBuf::from("/usr/bin/true"),
+        ));
+        unsafe {
+            std::env::remove_var("CASARS_BROWSER_REQUEST_TIMEOUT_MS");
+        }
+        let error = result.expect_err("invalid timeout must fail");
+        assert!(matches!(error, SessionRequestError::Configuration(_)));
+        assert!(error.contains("CASARS_BROWSER_REQUEST_TIMEOUT_MS"));
     }
 
     #[test]
@@ -586,7 +695,19 @@ mod tests {
     }
 
     fn write_slow_browser_script(root: &Path, delay_ms: u64) -> PathBuf {
-        let response = serde_json::to_string(&BrowserResponseEnvelope::snapshot(BrowserSnapshot {
+        let response =
+            serde_json::to_string(&BrowserResponseEnvelope::snapshot(empty_browser_snapshot()))
+                .expect("serialize snapshot");
+        let script = format!(
+            "#!/bin/sh\nwhile IFS= read -r line; do\n  sleep {}\n  printf '%s\\n' '{}'\ndone\n",
+            delay_ms as f64 / 1000.0,
+            response
+        );
+        write_browser_script(root, &script)
+    }
+
+    fn empty_browser_snapshot() -> BrowserSnapshot {
+        BrowserSnapshot {
             capabilities: casars_tablebrowser_protocol::BrowserCapabilities { editable: false },
             view: casars_tablebrowser_protocol::BrowserView::Overview,
             parameters: casars_tablebrowser_protocol::BrowserParameters::default(),
@@ -600,19 +721,14 @@ mod tests {
             horizontal_metrics: None,
             selected_address: None,
             inspector: None,
-        }))
-        .expect("serialize snapshot");
-        let script = format!(
-            "#!/bin/sh\nwhile IFS= read -r line; do\n  sleep {}\n  printf '%s\\n' '{}'\ndone\n",
-            delay_ms as f64 / 1000.0,
-            response
-        );
-        write_browser_script(root, &script)
+        }
     }
 
-    fn spawn_test_browser(script: PathBuf) -> BrowserClient {
+    fn spawn_test_browser(script: PathBuf) -> JsonlSessionClient<TableBrowserProtocol> {
         for attempt in 0..3 {
-            match BrowserClient::spawn(&ResolvedCommand::direct(script.clone())) {
+            match JsonlSessionClient::<TableBrowserProtocol>::spawn(&ResolvedCommand::direct(
+                script.clone(),
+            )) {
                 Ok(client) => return client,
                 Err(error) if error.contains("Text file busy") && attempt < 2 => {
                     thread::sleep(Duration::from_millis(10));

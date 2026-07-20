@@ -25,9 +25,10 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 use ratatui_graphics::{
-    ImageLayers, KittyLayerHandle, KittyLayerManager, KittyPlacement, PanelRenderer, Picker,
+    ImageLayers, KittyLayerHandle, KittyLayerManager, KittyPlacement, PanelProtocolRenderError,
+    PanelProtocolRequest, PanelSchedulePolicy, PanelScheduler, Picker, PreparedPanelProtocol,
     Resize, TerminalCapabilities, apply_opacity, fit_pixels_preserving_aspect,
-    prepare_image_layers,
+    prepare_image_layers, render_panel_protocol,
 };
 use ratatui_image::Image as PanelImage;
 
@@ -38,6 +39,11 @@ use common::{
 };
 
 const DEFAULT_PANEL_WIDTH: u16 = 42;
+type PlotPanelScheduler = PanelScheduler<
+    PanelProtocolRequest<ScientificPlotTheme>,
+    PreparedPanelProtocol,
+    PanelProtocolRenderError<anyhow::Error>,
+>;
 const MIN_PANEL_WIDTH: u16 = 26;
 const MIN_MAIN_WIDTH: u16 = 40;
 const IDLE_POLL_INTERVAL_MS: u64 = 16;
@@ -96,10 +102,15 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     loop {
         let changed = app
             .panel_renderer
-            .pump()
+            .pump_latest(1)
             .map_err(|err| anyhow::anyhow!(err.to_string()))?;
         if changed {
-            app.panel_pixels = app.panel_renderer.image_size();
+            app.panel_pixels = app.panel_renderer.latest().map(|completion| {
+                (
+                    completion.output.image_width,
+                    completion.output.image_height,
+                )
+            });
         }
 
         terminal.draw(|frame| app.draw(frame))?;
@@ -163,7 +174,7 @@ struct App {
     plot_background_preset: PlotBackgroundPreset,
     plot_theme: ScientificPlotTheme,
     direct_plot_layers: ImageLayers,
-    panel_renderer: PanelRenderer<ScientificPlotTheme, anyhow::Error>,
+    panel_renderer: PlotPanelScheduler,
     panel_request_key: Option<PanelRequestKey>,
     desired_panel_area: Rect,
     panel_pixels: Option<(u32, u32)>,
@@ -191,14 +202,17 @@ impl App {
         plot_theme: ScientificPlotTheme,
         direct_plot_layers: ImageLayers,
     ) -> Result<Self> {
-        let panel_renderer = PanelRenderer::new(picker.clone(), Resize::Fit(None), |job| {
-            let (pixel_width, pixel_height) = fit_pixels_preserving_aspect(
-                job.max_pixel_width,
-                job.max_pixel_height,
-                PLOT_ASPECT_WIDTH,
-                PLOT_ASPECT_HEIGHT,
-            )?;
-            render_scientific_plot(pixel_width.max(1), pixel_height.max(1), job.input)
+        let worker_picker = picker.clone();
+        let panel_renderer = PanelScheduler::new(PanelSchedulePolicy::LatestWins, move |job| {
+            render_panel_protocol(&worker_picker, Resize::Fit(None), job, |request| {
+                let (pixel_width, pixel_height) = fit_pixels_preserving_aspect(
+                    request.max_pixel_width,
+                    request.max_pixel_height,
+                    PLOT_ASPECT_WIDTH,
+                    PLOT_ASPECT_HEIGHT,
+                )?;
+                render_scientific_plot(pixel_width.max(1), pixel_height.max(1), request.input)
+            })
         })?;
 
         let terminal_label = env::var("TERM_PROGRAM")
@@ -263,12 +277,16 @@ impl App {
         }
 
         if !layout.panel_inner.is_empty() {
-            if let Some(protocol) = self.panel_renderer.protocol() {
+            let protocol = self
+                .panel_renderer
+                .latest()
+                .and_then(|completion| completion.output.protocol.as_ref());
+            if let Some(protocol) = protocol {
                 let image_area = center_rect(layout.panel_inner, protocol.area());
                 frame.render_widget(PanelImage::new(protocol), image_area);
             }
 
-            if self.panel_renderer.is_pending() && self.panel_renderer.protocol().is_none() {
+            if self.panel_renderer.is_pending() && protocol.is_none() {
                 let pending =
                     Paragraph::new("Rendering plot...").style(Style::default().fg(Color::DarkGray));
                 frame.render_widget(pending, layout.panel_inner);
@@ -291,11 +309,16 @@ impl App {
         }
 
         let font_size = self.picker.font_size();
-        self.panel_renderer.request(
-            area,
-            u32::from(area.width) * u32::from(font_size.0),
-            u32::from(area.height) * u32::from(font_size.1),
-            self.plot_theme,
+        self.panel_renderer.submit(
+            1,
+            0,
+            PanelProtocolRequest {
+                area,
+                max_pixel_width: u32::from(area.width) * u32::from(font_size.0),
+                max_pixel_height: u32::from(area.height) * u32::from(font_size.1),
+                build_protocol: true,
+                input: self.plot_theme,
+            },
         )?;
         self.panel_request_key = Some(request_key);
         Ok(())

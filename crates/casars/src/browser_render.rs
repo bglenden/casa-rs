@@ -86,6 +86,96 @@ pub struct ImageSpectrumRenderInput {
     pub theme_mode: BrowserRenderTheme,
 }
 
+impl ImagePlaneRenderInput {
+    /// Bytes owned by a clone of this render input, excluding allocator metadata.
+    ///
+    /// Movie jobs clone these inputs, so their vector and string allocations are
+    /// part of the in-flight frame budget even though they are not output pixels.
+    pub(crate) fn cloned_owned_bytes(&self) -> u64 {
+        let mut bytes = std::mem::size_of::<Self>() as u64;
+        bytes = bytes.saturating_add(self.raster.pixels_u8.len() as u64);
+        bytes = bytes
+            .saturating_add((self.raster.histogram_bins.len() * std::mem::size_of::<u32>()) as u64);
+        bytes = bytes.saturating_add(self.raster.value_unit.len() as u64);
+        bytes = bytes.saturating_add(
+            self.plane_label
+                .as_ref()
+                .map_or(0, |label| label.len() as u64),
+        );
+        bytes = bytes.saturating_add(
+            (self.display_axes.len() * std::mem::size_of::<ImageDisplayAxisState>()) as u64,
+        );
+        for axis in &self.display_axes {
+            bytes = bytes.saturating_add((axis.name.len() + axis.unit.len()) as u64);
+        }
+        if let Some(probe) = &self.probe {
+            bytes = bytes
+                .saturating_add((probe.pixel_indices.len() * std::mem::size_of::<usize>()) as u64);
+            bytes = bytes.saturating_add(axis_values_owned_bytes(&probe.pixel_axes));
+            bytes = bytes.saturating_add(axis_values_owned_bytes(&probe.world_axes));
+        }
+        bytes = bytes.saturating_add(
+            (self.overlay_markers.len() * std::mem::size_of::<ImagePlaneOverlayMarker>()) as u64,
+        );
+        bytes = bytes.saturating_add(
+            (self.region_overlay_shapes.len() * std::mem::size_of::<ImageRegionOverlayShapeState>())
+                as u64,
+        );
+        for shape in &self.region_overlay_shapes {
+            bytes = bytes.saturating_add(
+                (shape.vertices.len()
+                    * std::mem::size_of::<casars_imagebrowser_protocol::ImageRegionOverlayVertex>())
+                    as u64,
+            );
+        }
+        bytes
+    }
+}
+
+impl ImageSpectrumRenderInput {
+    /// Bytes owned by a clone of this render input, excluding allocator metadata.
+    pub(crate) fn cloned_owned_bytes(&self) -> u64 {
+        let mut bytes =
+            (std::mem::size_of::<Self>() as u64).saturating_add(profile_owned_bytes(&self.profile));
+        bytes = bytes.saturating_add(
+            (self.overlay_profiles.len() * std::mem::size_of::<ImageSpectrumOverlaySeries>())
+                as u64,
+        );
+        for overlay in &self.overlay_profiles {
+            bytes = bytes
+                .saturating_add(overlay.label.len() as u64)
+                .saturating_add(profile_owned_bytes(&overlay.profile));
+        }
+        bytes
+    }
+}
+
+fn axis_values_owned_bytes(axes: &[casars_imagebrowser_protocol::ImageBrowserAxisValue]) -> u64 {
+    let mut bytes = std::mem::size_of_val(axes) as u64;
+    for axis in axes {
+        bytes = bytes.saturating_add((axis.name.len() + axis.unit.len()) as u64);
+    }
+    bytes
+}
+
+fn profile_owned_bytes(profile: &ImageProfilePayload) -> u64 {
+    let mut bytes = (profile.axis_name.len()
+        + profile.axis_unit.len()
+        + profile.value_unit.len()
+        + profile.coord_type.len()) as u64;
+    bytes = bytes.saturating_add(
+        (profile.samples.len()
+            * std::mem::size_of::<casars_imagebrowser_protocol::ImageProfileSampleState>())
+            as u64,
+    );
+    for sample in &profile.samples {
+        if let Some(axis) = &sample.world_axis {
+            bytes = bytes.saturating_add((axis.name.len() + axis.unit.len()) as u64);
+        }
+    }
+    bytes
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImagePlaneColormap {
     Grayscale,

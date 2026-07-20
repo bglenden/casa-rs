@@ -19,7 +19,10 @@ use ratatui::{
     style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
 };
-use ratatui_graphics::{PanelRenderer, Picker, Resize, fit_pixels_preserving_aspect};
+use ratatui_graphics::{
+    PanelProtocolRenderError, PanelProtocolRequest, PanelSchedulePolicy, PanelScheduler, Picker,
+    PreparedPanelProtocol, Resize, fit_pixels_preserving_aspect, render_panel_protocol,
+};
 use ratatui_image::Image as PanelImage;
 
 use common::{
@@ -28,6 +31,11 @@ use common::{
 };
 
 const POLL_INTERVAL_MS: u64 = 16;
+type PlotPanelScheduler = PanelScheduler<
+    PanelProtocolRequest<ScientificPlotTheme>,
+    PreparedPanelProtocol,
+    PanelProtocolRenderError<anyhow::Error>,
+>;
 
 fn main() -> Result<()> {
     let mut terminal = init_terminal()?;
@@ -65,10 +73,15 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     loop {
         let changed = app
             .panel_renderer
-            .pump()
+            .pump_latest(1)
             .map_err(|err| anyhow::anyhow!(err.to_string()))?;
         if changed {
-            app.panel_pixels = app.panel_renderer.image_size();
+            app.panel_pixels = app.panel_renderer.latest().map(|completion| {
+                (
+                    completion.output.image_width,
+                    completion.output.image_height,
+                )
+            });
         }
 
         terminal.draw(|frame| app.draw(frame))?;
@@ -98,7 +111,7 @@ struct PanelRequestKey {
 struct App {
     picker: Picker,
     theme: ScientificPlotTheme,
-    panel_renderer: PanelRenderer<ScientificPlotTheme, anyhow::Error>,
+    panel_renderer: PlotPanelScheduler,
     desired_panel_area: Rect,
     panel_request_key: Option<PanelRequestKey>,
     panel_pixels: Option<(u32, u32)>,
@@ -106,14 +119,17 @@ struct App {
 
 impl App {
     fn new(picker: Picker, theme: ScientificPlotTheme) -> Result<Self> {
-        let panel_renderer = PanelRenderer::new(picker.clone(), Resize::Fit(None), |job| {
-            let (pixel_width, pixel_height) = fit_pixels_preserving_aspect(
-                job.max_pixel_width,
-                job.max_pixel_height,
-                PLOT_ASPECT_WIDTH,
-                PLOT_ASPECT_HEIGHT,
-            )?;
-            render_scientific_plot(pixel_width.max(1), pixel_height.max(1), job.input)
+        let worker_picker = picker.clone();
+        let panel_renderer = PanelScheduler::new(PanelSchedulePolicy::LatestWins, move |job| {
+            render_panel_protocol(&worker_picker, Resize::Fit(None), job, |request| {
+                let (pixel_width, pixel_height) = fit_pixels_preserving_aspect(
+                    request.max_pixel_width,
+                    request.max_pixel_height,
+                    PLOT_ASPECT_WIDTH,
+                    PLOT_ASPECT_HEIGHT,
+                )?;
+                render_scientific_plot(pixel_width.max(1), pixel_height.max(1), request.input)
+            })
         })?;
 
         Ok(Self {
@@ -137,7 +153,7 @@ impl App {
             .split(frame.area());
 
         let header = Paragraph::new(
-            "Panel-only example: the plot is rendered into a ratatui-defined panel via PanelRenderer.\nResize the terminal to request a new plot raster. Press q to exit.",
+            "Panel-only example: the plot is rendered into a ratatui-defined panel via PanelScheduler.\nResize the terminal to request a new plot raster. Press q to exit.",
         )
         .block(
             Block::default()
@@ -156,7 +172,11 @@ impl App {
         frame.render_widget(panel_block, layout[1]);
 
         if !panel_inner.is_empty() {
-            if let Some(protocol) = self.panel_renderer.protocol() {
+            if let Some(protocol) = self
+                .panel_renderer
+                .latest()
+                .and_then(|completion| completion.output.protocol.as_ref())
+            {
                 let image_area = center_rect(panel_inner, protocol.area());
                 frame.render_widget(PanelImage::new(protocol), image_area);
             } else if self.panel_renderer.is_pending() {
@@ -199,11 +219,16 @@ impl App {
         }
 
         let font_size = self.picker.font_size();
-        self.panel_renderer.request(
-            area,
-            u32::from(area.width) * u32::from(font_size.0),
-            u32::from(area.height) * u32::from(font_size.1),
-            self.theme,
+        self.panel_renderer.submit(
+            1,
+            0,
+            PanelProtocolRequest {
+                area,
+                max_pixel_width: u32::from(area.width) * u32::from(font_size.0),
+                max_pixel_height: u32::from(area.height) * u32::from(font_size.1),
+                build_protocol: true,
+                input: self.theme,
+            },
         )?;
         self.panel_request_key = Some(request_key);
         Ok(())

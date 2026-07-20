@@ -49,7 +49,8 @@ cargo build --release -q \
   -p casa-calibration --bin calibrate \
   -p casa-ms --bin mstransform \
   -p casars-imager --bin casars-imager \
-  -p casa-images --bin imexplore --bin immoments --bin impv
+  -p casa-images --bin immoments --bin impv \
+  -p casars --bin imexplore
 
 rm -rf \
   "$outdir/casa-target-prior.ms" \

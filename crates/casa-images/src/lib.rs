@@ -58,7 +58,6 @@
 
 pub mod analysis;
 pub mod beam;
-pub mod browser_render;
 pub mod error;
 pub mod expr_file;
 pub mod expr_parser;
@@ -66,8 +65,6 @@ pub mod image;
 pub mod image_expr;
 pub mod image_info;
 pub mod image_view;
-pub mod imagebrowser_session;
-pub mod movie;
 pub mod subimage;
 pub mod temp_image;
 
@@ -85,13 +82,6 @@ pub use analysis::{
     impv, imregrid, imstat, imsubimage, parse_image_channel_selection, run_image_analysis_task,
 };
 pub use beam::{GaussianBeam, ImageBeamSet};
-pub use browser_render::{
-    BrowserRenderTheme, ImagePlaneColormap, ImagePlaneDrawGeometry, ImagePlaneLayout,
-    ImagePlaneOverlayMarker, ImagePlaneRenderInput, ImageSpectrumLayout,
-    ImageSpectrumOverlaySeries, ImageSpectrumRenderInput, image_plane_draw_geometry,
-    image_plane_layout, image_spectrum_layout, render_image_plane_image,
-    render_image_spectrum_image,
-};
 pub use casa_lattices::{ScratchSpace, TempStoragePlan, TempStoragePolicy};
 pub use error::ImageError;
 pub use image::{
@@ -107,14 +97,6 @@ pub use image_view::{
     ImageAxisModel, ImageAxisValue, ImageDisplayAxis, ImageMetadataSection, ImageNonDisplayAxis,
     ImageProbe, ImageProfile, ImageProfileSample, ImageViewCapabilities, ImageViewWindow,
     OpenedImageView, PlaneRaster,
-};
-pub use imagebrowser_session::ImageBrowserSession;
-pub use movie::{
-    ImageMovieBundleCache, ImageMovieBundleEngine, ImageMovieBundleKey, ImageMovieBundleRequest,
-    ImageMovieOccurrence, ImageMoviePreparedBundle, ImageMoviePreparedSurface,
-    ImageMoviePresentationCoordinator, ImageMoviePresentationPoll, ImageMovieRender,
-    ImageMovieRenderedBundle, ImageMovieRenderedSurface, ImageMovieSurfaceKind,
-    ImageMovieSurfaceRequest, ImageMovieSurfaceSpec,
 };
 pub use subimage::{SubImage, SubImageMut};
 pub use temp_image::TempImage;

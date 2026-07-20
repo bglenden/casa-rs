@@ -90,6 +90,14 @@ Recommended machine-facing shape:
 The contract is a versioned command/event/state protocol, not a one-shot task
 request/result pair.
 
+The table and image browser protocols instantiate one shared JSONL session
+foundation in `casa-provider-contracts::session_protocol`. That owner provides
+the common envelope/error shape, protocol metadata, deterministic schema
+generation, and version access; each protocol crate owns only its typed domain
+commands and payloads. The `casars` runtime package owns the browser executables,
+session engines, and generic subprocess client. Reusable `casa-tables` and
+`casa-images` code does not depend on these protocol crates.
+
 A session `SurfaceDefinition` may additionally define durable startup
 parameters. Those parameters open or configure the session; they do not turn
 cursor movement, scrolling, viewport updates, caches, or commands into task
@@ -416,6 +424,10 @@ surfaces.
 - Keep protocol names and protocol versions explicit and machine-checkable.
 - Add CI parity tests so catalog coverage, wrappers, docs, sparse profiles, and
   projections cannot drift from the canonical schema bundle.
+- Regenerate committed browser-session schemas only through
+  `CASA_RS_REGENERATE_SESSION_SCHEMAS=1 cargo test -p
+  casars-tablebrowser-protocol -p casars-imagebrowser-protocol`, then rerun the
+  tests normally to prove the artifacts are current.
 
 This preserves one source of truth while still supporting:
 

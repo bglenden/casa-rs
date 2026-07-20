@@ -9,12 +9,11 @@
 //! extensions can target the same contract without a wire redesign.
 
 use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
-    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
-    SessionProviderContract, SessionProviderSchemas, SessionSemanticContract,
-    builtin_surface_bundle, merged_components,
+    ProviderProtocolDescriptor, ProviderSurfaceKind, SessionProviderContract,
+    builtin_surface_bundle, define_jsonl_session_envelopes, jsonl_session_contract,
+    session_contract_json, session_schema_json,
 };
-use schemars::{JsonSchema, schema_for};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Stable protocol name advertised by `tablebrowser --protocol-info`.
@@ -22,6 +21,12 @@ pub const TABLEBROWSER_SESSION_PROTOCOL_NAME: &str = "casa_tablebrowser_session"
 
 /// Current JSON protocol version.
 pub const PROTOCOL_VERSION: u32 = 1;
+
+define_jsonl_session_envelopes! {
+    request BrowserRequestEnvelope for BrowserCommand;
+    response BrowserResponseEnvelope for BrowserResponse;
+    error BrowserErrorPayload;
+}
 
 /// Build the current tablebrowser session protocol descriptor.
 pub fn browser_protocol_descriptor() -> ProviderProtocolDescriptor {
@@ -35,37 +40,13 @@ pub fn browser_protocol_descriptor() -> ProviderProtocolDescriptor {
 
 /// Build the current tablebrowser schema bundle.
 pub fn browser_session_schema_bundle() -> SessionProviderContract {
-    let request_schema = schema_for!(BrowserRequestEnvelope);
-    let response_schema = schema_for!(BrowserResponseEnvelope);
-    let canonical_surface = builtin_surface_bundle("tablebrowser")
-        .expect("built-in tablebrowser parameter surface must remain valid");
-    SessionProviderContract {
-        protocol: browser_protocol_descriptor(),
-        semantic: SessionSemanticContract {
-            transport: "jsonl_stdio".to_string(),
-            request_schema: request_schema.clone(),
-            response_schema: response_schema.clone(),
-        },
-        components: merged_components([&request_schema, &response_schema]),
-        annotations: serde_json::json!({}),
-        projections: ProviderProjectionMetadata {
-            cli: Some(ProviderCliProjection {
-                machine_actions: ProviderCliMachineActions {
-                    json_schema: Some("--json-schema".to_string()),
-                    protocol_info: Some("--protocol-info".to_string()),
-                    json_run: None,
-                    session: Some("--session".to_string()),
-                },
-            }),
-            python: None,
-        },
-        parameter_surfaces: vec![canonical_surface],
-        domain_schemas: SessionProviderSchemas {
-            request_schema,
-            response_schema,
-            additional: NoAdditionalProviderSchemas::default(),
-        },
-    }
+    jsonl_session_contract::<BrowserRequestEnvelope, BrowserResponseEnvelope>(
+        TABLEBROWSER_SESSION_PROTOCOL_NAME,
+        PROTOCOL_VERSION,
+        env!("CARGO_PKG_VERSION"),
+        builtin_surface_bundle("tablebrowser")
+            .expect("built-in tablebrowser parameter surface must remain valid"),
+    )
 }
 
 /// Render viewport requested by the consumer.
@@ -198,25 +179,6 @@ pub struct BrowserNavigationMetrics {
     pub viewport_items: usize,
 }
 
-/// JSON Lines request envelope sent from `casars` to the browser backend.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct BrowserRequestEnvelope {
-    /// Protocol version expected by the client.
-    pub version: u32,
-    /// Requested command.
-    pub command: BrowserCommand,
-}
-
-impl BrowserRequestEnvelope {
-    /// Wrap a command using the current protocol version.
-    pub fn new(command: BrowserCommand) -> Self {
-        Self {
-            version: PROTOCOL_VERSION,
-            command,
-        }
-    }
-}
-
 /// Command sent to the browser backend.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "command", rename_all = "snake_case")]
@@ -313,15 +275,6 @@ pub enum BrowserCommand {
     },
 }
 
-/// JSON Lines response envelope sent from the backend to `casars`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct BrowserResponseEnvelope {
-    /// Protocol version returned by the backend.
-    pub version: u32,
-    /// Response payload.
-    pub response: BrowserResponse,
-}
-
 impl BrowserResponseEnvelope {
     /// Wrap a snapshot response using the current protocol version.
     pub fn snapshot(snapshot: BrowserSnapshot) -> Self {
@@ -335,10 +288,7 @@ impl BrowserResponseEnvelope {
     pub fn error(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             version: PROTOCOL_VERSION,
-            response: BrowserResponse::Error(BrowserErrorPayload {
-                code: code.into(),
-                message: message.into(),
-            }),
+            response: BrowserResponse::Error(BrowserErrorPayload::new(code, message)),
         }
     }
 }
@@ -351,15 +301,6 @@ pub enum BrowserResponse {
     Snapshot(Box<BrowserSnapshot>),
     /// A structured protocol or backend error.
     Error(BrowserErrorPayload),
-}
-
-/// Structured error payload returned by the browser backend.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct BrowserErrorPayload {
-    /// Stable machine-readable error code.
-    pub code: String,
-    /// Human-readable explanation.
-    pub message: String,
 }
 
 /// Top-level browser view.
@@ -716,39 +657,27 @@ pub struct BrowserSnapshot {
 
 /// Render the request-envelope schema as pretty JSON.
 pub fn request_schema_json() -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&schema_for!(BrowserRequestEnvelope))
+    session_schema_json::<BrowserRequestEnvelope>()
 }
 
 /// Render the response-envelope schema as pretty JSON.
 pub fn response_schema_json() -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&schema_for!(BrowserResponseEnvelope))
+    session_schema_json::<BrowserResponseEnvelope>()
 }
 
 /// Render the canonical schema bundle as pretty JSON.
 pub fn schema_bundle_json() -> Result<String, serde_json::Error> {
-    browser_session_schema_bundle().to_pretty_json()
+    session_contract_json(&browser_session_schema_bundle())
+}
+
+casa_provider_contracts::committed_session_schema_tests! {
+    request crate::BrowserRequestEnvelope => "schemas/request.schema.json";
+    response crate::BrowserResponseEnvelope => "schemas/response.schema.json";
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value as JsonValue;
-
-    #[test]
-    fn request_schema_matches_committed_artifact() {
-        assert_schema_matches(
-            request_schema_json().expect("request schema"),
-            include_str!("../schemas/request.schema.json"),
-        );
-    }
-
-    #[test]
-    fn response_schema_matches_committed_artifact() {
-        assert_schema_matches(
-            response_schema_json().expect("response schema"),
-            include_str!("../schemas/response.schema.json"),
-        );
-    }
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_transport() {
@@ -858,6 +787,52 @@ mod tests {
         for case in cases {
             assert_round_trip(case);
         }
+    }
+
+    #[test]
+    fn request_and_error_wire_fixtures_remain_byte_stable() {
+        let request = BrowserRequestEnvelope::new(BrowserCommand::GetSnapshot { viewport: None });
+        assert_eq!(
+            serde_json::to_string(&request).expect("serialize request fixture"),
+            r#"{"version":1,"command":{"command":"get_snapshot","viewport":null}}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&BrowserResponseEnvelope::error("backend", "failed"))
+                .expect("serialize error fixture"),
+            r#"{"version":1,"response":{"response":"error","code":"backend","message":"failed"}}"#
+        );
+    }
+
+    #[test]
+    fn protocol_info_and_success_wire_fixtures_remain_byte_stable() {
+        assert_eq!(
+            serde_json::to_string(&browser_protocol_descriptor())
+                .expect("serialize protocol-info fixture"),
+            format!(
+                r#"{{"protocol_name":"casa_tablebrowser_session","protocol_version":1,"surface_kind":"session","binary_version":"{}"}}"#,
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+        let snapshot = BrowserSnapshot {
+            capabilities: BrowserCapabilities { editable: false },
+            view: BrowserView::Overview,
+            parameters: BrowserParameters::default(),
+            focus: BrowserFocus::Main,
+            table_path: "/tmp/table".into(),
+            breadcrumb: Vec::new(),
+            viewport: BrowserViewport::default(),
+            status_line: "ready".into(),
+            content_lines: Vec::new(),
+            vertical_metrics: None,
+            horizontal_metrics: None,
+            selected_address: None,
+            inspector: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&BrowserResponseEnvelope::snapshot(snapshot))
+                .expect("serialize success fixture"),
+            r#"{"version":1,"response":{"response":"snapshot","capabilities":{"editable":false},"view":"overview","parameters":{"view":"overview","row_start":0,"row_count":100,"content_mode":"auto"},"focus":"main","table_path":"/tmp/table","breadcrumb":[],"viewport":{"width":80,"height":24,"inspector_height":0},"status_line":"ready","content_lines":[],"vertical_metrics":null,"horizontal_metrics":null,"selected_address":null,"inspector":null}}"#
+        );
     }
 
     #[test]
@@ -1097,13 +1072,6 @@ mod tests {
         for case in cases {
             assert_round_trip(case);
         }
-    }
-
-    fn assert_schema_matches(actual_json: String, expected_json: &str) {
-        let actual = serde_json::from_str::<JsonValue>(&actual_json).expect("parse actual schema");
-        let expected =
-            serde_json::from_str::<JsonValue>(expected_json).expect("parse expected schema");
-        assert_eq!(actual, expected);
     }
 
     fn assert_round_trip<T>(value: T)

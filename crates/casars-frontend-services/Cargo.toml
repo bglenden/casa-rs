@@ -23,6 +23,7 @@ casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-tables = { path = "../casa-tables" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-types = { path = "../casa-types" }
+casars = { path = "../casars" }
 casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
 casars-tablebrowser-protocol = { path = "../casars-tablebrowser-protocol" }
 image = { version = "0.25", default-features = false, features = ["png"] }

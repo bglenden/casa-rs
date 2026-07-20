@@ -12,14 +12,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::movie::{
+    ImageMovieBundleEngine, ImageMovieBundleRequest, ImageMovieOccurrence, ImageMoviePlanRequest,
+    ImageMoviePreparedBundle, ImageMoviePresentationCoordinator, ImageMoviePresentationPoll,
+    ImageMovieRenderedBundle, ImageMovieSurfaceKind, ImageMovieSurfaceMemory,
+    ImageMovieSurfaceRequest,
+};
 use casa_calibration::{
     CalibrationPlotPreset, CalibrationPlotRequest, ManagedCalibrationOutput,
     build_calibration_plot_payload, load_apply_specs_from_callib, save_apply_specs_to_callib,
-};
-use casa_images::{
-    ImageMovieBundleEngine, ImageMovieBundleRequest, ImageMovieOccurrence,
-    ImageMoviePreparedBundle, ImageMoviePresentationCoordinator, ImageMoviePresentationPoll,
-    ImageMovieRenderedBundle, ImageMovieSurfaceKind, ImageMovieSurfaceRequest,
 };
 use casa_ms::msexplore::cli::build_explore_spec_from_args;
 use casa_ms::presentation::{UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind};
@@ -59,11 +60,75 @@ use image::{DynamicImage, RgbImage, RgbaImage};
 use ratatui::layout::Rect;
 use ratatui_explorer::{FileExplorer, FileExplorerBuilder, Input as ExplorerInput};
 use ratatui_graphics::{
-    PanelProtocol, PanelRenderPool, PanelRenderer, Picker, Resize,
-    build_panel_protocol_from_rgba_owned,
+    PanelProtocol, PanelProtocolRenderError, PanelProtocolRequest, PanelSchedulePolicy,
+    PanelScheduler, Picker, PreparedPanelProtocol, Resize, build_panel_protocol_from_rgba_owned,
+    render_panel_protocol,
 };
 
-use crate::browser_client::{BrowserClient, ImageBrowserClient};
+use crate::browser_client::{ImageBrowserProtocol, JsonlSessionClient, TableBrowserProtocol};
+use crate::browser_resources::{
+    ImageBrowserMemoryBudget, ImageBrowserResourceClaims, ImageBrowserResourcePlan,
+};
+
+type ProtocolPanelScheduler<T> = PanelScheduler<
+    PanelProtocolRequest<T>,
+    PreparedPanelProtocol,
+    PanelProtocolRenderError<String>,
+>;
+
+fn submit_panel_render<T>(
+    scheduler: &mut ProtocolPanelScheduler<T>,
+    area: Rect,
+    max_pixel_width: u32,
+    max_pixel_height: u32,
+    input: T,
+    build_protocol: bool,
+) -> Result<u64, ratatui_graphics::PanelSubmitError>
+where
+    T: Send + 'static,
+{
+    scheduler.submit(
+        1,
+        0,
+        PanelProtocolRequest {
+            area,
+            max_pixel_width,
+            max_pixel_height,
+            build_protocol,
+            input,
+        },
+    )
+}
+
+fn scheduled_panel_protocol<T>(scheduler: &ProtocolPanelScheduler<T>) -> Option<&PanelProtocol>
+where
+    T: Send + 'static,
+{
+    scheduler
+        .latest()
+        .and_then(|completion| completion.output.protocol.as_ref())
+}
+
+fn scheduled_panel_image_size<T>(scheduler: &ProtocolPanelScheduler<T>) -> Option<(u32, u32)>
+where
+    T: Send + 'static,
+{
+    scheduler.latest().map(|completion| {
+        (
+            completion.output.image_width,
+            completion.output.image_height,
+        )
+    })
+}
+
+fn scheduled_panel_bitmap<T>(scheduler: &ProtocolPanelScheduler<T>) -> Option<&RgbaImage>
+where
+    T: Send + 'static,
+{
+    scheduler
+        .latest()
+        .map(|completion| &completion.output.rendered_image)
+}
 use crate::calibration_workflow::{
     WorkflowCalibrationArtifactKind, WorkflowChainEntryRecord, WorkflowChainEntrySource,
     WorkflowChainSettingKind, WorkflowChainSettingRecord, WorkflowContextSettingKind,
@@ -121,17 +186,6 @@ const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(450);
 const HORIZONTAL_SCROLL_STEP: i16 = 8;
 const IMAGE_PLANE_CELL_WIDTH: usize = 11;
 const IMAGE_MOVIE_DEFAULT_FPS: f64 = 1.0;
-const IMAGE_PLANE_RENDER_CACHE_CAPACITY: usize = 32;
-const IMAGE_SPECTRUM_RENDER_CACHE_CAPACITY: usize = 64;
-const IMAGE_MOVIE_TARGET_RESIDENT_BYTES: u64 = 192 * 1024 * 1024;
-const IMAGE_MOVIE_MIN_RENDER_SCALE: f32 = 0.35;
-const IMAGE_MOVIE_RENDER_POOL_QUEUE_CAPACITY: usize = 12;
-const IMAGE_MOVIE_PROTOCOL_POOL_QUEUE_CAPACITY: usize = 8;
-const IMAGE_PLANE_TARGET_PIXELS_PER_SAMPLE: u32 = 2;
-const IMAGE_PLANE_MIN_TARGET_IMAGE_PIXELS: u32 = 160;
-const IMAGE_SPECTRUM_TARGET_PIXELS_PER_SAMPLE: u32 = 12;
-const IMAGE_SPECTRUM_MIN_TARGET_PLOT_WIDTH: u32 = 256;
-const IMAGE_SPECTRUM_TARGET_PLOT_HEIGHT: u32 = 192;
 const IMEXPLORE_LIVE_PARAMETER_FIELD_IDS: [&str; 17] = [
     "image",
     "blc",
@@ -849,7 +903,7 @@ enum BrowserSessionKind {
 
 #[derive(Debug)]
 struct TableBrowserSession {
-    client: BrowserClient,
+    client: JsonlSessionClient<TableBrowserProtocol>,
     snapshot: BrowserSnapshot,
     viewport: BrowserViewport,
 }
@@ -880,7 +934,7 @@ struct ImageSessionStartupConfig {
 
 #[derive(Debug)]
 struct ImageBrowserSessionState {
-    client: ImageBrowserClient,
+    client: JsonlSessionClient<ImageBrowserProtocol>,
     snapshot: ImageBrowserSnapshot,
     viewport: ImageBrowserViewport,
     hscroll: u16,
@@ -903,6 +957,8 @@ struct ImageBrowserSessionState {
     movie_scheduler: Option<ImageMovieSchedulerState>,
     movie_frame_seq: Option<u64>,
     direct_movie_engine: ImageMovieBundleEngine,
+    resource_budget: ImageBrowserMemoryBudget,
+    movie_resource_plan: Option<ImageBrowserResourcePlan>,
 }
 
 #[derive(Debug, Clone)]
@@ -999,7 +1055,7 @@ impl ImageMovieState {
 
 struct ImagePlanePanelState {
     picker: Picker,
-    renderer: PanelRenderer<ImagePlaneRenderInput, String>,
+    renderer: ProtocolPanelScheduler<ImagePlaneRenderInput>,
     render_cache: Arc<Mutex<RenderImageCache<u64>>>,
     font_size: (u16, u16),
     display_key: Option<ImagePlaneRequestKey>,
@@ -1013,7 +1069,8 @@ struct ImagePlanePanelState {
 
 struct ImageSpectrumPanelState {
     picker: Picker,
-    renderer: PanelRenderer<ImageSpectrumRenderInput, String>,
+    renderer: ProtocolPanelScheduler<ImageSpectrumRenderInput>,
+    render_cache: Arc<Mutex<RenderImageCache<u64>>>,
     font_size: (u16, u16),
     display_key: Option<ImageSpectrumRequestKey>,
     pending_request_key: Option<ImageSpectrumRequestKey>,
@@ -1029,6 +1086,15 @@ struct ImageSpectrumPanelState {
 enum DirectImageMovieSurfacePayload {
     Plane(ImagePlaneRenderInput),
     Spectrum(ImageSpectrumRenderInput),
+}
+
+impl DirectImageMovieSurfacePayload {
+    fn cloned_owned_bytes(&self) -> u64 {
+        match self {
+            Self::Plane(input) => input.cloned_owned_bytes(),
+            Self::Spectrum(input) => input.cloned_owned_bytes(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1146,7 +1212,7 @@ struct ImageMovieSchedulerState {
     movie_axis: usize,
     session_indices: Vec<(usize, usize)>,
     presentations: ImageMoviePresentationCoordinator<PreparedMoviePresentation>,
-    protocol_pool: PanelRenderPool<MovieProtocolRenderJob, PreparedMoviePresentation, String>,
+    protocol_pool: PanelScheduler<MovieProtocolRenderJob, PreparedMoviePresentation, String>,
     queue_capacity: usize,
 }
 
@@ -1202,7 +1268,6 @@ struct ImagePlaneRenderRequestOptions<'a> {
     overlay_markers: &'a [ImagePlaneOverlayMarker],
     split_ratio: f32,
     theme_mode: ThemeMode,
-    render_scale: f32,
     max_pixel_size: Option<(u32, u32)>,
 }
 
@@ -1210,13 +1275,13 @@ struct ImageSpectrumRenderRequestOptions<'a> {
     overlay_profiles: &'a [ImageSpectrumOverlaySeries],
     split_ratio: f32,
     theme_mode: ThemeMode,
-    render_scale: f32,
     max_pixel_size: Option<(u32, u32)>,
 }
 
 #[derive(Debug)]
 struct RenderImageCache<K> {
-    capacity: usize,
+    capacity_bytes: u64,
+    total_bytes: u64,
     values: HashMap<K, RgbImage>,
     order: VecDeque<K>,
 }
@@ -1225,9 +1290,10 @@ impl<K> RenderImageCache<K>
 where
     K: Clone + Eq + Hash,
 {
-    fn new(capacity: usize) -> Self {
+    fn new(capacity_bytes: u64) -> Self {
         Self {
-            capacity: capacity.max(1),
+            capacity_bytes,
+            total_bytes: 0,
             values: HashMap::new(),
             order: VecDeque::new(),
         }
@@ -1243,15 +1309,36 @@ where
         self.values.contains_key(key)
     }
 
-    fn insert(&mut self, key: K, value: RgbImage) {
-        if self.values.contains_key(&key) {
-            self.values.insert(key.clone(), value);
-            self.touch(&key);
-            return;
+    fn set_capacity_bytes(&mut self, capacity_bytes: u64) {
+        self.capacity_bytes = capacity_bytes;
+        self.evict_if_needed();
+    }
+
+    fn insert(&mut self, key: K, value: RgbImage) -> bool {
+        let value_bytes = u64::try_from(value.as_raw().len()).unwrap_or(u64::MAX);
+        if value_bytes > self.capacity_bytes {
+            if let Some(previous) = self.values.remove(&key) {
+                self.total_bytes = self
+                    .total_bytes
+                    .saturating_sub(u64::try_from(previous.as_raw().len()).unwrap_or(u64::MAX));
+                self.order.retain(|existing| existing != &key);
+            }
+            return false;
         }
-        self.values.insert(key.clone(), value);
+        let inserted_key = key.clone();
+        if let Some(previous) = self.values.insert(key.clone(), value) {
+            self.total_bytes = self
+                .total_bytes
+                .saturating_sub(u64::try_from(previous.as_raw().len()).unwrap_or(u64::MAX))
+                .saturating_add(value_bytes);
+            self.touch(&key);
+            self.evict_if_needed();
+            return self.values.contains_key(&key);
+        }
+        self.total_bytes = self.total_bytes.saturating_add(value_bytes);
         self.order.push_back(key);
         self.evict_if_needed();
+        self.values.contains_key(&inserted_key)
     }
 
     fn touch(&mut self, key: &K) {
@@ -1263,12 +1350,25 @@ where
     }
 
     fn evict_if_needed(&mut self) {
-        while self.values.len() > self.capacity {
+        while self.total_bytes > self.capacity_bytes {
             let Some(oldest) = self.order.pop_front() else {
                 break;
             };
-            self.values.remove(&oldest);
+            if let Some(previous) = self.values.remove(&oldest) {
+                self.total_bytes = self
+                    .total_bytes
+                    .saturating_sub(u64::try_from(previous.as_raw().len()).unwrap_or(u64::MAX));
+            }
         }
+    }
+
+    #[cfg(test)]
+    fn total_bytes(&self) -> u64 {
+        self.total_bytes
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        self.capacity_bytes
     }
 }
 
@@ -1279,20 +1379,25 @@ impl ImageMovieSchedulerState {
         next_due_index: usize,
         fps: f64,
         session_indices: Vec<(usize, usize)>,
+        worker_count: usize,
+        queue_capacity: usize,
     ) -> Self {
+        let queue_capacity = queue_capacity.max(1);
         Self {
             generation: 1,
             content_signature,
             movie_axis,
             session_indices,
             presentations: ImageMoviePresentationCoordinator::new(next_due_index, fps),
-            protocol_pool: PanelRenderPool::new(
-                image_movie_render_worker_count(),
-                IMAGE_MOVIE_PROTOCOL_POOL_QUEUE_CAPACITY,
+            protocol_pool: PanelScheduler::new(
+                PanelSchedulePolicy::Ordered {
+                    worker_count,
+                    queue_capacity,
+                },
                 |job| render_movie_presentation(&job.input),
             )
             .expect("image movie protocol pool"),
-            queue_capacity: IMAGE_MOVIE_PROTOCOL_POOL_QUEUE_CAPACITY,
+            queue_capacity,
         }
     }
 
@@ -1312,15 +1417,6 @@ impl ImageMovieSchedulerState {
     }
 }
 
-fn image_movie_render_worker_count() -> usize {
-    std::thread::available_parallelism()
-        .map(|count| {
-            let count = count.get();
-            if count >= 8 { 3 } else { 2 }
-        })
-        .unwrap_or(2)
-}
-
 fn image_movie_pipeline_state(scheduler: &ImageMovieSchedulerState) -> MoviePipelineState {
     MoviePipelineState {
         render_queue_depth: 0,
@@ -1334,10 +1430,67 @@ fn image_movie_pipeline_state(scheduler: &ImageMovieSchedulerState) -> MoviePipe
 }
 
 fn new_direct_image_movie_engine() -> ImageMovieBundleEngine {
-    ImageMovieBundleEngine::new(
-        configured_image_movie_target_resident_bytes(),
-        IMAGE_MOVIE_MIN_RENDER_SCALE,
-    )
+    ImageMovieBundleEngine::new(0)
+}
+
+fn plan_image_movie_resources<P>(
+    budget: ImageBrowserMemoryBudget,
+    request: &ImageMovieBundleRequest<P>,
+    render_latency: Duration,
+    static_render_cache_bytes: u64,
+    surface_payload_bytes: &[u64],
+) -> Result<ImageBrowserResourcePlan, String> {
+    if surface_payload_bytes.len() != request.surfaces.len() {
+        return Err(format!(
+            "movie payload accounting has {} entries for {} surfaces",
+            surface_payload_bytes.len(),
+            request.surfaces.len()
+        ));
+    }
+    let requested_fps_milli = (request.requested_fps * 1_000.0).round();
+    if !requested_fps_milli.is_finite()
+        || requested_fps_milli <= 0.0
+        || requested_fps_milli > u64::MAX as f64
+    {
+        return Err(format!(
+            "invalid movie frame rate {}",
+            request.requested_fps
+        ));
+    }
+    let available_parallelism = std::thread::available_parallelism()
+        .map_err(|error| format!("available parallelism is unavailable: {error}"))?
+        .get();
+    budget
+        .plan_movie(
+            ImageBrowserResourceClaims {
+                static_render_cache_bytes,
+                ..ImageBrowserResourceClaims::default()
+            },
+            ImageMoviePlanRequest {
+                surfaces: request
+                    .surfaces
+                    .iter()
+                    .zip(surface_payload_bytes)
+                    .map(|(surface, &payload_bytes)| ImageMovieSurfaceMemory {
+                        pixel_size: surface.pixel_size,
+                        // Completed movie frames are retained as RGB bitmaps.
+                        resident_bytes_per_pixel: 3,
+                        // Protocol preparation owns a simultaneous RGBA bitmap.
+                        worker_bytes_per_pixel: 4,
+                        // Each queued/prepared frame owns a clone of its render
+                        // input in addition to the eventual RGB bitmap.
+                        resident_fixed_bytes: payload_bytes,
+                        worker_fixed_bytes: 0,
+                    })
+                    .collect(),
+                frame_count: request.occurrence.axis_length,
+                requested_fps_milli: requested_fps_milli as u64,
+                render_latency,
+                available_parallelism,
+                memory_budget_bytes: 0,
+            },
+        )
+        .map_err(|error| error.to_string())
 }
 
 fn render_movie_presentation(
@@ -1405,27 +1558,35 @@ fn render_movie_presentation(
 fn new_image_plane_panel_state() -> ImagePlanePanelState {
     let picker = terminal_picker();
     let font_size = picker.font_size();
-    let render_image_cache = Arc::new(Mutex::new(RenderImageCache::new(
-        IMAGE_PLANE_RENDER_CACHE_CAPACITY,
-    )));
+    let render_image_cache = Arc::new(Mutex::new(RenderImageCache::new(0)));
     let worker_cache = Arc::clone(&render_image_cache);
-    let renderer = PanelRenderer::<ImagePlaneRenderInput, String>::new(
-        picker.clone(),
-        Resize::Scale(None),
-        move |job| {
-            if let Ok(mut cache) = worker_cache.lock()
-                && let Some(image) = cache.get(&job.input.cache_key)
-            {
-                return Ok(image::DynamicImage::ImageRgb8(image));
-            }
-            let image =
-                render_image_plane_image(job.max_pixel_width, job.max_pixel_height, &job.input)?;
-            if let Ok(mut cache) = worker_cache.lock() {
-                cache.insert(job.input.cache_key, image.to_rgb8());
-            }
-            Ok(image)
-        },
-    )
+    let worker_picker = picker.clone();
+    let renderer = PanelScheduler::new(PanelSchedulePolicy::LatestWins, move |job| {
+        render_panel_protocol(
+            &worker_picker,
+            Resize::Scale(None),
+            job,
+            |request: &PanelProtocolRequest<ImagePlaneRenderInput>| {
+                if let Ok(mut cache) = worker_cache.lock()
+                    && let Some(image) = cache.get(&request.input.cache_key)
+                {
+                    return Ok(image::DynamicImage::ImageRgb8(image));
+                }
+                let image = render_image_plane_image(
+                    request.max_pixel_width,
+                    request.max_pixel_height,
+                    &request.input,
+                )?;
+                if let Ok(mut cache) = worker_cache.lock() {
+                    let bitmap = image.to_rgb8();
+                    let bitmap_bytes = u64::try_from(bitmap.as_raw().len()).unwrap_or(u64::MAX);
+                    cache.set_capacity_bytes(bitmap_bytes);
+                    cache.insert(request.input.cache_key, bitmap);
+                }
+                Ok(image)
+            },
+        )
+    })
     .expect("image plane panel renderer");
     ImagePlanePanelState {
         picker,
@@ -1445,31 +1606,40 @@ fn new_image_plane_panel_state() -> ImagePlanePanelState {
 fn new_image_spectrum_panel_state() -> ImageSpectrumPanelState {
     let picker = terminal_picker();
     let font_size = picker.font_size();
-    let render_image_cache = Arc::new(Mutex::new(RenderImageCache::new(
-        IMAGE_SPECTRUM_RENDER_CACHE_CAPACITY,
-    )));
+    let render_image_cache = Arc::new(Mutex::new(RenderImageCache::new(0)));
     let worker_cache = Arc::clone(&render_image_cache);
-    let renderer = PanelRenderer::<ImageSpectrumRenderInput, String>::new(
-        picker.clone(),
-        Resize::Scale(None),
-        move |job| {
-            if let Ok(mut cache) = worker_cache.lock()
-                && let Some(image) = cache.get(&job.input.cache_key)
-            {
-                return Ok(image::DynamicImage::ImageRgb8(image));
-            }
-            let image =
-                render_image_spectrum_image(job.max_pixel_width, job.max_pixel_height, &job.input)?;
-            if let Ok(mut cache) = worker_cache.lock() {
-                cache.insert(job.input.cache_key, image.to_rgb8());
-            }
-            Ok(image)
-        },
-    )
+    let worker_picker = picker.clone();
+    let renderer = PanelScheduler::new(PanelSchedulePolicy::LatestWins, move |job| {
+        render_panel_protocol(
+            &worker_picker,
+            Resize::Scale(None),
+            job,
+            |request: &PanelProtocolRequest<ImageSpectrumRenderInput>| {
+                if let Ok(mut cache) = worker_cache.lock()
+                    && let Some(image) = cache.get(&request.input.cache_key)
+                {
+                    return Ok(image::DynamicImage::ImageRgb8(image));
+                }
+                let image = render_image_spectrum_image(
+                    request.max_pixel_width,
+                    request.max_pixel_height,
+                    &request.input,
+                )?;
+                if let Ok(mut cache) = worker_cache.lock() {
+                    let bitmap = image.to_rgb8();
+                    let bitmap_bytes = u64::try_from(bitmap.as_raw().len()).unwrap_or(u64::MAX);
+                    cache.set_capacity_bytes(bitmap_bytes);
+                    cache.insert(request.input.cache_key, bitmap);
+                }
+                Ok(image)
+            },
+        )
+    })
     .expect("image spectrum panel renderer");
     ImageSpectrumPanelState {
         picker,
         renderer,
+        render_cache: render_image_cache,
         font_size,
         display_key: None,
         pending_request_key: None,
@@ -1526,7 +1696,7 @@ impl fmt::Debug for ImageSpectrumPanelState {
 impl ImageSpectrumPanelState {
     fn has_visible_content(&self) -> bool {
         self.movie_protocol.is_some()
-            || self.renderer.protocol().is_some()
+            || scheduled_panel_protocol(&self.renderer).is_some()
             || self.image_size.is_some()
             || self.movie_image_size.is_some()
             || self.display_key.is_some()
@@ -1541,6 +1711,22 @@ pub(crate) enum BrowserPaneFocus {
 }
 
 impl ImageBrowserSessionState {
+    fn static_render_cache_bytes(&self) -> u64 {
+        let plane = self
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.render_cache.lock().ok())
+            .map(|cache| cache.capacity_bytes())
+            .unwrap_or(0);
+        let spectrum = self
+            .spectrum_panel
+            .as_ref()
+            .and_then(|panel| panel.render_cache.lock().ok())
+            .map(|cache| cache.capacity_bytes())
+            .unwrap_or(0);
+        plane.saturating_add(spectrum)
+    }
+
     fn clamp_left_pane_selection(&mut self) {
         if let Some(active_name) = self.active_region_definition_name()
             && let Some(index) = self
@@ -1999,7 +2185,7 @@ impl BrowserSession {
 }
 
 struct PlotPanelState {
-    renderer: PanelRenderer<PlotRenderInput, String>,
+    renderer: ProtocolPanelScheduler<PlotRenderInput>,
     font_size: (u16, u16),
     request_key: Option<PlotRequestKey>,
     last_error: Option<String>,
@@ -6770,7 +6956,6 @@ impl AppState {
                 overlay_profiles: &overlay_profiles,
                 split_ratio,
                 theme_mode,
-                render_scale: 1.0,
                 max_pixel_size: None,
             },
         )
@@ -6799,7 +6984,6 @@ impl AppState {
                 overlay_profiles: &overlay_profiles,
                 split_ratio,
                 theme_mode,
-                render_scale: 1.0,
                 max_pixel_size: None,
             },
         )
@@ -7036,7 +7220,6 @@ impl AppState {
                 overlay_markers: &overlay_markers,
                 split_ratio: spec.split_ratio,
                 theme_mode: spec.theme_mode,
-                render_scale: 1.0,
                 max_pixel_size: None,
             },
         )?;
@@ -7050,7 +7233,6 @@ impl AppState {
                     overlay_profiles: &overlay_profiles,
                     split_ratio: spec.split_ratio,
                     theme_mode: spec.theme_mode,
-                    render_scale: 1.0,
                     max_pixel_size: None,
                 },
             )
@@ -7079,42 +7261,63 @@ impl AppState {
                 payload: DirectImageMovieSurfacePayload::Spectrum(request.input.clone()),
             });
         }
+        let bundle_request = ImageMovieBundleRequest {
+            occurrence: ImageMovieOccurrence {
+                generation: occurrence.generation,
+                movie_key: spec.content_signature,
+                axis: occurrence.movie_axis,
+                axis_index: occurrence.axis_index,
+                axis_length: spec.axis_length,
+            },
+            requested_fps: spec.requested_fps,
+            surfaces: surface_requests,
+        };
+        let resource_plan = {
+            let state = self.image_browser_session_state()?;
+            let surface_payload_bytes = bundle_request
+                .surfaces
+                .iter()
+                .map(|surface| surface.payload.cloned_owned_bytes())
+                .collect::<Vec<_>>();
+            plan_image_movie_resources(
+                state.resource_budget,
+                &bundle_request,
+                state.movie.frame_interval,
+                state.static_render_cache_bytes(),
+                &surface_payload_bytes,
+            )
+            .ok()?
+        };
         let prepared = {
+            let state = self.image_browser_session_state_mut()?;
+            let prepared = state
+                .direct_movie_engine
+                .prepare_bundle(&bundle_request, &resource_plan.movie)
+                .ok()?;
+            state.movie_resource_plan = Some(resource_plan);
+            prepared
+        };
+        let (rendered, cache_hit) = {
             let state = self.image_browser_session_state_mut()?;
             state
                 .direct_movie_engine
-                .prepare_bundle(&ImageMovieBundleRequest {
-                    occurrence: ImageMovieOccurrence {
-                        generation: occurrence.generation,
-                        movie_key: spec.content_signature,
-                        axis: occurrence.movie_axis,
-                        axis_index: occurrence.axis_index,
-                        axis_length: spec.axis_length,
+                .render_or_get_cached(
+                    &prepared,
+                    &mut |_, pixel_size: (u32, u32), payload: &DirectImageMovieSurfacePayload| {
+                        match payload {
+                            DirectImageMovieSurfacePayload::Plane(input) => {
+                                render_image_plane_image(pixel_size.0, pixel_size.1, input)
+                                    .map(|image| image.to_rgb8())
+                            }
+                            DirectImageMovieSurfacePayload::Spectrum(input) => {
+                                render_image_spectrum_image(pixel_size.0, pixel_size.1, input)
+                                    .map(|image| image.to_rgb8())
+                            }
+                        }
                     },
-                    requested_fps: spec.requested_fps,
-                    surfaces: surface_requests,
-                })
+                )
+                .ok()?
         };
-        let (rendered, cache_hit) =
-            {
-                let state = self.image_browser_session_state_mut()?;
-                state.direct_movie_engine.render_or_get_cached(
-                &prepared,
-                &mut |_, pixel_size: (u32, u32), payload: &DirectImageMovieSurfacePayload| {
-                    match payload {
-                        DirectImageMovieSurfacePayload::Plane(input) => {
-                            render_image_plane_image(pixel_size.0, pixel_size.1, input)
-                                .map(|image| image.to_rgb8())
-                        }
-                        DirectImageMovieSurfacePayload::Spectrum(input) => {
-                            render_image_spectrum_image(pixel_size.0, pixel_size.1, input)
-                                .map(|image| image.to_rgb8())
-                        }
-                    }
-                },
-            )
-            .ok()?
-            };
         Some(PreparedMovieBundle {
             occurrence,
             snapshot,
@@ -7123,6 +7326,82 @@ impl AppState {
             rendered,
             cache_hit,
         })
+    }
+
+    fn plan_image_movie_for_snapshot(
+        &self,
+        layout: &UiLayout,
+        spec: &ImageMovieSchedulerSpec,
+        snapshot: &ImageBrowserSnapshot,
+    ) -> Option<ImageBrowserResourcePlan> {
+        let overlay_markers =
+            image_plane_overlay_markers_for_snapshot(snapshot, &spec.pinned_probes);
+        let plane = self.image_plane_render_request_for_snapshot(
+            layout,
+            spec.plane_font_size,
+            snapshot,
+            ImagePlaneRenderRequestOptions {
+                show_live_reticle: spec.show_live_reticle,
+                colormap: spec.plane_colormap,
+                invert: spec.plane_invert,
+                overlay_markers: &overlay_markers,
+                split_ratio: spec.split_ratio,
+                theme_mode: spec.theme_mode,
+                max_pixel_size: None,
+            },
+        )?;
+        let mut surfaces = vec![ImageMovieSurfaceRequest {
+            kind: ImageMovieSurfaceKind::Plane,
+            request_hash: hashed_render_request_key(&plane.request_key),
+            cell_size: (plane.request_key.area.width, plane.request_key.area.height),
+            pixel_size: (plane.pixel_width, plane.pixel_height),
+            payload: (),
+        }];
+        let mut surface_payload_bytes = vec![plane.input.cloned_owned_bytes()];
+        if spec.spectrum_visible {
+            let overlay_profiles = image_spectrum_overlay_series_for_pinned(&spec.pinned_probes);
+            let spectrum = self.current_image_spectrum_render_request(
+                layout,
+                spec.spectrum_font_size?,
+                snapshot,
+                ImageSpectrumRenderRequestOptions {
+                    overlay_profiles: &overlay_profiles,
+                    split_ratio: spec.split_ratio,
+                    theme_mode: spec.theme_mode,
+                    max_pixel_size: None,
+                },
+            )?;
+            surfaces.push(ImageMovieSurfaceRequest {
+                kind: ImageMovieSurfaceKind::Spectrum,
+                request_hash: hashed_render_request_key(&spectrum.request_key),
+                cell_size: (
+                    spectrum.request_key.area.width,
+                    spectrum.request_key.area.height,
+                ),
+                pixel_size: (spectrum.pixel_width, spectrum.pixel_height),
+                payload: (),
+            });
+            surface_payload_bytes.push(spectrum.input.cloned_owned_bytes());
+        }
+        let state = self.image_browser_session_state()?;
+        plan_image_movie_resources(
+            state.resource_budget,
+            &ImageMovieBundleRequest {
+                occurrence: ImageMovieOccurrence {
+                    generation: spec.content_signature,
+                    movie_key: spec.content_signature,
+                    axis: spec.movie_axis,
+                    axis_index: spec.next_due_index,
+                    axis_length: spec.axis_length,
+                },
+                requested_fps: spec.requested_fps,
+                surfaces,
+            },
+            state.movie.frame_interval,
+            state.static_render_cache_bytes(),
+            &surface_payload_bytes,
+        )
+        .ok()
     }
 
     fn apply_prepared_movie_presentation(&mut self, presentation: PreparedMoviePresentation) {
@@ -7193,6 +7472,13 @@ impl AppState {
         let Some(spec) = self.current_image_movie_scheduler_spec(layout) else {
             return;
         };
+        let Some(resource_plan) = self.plan_image_movie_for_snapshot(layout, &spec, &spec.snapshot)
+        else {
+            self.result.status_line =
+                "Movie resources do not fit the session memory budget.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
         let scheduler_context = self
             .image_browser_session_state()
             .map(|state| image_movie_perf_context_from_state(state, None, None, None))
@@ -7202,6 +7488,15 @@ impl AppState {
             let Some(state) = self.image_browser_session_state_mut() else {
                 return;
             };
+            let planned_queue_capacity = resource_plan.movie.queue_depth.max(1);
+            let replace_scheduler = state.movie_scheduler.as_ref().is_some_and(|scheduler| {
+                scheduler.protocol_pool.worker_count() != resource_plan.movie.worker_count
+                    || scheduler.queue_capacity != planned_queue_capacity
+            });
+            if replace_scheduler {
+                state.movie_scheduler = None;
+                invalidated = true;
+            }
             let scheduler = state.movie_scheduler.get_or_insert_with(|| {
                 ImageMovieSchedulerState::new(
                     spec.content_signature,
@@ -7209,6 +7504,8 @@ impl AppState {
                     spec.next_due_index,
                     spec.requested_fps,
                     spec.session_indices.clone(),
+                    resource_plan.movie.worker_count,
+                    resource_plan.movie.queue_depth,
                 )
             });
             if scheduler.content_signature != spec.content_signature
@@ -7225,6 +7522,7 @@ impl AppState {
             } else {
                 scheduler.session_indices = spec.session_indices.clone();
             }
+            state.movie_resource_plan = Some(resource_plan.clone());
         }
         if invalidated {
             self.clear_image_movie_panel_overrides();
@@ -7248,7 +7546,7 @@ impl AppState {
             let Some(scheduler) = state.movie_scheduler.as_mut() else {
                 return;
             };
-            scheduler.protocol_pool.drain_ready(scheduler.generation)
+            scheduler.protocol_pool.drain(scheduler.generation)
         };
 
         if protocol_drained.stale_count > 0 {
@@ -7349,25 +7647,11 @@ impl AppState {
         layout: &UiLayout,
         spec: &ImageMovieSchedulerSpec,
     ) {
-        let (render_worker_count, protocol_worker_count) = self
+        let lookahead_target = self
             .image_browser_session_state()
-            .and_then(|state| state.movie_scheduler.as_ref())
-            .map(|scheduler| {
-                (
-                    image_movie_render_worker_count(),
-                    scheduler.protocol_pool.worker_count(),
-                )
-            })
-            .unwrap_or((
-                image_movie_render_worker_count(),
-                image_movie_render_worker_count(),
-            ));
-        let lookahead_target = image_movie_lookahead_occurrences(
-            spec.requested_fps,
-            spec.axis_length,
-            render_worker_count,
-            protocol_worker_count,
-        );
+            .and_then(|state| state.movie_resource_plan.as_ref())
+            .map(|plan| plan.movie.lookahead_frames)
+            .unwrap_or(0);
         for offset in 0..lookahead_target {
             let (generation, axis_index) = {
                 let Some(state) = self.image_browser_session_state_mut() else {
@@ -7400,14 +7684,8 @@ impl AppState {
             let preview = match preview {
                 Ok(preview) => preview,
                 Err(error) => {
-                    self.stop_image_movie(
-                        false,
-                        format!("preview request failed: {}", error.message()),
-                    );
-                    self.report_browser_error(
-                        "Movie preview failed.",
-                        format!("{}\n", error.message()),
-                    );
+                    self.stop_image_movie(false, format!("preview request failed: {error}"));
+                    self.report_browser_error("Movie preview failed.", format!("{error}\n"));
                     return;
                 }
             };
@@ -10286,11 +10564,10 @@ impl AppState {
                 };
                 let (width, height, _) = self.browser_startup_viewport_cells();
                 let viewport = BrowserViewport::new(width, height);
-                match self
-                    .app
-                    .resolve_command()
-                    .and_then(|command| BrowserClient::spawn(&command))
-                {
+                match self.app.resolve_command().and_then(|command| {
+                    JsonlSessionClient::<TableBrowserProtocol>::spawn(&command)
+                        .map_err(|error| error.to_string())
+                }) {
                     Ok(client) => match client.request_startup(BrowserCommand::OpenRoot {
                         path: path.clone(),
                         viewport,
@@ -10300,7 +10577,7 @@ impl AppState {
                                 .request_startup(BrowserCommand::Configure {
                                     parameters: startup.parameters.clone(),
                                 })
-                                .map_err(|error| error.message().to_string())
+                                .map_err(|error| error.to_string())
                         } else {
                             Ok(snapshot)
                         } {
@@ -10344,7 +10621,7 @@ impl AppState {
                             let _ = client.cancel();
                             self.report_browser_error(
                                 "Failed to open table browser.",
-                                format!("{}\n", error.message()),
+                                format!("{error}\n"),
                             );
                         }
                     },
@@ -10382,13 +10659,27 @@ impl AppState {
                     width.saturating_mul(font_size.0.max(1)),
                     height.saturating_mul(font_size.1.max(1)),
                 );
+                let resource_budget = match ImageBrowserMemoryBudget::from_process_snapshot() {
+                    Ok(budget) => budget,
+                    Err(error) => {
+                        self.report_browser_error(
+                            "Cannot establish imexplore memory budget.",
+                            format!("{error}\n"),
+                        );
+                        return;
+                    }
+                };
+                crate::movie_debug_log(format!(
+                    "image-browser memory budget source={:?} bytes={}",
+                    resource_budget.source(),
+                    resource_budget.total_bytes()
+                ));
                 self.movie_perf
                     .startup_started(startup_context, format!("imexplore path={path}"));
-                match self
-                    .app
-                    .resolve_command()
-                    .and_then(|command| ImageBrowserClient::spawn(&command))
-                {
+                match self.app.resolve_command().and_then(|command| {
+                    JsonlSessionClient::<ImageBrowserProtocol>::spawn(&command)
+                        .map_err(|error| error.to_string())
+                }) {
                     Ok(client) => {
                         self.movie_perf.startup_browser_open_requested(
                             startup_context,
@@ -10458,6 +10749,8 @@ impl AppState {
                                     movie_scheduler: None,
                                     movie_frame_seq: None,
                                     direct_movie_engine: new_direct_image_movie_engine(),
+                                    resource_budget,
+                                    movie_resource_plan: None,
                                 };
                                 state.clamp_left_pane_selection();
                                 self.browser_session = Some(BrowserSession {
@@ -10522,7 +10815,7 @@ impl AppState {
                                 let _ = client.cancel();
                                 self.report_browser_error(
                                     "Failed to open imexplore.",
-                                    format!("{}\n", error.message()),
+                                    format!("{error}\n"),
                                 );
                             }
                         }
@@ -10959,7 +11252,7 @@ impl AppState {
                                     Some(frame_seq),
                                     image_movie_perf_context_from_state(state, None, None, None),
                                     MovieFrameOutcome::CacheMiss,
-                                    format!("browser request failed: {}", error.message()),
+                                    format!("browser request failed: {error}"),
                                 );
                                 state.movie_frame_seq = None;
                             }
@@ -10987,7 +11280,7 @@ impl AppState {
                 String::new(),
                 String::new(),
                 operation.affected_paths.clone(),
-                vec![error.message().to_string()],
+                vec![error.to_string()],
             ),
             _ => None,
         };
@@ -11062,10 +11355,7 @@ impl AppState {
                         .browser_session()
                         .is_some_and(|session| session.kind() == BrowserAppKind::Image);
                 if keep_session {
-                    self.stop_image_movie(
-                        false,
-                        format!("browser request failed: {}", error.message()),
-                    );
+                    self.stop_image_movie(false, format!("browser request failed: {error}"));
                 }
                 if !keep_session {
                     if let Some(session) = self.browser_session.take() {
@@ -11073,15 +11363,15 @@ impl AppState {
                     }
                 }
                 let mut details = if stderr.trim().is_empty() {
-                    format!("{}\n", error.message())
+                    format!("{error}\n")
                 } else {
-                    format!("{}\n{stderr}", error.message())
+                    format!("{error}\n{stderr}")
                 };
                 if let Some(warning) = notebook_warning {
                     details.push_str(&format!("Notebook recording warning: {warning}\n"));
                 }
                 let status = if keep_session {
-                    error.message().to_string()
+                    error.to_string()
                 } else {
                     "Browser command failed. Session closed.".to_string()
                 };
@@ -12316,10 +12606,10 @@ impl AppState {
         let Some(panel) = self.plot_workspace.panel.as_mut() else {
             return;
         };
-        match panel.renderer.pump() {
+        match panel.renderer.pump_latest(1) {
             Ok(changed) => {
                 if changed {
-                    panel.image_size = panel.renderer.image_size();
+                    panel.image_size = scheduled_panel_image_size(&panel.renderer);
                     self.plot_workspace.preview_invalidated = false;
                     self.plot_workspace.placeholder_protocol = None;
                     if matches!(self.result.status_kind, StatusKind::Info)
@@ -12332,7 +12622,7 @@ impl AppState {
                 }
                 if !changed
                     && was_pending
-                    && panel.renderer.protocol().is_some()
+                    && scheduled_panel_protocol(&panel.renderer).is_some()
                     && matches!(self.result.status_kind, StatusKind::Info)
                 {
                     self.plot_workspace.preview_invalidated = false;
@@ -12388,10 +12678,10 @@ impl AppState {
             return;
         };
         let stale_count = panel.renderer.take_stale_result_count();
-        let pump_result = match panel.renderer.pump() {
+        let pump_result = match panel.renderer.pump_latest(1) {
             Ok(changed) => {
                 if changed {
-                    panel.image_size = panel.renderer.image_size();
+                    panel.image_size = scheduled_panel_image_size(&panel.renderer);
                     let request_hash = panel
                         .pending_request_key
                         .as_ref()
@@ -12449,10 +12739,10 @@ impl AppState {
             return;
         };
         let mut startup_render_completed = None::<(u64, usize, bool)>;
-        match panel.renderer.pump() {
+        match panel.renderer.pump_latest(1) {
             Ok(changed) => {
                 if changed {
-                    panel.image_size = panel.renderer.image_size();
+                    panel.image_size = scheduled_panel_image_size(&panel.renderer);
                     if let Some(request_key) = panel.pending_request_key.take() {
                         startup_render_completed = Some((
                             hashed_render_request_key(&request_key),
@@ -12499,7 +12789,6 @@ impl AppState {
                 overlay_markers: &image_plane_overlay_markers(state),
                 split_ratio,
                 theme_mode,
-                render_scale: 1.0,
                 max_pixel_size: None,
             },
         )
@@ -12527,7 +12816,6 @@ impl AppState {
                 overlay_markers: &image_plane_overlay_markers(state),
                 split_ratio,
                 theme_mode,
-                render_scale: self.current_image_movie_plane_render_scale(),
                 max_pixel_size: None,
             },
         )
@@ -12572,20 +12860,10 @@ impl AppState {
             theme_mode: options.theme_mode,
             render_signature,
         };
-        let scaled_pixel_width = scaled_movie_render_dimension(
-            u32::from(area.width.max(1)) * u32::from(font_size.0.max(1)),
-            options.render_scale,
-        );
-        let scaled_pixel_height = scaled_movie_render_dimension(
-            u32::from(area.height.max(1)) * u32::from(font_size.1.max(1)),
-            options.render_scale,
-        );
-        let max_pixel_size = combine_render_pixel_caps(
-            options.max_pixel_size,
-            adaptive_image_plane_render_pixel_cap(area, font_size, snapshot),
-        );
+        let full_pixel_width = u32::from(area.width.max(1)) * u32::from(font_size.0.max(1));
+        let full_pixel_height = u32::from(area.height.max(1)) * u32::from(font_size.1.max(1));
         let (pixel_width, pixel_height) =
-            clamp_render_dimensions(scaled_pixel_width, scaled_pixel_height, max_pixel_size);
+            clamp_render_dimensions(full_pixel_width, full_pixel_height, options.max_pixel_size);
         let cache_key = hashed_render_input_cache_key(&request_key, pixel_width, pixel_height);
         Some(CurrentImagePlaneRenderRequest {
             request_key,
@@ -12628,20 +12906,10 @@ impl AppState {
             theme_mode: options.theme_mode,
             render_signature,
         };
-        let scaled_pixel_width = scaled_movie_render_dimension(
-            u32::from(area.width.max(1)) * u32::from(font_size.0.max(1)),
-            options.render_scale,
-        );
-        let scaled_pixel_height = scaled_movie_render_dimension(
-            u32::from(area.height.max(1)) * u32::from(font_size.1.max(1)),
-            options.render_scale,
-        );
-        let max_pixel_size = combine_render_pixel_caps(
-            options.max_pixel_size,
-            adaptive_image_spectrum_render_pixel_cap(area, font_size, &profile),
-        );
+        let full_pixel_width = u32::from(area.width.max(1)) * u32::from(font_size.0.max(1));
+        let full_pixel_height = u32::from(area.height.max(1)) * u32::from(font_size.1.max(1));
         let (pixel_width, pixel_height) =
-            clamp_render_dimensions(scaled_pixel_width, scaled_pixel_height, max_pixel_size);
+            clamp_render_dimensions(full_pixel_width, full_pixel_height, options.max_pixel_size);
         let cache_key = hashed_render_input_cache_key(&request_key, pixel_width, pixel_height);
         Some(CurrentImageSpectrumRenderRequest {
             request_key,
@@ -12654,12 +12922,6 @@ impl AppState {
                 theme_mode: browser_render_theme(options.theme_mode),
             },
         })
-    }
-
-    fn current_image_movie_plane_render_scale(&self) -> f32 {
-        self.image_browser_session_state()
-            .map(image_movie_plane_render_scale_for_state)
-            .unwrap_or(1.0)
     }
 
     fn ensure_image_plane_requested(&mut self, layout: &UiLayout) {
@@ -12741,18 +13003,22 @@ impl AppState {
                     ));
                 }
                 let request_result = if state.movie.playing && state.movie.direct_overlay {
-                    panel.renderer.request_render_only(
+                    submit_panel_render(
+                        &mut panel.renderer,
                         request.request_key.area,
                         request.pixel_width,
                         request.pixel_height,
                         request.input,
+                        false,
                     )
                 } else {
-                    panel.renderer.request(
+                    submit_panel_render(
+                        &mut panel.renderer,
                         request.request_key.area,
                         request.pixel_width,
                         request.pixel_height,
                         request.input,
+                        true,
                     )
                 };
                 if let Err(error) = request_result {
@@ -12840,7 +13106,6 @@ impl AppState {
                 overlay_profiles: &overlay_profiles,
                 split_ratio,
                 theme_mode,
-                render_scale: 1.0,
                 max_pixel_size: None,
             },
         ) else {
@@ -12869,11 +13134,13 @@ impl AppState {
             }
             // Do not cache cloned PanelProtocol values here: Kitty-backed protocols
             // transmit only once, so replaying a clone can produce blank frames.
-            if let Err(error) = panel.renderer.request(
+            if let Err(error) = submit_panel_render(
+                &mut panel.renderer,
                 request.request_key.area,
                 request.pixel_width,
                 request.pixel_height,
                 request.input,
+                true,
             ) {
                 panel.last_error = Some(error.to_string());
                 return;
@@ -13009,8 +13276,14 @@ impl AppState {
         let panel = self.plot_workspace.panel.get_or_insert_with(|| {
             let picker = terminal_picker();
             let font_size = picker.font_size();
-            let renderer = PanelRenderer::new(picker, Resize::Fit(None), |job| {
-                render_plot_image(job.max_pixel_width, job.max_pixel_height, &job.input)
+            let renderer = PanelScheduler::new(PanelSchedulePolicy::LatestWins, move |job| {
+                render_panel_protocol(&picker, Resize::Fit(None), job, |request| {
+                    render_plot_image(
+                        request.max_pixel_width,
+                        request.max_pixel_height,
+                        &request.input,
+                    )
+                })
             })
             .expect("panel renderer");
             PlotPanelState {
@@ -13027,7 +13300,8 @@ impl AppState {
 
         let pixel_width = u32::from(area.width.max(1)) * u32::from(panel.font_size.0.max(1));
         let pixel_height = u32::from(area.height.max(1)) * u32::from(panel.font_size.1.max(1));
-        if let Err(error) = panel.renderer.request(
+        if let Err(error) = submit_panel_render(
+            &mut panel.renderer,
             area,
             pixel_width.max(1),
             pixel_height.max(1),
@@ -13046,6 +13320,7 @@ impl AppState {
                     })
                 }
             },
+            true,
         ) {
             panel.last_error = Some(error.to_string());
             self.plot_workspace.preview_invalidated = false;
@@ -13060,7 +13335,7 @@ impl AppState {
         self.plot_workspace
             .panel
             .as_ref()
-            .and_then(|panel| panel.renderer.protocol())
+            .and_then(|panel| scheduled_panel_protocol(&panel.renderer))
     }
 
     pub(crate) fn plot_display_protocol(&self) -> Option<&PanelProtocol> {
@@ -13092,7 +13367,7 @@ impl AppState {
                 panel
                     .movie_protocol
                     .as_ref()
-                    .or_else(|| panel.renderer.protocol())
+                    .or_else(|| scheduled_panel_protocol(&panel.renderer))
             })
     }
 
@@ -13136,7 +13411,6 @@ impl AppState {
                 overlay_markers: &image_plane_overlay_markers(state),
                 split_ratio,
                 theme_mode,
-                render_scale: 1.0,
                 max_pixel_size: None,
             },
         )?;
@@ -13171,7 +13445,6 @@ impl AppState {
                     overlay_profiles: &overlay_profiles,
                     split_ratio,
                     theme_mode,
-                    render_scale: 1.0,
                     max_pixel_size: None,
                 },
             ) {
@@ -13204,19 +13477,34 @@ impl AppState {
             axis_state.axis,
             theme_mode,
         );
+        let bundle_request = ImageMovieBundleRequest {
+            occurrence: ImageMovieOccurrence {
+                generation: movie_key,
+                movie_key,
+                axis: axis_state.axis,
+                axis_index: axis_state.index,
+                axis_length: axis_state.length,
+            },
+            requested_fps: state.movie.fps,
+            surfaces: surface_requests,
+        };
+        let surface_payload_bytes = bundle_request
+            .surfaces
+            .iter()
+            .map(|surface| surface.payload.cloned_owned_bytes())
+            .collect::<Vec<_>>();
+        let resource_plan = plan_image_movie_resources(
+            state.resource_budget,
+            &bundle_request,
+            state.movie.frame_interval,
+            state.static_render_cache_bytes(),
+            &surface_payload_bytes,
+        )
+        .ok()?;
         let prepared = state
             .direct_movie_engine
-            .prepare_bundle(&ImageMovieBundleRequest {
-                occurrence: ImageMovieOccurrence {
-                    generation: movie_key,
-                    movie_key,
-                    axis: axis_state.axis,
-                    axis_index: axis_state.index,
-                    axis_length: axis_state.length,
-                },
-                requested_fps: state.movie.fps,
-                surfaces: surface_requests,
-            });
+            .prepare_bundle(&bundle_request, &resource_plan.movie)
+            .ok()?;
         Some(ImageDirectMovieBundleInfo {
             movie_key,
             axis: axis_state.axis,
@@ -13330,7 +13618,7 @@ impl AppState {
             .map(|image| image.to_rgba8())
             .or_else(|| {
                 if panel.display_key.as_ref() == Some(&request.request_key) {
-                    panel.renderer.rendered_image().and_then(|image| {
+                    scheduled_panel_bitmap(&panel.renderer).and_then(|image| {
                         (image.width() == request.pixel_width
                             && image.height() == request.pixel_height)
                             .then(|| image.clone())
@@ -13467,7 +13755,7 @@ impl AppState {
                 panel
                     .movie_protocol
                     .as_ref()
-                    .or_else(|| panel.renderer.protocol())
+                    .or_else(|| scheduled_panel_protocol(&panel.renderer))
             })
     }
 
@@ -17763,7 +18051,7 @@ fn resolve_image_axis_selector(
 }
 
 fn cycle_image_startup_view(
-    client: &ImageBrowserClient,
+    client: &JsonlSessionClient<ImageBrowserProtocol>,
     mut snapshot: ImageBrowserSnapshot,
     target: ImageBrowserView,
 ) -> Result<ImageBrowserSnapshot, String> {
@@ -17773,7 +18061,7 @@ fn cycle_image_startup_view(
         }
         snapshot = client
             .request_startup(ImageBrowserCommand::CycleView { forward: true })
-            .map_err(|error| error.message().to_string())?;
+            .map_err(|error| error.to_string())?;
     }
     Err(format!(
         "imexplore backend did not expose requested startup view {}",
@@ -17782,7 +18070,7 @@ fn cycle_image_startup_view(
 }
 
 fn apply_image_startup_config(
-    client: &ImageBrowserClient,
+    client: &JsonlSessionClient<ImageBrowserProtocol>,
     snapshot: ImageBrowserSnapshot,
     config: &ImageSessionStartupConfig,
 ) -> Result<(ImageBrowserSnapshot, usize), String> {
@@ -17797,7 +18085,7 @@ fn apply_image_startup_config(
             .request_startup(ImageBrowserCommand::SetPlaneContentMode {
                 mode: config.content_mode,
             })
-            .map_err(|error| error.message().to_string())?;
+            .map_err(|error| error.to_string())?;
     }
 
     if let Some((_, axis)) =
@@ -17805,7 +18093,7 @@ fn apply_image_startup_config(
     {
         snapshot = client
             .request_startup(ImageBrowserCommand::SetSelectedNonDisplayAxis { axis })
-            .map_err(|error| error.message().to_string())?;
+            .map_err(|error| error.to_string())?;
     }
 
     if config.region_explicit || config.mask_explicit {
@@ -17814,7 +18102,7 @@ fn apply_image_startup_config(
                 region: config.region_explicit.then(|| config.region.clone()),
                 mask: config.mask_explicit.then(|| config.mask.clone()),
             })
-            .map_err(|error| error.message().to_string())?;
+            .map_err(|error| error.to_string())?;
     }
 
     let selected_movie_axis =
@@ -17905,50 +18193,6 @@ fn image_plane_sampled_shape(snapshot: &ImageBrowserSnapshot) -> Option<(usize, 
     Some((display_x.sampled_len, display_y.sampled_len))
 }
 
-fn scaled_movie_render_dimension(dimension: u32, render_scale: f32) -> u32 {
-    let dimension = dimension.max(1);
-    if render_scale >= 0.999 {
-        return dimension;
-    }
-    let scaled = ((dimension as f32) * render_scale).round().max(1.0) as u32;
-    if dimension <= 64 {
-        scaled.min(dimension).max(1)
-    } else {
-        scaled.max(64).min(dimension)
-    }
-}
-
-fn image_movie_plane_render_scale_for_state(state: &ImageBrowserSessionState) -> f32 {
-    if !state.movie.playing {
-        return 1.0;
-    }
-    let Some(axis_len) = state
-        .selected_non_display_axis_state()
-        .map(|axis| axis.length)
-        .filter(|length| *length > 1)
-    else {
-        return 1.0;
-    };
-    let pixel_width = u64::from(state.viewport.plane_pixel_width.max(1));
-    let pixel_height = u64::from(state.viewport.plane_pixel_height.max(1));
-    let bytes_per_frame = pixel_width.saturating_mul(pixel_height).saturating_mul(4);
-    let total_bytes = bytes_per_frame.saturating_mul(axis_len as u64);
-    let target_bytes = configured_image_movie_target_resident_bytes();
-    if total_bytes <= target_bytes || target_bytes == 0 {
-        return 1.0;
-    }
-    ((target_bytes as f64 / total_bytes as f64).sqrt() as f32)
-        .clamp(IMAGE_MOVIE_MIN_RENDER_SCALE, 1.0)
-}
-
-fn configured_image_movie_target_resident_bytes() -> u64 {
-    std::env::var("CASARS_IMEXPLORE_MOVIE_TARGET_RESIDENT_MB")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .map(|mb| mb.saturating_mul(1024 * 1024))
-        .unwrap_or(IMAGE_MOVIE_TARGET_RESIDENT_BYTES)
-}
-
 fn clamp_render_dimensions(
     pixel_width: u32,
     pixel_height: u32,
@@ -17969,110 +18213,6 @@ fn clamp_render_dimensions(
         ((pixel_width as f32) * scale).round().max(1.0) as u32,
         ((pixel_height as f32) * scale).round().max(1.0) as u32,
     )
-}
-
-fn combine_render_pixel_caps(
-    primary: Option<(u32, u32)>,
-    secondary: Option<(u32, u32)>,
-) -> Option<(u32, u32)> {
-    match (primary, secondary) {
-        (Some((left_width, left_height)), Some((right_width, right_height))) => Some((
-            left_width.min(right_width).max(1),
-            left_height.min(right_height).max(1),
-        )),
-        (Some(cap), None) | (None, Some(cap)) => Some((cap.0.max(1), cap.1.max(1))),
-        (None, None) => None,
-    }
-}
-
-fn adaptive_image_plane_render_pixel_cap(
-    area: Rect,
-    font_size: (u16, u16),
-    snapshot: &ImageBrowserSnapshot,
-) -> Option<(u32, u32)> {
-    if area.is_empty() {
-        return None;
-    }
-    let full_width = u32::from(area.width.max(1)) * u32::from(font_size.0.max(1));
-    let full_height = u32::from(area.height.max(1)) * u32::from(font_size.1.max(1));
-    let layout = image_plane_layout(
-        full_width,
-        full_height,
-        image_plane_display_aspect_ratio(snapshot),
-        snapshot.display_axes.len() >= 2,
-    );
-    if layout.image.width == 0 || layout.image.height == 0 {
-        return None;
-    }
-    let (sampled_width, sampled_height) = image_plane_sampled_shape(snapshot).or_else(|| {
-        snapshot
-            .plane
-            .as_ref()
-            .map(|raster| (raster.width.max(1), raster.height.max(1)))
-    })?;
-    let target_image_width = plane_target_dimension(
-        (sampled_width as u32).saturating_mul(IMAGE_PLANE_TARGET_PIXELS_PER_SAMPLE),
-        IMAGE_PLANE_MIN_TARGET_IMAGE_PIXELS,
-        layout.image.width.max(1),
-    );
-    let target_image_height = plane_target_dimension(
-        (sampled_height as u32).saturating_mul(IMAGE_PLANE_TARGET_PIXELS_PER_SAMPLE),
-        IMAGE_PLANE_MIN_TARGET_IMAGE_PIXELS,
-        layout.image.height.max(1),
-    );
-    let width_scale = target_image_width as f32 / layout.image.width.max(1) as f32;
-    let height_scale = target_image_height as f32 / layout.image.height.max(1) as f32;
-    let scale = width_scale.min(height_scale).min(1.0);
-    if scale >= 0.999 {
-        return None;
-    }
-    Some((
-        ((full_width as f32) * scale).round().max(1.0) as u32,
-        ((full_height as f32) * scale).round().max(1.0) as u32,
-    ))
-}
-
-fn adaptive_image_spectrum_render_pixel_cap(
-    area: Rect,
-    font_size: (u16, u16),
-    profile: &ImageProfilePayload,
-) -> Option<(u32, u32)> {
-    if area.is_empty() {
-        return None;
-    }
-    let full_width = u32::from(area.width.max(1)) * u32::from(font_size.0.max(1));
-    let full_height = u32::from(area.height.max(1)) * u32::from(font_size.1.max(1));
-    let layout = image_spectrum_layout(full_width, full_height);
-    if layout.plot.width == 0 || layout.plot.height == 0 {
-        return None;
-    }
-    let target_plot_width = plane_target_dimension(
-        (profile.samples.len() as u32)
-            .max(1)
-            .saturating_mul(IMAGE_SPECTRUM_TARGET_PIXELS_PER_SAMPLE),
-        IMAGE_SPECTRUM_MIN_TARGET_PLOT_WIDTH,
-        layout.plot.width.max(1),
-    );
-    let target_plot_height = layout
-        .plot
-        .height
-        .clamp(1, IMAGE_SPECTRUM_TARGET_PLOT_HEIGHT);
-    let width_scale = target_plot_width as f32 / layout.plot.width.max(1) as f32;
-    let height_scale = target_plot_height as f32 / layout.plot.height.max(1) as f32;
-    let scale = width_scale.min(height_scale).min(1.0);
-    if scale >= 0.999 {
-        return None;
-    }
-    Some((
-        ((full_width as f32) * scale).round().max(1.0) as u32,
-        ((full_height as f32) * scale).round().max(1.0) as u32,
-    ))
-}
-
-fn plane_target_dimension(desired: u32, min_target: u32, max_target: u32) -> u32 {
-    let max_target = max_target.max(1);
-    let min_target = min_target.min(max_target);
-    desired.clamp(min_target, max_target)
 }
 
 fn image_movie_content_signature(
@@ -18145,40 +18285,6 @@ fn build_image_movie_preview_request(
         ),
         include_profile: spec.spectrum_visible,
     }
-}
-
-pub(crate) fn image_movie_lookahead_occurrences(
-    requested_fps: f64,
-    axis_length: usize,
-    render_worker_count: usize,
-    protocol_worker_count: usize,
-) -> usize {
-    let frame_interval = Duration::from_secs_f64(1.0 / requested_fps.max(0.001));
-    let horizon = Duration::from_millis(150).max(frame_interval.mul_f64(1.5));
-    let frame_count = ((horizon.as_secs_f64() / frame_interval.as_secs_f64()).ceil() as usize)
-        .clamp(1, IMAGE_MOVIE_RENDER_POOL_QUEUE_CAPACITY.max(1));
-    let worker_hint = render_worker_count.max(protocol_worker_count).clamp(1, 2);
-    frame_count
-        .max(worker_hint)
-        .min(axis_length.max(1))
-        .min(IMAGE_MOVIE_RENDER_POOL_QUEUE_CAPACITY.max(1))
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn image_movie_presentation_lookahead_occurrences(
-    requested_fps: f64,
-    axis_length: usize,
-    protocol_worker_count: usize,
-) -> usize {
-    let frame_interval = Duration::from_secs_f64(1.0 / requested_fps.max(0.001));
-    let horizon = Duration::from_millis(150).max(frame_interval.mul_f64(1.5));
-    let frame_count = ((horizon.as_secs_f64() / frame_interval.as_secs_f64()).ceil() as usize)
-        .clamp(1, IMAGE_MOVIE_PROTOCOL_POOL_QUEUE_CAPACITY.max(1));
-    let worker_hint = protocol_worker_count.clamp(1, 2);
-    frame_count
-        .max(worker_hint)
-        .min(axis_length.max(1))
-        .min(IMAGE_MOVIE_PROTOCOL_POOL_QUEUE_CAPACITY.max(1))
 }
 
 fn image_plane_overlay_markers(state: &ImageBrowserSessionState) -> Vec<ImagePlaneOverlayMarker> {
@@ -19347,7 +19453,10 @@ fn shell_quote(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use casa_images::ImageMovieSurfaceKind;
+    use crate::movie::{
+        ImageMovieBundleRequest, ImageMovieOccurrence, ImageMovieSurfaceKind,
+        ImageMovieSurfaceRequest,
+    };
     use casa_ms::presentation::UiCommandSchema;
     use casars_imagebrowser_protocol::{
         ImageBrowserAxisValue, ImageBrowserCapabilities, ImageBrowserFocus, ImageBrowserParameters,
@@ -19355,20 +19464,84 @@ mod tests {
         ImageNavigationMetrics, ImageNonDisplayAxisState, ImagePlaneCursorState, ImagePlaneRaster,
         ImageProfilePayload, ImageProfileSampleState,
     };
+    use image::RgbImage;
     use ratatui::layout::Rect;
 
     use super::{
         AppState, BrowserRequest, BrowserSession, BrowserSessionKind, ConfigStore, FormField,
-        FormSectionContent, ImageBrowserLeftPaneMode, ImageBrowserSessionState, ImageMovieState,
-        ImagePlaneColormap, ImagePlaneMode, StaticFormItem, build_workflow_sections,
-        centered_window_start, expand_tilde_path_with_home, image_pan_parameters,
-        image_plane_draw_rect, image_zoom_parameters, new_direct_image_movie_engine,
-        notebook_browser_operation,
+        FormSectionContent, ImageBrowserLeftPaneMode, ImageBrowserMemoryBudget,
+        ImageBrowserSessionState, ImageMovieState, ImagePlaneColormap, ImagePlaneMode,
+        RenderImageCache, StaticFormItem, build_workflow_sections, centered_window_start,
+        expand_tilde_path_with_home, image_pan_parameters, image_plane_draw_rect,
+        image_zoom_parameters, new_direct_image_movie_engine, notebook_browser_operation,
+        plan_image_movie_resources,
     };
     use std::{
         path::{Path, PathBuf},
         time::Duration,
     };
+
+    #[test]
+    fn render_image_cache_evicts_by_owned_bitmap_bytes() {
+        let mut cache = RenderImageCache::new(12);
+        assert!(cache.insert(1u8, RgbImage::new(2, 2)));
+        assert_eq!(cache.total_bytes(), 12);
+        assert!(cache.insert(2u8, RgbImage::new(2, 2)));
+        assert!(!cache.contains_key(&1));
+        assert!(cache.contains_key(&2));
+        assert_eq!(cache.total_bytes(), 12);
+        assert!(cache.total_bytes() <= cache.capacity_bytes());
+    }
+
+    #[test]
+    fn render_image_cache_replacement_updates_accounted_bytes() {
+        let mut cache = RenderImageCache::new(18);
+        assert!(cache.insert(1u8, RgbImage::new(1, 1)));
+        assert_eq!(cache.total_bytes(), 3);
+        assert!(cache.insert(1u8, RgbImage::new(2, 2)));
+        assert_eq!(cache.total_bytes(), 12);
+        assert_eq!(cache.values.len(), 1);
+    }
+
+    #[test]
+    fn render_image_cache_rejects_oversized_value_and_removes_old_key() {
+        let mut cache = RenderImageCache::new(12);
+        assert!(cache.insert(1u8, RgbImage::new(1, 1)));
+        assert!(!cache.insert(1u8, RgbImage::new(3, 2)));
+        assert!(!cache.contains_key(&1));
+        assert_eq!(cache.total_bytes(), 0);
+    }
+
+    #[test]
+    fn movie_resource_plan_accounts_for_cloned_surface_payloads() {
+        let request = ImageMovieBundleRequest {
+            occurrence: ImageMovieOccurrence {
+                generation: 1,
+                movie_key: 2,
+                axis: 2,
+                axis_index: 0,
+                axis_length: 8,
+            },
+            requested_fps: 10.0,
+            surfaces: vec![ImageMovieSurfaceRequest {
+                kind: ImageMovieSurfaceKind::Plane,
+                request_hash: 3,
+                cell_size: (10, 10),
+                pixel_size: (10, 10),
+                payload: (),
+            }],
+        };
+        let plan = plan_image_movie_resources(
+            ImageBrowserMemoryBudget::for_test(1_000_000),
+            &request,
+            Duration::from_millis(100),
+            0,
+            &[1_234],
+        )
+        .unwrap();
+        assert_eq!(plan.movie.resident_frame_bytes, 10 * 10 * 3 + 1_234);
+        assert!(plan.total_reserved_bytes <= plan.budget.total_bytes());
+    }
 
     #[test]
     fn expands_bare_tilde_to_home() {
@@ -19617,7 +19790,9 @@ mod tests {
         app.browser_session = Some(BrowserSession {
             root_path: "test.image".into(),
             kind: BrowserSessionKind::Image(Box::new(ImageBrowserSessionState {
-                client: crate::browser_client::ImageBrowserClient::for_test(),
+                client: crate::browser_client::JsonlSessionClient::<
+                    crate::browser_client::ImageBrowserProtocol,
+                >::for_test(),
                 snapshot,
                 viewport: ImageBrowserViewport::with_plane_pixels(160, 48, 0, 1280, 768),
                 hscroll: 0,
@@ -19640,6 +19815,8 @@ mod tests {
                 movie_scheduler: None,
                 movie_frame_seq: None,
                 direct_movie_engine: new_direct_image_movie_engine(),
+                resource_budget: ImageBrowserMemoryBudget::for_test(256 * 1024 * 1024),
+                movie_resource_plan: None,
             })),
         });
         app
@@ -19726,7 +19903,7 @@ mod tests {
     }
 
     #[test]
-    fn image_render_requests_scale_down_large_surface_pixels_to_content_budget() {
+    fn static_image_render_requests_preserve_full_surface_geometry() {
         let mut snapshot = plane_snapshot();
         snapshot.plane = Some(plane_raster());
         snapshot.profile = Some(spectrum_profile());
@@ -19740,9 +19917,11 @@ mod tests {
         let app = image_test_app(snapshot);
         let layout = crate::ui::compute_layout(Rect::new(0, 0, 240, 80), &app);
         let font_size = app.image_plane_font_size_for_test();
-        let plane_canvas = crate::ui::image_plane_canvas_area_for_browser(&layout, true, 0.75);
-        let spectrum_canvas =
-            crate::ui::image_spectrum_canvas_area(&layout, true, 0.75).expect("spectrum canvas");
+        let split_ratio = app.image_workspace_split_ratio();
+        let plane_canvas =
+            crate::ui::image_plane_canvas_area_for_browser(&layout, true, split_ratio);
+        let spectrum_canvas = crate::ui::image_spectrum_canvas_area(&layout, true, split_ratio)
+            .expect("spectrum canvas");
         let full_plane_pixels = (
             u32::from(plane_canvas.width.max(1)) * u32::from(font_size.0.max(1)),
             u32::from(plane_canvas.height.max(1)) * u32::from(font_size.1.max(1)),
@@ -19759,10 +19938,8 @@ mod tests {
             .image_spectrum_render_pixels_for_test(&layout)
             .expect("spectrum render pixels");
 
-        assert!(plane_pixels.0 < full_plane_pixels.0);
-        assert!(plane_pixels.1 < full_plane_pixels.1);
-        assert!(spectrum_pixels.0 < full_spectrum_pixels.0);
-        assert!(spectrum_pixels.1 < full_spectrum_pixels.1);
+        assert_eq!(plane_pixels, full_plane_pixels);
+        assert_eq!(spectrum_pixels, full_spectrum_pixels);
     }
 
     #[test]

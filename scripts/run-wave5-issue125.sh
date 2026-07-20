@@ -42,7 +42,7 @@ fi
 cargo build --release -q \
   -p casa-ms --bin simobserve --bin msexplore \
   -p casars-imager --bin casars-imager \
-  -p casa-images --bin imexplore
+  -p casars --bin imexplore
 
 rust_ms="$outdir/ppdisk-rust-analysis.ms"
 casa_image="$outdir/casa-ppdisk-analysis"

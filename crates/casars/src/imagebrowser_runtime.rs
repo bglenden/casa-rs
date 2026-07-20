@@ -9,13 +9,16 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Instant;
 
-use crate::error::ImageError;
-use crate::image_view::{
+use crate::browser_resources::{
+    ImageBackendResourcePlan, ImageBackendResourceRequest, ImageBrowserMemoryBudget,
+};
+use casa_images::error::ImageError;
+use casa_images::image_view::{
     ImageRegion, ImageRegionOverlayShape, ImageRegionShape, ImageRegionStats, ImageRegionVertex,
     PlaneAutoscaleMode, PlaneRenderTelemetry, PlaneStretchPreset, PlaneStretchSettings,
     format_numeric_value_with_unit,
 };
-use crate::{
+use casa_images::{
     ImageAxisValue, ImageDisplayAxis, ImageMetadataSection, ImageNonDisplayAxis, ImageProbe,
     ImageProfile, ImageProfileSample, ImageViewCapabilities, ImageViewWindow, OpenedImageView,
     PlaneRaster,
@@ -62,6 +65,7 @@ pub struct ImageBrowserSession {
     profile_perf: ProfilePerfAggregate,
     last_non_display_step: Option<(usize, i32)>,
     prefetch_worker: Option<PlanePrefetchWorker>,
+    resources: ImageBackendResourcePlan,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,14 +101,6 @@ struct PreparedRegionReference {
     reset_saved_cycle: bool,
 }
 
-const SESSION_PLANE_CACHE_CAPACITY: usize = 48;
-const SESSION_PROFILE_CACHE_CAPACITY: usize = 24;
-const PREFETCH_CACHE_BYTES: usize = 64 * 1024 * 1024;
-const PREFETCH_DISTANCE: usize = 2;
-const PREFETCH_FORWARD_DISTANCE: usize = 6;
-const PREFETCH_REVERSE_DISTANCE: usize = 1;
-const PREFETCH_MAX_WORKERS: usize = 3;
-
 #[derive(Debug, Clone, Copy, Default)]
 struct ProfilePerfAggregate {
     cache_hits: u64,
@@ -114,7 +110,10 @@ struct ProfilePerfAggregate {
 
 #[derive(Debug)]
 struct RecentCache<K, V> {
-    capacity: usize,
+    capacity_bytes: u64,
+    total_bytes: u64,
+    latest_value_budget: bool,
+    retained_bytes: fn(&V) -> u64,
     values: HashMap<K, V>,
     order: VecDeque<K>,
 }
@@ -123,9 +122,23 @@ impl<K, V> RecentCache<K, V>
 where
     K: Clone + Eq + Hash,
 {
-    fn new(capacity: usize) -> Self {
+    fn with_byte_budget(capacity_bytes: u64, retained_bytes: fn(&V) -> u64) -> Self {
         Self {
-            capacity: capacity.max(1),
+            capacity_bytes,
+            total_bytes: 0,
+            latest_value_budget: false,
+            retained_bytes,
+            values: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn latest_value(retained_bytes: fn(&V) -> u64) -> Self {
+        Self {
+            capacity_bytes: 0,
+            total_bytes: 0,
+            latest_value_budget: true,
+            retained_bytes,
             values: HashMap::new(),
             order: VecDeque::new(),
         }
@@ -141,12 +154,23 @@ where
     }
 
     fn insert(&mut self, key: K, value: V) {
-        if self.values.contains_key(&key) {
-            self.values.insert(key.clone(), value);
-            self.touch(&key);
+        let value_bytes = (self.retained_bytes)(&value);
+        if self.latest_value_budget {
+            self.capacity_bytes = value_bytes;
+        }
+        if value_bytes > self.capacity_bytes {
             return;
         }
-        self.values.insert(key.clone(), value);
+        if let Some(previous) = self.values.insert(key.clone(), value) {
+            self.total_bytes = self
+                .total_bytes
+                .saturating_sub((self.retained_bytes)(&previous))
+                .saturating_add(value_bytes);
+            self.touch(&key);
+            self.evict_if_needed();
+            return;
+        }
+        self.total_bytes = self.total_bytes.saturating_add(value_bytes);
         self.order.push_back(key);
         self.evict_if_needed();
     }
@@ -164,13 +188,42 @@ where
     }
 
     fn evict_if_needed(&mut self) {
-        while self.values.len() > self.capacity {
+        while self.total_bytes > self.capacity_bytes {
             let Some(oldest) = self.order.pop_front() else {
                 break;
             };
-            self.values.remove(&oldest);
+            if let Some(previous) = self.values.remove(&oldest) {
+                self.total_bytes = self
+                    .total_bytes
+                    .saturating_sub((self.retained_bytes)(&previous));
+            }
         }
     }
+}
+
+fn plane_raster_retained_bytes(raster: &PlaneRaster) -> u64 {
+    let pixels = raster.pixels_u8.capacity() as u64;
+    let histogram =
+        (raster.histogram_bins.capacity() as u64).saturating_mul(std::mem::size_of::<u32>() as u64);
+    pixels
+        .saturating_add(histogram)
+        .saturating_add(raster.value_unit.capacity() as u64)
+}
+
+fn profile_retained_bytes(profile: &ImageProfile) -> u64 {
+    let samples = (profile.samples.capacity() as u64)
+        .saturating_mul(std::mem::size_of::<ImageProfileSample>() as u64);
+    let sample_strings = profile.samples.iter().fold(0u64, |total, sample| {
+        let axis = sample.world_axis.as_ref().map_or(0, |axis| {
+            (axis.name.capacity() as u64).saturating_add(axis.unit.capacity() as u64)
+        });
+        total.saturating_add(axis)
+    });
+    samples
+        .saturating_add(sample_strings)
+        .saturating_add(profile.axis_name.capacity() as u64)
+        .saturating_add(profile.axis_unit.capacity() as u64)
+        .saturating_add(profile.value_unit.capacity() as u64)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -237,12 +290,13 @@ struct PlanePrefetchWorker {
 }
 
 impl PlanePrefetchWorker {
-    fn new(path: &Path) -> Result<Self, ImageError> {
+    fn new(path: &Path, plan: ImageBackendResourcePlan) -> Result<Option<Self>, ImageError> {
+        if plan.prefetch_worker_count == 0 {
+            return Ok(None);
+        }
         let (response_tx, response_rx) = mpsc::channel::<PlanePrefetchResult>();
         let path = path.to_path_buf();
-        let worker_count = thread::available_parallelism()
-            .map(|parallelism| parallelism.get().clamp(1, PREFETCH_MAX_WORKERS))
-            .unwrap_or(1);
+        let worker_count = plan.prefetch_worker_count;
         let mut request_txs = Vec::with_capacity(worker_count);
         for worker_index in 0..worker_count {
             let (request_tx, request_rx) = mpsc::channel::<PlanePrefetchRequest>();
@@ -251,19 +305,24 @@ impl PlanePrefetchWorker {
             thread::Builder::new()
                 .name(format!("imexplore-plane-prefetch-{worker_index}"))
                 .spawn(move || {
-                    run_plane_prefetch_worker(worker_path, request_rx, worker_response_tx)
+                    run_plane_prefetch_worker(
+                        worker_path,
+                        request_rx,
+                        worker_response_tx,
+                        plan.view_cache_bytes_per_reader,
+                    )
                 })
                 .map_err(|error| {
                     ImageError::InvalidMetadata(format!("failed to spawn prefetch worker: {error}"))
                 })?;
             request_txs.push(request_tx);
         }
-        Ok(Self {
+        Ok(Some(Self {
             request_txs,
             response_rx,
             queued: HashSet::new(),
             next_worker: 0,
-        })
+        }))
     }
 
     fn submit(
@@ -301,8 +360,9 @@ fn run_plane_prefetch_worker(
     path: PathBuf,
     request_rx: Receiver<PlanePrefetchRequest>,
     response_tx: Sender<PlanePrefetchResult>,
+    view_cache_bytes: usize,
 ) {
-    let Ok(view) = OpenedImageView::open_with_cache_bytes(&path, PREFETCH_CACHE_BYTES) else {
+    let Ok(view) = OpenedImageView::open_with_cache_bytes(&path, view_cache_bytes) else {
         return;
     };
     while let Ok(request) = request_rx.recv() {
@@ -388,7 +448,39 @@ impl ImageBrowserSession {
         parameters: Option<&ImageBrowserParameters>,
     ) -> Result<Self, ImageError> {
         let path = path.as_ref();
-        let view = OpenedImageView::open(path)?;
+        let budget = ImageBrowserMemoryBudget::from_process_snapshot().map_err(|error| {
+            ImageError::InvalidMetadata(format!("image-browser resource budget: {error}"))
+        })?;
+        let available_parallelism = thread::available_parallelism()
+            .map_err(|error| {
+                ImageError::InvalidMetadata(format!("image-browser available parallelism: {error}"))
+            })?
+            .get();
+        let plane_pixel_size = (
+            usize::from(if viewport.plane_pixel_width > 0 {
+                viewport.plane_pixel_width
+            } else {
+                viewport.width.max(1)
+            }),
+            usize::from(if viewport.plane_pixel_height > 0 {
+                viewport.plane_pixel_height
+            } else {
+                viewport.height.max(1)
+            }),
+        );
+        let initial_resources = budget
+            .plan_backend(ImageBackendResourceRequest {
+                plane_pixel_size,
+                prefetch_frame_count: 0,
+                available_parallelism,
+            })
+            .map_err(|error| {
+                ImageError::InvalidMetadata(format!("image-browser backend resources: {error}"))
+            })?;
+        let view = OpenedImageView::open_with_cache_bytes(
+            path,
+            initial_resources.view_cache_bytes_per_reader,
+        )?;
         let non_display_axis_count = session_non_display_axis_count(&view);
         let stretch = parameters
             .map(parse_stretch_parameters)
@@ -400,6 +492,22 @@ impl ImageBrowserSession {
             }
             None => view.default_window(),
         };
+        let prefetch_frame_count = view
+            .axis_model()
+            .non_display_axes
+            .iter()
+            .map(|axis| window.sampled_axis_len(*axis).saturating_sub(1))
+            .max()
+            .unwrap_or(0);
+        let resources = budget
+            .plan_backend(ImageBackendResourceRequest {
+                plane_pixel_size,
+                prefetch_frame_count,
+                available_parallelism,
+            })
+            .map_err(|error| {
+                ImageError::InvalidMetadata(format!("image-browser backend resources: {error}"))
+            })?;
         let default_display_pixels = centered_display_pixels(&view, &window);
         let default_non_display_pixels = centered_non_display_pixels(&view, &window);
         let active_view = if view.capabilities().renderable_plane {
@@ -409,7 +517,8 @@ impl ImageBrowserSession {
         };
         let perf_enabled = image_browser_perf_enabled();
         let mut session = Self {
-            prefetch_worker: Some(PlanePrefetchWorker::new(view.path())?),
+            prefetch_worker: PlanePrefetchWorker::new(view.path(), resources)?,
+            resources,
             view,
             window,
             stretch,
@@ -431,9 +540,12 @@ impl ImageBrowserSession {
             mask_reference: ImageMaskReference::None,
             saved_region_cycle_index: 0,
             perf_enabled,
-            plane_cache: RecentCache::new(SESSION_PLANE_CACHE_CAPACITY),
+            plane_cache: RecentCache::with_byte_budget(
+                resources.plane_result_cache_bytes,
+                plane_raster_retained_bytes,
+            ),
             prefetched_plane_keys: HashSet::new(),
-            profile_cache: RecentCache::new(SESSION_PROFILE_CACHE_CAPACITY),
+            profile_cache: RecentCache::latest_value(profile_retained_bytes),
             profile_perf: ProfilePerfAggregate::default(),
             last_non_display_step: None,
         };
@@ -1371,20 +1483,18 @@ impl ImageBrowserSession {
             .last_non_display_step
             .filter(|(axis, direction)| *axis == axis_state.axis && *direction != 0)
             .map(|(_, direction)| direction);
+        let lookahead = self.resources.prefetch_lookahead_frames;
         let prefetch_offsets = if let Some(direction) = preferred_direction {
             let primary_direction = if direction < 0 { -1isize } else { 1isize };
-            (1..=PREFETCH_FORWARD_DISTANCE)
+            (1..=lookahead)
                 .map(|offset| (offset, primary_direction))
-                .chain(
-                    (1..=PREFETCH_REVERSE_DISTANCE).map(move |offset| (offset, -primary_direction)),
-                )
                 .collect::<Vec<_>>()
         } else {
-            (1..=PREFETCH_DISTANCE)
-                .flat_map(|offset| {
-                    [-1isize, 1isize]
-                        .into_iter()
-                        .map(move |direction| (offset, direction))
+            (0..lookahead)
+                .map(|index| {
+                    let offset = index / 2 + 1;
+                    let direction = if index % 2 == 0 { -1isize } else { 1isize };
+                    (offset, direction)
                 })
                 .collect::<Vec<_>>()
         };
@@ -2758,8 +2868,8 @@ mod tests {
     use ndarray::IxDyn;
 
     use super::*;
-    use crate::image::PagedImage;
-    use crate::image_view::ImageRegionShape;
+    use casa_images::image::PagedImage;
+    use casa_images::image_view::ImageRegionShape;
 
     static PERF_ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -4411,7 +4521,7 @@ if not (rg.ispixelregion(casa_pixel_region) or rg.isworldregion(casa_pixel_regio
             String::from_utf8_lossy(&output.stderr)
         );
 
-        let world_stats = crate::analysis::imstat(
+        let world_stats = casa_images::analysis::imstat(
             &image_path,
             None,
             Some(casa_world_region_path.to_str().unwrap()),
@@ -4423,7 +4533,7 @@ if not (rg.ispixelregion(casa_pixel_region) or rg.isworldregion(casa_pixel_regio
         assert_eq!(world_stats.trc, vec![1, 0]);
         assert_eq!(world_stats.npts, 2.0);
 
-        let pixel_stats = crate::analysis::imstat(
+        let pixel_stats = casa_images::analysis::imstat(
             &image_path,
             None,
             Some(casa_pixel_region_path.to_str().unwrap()),

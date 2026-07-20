@@ -30,11 +30,11 @@ Do not copy source files into `casa-rs`.
 
 The library owns:
 
-- `PanelRenderer` in `src/panel.rs`
-  - worker lifecycle
-  - latest-wins request coalescing
-  - request-id-based stale result filtering
-  - current protocol/current image size state
+- `PanelScheduler` in `src/panel.rs`
+  - one worker engine for latest-wins and bounded-ordered policies
+  - request-id and generation-based stale-result filtering
+  - typed worker, panic, disconnect, and queue failures
+  - app-owned current protocol/current image state
 
 - `KittyLayerManager` in `src/kitty.rs`
   - typed layer handles

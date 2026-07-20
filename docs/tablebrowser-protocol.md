@@ -10,7 +10,7 @@ without redesigning the wire format.
 
 ## Transport
 
-- Producer: `tablebrowser --session`
+- Producer: `tablebrowser --session` from the `casars` runtime package
 - Consumer: `casars`
 - Encoding: UTF-8 JSON
 - Framing: one object per line
@@ -22,6 +22,30 @@ The committed JSON Schemas live in:
 
 - `crates/casars-tablebrowser-protocol/schemas/request.schema.json`
 - `crates/casars-tablebrowser-protocol/schemas/response.schema.json`
+
+The paired image-browser session uses the same transport/envelope foundation
+and commits its domain-specific schemas at:
+
+- `crates/casars-imagebrowser-protocol/schemas/request.schema.json`
+- `crates/casars-imagebrowser-protocol/schemas/response.schema.json`
+
+`casa-provider-contracts::session_protocol` owns the shared JSONL session
+metadata, envelope/error definitions, version access, deterministic schema
+rendering, and stale checks. The two protocol crates retain distinct typed
+commands and response payloads. `casars` owns one generic process client that
+classifies provider, serialization, malformed-response, version, unexpected-
+variant, timeout, process-exit, configuration, and transport failures without
+fabricating a successful response.
+
+Regenerate both committed schema pairs with:
+
+```bash
+CASA_RS_REGENERATE_SESSION_SCHEMAS=1 CARGO_INCREMENTAL=0 \
+  cargo test -p casars-tablebrowser-protocol -p casars-imagebrowser-protocol
+```
+
+Run the command a second time without the environment variable to perform the
+normal stale check.
 
 The canonical schema bundle now wraps those envelope schemas with:
 

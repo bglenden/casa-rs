@@ -7,9 +7,8 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 
-use casa_images::{
-    ImageBrowserSession, ImmomentsRequest, ImpvRequest, imhead, imhead_put, immoments, impv, imstat,
-};
+use casa_images::{ImmomentsRequest, ImpvRequest, imhead, imhead_put, immoments, impv, imstat};
+use casars::imagebrowser_runtime::ImageBrowserSession;
 use casars_imagebrowser_protocol::{
     ImageBrowserCommand, ImageBrowserRequestEnvelope, ImageBrowserResponseEnvelope,
     ImageBrowserViewport, PROTOCOL_VERSION, image_browser_protocol_descriptor, schema_bundle_json,

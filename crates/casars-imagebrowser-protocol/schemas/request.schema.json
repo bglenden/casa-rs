@@ -1,0 +1,893 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ImageBrowserRequestEnvelope",
+  "description": "JSON Lines request envelope sent from `casars` to the browser backend.",
+  "type": "object",
+  "required": [
+    "command",
+    "version"
+  ],
+  "properties": {
+    "command": {
+      "description": "Requested command.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/ImageBrowserCommand"
+        }
+      ]
+    },
+    "version": {
+      "description": "Protocol version expected by the client.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    }
+  },
+  "definitions": {
+    "ImageBrowserCommand": {
+      "description": "Command sent to the image browser backend.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "path",
+            "viewport"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "open_root"
+              ]
+            },
+            "parameters": {
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageBrowserParameters"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "viewport": {
+              "$ref": "#/definitions/ImageBrowserViewport"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "viewport"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "resize"
+              ]
+            },
+            "viewport": {
+              "$ref": "#/definitions/ImageBrowserViewport"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "forward"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "cycle_view"
+              ]
+            },
+            "forward": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "focus"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "set_focus"
+              ]
+            },
+            "focus": {
+              "$ref": "#/definitions/ImageBrowserFocus"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "dx",
+            "dy"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "move_cursor"
+              ]
+            },
+            "dx": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "dy": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "x",
+            "y"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "set_cursor"
+              ]
+            },
+            "x": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "y": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "axis",
+            "command",
+            "delta"
+          ],
+          "properties": {
+            "axis": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "command": {
+              "type": "string",
+              "enum": [
+                "step_non_display_axis"
+              ]
+            },
+            "delta": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "axis",
+            "command"
+          ],
+          "properties": {
+            "axis": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "command": {
+              "type": "string",
+              "enum": [
+                "set_selected_non_display_axis"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "parameters"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "set_view_window"
+              ]
+            },
+            "parameters": {
+              "$ref": "#/definitions/ImageBrowserParameters"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "mode"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "set_plane_content_mode"
+              ]
+            },
+            "mode": {
+              "$ref": "#/definitions/ImagePlaneContentMode"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "set_selection_references"
+              ]
+            },
+            "mask": {
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageMaskReference"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "region": {
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageRegionReference"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "start_region_shape"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "x",
+            "y"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "append_region_vertex"
+              ]
+            },
+            "x": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "y": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "close_region_shape"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "undo_region_vertex"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "cancel_region_shape"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "clear_region"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "save_region_definition"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "load_next_region_definition"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "name"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "load_region_definition"
+              ]
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "name",
+            "new_name"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "rename_region_definition"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "new_name": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "name"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "delete_region_definition"
+              ]
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "name"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "set_default_mask"
+              ]
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "unset_default_mask"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "name"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "delete_mask"
+              ]
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "write_region_mask"
+              ]
+            },
+            "name": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "set_default": {
+              "default": false,
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "path"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "export_region_file"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "path"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "load_region_file"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "path"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "append_region_file"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "request"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "preview_occurrence"
+              ]
+            },
+            "request": {
+              "$ref": "#/definitions/ImageBrowserPreviewRequest"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "get_snapshot"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ImageBrowserFocus": {
+      "description": "Active focus target within the image browser workspace.",
+      "type": "string",
+      "enum": [
+        "inspector",
+        "content"
+      ]
+    },
+    "ImageBrowserParameters": {
+      "description": "Normalized image view parameters reflected in the left-side live form.",
+      "type": "object",
+      "required": [
+        "blc",
+        "inc",
+        "trc"
+      ],
+      "properties": {
+        "autoscale": {
+          "default": "",
+          "type": "string"
+        },
+        "blc": {
+          "type": "string"
+        },
+        "clip_high": {
+          "default": "",
+          "type": "string"
+        },
+        "clip_low": {
+          "default": "",
+          "type": "string"
+        },
+        "inc": {
+          "type": "string"
+        },
+        "stretch": {
+          "default": "",
+          "type": "string"
+        },
+        "trc": {
+          "type": "string"
+        }
+      }
+    },
+    "ImageBrowserPreviewRequest": {
+      "description": "Stateless preview request for a specific movie/frame occurrence.",
+      "type": "object",
+      "required": [
+        "parameters",
+        "plane_content_mode",
+        "viewport"
+      ],
+      "properties": {
+        "include_profile": {
+          "default": false,
+          "type": "boolean"
+        },
+        "non_display_indices": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0.0
+          }
+        },
+        "parameters": {
+          "$ref": "#/definitions/ImageBrowserParameters"
+        },
+        "plane_content_mode": {
+          "$ref": "#/definitions/ImagePlaneContentMode"
+        },
+        "viewport": {
+          "$ref": "#/definitions/ImageBrowserViewport"
+        }
+      }
+    },
+    "ImageBrowserViewport": {
+      "description": "Render viewport requested by the consumer.",
+      "type": "object",
+      "required": [
+        "height",
+        "width"
+      ],
+      "properties": {
+        "height": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "inspector_height": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "plane_pixel_height": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "plane_pixel_width": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ImageMaskReference": {
+      "description": "Declarative mask selected by a durable session parameter.",
+      "oneOf": [
+        {
+          "description": "No explicit mask override.",
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "none"
+              ]
+            }
+          }
+        },
+        {
+          "description": "A named persistent mask attached to the image.",
+          "type": "object",
+          "required": [
+            "kind",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "name"
+              ]
+            },
+            "name": {
+              "description": "Persistent mask name.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "A boolean image mask expression. Reserved for a backend that can evaluate the expression without mutating the source image; the current imexplore backend rejects this variant explicitly.",
+          "type": "object",
+          "required": [
+            "expression",
+            "kind"
+          ],
+          "properties": {
+            "expression": {
+              "description": "Expression text.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "expression"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ImagePlaneContentMode": {
+      "description": "Content representation requested for the Plane view.",
+      "type": "string",
+      "enum": [
+        "raster",
+        "spreadsheet"
+      ]
+    },
+    "ImageRegionReference": {
+      "description": "Declarative region selected by a durable session parameter.",
+      "oneOf": [
+        {
+          "description": "No active region.",
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "none"
+              ]
+            }
+          }
+        },
+        {
+          "description": "A saved region definition attached to the image.",
+          "type": "object",
+          "required": [
+            "kind",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "definition"
+              ]
+            },
+            "name": {
+              "description": "Saved definition name.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "A CASA CRTF region file.",
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "file"
+              ]
+            },
+            "path": {
+              "description": "Filesystem path to the CRTF file.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "Inline CASA CRTF box or polygon text.",
+          "type": "object",
+          "required": [
+            "expression",
+            "kind"
+          ],
+          "properties": {
+            "expression": {
+              "description": "Inline CRTF expression.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "expression"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

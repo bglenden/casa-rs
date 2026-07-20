@@ -2,12 +2,11 @@
 //! Wire protocol for the `imagebrowser` subprocess session.
 
 use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
-    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
-    SessionProviderContract, SessionProviderSchemas, SessionSemanticContract,
-    builtin_surface_bundle, merged_components,
+    ProviderProtocolDescriptor, ProviderSurfaceKind, SessionProviderContract,
+    builtin_surface_bundle, define_jsonl_session_envelopes, jsonl_session_contract,
+    session_contract_json, session_schema_json,
 };
-use schemars::{JsonSchema, schema_for};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Stable protocol name advertised by `imexplore --protocol-info`.
@@ -15,6 +14,12 @@ pub const IMAGEBROWSER_SESSION_PROTOCOL_NAME: &str = "casa_imagebrowser_session"
 
 /// Current JSON protocol version.
 pub const PROTOCOL_VERSION: u32 = 1;
+
+define_jsonl_session_envelopes! {
+    request ImageBrowserRequestEnvelope for ImageBrowserCommand;
+    response ImageBrowserResponseEnvelope for ImageBrowserResponse;
+    error ImageBrowserErrorPayload;
+}
 
 /// Build the current imagebrowser session protocol descriptor.
 pub fn image_browser_protocol_descriptor() -> ProviderProtocolDescriptor {
@@ -28,37 +33,13 @@ pub fn image_browser_protocol_descriptor() -> ProviderProtocolDescriptor {
 
 /// Build the current imagebrowser schema bundle.
 pub fn image_browser_session_schema_bundle() -> SessionProviderContract {
-    let request_schema = schema_for!(ImageBrowserRequestEnvelope);
-    let response_schema = schema_for!(ImageBrowserResponseEnvelope);
-    let canonical_surface = builtin_surface_bundle("imexplore")
-        .expect("built-in imexplore parameter surface must remain valid");
-    SessionProviderContract {
-        protocol: image_browser_protocol_descriptor(),
-        semantic: SessionSemanticContract {
-            transport: "jsonl_stdio".to_string(),
-            request_schema: request_schema.clone(),
-            response_schema: response_schema.clone(),
-        },
-        components: merged_components([&request_schema, &response_schema]),
-        annotations: serde_json::json!({}),
-        projections: ProviderProjectionMetadata {
-            cli: Some(ProviderCliProjection {
-                machine_actions: ProviderCliMachineActions {
-                    json_schema: Some("--json-schema".to_string()),
-                    protocol_info: Some("--protocol-info".to_string()),
-                    json_run: None,
-                    session: Some("--session".to_string()),
-                },
-            }),
-            python: None,
-        },
-        parameter_surfaces: vec![canonical_surface],
-        domain_schemas: SessionProviderSchemas {
-            request_schema,
-            response_schema,
-            additional: NoAdditionalProviderSchemas::default(),
-        },
-    }
+    jsonl_session_contract::<ImageBrowserRequestEnvelope, ImageBrowserResponseEnvelope>(
+        IMAGEBROWSER_SESSION_PROTOCOL_NAME,
+        PROTOCOL_VERSION,
+        env!("CARGO_PKG_VERSION"),
+        builtin_surface_bundle("imexplore")
+            .expect("built-in imexplore parameter surface must remain valid"),
+    )
 }
 
 /// Render viewport requested by the consumer.
@@ -124,22 +105,6 @@ pub struct ImageNavigationMetrics {
     pub selected_index: usize,
     pub total_items: usize,
     pub viewport_items: usize,
-}
-
-/// JSON Lines request envelope sent from `casars` to the image browser backend.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct ImageBrowserRequestEnvelope {
-    pub version: u32,
-    pub command: ImageBrowserCommand,
-}
-
-impl ImageBrowserRequestEnvelope {
-    pub fn new(command: ImageBrowserCommand) -> Self {
-        Self {
-            version: PROTOCOL_VERSION,
-            command,
-        }
-    }
 }
 
 /// Command sent to the image browser backend.
@@ -245,13 +210,6 @@ pub enum ImagePlaneContentMode {
     Spreadsheet,
 }
 
-/// JSON Lines response envelope sent from the backend to `casars`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct ImageBrowserResponseEnvelope {
-    pub version: u32,
-    pub response: ImageBrowserResponse,
-}
-
 impl ImageBrowserResponseEnvelope {
     pub fn snapshot(snapshot: ImageBrowserSnapshot) -> Self {
         Self {
@@ -270,10 +228,7 @@ impl ImageBrowserResponseEnvelope {
     pub fn error(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             version: PROTOCOL_VERSION,
-            response: ImageBrowserResponse::Error(ImageBrowserErrorPayload {
-                code: code.into(),
-                message: message.into(),
-            }),
+            response: ImageBrowserResponse::Error(ImageBrowserErrorPayload::new(code, message)),
         }
     }
 }
@@ -297,13 +252,6 @@ pub struct ImageBrowserPreviewRequest {
     pub non_display_indices: Vec<usize>,
     #[serde(default)]
     pub include_profile: bool,
-}
-
-/// Structured error payload returned by the browser backend.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct ImageBrowserErrorPayload {
-    pub code: String,
-    pub message: String,
 }
 
 /// Top-level browser view.
@@ -622,17 +570,22 @@ pub struct ImageBrowserPreviewPayload {
 
 /// Returns the JSON schema for the request envelope.
 pub fn request_schema_json() -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&schema_for!(ImageBrowserRequestEnvelope))
+    session_schema_json::<ImageBrowserRequestEnvelope>()
 }
 
 /// Returns the JSON schema for the response envelope.
 pub fn response_schema_json() -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&schema_for!(ImageBrowserResponseEnvelope))
+    session_schema_json::<ImageBrowserResponseEnvelope>()
 }
 
 /// Returns the canonical schema bundle for the public imagebrowser session protocol.
 pub fn schema_bundle_json() -> Result<String, serde_json::Error> {
-    image_browser_session_schema_bundle().to_pretty_json()
+    session_contract_json(&image_browser_session_schema_bundle())
+}
+
+casa_provider_contracts::committed_session_schema_tests! {
+    request crate::ImageBrowserRequestEnvelope => "schemas/request.schema.json";
+    response crate::ImageBrowserResponseEnvelope => "schemas/response.schema.json";
 }
 
 #[cfg(test)]
@@ -646,6 +599,67 @@ mod tests {
         let encoded = serde_json::to_string(&envelope).unwrap();
         let decoded: ImageBrowserRequestEnvelope = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, envelope);
+    }
+
+    #[test]
+    fn request_and_error_wire_fixtures_remain_byte_stable() {
+        let request =
+            ImageBrowserRequestEnvelope::new(ImageBrowserCommand::MoveCursor { dx: 1, dy: -2 });
+        assert_eq!(
+            serde_json::to_string(&request).expect("serialize request fixture"),
+            r#"{"version":1,"command":{"command":"move_cursor","dx":1,"dy":-2}}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageBrowserResponseEnvelope::error("backend", "failed"))
+                .expect("serialize error fixture"),
+            r#"{"version":1,"response":{"response":"error","code":"backend","message":"failed"}}"#
+        );
+    }
+
+    #[test]
+    fn protocol_info_and_success_wire_fixtures_remain_byte_stable() {
+        assert_eq!(
+            serde_json::to_string(&image_browser_protocol_descriptor())
+                .expect("serialize protocol-info fixture"),
+            format!(
+                r#"{{"protocol_name":"casa_imagebrowser_session","protocol_version":1,"surface_kind":"session","binary_version":"{}"}}"#,
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+        let snapshot = ImageBrowserSnapshot {
+            status_line: "ready".into(),
+            active_view: ImageBrowserView::Plane,
+            focus: ImageBrowserFocus::Content,
+            shape: Vec::new(),
+            parameters: ImageBrowserParameters::default(),
+            inspector_lines: Vec::new(),
+            content_lines: Vec::new(),
+            navigation: ImageNavigationMetrics {
+                selected_index: 0,
+                total_items: 0,
+                viewport_items: 0,
+            },
+            plane: None,
+            probe: None,
+            profile: None,
+            display_axes: Vec::new(),
+            plane_cursor: None,
+            non_display_axes: Vec::new(),
+            region: None,
+            saved_region_names: Vec::new(),
+            active_region_definition_name: None,
+            region_reference: ImageRegionReference::None,
+            mask_names: Vec::new(),
+            default_mask_name: None,
+            mask_reference: ImageMaskReference::None,
+            backend_timing: None,
+            capabilities: ImageBrowserCapabilities::default(),
+        };
+        assert_eq!(
+            serde_json::to_string(&ImageBrowserResponseEnvelope::snapshot(snapshot))
+                .expect("serialize success fixture"),
+            r#"{"version":1,"response":{"response":"snapshot","status_line":"ready","active_view":"plane","focus":"content","shape":[],"parameters":{"blc":"","trc":"","inc":"","stretch":"","autoscale":"","clip_low":"","clip_high":""},"inspector_lines":[],"content_lines":[],"navigation":{"selected_index":0,"total_items":0,"viewport_items":0},"plane":null,"probe":null,"profile":null,"display_axes":[],"plane_cursor":null,"non_display_axes":[],"region":null,"saved_region_names":[],"active_region_definition_name":null,"region_reference":{"kind":"none"},"mask_names":[],"default_mask_name":null,"mask_reference":{"kind":"none"},"backend_timing":null,"capabilities":{"renderable_plane":false,"world_coords_available":false,"pixel_only_mode":false,"non_display_axis_selectors":false,"mask_present":false,"complex_unsupported":false}}}"#
+        );
     }
 
     #[test]

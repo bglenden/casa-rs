@@ -79,9 +79,9 @@ around casacore C++.
 
 | Area | Main code | Current capability |
 |---|---|---|
-| Tables | `casa-tables`, `tablebrowser` | Persistent tables, schema and mutation APIs, storage managers, broad practical TaQL support, and interactive table browsing. |
+| Tables | `casa-tables`, `casars`/`tablebrowser` | Persistent tables, schema and mutation APIs, storage managers, broad practical TaQL support, and application-owned interactive table browsing. |
 | MeasurementSets | `casa-ms`, `msexplore` | Typed MS access, summaries, selections, plotting/export payloads, derived columns, flag versions, and MS-focused inspection. |
-| Images/lattices | `casa-images`, `casa-lattices`, `imexplore` | Persistent images, masks, regions, lazy expressions, statistics, image-browser sessions, and image analysis tasks. |
+| Images/lattices | `casa-images`, `casa-lattices`, `casars`/`imexplore` | Persistent images, masks, regions, lazy expressions, statistics, image analysis tasks, and application-owned image-browser sessions. |
 | Coordinates/measures | `casa-coordinates`, `casa-measures-data`, `casa-measures-tools`, `casa-types` | Units, quanta, measures, CASA-table-backed runtime data, frame-aware conversions, and coordinate systems. |
 | Imaging | `casars-imager`, `casa-imaging` | Dirty imaging, tclean-style workflows, cube/mosaic/multiscale pieces, automasking pieces, export/import FITS paths, and tutorial parity scripts. |
 | Calibration | `casa-calibration`, `calibrate` | `applycal`, `gaincal`, `bandpass`, `fluxscale`, callib handling, stats, diagnostics, and guided CLI/TUI workflows. |
@@ -118,14 +118,14 @@ Status legend:
 | casacore-c++ module | casa-rs status | Notes |
 |---|---|---|
 | `casa` | Partial / Available now | `casa-types` covers the core scalar/array/record value model plus quanta/measures foundations. Broader `casa` utility parity is not a target. |
-| `tables` | Available now | `casa-tables` provides persistent tables, data managers/storage backends, schema/mutation APIs, a broad TaQL engine for practical table workflows, and `tablebrowser`. |
+| `tables` | Available now | `casa-tables` provides persistent tables, data managers/storage backends, schema/mutation APIs, and a broad TaQL engine for practical table workflows; the `casars` package owns `tablebrowser`. |
 | `measures` | Available now | `casa-types`, `casa-measures-data`, and `casa-coordinates` provide units/quanta, typed measures, CASA-table-backed runtime data, and frame-aware coordinate conversions. |
 | `meas` (TaQL UDF) | Available now | The TaQL `meas.*` UDF surface now covers the upstream conversion families and helper aliases used by current CASA-compatible workflows, including sidereal-time extraction, rise/set evaluation, earth-magnetic/IGRF helpers, and `meas.help`. The remaining gap is full external `ephemerides/Sources` parity for non-built-in source names. |
 | `ms` | Available now | `casa-ms` provides typed MeasurementSet APIs, summaries, selection/grouping, derived columns, plotting support, and `msexplore`. |
 | `derivedmscal` | Available now | `casa-calibration` and `calibrate` cover apply, gaincal, bandpass, fluxscale, stats, callib, and diagnostic inspection workflows. |
 | `coordinates` | Available now | `casa-coordinates` implements `CoordinateSystem` and core coordinate types used by images, measures, and FITS/WCS interop. |
 | `lattices` | Available now | `casa-lattices` provides lattice abstractions, paging/storage, traversal, regions, masks, and statistics. |
-| `images` | Available now | `casa-images` provides persistent images, masks, regions, subimages, lazy expressions, image-browser sessions, and `imexplore`. |
+| `images` | Available now | `casa-images` provides persistent images, masks, regions, subimages, lazy expressions, and image analysis; the `casars` package owns image-browser sessions and `imexplore`. |
 | `fits` | Partial / Available now | Targeted FITS/WCS header and coordinate interoperability exists in `casa-coordinates`, and Wave 3 image-analysis tooling includes `exportfits`/`importfits` primary-image paths through the Rust `fitsio` crate. `fitsio` depends on the CFITSIO C library; a future backlog item tracks evaluating pure-Rust FITS alternatives so the workspace can return to an all-Rust dependency stack if practical. There is no full casacore `fits` module parity target. |
 | `msfits` | Deferred | Deferred in planning; depends on broader FITS and MS parity. |
 | `scimath`, `scimath_f` | Deferred/Not planned | Prefer Rust community math/fitting/statistics crates when needed rather than mirroring the casacore module surface. |
@@ -315,6 +315,15 @@ Current shipped apps:
 - `tablebrowser` via `BrowserShell`
 - `imexplore` via `BrowserShell`
 - `calibrate` via `WorkflowShell`
+
+`imexplore` snapshots its process memory budget when an image session opens.
+By default the budget is the operating system's currently available-memory
+estimate; `CASARS_IMEXPLORE_MEMORY_BUDGET_BYTES` supplies a strict positive-byte
+override and invalid values fail instead of falling back. A process-local
+resource ledger reserves measured browser caches and protocol staging first,
+then derives movie geometry, worker count, queue depth, lookahead, and byte-
+accounted frame-cache capacity from the remaining budget. It reserves only the
+active workload's calculated needs and does not use a generic big-buffer pool.
 
 The framework guide for adding new apps lives at:
 

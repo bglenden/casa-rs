@@ -8,9 +8,7 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
-use casa_images::{
-    AnyPagedImage, ImageBrowserSession, ImageInfo, ImagePixelType, parse_image_channel_selection,
-};
+use casa_images::{AnyPagedImage, ImageInfo, ImagePixelType, parse_image_channel_selection};
 use casa_ms::plot::UvCoverageSeries;
 use casa_ms::{
     MeasurementSet, MeasurementSetPlotPayload, MeasurementSetSummary,
@@ -38,7 +36,7 @@ use casa_provider_contracts::{
     RunProductRole, RunSafetyClass, SelectorGrammar, SurfaceContractBundle, SurfaceKind,
     builtin_application_catalog, builtin_surface_bundle, builtin_surface_catalog, project_ui_form,
 };
-use casa_tables::{ArrayShapeContract, ColumnType, Table, TableBrowser, TableOptions};
+use casa_tables::{ArrayShapeContract, ColumnType, Table, TableOptions};
 use casa_task_runtime::{
     BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, OpenSessionRequest,
     ParameterEditDiagnosticCode, ParameterEditSuggestion, ParameterRuntime, ParameterSession,
@@ -51,6 +49,8 @@ use casa_types::measures::direction::{
     format_right_ascension_labeled,
 };
 use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
+use casars::imagebrowser_runtime::ImageBrowserSession;
+use casars::tablebrowser_runtime::TableBrowser;
 use casars_imagebrowser_protocol::ImageBrowserViewport;
 use casars_imagebrowser_protocol::{
     ImageBrowserCommand, ImageBrowserFocus, ImageBrowserParameters, ImageBrowserPreviewRequest,
