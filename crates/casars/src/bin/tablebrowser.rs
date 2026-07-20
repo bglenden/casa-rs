@@ -6,7 +6,7 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process;
 
-use casa_tables::{TableBrowser, TableBrowserView};
+use casars::tablebrowser_runtime::{TableBrowser, TableBrowserView};
 use casars_tablebrowser_protocol::{
     BrowserCommand, BrowserRequestEnvelope, BrowserViewport, PROTOCOL_VERSION,
     browser_protocol_descriptor, schema_bundle_json,

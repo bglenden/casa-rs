@@ -12,7 +12,6 @@ workspace = true
 
 [dependencies]
 casa-aipsio = { path = "../casa-aipsio" }
-casars-tablebrowser-protocol = { path = "../casars-tablebrowser-protocol" }
 casa-types = { path = "../casa-types" }
 logos = "0.15"
 ndarray.workspace = true

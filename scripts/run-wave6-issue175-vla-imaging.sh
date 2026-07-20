@@ -42,7 +42,7 @@ ms="$outdir/data/SNR_G55_10s.calib.ms"
 cargo build --release \
   -p casars-imager --bin casars-imager \
   -p casa-images --bin immath \
-  -p casa-images --bin imexplore
+  -p casars --bin imexplore
 
 cat >"$outdir/outliers.txt" <<'EOF'
 imagename=Outlier1

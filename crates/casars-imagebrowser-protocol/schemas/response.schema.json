@@ -1,0 +1,1291 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ImageBrowserResponseEnvelope",
+  "description": "JSON Lines response envelope sent from the backend to `casars`.",
+  "type": "object",
+  "required": [
+    "response",
+    "version"
+  ],
+  "properties": {
+    "response": {
+      "description": "Response payload.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/ImageBrowserResponse"
+        }
+      ]
+    },
+    "version": {
+      "description": "Protocol version returned by the backend.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    }
+  },
+  "definitions": {
+    "ImageBackendPlaneCacheResult": {
+      "description": "Backend plane cache classification for the current snapshot.",
+      "type": "string",
+      "enum": [
+        "hit",
+        "prefetch_hit",
+        "miss"
+      ]
+    },
+    "ImageBackendTimingState": {
+      "description": "Backend timing payload attached to a snapshot when performance tracing is enabled.",
+      "type": "object",
+      "required": [
+        "cached_plane_lookup_ns",
+        "histogram_ns",
+        "plane_cache_result",
+        "plane_extract_ns",
+        "rasterize_ns",
+        "stat_collection_ns",
+        "total_plane_ns"
+      ],
+      "properties": {
+        "cached_plane_lookup_ns": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "histogram_ns": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "plane_cache_result": {
+          "$ref": "#/definitions/ImageBackendPlaneCacheResult"
+        },
+        "plane_extract_ns": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "profile_cache_hits": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "profile_cache_misses": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "profile_extract_total_ns": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "rasterize_ns": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "stat_collection_ns": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "total_plane_ns": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ImageBrowserAxisValue": {
+      "description": "Named numeric axis value.",
+      "type": "object",
+      "required": [
+        "name",
+        "unit",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "ImageBrowserCapabilities": {
+      "description": "Capability flags exposed by the image browser session.",
+      "type": "object",
+      "required": [
+        "complex_unsupported",
+        "mask_present",
+        "non_display_axis_selectors",
+        "pixel_only_mode",
+        "renderable_plane",
+        "world_coords_available"
+      ],
+      "properties": {
+        "complex_unsupported": {
+          "type": "boolean"
+        },
+        "mask_present": {
+          "type": "boolean"
+        },
+        "non_display_axis_selectors": {
+          "type": "boolean"
+        },
+        "pixel_only_mode": {
+          "type": "boolean"
+        },
+        "renderable_plane": {
+          "type": "boolean"
+        },
+        "world_coords_available": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ImageBrowserFocus": {
+      "description": "Active focus target within the image browser workspace.",
+      "type": "string",
+      "enum": [
+        "inspector",
+        "content"
+      ]
+    },
+    "ImageBrowserParameters": {
+      "description": "Normalized image view parameters reflected in the left-side live form.",
+      "type": "object",
+      "required": [
+        "blc",
+        "inc",
+        "trc"
+      ],
+      "properties": {
+        "autoscale": {
+          "default": "",
+          "type": "string"
+        },
+        "blc": {
+          "type": "string"
+        },
+        "clip_high": {
+          "default": "",
+          "type": "string"
+        },
+        "clip_low": {
+          "default": "",
+          "type": "string"
+        },
+        "inc": {
+          "type": "string"
+        },
+        "stretch": {
+          "default": "",
+          "type": "string"
+        },
+        "trc": {
+          "type": "string"
+        }
+      }
+    },
+    "ImageBrowserProbe": {
+      "description": "Cursor probe payload for the active image plane.",
+      "type": "object",
+      "required": [
+        "finite",
+        "masked",
+        "pixel_axes",
+        "pixel_indices",
+        "value",
+        "world_axes"
+      ],
+      "properties": {
+        "finite": {
+          "type": "boolean"
+        },
+        "masked": {
+          "type": "boolean"
+        },
+        "pixel_axes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ImageBrowserAxisValue"
+          }
+        },
+        "pixel_indices": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0.0
+          }
+        },
+        "value": {
+          "type": "number",
+          "format": "double"
+        },
+        "world_axes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ImageBrowserAxisValue"
+          }
+        }
+      }
+    },
+    "ImageBrowserResponse": {
+      "description": "Backend response payload.",
+      "oneOf": [
+        {
+          "description": "Full image browser render snapshot.",
+          "type": "object",
+          "required": [
+            "active_view",
+            "capabilities",
+            "content_lines",
+            "focus",
+            "inspector_lines",
+            "navigation",
+            "response",
+            "status_line"
+          ],
+          "properties": {
+            "active_region_definition_name": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "active_view": {
+              "$ref": "#/definitions/ImageBrowserView"
+            },
+            "backend_timing": {
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageBackendTimingState"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "capabilities": {
+              "$ref": "#/definitions/ImageBrowserCapabilities"
+            },
+            "content_lines": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "default_mask_name": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "display_axes": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ImageDisplayAxisState"
+              }
+            },
+            "focus": {
+              "$ref": "#/definitions/ImageBrowserFocus"
+            },
+            "inspector_lines": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "mask_names": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "mask_reference": {
+              "default": {
+                "kind": "none"
+              },
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ImageMaskReference"
+                }
+              ]
+            },
+            "navigation": {
+              "$ref": "#/definitions/ImageNavigationMetrics"
+            },
+            "non_display_axes": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ImageNonDisplayAxisState"
+              }
+            },
+            "parameters": {
+              "default": {
+                "autoscale": "",
+                "blc": "",
+                "clip_high": "",
+                "clip_low": "",
+                "inc": "",
+                "stretch": "",
+                "trc": ""
+              },
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ImageBrowserParameters"
+                }
+              ]
+            },
+            "plane": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImagePlaneRaster"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "plane_cursor": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImagePlaneCursorState"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "probe": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageBrowserProbe"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "profile": {
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageProfilePayload"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "region": {
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageRegionState"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "region_reference": {
+              "default": {
+                "kind": "none"
+              },
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ImageRegionReference"
+                }
+              ]
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "snapshot"
+              ]
+            },
+            "saved_region_names": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "shape": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint",
+                "minimum": 0.0
+              }
+            },
+            "status_line": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "Stateless preview payload for a specific movie/frame occurrence.",
+          "type": "object",
+          "required": [
+            "response",
+            "snapshot"
+          ],
+          "properties": {
+            "non_display_indices": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint",
+                "minimum": 0.0
+              }
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "preview"
+              ]
+            },
+            "snapshot": {
+              "$ref": "#/definitions/ImageBrowserSnapshot"
+            }
+          }
+        },
+        {
+          "description": "Structured error payload returned by the session backend.",
+          "type": "object",
+          "required": [
+            "code",
+            "message",
+            "response"
+          ],
+          "properties": {
+            "code": {
+              "description": "Stable machine-readable error code.",
+              "type": "string"
+            },
+            "message": {
+              "description": "Human-readable explanation.",
+              "type": "string"
+            },
+            "response": {
+              "type": "string",
+              "enum": [
+                "error"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ImageBrowserSnapshot": {
+      "description": "Full image browser render snapshot.",
+      "type": "object",
+      "required": [
+        "active_view",
+        "capabilities",
+        "content_lines",
+        "focus",
+        "inspector_lines",
+        "navigation",
+        "status_line"
+      ],
+      "properties": {
+        "active_region_definition_name": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "active_view": {
+          "$ref": "#/definitions/ImageBrowserView"
+        },
+        "backend_timing": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ImageBackendTimingState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capabilities": {
+          "$ref": "#/definitions/ImageBrowserCapabilities"
+        },
+        "content_lines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "default_mask_name": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "display_axes": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ImageDisplayAxisState"
+          }
+        },
+        "focus": {
+          "$ref": "#/definitions/ImageBrowserFocus"
+        },
+        "inspector_lines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mask_names": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mask_reference": {
+          "default": {
+            "kind": "none"
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/ImageMaskReference"
+            }
+          ]
+        },
+        "navigation": {
+          "$ref": "#/definitions/ImageNavigationMetrics"
+        },
+        "non_display_axes": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ImageNonDisplayAxisState"
+          }
+        },
+        "parameters": {
+          "default": {
+            "autoscale": "",
+            "blc": "",
+            "clip_high": "",
+            "clip_low": "",
+            "inc": "",
+            "stretch": "",
+            "trc": ""
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/ImageBrowserParameters"
+            }
+          ]
+        },
+        "plane": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ImagePlaneRaster"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plane_cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ImagePlaneCursorState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "probe": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ImageBrowserProbe"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "profile": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ImageProfilePayload"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "region": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ImageRegionState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "region_reference": {
+          "default": {
+            "kind": "none"
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/ImageRegionReference"
+            }
+          ]
+        },
+        "saved_region_names": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "shape": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0.0
+          }
+        },
+        "status_line": {
+          "type": "string"
+        }
+      }
+    },
+    "ImageBrowserView": {
+      "description": "Top-level browser view.",
+      "type": "string",
+      "enum": [
+        "plane",
+        "spectrum",
+        "metadata",
+        "coordinates"
+      ]
+    },
+    "ImageDisplayAxisState": {
+      "description": "Display-axis metadata for the current rendered plane window.",
+      "type": "object",
+      "required": [
+        "axis",
+        "blc",
+        "inc",
+        "name",
+        "sampled_len",
+        "trc",
+        "unit"
+      ],
+      "properties": {
+        "axis": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "blc": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "inc": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "name": {
+          "type": "string"
+        },
+        "sampled_len": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "trc": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "unit": {
+          "type": "string"
+        },
+        "world_increment": {
+          "description": "World-coordinate increment per source pixel, in the native axis units.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      }
+    },
+    "ImageMaskReference": {
+      "description": "Declarative mask selected by a durable session parameter.",
+      "oneOf": [
+        {
+          "description": "No explicit mask override.",
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "none"
+              ]
+            }
+          }
+        },
+        {
+          "description": "A named persistent mask attached to the image.",
+          "type": "object",
+          "required": [
+            "kind",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "name"
+              ]
+            },
+            "name": {
+              "description": "Persistent mask name.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "A boolean image mask expression. Reserved for a backend that can evaluate the expression without mutating the source image; the current imexplore backend rejects this variant explicitly.",
+          "type": "object",
+          "required": [
+            "expression",
+            "kind"
+          ],
+          "properties": {
+            "expression": {
+              "description": "Expression text.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "expression"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ImageNavigationMetrics": {
+      "description": "Structured navigation metrics for the active right-hand pane.",
+      "type": "object",
+      "required": [
+        "selected_index",
+        "total_items",
+        "viewport_items"
+      ],
+      "properties": {
+        "selected_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "total_items": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "viewport_items": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ImageNonDisplayAxisState": {
+      "description": "Non-display axis selector state for the current plane.",
+      "type": "object",
+      "required": [
+        "axis",
+        "index",
+        "label",
+        "length",
+        "pixel"
+      ],
+      "properties": {
+        "axis": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "label": {
+          "type": "string"
+        },
+        "length": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "pixel": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ImagePlaneCursorState": {
+      "description": "Cursor state for the active rendered plane.",
+      "type": "object",
+      "required": [
+        "pixel_x",
+        "pixel_y",
+        "sampled_x",
+        "sampled_y"
+      ],
+      "properties": {
+        "pixel_x": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "pixel_y": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "sampled_x": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "sampled_y": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ImagePlaneRaster": {
+      "description": "Quantized grayscale plane raster returned by the backend.",
+      "type": "object",
+      "required": [
+        "clip_max",
+        "clip_min",
+        "height",
+        "masked_or_non_finite_count",
+        "no_finite_values",
+        "pixels_u8",
+        "width"
+      ],
+      "properties": {
+        "clip_max": {
+          "type": "number",
+          "format": "double"
+        },
+        "clip_min": {
+          "type": "number",
+          "format": "double"
+        },
+        "data_max": {
+          "default": 0.0,
+          "type": "number",
+          "format": "double"
+        },
+        "data_min": {
+          "default": 0.0,
+          "type": "number",
+          "format": "double"
+        },
+        "height": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "histogram_bins": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          }
+        },
+        "masked_or_non_finite_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "no_finite_values": {
+          "type": "boolean"
+        },
+        "pixels_u8": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0.0
+          }
+        },
+        "value_unit": {
+          "default": "",
+          "type": "string"
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ImageProfilePayload": {
+      "description": "Structured 1D spectrum/profile payload for linked client-side rendering.",
+      "type": "object",
+      "required": [
+        "axis",
+        "axis_name",
+        "axis_unit",
+        "coord_type",
+        "samples",
+        "selected_sample_index",
+        "value_unit"
+      ],
+      "properties": {
+        "axis": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "axis_name": {
+          "type": "string"
+        },
+        "axis_unit": {
+          "type": "string"
+        },
+        "coord_type": {
+          "type": "string"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ImageProfileSampleState"
+          }
+        },
+        "selected_sample_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "value_unit": {
+          "type": "string"
+        }
+      }
+    },
+    "ImageProfileSampleState": {
+      "description": "A single sample in a 1D spectrum/profile extraction.",
+      "type": "object",
+      "required": [
+        "finite",
+        "masked",
+        "pixel_index",
+        "sample_index",
+        "value"
+      ],
+      "properties": {
+        "finite": {
+          "type": "boolean"
+        },
+        "masked": {
+          "type": "boolean"
+        },
+        "pixel_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "sample_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "value": {
+          "type": "number",
+          "format": "double"
+        },
+        "world_axis": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ImageBrowserAxisValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ImageRegionOverlayShapeState": {
+      "description": "A polygonal region shape projected into the active plane view.",
+      "type": "object",
+      "required": [
+        "closed",
+        "vertices"
+      ],
+      "properties": {
+        "closed": {
+          "type": "boolean"
+        },
+        "vertices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ImageRegionOverlayVertex"
+          }
+        }
+      }
+    },
+    "ImageRegionOverlayVertex": {
+      "description": "A sampled 2D point used for region overlays in the active plane view.",
+      "type": "object",
+      "required": [
+        "sampled_x",
+        "sampled_y"
+      ],
+      "properties": {
+        "sampled_x": {
+          "type": "number",
+          "format": "double"
+        },
+        "sampled_y": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "ImageRegionReference": {
+      "description": "Declarative region selected by a durable session parameter.",
+      "oneOf": [
+        {
+          "description": "No active region.",
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "none"
+              ]
+            }
+          }
+        },
+        {
+          "description": "A saved region definition attached to the image.",
+          "type": "object",
+          "required": [
+            "kind",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "definition"
+              ]
+            },
+            "name": {
+              "description": "Saved definition name.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "A CASA CRTF region file.",
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "file"
+              ]
+            },
+            "path": {
+              "description": "Filesystem path to the CRTF file.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "Inline CASA CRTF box or polygon text.",
+          "type": "object",
+          "required": [
+            "expression",
+            "kind"
+          ],
+          "properties": {
+            "expression": {
+              "description": "Inline CRTF expression.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "expression"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ImageRegionState": {
+      "description": "Active region state for the current image browser session.",
+      "type": "object",
+      "required": [
+        "active_shape_vertices",
+        "closed_shape_count",
+        "editing",
+        "label",
+        "shape_count"
+      ],
+      "properties": {
+        "active_shape_vertices": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "closed_shape_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "editing": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string"
+        },
+        "overlay_shapes": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ImageRegionOverlayShapeState"
+          }
+        },
+        "shape_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "stats": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ImageRegionStatsState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ImageRegionStatsState": {
+      "description": "Statistics for the active region in the current plane/image units.",
+      "type": "object",
+      "required": [
+        "max",
+        "mean",
+        "median",
+        "min",
+        "pixel_count",
+        "rms",
+        "sigma",
+        "sum",
+        "value_unit"
+      ],
+      "properties": {
+        "max": {
+          "type": "number",
+          "format": "double"
+        },
+        "mean": {
+          "type": "number",
+          "format": "double"
+        },
+        "median": {
+          "type": "number",
+          "format": "double"
+        },
+        "min": {
+          "type": "number",
+          "format": "double"
+        },
+        "pixel_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "rms": {
+          "type": "number",
+          "format": "double"
+        },
+        "sigma": {
+          "type": "number",
+          "format": "double"
+        },
+        "sum": {
+          "type": "number",
+          "format": "double"
+        },
+        "value_unit": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -18,13 +18,21 @@ use casa_types::quanta::{MvTime, Quantity, Unit};
 use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, Axis, Ix1, Ix2, IxDyn};
 
+#[cfg(test)]
+use self::plane_render::format_plane_value;
+use self::plane_render::{
+    collect_plane_stats, duration_ns, plane_cell_text, render_grid_cell, sample_plane_axes,
+    trim_float_text,
+};
 use self::region_geometry::*;
 use self::region_persistence::*;
 use crate::beam::{GaussianBeam, ImageBeamSet};
 use crate::error::ImageError;
 use crate::image::{AnyPagedImage, ImagePixelType, PagedImage};
 
-pub(crate) use self::plane_render::*;
+pub use self::plane_render::{
+    PlaneAutoscaleMode, PlaneRenderTelemetry, PlaneStretchPreset, PlaneStretchSettings,
+};
 
 const IMAGE_BROWSER_DEFAULT_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const REGION_TYPE_WC: i32 = 2;
@@ -323,11 +331,13 @@ impl ImageViewWindow {
         format_axis_list(&self.inc)
     }
 
-    pub(crate) fn sampled_axis_len(&self, axis: usize) -> usize {
+    /// Returns the number of selected samples along an image axis.
+    pub fn sampled_axis_len(&self, axis: usize) -> usize {
         sampled_axis_len(self.blc[axis], self.trc[axis], self.inc[axis])
     }
 
-    pub(crate) fn sampled_axis_value(&self, axis: usize, sample_index: usize) -> Option<usize> {
+    /// Maps a selected-sample index back to its absolute image pixel index.
+    pub fn sampled_axis_value(&self, axis: usize, sample_index: usize) -> Option<usize> {
         (sample_index < self.sampled_axis_len(axis))
             .then_some(self.blc[axis] + sample_index * self.inc[axis])
     }
@@ -338,7 +348,8 @@ impl ImageViewWindow {
             .collect()
     }
 
-    pub(crate) fn nearest_sample_index(&self, axis: usize, pixel: usize) -> usize {
+    /// Returns the selected-sample index nearest an absolute image pixel index.
+    pub fn nearest_sample_index(&self, axis: usize, pixel: usize) -> usize {
         let start = self.blc[axis];
         let end = self.trc[axis];
         if pixel <= start {
@@ -366,7 +377,8 @@ impl OpenedImageView {
         Self::open_with_cache_bytes(path, IMAGE_BROWSER_DEFAULT_CACHE_BYTES)
     }
 
-    pub(crate) fn open_with_cache_bytes(
+    /// Opens a persistent image with an explicit table/image cache budget.
+    pub fn open_with_cache_bytes(
         path: impl AsRef<Path>,
         cache_bytes: usize,
     ) -> Result<Self, ImageError> {
@@ -641,7 +653,7 @@ impl OpenedImageView {
 
     /// Renders the current 2D plane for an explicit `blc`/`trc`/`inc` window,
     /// non-display-axis selections, and explicit stretch settings.
-    pub(crate) fn render_plane_with_window_and_axes_and_stretch(
+    pub fn render_plane_with_window_and_axes_and_stretch(
         &self,
         viewport: (usize, usize),
         window: &ImageViewWindow,
@@ -662,7 +674,7 @@ impl OpenedImageView {
     }
 
     /// Renders the current 2D plane and returns a timing breakdown for the work.
-    pub(crate) fn render_plane_with_window_and_axes_and_stretch_timed(
+    pub fn render_plane_with_window_and_axes_and_stretch_timed(
         &self,
         viewport: (usize, usize),
         window: &ImageViewWindow,
@@ -2501,7 +2513,8 @@ fn format_axis_increment_for_display(
     }
 }
 
-pub(crate) fn format_numeric_value_with_unit(value: f64, unit: &str) -> String {
+/// Formats a numeric scientific value using a readable conformant frequency unit when possible.
+pub fn format_numeric_value_with_unit(value: f64, unit: &str) -> String {
     format_frequency_quantity_auto(value, unit).unwrap_or_else(|| format!("{value} {unit}"))
 }
 

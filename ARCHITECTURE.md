@@ -420,6 +420,9 @@ compatibility block facade or normal-path host full-grid upload is retained.
 
 - published Rust library crates, especially `casa-types`, `casa-tables`, `casa-ms`, `casa-lattices`, `casa-coordinates`, and `casa-images`
 - CLI/TUI apps such as `casars`, `msexplore`, `tablebrowser`, `imexplore`, `calibrate`, and `importvla`
+- The `casars` runtime package owns the `tablebrowser` and `imexplore` session engines,
+  rendering/movie coordination, and executable targets. `casa-tables` and `casa-images` expose
+  only reusable table/image domain capabilities and do not depend on browser protocol crates.
 - native macOS GUI prototype package `apps/casars-mac`
 - experimental UniFFI frontend service bindings generated from
   `casars-frontend-services`

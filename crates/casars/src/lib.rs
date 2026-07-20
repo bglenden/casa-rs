@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 mod app;
 mod browser_client;
+pub mod browser_render;
+mod browser_resources;
 mod calibration_workflow;
 mod clipboard;
 mod config;
 mod execution;
 mod graphics;
+pub mod imagebrowser_runtime;
 mod imaging_workflow;
+pub mod movie;
 mod movie_perf;
 mod notebook_recording;
 mod parameters_cli;
 mod registry;
 mod shell;
 mod startup;
+pub mod tablebrowser_runtime;
 mod theme;
 mod ui;
 mod workflow;
@@ -23,7 +28,7 @@ use std::num::NonZeroU32;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use casa_images::ImageMovieSurfaceKind;
+use crate::movie::ImageMovieSurfaceKind;
 use crossterm::event::{self, Event};
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, KeyCode,

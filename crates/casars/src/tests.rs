@@ -32,10 +32,10 @@ use casa_types::{
 };
 use casars_imagebrowser_protocol::{
     ImageBrowserAxisValue, ImageBrowserCapabilities, ImageBrowserFocus as ProtocolImageFocus,
-    ImageBrowserParameters, ImageBrowserProbe, ImageBrowserResponse, ImageBrowserResponseEnvelope,
-    ImageBrowserSnapshot, ImageBrowserView as ProtocolImageView, ImageDisplayAxisState,
-    ImageNavigationMetrics, ImageNonDisplayAxisState, ImagePlaneCursorState, ImagePlaneRaster,
-    ImageProfilePayload, ImageProfileSampleState, ImageRegionOverlayShapeState,
+    ImageBrowserParameters, ImageBrowserPreviewPayload, ImageBrowserProbe, ImageBrowserResponse,
+    ImageBrowserResponseEnvelope, ImageBrowserSnapshot, ImageBrowserView as ProtocolImageView,
+    ImageDisplayAxisState, ImageNavigationMetrics, ImageNonDisplayAxisState, ImagePlaneCursorState,
+    ImagePlaneRaster, ImageProfilePayload, ImageProfileSampleState, ImageRegionOverlayShapeState,
     ImageRegionOverlayVertex, ImageRegionState, ImageRegionStatsState,
 };
 use casars_tablebrowser_protocol::{
@@ -58,8 +58,7 @@ use tempfile::tempdir;
 
 use crate::app::{
     AppState, BrowserPaneFocus, ImageBrowserLeftPaneMode, OutputPane, PaneFocus, PlotCatalogTarget,
-    PlotControlTarget, PlotPaneFocus, ResultTab, image_movie_lookahead_occurrences,
-    image_movie_presentation_lookahead_occurrences, image_plane_draw_rect,
+    PlotControlTarget, PlotPaneFocus, ResultTab, image_plane_draw_rect,
 };
 use crate::calibration_workflow::{
     WorkflowChainSettingKind, WorkflowContextSettingKind, WorkflowProductActionKind,
@@ -536,24 +535,6 @@ fn launcher_screen_renders_available_apps() {
     assert!(rendered.contains("Imager"));
     assert!(rendered.contains("Table Browser"));
     assert!(rendered.contains("ImExplore"));
-}
-
-#[test]
-fn movie_lookahead_stays_tight_for_low_fps_playback() {
-    assert_eq!(image_movie_lookahead_occurrences(1.0, 64, 3, 3), 2);
-    assert_eq!(
-        image_movie_presentation_lookahead_occurrences(1.0, 64, 3),
-        2
-    );
-}
-
-#[test]
-fn movie_lookahead_retains_short_buffer_for_high_fps_playback() {
-    assert_eq!(image_movie_lookahead_occurrences(30.0, 64, 3, 3), 5);
-    assert_eq!(
-        image_movie_presentation_lookahead_occurrences(30.0, 64, 3),
-        5
-    );
 }
 
 #[test]
@@ -11112,12 +11093,16 @@ fn write_fake_imexplore_script_impl(
         session_body.push_str("  case \"$count\" in\n");
         for (index, response) in responses.iter().enumerate() {
             let case_index = index + 1;
+            let preview_response = fake_imexplore_preview_json(response);
             session_body.push_str(&format!(
-                "    {case_index}) printf '%s\\n' '{response}' ;;\n"
+                "    {case_index})\n      case \"$line\" in\n        *'\"command\":\"preview_occurrence\"'*) printf '%s\\n' '{preview_response}' ;;\n        *) printf '%s\\n' '{response}' ;;\n      esac ;;\n"
             ));
         }
         if let Some(last_response) = responses.last() {
-            session_body.push_str(&format!("    *) printf '%s\\n' '{last_response}' ;;\n"));
+            let last_preview_response = fake_imexplore_preview_json(last_response);
+            session_body.push_str(&format!(
+                "    *)\n      case \"$line\" in\n        *'\"command\":\"preview_occurrence\"'*) printf '%s\\n' '{last_preview_response}' ;;\n        *) printf '%s\\n' '{last_response}' ;;\n      esac ;;\n"
+            ));
         } else {
             session_body.push_str("    *) exit 0 ;;\n");
         }
@@ -11134,6 +11119,28 @@ fn write_fake_imexplore_script_impl(
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions).expect("chmod script");
     path
+}
+
+#[cfg(unix)]
+fn fake_imexplore_preview_json(response: &str) -> String {
+    let Ok(envelope) = serde_json::from_str::<ImageBrowserResponseEnvelope>(response) else {
+        return response.to_string();
+    };
+    let ImageBrowserResponse::Snapshot(snapshot) = envelope.response else {
+        return response.to_string();
+    };
+    let non_display_indices = snapshot
+        .non_display_axes
+        .iter()
+        .map(|axis| axis.index)
+        .collect();
+    serde_json::to_string(&ImageBrowserResponseEnvelope::preview(
+        ImageBrowserPreviewPayload {
+            non_display_indices,
+            snapshot,
+        },
+    ))
+    .expect("serialize fake imexplore preview")
 }
 
 fn fake_canonical_bundle_json(

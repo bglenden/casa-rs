@@ -14,12 +14,10 @@ workspace = true
 casa-coordinates = { path = "../casa-coordinates" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
-casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
 casa-lattices = { path = "../casa-lattices" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
 fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
 ndarray.workspace = true
 num-complex.workspace = true
 rustfft.workspace = true
@@ -31,9 +29,3 @@ thiserror.workspace = true
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
 tempfile = "3"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "line_series", "point_series", "full_palette", "ttf"] }
-
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "line_series", "point_series", "full_palette", "ab_glyph"] }

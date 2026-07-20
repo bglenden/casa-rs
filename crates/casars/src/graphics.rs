@@ -74,7 +74,7 @@ pub(crate) struct ImagingPlotRenderInput {
     pub payload: ImagingPlotPayload,
     pub theme_mode: ThemeMode,
 }
-pub(crate) use casa_images::{
+pub(crate) use crate::browser_render::{
     BrowserRenderTheme, ImagePlaneColormap, ImagePlaneOverlayMarker, ImagePlaneRenderInput,
     ImageSpectrumOverlaySeries, ImageSpectrumRenderInput, image_plane_layout,
     image_spectrum_layout, render_image_plane_image, render_image_spectrum_image,

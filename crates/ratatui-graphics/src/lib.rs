@@ -24,11 +24,10 @@ pub use kitty::{
 };
 #[cfg(feature = "panel")]
 pub use panel::{
-    PanelInitError, PanelRenderError, PanelRenderJob, PanelRenderPool, PanelRenderPoolDrain,
-    PanelRenderPoolError, PanelRenderPoolJob, PanelRenderPoolSubmitError, PanelRenderer,
-    PanelSubmitError, PanelWorkerError, PreparedPanelProtocol, PreparedPanelProtocolOnly,
-    PreparedPanelRender, build_panel_protocol_from_rgba, build_panel_protocol_from_rgba_owned,
-    render_panel_protocol,
+    PanelCompletion, PanelDrain, PanelInitError, PanelJob, PanelProtocolRenderError,
+    PanelProtocolRequest, PanelSchedulePolicy, PanelScheduler, PanelSchedulerError,
+    PanelSubmitError, PreparedPanelProtocol, PreparedPanelProtocolOnly,
+    build_panel_protocol_from_rgba_owned, render_panel_protocol,
 };
 #[cfg(any(feature = "panel", feature = "kitty"))]
 pub use ratatui_image::picker::{Picker, ProtocolType};

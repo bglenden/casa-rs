@@ -98,7 +98,7 @@
       "kind": "task",
       "launch": {
         "executable": "tablebrowser",
-        "cargo_package": "casa-tables",
+        "cargo_package": "casars",
         "override_env": "CASARS_TABLEBROWSER_BIN"
       },
       "shell_kind": "browser",
@@ -118,7 +118,7 @@
       "kind": "task",
       "launch": {
         "executable": "imexplore",
-        "cargo_package": "casa-images",
+        "cargo_package": "casars",
         "override_env": "CASARS_IMEXPLORE_BIN"
       },
       "shell_kind": "browser",
@@ -136,7 +136,7 @@
       "kind": "task",
       "launch": {
         "executable": "imexplore",
-        "cargo_package": "casa-images",
+        "cargo_package": "casars",
         "override_env": "CASARS_IMEXPLORE_BIN"
       },
       "shell_kind": "workflow",
@@ -154,7 +154,7 @@
       "kind": "task",
       "launch": {
         "executable": "imexplore",
-        "cargo_package": "casa-images",
+        "cargo_package": "casars",
         "override_env": "CASARS_IMEXPLORE_BIN"
       },
       "shell_kind": "workflow",

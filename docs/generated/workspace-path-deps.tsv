@@ -15,7 +15,6 @@ casa-images	casa-tables	normal	crates/casa-tables
 casa-images	casa-task-runtime	normal	crates/casa-task-runtime
 casa-images	casa-test-support	dev	crates/casa-test-support
 casa-images	casa-types	normal	crates/casa-types
-casa-images	casars-imagebrowser-protocol	normal	crates/casars-imagebrowser-protocol
 casa-imaging	casa-coordinates	normal	crates/casa-coordinates
 casa-imaging	casa-images	normal	crates/casa-images
 casa-imaging	casa-lattices	normal	crates/casa-lattices
@@ -40,7 +39,6 @@ casa-ms	casa-types	normal	crates/casa-types
 casa-provider-contracts	casa-types	normal	crates/casa-types
 casa-tables	casa-aipsio	normal	crates/casa-aipsio
 casa-tables	casa-types	normal	crates/casa-types
-casa-tables	casars-tablebrowser-protocol	normal	crates/casars-tablebrowser-protocol
 casa-task-runtime	casa-provider-contracts	normal	crates/casa-provider-contracts
 casa-task-runtime	casa-types	normal	crates/casa-types
 casa-test-support	casa-aipsio	normal	crates/casa-aipsio
@@ -62,6 +60,7 @@ casa-vla	casa-task-runtime	normal	crates/casa-task-runtime
 casa-vla	casa-test-support	dev	crates/casa-test-support
 casa-vla	casa-types	normal	crates/casa-types
 casars	casa-calibration	normal	crates/casa-calibration
+casars	casa-coordinates	dev	crates/casa-coordinates
 casars	casa-images	normal	crates/casa-images
 casars	casa-imaging	normal	crates/casa-imaging
 casars	casa-logging	normal	crates/casa-logging
@@ -70,6 +69,7 @@ casars	casa-notebook	normal	crates/casa-notebook
 casars	casa-provider-contracts	normal	crates/casa-provider-contracts
 casars	casa-tables	normal	crates/casa-tables
 casars	casa-task-runtime	normal	crates/casa-task-runtime
+casars	casa-test-support	dev	crates/casa-test-support
 casars	casa-types	normal	crates/casa-types
 casars	casa-vla	normal	crates/casa-vla
 casars	casars-imagebrowser-protocol	normal	crates/casars-imagebrowser-protocol
@@ -84,6 +84,7 @@ casars-frontend-services	casa-provider-contracts	normal	crates/casa-provider-con
 casars-frontend-services	casa-tables	normal	crates/casa-tables
 casars-frontend-services	casa-task-runtime	normal	crates/casa-task-runtime
 casars-frontend-services	casa-types	normal	crates/casa-types
+casars-frontend-services	casars	normal	crates/casars
 casars-frontend-services	casars-imagebrowser-protocol	normal	crates/casars-imagebrowser-protocol
 casars-frontend-services	casars-tablebrowser-protocol	normal	crates/casars-tablebrowser-protocol
 casars-imagebrowser-protocol	casa-provider-contracts	normal	crates/casa-provider-contracts

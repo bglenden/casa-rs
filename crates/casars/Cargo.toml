@@ -30,7 +30,7 @@ casa-types = { path = "../casa-types" }
 crossterm = "0.28"
 directories = "5"
 image = { version = "0.25", default-features = false, features = ["png"] }
-plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series"] }
+plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "point_series", "full_palette"] }
 ratatui = "0.30"
 ratatui-explorer = "0.3.0"
 ratatui-graphics.workspace = true
@@ -44,7 +44,15 @@ libc = "0.2"
 tracing.workspace = true
 
 [dev-dependencies]
+casa-coordinates = { path = "../casa-coordinates" }
+casa-test-support = { path = "../casa-test-support" }
 flate2 = "1"
 ndarray.workspace = true
 tar = "0.4"
 tempfile = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+plotters = { version = "0.3.7", default-features = false, features = ["ttf"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+plotters = { version = "0.3.7", default-features = false, features = ["ab_glyph"] }

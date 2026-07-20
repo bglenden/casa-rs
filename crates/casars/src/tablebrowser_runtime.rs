@@ -25,7 +25,7 @@ use casars_tablebrowser_protocol::{
 };
 use thiserror::Error;
 
-use crate::{
+use casa_tables::{
     ArrayShapeContract, ColumnType, DataManagerInfo, Table, TableError, TableInfo, TableOptions,
 };
 
@@ -1718,7 +1718,7 @@ fn column_names(table: &Table) -> Result<Vec<String>, TableBrowserError> {
     Ok(names.into_iter().collect())
 }
 
-fn describe_schema_column(column: &crate::ColumnSchema) -> String {
+fn describe_schema_column(column: &casa_tables::ColumnSchema) -> String {
     let mut line = String::new();
     match column.column_type() {
         ColumnType::Scalar => {
@@ -1745,7 +1745,7 @@ fn describe_schema_column(column: &crate::ColumnSchema) -> String {
     line
 }
 
-fn describe_schema_column_short(column: &crate::ColumnSchema) -> String {
+fn describe_schema_column_short(column: &casa_tables::ColumnSchema) -> String {
     match column.column_type() {
         ColumnType::Scalar => column
             .data_type()
@@ -2558,7 +2558,7 @@ mod tests {
     use flate2::read::GzDecoder;
     use tempfile::tempdir;
 
-    use crate::{ColumnOptions, ColumnSchema, TableSchema};
+    use casa_tables::{ColumnOptions, ColumnSchema, TableSchema};
 
     #[test]
     fn browser_can_navigate_complex_values_and_linked_tables() {

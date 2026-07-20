@@ -17,8 +17,8 @@ The library supports two rendering paths:
 
 The current public API is centered on:
 
-- `PanelRenderer` for request coalescing, worker lifecycle, stale-result filtering, and current
-  panel protocol state.
+- `PanelScheduler` for one shared worker lifecycle with explicit latest-wins or bounded-ordered
+  queue policy and generation-based stale-result filtering.
 - `KittyLayerManager` for typed image/placement handles and explicit upload/place/delete steps.
 - `PlottersBitmap` for `plotters` RGB raster generation.
 - Generic image operations such as aspect fitting, chroma-key background transparency, and
@@ -30,7 +30,7 @@ The current public API is centered on:
 
 This crate is intentionally more than thin glue. It owns:
 
-- panel worker lifecycle and latest-wins request behavior
+- panel worker lifecycle and explicit latest-wins or bounded-ordered request behavior
 - stale-result filtering via request ids
 - Kitty layer id allocation
 - terminal capability policy for direct Kitty layers
@@ -99,7 +99,7 @@ The main local verification commands are:
 
 - The direct Kitty layer path is intentionally explicit: callers are responsible for deciding
   when to upload, place, clear, and delete layers.
-- The panel path is stateful but higher-level: `PanelRenderer` owns the worker thread and
-  latest-wins request semantics so the app does not need raw channel plumbing.
+- The panel path is stateful but higher-level: `PanelScheduler` owns worker threads, queue policy,
+  and completion plumbing while the app owns its current visible protocol or bitmap.
 - Ghostty-specific compositing behavior should be validated in a real Ghostty session; a generic
   PTY smoke test is not enough to verify layering.
