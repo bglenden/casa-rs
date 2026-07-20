@@ -1034,6 +1034,7 @@ impl StandardMfsBlockTileBuckets {
         self.sample_refs.len()
     }
 
+    #[cfg(any(test, all(target_os = "macos", not(coverage))))]
     pub(crate) fn nonempty_tiles(&self) -> &[StandardMfsTileId] {
         &self.nonempty_tiles
     }
