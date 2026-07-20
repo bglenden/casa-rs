@@ -740,7 +740,7 @@
 
 <h1 id="imaging-public-api-consolidation-inventory">Imaging Public API Consolidation Inventory<a class="headerlink" href="#imaging-public-api-consolidation-inventory" title="Permanent link">&para;</a></h1>
 <p>Truth class: implementation inventory
-Last reality check: 2026-07-10
+Last reality check: 2026-07-19
 Verification: targeted <code>rg</code> call-site searches; <code>python3 -m py_compile tools/perf/imager/imaging_interface_metrics.py</code>; <code>python3 tools/perf/imager/imaging_interface_metrics.py --base origin/main --format markdown</code>; <code>cargo fmt --all -- --check</code>; <code>cargo check -p casa-imaging -p casa-ms -p casars-imager</code>; focused <code>casa-imaging</code>, <code>casa-ms</code>, and <code>casars-imager</code> regression tests for source views, auto-multithresh, PB products, coordinate systems, density translation, product-plane helpers, cube-Briggs formulas, clean-cycle/Hogbom helpers, and standard-MFS/mosaic/PB app routes; <code>just quick</code>; <code>just docs-check</code>; <code>just verify</code>; <code>tools/perf/imager/run_workload.py --artifact-root target/imperformance-interface-consolidation-final-r3/artifacts --repeats 3 --run-label imaging-interface-consolidation-final-r3 --storage-label local-testdata --output-dir target/imperformance-interface-consolidation-final-r3/smoke wave1-standard-mfs-dirty-smoke</code>; same three-repeat workload at <code>origin/main</code> commit <code>e5df883d1b465f87661322fec875dacd05e5fc0f</code> in <code>/private/tmp/casa-rs-origin-imaging-interface-20260702</code></p>
 <h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
 <p>This inventory records the standard-MFS imaging execution surface after issue</p>
@@ -1024,7 +1024,7 @@ mosaic slice; the core validates the same projection and weighting constraints.<
 <td>Dead row-run block wrapper after the routed-run source facade moved to direct runs.</td>
 </tr>
 <tr>
-<td><code>StandardMfsExecutionConfig</code></td>
+<td><code>StandardMfsExecutionPlan</code></td>
 <td style="text-align: right;">Public</td>
 <td><code>casa-imaging</code>, <code>casars-imager</code></td>
 <td>Keep public</td>
@@ -1074,10 +1074,10 @@ mosaic slice; the core validates the same projection and weighting constraints.<
 </tr>
 <tr>
 <td><code>ImagingWorkerPlan</code> and <code>ImagingWorkerPlanInput</code></td>
-<td style="text-align: right;">Public</td>
-<td><code>casars-imager</code>, spectral slab planner tests</td>
-<td>Keep public</td>
-<td>Shared worker-count and backend-command-target model used by app/runtime planners.</td>
+<td style="text-align: right;">Removed</td>
+<td>none</td>
+<td>Remove without replacement</td>
+<td>Worker count and backend command targets are fields of the admitted <code>ImagingResolvedPlan</code>; there is no independent worker planner.</td>
 </tr>
 <tr>
 <td>MFS image-product plane helpers and <code>ImageProductSet</code></td>
@@ -1408,6 +1408,36 @@ single-plane mosaic block facade without replacement. Most growth is private or
 <code>pub(crate)</code> implementation for bounded replay, planner telemetry, exact-plan
 compaction, and Metal tile execution. The app still does not construct or
 observe planned/routed/Metal backend IR directly.</p>
+<h2 id="wave-8-execution-planning-consolidation">Wave 8 Execution-Planning Consolidation<a class="headerlink" href="#wave-8-execution-planning-consolidation" title="Permanent link">&para;</a></h2>
+<p>Wave 8 replaces the remaining independent performance-policy paths with one
+immutable typed <code>ImagingResolvedPlan</code>. The application translates CLI intent,
+workload shape, and a reservation from its process resource ledger exactly
+once; <code>casa-imaging</code> consumes the admitted workers, row blocks, FFT chunks,
+tile residency and queue depth, spectral schedule, caches, and Metal command
+schedule without consulting environment variables or inventing fallback
+budgets. Explicit CLI memory is a cap on the application reservation. Automatic
+assignment uses operating-system available/reclaimable memory as a runtime
+fact, rather than a fixed percentage heuristic.</p>
+<p>The former <code>ImagingWorkerPlan</code>, <code>ImagingWorkerPlanInput</code>, and
+<code>worker_plan.rs</code> boundary has been removed. Fixed row, batch, tile, queue,
+flush, sample, and worker-penalty policies have also been removed from the core
+execution paths. Buffer reuse remains an allocation optimization only: pools
+do not reserve memory independently and cannot override the admitted plan.
+Exact byte formulas for queue entries, grouped Metal cache lanes, FFT planes,
+row blocks, tiles, and standard-gridder halo are owned by <code>casa-imaging</code> and
+shared with the application planner.</p>
+<p>The workload shape distinguishes tiled and full-grid execution. Mosaic's
+single full-grid owner does not reserve a tile queue or one Fourier grid per
+helper worker; its pointing-density maps are charged once as topology-owned
+state. On heterogeneous Apple Silicon the process ledger assigns that
+latency-critical topology the performance-core slice, while independently
+tiled work may use all logical CPUs. This keeps CPU assignment a machine
+resource fact rather than restoring the removed worker-penalty model.</p>
+<p><code>casa-lattices</code> now provides the shared byte-aware chunk planner used by
+lattice statistics and the canonical compiled image-expression evaluator.
+Explicit worker and prefetch values are caps bounded by available work and the
+assigned resource slice. Compiled image sources are deduplicated, and only
+sources referenced more than once retain a per-worker slice cache.</p>
 <h2 id="performance-smoke-snapshot">Performance Smoke Snapshot<a class="headerlink" href="#performance-smoke-snapshot" title="Permanent link">&para;</a></h2>
 <p>The current worktree and <code>origin/main</code> were run through the same
 <code>wave1-standard-mfs-dirty-smoke</code> CASA-vs-Rust workload with three repeats and

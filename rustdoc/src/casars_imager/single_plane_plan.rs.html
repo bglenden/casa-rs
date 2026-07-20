@@ -11,10 +11,10 @@
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>casa_ms::CubeInterpolation;
 <a href=#12 id=12 data-nosnippet>12</a>
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use crate</span>::{
-<a href=#14 id=14 data-nosnippet>14</a>    CleanMaskMode, CliConfig, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
+<a href=#14 id=14 data-nosnippet>14</a>    CleanMaskMode, CliConfig, SpectralMode, StandardMfsAccelerationPolicy,
 <a href=#15 id=15 data-nosnippet>15</a>    can_plan_mosaic_mfs_acceleration, can_plan_standard_mfs_acceleration,
-<a href=#16 id=16 data-nosnippet>16</a>    needs_single_field_primary_beam_products, standard_mfs_auto_grid_threads,
-<a href=#17 id=17 data-nosnippet>17</a>    standard_mfs_wproject_auto_grid_threads,
+<a href=#16 id=16 data-nosnippet>16</a>    needs_single_field_primary_beam_products, phasecenter_field_matches_single_selected_field,
+<a href=#17 id=17 data-nosnippet>17</a>    standard_mfs_auto_grid_threads, standard_mfs_wproject_auto_grid_threads,
 <a href=#18 id=18 data-nosnippet>18</a>};
 <a href=#19 id=19 data-nosnippet>19</a>
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>build_single_plane_execution_plan(
@@ -48,58 +48,58 @@
 <a href=#48 id=48 data-nosnippet>48</a>        cube_interpolation(config.cube_axis.interpolation),
 <a href=#49 id=49 data-nosnippet>49</a>        config.dirty_only || config.niter == <span class="number">0</span>,
 <a href=#50 id=50 data-nosnippet>50</a>        config.use_pointing,
-<a href=#51 id=51 data-nosnippet>51</a>        config.save_model != SaveModelMode::None,
-<a href=#52 id=52 data-nosnippet>52</a>        config.use_mask == CleanMaskMode::User,
-<a href=#53 id=53 data-nosnippet>53</a>        config.w_term_mode,
-<a href=#54 id=54 data-nosnippet>54</a>    ))
-<a href=#55 id=55 data-nosnippet>55</a>}
-<a href=#56 id=56 data-nosnippet>56</a>
-<a href=#57 id=57 data-nosnippet>57</a><span class="kw">fn </span>output_channel_count(config: <span class="kw-2">&amp;</span>CliConfig) -&gt; usize {
-<a href=#58 id=58 data-nosnippet>58</a>    <span class="kw">match </span>config.spectral_mode {
-<a href=#59 id=59 data-nosnippet>59</a>        SpectralMode::Mfs =&gt; <span class="number">1</span>,
-<a href=#60 id=60 data-nosnippet>60</a>        SpectralMode::Cube | SpectralMode::Cubedata =&gt; config.channel_count.unwrap_or(<span class="number">1</span>),
-<a href=#61 id=61 data-nosnippet>61</a>    }
-<a href=#62 id=62 data-nosnippet>62</a>}
-<a href=#63 id=63 data-nosnippet>63</a>
-<a href=#64 id=64 data-nosnippet>64</a><span class="kw">fn </span>spectral_plan(mode: SpectralMode, output_channel_count: usize) -&gt; SinglePlaneSpectralPlan {
-<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">match </span>mode {
-<a href=#66 id=66 data-nosnippet>66</a>        SpectralMode::Mfs =&gt; SinglePlaneSpectralPlan::Mfs,
-<a href=#67 id=67 data-nosnippet>67</a>        SpectralMode::Cube | SpectralMode::Cubedata <span class="kw">if </span>output_channel_count == <span class="number">1 </span>=&gt; {
-<a href=#68 id=68 data-nosnippet>68</a>            SinglePlaneSpectralPlan::CubeLikeOneChannel
-<a href=#69 id=69 data-nosnippet>69</a>        }
-<a href=#70 id=70 data-nosnippet>70</a>        SpectralMode::Cube | SpectralMode::Cubedata =&gt; {
-<a href=#71 id=71 data-nosnippet>71</a>            SinglePlaneSpectralPlan::CubeLikeMultiChannel
-<a href=#72 id=72 data-nosnippet>72</a>        }
-<a href=#73 id=73 data-nosnippet>73</a>    }
-<a href=#74 id=74 data-nosnippet>74</a>}
-<a href=#75 id=75 data-nosnippet>75</a>
-<a href=#76 id=76 data-nosnippet>76</a><span class="kw">fn </span>acceleration_policy(policy: StandardMfsAccelerationPolicy) -&gt; SinglePlaneAccelerationPolicy {
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">match </span>policy {
-<a href=#78 id=78 data-nosnippet>78</a>        StandardMfsAccelerationPolicy::Cpu =&gt; SinglePlaneAccelerationPolicy::Cpu,
-<a href=#79 id=79 data-nosnippet>79</a>        StandardMfsAccelerationPolicy::Auto =&gt; SinglePlaneAccelerationPolicy::Auto,
-<a href=#80 id=80 data-nosnippet>80</a>        StandardMfsAccelerationPolicy::MultiCpu =&gt; SinglePlaneAccelerationPolicy::MultiCpu,
-<a href=#81 id=81 data-nosnippet>81</a>        StandardMfsAccelerationPolicy::Metal =&gt; SinglePlaneAccelerationPolicy::Metal,
-<a href=#82 id=82 data-nosnippet>82</a>    }
-<a href=#83 id=83 data-nosnippet>83</a>}
-<a href=#84 id=84 data-nosnippet>84</a>
-<a href=#85 id=85 data-nosnippet>85</a><span class="kw">fn </span>cube_interpolation(interpolation: CubeInterpolation) -&gt; SinglePlaneCubeInterpolation {
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">match </span>interpolation {
-<a href=#87 id=87 data-nosnippet>87</a>        CubeInterpolation::Nearest =&gt; SinglePlaneCubeInterpolation::Nearest,
-<a href=#88 id=88 data-nosnippet>88</a>        CubeInterpolation::Linear | CubeInterpolation::Cubic =&gt; SinglePlaneCubeInterpolation::Other,
-<a href=#89 id=89 data-nosnippet>89</a>    }
-<a href=#90 id=90 data-nosnippet>90</a>}
-<a href=#91 id=91 data-nosnippet>91</a>
-<a href=#92 id=92 data-nosnippet>92</a><span class="kw">fn </span>projection_plan(config: <span class="kw-2">&amp;</span>CliConfig, force_standard_gridder: bool) -&gt; SinglePlaneProjectionPlan {
-<a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">if </span><span class="macro">matches!</span>(config.w_term_mode, WTermMode::WProject | WTermMode::Direct) {
-<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">return </span>SinglePlaneProjectionPlan::WProjection;
-<a href=#95 id=95 data-nosnippet>95</a>    }
-<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">if </span>config.use_pointing || needs_single_field_primary_beam_products(config) {
-<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">return </span>SinglePlaneProjectionPlan::Mosaic;
-<a href=#98 id=98 data-nosnippet>98</a>    }
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">if </span>!force_standard_gridder
-<a href=#100 id=100 data-nosnippet>100</a>        &amp;&amp; !config.force_standard_gridder
-<a href=#101 id=101 data-nosnippet>101</a>        &amp;&amp; (config.field_ids.as_ref().is_some_and(|ids| ids.len() &gt; <span class="number">1</span>)
-<a href=#102 id=102 data-nosnippet>102</a>            || config.phasecenter_field.is_some()
+<a href=#51 id=51 data-nosnippet>51</a>        config.use_mask == CleanMaskMode::User,
+<a href=#52 id=52 data-nosnippet>52</a>        config.w_term_mode,
+<a href=#53 id=53 data-nosnippet>53</a>    ))
+<a href=#54 id=54 data-nosnippet>54</a>}
+<a href=#55 id=55 data-nosnippet>55</a>
+<a href=#56 id=56 data-nosnippet>56</a><span class="kw">fn </span>output_channel_count(config: <span class="kw-2">&amp;</span>CliConfig) -&gt; usize {
+<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">match </span>config.spectral_mode {
+<a href=#58 id=58 data-nosnippet>58</a>        SpectralMode::Mfs =&gt; <span class="number">1</span>,
+<a href=#59 id=59 data-nosnippet>59</a>        SpectralMode::Cube | SpectralMode::Cubedata =&gt; config.channel_count.unwrap_or(<span class="number">1</span>),
+<a href=#60 id=60 data-nosnippet>60</a>    }
+<a href=#61 id=61 data-nosnippet>61</a>}
+<a href=#62 id=62 data-nosnippet>62</a>
+<a href=#63 id=63 data-nosnippet>63</a><span class="kw">fn </span>spectral_plan(mode: SpectralMode, output_channel_count: usize) -&gt; SinglePlaneSpectralPlan {
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">match </span>mode {
+<a href=#65 id=65 data-nosnippet>65</a>        SpectralMode::Mfs =&gt; SinglePlaneSpectralPlan::Mfs,
+<a href=#66 id=66 data-nosnippet>66</a>        SpectralMode::Cube | SpectralMode::Cubedata <span class="kw">if </span>output_channel_count == <span class="number">1 </span>=&gt; {
+<a href=#67 id=67 data-nosnippet>67</a>            SinglePlaneSpectralPlan::CubeLikeOneChannel
+<a href=#68 id=68 data-nosnippet>68</a>        }
+<a href=#69 id=69 data-nosnippet>69</a>        SpectralMode::Cube | SpectralMode::Cubedata =&gt; {
+<a href=#70 id=70 data-nosnippet>70</a>            SinglePlaneSpectralPlan::CubeLikeMultiChannel
+<a href=#71 id=71 data-nosnippet>71</a>        }
+<a href=#72 id=72 data-nosnippet>72</a>    }
+<a href=#73 id=73 data-nosnippet>73</a>}
+<a href=#74 id=74 data-nosnippet>74</a>
+<a href=#75 id=75 data-nosnippet>75</a><span class="kw">fn </span>acceleration_policy(policy: StandardMfsAccelerationPolicy) -&gt; SinglePlaneAccelerationPolicy {
+<a href=#76 id=76 data-nosnippet>76</a>    <span class="kw">match </span>policy {
+<a href=#77 id=77 data-nosnippet>77</a>        StandardMfsAccelerationPolicy::Cpu =&gt; SinglePlaneAccelerationPolicy::Cpu,
+<a href=#78 id=78 data-nosnippet>78</a>        StandardMfsAccelerationPolicy::Auto =&gt; SinglePlaneAccelerationPolicy::Auto,
+<a href=#79 id=79 data-nosnippet>79</a>        StandardMfsAccelerationPolicy::MultiCpu =&gt; SinglePlaneAccelerationPolicy::MultiCpu,
+<a href=#80 id=80 data-nosnippet>80</a>        StandardMfsAccelerationPolicy::Metal =&gt; SinglePlaneAccelerationPolicy::Metal,
+<a href=#81 id=81 data-nosnippet>81</a>    }
+<a href=#82 id=82 data-nosnippet>82</a>}
+<a href=#83 id=83 data-nosnippet>83</a>
+<a href=#84 id=84 data-nosnippet>84</a><span class="kw">fn </span>cube_interpolation(interpolation: CubeInterpolation) -&gt; SinglePlaneCubeInterpolation {
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">match </span>interpolation {
+<a href=#86 id=86 data-nosnippet>86</a>        CubeInterpolation::Nearest =&gt; SinglePlaneCubeInterpolation::Nearest,
+<a href=#87 id=87 data-nosnippet>87</a>        CubeInterpolation::Linear | CubeInterpolation::Cubic =&gt; SinglePlaneCubeInterpolation::Other,
+<a href=#88 id=88 data-nosnippet>88</a>    }
+<a href=#89 id=89 data-nosnippet>89</a>}
+<a href=#90 id=90 data-nosnippet>90</a>
+<a href=#91 id=91 data-nosnippet>91</a><span class="kw">fn </span>projection_plan(config: <span class="kw-2">&amp;</span>CliConfig, force_standard_gridder: bool) -&gt; SinglePlaneProjectionPlan {
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">if </span><span class="macro">matches!</span>(config.w_term_mode, WTermMode::WProject | WTermMode::Direct) {
+<a href=#93 id=93 data-nosnippet>93</a>        <span class="kw">return </span>SinglePlaneProjectionPlan::WProjection;
+<a href=#94 id=94 data-nosnippet>94</a>    }
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">if </span>config.use_pointing || needs_single_field_primary_beam_products(config) {
+<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">return </span>SinglePlaneProjectionPlan::Mosaic;
+<a href=#97 id=97 data-nosnippet>97</a>    }
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">if </span>!force_standard_gridder
+<a href=#99 id=99 data-nosnippet>99</a>        &amp;&amp; !config.force_standard_gridder
+<a href=#100 id=100 data-nosnippet>100</a>        &amp;&amp; (config.field_ids.as_ref().is_some_and(|ids| ids.len() &gt; <span class="number">1</span>)
+<a href=#101 id=101 data-nosnippet>101</a>            || (config.phasecenter_field.is_some()
+<a href=#102 id=102 data-nosnippet>102</a>                &amp;&amp; !phasecenter_field_matches_single_selected_field(config))
 <a href=#103 id=103 data-nosnippet>103</a>            || config.phasecenter.is_some())
 <a href=#104 id=104 data-nosnippet>104</a>    {
 <a href=#105 id=105 data-nosnippet>105</a>        <span class="kw">return </span>SinglePlaneProjectionPlan::Mosaic;
@@ -496,7 +496,7 @@
 <a href=#496 id=496 data-nosnippet>496</a>    }
 <a href=#497 id=497 data-nosnippet>497</a>
 <a href=#498 id=498 data-nosnippet>498</a>    <span class="attr">#[test]
-<a href=#499 id=499 data-nosnippet>499</a>    </span><span class="kw">fn </span>representative_standard_rejection_keeps_explicit_reason() {
+<a href=#499 id=499 data-nosnippet>499</a>    </span><span class="kw">fn </span>bounded_model_writeback_keeps_standard_acceleration_eligible() {
 <a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">let </span>config = parse([
 <a href=#501 id=501 data-nosnippet>501</a>            <span class="string">"--gridder"</span>,
 <a href=#502 id=502 data-nosnippet>502</a>            <span class="string">"standard"</span>,
@@ -507,12 +507,12 @@
 <a href=#507 id=507 data-nosnippet>507</a>        ]);
 <a href=#508 id=508 data-nosnippet>508</a>        <span class="kw">let </span>plan = build_single_plane_execution_plan(<span class="kw-2">&amp;</span>config, <span class="bool-val">false</span>, <span class="number">1</span>);
 <a href=#509 id=509 data-nosnippet>509</a>
-<a href=#510 id=510 data-nosnippet>510</a>        <span class="macro">assert!</span>(!plan.cpu_multi_worker.eligible);
-<a href=#511 id=511 data-nosnippet>511</a>        <span class="macro">assert_eq!</span>(
-<a href=#512 id=512 data-nosnippet>512</a>            plan.cpu_multi_worker.reason,
-<a href=#513 id=513 data-nosnippet>513</a>            <span class="string">"savemodel-requires-traced-path"
-<a href=#514 id=514 data-nosnippet>514</a>        </span>);
-<a href=#515 id=515 data-nosnippet>515</a>        <span class="macro">assert_eq!</span>(plan.gpu_metal.reason, <span class="string">"savemodel-requires-traced-path"</span>);
+<a href=#510 id=510 data-nosnippet>510</a>        <span class="macro">assert!</span>(plan.cpu_multi_worker.eligible);
+<a href=#511 id=511 data-nosnippet>511</a>        <span class="macro">assert!</span>(
+<a href=#512 id=512 data-nosnippet>512</a>            plan.cpu_multi_worker
+<a href=#513 id=513 data-nosnippet>513</a>                .reason
+<a href=#514 id=514 data-nosnippet>514</a>                .starts_with(<span class="string">"standard-mfs-fixed-tile-workers-"</span>)
+<a href=#515 id=515 data-nosnippet>515</a>        );
 <a href=#516 id=516 data-nosnippet>516</a>    }
 <a href=#517 id=517 data-nosnippet>517</a>
 <a href=#518 id=518 data-nosnippet>518</a>    <span class="attr">#[test]
