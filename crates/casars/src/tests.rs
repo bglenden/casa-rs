@@ -4597,7 +4597,11 @@ fn browser_views_are_clickable_from_the_browser_shell() {
 #[test]
 fn back_to_launcher_closes_active_browser_session() {
     let _guard = launcher_env_lock();
-    clear_tablebrowser_launcher_bin();
+    if let Some(path) = test_workspace_binary("tablebrowser") {
+        set_tablebrowser_launcher_bin(&path);
+    } else {
+        clear_tablebrowser_launcher_bin();
+    }
 
     let temp = tempdir().expect("tempdir");
     let table_path = create_fixture_table(temp.path());
@@ -4608,8 +4612,9 @@ fn back_to_launcher_closes_active_browser_session() {
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
     app.set_text_value("table", table_path.to_string_lossy().as_ref());
     app.start_run_for_test();
+    clear_tablebrowser_launcher_bin();
 
-    assert!(app.browser_is_active());
+    assert!(app.browser_is_active(), "{}", app.stderr_for_test());
     app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
     assert!(app.should_return_to_launcher_for_test());
     assert!(!app.browser_is_active());
