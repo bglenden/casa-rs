@@ -2132,7 +2132,7 @@
     }
   },
   "run_id": "mosaic-cube-chanchunks-formula-comparison",
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "completed",
   "workload": {
     "id": "wave4-mosaic-cube-alma-medium-dirty-bounded"

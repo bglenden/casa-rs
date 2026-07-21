@@ -3040,7 +3040,7 @@
     }
   },
   "run_id": "20260710T212004Z-wave1-standard-mfs-dirty-smoke-vs-wave1-standard-mfs-dirty-smoke-fe4c7599",
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "completed",
   "workload": {
     "id": "wave1-standard-mfs-dirty-smoke"

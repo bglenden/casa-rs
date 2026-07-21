@@ -3159,7 +3159,7 @@
     }
   },
   "run_id": "20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f",
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "completed",
   "workload": {
     "id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto"

@@ -6,9 +6,14 @@ imager.
 ## Entry points
 
 - `tools/perf/imager/run_workload.py`
-  - runs one JSON workload manifest, preflights support, delegates supported
-    workloads to `scripts/bench-imager-vs-casa.sh`, and writes a normalized
-    machine-readable result JSON
+  - runs one JSON workload manifest, preflights each target independently,
+    delegates ordinary paired workloads to `scripts/bench-imager-vs-casa.sh`,
+    executes checked-in recipe-backed CASA oracles directly, and writes a
+    normalized machine-readable result JSON
+- `tools/perf/imager/stage_vlass_fragment.py`
+  - verifies the frozen VLASS archive SHA-256 and gzip stream, extracts only the
+    expected MS and recipe, hashes the extracted tree, and atomically promotes
+    it inside the issue-owned GLENDENNING evidence root
 - `tools/perf/imager/stage_wave1_datasets.py`
   - validates the ImPerformance Wave 1 simulated-dataset registry, enforces the
     explicit data-root policy, and can materialize deterministic source models,
@@ -58,8 +63,9 @@ or scientific comparators.
 
 The package has these canonical owners:
 
-- `schema.py`: strict workload schema version 1 and run/result schema version 2
-- `artifacts.py`: JSON-object loading and atomic JSON replacement
+- `schema.py`: strict workload schema version 1 and run/result schema version 3
+- `artifacts.py`: JSON-object loading, atomic JSON replacement, and same-parent
+  atomic directory-bundle publication
 - `subprocesses.py`: command execution, stdin, timeout, return-code, and
   stdout/stderr policy
 - `provenance.py`: repository, machine, executable, dataset, and storage
@@ -69,7 +75,21 @@ The package has these canonical owners:
 - `ms_compare.py` plus `casa_ms_compare.py`: the single MeasurementSet
   comparator, with explicit `full`, `sampled`, and `aca_pairs` modes
 - `image_compare.py` plus `casa_image_compare.py`: the single imaging-product
-  comparator and its beam-aware and structured-difference metrics
+  comparator protocol schema version 4, including exact product/metadata
+  topology, bounded full-array reduction, Taylor-family semantics, and exact
+  bounded out-of-core native-plane structured differences
+- `casa_tclean.py`: the typed archived-recipe-to-`tclean` protocol, including
+  exact effective-call plans, per-call runtime/mask revalidation, protocol
+  result schema 3, and producer/product-bound cold/warm CF-cache receipt schema 2
+- `casa_tclean_workflow.py`: recipe-backed CASA planning/execution, required
+  repeatability comparisons, and whole-bundle partial/retained lifecycle
+- `casa_runtime_identity.py`: path-independent installed CASA code/native-library
+  and measures/model identities with host paths retained only as provenance
+- `tolerances.py`: frozen full-array numerical, beam, topology, source-region,
+  and structured-difference acceptance contracts
+- `casa_ms_geometry.py`: bounded MeasurementSet geometry and selection receipts
+- `dataset_selection_identity.py`: strict binding of a manifest to one named,
+  row/channel/correlation-verified frozen selection
 
 CASA-side programs are checked-in Python files. They are syntax-checked
 independently and invoked with request/result JSON files; no command generates
@@ -99,6 +119,26 @@ needs a different external scratch area. Small JSON/log result files may still
 be directed with `--output-dir`, but image products, comparison panels, and
 benchmark temp copies default to the safe-to-delete external root.
 
+Durable recipe-backed fiducials are different: pass explicit `--output-dir`,
+`--artifact-root`, and `--cf-cache-root` paths. The VLASS manifests enforce that
+all three are under `/Volumes/GLENDENNING/casa-rs-vlass/issue-446`, share the
+dataset device, retain at least 1 TiB free, and never use a
+`_tmp_safe_to_delete` directory for evidence or CF caches.
+
+The storage check covers both the supplied and fully resolved MeasurementSet
+path, so symlinks cannot escape the issue root. Outputs, receipts, the artifact
+bundle and its derived scratch/protocol/log/panel paths, deterministic masks,
+and CF-cache state likewise remain under the exact issue root and on the same
+mounted device as the dataset.
+
+Recipe-backed durable runs write products, CASA protocol files/logs, comparison
+inputs/results/panels, the benchmark summary, and an embedded receipt beneath a
+single `<run-id>.partial` directory. A required comparison must complete and
+pass its frozen tolerances before that whole directory is atomically renamed to
+`<run-id>`. Failed, interrupted, unavailable, and out-of-tolerance evidence
+retains the typed partial tree; receipts preserve raw execution paths and add
+the retained-path mapping instead of rewriting request provenance.
+
 ## Typical usage
 
 ```sh
@@ -113,6 +153,139 @@ tools/perf/imager/run_workload.py --dry-run wave1-standard-mfs-dirty-smoke
 
 The command writes a JSON plan under the external artifact root without
 requiring CASA Python or a local MeasurementSet.
+
+To inspect the frozen VLASS plans after staging the archive:
+
+```sh
+export CASA_RS_VLASS_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-vlass/issue-446/data/\
+b80d5e87487ab8ab01faa064c4cd48db6d93446fd0add208c051dd574e0d353a
+export CASA_RS_CASA_PYTHON=/path/to/casa-6.7.5.9/bin/python
+
+tools/perf/imager/run_workload.py --dry-run vlass-fragment-single-field \
+  --artifact-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts \
+  --cf-cache-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache
+```
+
+The full workloads have explicit cold and warm evidence manifests. Run
+`vlass-fragment-single-field-cold` or `vlass-fragment-all-fields-cold` once to
+measure CF construction and publish a schema-v2 cache receipt, then run the
+corresponding unsuffixed warm manifest to measure reuse. Each cold/warm pair
+derives the same plan-keyed CF identity; the only intentional run differences
+are cache role, repeat count, label, and evidence role.
+
+Recipe-backed manifests are immutable evidence. `--set-imaging` is rejected,
+as is a nonempty `run.env`; create a separately reviewed non-fiducial manifest
+for a parameter experiment. The manifests name one frozen dataset selection:
+`single_field` binds 10,400 field-1525 rows over SPWs 2--17, `all_fields` binds
+655,200 rows over the 63-field raster and SPWs 2--17, and
+`single_field_spw9` binds the verified 650-row field-1525/SPW-9 smoke. Field,
+SPW IDs, channel window, correlations, UV range, intent, and selected row count
+must all match the named selection.
+
+The corresponding Rust target is deliberately `unavailable` until the shared
+production imager has true EVLA A+W CF application, bounded multi-SPW/DDID
+selection, selection-windowed POINTING, joint MT-MFS, CASA normalization and
+restoration, and the complete Taylor/PB/weight/alpha product topology. The
+runner never substitutes W-projection or drops a requested control.
+
+Recipe-backed VLASS cache keys are bound to the verified staged-MS tree, named
+selection and SPW/DDID frequency facts, archived recipe, stable CASA/runtime/
+measures identity, and this exact CF-affecting effective-call projection:
+`field`, `spw`, `imsize`, `cell`, `phasecenter`, `stokes`, `projection`,
+`specmode`, `reffreq`, `nchan`, `start`, `width`, `outframe`, `veltype`,
+`restfreq`, `interpolation`, `gridder`, `facets`, `psfphasecenter`,
+`wprojplanes`, `vptable`, `aterm`, `psterm`, `wbawp`, `conjbeams`,
+`usepointing`, `computepastep`, `rotatepastep`, `pointingoffsetsigdev`, and
+`pblimit`. Mask, deconvolution/minor-cycle/restoration controls, output paths,
+and Rust memory/worker/backend policy are excluded. A deterministic mask is
+instead content-addressed in the individual request, including its resolved
+location and file or CASA-image-tree identity, and revalidated immediately
+before CASA starts. Relocating identical content therefore does not fragment
+the CF key, while changed content fails closed.
+
+A warm plan requires a separately completed matching cold cache and receipt.
+Missing cold evidence fails before CASA is called; warm never bootstraps cold.
+Exact replay of a cold request can finish protocol-reachable publication only
+when a schema-v2 commit-intent receipt binds the exact request ID, effective-call
+digest, and stable inventory of every run product proving `tclean` completed.
+It never reinvokes `tclean`, returns `recovered_publication`, and is explicitly
+non-benchmark evidence with no acceptable timing sample. The workload stops at
+that call, writes a typed schema-v3 `recovered_publication` receipt, and retains
+the run bundle as `.partial`; only the independently validated cache and its
+receipt are published. A recovery during either warmup or measured execution
+cannot run later calls, comparisons, or bundle promotion.
+
+One-call cold evidence still runs the exact product-inventory and metadata
+contract by comparing the retained prefix with itself. Multi-call evidence
+compares measured call 1 with every later call, including the final retained
+prefix. Final parity manifests may additionally declare bounded source boxes
+and a strict numerical tolerance contract. Those gates require full-array
+streaming and fail closed when beam, centroid, source-region peak/integrated
+flux, topology, or structured-difference measurements are missing or outside
+their frozen ceilings; sampled panels cannot satisfy them. Full mode visits
+every array pixel and writes the complete native central spatial plane into
+request-owned Float64 operand/difference stores plus a coverage map. The
+schema-v4 request hash binds an absolute `structure_workspace_dir` under the
+partial comparison bundle. Structure metrics consume that exact native plane;
+successful comparison removes every owned store and the workspace, while a
+failure retains it for diagnosis.
+
+The comparator's schema-v4 canonical request hash covers every normalized
+request field, including its structure workspace. Result validation checks the
+echoed binding, operands, labels, product set and paths, inventory/metadata
+policy, source regions, tolerances, and exact native-plane coverage evidence.
+Request, result, and log SHA-256 values are retained. The run-result schema and
+every required comparison must validate before same-parent bundle promotion;
+a completed workspace must be absent, and missing, leftover, mismatched,
+unavailable, or out-of-tolerance evidence remains a typed partial.
+
+Protocol result `wall_seconds` remains the exact opaque `tclean()` task time.
+Schema 3 additionally records measured preflight, task, product-inventory,
+cache-postcondition, and end-to-end protocol stages. Peak RSS, CPU, page faults,
+context switches, block-I/O operations, and process disk read/write bytes are
+captured fail-closed for each CASA call and summarized over measured calls only.
+These are protocol-boundary timings: they do not claim to disaggregate CASA's
+internal MS selection, CF/AW construction, gridding, FFT, deconvolution,
+restoration, or product-write phases.
+
+### VLASS Wave #446 evidence status
+
+Current schema-v4 exact full-array smokes with CASA protocol result schema 3
+and CF-cache receipt schema 2 completed on 2026-07-21. The cold receipt is
+`20260721T035625Z-vlass-fragment-smoke-cold-cad8add1.json`: `tclean` took
+70.564 s, the complete protocol took 81.229 s, peak RSS was 1,959,198,720
+bytes, and process I/O was 98,660,352 bytes read plus 369,967,104 bytes
+written. The warm receipt is
+`20260721T035810Z-vlass-fragment-smoke-warm-a3dd3526.json`; its warmup was
+1.778 s and its three measured calls were 1.819, 1.835, and 1.904 s (median
+1.835 s). Both bundles passed exact 18-product inventory, native-plane
+structure, frozen tolerances, request/result/log/cache binding, measured-call
+summary recomputation, and pre-promotion integrity. Their complete paths and
+SHA-256 values are the canonical v3 receipts
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T035625Z-vlass-fragment-smoke-cold-cad8add1.json`
+(`a6d81a86649ac9f64c33bb967d5205f861ba8bbf21a0cf80caa3f9507dca304c`)
+and
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T035810Z-vlass-fragment-smoke-warm-a3dd3526.json`
+(`c8deeef01d44c5365c91264590fee15b81c467606a9c5128ab5c011c945beace`).
+Both receipts pass the shared strict run-result loader; no VLASS-only index
+schema is part of the evidence contract.
+
+All earlier smoke generations remain historical engineering evidence only. In
+particular, the 00:19/00:21 UTC receipts bind the superseded pre-generalization
+geometry identity. The exact full-size run is still blocked by the recorded
+32 GiB capacity stop, so Wave #446 stays open and its implementation PR stays
+draft until the required full-size fiducials satisfy acceptance.
+
+### Production parameter and UI contract
+
+Evidence-manifest fields are not production parameters. Under #450, every new
+science or final execution-control capability must be defined once in the
+canonical `ParameterCatalog` and exposed with identical semantics through CLI,
+TUI, native macOS, Python, sparse profiles, and assistant/task schemas. Suitable
+AW/CF/resource controls belong in an advanced wide-field section. Any resolved-
+plan-only field must instead be explicitly classified internal and
+non-persistable with a recorded rationale; no capability may remain CLI-only,
+schema-only, environment-only, or silently simplified in a UI.
 
 To validate the Wave 1 simulated-dataset plan:
 
@@ -466,7 +639,7 @@ fail before timing claims if requested as real runs.
 
 ## Result JSON
 
-Every evidence entry point writes the same strict version-2 envelope. Its
+Every evidence entry point writes the same strict version-3 envelope. Its
 top-level fields are `schema_version`, `kind`, `status`, `run_id`,
 `created_at`, `environment`, `artifacts`, and `results`. Tool-specific content
 lives below `results`; `run_workload.py` records its workload result there with:
@@ -488,18 +661,22 @@ lives below `results`; `run_workload.py` records its workload result there with:
 - review panels for compared products when CASA Python has matplotlib
 - `human_review`, which remains `pending` until Brian accepts the numeric
   table and panels for the mode ticket
-- a typed `dry_run`, `completed`, `failed_execution`, `failed_comparison`,
-  `out_of_tolerance`, or `unavailable` status
+- a typed `dry_run`, `completed`, `recovered_publication`,
+  `failed_execution`, `failed_comparison`, `out_of_tolerance`, or `unavailable`
+  status
 
 The workload manifest's `schema_version: 1` and result envelope's
-`schema_version: 2` are independent of `casars-imager` task protocol v3 and the
+`schema_version: 3` are independent of `casars-imager` task protocol v3 and the
 progress/observability schema versions emitted by the application. Unknown
-fields, wrong types, and runtime result schema version 1 are rejected.
+fields, wrong types, and older runtime result schemas are rejected by normal
+readers.
 
-Thirty checked-in evidence artifacts were converted once with
-`migrate_evidence_v1_to_v2.py`; the evidence manifest SHA-256 values were
-updated in the same migration. The converter is deliberately not a runtime
-fallback. New tools do not best-effort parse historical shapes.
+Checked-in evidence artifacts use explicit one-time migrations:
+`migrate_evidence_v1_to_v2.py` freezes the historical v2 envelope, and
+`migrate_evidence_v2_to_v3.py` adds the v3 publication-recovery contract. Each
+migration updates evidence-manifest SHA-256 values and is idempotent at its own
+target version. Neither converter is a runtime fallback; normal tools do not
+best-effort parse historical shapes.
 
 ### Failure semantics
 
