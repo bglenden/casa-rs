@@ -2955,9 +2955,6 @@ fn rich_panel_footer_keeps_theme_toggle_visible() {
 
 #[test]
 fn tablebrowser_session_opens_cells_and_linked_subtables() {
-    let _guard = launcher_env_lock();
-    clear_tablebrowser_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let table_path = create_fixture_table(temp.path());
     let schema = tablebrowser_app()
@@ -2966,7 +2963,7 @@ fn tablebrowser_session_opens_cells_and_linked_subtables() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
     app.set_text_value("table", table_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_tablebrowser_launcher(&mut app);
 
     assert!(
         app.browser_is_active(),
@@ -3001,9 +2998,6 @@ fn tablebrowser_session_opens_cells_and_linked_subtables() {
 
 #[test]
 fn browser_footer_describes_escape_and_backspace_semantics() {
-    let _guard = launcher_env_lock();
-    clear_tablebrowser_launcher_bin();
-
     let temp = tempdir().expect("tempdir");
     let table_path = create_fixture_table(temp.path());
     let schema = tablebrowser_app()
@@ -3012,9 +3006,9 @@ fn browser_footer_describes_escape_and_backspace_semantics() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
     app.set_text_value("table", table_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
+    start_run_with_default_tablebrowser_launcher(&mut app);
 
-    assert!(app.browser_is_active());
+    assert!(app.browser_is_active(), "{}", app.stderr_for_test());
     assert!(app.footer_text().contains("Esc back"));
     assert!(app.footer_text().contains("Bksp parent table"));
 }
@@ -4596,13 +4590,6 @@ fn browser_views_are_clickable_from_the_browser_shell() {
 
 #[test]
 fn back_to_launcher_closes_active_browser_session() {
-    let _guard = launcher_env_lock();
-    if let Some(path) = test_workspace_binary("tablebrowser") {
-        set_tablebrowser_launcher_bin(&path);
-    } else {
-        clear_tablebrowser_launcher_bin();
-    }
-
     let temp = tempdir().expect("tempdir");
     let table_path = create_fixture_table(temp.path());
     let schema = tablebrowser_app()
@@ -4611,8 +4598,7 @@ fn back_to_launcher_closes_active_browser_session() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
     app.set_text_value("table", table_path.to_string_lossy().as_ref());
-    app.start_run_for_test();
-    clear_tablebrowser_launcher_bin();
+    start_run_with_default_tablebrowser_launcher(&mut app);
 
     assert!(app.browser_is_active(), "{}", app.stderr_for_test());
     app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
@@ -10583,6 +10569,21 @@ fn start_run_with_default_msexplore_launcher(app: &mut AppState) {
         }
         app.start_run_for_test();
         clear_launcher_bin();
+    });
+}
+
+fn start_run_with_default_tablebrowser_launcher(app: &mut AppState) {
+    with_test_env_lock(|| {
+        let launcher_path = std::env::var_os("CASARS_TEST_TABLEBROWSER_BIN")
+            .map(PathBuf::from)
+            .or_else(|| test_workspace_binary("tablebrowser"));
+        if let Some(path) = launcher_path {
+            set_tablebrowser_launcher_bin(&path);
+        } else {
+            clear_tablebrowser_launcher_bin();
+        }
+        app.start_run_for_test();
+        clear_tablebrowser_launcher_bin();
     });
 }
 
