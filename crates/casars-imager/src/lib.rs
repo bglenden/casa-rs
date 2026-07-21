@@ -94,6 +94,7 @@ use casa_ms::{
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
+use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_tables::{ColumnSchema, SelectedArray1DCells, TiledFileIoStats};
 
 #[cfg(target_os = "macos")]
@@ -5998,7 +5999,12 @@ pub fn export_standard_mfs_metal_fixture_from_config(
         },
     );
 
-    let geometry_columns = PreparedGeometryColumnCache::load(&ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        &ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     let mut accumulate_timings = AccumulateRowTimings {
         rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
@@ -6215,7 +6221,12 @@ pub fn build_prepare_geometry_trace_from_config(
         .needs_geometry_engine
         .then(|| MsCalEngine::new(&ms).map_err(|error| format!("build derived engine: {error}")))
         .transpose()?;
-    let geometry_columns = PreparedGeometryColumnCache::load(&ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        &ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     let rows = build_prepared_geometry_rows(
         &ms,
         &selection.selected_rows,
@@ -6982,7 +6993,6 @@ fn can_run_mosaic_mtmfs_from_single_plane_stream(
         && config.nterms <= 2
         && matches!(config.spectral_mode, SpectralMode::Mfs)
         && can_plan_mosaic_mfs_acceleration(config, ms_count)
-        && !config.use_pointing
         && config.save_model == SaveModelMode::None
         && config.start_model.is_none()
         && config.outlier_file.is_none()
@@ -7062,7 +7072,6 @@ fn can_run_mfs_mosaic_from_single_plane_stream(
         && !force_standard_gridder
         && can_plan_mosaic_mfs_acceleration(config, ms_count)
         && matches!(config.spectral_mode, SpectralMode::Mfs)
-        && !config.use_pointing
         && config.deconvolver != Deconvolver::Mtmfs
         && config.save_model == SaveModelMode::None
         && config.start_model.is_none()
@@ -7590,6 +7599,7 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
     cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
 ) -> Result<PlaneInput, String> {
     let stage_started_at = Instant::now();
+    let block_selection = selected_rows_context_for_source_block(selection, source_block)?;
     let finish = if mosaic_cube_one_channel_can_use_single_plane_stream(config) {
         SourceRowBlockFinish::Cube
     } else {
@@ -7598,13 +7608,13 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
     let cube_context = config
         .spectral_mode
         .is_cube_like()
-        .then(|| cube_setup_context_for_selection(selection, derived_engine))
+        .then(|| cube_setup_context_for_selection(&block_selection, derived_engine))
         .transpose()?;
     let prepared_input = prepare_source_row_block_plane_inner(
         SourceRowBlockPlaneDescriptor {
             ms,
             config,
-            selection,
+            selection: &block_selection,
             ddid_info,
             spectral_window,
             polarization,
@@ -8210,51 +8220,62 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
     if active_selected_rows.is_empty() {
         return Err("selection resolved to no active mosaic MT-MFS rows".to_string());
     }
-    let selected_spw_id = ddid_info
-        .get(selection.selected_ddid)
-        .copied()
-        .flatten()
-        .map(|(spw_id, _)| spw_id)
-        .ok_or_else(|| {
-            format!(
-                "map selected DDID {} to SPW/POLARIZATION",
-                selection.selected_ddid
-            )
-        })?;
-    let selected_freq_ref = FrequencyRef::from_casacore_code(
-        spectral_window
-            .meas_freq_ref(selected_spw_id)
-            .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
-    )
-    .unwrap_or(FrequencyRef::TOPO);
-    let derived_engine =
-        if selection.needs_geometry_engine || selected_freq_ref != FrequencyRef::LSRK {
-            Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
-        } else {
-            None
-        };
-    let table_values = load_prepared_selection_table_values(
-        selection.selected_ddid,
+    let requires_frequency_engine =
+        selection
+            .selected_ddids
+            .iter()
+            .try_fold(false, |requires, &ddid| {
+                let spw_id = ddid_info
+                    .get(ddid)
+                    .copied()
+                    .flatten()
+                    .map(|(spw_id, _)| spw_id)
+                    .ok_or_else(|| format!("map selected DDID {ddid} to SPW/POLARIZATION"))?;
+                let freq_ref = FrequencyRef::from_casacore_code(
+                    spectral_window
+                        .meas_freq_ref(spw_id)
+                        .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+                )
+                .unwrap_or(FrequencyRef::TOPO);
+                Ok::<_, String>(requires || freq_ref != FrequencyRef::LSRK)
+            })?;
+    let derived_engine = if selection.needs_geometry_engine || requires_frequency_engine {
+        Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
+    } else {
+        None
+    };
+    let active_row_count = active_selected_rows.len();
+    let ddid_plans = prepare_mfs_ddid_plans(
+        config,
+        &selection,
+        active_selected_rows,
         &ddid_info,
         &spectral_window,
         &polarization,
+        derived_engine.as_ref(),
     )?;
-    let channel_read_range =
-        selected_channel_read_range_for_shared_single_plane_acceleration(config, &table_values)?;
-    let selected_channel_count =
-        selected_channel_count_estimate_from_table_values(config, &table_values);
+    let selected_channel_count = ddid_plans
+        .iter()
+        .map(|plan| plan.selected_channel_count)
+        .max()
+        .unwrap_or(1);
+    let correlation_count = ddid_plans
+        .iter()
+        .map(|plan| plan.table_values.corr_types.len())
+        .max()
+        .unwrap_or(1);
     let strategy = standard_mfs_memory_plan_for_ms(
         config,
         ms,
         data_column,
         selected_channel_count,
-        active_selected_rows.len(),
-        table_values.corr_types.len(),
+        active_row_count,
+        correlation_count,
     )?;
     let row_block_rows = strategy.ingest.source_row_block_rows.max(1);
     log_standard_mfs_memory_plan_actual(
         &strategy,
-        active_selected_rows.len(),
+        active_row_count,
         0,
         0,
         "mosaic_mtmfs_single_plane_stream",
@@ -8262,35 +8283,42 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
     set_imager_progress_standard_mfs_memory(&strategy, config.nterms);
 
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     let mut accumulate_timings = AccumulateRowTimings {
-        rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
+        rows_skipped_by_flag_row: selection.selected_rows.len() - active_row_count,
         ..Default::default()
     };
-    let full_selection_frequency_metadata = mfs_output_frequency_metadata_for_config_selection(
-        config,
-        &table_values,
-        &active_selected_rows,
-        derived_engine.as_ref(),
+    let full_selection_frequency_metadata = merge_mfs_output_frequency_metadata(
+        ddid_plans
+            .iter()
+            .map(|plan| &plan.output_frequency_metadata),
     )?;
 
-    let first_rows_len = row_block_rows.min(active_selected_rows.len());
+    let first_plan = ddid_plans
+        .first()
+        .ok_or_else(|| "selection resolved to no active MFS DDID plan".to_string())?;
+    let first_rows_len = row_block_rows.min(first_plan.active_selected_rows.len());
     let mut first_plane = prepare_mfs_mosaic_source_row_block_plane(
         ms,
         config,
         data_column,
         false,
         &selection,
-        &table_values,
+        &first_plan.table_values,
         &ddid_info,
         &spectral_window,
         &polarization,
         flag_row,
-        &active_selected_rows[..first_rows_len],
+        &first_plan.active_selected_rows[..first_rows_len],
         derived_engine.as_ref(),
-        channel_read_range,
+        first_plan.channel_read_range,
         &geometry_columns,
         prepare_started_at,
         &mut prepare_stage_timings,
@@ -8341,91 +8369,97 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
             let load_visibility_values = pass.needs_visibility_values();
             let mut block_count = 0usize;
             let mut sample_count = 0usize;
-            stream_mfs_mosaic_source_row_block_planes(
-                ms,
-                config,
-                data_column,
-                load_visibility_values,
-                &selection,
-                &table_values,
-                &ddid_info,
-                &spectral_window,
-                &polarization,
-                flag_row,
-                &active_selected_rows,
-                derived_engine.as_ref(),
-                channel_read_range,
-                &geometry_columns,
-                row_block_rows,
-                strategy.ingest.max_live_row_blocks,
-                selected_channel_count,
-                prepare_started_at,
-                &mut prepare_stage_timings,
-                &mut accumulate_timings,
-                None,
-                "mosaic_mtmfs_replay",
-                |plane, _row_count| {
-                let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
-                    return Err(ImagingError::InvalidRequest(
-                        "streaming mosaic MT-MFS row block produced standard gridder metadata"
-                            .to_string(),
-                    ));
-                };
-                if plane.sample_frequency_batches_hz.len() != plane.batches.len() {
-                    return Err(ImagingError::InvalidRequest(format!(
-                        "streaming mosaic MT-MFS produced {} frequency batches for {} visibility batches",
-                        plane.sample_frequency_batches_hz.len(),
-                        plane.batches.len()
-                    )));
-                }
-                if mosaic.grouped_metadata_batches.len() != plane.batches.len() {
-                    return Err(ImagingError::InvalidRequest(format!(
-                        "streaming mosaic MT-MFS produced {} metadata batches for {} visibility batches",
-                        mosaic.grouped_metadata_batches.len(),
-                        plane.batches.len()
-                    )));
-                }
-                let density_batches =
-                    align_optional_density_batches(&plane.batches, plane.density_batches)?;
-                for (((batch, density), frequencies_hz), metadata) in plane
-                    .batches
-                    .into_iter()
-                    .zip(density_batches)
-                    .zip(plane.sample_frequency_batches_hz)
-                    .zip(mosaic.grouped_metadata_batches)
-                {
-                    if frequencies_hz.len() != batch.len() {
-                        return Err(ImagingError::InvalidRequest(format!(
-                            "streaming mosaic MT-MFS block has {} frequencies for {} visibility samples",
-                            frequencies_hz.len(),
-                            batch.len()
-                        )));
-                    }
-                    sample_count += batch.len();
-                    consumer(MosaicMtmfsVisibilityBlock {
-                        visibility: batch,
-                        density,
-                        sample_frequencies_hz: frequencies_hz,
-                        gridder_metadata: metadata,
-                    })?;
-                }
-                block_count += 1;
-                if frontend_progress_enabled() {
-                    eprintln!(
-                        "frontend stage=run_imaging/mosaic_mtmfs_stream_replay invocation={} pass={:?} load_visibility_values={} rows_done={} rows_total={} blocks={} samples={} elapsed_s={:.3}",
-                        ordinal,
-                        pass,
-                        load_visibility_values,
-                        (block_count * row_block_rows).min(active_selected_rows.len()),
-                        active_selected_rows.len(),
-                        block_count,
-                        sample_count,
-                        replay_started.elapsed().as_secs_f64(),
-                    );
-                }
-                    Ok(())
-                },
-            )?;
+            let mut rows_done = 0usize;
+            for ddid_plan in &ddid_plans {
+                stream_mfs_mosaic_source_row_block_planes(
+                    ms,
+                    config,
+                    data_column,
+                    load_visibility_values,
+                    &selection,
+                    &ddid_plan.table_values,
+                    &ddid_info,
+                    &spectral_window,
+                    &polarization,
+                    flag_row,
+                    &ddid_plan.active_selected_rows,
+                    derived_engine.as_ref(),
+                    ddid_plan.channel_read_range,
+                    &geometry_columns,
+                    row_block_rows,
+                    strategy.ingest.max_live_row_blocks,
+                    ddid_plan.selected_channel_count,
+                    prepare_started_at,
+                    &mut prepare_stage_timings,
+                    &mut accumulate_timings,
+                    None,
+                    "mosaic_mtmfs_replay",
+                    |plane, row_count| {
+                        let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
+                            return Err(ImagingError::InvalidRequest(
+                                "streaming mosaic MT-MFS row block produced standard gridder metadata"
+                                    .to_string(),
+                            ));
+                        };
+                        if plane.sample_frequency_batches_hz.len() != plane.batches.len() {
+                            return Err(ImagingError::InvalidRequest(format!(
+                                "streaming mosaic MT-MFS produced {} frequency batches for {} visibility batches",
+                                plane.sample_frequency_batches_hz.len(),
+                                plane.batches.len()
+                            )));
+                        }
+                        if mosaic.grouped_metadata_batches.len() != plane.batches.len() {
+                            return Err(ImagingError::InvalidRequest(format!(
+                                "streaming mosaic MT-MFS produced {} metadata batches for {} visibility batches",
+                                mosaic.grouped_metadata_batches.len(),
+                                plane.batches.len()
+                            )));
+                        }
+                        let density_batches = align_optional_density_batches(
+                            &plane.batches,
+                            plane.density_batches,
+                        )?;
+                        for (((batch, density), frequencies_hz), metadata) in plane
+                            .batches
+                            .into_iter()
+                            .zip(density_batches)
+                            .zip(plane.sample_frequency_batches_hz)
+                            .zip(mosaic.grouped_metadata_batches)
+                        {
+                            if frequencies_hz.len() != batch.len() {
+                                return Err(ImagingError::InvalidRequest(format!(
+                                    "streaming mosaic MT-MFS block has {} frequencies for {} visibility samples",
+                                    frequencies_hz.len(),
+                                    batch.len()
+                                )));
+                            }
+                            sample_count += batch.len();
+                            consumer(MosaicMtmfsVisibilityBlock {
+                                visibility: batch,
+                                density,
+                                sample_frequencies_hz: frequencies_hz,
+                                gridder_metadata: metadata,
+                            })?;
+                        }
+                        block_count += 1;
+                        rows_done += row_count;
+                        if frontend_progress_enabled() {
+                            eprintln!(
+                                "frontend stage=run_imaging/mosaic_mtmfs_stream_replay invocation={} pass={:?} load_visibility_values={} rows_done={} rows_total={} blocks={} samples={} elapsed_s={:.3}",
+                                ordinal,
+                                pass,
+                                load_visibility_values,
+                                rows_done,
+                                active_row_count,
+                                block_count,
+                                sample_count,
+                                replay_started.elapsed().as_secs_f64(),
+                            );
+                        }
+                        Ok(())
+                    },
+                )?;
+            }
             if standard_mfs_profile_detail_enabled() {
                 eprintln!(
                     "mosaic_mtmfs_stream_replay invocation={} pass={:?} load_visibility_values={} blocks={} samples={} elapsed_ms={:.3}",
@@ -8676,7 +8710,12 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
     }
 
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, read_config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        read_config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     let mut accumulate_timings = AccumulateRowTimings {
@@ -10636,7 +10675,12 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
             prepare_started_at.elapsed().as_secs_f64(),
         );
     }
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     if frontend_progress_enabled() {
@@ -11380,7 +11424,12 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
 
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     let mut accumulate_timings = AccumulateRowTimings {
         rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
@@ -12405,7 +12454,12 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
     };
     let mut prepared_batch_count = 0usize;
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
 
     for row_chunk in active_selected_rows.chunks(strategy.ingest.source_row_block_rows) {
@@ -19689,7 +19743,12 @@ fn run_mtmfs_from_bounded_stream_open_ms(
         ..Default::default()
     };
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
 
     let mut phase_center = None::<PhaseCenter>;
@@ -25311,6 +25370,15 @@ fn read_columnar_prepared_source_with_progress_cube(
     geometry_cache_key: Option<VisibilityGeometryCacheKey>,
     progress_output_cube: Option<ImagerProgressCube>,
 ) -> Result<ColumnarPreparedSource, String> {
+    let source_ddid = row_chunk
+        .first()
+        .map(|row| row.ddid)
+        .ok_or_else(|| "columnar visibility source row block is empty".to_string())?;
+    if row_chunk.iter().any(|row| row.ddid != source_ddid) {
+        return Err(format!(
+            "columnar visibility source row block mixes DATA_DESC_ID values; expected {source_ddid}"
+        ));
+    }
     let row_indices = row_chunk
         .iter()
         .map(|selected_row| selected_row.row_index)
@@ -25319,19 +25387,23 @@ fn read_columnar_prepared_source_with_progress_cube(
         .map(|range| (range.start, range.count))
         .unwrap_or((0, table_values.spw_freqs_hz.len()));
     let (_, polarization_id) = ddid_info
-        .get(selection.selected_ddid)
+        .get(source_ddid)
         .copied()
         .flatten()
-        .ok_or_else(|| {
-            format!(
-                "map selected DDID {} to SPW/POLARIZATION",
-                selection.selected_ddid
-            )
-        })?;
+        .ok_or_else(|| format!("map selected DDID {} to SPW/POLARIZATION", source_ddid))?;
+    if row_chunk
+        .iter()
+        .any(|row| row.spw_id != table_values.spw_id)
+    {
+        return Err(format!(
+            "columnar visibility source DDID {source_ddid} row block does not match prepared SPW {}",
+            table_values.spw_id
+        ));
+    }
     let source_partition = SourcePartition::new(
         casa_ms::SourcePartitionId(0),
         0,
-        selection.selected_ddid as i32,
+        source_ddid as i32,
         table_values.spw_id as i32,
         polarization_id as i32,
         table_values.spw_freqs_hz.len(),
@@ -25844,6 +25916,49 @@ fn mfs_output_frequency_metadata_for_config_selection(
         selected_rows,
         derived_engine,
     )
+}
+
+fn merge_mfs_output_frequency_metadata<'a>(
+    metadata: impl IntoIterator<Item = &'a MfsOutputFrequencyMetadata>,
+) -> Result<MfsOutputFrequencyMetadata, String> {
+    let mut metadata = metadata.into_iter();
+    let first = *metadata
+        .next()
+        .ok_or_else(|| "cannot merge empty MFS frequency metadata".to_string())?;
+    let mut merged = first;
+    for next in metadata {
+        if next.freq_ref != merged.freq_ref {
+            return Err(format!(
+                "MFS DATA_DESC_ID plans resolve to different output frequency frames: {:?} versus {:?}",
+                merged.freq_ref, next.freq_ref
+            ));
+        }
+        merged.selected_frequency_range_hz = [
+            merged.selected_frequency_range_hz[0].min(next.selected_frequency_range_hz[0]),
+            merged.selected_frequency_range_hz[1].max(next.selected_frequency_range_hz[1]),
+        ];
+        merged.spectral_frequency_edge_range_hz = match (
+            merged.spectral_frequency_edge_range_hz,
+            next.spectral_frequency_edge_range_hz,
+        ) {
+            (Some(left), Some(right)) => Some([left[0].min(right[0]), left[1].max(right[1])]),
+            (left, right) => left.or(right),
+        };
+        merged.sample_frequency_range_hz = match (
+            merged.sample_frequency_range_hz,
+            next.sample_frequency_range_hz,
+        ) {
+            (Some(left), Some(right)) => Some([left[0].min(right[0]), left[1].max(right[1])]),
+            (left, right) => left.or(right),
+        };
+    }
+    merged.reffreq_hz = merged
+        .spectral_frequency_edge_range_hz
+        .map(|range| 0.5 * (range[0] + range[1]))
+        .unwrap_or_else(|| {
+            0.5 * (merged.selected_frequency_range_hz[0] + merged.selected_frequency_range_hz[1])
+        });
+    Ok(merged)
 }
 
 fn apply_mfs_output_frequency_metadata(
@@ -29029,71 +29144,315 @@ struct PointingDirectionRow {
     angles_rad: [f64; 2],
 }
 
+fn resolve_pointing_direction_reference(
+    table: &casa_tables::Table,
+    row_index: usize,
+) -> Result<DirectionRef, String> {
+    let Some(descriptor) = TableMeasDesc::reconstruct(table, "DIRECTION") else {
+        return Ok(DirectionRef::J2000);
+    };
+    let reference = match descriptor.ref_desc() {
+        MeasRefDesc::Fixed { refer } => refer.clone(),
+        MeasRefDesc::VariableInt {
+            ref_column,
+            tab_ref_types,
+            tab_ref_codes,
+        } => {
+            let code = match table
+                .cell_accessor(row_index, ref_column)
+                .and_then(|cell| cell.scalar())
+                .map_err(|error| {
+                    format!(
+                        "read POINTING.{ref_column} row {row_index} for DIRECTION reference: {error}"
+                    )
+                })? {
+                &ScalarValue::Int32(value) => value,
+                &ScalarValue::Int64(value) => i32::try_from(value).map_err(|_| {
+                    format!(
+                        "POINTING.{ref_column} row {row_index} reference code {value} exceeds Int32"
+                    )
+                })?,
+                &ScalarValue::UInt32(value) => i32::try_from(value).map_err(|_| {
+                    format!(
+                        "POINTING.{ref_column} row {row_index} reference code {value} exceeds Int32"
+                    )
+                })?,
+                other => {
+                    return Err(format!(
+                        "POINTING.{ref_column} row {row_index} must contain an integer direction reference, found {:?}",
+                        other.primitive_type()
+                    ));
+                }
+            };
+            let index = tab_ref_codes
+                .iter()
+                .position(|candidate| *candidate == code)
+                .ok_or_else(|| {
+                    format!(
+                        "POINTING.{ref_column} row {row_index} has unknown direction reference code {code}"
+                    )
+                })?;
+            tab_ref_types.get(index).cloned().ok_or_else(|| {
+                format!(
+                    "POINTING.DIRECTION reference type is missing for code {code} at index {index}"
+                )
+            })?
+        }
+        MeasRefDesc::VariableString { ref_column } => match table
+            .cell_accessor(row_index, ref_column)
+            .and_then(|cell| cell.scalar())
+            .map_err(|error| {
+                format!(
+                    "read POINTING.{ref_column} row {row_index} for DIRECTION reference: {error}"
+                )
+            })? {
+            ScalarValue::String(value) => value.clone(),
+            other => {
+                return Err(format!(
+                    "POINTING.{ref_column} row {row_index} must contain a string direction reference, found {:?}",
+                    other.primitive_type()
+                ));
+            }
+        },
+    };
+    reference.parse::<DirectionRef>().map_err(|_| {
+        format!(
+            "POINTING.DIRECTION row {row_index} uses unsupported direction reference {reference}"
+        )
+    })
+}
+
 #[derive(Debug, Clone)]
 struct PointingDirectionResolver {
     by_antenna: BTreeMap<i32, Vec<PointingDirectionRow>>,
     by_row_index: HashMap<usize, PointingDirectionRow>,
+    table_row_count: usize,
+    retained_row_count: usize,
 }
 
 impl PointingDirectionResolver {
-    fn new(ms: &MeasurementSet) -> Result<Option<Self>, String> {
+    fn new(
+        ms: &MeasurementSet,
+        selected_rows: &[SelectedMainRow],
+        derived_engine: Option<&MsCalEngine>,
+    ) -> Result<Option<Self>, String> {
         let Ok(pointing) = ms.pointing() else {
             return Ok(None);
         };
-        if pointing.row_count() == 0 {
+        let table_row_count = pointing.row_count();
+        if table_row_count == 0 || selected_rows.is_empty() {
             return Ok(None);
         }
         let table = pointing.table();
+        let selected_antennas = selected_rows
+            .iter()
+            .flat_map(|row| [row.antenna1_id, row.antenna2_id])
+            .collect::<BTreeSet<_>>();
+        let selected_time_bounds = selected_rows
+            .iter()
+            .filter_map(|row| row.time_mjd_seconds)
+            .fold(None::<[f64; 2]>, |bounds, time| {
+                Some(match bounds {
+                    Some([low, high]) => [low.min(time), high.max(time)],
+                    None => [time, time],
+                })
+            })
+            .ok_or_else(|| {
+                "selected MAIN rows require TIME to build the POINTING window".to_string()
+            })?;
+        let selected_main_row_indices = selected_rows
+            .iter()
+            .map(|row| row.row_index)
+            .collect::<Vec<_>>();
+        let explicit_pointing_rows =
+            load_selected_optional_i32_main_column(ms, "POINTING_ID", &selected_main_row_indices)?
+                .into_iter()
+                .flatten()
+                .map(|row| {
+                    usize::try_from(row)
+                        .map_err(|_| format!("selected POINTING_ID {row} is negative"))
+                })
+                .collect::<Result<HashSet<_>, String>>()?;
+
+        let antenna_column = table
+            .column_accessor("ANTENNA_ID")
+            .map_err(|error| format!("open POINTING.ANTENNA_ID: {error}"))?;
+        let time_column = table
+            .column_accessor("TIME")
+            .map_err(|error| format!("open POINTING.TIME: {error}"))?;
+        let interval_column = table
+            .column_accessor("INTERVAL")
+            .map_err(|error| format!("open POINTING.INTERVAL: {error}"))?;
+        let direction_column = table
+            .column_accessor("DIRECTION")
+            .map_err(|error| format!("open POINTING.DIRECTION: {error}"))?;
+
+        // POINTING can be orders of magnitude larger than the selected MAIN
+        // row set (VLASS has millions of OTF samples). Scan only the fixed-width
+        // selector columns in bounded blocks, then materialize DIRECTION for
+        // rows whose antenna/time support overlaps the selected MAIN window or
+        // whose explicit POINTING_ID was selected.
+        const POINTING_SCAN_BLOCK_ROWS: usize = 65_536;
+        let mut retained_metadata = BTreeMap::<usize, (i32, f64, f64)>::new();
+        let mut timestamp_guard_before = BTreeMap::<i32, (usize, f64, f64)>::new();
+        let mut timestamp_guard_after = BTreeMap::<i32, (usize, f64, f64)>::new();
+        for block_start in (0..table_row_count).step_by(POINTING_SCAN_BLOCK_ROWS) {
+            let block_end = (block_start + POINTING_SCAN_BLOCK_ROWS).min(table_row_count);
+            let row_indices = (block_start..block_end).collect::<Vec<_>>();
+            let antenna_values = antenna_column
+                .scalar_cells_owned_for_rows(&row_indices)
+                .map_err(|error| {
+                    format!("read POINTING.ANTENNA_ID rows {block_start}..{block_end}: {error}")
+                })?;
+            let time_values = time_column
+                .scalar_cells_owned_for_rows(&row_indices)
+                .map_err(|error| {
+                    format!("read POINTING.TIME rows {block_start}..{block_end}: {error}")
+                })?;
+            let interval_values = interval_column
+                .scalar_cells_owned_for_rows(&row_indices)
+                .map_err(|error| {
+                    format!("read POINTING.INTERVAL rows {block_start}..{block_end}: {error}")
+                })?;
+            for (row_slot, row_index) in row_indices.into_iter().enumerate() {
+                let antenna_id = match antenna_values.get(row_slot).and_then(Option::as_ref) {
+                    Some(ScalarValue::Int32(value)) => *value,
+                    Some(other) => {
+                        return Err(format!(
+                            "POINTING.ANTENNA_ID row {row_index} must be Int32, found {:?}",
+                            other.primitive_type()
+                        ));
+                    }
+                    None => {
+                        return Err(format!("POINTING.ANTENNA_ID row {row_index} is missing"));
+                    }
+                };
+                let time_mjd_seconds = match time_values.get(row_slot).and_then(Option::as_ref) {
+                    Some(ScalarValue::Float64(value)) => *value,
+                    Some(other) => {
+                        return Err(format!(
+                            "POINTING.TIME row {row_index} must be Float64, found {:?}",
+                            other.primitive_type()
+                        ));
+                    }
+                    None => return Err(format!("POINTING.TIME row {row_index} is missing")),
+                };
+                let interval_seconds = match interval_values.get(row_slot).and_then(Option::as_ref)
+                {
+                    Some(ScalarValue::Float64(value)) => *value,
+                    Some(other) => {
+                        return Err(format!(
+                            "POINTING.INTERVAL row {row_index} must be Float64, found {:?}",
+                            other.primitive_type()
+                        ));
+                    }
+                    None => {
+                        return Err(format!("POINTING.INTERVAL row {row_index} is missing"));
+                    }
+                };
+                if !time_mjd_seconds.is_finite() || !interval_seconds.is_finite() {
+                    return Err(format!(
+                        "POINTING row {row_index} has invalid TIME/INTERVAL {time_mjd_seconds}/{interval_seconds}"
+                    ));
+                }
+                let selected_antenna = selected_antennas.contains(&antenna_id);
+                let overlaps_selection = if interval_seconds > 0.0 {
+                    let half_interval = 0.5 * interval_seconds;
+                    selected_antenna
+                        && time_mjd_seconds + half_interval >= selected_time_bounds[0]
+                        && time_mjd_seconds - half_interval <= selected_time_bounds[1]
+                } else {
+                    selected_antenna
+                        && (selected_time_bounds[0]..=selected_time_bounds[1])
+                            .contains(&time_mjd_seconds)
+                };
+                if overlaps_selection || explicit_pointing_rows.contains(&row_index) {
+                    retained_metadata
+                        .insert(row_index, (antenna_id, time_mjd_seconds, interval_seconds));
+                }
+                if selected_antenna && interval_seconds <= 0.0 {
+                    if time_mjd_seconds < selected_time_bounds[0] {
+                        let replace = timestamp_guard_before
+                            .get(&antenna_id)
+                            .is_none_or(|(_, retained_time, _)| time_mjd_seconds > *retained_time);
+                        if replace {
+                            timestamp_guard_before.insert(
+                                antenna_id,
+                                (row_index, time_mjd_seconds, interval_seconds),
+                            );
+                        }
+                    } else if time_mjd_seconds > selected_time_bounds[1] {
+                        let replace = timestamp_guard_after
+                            .get(&antenna_id)
+                            .is_none_or(|(_, retained_time, _)| time_mjd_seconds < *retained_time);
+                        if replace {
+                            timestamp_guard_after.insert(
+                                antenna_id,
+                                (row_index, time_mjd_seconds, interval_seconds),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        for (antenna_id, (row_index, time_mjd_seconds, interval_seconds)) in timestamp_guard_before
+            .into_iter()
+            .chain(timestamp_guard_after)
+        {
+            retained_metadata.entry(row_index).or_insert((
+                antenna_id,
+                time_mjd_seconds,
+                interval_seconds,
+            ));
+        }
+
+        let retained_row_indices = retained_metadata.keys().copied().collect::<Vec<_>>();
+        let retained_directions = direction_column
+            .array_cells_owned(&retained_row_indices)
+            .map_err(|error| format!("read selected POINTING.DIRECTION rows: {error}"))?;
         let mut by_antenna = BTreeMap::<i32, Vec<PointingDirectionRow>>::new();
         let mut by_row_index = HashMap::<usize, PointingDirectionRow>::new();
-        for row_index in 0..table.row_count() {
-            let antenna_id = match table
-                .cell_accessor(row_index, "ANTENNA_ID")
-                .and_then(|cell| cell.scalar())
-                .map_err(|error| format!("read POINTING.ANTENNA_ID row {row_index}: {error}"))?
-            {
-                &ScalarValue::Int32(value) => value,
-                other => {
-                    return Err(format!(
-                        "POINTING.ANTENNA_ID row {row_index} must be Int32, found {:?}",
-                        other.primitive_type()
-                    ));
-                }
-            };
-            let time_mjd_seconds = match table
-                .cell_accessor(row_index, "TIME")
-                .and_then(|cell| cell.scalar())
-                .map_err(|error| format!("read POINTING.TIME row {row_index}: {error}"))?
-            {
-                &ScalarValue::Float64(value) => value,
-                other => {
-                    return Err(format!(
-                        "POINTING.TIME row {row_index} must be Float64, found {:?}",
-                        other.primitive_type()
-                    ));
-                }
-            };
-            let interval_seconds = match table
-                .cell_accessor(row_index, "INTERVAL")
-                .and_then(|cell| cell.scalar())
-                .map_err(|error| format!("read POINTING.INTERVAL row {row_index}: {error}"))?
-            {
-                &ScalarValue::Float64(value) => value,
-                other => {
-                    return Err(format!(
-                        "POINTING.INTERVAL row {row_index} must be Float64, found {:?}",
-                        other.primitive_type()
-                    ));
-                }
-            };
-            let angles_rad = extract_constant_direction_angles(
-                table
-                    .cell_accessor(row_index, "DIRECTION")
-                    .and_then(|cell| cell.array())
-                    .map_err(|error| format!("read POINTING.DIRECTION row {row_index}: {error}"))?,
+        for ((row_index, (antenna_id, time_mjd_seconds, interval_seconds)), direction) in
+            retained_metadata.into_iter().zip(retained_directions)
+        {
+            let raw_angles_rad = extract_constant_direction_angles(
+                direction
+                    .as_ref()
+                    .ok_or_else(|| format!("POINTING.DIRECTION row {row_index} is missing"))?,
                 "POINTING.DIRECTION",
                 row_index,
             )?;
+            if !raw_angles_rad.into_iter().all(f64::is_finite) {
+                return Err(format!(
+                    "POINTING.DIRECTION row {row_index} contains a non-finite angle"
+                ));
+            }
+            let source_ref = resolve_pointing_direction_reference(table, row_index)?;
+            let angles_rad = if source_ref == DirectionRef::J2000 {
+                raw_angles_rad
+            } else {
+                let derived_engine = derived_engine.ok_or_else(|| {
+                    format!(
+                        "POINTING.DIRECTION row {row_index} uses {source_ref}, but no measures engine was prepared"
+                    )
+                })?;
+                let raw_direction =
+                    MDirection::from_angles(raw_angles_rad[0], raw_angles_rad[1], source_ref);
+                let frame = derived_engine
+                    .spectral_frame_observatory_direction(time_mjd_seconds, raw_direction.clone())
+                    .map_err(|error| {
+                        format!("build POINTING.DIRECTION frame for row {row_index}: {error}")
+                    })?;
+                let converted = raw_direction
+                    .convert_to(DirectionRef::J2000, &frame)
+                    .map_err(|error| {
+                        format!(
+                            "convert POINTING.DIRECTION row {row_index} from {source_ref} to J2000: {error}"
+                        )
+                    })?;
+                let (longitude_rad, latitude_rad) = converted.as_angles();
+                [longitude_rad, latitude_rad]
+            };
             let entry = PointingDirectionRow {
                 row_index,
                 antenna_id,
@@ -29114,6 +29473,8 @@ impl PointingDirectionResolver {
         Ok(Some(Self {
             by_antenna,
             by_row_index,
+            table_row_count,
+            retained_row_count: retained_row_indices.len(),
         }))
     }
 
@@ -29143,20 +29504,39 @@ impl PointingDirectionResolver {
             };
         };
         let lower = entries.partition_point(|entry| entry.time_mjd_seconds < time_mjd_seconds);
-        for entry in [lower.checked_sub(1), Some(lower)]
+        let candidates = [lower.checked_sub(1), Some(lower)]
             .into_iter()
             .flatten()
             .filter_map(|candidate_index| entries.get(candidate_index).copied())
+            .collect::<Vec<_>>();
+        if let Some(entry) = candidates.iter().copied().find(|entry| {
+            let half_interval = 0.5 * entry.interval_seconds;
+            entry.interval_seconds > 0.0
+                && time_mjd_seconds >= entry.time_mjd_seconds - half_interval
+                && time_mjd_seconds <= entry.time_mjd_seconds + half_interval
+        }) {
+            return ResolvedPointingDirection {
+                source_row_index: Some(entry.row_index),
+                used_fallback: false,
+                angles_rad: entry.angles_rad,
+            };
+        }
+        if let Some(entry) = candidates
+            .iter()
+            .copied()
+            .filter(|entry| entry.interval_seconds <= 0.0)
+            .min_by(|left, right| {
+                (left.time_mjd_seconds - time_mjd_seconds)
+                    .abs()
+                    .total_cmp(&(right.time_mjd_seconds - time_mjd_seconds).abs())
+                    .then_with(|| left.row_index.cmp(&right.row_index))
+            })
         {
-            if time_mjd_seconds >= entry.time_mjd_seconds - entry.interval_seconds
-                && time_mjd_seconds <= entry.time_mjd_seconds + entry.interval_seconds
-            {
-                return ResolvedPointingDirection {
-                    source_row_index: Some(entry.row_index),
-                    used_fallback: false,
-                    angles_rad: entry.angles_rad,
-                };
-            }
+            return ResolvedPointingDirection {
+                source_row_index: Some(entry.row_index),
+                used_fallback: false,
+                angles_rad: entry.angles_rad,
+            };
         }
         ResolvedPointingDirection {
             source_row_index: None,
@@ -29171,13 +29551,27 @@ struct PreparedGeometryColumnCache {
 }
 
 impl PreparedGeometryColumnCache {
-    fn load(ms: &MeasurementSet, use_pointing: bool) -> Result<Self, String> {
+    fn load(
+        ms: &MeasurementSet,
+        use_pointing: bool,
+        selected_rows: &[SelectedMainRow],
+        derived_engine: Option<&MsCalEngine>,
+    ) -> Result<Self, String> {
         let geometry_started_at = Instant::now();
         let pointing_resolver = if use_pointing {
-            PointingDirectionResolver::new(ms)?
+            PointingDirectionResolver::new(ms, selected_rows, derived_engine)?
         } else {
             None
         };
+        if let Some(resolver) = pointing_resolver.as_ref() {
+            eprintln!(
+                "pointing_resolver_plan table_rows={} retained_rows={} selected_main_rows={} resident_fraction={:.9}",
+                resolver.table_row_count,
+                resolver.retained_row_count,
+                selected_rows.len(),
+                resolver.retained_row_count as f64 / resolver.table_row_count.max(1) as f64,
+            );
+        }
         maybe_log_frontend_progress(
             "prepare_plane_input/build_prepared_geometry_rows/build_pointing_resolver",
             geometry_started_at.elapsed(),
@@ -29190,6 +29584,7 @@ impl PreparedGeometryColumnCache {
 #[derive(Debug, Clone)]
 struct SelectedRowsContext {
     selected_rows: Vec<SelectedMainRow>,
+    selected_ddids: Vec<usize>,
     selected_ddid: usize,
     phase_center: PhaseCenter,
     reference_row_time_mjd_sec: Option<f64>,
@@ -29307,13 +29702,16 @@ fn select_main_rows(
         .iter()
         .map(|row| row.data_desc_id)
         .collect::<BTreeSet<_>>();
+    let selected_ddids = selected_ddids
+        .into_iter()
+        .map(|ddid| {
+            usize::try_from(ddid).map_err(|_| format!("selected DATA_DESC_ID {ddid} is negative"))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let selected_ddid = if selected_ddids.is_empty() {
         return Err("selection resolved to no rows".to_string());
-    } else if selected_ddids.len() != 1 {
-        return Err("selection spans multiple DATA_DESC_ID values".to_string());
     } else {
-        let ddid = *selected_ddids.iter().next().expect("one selected DDID");
-        usize::try_from(ddid).map_err(|_| format!("selected DATA_DESC_ID {ddid} is negative"))?
+        selected_ddids[0]
     };
     let selected_fields = row_selection
         .selected_rows
@@ -29383,9 +29781,20 @@ fn select_main_rows(
         select_started_at.elapsed(),
         select_started_at.elapsed(),
     );
+    if selected_ddids.len() > 1
+        && (!matches!(config.spectral_mode, SpectralMode::Mfs)
+            || config.force_standard_gridder
+            || (!config.use_pointing && config.phasecenter.is_none() && selected_fields.len() <= 1))
+    {
+        return Err(format!(
+            "selection spans {} DATA_DESC_ID values; bounded multi-DDID execution currently requires MFS mosaic or pointing imaging",
+            selected_ddids.len()
+        ));
+    }
     let needs_geometry_engine = config.spectral_mode.is_cube_like()
         || config.w_term_mode != WTermMode::None
         || config.phasecenter.is_some()
+        || needs_pointing_times
         || selected_fields
             .iter()
             .copied()
@@ -29393,6 +29802,7 @@ fn select_main_rows(
 
     Ok(SelectedRowsContext {
         selected_rows,
+        selected_ddids,
         selected_ddid,
         phase_center,
         reference_row_time_mjd_sec,
@@ -29663,6 +30073,34 @@ fn build_prepared_geometry_rows_from_selected_uvw(
     Ok(rows)
 }
 
+fn selected_rows_context_for_source_block(
+    selection: &SelectedRowsContext,
+    source_block: &ColumnarPreparedSource,
+) -> Result<SelectedRowsContext, String> {
+    let selected_rows = (0..source_block.row_count())
+        .map(|row_slot| source_block.selected_main_row(row_slot))
+        .collect::<Result<Vec<_>, _>>()?;
+    let selected_ddid = selected_rows
+        .first()
+        .map(|row| row.ddid)
+        .ok_or_else(|| "prepared source block contains no rows".to_string())?;
+    if selected_rows.iter().any(|row| row.ddid != selected_ddid) {
+        return Err(format!(
+            "prepared source block mixes DATA_DESC_ID values; expected {selected_ddid}"
+        ));
+    }
+    Ok(SelectedRowsContext {
+        selected_ddids: vec![selected_ddid],
+        selected_ddid,
+        selected_rows,
+        flag_row: Vec::new(),
+        phase_center: selection.phase_center.clone(),
+        needs_geometry_engine: selection.needs_geometry_engine,
+        reference_row_time_mjd_sec: selection.reference_row_time_mjd_sec,
+        time_bounds_mjd_sec: selection.time_bounds_mjd_sec,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prepare_processing_buffer(
     ms: &MeasurementSet,
@@ -29677,18 +30115,7 @@ fn prepare_processing_buffer(
     accumulate_timings: &mut AccumulateRowTimings,
     mfs_batch_size: usize,
 ) -> Result<PlaneInput, String> {
-    let selected_rows = (0..source_block.row_count())
-        .map(|row_slot| source_block.selected_main_row(row_slot))
-        .collect::<Result<Vec<_>, _>>()?;
-    let block_selection = SelectedRowsContext {
-        selected_ddid: selection.selected_ddid,
-        selected_rows,
-        flag_row: flag_row.to_vec(),
-        phase_center: selection.phase_center.clone(),
-        needs_geometry_engine: selection.needs_geometry_engine,
-        reference_row_time_mjd_sec: selection.reference_row_time_mjd_sec,
-        time_bounds_mjd_sec: selection.time_bounds_mjd_sec,
-    };
+    let block_selection = selected_rows_context_for_source_block(selection, source_block)?;
     let cube_context = if config.spectral_mode.is_cube_like()
         && standard_mfs_shared_acceleration_spectral_mode_is_eligible(config)
         && !standard_cube_like_one_channel_can_use_mfs_single_plane_path(config)
@@ -30860,7 +31287,12 @@ fn prepare_standard_mfs_input_in_row_blocks(
     let mut prepared_batch_count = 0usize;
     let mut stage_timings = PreparePlaneInputStageTimings::default();
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine,
+    )?;
     stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     let mut accumulate_timings = AccumulateRowTimings {
         rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
@@ -32325,7 +32757,12 @@ fn prepare_mfs_mosaic_without_trace_in_source_row_blocks(
     set_imager_progress_standard_mfs_memory(&memory_plan, 1);
 
     let geometry_columns_started = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine,
+    )?;
     let geometry_columns_elapsed = geometry_columns_started.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input/mfs_mosaic_source_row_blocks/load_geometry_columns",
@@ -32607,7 +33044,12 @@ fn read_shared_columnar_cube_slab_source(
 ) -> Result<SharedColumnarCubeSlabSource, String> {
     let started = Instant::now();
     let geometry_columns_started = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        Some(derived_engine),
+    )?;
     let geometry_columns_elapsed = geometry_columns_started.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input/cube_shared_columnar_slab/load_geometry_columns",
@@ -32959,7 +33401,12 @@ fn prepare_cube_without_trace_in_source_row_blocks(
     );
 
     let geometry_columns_started = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine,
+    )?;
     let geometry_columns_elapsed = geometry_columns_started.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input/cube_source_row_blocks/load_geometry_columns",
@@ -33196,7 +33643,12 @@ fn prepare_trace_in_source_row_blocks(
     );
 
     let geometry_columns_started = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine,
+    )?;
     let geometry_columns_elapsed = geometry_columns_started.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input/trace_source_row_blocks/load_geometry_columns",
@@ -35256,6 +35708,94 @@ fn load_prepared_selection_table_values(
     })
 }
 
+#[derive(Debug)]
+struct PreparedMfsDdidPlan {
+    ddid: usize,
+    table_values: PreparedSelectionTableValues,
+    active_selected_rows: Vec<SelectedMainRow>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    selected_channel_count: usize,
+    output_frequency_metadata: MfsOutputFrequencyMetadata,
+}
+
+fn prepare_mfs_ddid_plans(
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+    active_selected_rows: Vec<SelectedMainRow>,
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<Vec<PreparedMfsDdidPlan>, String> {
+    let mut rows_by_ddid = BTreeMap::<usize, Vec<SelectedMainRow>>::new();
+    for row in active_selected_rows {
+        rows_by_ddid.entry(row.ddid).or_default().push(row);
+    }
+    let mut plans = Vec::with_capacity(selection.selected_ddids.len());
+    for &ddid in &selection.selected_ddids {
+        let active_selected_rows = rows_by_ddid.remove(&ddid).unwrap_or_default();
+        if active_selected_rows.is_empty() {
+            continue;
+        }
+        let table_values =
+            load_prepared_selection_table_values(ddid, ddid_info, spectral_window, polarization)?;
+        let channel_read_range = selected_channel_read_range_for_shared_single_plane_acceleration(
+            config,
+            &table_values,
+        )?;
+        let selected_channel_count =
+            selected_channel_count_estimate_from_table_values(config, &table_values);
+        let output_frequency_metadata = mfs_output_frequency_metadata_for_config_selection(
+            config,
+            &table_values,
+            &active_selected_rows,
+            derived_engine,
+        )?;
+        plans.push(PreparedMfsDdidPlan {
+            ddid,
+            table_values,
+            active_selected_rows,
+            channel_read_range,
+            selected_channel_count,
+            output_frequency_metadata,
+        });
+    }
+    if !rows_by_ddid.is_empty() {
+        return Err(format!(
+            "selected MAIN rows reference unplanned DATA_DESC_ID values {:?}",
+            rows_by_ddid.keys().collect::<Vec<_>>()
+        ));
+    }
+    if plans.is_empty() {
+        return Err("selection resolved to no active MFS DATA_DESC_ID plans".to_string());
+    }
+    eprintln!(
+        "mfs_ddid_execution_plan ddids={} spws={} rows={} selected_channel_visits={} bounded_row_groups=true",
+        plans
+            .iter()
+            .map(|plan| plan.ddid.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+        plans
+            .iter()
+            .map(|plan| plan.table_values.spw_id.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+        plans
+            .iter()
+            .map(|plan| plan.active_selected_rows.len())
+            .sum::<usize>(),
+        plans
+            .iter()
+            .map(|plan| plan
+                .active_selected_rows
+                .len()
+                .saturating_mul(plan.selected_channel_count))
+            .sum::<usize>(),
+    );
+    Ok(plans)
+}
+
 fn selected_channel_count_estimate_from_table_values(
     config: &CliConfig,
     table_values: &PreparedSelectionTableValues,
@@ -36356,16 +36896,19 @@ fn allowed_ddids(
     ddid_info: &[Option<(usize, usize)>],
 ) -> Result<Vec<bool>, String> {
     let mut allowed = vec![true; ddid_info.len()];
-    let selected_spw = selected_spw_id(config)?;
-    if let Some(spw) = selected_spw {
+    let selected_spws = selected_spw_ids(config)?;
+    if !selected_spws.is_empty() {
         allowed.fill(false);
         for (ddid, info) in ddid_info.iter().enumerate() {
-            if info.is_some_and(|(row_spw, _)| row_spw == spw as usize) {
+            if info.is_some_and(|(row_spw, _)| selected_spws.contains(&(row_spw as i32))) {
                 allowed[ddid] = true;
             }
         }
         if !allowed.iter().any(|value| *value) {
-            return Err(format!("selection resolved to no DDID for SPW {spw}"));
+            return Err(format!(
+                "selection resolved to no DDID for SPWs {:?}",
+                selected_spws
+            ));
         }
     }
     if let Some(ddid) = config.ddid {
@@ -36374,31 +36917,29 @@ fn allowed_ddids(
                 "DATA_DESC_ID {ddid} is outside the DATA_DESCRIPTION table"
             ));
         }
-        if let Some(spw) = selected_spw
-            && ddid_info[ddid as usize].is_none_or(|(row_spw, _)| row_spw != spw as usize)
+        if !selected_spws.is_empty()
+            && ddid_info[ddid as usize]
+                .is_none_or(|(row_spw, _)| !selected_spws.contains(&(row_spw as i32)))
         {
-            return Err(format!("DATA_DESC_ID {ddid} does not map to SPW {spw}"));
+            return Err(format!(
+                "DATA_DESC_ID {ddid} does not map to selected SPWs {:?}",
+                selected_spws
+            ));
         }
     }
     Ok(allowed)
 }
 
-fn selected_spw_id(config: &CliConfig) -> Result<Option<i32>, String> {
+fn selected_spw_ids(config: &CliConfig) -> Result<BTreeSet<i32>, String> {
     if let Some(selector_text) = config.spw_selector.as_deref() {
         let selectors = parse_spw_selector(selector_text).map_err(|error| error.to_string())?;
         let ids = selectors
             .iter()
             .map(|selector| selector.spw_id)
-            .collect::<std::collections::BTreeSet<_>>();
-        return match ids.len() {
-            0 => Ok(None),
-            1 => Ok(ids.into_iter().next()),
-            _ => Err(format!(
-                "spw selector {selector_text:?} resolved to multiple SPWs; the current frontend accepts exactly one"
-            )),
-        };
+            .collect::<BTreeSet<_>>();
+        return Ok(ids);
     }
-    Ok(config.spw)
+    Ok(config.spw.into_iter().collect())
 }
 
 fn selected_spw_channel_selector(
@@ -50071,7 +50612,13 @@ mod tests {
             &polarization,
         )
         .unwrap();
-        let geometry_columns = PreparedGeometryColumnCache::load(&ms, config.use_pointing).unwrap();
+        let geometry_columns = PreparedGeometryColumnCache::load(
+            &ms,
+            config.use_pointing,
+            &selection.selected_rows,
+            None,
+        )
+        .unwrap();
         let reversed_rows = vec![
             selection.selected_rows[1].clone(),
             selection.selected_rows[0].clone(),
@@ -51165,6 +51712,22 @@ mod tests {
         nterms_one.nterms = 1;
         assert!(can_run_mosaic_mtmfs_from_single_plane_stream(
             &nterms_one,
+            false,
+            1
+        ));
+
+        let mut pointing_mtmfs = config.clone();
+        pointing_mtmfs.use_pointing = true;
+        assert!(can_run_mosaic_mtmfs_from_single_plane_stream(
+            &pointing_mtmfs,
+            false,
+            1
+        ));
+
+        let mut pointing_single_term = pointing_mtmfs;
+        pointing_single_term.deconvolver = Deconvolver::Multiscale;
+        assert!(can_run_mfs_mosaic_from_single_plane_stream(
+            &pointing_single_term,
             false,
             1
         ));
@@ -58622,6 +59185,8 @@ deconvolver=mtmfs
         let resolver = PointingDirectionResolver {
             by_antenna: BTreeMap::from([(0, vec![first, second]), (1, vec![other_antenna])]),
             by_row_index: HashMap::from([(0, first), (1, second), (2, other_antenna)]),
+            table_row_count: 3,
+            retained_row_count: 3,
         };
 
         let fallback_angles = [0.9, 0.1];
@@ -58645,6 +59210,304 @@ deconvolver=mtmfs
         assert_eq!(missing_antenna.source_row_index, None);
         assert!(missing_antenna.used_fallback);
         assert_eq!(missing_antenna.angles_rad, fallback_angles);
+    }
+
+    #[test]
+    fn pointing_direction_resolver_retains_only_selected_time_and_antenna_window() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("pointing_window.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_and_antennas_channels(
+            &mut ms,
+            0,
+            0,
+            1,
+            [30.0, -15.0, 5.0],
+            &[Complex32::new(1.0, 0.5), Complex32::new(0.0, 0.0)],
+        );
+        for (antenna_id, direction) in [(0, [1.2, 0.4]), (1, [1.3, 0.45])] {
+            add_pointing_row(
+                &mut ms,
+                antenna_id,
+                direction,
+                TEST_TIME_MJD_SEC - 100.0,
+                5.0,
+            );
+            add_pointing_row(&mut ms, antenna_id, direction, TEST_TIME_MJD_SEC, 5.0);
+            add_pointing_row(
+                &mut ms,
+                antenna_id,
+                direction,
+                TEST_TIME_MJD_SEC + 100.0,
+                5.0,
+            );
+        }
+        add_pointing_row(&mut ms, 9, [1.8, 0.2], TEST_TIME_MJD_SEC, 5.0);
+        ms.save().unwrap();
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            ms_path.into_os_string(),
+            OsString::from("--imagename"),
+            OsString::from("unused"),
+            OsString::from("--imsize"),
+            OsString::from("32"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("20.0"),
+            OsString::from("--spw"),
+            OsString::from("0"),
+            OsString::from("--phasecenter-field"),
+            OsString::from("0"),
+            OsString::from("--usepointing"),
+        ])
+        .unwrap();
+        let data_description = ms.data_description().unwrap();
+        let ddid_info = data_description_index(&data_description).unwrap();
+        let selection = select_main_rows(&ms, &config, &ddid_info).unwrap();
+        let resolver = PointingDirectionResolver::new(&ms, &selection.selected_rows, None)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(resolver.table_row_count, 7);
+        assert_eq!(resolver.retained_row_count, 2);
+        assert_eq!(
+            resolver.by_antenna.keys().copied().collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert_eq!(
+            resolver
+                .by_row_index
+                .keys()
+                .copied()
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([1, 4])
+        );
+    }
+
+    #[test]
+    fn pointing_direction_resolver_converts_azelgeo_directions_to_j2000() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("pointing_azelgeo.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_observation_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_and_antennas_channels(
+            &mut ms,
+            0,
+            0,
+            1,
+            [30.0, -15.0, 5.0],
+            &[Complex32::new(1.0, 0.5), Complex32::new(0.0, 0.0)],
+        );
+        let raw_azelgeo = [1.2, 0.7];
+        add_pointing_row(&mut ms, 0, raw_azelgeo, TEST_TIME_MJD_SEC, -1.0);
+        add_pointing_row(&mut ms, 1, raw_azelgeo, TEST_TIME_MJD_SEC, -1.0);
+        TableMeasDesc::new_fixed("DIRECTION", MeasureType::Direction, "AZELGEO")
+            .write(ms.subtable_mut(SubtableId::Pointing).unwrap())
+            .unwrap();
+        ms.save().unwrap();
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            ms_path.into_os_string(),
+            OsString::from("--imagename"),
+            OsString::from("unused"),
+            OsString::from("--imsize"),
+            OsString::from("32"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("20.0"),
+            OsString::from("--spw"),
+            OsString::from("0"),
+            OsString::from("--phasecenter-field"),
+            OsString::from("0"),
+            OsString::from("--usepointing"),
+        ])
+        .unwrap();
+        let data_description = ms.data_description().unwrap();
+        let ddid_info = data_description_index(&data_description).unwrap();
+        let selection = select_main_rows(&ms, &config, &ddid_info).unwrap();
+        let engine = MsCalEngine::new(&ms).unwrap();
+        let resolver = PointingDirectionResolver::new(&ms, &selection.selected_rows, Some(&engine))
+            .unwrap()
+            .unwrap();
+
+        let raw_direction =
+            MDirection::from_angles(raw_azelgeo[0], raw_azelgeo[1], DirectionRef::AZELGEO);
+        let frame = engine
+            .spectral_frame_observatory_direction(TEST_TIME_MJD_SEC, raw_direction.clone())
+            .unwrap();
+        let expected = raw_direction
+            .convert_to(DirectionRef::J2000, &frame)
+            .unwrap();
+        let expected_angles = expected.as_angles();
+        let resolved = resolver.resolve(None, 0, TEST_TIME_MJD_SEC, [0.0, 0.0]);
+
+        assert!((resolved.angles_rad[0] - expected_angles.0).abs() < 1.0e-12);
+        assert!((resolved.angles_rad[1] - expected_angles.1).abs() < 1.0e-12);
+        assert!((resolved.angles_rad[0] - raw_azelgeo[0]).abs() > 1.0e-3);
+        assert!(!resolved.used_fallback);
+    }
+
+    #[test]
+    fn pointing_direction_resolver_retains_timestamp_guards_and_uses_nearest() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("pointing_timestamp_window.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_and_antennas_channels(
+            &mut ms,
+            0,
+            0,
+            1,
+            [30.0, -15.0, 5.0],
+            &[Complex32::new(1.0, 0.5), Complex32::new(0.0, 0.0)],
+        );
+        for (antenna_id, direction) in [(0, [1.2, 0.4]), (1, [1.3, 0.45])] {
+            for offset in [0.0, 20.0, 100.0] {
+                add_pointing_row(
+                    &mut ms,
+                    antenna_id,
+                    direction,
+                    TEST_TIME_MJD_SEC + offset,
+                    -1.0,
+                );
+            }
+        }
+        ms.save().unwrap();
+
+        let selected_rows = vec![SelectedMainRow {
+            row_index: 0,
+            field_id: 0,
+            ddid: 0,
+            spw_id: 0,
+            polarization_id: 0,
+            antenna1_id: 0,
+            antenna2_id: 1,
+            time_mjd_seconds: Some(TEST_TIME_MJD_SEC + 12.0),
+        }];
+        let resolver = PointingDirectionResolver::new(&ms, &selected_rows, None)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(resolver.table_row_count, 6);
+        assert_eq!(resolver.retained_row_count, 4);
+        assert_eq!(
+            resolver
+                .by_row_index
+                .keys()
+                .copied()
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([0, 1, 3, 4])
+        );
+        let resolved = resolver.resolve(None, 0, TEST_TIME_MJD_SEC + 12.0, [0.0, 0.0]);
+        assert_eq!(resolved.source_row_index, Some(1));
+        assert!(!resolved.used_fallback);
+    }
+
+    #[test]
+    fn mosaic_mtmfs_streams_multiple_ddids_and_spws() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("multi_spw_mosaic_mtmfs.ms");
+        let image_prefix = tmp.path().join("multi_spw_mosaic_mtmfs_image");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_observation_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.0e9, 1.1e9]);
+        add_spectral_window_row(&mut ms, &[1.9e9, 2.0e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row_for_spw(&mut ms, 0);
+        add_data_description_row_for_spw(&mut ms, 1);
+        add_pointing_row(&mut ms, 0, [1.0, 0.5], TEST_TIME_MJD_SEC, -1.0);
+        add_pointing_row(&mut ms, 1, [1.0, 0.5], TEST_TIME_MJD_SEC, -1.0);
+        for (ddid, uvw, amplitude) in [
+            (0, [30.0, -15.0, 0.0], 1.0),
+            (1, [-25.0, 20.0, 0.0], 1.5),
+            (0, [10.0, 35.0, 0.0], 0.8),
+            (1, [-15.0, -30.0, 0.0], 1.2),
+        ] {
+            add_main_row_with_field_ddid_and_antennas_corr_channels(
+                &mut ms,
+                0,
+                ddid,
+                0,
+                1,
+                uvw,
+                2,
+                &[
+                    Complex32::new(amplitude, 0.0),
+                    Complex32::new(amplitude, 0.0),
+                    Complex32::new(amplitude, 0.0),
+                    Complex32::new(amplitude, 0.0),
+                ],
+            );
+        }
+        ms.save().unwrap();
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            ms_path.into_os_string(),
+            OsString::from("--imagename"),
+            image_prefix.clone().into_os_string(),
+            OsString::from("--imsize"),
+            OsString::from("32"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("20.0"),
+            OsString::from("--spw"),
+            OsString::from("0,1"),
+            OsString::from("--gridder"),
+            OsString::from("mosaic"),
+            OsString::from("--usepointing"),
+            OsString::from("--deconvolver"),
+            OsString::from("mtmfs"),
+            OsString::from("--nterms"),
+            OsString::from("2"),
+            OsString::from("--dirty-only"),
+            OsString::from("--weighting"),
+            OsString::from("natural"),
+            OsString::from("--no-parallel"),
+            OsString::from("--no-preview-pngs"),
+        ])
+        .unwrap();
+        let summary = run_from_config(&config).unwrap();
+
+        assert!(summary.gridded_samples >= 8);
+        for suffix in ["psf.tt0", "psf.tt1", "psf.tt2", "image.tt0", "image.tt1"] {
+            let path = format!("{}.{}", image_prefix.display(), suffix);
+            assert!(
+                Path::new(&path).exists(),
+                "missing multi-SPW product {path}"
+            );
+        }
     }
 
     #[test]
@@ -64206,12 +65069,19 @@ deconvolver=mtmfs
     }
 
     fn add_data_description_row(ms: &mut MeasurementSet) {
+        add_data_description_row_for_spw(ms, 0);
+    }
+
+    fn add_data_description_row_for_spw(ms: &mut MeasurementSet, spw_id: i32) {
         let table = ms.subtable_mut(SubtableId::DataDescription).unwrap();
         table
             .add_row(RecordValue::new(vec![
                 RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
                 RecordField::new("POLARIZATION_ID", Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(0))),
+                RecordField::new(
+                    "SPECTRAL_WINDOW_ID",
+                    Value::Scalar(ScalarValue::Int32(spw_id)),
+                ),
             ]))
             .unwrap();
     }
@@ -64261,6 +65131,22 @@ deconvolver=mtmfs
         num_corr: usize,
         vis: &[Complex32],
     ) {
+        add_main_row_with_field_ddid_and_antennas_corr_channels(
+            ms, field_id, 0, antenna1, antenna2, uvw, num_corr, vis,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_main_row_with_field_ddid_and_antennas_corr_channels(
+        ms: &mut MeasurementSet,
+        field_id: i32,
+        ddid: i32,
+        antenna1: i32,
+        antenna2: i32,
+        uvw: [f64; 3],
+        num_corr: usize,
+        vis: &[Complex32],
+    ) {
         assert!(
             vis.len().is_multiple_of(num_corr),
             "test helper expects [num_corr, num_chan] visibility ordering"
@@ -64279,7 +65165,7 @@ deconvolver=mtmfs
                 }
                 "ARRAY_ID" => RecordField::new("ARRAY_ID", Value::Scalar(ScalarValue::Int32(0))),
                 "DATA_DESC_ID" => {
-                    RecordField::new("DATA_DESC_ID", Value::Scalar(ScalarValue::Int32(0)))
+                    RecordField::new("DATA_DESC_ID", Value::Scalar(ScalarValue::Int32(ddid)))
                 }
                 "FIELD_ID" => {
                     RecordField::new("FIELD_ID", Value::Scalar(ScalarValue::Int32(field_id)))

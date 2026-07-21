@@ -393,6 +393,37 @@ frozen correctness products and receipts are integrated into the required
 casa-rs serial-parity evidence; neither interrupted partial closes a
 correctness acceptance check by itself.
 
+### Initial casa-rs capability probes
+
+The first real casa-rs field-1525/SPW-9 probe exposed and then verified two
+POINTING requirements from the actual MS. The `POINTING` table contains
+3,335,002 rows with `INTERVAL=-1` timestamp semantics and an `AZELGEO`
+`DIRECTION` measure reference. The corrected bounded resolver scanned only the
+fixed-width selector columns, retained 168 rows for 650 selected MAIN rows,
+converted retained directions to J2000 through the MS measures frame, and
+wrote all 18 expected dirty MT-MFS/mosaic products. Before frame conversion,
+the same probe correctly failed finite/non-zero mosaic normalization because
+raw azimuth/elevation angles had been treated as celestial coordinates.
+
+The next real probe used the literal frozen CASA selector `spw='2~17'`, field
+1525, all 64 channels, `usepointing`, Briggs robust 1, MT-MFS with two Taylor
+terms, serial CPU execution, and a deliberately tiny 32 by 32 image used only
+to verify the shared preparation and replay path. It selected the exact 10,400
+MAIN rows, retained 168 of 3,335,002 POINTING rows, partitioned 8,986 active
+rows across DDIDs/SPWs 2 through 17 after `FLAG_ROW`, processed 575,104 active
+row-channel visits, gridded 135,576 unflagged scalar samples, and wrote the full
+18-product dirty inventory. The development binary took 103.10 s wall time;
+that debug-build, tiny-image probe is capability evidence, not the first
+full-geometry serial performance baseline and cannot be compared with the
+8,183.264 s CASA target.
+
+Focused regressions cover bounded POINTING time/antenna windows, timestamp
+guards, explicit row IDs, AZELGEO-to-J2000 conversion, CASA SPW range syntax,
+and end-to-end two-DDID/two-SPW mosaic MT-MFS streaming. The multi-DDID replay
+keeps one immutable spectral/polarization/channel plan per DDID and feeds every
+plan through the same weighting and MT-MFS consumer, so density estimation and
+Briggs replay remain global rather than independently normalized per SPW.
+
 ## Verification Plan
 
 Focused tests cover strict schema fields and types, exact recipe parsing and
