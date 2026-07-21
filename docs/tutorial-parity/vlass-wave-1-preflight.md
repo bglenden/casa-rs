@@ -249,8 +249,11 @@ Stop before execution if any planned path is on the internal disk, an archive
 or recipe identity differs, the mount changes, free space falls below 1 TiB or
 twice the remaining projection, a partial cache would be reused, a receipt or
 inventory cannot be written, cache growth exceeds 256 GiB without review, the
-run is opaque for more than three minutes, or memory pressure/swap continues to
-grow toward OOM.
+run is opaque for more than three minutes, or swapping becomes genuinely
+untenable: the host is effectively unusable, swap-dominated execution makes no
+meaningful CASA progress for a sustained interval, or stability/storage is at
+credible risk. Ordinary or noticeable finite swapping is accepted for the
+12,150-pixel baseline.
 
 ### Recorded capacity stop
 
@@ -269,10 +272,43 @@ Its exact request is `protocol/warmup-001/request.json`
 and its CASA log is `protocol/warmup-001/casa-20260720-202527.log`
 (`78e53eb2656789954bbc99a977300aabd639731467d50858a0b8f095c8a7e71e`).
 The incomplete artifact is explicitly not a fiducial and cannot close any
-dirty-oracle acceptance check. Repeating the exact full run on another machine
-or changing execution shape remains a stop-and-ask decision. The stop is an
-operator observation bound to those generic request/log identities, not a new
-VLASS-only persisted evidence schema.
+dirty-oracle acceptance check. This stop was superseded on 2026-07-21 by the
+explicitly approved policy above and the successful full-size run below. It
+remains historical evidence of the former 2 GiB swap-growth threshold, not an
+indication that 12,150 pixels is infeasible and not a new VLASS-only persisted
+evidence schema.
+
+### Current exact full-size single-field cold evidence
+
+The exact 12,150 by 12,150 field-1525 cold run completed on 2026-07-21 without
+the authorized 8,192-pixel fallback. `tclean` took 1,276.157 s (21m16.157s) and
+the checked protocol took 1,316.767 s. The process recorded 13,542,998,016 bytes
+peak RSS, 83,842,760,704 bytes read, 63,605,723,136 bytes written, 8,988,500,714
+logical product bytes, and a 23,187,184,256-byte CF cache with 14,336 files.
+
+External `vm_stat` samples bound to this invocation observed 16,384-byte pages
+and deltas of 3,210,122 swap-outs (52,594,638,848 bytes, 48.98 GiB) and
+1,797,859 swap-ins (29,456,121,856 bytes, 27.43 GiB). The heaviest finite
+intervals were roughly 200--240 MB/s combined swap traffic around CF/full-grid
+transitions. CPU utilization temporarily fell to roughly 22--25%, but the host
+remained responsive, CASA continued through visible phases, swap growth stopped
+after `tclean`, and memory pressure recovered to 88% free. This is substantial
+but bounded swapping, not the approved definition of untenable thrashing.
+
+The complete receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T051546Z-vlass-fragment-single-field-cold-164bd8e1.json`
+(`e91ee5af3a5a28b90c2bd6a77c43fd870ab8d590534e4e67dc351f4e54e7b0b1`).
+It passes the shared strict loader and pre-promotion integrity validation for
+one call, 18 CASA products, one full-array self-contract comparison, 20 review
+panels, and the external CF cache. The structured-difference label is `good`
+and the human-review panel state is `ready`.
+
+The comparator completed before an outer-schema mismatch rejected newly added
+source-region and zoom-panel fields. Recovery rebound the existing request,
+result, logs, products, panels, and cache to the frozen plan, recorded
+`tclean_reinvoked=false comparator_reinvoked=false`, and used the normal
+full-bundle integrity validator before atomic promotion. No timing was
+re-measured or synthesized.
 
 ### Current exact full-array smoke evidence
 
@@ -306,11 +342,11 @@ engineering evidence only and do not satisfy the current Wave #446 smoke
 acceptance contract. The current canonical receipts above replace them for
 smoke acceptance.
 
-The exact single-field/all-field fiducials also remain blocked by the recorded
-32 GiB capacity stop. Wave #446 therefore remains open and its implementation
-PR remains draft: the current smokes satisfy only the 1,024-pixel smoke check,
-and the capacity-stop partial closes no full dirty-oracle, correctness, or
-performance acceptance check.
+The exact single-field cold dirty fiducial is now complete at full geometry.
+Wave #446 and its implementation PR remain open/draft because the single-field
+warm repeatability run and the required all-fields cold/warm fiducials are not
+yet complete; neither the historical capacity-stop partial nor the smokes close
+those remaining checks.
 
 ## Verification Plan
 

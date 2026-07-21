@@ -581,6 +581,87 @@ class PublicationRecoveryWorkflowTests(unittest.TestCase):
             validate_run_result(retained)
 
 
+class CompletedOuterPublicationRecoveryTests(unittest.TestCase):
+    def test_recovery_rebinds_existing_artifacts_without_reinvocation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            partial = root / "run.partial"
+            partial.mkdir()
+            plan = {
+                "run_id": "run",
+                "run": {"cf_cache_role": "cold", "warmups": 0, "repeats": 1},
+                "command": {"kind": "casa_tclean_protocol"},
+                "artifacts": {
+                    "bundle": {
+                        "partial_root": str(partial),
+                        "final_root": str(root / "run"),
+                    }
+                },
+            }
+            failed = {
+                "status": "failed_execution",
+                "started_at": "2026-07-20T00:00:00Z",
+                "results": {"failure": {"kind": "harness_internal"}},
+            }
+            measured = {"name": "measured-001", "measured": True}
+            repeatability = {"status": "completed", "products": {"image": {}}}
+            completed = {"status": "completed", "results": {}}
+            services = mock.Mock()
+            services.comparison_evidence_status.return_value = ("completed", None)
+            log_path = partial / "benchmark-summary.log"
+
+            with (
+                mock.patch.object(casa_tclean_workflow, "validate_run_result"),
+                mock.patch.object(
+                    casa_tclean_workflow,
+                    "_recipe_plan_from_failed_result",
+                    return_value=plan,
+                ),
+                mock.patch.object(
+                    casa_tclean_workflow,
+                    "recover_casa_recipe_call",
+                    return_value=measured,
+                ) as recover_call,
+                mock.patch.object(
+                    casa_tclean_workflow,
+                    "recover_casa_repeatability",
+                    return_value=repeatability,
+                ) as recover_comparison,
+                mock.patch.object(
+                    casa_tclean_workflow,
+                    "completed_recipe_run_result",
+                    return_value=completed,
+                ),
+                mock.patch.object(
+                    casa_tclean_workflow, "write_recipe_summary_log"
+                ) as write_log,
+                mock.patch.object(
+                    casa_tclean_workflow, "execute_casa_recipe_call"
+                ) as execute_casa,
+                mock.patch.object(
+                    casa_tclean_workflow, "compare_image_products"
+                ) as execute_comparator,
+            ):
+                result = casa_tclean_workflow.recover_completed_recipe_run(
+                    failed,
+                    log_path,
+                    services=services,
+                )
+
+            self.assertIs(completed, result)
+            recover_call.assert_called_once_with(
+                plan,
+                call_name="measured-001",
+                call_role="cold",
+                measured=True,
+            )
+            recover_comparison.assert_called_once_with(plan, [measured])
+            write_log.assert_called_once_with(log_path, [], [measured])
+            execute_casa.assert_not_called()
+            execute_comparator.assert_not_called()
+            self.assertIn("tclean_reinvoked=false", log_path.read_text())
+
+
 def _recovery_services() -> casa_tclean_workflow.ExecutionServices:
     return casa_tclean_workflow.ExecutionServices(
         utc_now=lambda: "2026-07-20T00:00:01Z",

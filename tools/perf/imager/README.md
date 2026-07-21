@@ -239,6 +239,18 @@ every required comparison must validate before same-parent bundle promotion;
 a completed workspace must be absent, and missing, leftover, mismatched,
 unavailable, or out-of-tolerance evidence remains a typed partial.
 
+If CASA and the comparator completed but outer receipt publication failed, the
+generic recovery command is:
+
+```sh
+tools/perf/imager/run_workload.py --recover-receipt /absolute/path/to/run.json
+```
+
+It accepts only a typed post-processing or promotion failure, rebinds every
+expected protocol/comparison file to the exact frozen plan, and runs normal
+full bundle-integrity validation before promotion. It never invokes CASA or the
+comparator and records both non-reinvocation facts in the benchmark summary.
+
 Protocol result `wall_seconds` remains the exact opaque `tclean()` task time.
 Schema 3 additionally records measured preflight, task, product-inventory,
 cache-postcondition, and end-to-end protocol stages. Peak RSS, CPU, page faults,
@@ -272,9 +284,25 @@ schema is part of the evidence contract.
 
 All earlier smoke generations remain historical engineering evidence only. In
 particular, the 00:19/00:21 UTC receipts bind the superseded pre-generalization
-geometry identity. The exact full-size run is still blocked by the recorded
-32 GiB capacity stop, so Wave #446 stays open and its implementation PR stays
-draft until the required full-size fiducials satisfy acceptance.
+geometry identity.
+
+The exact 12,150 by 12,150 single-field cold dirty fiducial completed on
+2026-07-21 without the authorized 8,192-pixel fallback. `tclean` took 1,276.157
+s and the checked protocol took 1,316.767 s. It recorded 13,542,998,016 bytes
+peak RSS, 83,842,760,704 bytes read, 63,605,723,136 bytes written, 8,988,500,714
+logical product bytes, and a 23,187,184,256-byte CF cache. External monitoring
+observed 52,594,638,848 bytes swap-out and 29,456,121,856 bytes swap-in; CASA
+continued through visible phases and the host stayed responsive, so this was
+substantial but bounded swapping. The strict complete receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T051546Z-vlass-fragment-single-field-cold-164bd8e1.json`
+(`e91ee5af3a5a28b90c2bd6a77c43fd870ab8d590534e4e67dc351f4e54e7b0b1`).
+Its integrity receipt binds one call, all 18 products, one full-array
+self-contract comparison, 20 panels, and the external CF cache; structured
+difference is `good` and panel review is `ready`.
+
+Wave #446 stays open and its implementation PR stays draft until the
+single-field warm repeatability and all-fields cold/warm fiducials also satisfy
+acceptance.
 
 ### Production parameter and UI contract
 

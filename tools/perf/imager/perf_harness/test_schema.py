@@ -10,6 +10,7 @@ import pathlib
 import tempfile
 import unittest
 
+import perf_harness.schema as schema_contract
 from perf_harness import (
     ContractError,
     RUN_RESULT_SCHEMA_VERSION,
@@ -147,6 +148,64 @@ def _legacy_casa_tclean_result() -> dict[str, object]:
 
 
 class SchemaTests(unittest.TestCase):
+    def test_current_product_contract_accepts_bound_source_region_evidence(
+        self,
+    ) -> None:
+        product = {
+            "status": "compared",
+            "review_panel": {
+                "status": "written",
+                "zoom_panel": {
+                    "status": "written",
+                    "path": "/tmp/zoom.png",
+                    "sha256": "1" * 64,
+                    "left_label": "CASA measured 1",
+                    "right_label": "CASA measured 1 product contract",
+                    "bounds": {
+                        "x_start": 1,
+                        "x_end": 2,
+                        "y_start": 3,
+                        "y_end": 4,
+                    },
+                    "casa_rs_and_casa_color_limits": [-1.0, 1.0],
+                    "left_and_right_color_limits": [-1.0, 1.0],
+                    "difference_color_limits": [-0.1, 0.1],
+                },
+            },
+            "source_regions": [
+                {
+                    "id": "bright-source",
+                    "products": [".image.tt0"],
+                    "blc": [1, 2],
+                    "trc": [3, 4],
+                    "method": "bounded-test",
+                    "left": {},
+                    "right": {},
+                }
+            ],
+        }
+
+        schema_contract._validate_comparison_product(
+            product,
+            protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
+            source="test product",
+        )
+
+        with self.assertRaisesRegex(ContractError, "unknown field"):
+            schema_contract._validate_comparison_product(
+                product,
+                protocol_variant=3,
+                source="legacy product",
+            )
+
+        malformed = {"status": "compared", "source_regions": {}}
+        with self.assertRaisesRegex(ContractError, "must be a list"):
+            schema_contract._validate_comparison_product(
+                malformed,
+                protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
+                source="malformed product",
+            )
+
     def test_workload_rejects_unknown_and_unversioned_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = pathlib.Path(temporary) / "workload.json"

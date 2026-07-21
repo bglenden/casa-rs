@@ -33,6 +33,7 @@ from .image_compare import (
     apply_tolerance_contract,
     validate_comparison_output,
 )
+from .host_telemetry import HostTelemetryError, validate_host_telemetry
 from .tree_identity import sha256_file
 
 
@@ -202,6 +203,40 @@ def _validate_call(
         record.get("stdout_stderr_sha256"),
         label=f"CASA call {name} stdout/stderr",
     )
+    telemetry_fields = (
+        "host_telemetry_path",
+        "host_telemetry_sha256",
+        "host_telemetry",
+    )
+    telemetry_present = [field in record for field in telemetry_fields]
+    if any(telemetry_present) and not all(telemetry_present):
+        raise BundleIntegrityError(
+            f"CASA call {name} host telemetry artifact is incomplete"
+        )
+    if all(telemetry_present):
+        telemetry_path = _bundle_file(
+            record.get("host_telemetry_path"),
+            partial_root=partial_root,
+            label=f"CASA call {name} host telemetry",
+        )
+        _validate_file_digest(
+            telemetry_path,
+            record.get("host_telemetry_sha256"),
+            label=f"CASA call {name} host telemetry",
+        )
+        telemetry = _load_json_object(
+            telemetry_path, label=f"CASA call {name} host telemetry"
+        )
+        if telemetry != record.get("host_telemetry"):
+            raise BundleIntegrityError(
+                f"CASA call {name} embedded host telemetry differs from artifact"
+            )
+        try:
+            validate_host_telemetry(telemetry)
+        except HostTelemetryError as error:
+            raise BundleIntegrityError(
+                f"CASA call {name} host telemetry is invalid: {error}"
+            ) from error
     request = _load_json_object(request_path, label=f"CASA call {name} request")
     protocol_result = _load_json_object(result_path, label=f"CASA call {name} result")
     if record.get("result") != protocol_result:

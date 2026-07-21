@@ -22,6 +22,7 @@ from .image_compare import (
     comparison_request_binding,
     validate_comparison_output,
 )
+from .host_telemetry import HostTelemetryError, validate_host_telemetry
 from .tolerances import ToleranceContractError, validate_tolerance_contract
 
 
@@ -605,6 +606,8 @@ COMPARISON_PRODUCT_FIELDS = {
     "review_panel",
     "structured_difference",
     "sampled_structured_difference",
+    "source_regions",
+    "source_region_failure",
     "full_array",
 }
 COMPARISON_REVIEW_PANEL_FIELDS = {
@@ -631,10 +634,14 @@ COMPARISON_REVIEW_PANEL_FIELDS = {
 COMPARISON_ZOOM_PANEL_FIELDS = {
     "status",
     "path",
+    "sha256",
     "retained_path",
     "reason",
     "bounds",
+    "left_label",
+    "right_label",
     "casa_rs_and_casa_color_limits",
+    "left_and_right_color_limits",
     "difference_color_limits",
 }
 COMPARISON_BEAM_INFO_FIELDS = {
@@ -711,6 +718,8 @@ COMPARISON_STRUCTURED_DIFFERENCE_FIELDS = {
 LEGACY_COMPARISON_PRODUCT_FIELDS = COMPARISON_PRODUCT_FIELDS - {
     "full_array",
     "sampled_structured_difference",
+    "source_regions",
+    "source_region_failure",
     "topology_parity",
 }
 LEGACY_COMPARISON_BEAM_INFO_FIELDS = COMPARISON_BEAM_INFO_FIELDS - {
@@ -779,6 +788,9 @@ CASA_CALL_FIELDS = {
     "result_sha256",
     "stdout_stderr_path",
     "stdout_stderr_sha256",
+    "host_telemetry_path",
+    "host_telemetry_sha256",
+    "host_telemetry",
     "exit_code",
     "casa_log_paths",
     "casa_log_identities",
@@ -788,6 +800,7 @@ CASA_CALL_FIELDS = {
     "retained_request_path",
     "retained_result_path",
     "retained_stdout_stderr_path",
+    "retained_host_telemetry_path",
     "retained_casa_log_paths",
     "retained_casa_log_identities",
 }
@@ -2322,6 +2335,16 @@ def _validate_comparison_product(
             _validate_peak(product[key], source=f"{source}: {key}")
     if "metadata" in product:
         _validate_comparison_metadata(product["metadata"], source=f"{source}: metadata")
+    if "source_regions" in product:
+        if not isinstance(product["source_regions"], list):
+            raise ContractError(f"{source}: source_regions must be a list")
+        for index, region in enumerate(product["source_regions"]):
+            if not isinstance(region, dict):
+                raise ContractError(
+                    f"{source}: source_regions[{index}] must be an object"
+                )
+    if "source_region_failure" in product:
+        _nonempty_string(product, "source_region_failure", source)
     if "review_panel" in product:
         _validate_comparison_review_panel(
             product["review_panel"], source=f"{source}: review_panel"
@@ -2374,13 +2397,22 @@ def _validate_comparison_review_panel(value: Any, *, source: str) -> None:
         zoom = _require_dict(panel["zoom_panel"], f"{source}: zoom_panel")
         _allowed_fields(zoom, COMPARISON_ZOOM_PANEL_FIELDS, f"{source}: zoom_panel")
         _nonempty_string(zoom, "status", f"{source}: zoom_panel")
-        for key in ("path", "retained_path", "reason"):
+        for key in (
+            "path",
+            "retained_path",
+            "reason",
+            "left_label",
+            "right_label",
+        ):
             if key in zoom:
                 _nonempty_string(zoom, key, f"{source}: zoom_panel")
+        if zoom.get("sha256") is not None:
+            _sha256_or_historical(zoom["sha256"], f"{source}: zoom_panel.sha256")
         if "bounds" in zoom:
             _validate_zoom_bounds(zoom["bounds"], f"{source}: zoom_panel.bounds")
         for key in (
             "casa_rs_and_casa_color_limits",
+            "left_and_right_color_limits",
             "difference_color_limits",
         ):
             if key in zoom:
@@ -3293,6 +3325,7 @@ def _validate_casa_call_record(value: Any, *, group: str, source: str) -> None:
         "request_path",
         "result_path",
         "stdout_stderr_path",
+        "host_telemetry_path",
     ):
         if key in record:
             _nonempty_string(record, key, source)
@@ -3301,6 +3334,7 @@ def _validate_casa_call_record(value: Any, *, group: str, source: str) -> None:
         "retained_request_path",
         "retained_result_path",
         "retained_stdout_stderr_path",
+        "retained_host_telemetry_path",
     ):
         if key in record:
             _optional_string(record[key], f"{source}: {key}")
@@ -3319,6 +3353,7 @@ def _validate_casa_call_record(value: Any, *, group: str, source: str) -> None:
         "request_sha256",
         "result_sha256",
         "stdout_stderr_sha256",
+        "host_telemetry_sha256",
         "cache_receipt_sha256",
     ):
         if record.get(key) is not None:
@@ -3341,6 +3376,16 @@ def _validate_casa_call_record(value: Any, *, group: str, source: str) -> None:
                 _sha256_or_historical(identity["sha256"], f"{label}: sha256")
     if "result" in record:
         _validate_embedded_casa_result(record["result"], source=f"{source}: result")
+    if "host_telemetry" in record:
+        try:
+            validate_host_telemetry(record["host_telemetry"])
+        except HostTelemetryError as error:
+            raise ContractError(f"{source}: invalid host telemetry: {error}") from error
+        for required in ("host_telemetry_path", "host_telemetry_sha256"):
+            if required not in record:
+                raise ContractError(f"{source}: host telemetry requires {required}")
+    elif any(key in record for key in ("host_telemetry_path", "host_telemetry_sha256")):
+        raise ContractError(f"{source}: host telemetry artifact is incomplete")
 
 
 def _validate_embedded_casa_result(value: Any, *, source: str) -> None:

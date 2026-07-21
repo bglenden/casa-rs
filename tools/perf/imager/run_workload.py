@@ -21,6 +21,7 @@ from perf_harness import (
     RUN_RESULT_SCHEMA_VERSION,
     atomic_write_json,
     finite_number,
+    load_run_result,
     load_workload_manifest,
     validate_run_result,
     validate_workload_manifest,
@@ -84,7 +85,19 @@ MAX_BACKEND_LOG_ENTRIES_PER_BUCKET = 128
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("workload", help="workload manifest id or JSON path")
+    parser.add_argument(
+        "workload",
+        nargs="?",
+        help="workload manifest id or JSON path",
+    )
+    parser.add_argument(
+        "--recover-receipt",
+        type=pathlib.Path,
+        help=(
+            "recover a completed recipe bundle after outer receipt publication "
+            "failed; never reinvokes CASA or the comparator"
+        ),
+    )
     parser.add_argument(
         "--output-dir",
         type=pathlib.Path,
@@ -155,6 +168,19 @@ def main() -> None:
     log_path: pathlib.Path | None = None
 
     try:
+        recovery_value = getattr(args, "recover_receipt", None)
+        recovery_path = (
+            recovery_value if isinstance(recovery_value, pathlib.Path) else None
+        )
+        if recovery_path is not None:
+            if args.workload is not None:
+                raise HarnessError(
+                    "workload and --recover-receipt are mutually exclusive"
+                )
+            recover_recipe_receipt(recovery_path.expanduser().resolve())
+            return
+        if args.workload is None:
+            raise HarnessError("workload is required unless --recover-receipt is used")
         manifest_path = resolve_workload(args.workload)
         manifest = load_manifest(manifest_path)
         apply_imaging_overrides(manifest, args.set_imaging)
@@ -298,6 +324,37 @@ def main() -> None:
                 )
         print(f"internal error: {type(error).__name__}: {error}", file=sys.stderr)
         raise
+
+
+def recover_recipe_receipt(receipt_path: pathlib.Path) -> None:
+    """Publish an already-completed recipe bundle from fail-closed artifacts."""
+
+    failed_result = load_run_result(receipt_path)
+    bundle = failed_result.get("artifacts", {}).get("bundle")
+    if not isinstance(bundle, dict) or not isinstance(bundle.get("partial_root"), str):
+        raise HarnessError("recovery receipt does not name a partial artifact bundle")
+    log_path = pathlib.Path(bundle["partial_root"]) / "benchmark-summary.log"
+    try:
+        recovered = casa_tclean_workflow.recover_completed_recipe_run(
+            failed_result,
+            log_path,
+            services=recipe_execution_services(),
+        )
+    except casa_tclean_workflow.ProtocolError as error:
+        raise HarnessError(str(error)) from error
+    recovered["logs"] = casa_tclean_workflow.benchmark_log_evidence(log_path)
+    recovered = casa_tclean_workflow.finalize_bundle_result(recovered)
+    normalize_cli_exit_code(recovered)
+    validate_run_result(recovered, source=str(receipt_path))
+    atomic_write_json(receipt_path, recovered)
+    if recovered.get("status") != "completed":
+        failure = recovered.get("results", {}).get("failure")
+        reason = failure.get("reason") if isinstance(failure, dict) else None
+        raise HarnessError(
+            "recovered bundle failed final publication validation"
+            + (f": {reason}" if reason else "")
+        )
+    print(receipt_path)
 
 
 CLI_SUCCESS_STATUSES = {"completed", "dry_run", "recovered_publication"}

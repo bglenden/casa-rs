@@ -54,7 +54,17 @@ from .evidence_storage import (
     validate_requirement_capacity,
     validate_requirement_paths,
 )
-from .image_compare import compare_products as compare_image_products
+from .image_compare import (
+    apply_tolerance_contract,
+    compare_products as compare_image_products,
+    normalize_comparison_request,
+    validate_comparison_output,
+)
+from .host_telemetry import (
+    DarwinHostTelemetrySampler,
+    HostTelemetryError,
+    validate_host_telemetry,
+)
 from .schema import RUN_RESULT_SCHEMA_VERSION, validate_run_result
 from .subprocesses import run_command
 from .tree_identity import sha256_file, tree_identity
@@ -995,6 +1005,7 @@ def _attach_retained_call_paths(
         "request_path",
         "result_path",
         "stdout_stderr_path",
+        "host_telemetry_path",
     ):
         record[f"retained_{key}"] = _retained_path(
             record.get(key), execution_root, retained_root
@@ -1323,7 +1334,7 @@ def run_recipe_plan(
             )
 
     try:
-        evidence_summary = summarize_completed_results(measured_calls)
+        summarize_completed_results(measured_calls)
     except ProtocolError as error:
         return direct_recipe_failure(
             plan,
@@ -1334,19 +1345,55 @@ def run_recipe_plan(
             services=services,
         )
     write_recipe_summary_log(log_path, warmup_calls, measured_calls)
-    timings = [float(record["result"]["wall_seconds"]) for record in measured_calls]
-    casa_stage_medians_ms = {
-        name: seconds * 1000.0
-        for name, seconds in evidence_summary["stage_seconds"]["median"].items()
-    }
-    final_prefix = measured_calls[-1]["prefix"]
-    plan["products"]["casa_prefix"] = final_prefix
     repeatability = compare_casa_repeatability(
         plan,
         measured_calls,
         log_path,
         comparison_runner=services.compare_image_products,
     )
+    try:
+        return completed_recipe_run_result(
+            plan,
+            started=started,
+            warmup_calls=warmup_calls,
+            measured_calls=measured_calls,
+            repeatability=repeatability,
+            services=services,
+        )
+    except ProtocolError as error:
+        return direct_recipe_failure(
+            plan,
+            started=started,
+            log_path=log_path,
+            reason=str(error),
+            records=[*warmup_calls, *measured_calls],
+            services=services,
+        )
+
+
+def completed_recipe_run_result(
+    plan: dict[str, Any],
+    *,
+    started: str,
+    warmup_calls: list[dict[str, Any]],
+    measured_calls: list[dict[str, Any]],
+    repeatability: dict[str, Any],
+    services: ExecutionServices,
+) -> dict[str, Any]:
+    """Build the completed recipe envelope from independently bound artifacts."""
+
+    try:
+        evidence_summary = summarize_completed_results(measured_calls)
+    except ProtocolError as error:
+        raise ProtocolError(f"invalid CASA stage/resource evidence: {error}") from error
+    timings = [float(record["result"]["wall_seconds"]) for record in measured_calls]
+    role = str(plan["run"]["cf_cache_role"])
+    casa_stage_medians_ms = {
+        name: seconds * 1000.0
+        for name, seconds in evidence_summary["stage_seconds"]["median"].items()
+    }
+    final_prefix = measured_calls[-1]["prefix"]
+    plan["products"]["casa_prefix"] = final_prefix
     status, failure = services.comparison_evidence_status(repeatability, required=True)
     results: dict[str, Any] = {
         "rust": {
@@ -1470,6 +1517,7 @@ def execute_casa_recipe_call(
     request_path = call_root / "request.json"
     result_path = call_root / "result.json"
     stdout_path = call_root / "stdout-stderr.log"
+    host_telemetry_path = call_root / "host-telemetry.json"
     cache = runtime_cache_request(plan, call_role)
     if cache["role"] != "none":
         pathlib.Path(cache["path"]).parent.mkdir(parents=True, exist_ok=True)
@@ -1487,14 +1535,25 @@ def execute_casa_recipe_call(
     scratch_root = pathlib.Path(plan["artifacts"]["tmp_root"])
     env["TMPDIR"] = str(scratch_root)
     env["MPLCONFIGDIR"] = str(scratch_root / "matplotlib")
-    completed = run_command(
-        [casa_python, str(CASA_TCLEAN_PROTOCOL), str(request_path), str(result_path)],
-        cwd=call_root,
-        environment=env,
-        merge_stderr=True,
-        stream_stdout=bool(plan["run"].get("stream_log", False)),
-        incremental_output_path=stdout_path,
-    )
+    host_sampler = DarwinHostTelemetrySampler()
+    host_sampler.start()
+    try:
+        completed = run_command(
+            [
+                casa_python,
+                str(CASA_TCLEAN_PROTOCOL),
+                str(request_path),
+                str(result_path),
+            ],
+            cwd=call_root,
+            environment=env,
+            merge_stderr=True,
+            stream_stdout=bool(plan["run"].get("stream_log", False)),
+            incremental_output_path=stdout_path,
+        )
+    finally:
+        host_telemetry = host_sampler.stop()
+        atomic_write_json(host_telemetry_path, host_telemetry)
     stdout_path.write_text(completed.stdout or "", encoding="utf-8")
     casa_log_paths = sorted(call_root.glob("casa-*.log"))
     if result_path.is_file():
@@ -1545,7 +1604,7 @@ def execute_casa_recipe_call(
     cache_receipt_path = (
         pathlib.Path(cache["receipt_path"]) if cache.get("role") != "none" else None
     )
-    return {
+    record = {
         "name": call_name,
         "role": call_role,
         "measured": measured,
@@ -1560,6 +1619,9 @@ def execute_casa_recipe_call(
         ),
         "stdout_stderr_path": str(stdout_path),
         "stdout_stderr_sha256": sha256_file(stdout_path),
+        "host_telemetry_path": str(host_telemetry_path),
+        "host_telemetry_sha256": sha256_file(host_telemetry_path),
+        "host_telemetry": host_telemetry,
         "exit_code": completed.returncode,
         "casa_log_paths": [str(path) for path in casa_log_paths],
         "casa_log_identities": [
@@ -1572,6 +1634,215 @@ def execute_casa_recipe_call(
         ),
         "result": result,
     }
+    return record
+
+
+def recover_completed_recipe_run(
+    failed_result: dict[str, Any],
+    log_path: pathlib.Path,
+    *,
+    services: ExecutionServices,
+) -> dict[str, Any]:
+    """Rebuild a completed outer receipt without reinvoking CASA or comparison.
+
+    Recovery is deliberately narrow: the retained receipt must be a valid typed
+    failure, every expected protocol call and comparator artifact must already
+    exist, and their bytes are rebound to the exact frozen plan before a normal
+    completed result is constructed.  Final bundle validation still rehashes all
+    products, panels, logs, and the external CF-cache publication.
+    """
+
+    validate_run_result(failed_result, source="recipe publication recovery input")
+    if failed_result.get("status") != "failed_execution":
+        raise ProtocolError("recipe publication recovery requires failed_execution")
+    failure = failed_result.get("results", {}).get("failure")
+    failure_kind = failure.get("kind") if isinstance(failure, dict) else None
+    if failure_kind not in {"artifact_promotion", "harness_internal"}:
+        raise ProtocolError(
+            "recipe publication recovery only accepts post-processing or "
+            "artifact-promotion failures"
+        )
+
+    plan = _recipe_plan_from_failed_result(failed_result)
+    if plan.get("command", {}).get("kind") != "casa_tclean_protocol":
+        raise ProtocolError("recipe publication recovery requires CASA tclean plan")
+    bundle = plan.get("artifacts", {}).get("bundle")
+    if not isinstance(bundle, dict):
+        raise ProtocolError("recipe publication recovery has no artifact bundle")
+    partial_root = pathlib.Path(str(bundle.get("partial_root", "")))
+    final_root = pathlib.Path(str(bundle.get("final_root", "")))
+    if not partial_root.is_dir() or partial_root.is_symlink():
+        raise ProtocolError("recipe publication recovery partial bundle is unavailable")
+    if final_root.exists():
+        raise ProtocolError("recipe publication recovery final bundle already exists")
+
+    role = str(plan["run"]["cf_cache_role"])
+    warmup_calls = [
+        recover_casa_recipe_call(
+            plan,
+            call_name=f"warmup-{index:03d}",
+            call_role=role,
+            measured=False,
+        )
+        for index in range(1, int(plan["run"]["warmups"]) + 1)
+    ]
+    measured_calls = [
+        recover_casa_recipe_call(
+            plan,
+            call_name=f"measured-{index:03d}",
+            call_role=role,
+            measured=True,
+        )
+        for index in range(1, int(plan["run"]["repeats"]) + 1)
+    ]
+    if not measured_calls:
+        raise ProtocolError("recipe publication recovery has no measured calls")
+    repeatability = recover_casa_repeatability(plan, measured_calls)
+    status, failure = services.comparison_evidence_status(repeatability, required=True)
+    if status != "completed" or failure is not None:
+        reason = failure.get("reason") if isinstance(failure, dict) else status
+        raise ProtocolError(f"recovered comparison evidence is not accepted: {reason}")
+
+    write_recipe_summary_log(log_path, warmup_calls, measured_calls)
+    with log_path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            "recovery=completed_outer_publication "
+            "tclean_reinvoked=false comparator_reinvoked=false\n"
+        )
+    return completed_recipe_run_result(
+        plan,
+        started=str(failed_result["started_at"]),
+        warmup_calls=warmup_calls,
+        measured_calls=measured_calls,
+        repeatability=repeatability,
+        services=services,
+    )
+
+
+def _recipe_plan_from_failed_result(failed_result: dict[str, Any]) -> dict[str, Any]:
+    envelope_fields = {
+        "schema_version",
+        "kind",
+        "status",
+        "started_at",
+        "completed_at",
+        "exit_code",
+        "logs",
+        "results",
+        "human_review",
+    }
+    plan = copy.deepcopy(
+        {
+            key: value
+            for key, value in failed_result.items()
+            if key not in envelope_fields
+        }
+    )
+    artifacts = plan.get("artifacts")
+    if isinstance(artifacts, dict):
+        for key in ("products_root", "comparison_root", "protocol_root"):
+            execution_key = f"execution_{key}"
+            if isinstance(artifacts.get(execution_key), str):
+                artifacts[key] = artifacts[execution_key]
+    products = plan.get("products")
+    if isinstance(products, dict):
+        if isinstance(products.get("execution_root"), str):
+            products["root"] = products["execution_root"]
+        if isinstance(products.get("execution_casa_prefix"), str):
+            products["casa_prefix"] = products["execution_casa_prefix"]
+    return plan
+
+
+def recover_casa_recipe_call(
+    plan: dict[str, Any], *, call_name: str, call_role: str, measured: bool
+) -> dict[str, Any]:
+    """Rebind one completed protocol call from a retained partial bundle."""
+
+    protocol_root = pathlib.Path(plan["artifacts"]["protocol_root"])
+    product_root = pathlib.Path(plan["artifacts"]["products_root"])
+    category = "casa" if measured else "casa-warmups"
+    prefix = product_root / category / call_name / "casa"
+    call_root = protocol_root / call_name
+    request_path = call_root / "request.json"
+    result_path = call_root / "result.json"
+    stdout_path = call_root / "stdout-stderr.log"
+    host_telemetry_path = call_root / "host-telemetry.json"
+    for label, path in (
+        ("request", request_path),
+        ("result", result_path),
+        ("stdout/stderr", stdout_path),
+    ):
+        if not path.is_file() or path.is_symlink():
+            raise ProtocolError(f"recovered CASA call {call_name} {label} is missing")
+    try:
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ProtocolError(
+            f"cannot load recovered CASA call {call_name}: {error}"
+        ) from error
+    cache = runtime_cache_request(plan, call_role)
+    expected_request = build_casa_request(
+        plan,
+        action="run",
+        request_id=f"{plan['run_id']}-{call_name}",
+        imagename=prefix,
+        cache=cache,
+    )
+    if request != expected_request:
+        raise ProtocolError(
+            f"recovered CASA call {call_name} request differs from frozen plan"
+        )
+    validate_result_for_request(result, request)
+    if result.get("status") != "completed":
+        raise ProtocolError(f"recovered CASA call {call_name} is not completed")
+    casa_log_paths = sorted(call_root.glob("casa-*.log"))
+    if not casa_log_paths:
+        raise ProtocolError(f"recovered CASA call {call_name} has no CASA log")
+    cache_receipt_path = (
+        pathlib.Path(str(cache["receipt_path"]))
+        if cache.get("role") != "none"
+        else None
+    )
+    record = {
+        "name": call_name,
+        "role": call_role,
+        "measured": measured,
+        "prefix": str(prefix),
+        "request_path": str(request_path),
+        "request_sha256": sha256_file(request_path),
+        "result_path": str(result_path),
+        "result_sha256": sha256_file(result_path),
+        "stdout_stderr_path": str(stdout_path),
+        "stdout_stderr_sha256": sha256_file(stdout_path),
+        "exit_code": 0,
+        "casa_log_paths": [str(path) for path in casa_log_paths],
+        "casa_log_identities": [
+            {"path": str(path), "sha256": sha256_file(path)} for path in casa_log_paths
+        ],
+        "cache_receipt_sha256": (
+            sha256_file(cache_receipt_path)
+            if cache_receipt_path is not None and cache_receipt_path.is_file()
+            else None
+        ),
+        "result": result,
+    }
+    if host_telemetry_path.is_file() and not host_telemetry_path.is_symlink():
+        try:
+            host_telemetry = json.loads(host_telemetry_path.read_text(encoding="utf-8"))
+            validate_host_telemetry(host_telemetry)
+        except (OSError, json.JSONDecodeError, HostTelemetryError) as error:
+            raise ProtocolError(
+                f"recovered CASA call {call_name} host telemetry is invalid: {error}"
+            ) from error
+        record.update(
+            {
+                "host_telemetry_path": str(host_telemetry_path),
+                "host_telemetry_sha256": sha256_file(host_telemetry_path),
+                "host_telemetry": host_telemetry,
+            }
+        )
+    return record
 
 
 def runtime_cache_request(plan: dict[str, Any], role: str) -> dict[str, Any]:
@@ -1624,40 +1895,15 @@ def compare_casa_repeatability(
     comparisons: list[dict[str, Any]] = []
     for target in targets:
         target_name = str(target["name"])
-        panel_dir = comparison_root / f"casa-{target_name}-panels"
-        structure_workspace_dir = (
-            comparison_root / f"casa-{target_name}-structure-workspace"
-        )
         self_contract = target is baseline
-        request = {
-            "left_prefix": baseline["prefix"],
-            "right_prefix": target["prefix"],
-            "left_label": "CASA measured 1",
-            "right_label": (
-                "CASA measured 1 product contract"
-                if self_contract
-                else f"CASA {target_name}"
-            ),
-            "products": plan["comparison"]["products"],
-            "max_elements_per_product": plan["comparison"]["max_elements_per_product"],
-            "mode": plan["comparison"]["mode"],
-            "full_chunk_elements": plan["comparison"]["full_chunk_elements"],
-            "require_exact_product_inventory": plan["comparison"][
-                "require_exact_product_inventory"
-            ],
-            "require_metadata_parity": plan["comparison"]["require_metadata_parity"],
-            "source_regions": plan["comparison"].get("source_regions", []),
-            "tolerances": plan["comparison"].get("tolerances"),
-            "panel_dir": str(panel_dir),
-            "structure_workspace_dir": str(structure_workspace_dir),
-        }
+        request = casa_repeatability_comparison_request(plan, baseline, target)
         comparison = comparison_runner(
             casa_python=casa_python,
             request=request,
             artifact_prefix=comparison_root / f"casa-{target_name}",
             cwd=REPO_ROOT,
         )
-        comparison["panel_dir"] = str(panel_dir)
+        comparison["panel_dir"] = request["panel_dir"]
         comparison["left_call"] = str(baseline["name"])
         comparison["right_call"] = target_name
         comparison["comparison_kind"] = (
@@ -1665,6 +1911,54 @@ def compare_casa_repeatability(
         )
         comparisons.append(comparison)
 
+    return summarize_casa_repeatability(plan, measured_calls, comparisons)
+
+
+def casa_repeatability_comparison_request(
+    plan: dict[str, Any],
+    baseline: dict[str, Any],
+    target: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the exact comparator request for one measured CASA call pair."""
+
+    comparison_root = pathlib.Path(plan["artifacts"]["comparison_root"])
+    target_name = str(target["name"])
+    self_contract = target is baseline or target_name == str(baseline["name"])
+    return {
+        "left_prefix": baseline["prefix"],
+        "right_prefix": target["prefix"],
+        "left_label": "CASA measured 1",
+        "right_label": (
+            "CASA measured 1 product contract"
+            if self_contract
+            else f"CASA {target_name}"
+        ),
+        "products": plan["comparison"]["products"],
+        "max_elements_per_product": plan["comparison"]["max_elements_per_product"],
+        "mode": plan["comparison"]["mode"],
+        "full_chunk_elements": plan["comparison"]["full_chunk_elements"],
+        "require_exact_product_inventory": plan["comparison"][
+            "require_exact_product_inventory"
+        ],
+        "require_metadata_parity": plan["comparison"]["require_metadata_parity"],
+        "source_regions": plan["comparison"].get("source_regions", []),
+        "tolerances": plan["comparison"].get("tolerances"),
+        "panel_dir": str(comparison_root / f"casa-{target_name}-panels"),
+        "structure_workspace_dir": str(
+            comparison_root / f"casa-{target_name}-structure-workspace"
+        ),
+    }
+
+
+def summarize_casa_repeatability(
+    plan: dict[str, Any],
+    measured_calls: list[dict[str, Any]],
+    comparisons: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Derive the repeatability envelope from the exact comparison sequence."""
+
+    baseline = measured_calls[0]
+    targets = measured_calls[1:] or [baseline]
     failed = next(
         (
             comparison
@@ -1715,6 +2009,84 @@ def compare_casa_repeatability(
         ),
         "comparisons": comparisons,
     }
+
+
+def recover_casa_repeatability(
+    plan: dict[str, Any], measured_calls: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Rebind already-written comparator artifacts without rerunning CASA Python."""
+
+    comparison_root = pathlib.Path(plan["artifacts"]["comparison_root"])
+    baseline = measured_calls[0]
+    targets = measured_calls[1:] or [baseline]
+    comparisons: list[dict[str, Any]] = []
+    for target in targets:
+        target_name = str(target["name"])
+        artifact_prefix = comparison_root / f"casa-{target_name}"
+        input_path = artifact_prefix.with_suffix(".comparison-input.json")
+        output_path = artifact_prefix.with_suffix(".comparison.json")
+        comparison_log_path = artifact_prefix.with_suffix(".comparison.log")
+        for label, path in (
+            ("input", input_path),
+            ("output", output_path),
+            ("log", comparison_log_path),
+        ):
+            if not path.is_file() or path.is_symlink():
+                raise ProtocolError(
+                    f"recovered CASA comparison {target_name} {label} is missing"
+                )
+        try:
+            request = json.loads(input_path.read_text(encoding="utf-8"))
+            raw_output = json.loads(output_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ProtocolError(
+                f"cannot load recovered CASA comparison {target_name}: {error}"
+            ) from error
+        expected_request = normalize_comparison_request(
+            casa_repeatability_comparison_request(plan, baseline, target)
+        )
+        if request != expected_request:
+            raise ProtocolError(
+                f"recovered CASA comparison {target_name} request differs from plan"
+            )
+        try:
+            validate_comparison_output(raw_output, request)
+        except ValueError as error:
+            raise ProtocolError(
+                f"recovered CASA comparison {target_name} is invalid: {error}"
+            ) from error
+        comparison = apply_tolerance_contract(copy.deepcopy(raw_output), request)
+        if comparison.get("status") != "completed":
+            raise ProtocolError(
+                f"recovered CASA comparison {target_name} status is "
+                f"{comparison.get('status')}"
+            )
+        structure_workspace = pathlib.Path(request["structure_workspace_dir"])
+        if request["mode"] == "full" and structure_workspace.exists():
+            raise ProtocolError(
+                f"recovered accepted comparison retained workspace: "
+                f"{structure_workspace}"
+            )
+        comparison.update(
+            {
+                "input": str(input_path),
+                "input_sha256": sha256_file(input_path),
+                "output": str(output_path),
+                "output_sha256": sha256_file(output_path),
+                "log": str(comparison_log_path),
+                "log_sha256": sha256_file(comparison_log_path),
+                "panel_dir": request["panel_dir"],
+                "left_call": str(baseline["name"]),
+                "right_call": target_name,
+                "comparison_kind": (
+                    "single_call_product_contract"
+                    if target_name == str(baseline["name"])
+                    else "repeatability"
+                ),
+            }
+        )
+        comparisons.append(comparison)
+    return summarize_casa_repeatability(plan, measured_calls, comparisons)
 
 
 def protocol_failure_reason(record: dict[str, Any]) -> str:

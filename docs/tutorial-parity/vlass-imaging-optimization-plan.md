@@ -29,9 +29,18 @@ and
 `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T035810Z-vlass-fragment-smoke-warm-a3dd3526.json`
 (`c8deeef01d44c5365c91264590fee15b81c467606a9c5128ab5c011c945beace`);
 all earlier smoke generations remain historical only. The exact 12,150-pixel
-fiducials remain incomplete after the recorded 32 GiB capacity stop. Wave #446
-therefore remains open and the implementation PR remains draft; no full-row
-correctness or performance gate is closed.
+single-field cold dirty fiducial then completed at full geometry with no 8,192-
+pixel fallback: CASA `tclean` took 1,276.157 s and the complete protocol took
+1,316.767 s. Peak RSS was 13,542,998,016 bytes, process I/O was 83,842,760,704
+bytes read plus 63,605,723,136 bytes written, and externally sampled swap
+traffic was 52,594,638,848 bytes out plus 29,456,121,856 bytes in. The host
+remained responsive and CASA continued through visible phases, so the swapping
+was substantial but bounded under the explicitly approved policy. The complete
+strict receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T051546Z-vlass-fragment-single-field-cold-164bd8e1.json`
+(`e91ee5af3a5a28b90c2bd6a77c43fd870ab8d590534e4e67dc351f4e54e7b0b1`).
+Wave #446 therefore remains open for single-field warm repeatability and the
+all-fields cold/warm fiducials, and the implementation PR remains draft.
 
 ## Outcome
 
@@ -269,8 +278,17 @@ Measurement rules:
 - record peak RSS, memory pressure/swap change, bytes read/written, CF-cache
   size, worker plan, grid residency, CPU/GPU utilization, and fallback reasons;
   and
-- final runs must finish without OOM, sustained swap growth, or opaque periods
-  longer than three minutes without stage/pass progress.
+- final runs must finish without OOM or genuinely untenable sustained
+  thrashing. Noticeable finite swapping is allowed while the host remains
+  operational and CASA makes meaningful stage/pass progress; stop for an
+  effectively unusable host, prolonged swap-dominated execution with negligible
+  progress, credible stability/storage risk, or opaque periods longer than
+  three minutes without stage/pass progress.
+
+The exact 12,150-pixel geometry is the active comparison geometry. The
+explicitly approved 8,192-pixel fallback may be used only after recording one
+of those untenable conditions; it must preserve the field/SPW selection, cell,
+AWProject/POINTING/MT-MFS science semantics, and matched CASA/casa-rs geometry.
 
 An explicit serial CPU casa-rs baseline remains in every evidence bundle even
 when `auto`, multi-worker CPU, or Metal is faster. The final user-facing `auto`

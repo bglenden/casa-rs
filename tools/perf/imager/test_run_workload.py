@@ -148,6 +148,50 @@ class CliExitSemanticsTests(unittest.TestCase):
             self.assertEqual(expected_exit, receipt["exit_code"])
 
 
+class CompletedRecipeReceiptRecoveryTests(unittest.TestCase):
+    def test_recovery_publishes_bound_result_to_original_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            partial = root / "run.partial"
+            partial.mkdir()
+            receipt_path = root / "run.json"
+            failed = {"artifacts": {"bundle": {"partial_root": str(partial)}}}
+            recovered = {
+                "status": "completed",
+                "exit_code": 1,
+                "results": {},
+            }
+            with (
+                mock.patch.object(run_workload, "load_run_result", return_value=failed),
+                mock.patch.object(
+                    run_workload.casa_tclean_workflow,
+                    "recover_completed_recipe_run",
+                    return_value=recovered,
+                ) as recover,
+                mock.patch.object(
+                    run_workload.casa_tclean_workflow,
+                    "benchmark_log_evidence",
+                    return_value={
+                        "benchmark_log": "bound",
+                        "benchmark_log_sha256": "0" * 64,
+                    },
+                ),
+                mock.patch.object(
+                    run_workload.casa_tclean_workflow,
+                    "finalize_bundle_result",
+                    side_effect=lambda value: value,
+                ),
+                mock.patch.object(run_workload, "validate_run_result"),
+                mock.patch.object(run_workload, "atomic_write_json") as write,
+                mock.patch("builtins.print"),
+            ):
+                run_workload.recover_recipe_receipt(receipt_path)
+
+            recover.assert_called_once()
+            write.assert_called_once_with(receipt_path, recovered)
+            self.assertEqual(0, recovered["exit_code"])
+
+
 class StageBreakdownTests(unittest.TestCase):
     def test_parse_log_marks_missing_timing_sections_without_claiming_runs(
         self,
