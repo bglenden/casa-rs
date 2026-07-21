@@ -300,9 +300,29 @@ Its integrity receipt binds one call, all 18 products, one full-array
 self-contract comparison, 20 panels, and the external CF cache; structured
 difference is `good` and panel review is `ready`.
 
-Wave #446 stays open and its implementation PR stays draft until the
-single-field warm repeatability and all-fields cold/warm fiducials also satisfy
-acceptance.
+The exact 12,150 by 12,150 connected 63-field cold dirty fiducial also
+completed. `tclean` took 8,183.264 s and the complete protocol took 8,225.322
+s. Peak RSS was 16,742,760,448 bytes; the process read 91,283,177,472 bytes and
+wrote 64,626,225,152 bytes. Host telemetry recorded a 35% minimum free-memory
+level, zero throttled pages, 48,947,691,520 bytes swap-out, and 31,465,897,984
+bytes swap-in. The strict complete receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T071009Z-vlass-fragment-all-fields-cold-3d3179ae.json`
+(`f424a33d8b228a56b552cfd793b4410e9fbca3fdb8af9a3fc47ea9d6957b415e`).
+
+The all-fields warmup completed in 9,011.462 s before the schedule was
+operator-interrupted to resume casa-rs work. Its typed partial receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T093618Z-vlass-fragment-all-fields-f80f9a39.json`
+(`70b33ca592a71139c8f85adf99e8d4249a8852d58d18b9e3adf5550f95eb7d4f`).
+Brian explicitly approved deferring additional CASA runs solely for statistical
+precision. Use 8,183.264 s as the conservative development baseline and
+818.326 s as the initial 10x casa-rs target. Do not repeat CASA unless its
+parameters/data/geometry/products change, or casa-rs is close enough to the
+10x boundary that CASA variance could change pass/fail. Full geometry is
+feasible and the 8,192-pixel fallback is not active.
+
+Wave #446 stays open and its implementation PR stays draft while the frozen
+CASA products are integrated into serial casa-rs correctness evidence; no
+additional CASA timing repetition is required for current development.
 
 ### Production parameter and UI contract
 

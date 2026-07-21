@@ -39,8 +39,36 @@ was substantial but bounded under the explicitly approved policy. The complete
 strict receipt is
 `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T051546Z-vlass-fragment-single-field-cold-164bd8e1.json`
 (`e91ee5af3a5a28b90c2bd6a77c43fd870ab8d590534e4e67dc351f4e54e7b0b1`).
-Wave #446 therefore remains open for single-field warm repeatability and the
-all-fields cold/warm fiducials, and the implementation PR remains draft.
+At that checkpoint, Wave #446 remained open for single-field warm repeatability
+and the all-fields cold/warm fiducials. The later full-size evidence and Brian's
+explicit schedule redirection below supersede that remaining repetition plan;
+the implementation PR remains draft for the casa-rs acceptance work.
+
+The full-size all-fields cold dirty fiducial subsequently completed at the same
+12,150 by 12,150 geometry. CASA `tclean` took 8,183.264 s and the complete
+protocol took 8,225.322 s; peak RSS was 16,742,760,448 bytes and bound host
+telemetry recorded a 35% minimum free-memory level, zero throttled pages,
+48,947,691,520 bytes swap-out, and 31,465,897,984 bytes swap-in. The strict
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T071009Z-vlass-fragment-all-fields-cold-3d3179ae.json`
+(`f424a33d8b228a56b552cfd793b4410e9fbca3fdb8af9a3fc47ea9d6957b415e`).
+It binds all 18 products, one full-array comparison, 20 panels, and the
+published CF cache. The full-size warmup then completed in 9,011.462 s before
+the measured schedule was operator-interrupted.
+
+Brian explicitly redirected the wave on 2026-07-21: repeated CASA timing is
+deferred solely for statistical precision so development resumes on casa-rs.
+The conservative development baseline is 8,183.264 s and the corresponding
+initial 10x casa-rs target is 818.326 s. The completed 12,150-pixel CASA
+products remain the frozen correctness reference; the 8,192-pixel fallback is
+not active. Revisit a multi-run CASA median only if CASA parameters, data
+selection, geometry, or required products change, or if casa-rs approaches the
+final 10x boundary closely enough that CASA variance could change pass/fail.
+The interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T093618Z-vlass-fragment-all-fields-f80f9a39.json`
+(`70b33ca592a71139c8f85adf99e8d4249a8852d58d18b9e3adf5550f95eb7d4f`);
+it retains the completed warmup and partial measured-001 request/log, and no
+measured-002/003 call was launched.
 
 ## Outcome
 
@@ -272,6 +300,9 @@ Measurement rules:
 - at least three counterbalanced warm runs after one unmeasured warm-up, unless
   a final run exceeds 60 minutes, in which case record the approved bounded
   schedule explicitly;
+- for current development, Brian approved the bounded all-fields schedule
+  recorded above: use 8,183.264 s as the conservative baseline and do not spend
+  further hours on CASA repetitions solely to refine statistical precision;
 - preserve CASA products and timing once parameters are frozen; do not rerun
   CASA merely because casa-rs changes;
 - report total wall time first, then stage timings;
@@ -285,10 +316,10 @@ Measurement rules:
   progress, credible stability/storage risk, or opaque periods longer than
   three minutes without stage/pass progress.
 
-The exact 12,150-pixel geometry is the active comparison geometry. The
-explicitly approved 8,192-pixel fallback may be used only after recording one
-of those untenable conditions; it must preserve the field/SPW selection, cell,
-AWProject/POINTING/MT-MFS science semantics, and matched CASA/casa-rs geometry.
+The exact 12,150-pixel geometry is the active comparison geometry. It completed
+successfully for both frozen selections with tolerable swapping, so the
+8,192-pixel fallback is not active. Any future geometry change is a scope
+change requiring new matched CASA products and timing.
 
 An explicit serial CPU casa-rs baseline remains in every evidence bundle even
 when `auto`, multi-worker CPU, or Metal is faster. The final user-facing `auto`

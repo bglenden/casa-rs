@@ -310,6 +310,49 @@ result, logs, products, panels, and cache to the frozen plan, recorded
 full-bundle integrity validator before atomic promotion. No timing was
 re-measured or synthesized.
 
+### Current exact full-size all-fields evidence
+
+The exact 12,150 by 12,150 connected 63-field cold dirty fiducial completed on
+2026-07-21 without the authorized 8,192-pixel fallback. `tclean` took
+8,183.264 s and the checked protocol took 8,225.322 s. The process recorded
+16,742,760,448 bytes peak RSS, 91,283,177,472 bytes read, 64,626,225,152 bytes
+written, 8,988,500,714 logical product bytes, and a 23,166,034,560-byte CF
+cache with 14,336 files. Bound five-second host telemetry observed a minimum
+35% free memory, zero throttled pages, 48,947,691,520 bytes swap-out,
+31,465,897,984 bytes swap-in, and a maximum combined swap rate of
+681,609,133 bytes/s. CASA continued through both full SPW/POINTING traversals,
+the host remained operational, and memory recovered after the call. Full
+geometry is therefore feasible; the 8,192-pixel fallback is not active.
+
+The strict complete receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T071009Z-vlass-fragment-all-fields-cold-3d3179ae.json`
+(`f424a33d8b228a56b552cfd793b4410e9fbca3fdb8af9a3fc47ea9d6957b415e`).
+It passes bundle integrity for one call, all 18 CASA products, one full-array
+self-contract comparison, 20 panels, and the external CF cache. Structured
+difference is `good` and panel review is `ready`.
+
+A subsequent warm schedule completed its unmeasured warmup in 9,011.462 s,
+with 12,238,503,936 bytes peak RSS, 105,544,388,608 bytes read, and
+38,139,731,968 bytes written. Brian redirected the wave on 2026-07-21 before
+the first measured warm call completed: repeated CASA timing was consuming
+development time before casa-rs could run the workload. The typed interrupted
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T093618Z-vlass-fragment-all-fields-f80f9a39.json`
+(`70b33ca592a71139c8f85adf99e8d4249a8852d58d18b9e3adf5550f95eb7d4f`).
+It records `operator_interrupt`; the completed warmup result is retained, the
+partial measured-001 request and log are retained without a completed result,
+and measured-002/003 were never launched.
+
+Brian explicitly approved deferring further CASA repetitions solely for
+statistical precision. The conservative development baseline is the completed
+all-fields cold `tclean` time, 8,183.264 s, and the corresponding initial 10x
+casa-rs target is 818.326 s. The completed full-size CASA products are the
+frozen correctness reference. Revisit a multi-run CASA median only if CASA
+parameters, data selection, geometry, or required products change, or if
+casa-rs approaches the final 10x boundary closely enough that CASA variance
+could change pass/fail. This schedule change does not defer any casa-rs
+capability, correctness, UI, or performance work.
+
 ### Current exact full-array smoke evidence
 
 The schema-v4/schema-v3 cold smoke completed at 03:57 UTC on 2026-07-21 with
@@ -342,11 +385,13 @@ engineering evidence only and do not satisfy the current Wave #446 smoke
 acceptance contract. The current canonical receipts above replace them for
 smoke acceptance.
 
-The exact single-field cold dirty fiducial is now complete at full geometry.
-Wave #446 and its implementation PR remain open/draft because the single-field
-warm repeatability run and the required all-fields cold/warm fiducials are not
-yet complete; neither the historical capacity-stop partial nor the smokes close
-those remaining checks.
+The exact single-field and all-fields cold dirty fiducials are complete at full
+geometry, and the all-fields warmup is retained. The approved precision-only
+repetition deferral above replaces the remaining CASA timing schedule for
+development. Wave #446 and its implementation PR remain open/draft while the
+frozen correctness products and receipts are integrated into the required
+casa-rs serial-parity evidence; neither interrupted partial closes a
+correctness acceptance check by itself.
 
 ## Verification Plan
 
