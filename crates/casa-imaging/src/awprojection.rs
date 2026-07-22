@@ -1596,9 +1596,19 @@ mod tests {
         CoordinateSystem, LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType,
     };
     use casa_types::{RecordField, ScalarValue, Value, measures::frequency::FrequencyRef};
+    use ndarray::Array2;
+    use num_complex::Complex32;
     use tempfile::TempDir;
 
     use super::*;
+    use crate::{
+        AwParallelHandVisibilityBatch, AwProjectControls, AwProjectGridderConfig, CleanConfig,
+        CompatibilityMode, DirtyProductFftPolicy, GridderMode, GroupedVisibilityMetadata,
+        GroupedVisibilityMetadataBatch, ImageGeometry, ImagingExecutionPlan, ImagingResolvedPlan,
+        MosaicGridderConfig, MosaicMtmfsVisibilityBlock, MtmfsRequest, PlaneStokes,
+        PrimaryBeamModel, VisibilityBatch, VisibilitySampleRange, WTermMode, WeightDensityMode,
+        WeightingMode, run_mosaic_mtmfs_from_single_plane_stream,
+    };
 
     #[test]
     fn first_complex_plane_consumes_singleton_axes_without_copying_pixels() {
@@ -1893,6 +1903,228 @@ mod tests {
                 hits: 2,
                 evictions: 1,
             }
+        );
+    }
+
+    #[test]
+    fn synthetic_cache_runs_pointing_aware_awproject_mtmfs_products_end_to_end() {
+        let temp = TempDir::new().unwrap();
+        let frequencies_hz = [1.35e9, 1.45e9];
+        let w_values_lambda = [0.0, 2.0];
+        for (frequency_index, frequency_hz) in frequencies_hz.into_iter().enumerate() {
+            for (w_index, w_value_lambda) in w_values_lambda.into_iter().enumerate() {
+                for (mueller_index, mueller_element) in [0, 15].into_iter().enumerate() {
+                    for weight in [false, true] {
+                        let family = if weight { "WTCFS" } else { "CFS" };
+                        write_test_cell_with_mueller(
+                            temp.path(),
+                            &format!(
+                                "{family}_0_0_CF_{frequency_index}_{w_index}_{mueller_index}.im"
+                            ),
+                            frequency_hz,
+                            w_value_lambda,
+                            mueller_element,
+                            weight,
+                        );
+                    }
+                }
+            }
+        }
+
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let visibility = VisibilityBatch {
+            u_lambda: vec![-95.0, -70.0, -35.0, 22.0, 55.0, 105.0],
+            v_lambda: vec![-35.0, 40.0, -80.0, 75.0, -25.0, 50.0],
+            w_lambda: vec![-2.0, 0.5, 2.0, -1.0, 1.5, -0.5],
+            weight: vec![1.0; 6],
+            sumwt_factor: vec![1.0; 6],
+            gridable: vec![true; 6],
+            visibility: vec![Complex32::new(1.0, 0.0); 6],
+        };
+        let parallel_hands = AwParallelHandVisibilityBatch {
+            first_visibility: vec![
+                Complex32::new(1.0, 0.10),
+                Complex32::new(0.9, -0.05),
+                Complex32::new(1.1, 0.02),
+                Complex32::new(0.8, -0.08),
+                Complex32::new(1.2, 0.04),
+                Complex32::new(0.7, -0.03),
+            ],
+            second_visibility: vec![
+                Complex32::new(0.8, -0.04),
+                Complex32::new(1.0, 0.03),
+                Complex32::new(0.7, -0.02),
+                Complex32::new(1.1, 0.06),
+                Complex32::new(0.9, -0.01),
+                Complex32::new(1.2, 0.05),
+            ],
+        };
+        let primary_beam_model = PrimaryBeamModel::EvlaLBandCommon;
+        let grouped_metadata = GroupedVisibilityMetadataBatch {
+            sample_count: visibility.len(),
+            groups: vec![
+                GroupedVisibilityMetadata {
+                    beam_frequency_hz: frequencies_hz[0],
+                    primary_beam_model,
+                    pointing_direction_rad: [0.0, 0.0],
+                    sample_ranges: vec![VisibilitySampleRange { start: 0, end: 3 }],
+                },
+                GroupedVisibilityMetadata {
+                    beam_frequency_hz: frequencies_hz[1],
+                    primary_beam_model,
+                    pointing_direction_rad: [1.5e-4, -1.0e-4],
+                    sample_ranges: vec![VisibilitySampleRange { start: 3, end: 6 }],
+                },
+            ],
+        };
+        let mut controls = AwProjectControls::casa_defaults(temp.path().to_path_buf());
+        controls.w_plane_count = Some(w_values_lambda.len());
+        controls.use_pointing = true;
+        let one_cell_bytes = (16 * 16 + 32 * 32) * std::mem::size_of::<Complex32>();
+        controls.cf_resident_bytes = 4 * one_cell_bytes;
+        let request = MtmfsRequest {
+            geometry,
+            visibility_batches: Vec::new(),
+            sample_frequency_batches_hz: Vec::new(),
+            gridder_mode: GridderMode::AwProject(AwProjectGridderConfig {
+                controls,
+                mosaic: MosaicGridderConfig {
+                    phase_center_direction_rad: [0.0, 0.0],
+                    primary_beam_model,
+                    pb_limit: 0.1,
+                    metadata_batches: Vec::new(),
+                    grouped_metadata_batches: vec![grouped_metadata.clone()],
+                },
+            }),
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [frequencies_hz[0], frequencies_hz[1]],
+            nterms: 2,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            clean: CleanConfig {
+                niter: 0,
+                ..CleanConfig::default()
+            },
+            clean_mask: Some(Array2::from_elem((64, 64), true)),
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let run = |request| {
+            run_mosaic_mtmfs_from_single_plane_stream(
+                request,
+                ImagingExecutionPlan::new(
+                    DirtyProductFftPolicy::correctness_first(),
+                    ImagingResolvedPlan::default(),
+                ),
+                WeightDensityMode::Combined,
+                |_, consumer| {
+                    consumer(MosaicMtmfsVisibilityBlock {
+                        visibility: visibility.clone(),
+                        aw_parallel_hands: Some(parallel_hands.clone()),
+                        density: None,
+                        sample_frequencies_hz: vec![
+                            frequencies_hz[0],
+                            frequencies_hz[0],
+                            frequencies_hz[0],
+                            frequencies_hz[1],
+                            frequencies_hz[1],
+                            frequencies_hz[1],
+                        ],
+                        gridder_metadata: grouped_metadata.clone(),
+                    })
+                },
+            )
+        };
+        let result = run(request.clone()).unwrap();
+
+        assert_eq!(result.psf_terms.len(), 3);
+        assert_eq!(result.residual_terms.len(), 2);
+        assert_eq!(result.model_terms.len(), 2);
+        assert_eq!(result.image_terms.len(), 2);
+        assert_eq!(result.sumwt_terms.len(), 3);
+        assert_eq!(result.weight_terms.len(), 3);
+        assert!(result.alpha.is_some());
+        assert!(result.alpha_error.is_some());
+        assert!(result.alpha_mask.is_some());
+        assert!(
+            result
+                .weight_terms
+                .iter()
+                .flatten()
+                .any(|value| *value > 0.0)
+        );
+        assert!(
+            result
+                .residual_terms
+                .iter()
+                .flatten()
+                .any(|value| *value != 0.0)
+        );
+
+        let diagnostics = result.awproject.expect("AWProject diagnostics");
+        assert!(diagnostics.plan_key.a_term);
+        assert!(diagnostics.plan_key.wb_awp);
+        assert!(diagnostics.plan_key.conjugate_beams);
+        assert!(diagnostics.plan_key.use_pointing);
+        assert_eq!(diagnostics.plan_key.w_plane_count, 2);
+        assert_eq!(diagnostics.samples.attempted_samples, 6);
+        assert_eq!(diagnostics.samples.accepted_samples, 6);
+        assert_eq!(diagnostics.samples.rejected_not_gridable, 0);
+        assert_eq!(diagnostics.samples.rejected_invalid_input, 0);
+        assert!(diagnostics.resident.loads > 0);
+        assert!(diagnostics.resident.hits > 0);
+        assert!(diagnostics.resident.evictions > 0);
+        assert!(diagnostics.resident.resident_bytes <= diagnostics.resident_budget_bytes);
+
+        let mut clean_request = request;
+        clean_request.clean.niter = 2;
+        clean_request.clean.minor_cycle_length = 1;
+        let clean_result = run(clean_request.clone()).unwrap();
+        let repeated_clean_result = run(clean_request).unwrap();
+        assert_eq!(clean_result.psf_terms, repeated_clean_result.psf_terms);
+        assert_eq!(
+            clean_result.residual_terms,
+            repeated_clean_result.residual_terms
+        );
+        assert_eq!(clean_result.model_terms, repeated_clean_result.model_terms);
+        assert_eq!(clean_result.image_terms, repeated_clean_result.image_terms);
+        assert_eq!(clean_result.sumwt_terms, repeated_clean_result.sumwt_terms);
+        assert_eq!(
+            clean_result.weight_terms,
+            repeated_clean_result.weight_terms
+        );
+        assert_eq!(clean_result.alpha, repeated_clean_result.alpha);
+        assert_eq!(clean_result.alpha_error, repeated_clean_result.alpha_error);
+        assert_eq!(clean_result.alpha_mask, repeated_clean_result.alpha_mask);
+        assert_eq!(clean_result.psf_terms.len(), 3);
+        assert_eq!(clean_result.residual_terms.len(), 2);
+        assert_eq!(clean_result.model_terms.len(), 2);
+        assert_eq!(clean_result.image_terms.len(), 2);
+        assert_eq!(clean_result.sumwt_terms.len(), 3);
+        assert_eq!(clean_result.weight_terms.len(), 3);
+        assert!(clean_result.alpha.is_some());
+        assert!(clean_result.alpha_error.is_some());
+        assert!(clean_result.alpha_mask.is_some());
+        assert!(
+            clean_result
+                .model_terms
+                .iter()
+                .flatten()
+                .any(|value| *value != 0.0)
+        );
+        assert!(clean_result.diagnostics.minor_iterations > 0);
+        let clean_diagnostics = clean_result.awproject.expect("clean AWProject diagnostics");
+        assert_eq!(clean_diagnostics.samples.attempted_samples, 6);
+        assert_eq!(clean_diagnostics.samples.accepted_samples, 6);
+        assert!(clean_diagnostics.resident.hits > 0);
+        assert!(
+            clean_diagnostics.resident.resident_bytes <= clean_diagnostics.resident_budget_bytes
         );
     }
 
