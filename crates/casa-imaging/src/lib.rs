@@ -6946,6 +6946,7 @@ struct AwProjectMetalGridStats {
 }
 
 impl AwProjectMetalGridStats {
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn add_assign(&mut self, other: Self) {
         self.calls += other.calls;
         self.samples += other.samples;
@@ -7040,6 +7041,7 @@ fn copy_awproject_metal_centered_f64_planes(
         .collect())
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn split_mosaic_mtmfs_host_planes(
     mut planes: Vec<Array2<Complex64>>,
     psf_term_count: usize,
