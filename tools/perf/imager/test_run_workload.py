@@ -1101,6 +1101,51 @@ real 1.145408
             self.assertTrue(Path(request["structure_workspace_dir"]).is_absolute())
             self.assertEqual(str(root / "comparisons" / "panels"), result["panel_dir"])
 
+    def test_generic_comparison_collapses_operational_failure_to_closed_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            plan = {
+                "artifacts": {"comparison_root": str(root / "comparisons")},
+                "products": {
+                    "rust_prefix": str(root / "rust"),
+                    "casa_prefix": str(root / "casa"),
+                },
+                "environment": {
+                    "executables": {"casa_python": {"path": sys.executable}}
+                },
+                "comparison": {
+                    "products": [".image"],
+                    "max_elements_per_product": 100,
+                    "mode": "full",
+                    "full_chunk_elements": 50,
+                    "require_exact_product_inventory": True,
+                    "require_metadata_parity": True,
+                    "source_regions": [],
+                    "tolerances": {"contract_version": 1, "default": {}},
+                },
+            }
+            failure = {
+                "status": "failed_execution",
+                "reason": "missing comparator dependency",
+                "return_code": 1,
+                "products": {},
+                "input": str(root / "request.json"),
+            }
+
+            with mock.patch.object(
+                run_workload, "compare_image_products", return_value=failure
+            ):
+                result = run_workload.compare_products(plan, {}, root / "run.log")
+
+            self.assertEqual(
+                {
+                    "status": "failed_execution",
+                    "reason": "missing comparator dependency",
+                    "products": {},
+                },
+                result,
+            )
+
     def test_vlass_recipe_plan_preserves_real_aw_and_reports_rust_unavailable(
         self,
     ) -> None:

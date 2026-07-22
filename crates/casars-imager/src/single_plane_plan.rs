@@ -386,9 +386,15 @@ mod tests {
                 .reason
                 .starts_with("awproject-disjoint-taylor-plane-workers-")
         );
+        let metal_available = casa_imaging::standard_mfs_metal_device_available();
+        assert_eq!(plan.gpu_metal.eligible, metal_available);
         assert_eq!(
             plan.gpu_metal.reason,
-            "awproject-metal-kernel-not-implemented"
+            if metal_available {
+                "awproject-metal-cf-kernel"
+            } else {
+                "metal-device-unavailable"
+            }
         );
         assert_eq!(
             products(&plan),

@@ -2911,7 +2911,6 @@ def difference_basis_fit(
             "shape": [int(v) for v in reference.shape],
         }
     fit = StreamingLeastSquares(4)
-    diff_moments = StreamingMoments()
     for reference_values, diff_values, x_gradient, y_gradient in _gradient_fit_chunks(
         reference,
         diff,
@@ -2925,7 +2924,6 @@ def difference_basis_fit(
         basis[:, 2] = x_gradient
         basis[:, 3] = y_gradient
         fit.add(basis, diff_values)
-        diff_moments.add(diff_values)
     fit_pixels = fit.rows
     excluded_nonfinite_basis_pixels = masked_pixels - fit_pixels
     if fit_pixels < 8:
@@ -2952,7 +2950,11 @@ def difference_basis_fit(
         residual = diff_values - basis @ coefficients
         residual_sum_squares.add(float(np.sum(residual * residual)))
     residual_sum = residual_sum_squares.value()
-    total = diff_moments.sum_squared_deviations
+    # The schema-v4 validator binds this diagnostic to the uncentered
+    # difference energy reported by diff_rms. Keep the producer and validator
+    # on that same closed derivation rather than mixing centered variance with
+    # an uncentered RMS field.
+    total = fit.target_sum_squares.value()
     r2 = 1.0 - residual_sum / total if total > 0.0 and np.isfinite(total) else None
     return {
         "status": "computed",

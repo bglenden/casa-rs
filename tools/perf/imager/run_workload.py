@@ -3188,6 +3188,17 @@ def compare_products(
         artifact_prefix=log_path,
         cwd=REPO_ROOT,
     )
+    if comparison.get("status") in {
+        "unavailable",
+        "failed_execution",
+        "failed_validation",
+    }:
+        status = comparison.get("status")
+        return {
+            "status": "unavailable" if status == "unavailable" else "failed_execution",
+            "reason": str(comparison.get("reason") or status),
+            "products": {},
+        }
     comparison["panel_dir"] = str(panel_dir)
     comparison["source_regions"] = plan["comparison"].get("source_regions", [])
     comparison["tolerances"] = plan["comparison"].get("tolerances")

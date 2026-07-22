@@ -1783,6 +1783,19 @@ impl StandardGridder {
         image
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    pub(crate) fn aw_weight_image_from_grid(&self, raw: &Array2<Complex32>) -> Array2<f32> {
+        let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
+        for x in 0..self.geometry.nx() {
+            for y in 0..self.geometry.ny() {
+                let grid_x = self.image_blc[0] + x;
+                let grid_y = self.image_blc[1] + y;
+                image[(x, y)] = raw[(grid_x, grid_y)].norm();
+            }
+        }
+        image
+    }
+
     #[cfg(test)]
     pub(crate) fn density_cell_index(
         &self,
@@ -2076,6 +2089,13 @@ pub(crate) struct AwProjector<'a> {
     phase_gradient_rad_per_sample: [f64; 2],
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+pub(crate) struct AwProjectorPackedTaps {
+    pub(crate) values: Vec<Complex32>,
+    pub(crate) x_support: usize,
+    pub(crate) y_support: usize,
+}
+
 impl<'a> AwProjector<'a> {
     pub(crate) fn new(
         gridder: &StandardGridder,
@@ -2242,6 +2262,18 @@ impl<'a> AwProjector<'a> {
             value += tap.conj() * grid[(grid_x, grid_y)];
         });
         value / plan.normalization.conj()
+    }
+
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+    pub(crate) fn packed_taps(&self, plan: &AwProjectSamplePlan) -> AwProjectorPackedTaps {
+        let mut values =
+            Vec::with_capacity((2 * self.x_support + 1).saturating_mul(2 * self.y_support + 1));
+        self.for_each_grid_tap(plan, |_grid_x, _grid_y, tap| values.push(tap));
+        AwProjectorPackedTaps {
+            values,
+            x_support: self.x_support,
+            y_support: self.y_support,
+        }
     }
 
     fn for_each_grid_tap(

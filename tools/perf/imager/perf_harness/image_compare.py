@@ -2444,6 +2444,16 @@ def apply_tolerance_contract(
     contract = request.get("tolerances")
     if contract is None:
         return comparison
+    if comparison.get("status") in {
+        "unavailable",
+        "failed_execution",
+        "failed_validation",
+    }:
+        # No numerical evidence exists to evaluate. Preserve the operational
+        # failure classification so the run-result layer can publish its
+        # closed terminal summary instead of mislabeling it as a tolerance
+        # result.
+        return comparison
     comparison["tolerances"] = contract
     evaluation = evaluate_comparison_tolerances(comparison, contract)
     comparison["tolerance_evaluation"] = evaluation

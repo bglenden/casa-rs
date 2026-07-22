@@ -48,6 +48,7 @@ VLASS_WORKLOADS = {
     "vlass-fragment-smoke-warm.json",
 }
 VLASS_TURNAROUND_WORKLOAD = "vlass-awproject-turnaround.json"
+VLASS_TURNAROUND_METAL_WORKLOAD = "vlass-awproject-turnaround-metal.json"
 
 
 def explicit_aw_workload() -> dict[str, object]:
@@ -174,6 +175,26 @@ class SchemaTests(unittest.TestCase):
         )
         self.assertTrue(manifest["comparison"]["tolerances"]["require_full_array"])
 
+    def test_vlass_turnaround_metal_uses_compensated_f64_finish(self) -> None:
+        path = (
+            REPO_ROOT
+            / "tools/perf/imager/workloads"
+            / VLASS_TURNAROUND_METAL_WORKLOAD
+        )
+        manifest = load_workload_manifest(path)
+
+        self.assertIn("never final", manifest["description"])
+        self.assertEqual("0~3", manifest["imaging"]["spw"])
+        self.assertEqual("awproject", manifest["imaging"]["gridder"])
+        self.assertEqual("metal", manifest["imaging"]["standard_mfs_acceleration"])
+        self.assertEqual(1, manifest["imaging"]["standard_mfs_grid_threads"])
+        self.assertEqual("f64", manifest["imaging"]["imaging_fft_precision"])
+        self.assertEqual("rustfft", manifest["imaging"]["imaging_fft_backend"])
+        self.assertEqual(
+            "reduced_turnaround_only", manifest["run"]["evidence_role"]
+        )
+        self.assertTrue(manifest["comparison"]["tolerances"]["require_full_array"])
+
     def test_current_product_contract_accepts_bound_source_region_evidence(
         self,
     ) -> None:
@@ -230,6 +251,33 @@ class SchemaTests(unittest.TestCase):
                 malformed,
                 protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
                 source="malformed product",
+            )
+
+    def test_current_product_contract_accepts_missing_side_existence(self) -> None:
+        product = {
+            "status": "missing",
+            "left_path": "/tmp/rust.image.tt0",
+            "right_path": "/tmp/casa.image.tt0",
+            "left_exists": True,
+            "right_exists": False,
+            "rust_path": "/tmp/rust.image.tt0",
+            "casa_path": "/tmp/casa.image.tt0",
+            "rust_exists": True,
+            "casa_exists": False,
+        }
+
+        schema_contract._validate_comparison_product(
+            product,
+            protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
+            source="missing product",
+        )
+
+        product["right_exists"] = "false"
+        with self.assertRaisesRegex(ContractError, "right_exists must be boolean"):
+            schema_contract._validate_comparison_product(
+                product,
+                protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
+                source="malformed missing product",
             )
 
     def test_workload_rejects_unknown_and_unversioned_shapes(self) -> None:

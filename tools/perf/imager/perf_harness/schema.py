@@ -561,6 +561,8 @@ COMPARISON_REQUEST_BINDING_FIELDS = {
 }
 COMPARISON_PRODUCT_FIELDS = {
     "status",
+    "left_exists",
+    "right_exists",
     "rust_exists",
     "casa_exists",
     "rust_path",
@@ -2290,6 +2292,8 @@ def _validate_comparison_product(
         if key in product:
             _nonempty_string(product, key, source)
     for key in (
+        "left_exists",
+        "right_exists",
         "rust_exists",
         "casa_exists",
         "metadata_parity_required",

@@ -538,7 +538,17 @@ fn gpu_metal_eligibility(
         return BackendEligibility::ineligible("not-one-output-channel");
     }
     if input.projection == SinglePlaneProjectionPlan::AwProject {
-        return BackendEligibility::ineligible("awproject-metal-kernel-not-implemented");
+        if matches!(
+            input.acceleration,
+            SinglePlaneAccelerationPolicy::Cpu | SinglePlaneAccelerationPolicy::MultiCpu
+        ) {
+            return BackendEligibility::ineligible("awproject-policy-disabled-metal");
+        }
+        return if input.metal_device_available {
+            BackendEligibility::eligible("awproject-metal-cf-kernel")
+        } else {
+            BackendEligibility::ineligible("metal-device-unavailable")
+        };
     }
     if !(input.standard_mfs_eligible || input.mosaic_mfs_eligible) {
         return BackendEligibility::ineligible(shared_strategy_gap_reason(input));

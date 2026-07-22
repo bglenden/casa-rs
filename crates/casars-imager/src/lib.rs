@@ -35421,9 +35421,31 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         0
     };
     let direct_metal_scratch_candidate_bytes = if mosaic_full_grid {
+        let grid_allocation_bytes = if awproject_mtmfs {
+            // AWProject owns a Complex32 output and compensation pair plus
+            // two equally sized u32 fixed-point limbs while one packed CF
+            // batch is resident. The f64 topology estimate is exactly one
+            // output/compensation pair; double it for the two fixed limbs and
+            // conservatively bound packed taps by the admitted CF residency.
+            checked_imaging_sum(
+                [
+                    checked_imaging_product(
+                        [grid_bytes, 2],
+                        "AWProject Metal compensated and fixed grids",
+                    )?,
+                    config
+                        .aw_project
+                        .as_ref()
+                        .map_or(0, |controls| controls.cf_resident_bytes),
+                ],
+                "AWProject Metal grid and packed-CF scratch",
+            )?
+        } else {
+            grid_bytes
+        };
         checked_imaging_sum(
             [
-                grid_bytes,
+                grid_allocation_bytes,
                 checked_imaging_product(
                     [
                         sample_count,
@@ -53833,6 +53855,18 @@ mod tests {
         assert_eq!(plan.workload.grid_height, config.imsize);
         assert_eq!(plan.workload.grid_planes, 8);
         assert_eq!(plan.workload.worker_scratch_bytes, 0);
+        let resident_grid_bytes = config.imsize
+            * config.imsize
+            * plan.workload.grid_planes
+            * std::mem::size_of::<Complex64>();
+        let routed_sample_bytes = 64 * 1024 * std::mem::size_of::<StandardMfsRoutedGridSample>();
+        assert_eq!(
+            plan.workload.direct_metal_scratch_candidate_bytes,
+            resident_grid_bytes * 2
+                + config.aw_project.as_ref().unwrap().cf_resident_bytes
+                + routed_sample_bytes,
+            "AWProject Metal scratch must charge output/compensation, fixed limbs, packed CFs, and routed samples",
+        );
         assert_eq!(
             plan.allocation_bytes("AWProject CF pixels"),
             config.aw_project.as_ref().unwrap().cf_resident_bytes
@@ -65104,12 +65138,33 @@ deconvolver=mtmfs
         parallel.standard_mfs_grid_threads = Some("4".to_string());
         let parallel_summary = run_from_config(&parallel).unwrap();
         assert_eq!(parallel_summary.gridded_samples, summary.gridded_samples);
-        for suffix in expected_suffixes {
+        for suffix in &expected_suffixes {
             assert_f32_images_close(
                 format!("{}.{}", image_prefix.display(), suffix),
                 format!("{}.{}", parallel_prefix.display(), suffix),
                 1.0e-6,
             );
+        }
+
+        #[cfg(target_os = "macos")]
+        if casa_imaging::standard_mfs_metal_device_available() {
+            let metal_prefix = tmp.path().join("tiny_awproject_mtmfs_metal_image");
+            let mut metal = config.clone();
+            metal.imagename = metal_prefix.clone();
+            metal.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+            metal.standard_mfs_grid_threads = Some("1".to_string());
+            metal.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
+            metal.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
+            let metal_summary = run_from_config(&metal).unwrap();
+            assert_eq!(metal_summary.gridded_samples, summary.gridded_samples);
+            assert_eq!(metal_summary.minor_iterations, summary.minor_iterations);
+            for suffix in &expected_suffixes {
+                assert_f32_images_close(
+                    format!("{}.{}", image_prefix.display(), suffix),
+                    format!("{}.{}", metal_prefix.display(), suffix),
+                    1.0e-5,
+                );
+            }
         }
     }
 

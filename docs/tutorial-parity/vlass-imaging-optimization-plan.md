@@ -115,6 +115,48 @@ and measured 34.58 seconds. It retained 796 CF loads and the complete product
 contract; explicit grid, preparation, and read-ahead controls still override
 the automatic values.
 
+The next checkpoint adds a true AWProject Metal gridder. It packs each exact
+RR/LL imaging-and-weight CF quartet once per locality group, dispatches the
+eight MT-MFS PSF/residual/weight planes directly to shared Metal storage, and
+uses two signed `u32` atomic limbs per component with overlap-derived
+power-of-two fixed scales. The final high/low conversion uses IEEE-safe Metal
+math, retains a second Float32 compensation plane, and reads the compensated
+grids back into the existing f64 RustFFT finish. Explicit AWProject Metal with
+an f32 dirty-product FFT is rejected because it cannot preserve that
+compensation contract. The planner charges the output, compensation, fixed
+limbs, packed CF batch, and routed sample batch before admitting Metal.
+
+The reviewed non-fiducial configuration is
+`tools/perf/imager/workloads/vlass-awproject-turnaround-metal.json`. One warmup
+plus three measured full four-SPW runs took 22.238401, 22.255476, and
+22.238511 seconds (median 22.238511 seconds), with a 2,865,397,760-byte peak
+RSS in all three profile runs. This is 1.535x faster than the adopted
+four-worker CPU median and 5.415x faster than the preserved serial baseline.
+Each measured run accepted all 323,568 selected samples with no rejections;
+the Metal grid stage used 24 locality dispatches, and compensated readback of
+all eight planes took 16.6 to 19.0 ms in the measured sequence. The durable
+development log is
+`/private/tmp/casa-rs-vlass-metal-final-receipts/20260722T213940Z-vlass-awproject-turnaround-metal-76bebbc1.log`.
+
+A strict full-array comparison of the preserved four-SPW Metal products to
+the preserved f64 serial CPU products completed for all 18 products, passed
+the frozen tolerance evaluation, and received an overall `good` structure
+review. The worst RMS ratio was `2.1916123684739682e-7` and the worst
+peak-normalized absolute difference was `2.0733173011344975e-6`; the complete
+receipt is
+`/private/tmp/casa-rs-vlass-metal-vs-cpu-final2-receipts/20260722T214929Z-vlass-awproject-turnaround-metal-e08da7a5.json`.
+
+This does not make the reduced row CASA-correct. Comparing the same Metal
+products with the preserved CASA turnaround products retained the existing
+casa-rs/CASA residual gap: RMS ratios were `0.009622961759686686` for
+`.residual.tt0` and `0.004643503173129556` for `.residual.tt1`, with additional
+metadata and finite/mask-topology mismatches. That typed failed-comparison
+receipt is
+`/private/tmp/casa-rs-vlass-metal-final-comparison-receipts/20260722T214630Z-vlass-awproject-turnaround-metal-91e9c5f5.json`.
+Metal-vs-CPU parity and acceleration are therefore green development evidence;
+CASA correctness, the frozen 12,150-pixel four-row benchmark, and the 10x
+closeout remain explicitly incomplete.
+
 ## Outcome
 
 Make two imaging workloads derived from the archived VLASS test MeasurementSet
