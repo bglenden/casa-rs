@@ -467,7 +467,21 @@ fn cpu_multi_worker_eligibility(
         return BackendEligibility::ineligible("not-one-output-channel");
     }
     if input.projection == SinglePlaneProjectionPlan::AwProject {
-        return BackendEligibility::ineligible("awproject-currently-uses-one-grid-owner");
+        let workers = match input.acceleration {
+            SinglePlaneAccelerationPolicy::Cpu => 1,
+            SinglePlaneAccelerationPolicy::Auto
+            | SinglePlaneAccelerationPolicy::MultiCpu
+            | SinglePlaneAccelerationPolicy::Metal => input
+                .grid_threads_override
+                .unwrap_or(input.standard_auto_grid_threads),
+        };
+        return if workers > 1 {
+            BackendEligibility::eligible(format!(
+                "awproject-disjoint-taylor-plane-workers-{workers}"
+            ))
+        } else {
+            BackendEligibility::ineligible("awproject-resolved-one-plane-worker")
+        };
     }
     if input.standard_mfs_eligible || input.mosaic_mfs_eligible {
         let workers = match input.acceleration {

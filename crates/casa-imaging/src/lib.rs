@@ -5086,75 +5086,6 @@ impl MosaicMtmfsStreamGridStorage {
         }
         Ok(())
     }
-
-    fn grid_aw_psf(
-        &mut self,
-        order: usize,
-        projector: &AwProjector<'_>,
-        plan: &gridder::AwProjectSamplePlan,
-        value: Complex32,
-    ) -> Result<(), ImagingError> {
-        match self {
-            Self::HostF64(grids) => {
-                projector.grid_sample_planned_f64(
-                    &mut grids.psf_grids[order],
-                    plan,
-                    Complex64::new(f64::from(value.re), f64::from(value.im)),
-                );
-                Ok(())
-            }
-            #[cfg(all(target_os = "macos", not(coverage)))]
-            Self::MetalSharedF32 { .. } => Err(ImagingError::Unsupported(
-                "AWProject direct Metal gridding is not yet an eligible execution plan".to_string(),
-            )),
-        }
-    }
-
-    fn grid_aw_residual(
-        &mut self,
-        order: usize,
-        projector: &AwProjector<'_>,
-        plan: &gridder::AwProjectSamplePlan,
-        value: Complex32,
-    ) -> Result<(), ImagingError> {
-        match self {
-            Self::HostF64(grids) => {
-                projector.grid_sample_planned_f64(
-                    &mut grids.residual_grids[order],
-                    plan,
-                    Complex64::new(f64::from(value.re), f64::from(value.im)),
-                );
-                Ok(())
-            }
-            #[cfg(all(target_os = "macos", not(coverage)))]
-            Self::MetalSharedF32 { .. } => Err(ImagingError::Unsupported(
-                "AWProject direct Metal gridding is not yet an eligible execution plan".to_string(),
-            )),
-        }
-    }
-
-    fn grid_aw_weight(
-        &mut self,
-        order: usize,
-        projector: &AwProjector<'_>,
-        plan: &gridder::AwProjectSamplePlan,
-        value: f32,
-    ) -> Result<(), ImagingError> {
-        match self {
-            Self::HostF64(grids) => {
-                projector.grid_sample_planned_f64(
-                    &mut grids.weight_grids[order],
-                    plan,
-                    Complex64::new(f64::from(value), 0.0),
-                );
-                Ok(())
-            }
-            #[cfg(all(target_os = "macos", not(coverage)))]
-            Self::MetalSharedF32 { .. } => Err(ImagingError::Unsupported(
-                "AWProject direct Metal gridding is not yet an eligible execution plan".to_string(),
-            )),
-        }
-    }
 }
 
 struct MosaicMtmfsStreamGridAccumulation {
@@ -6748,6 +6679,7 @@ where
                         model_grids,
                         cache,
                         controls,
+                        requested_threads,
                         &mut accumulation,
                         &mut taylor_weights,
                     )?;
@@ -6779,6 +6711,244 @@ where
     Ok(accumulation)
 }
 
+type AwProjectStableCellKey = (u64, u64, i32, u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct AwProjectMtmfsLocalityKey {
+    first_imaging: AwProjectStableCellKey,
+    second_imaging: AwProjectStableCellKey,
+    first_weight: AwProjectStableCellKey,
+    second_weight: AwProjectStableCellKey,
+}
+
+struct AwProjectMtmfsLocalityGroup {
+    first_imaging: AwConvolutionFunctionKey,
+    second_imaging: AwConvolutionFunctionKey,
+    first_weight: AwConvolutionFunctionKey,
+    second_weight: AwConvolutionFunctionKey,
+    sample_indices: Vec<usize>,
+}
+
+#[derive(Clone, Copy)]
+struct AwProjectMtmfsPlannedSample {
+    first_imaging_plan: gridder::AwProjectSamplePlan,
+    second_imaging_plan: gridder::AwProjectSamplePlan,
+    first_psf_plan: gridder::AwProjectSamplePlan,
+    second_psf_plan: gridder::AwProjectSamplePlan,
+    frequency_hz: f64,
+    weight: f32,
+    first_residual: Complex32,
+    second_residual: Complex32,
+}
+
+enum AwProjectMtmfsPlaneTask<'a> {
+    Psf {
+        order: usize,
+        grid: &'a mut Array2<Complex64>,
+    },
+    Residual {
+        order: usize,
+        grid: &'a mut Array2<Complex64>,
+    },
+    Weight {
+        order: usize,
+        grid: &'a mut Array2<Complex64>,
+    },
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_awproject_mtmfs_plane_tasks(
+    tasks: Vec<AwProjectMtmfsPlaneTask<'_>>,
+    samples: &[AwProjectMtmfsPlannedSample],
+    reffreq_hz: f64,
+    first_imaging_projector: &AwProjector<'_>,
+    second_imaging_projector: &AwProjector<'_>,
+    first_psf_projector: &AwProjector<'_>,
+    second_psf_projector: &AwProjector<'_>,
+    first_weight_projector: &AwProjector<'_>,
+    second_weight_projector: &AwProjector<'_>,
+    first_weight_plan: &gridder::AwProjectSamplePlan,
+    second_weight_plan: &gridder::AwProjectSamplePlan,
+) {
+    for task in tasks {
+        match task {
+            AwProjectMtmfsPlaneTask::Psf { order, grid } => {
+                for sample in samples {
+                    let taylor_weight =
+                        mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
+                    let value = Complex64::new(f64::from(sample.weight * taylor_weight), 0.0);
+                    first_psf_projector.grid_sample_planned_f64(
+                        grid,
+                        &sample.first_psf_plan,
+                        value,
+                    );
+                    second_psf_projector.grid_sample_planned_f64(
+                        grid,
+                        &sample.second_psf_plan,
+                        value,
+                    );
+                }
+            }
+            AwProjectMtmfsPlaneTask::Residual { order, grid } => {
+                for sample in samples {
+                    let taylor_weight =
+                        mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
+                    let term_weight = sample.weight * taylor_weight;
+                    let first_value = sample.first_residual * term_weight;
+                    let second_value = sample.second_residual * term_weight;
+                    first_imaging_projector.grid_sample_planned_f64(
+                        grid,
+                        &sample.first_imaging_plan,
+                        Complex64::new(f64::from(first_value.re), f64::from(first_value.im)),
+                    );
+                    second_imaging_projector.grid_sample_planned_f64(
+                        grid,
+                        &sample.second_imaging_plan,
+                        Complex64::new(f64::from(second_value.re), f64::from(second_value.im)),
+                    );
+                }
+            }
+            AwProjectMtmfsPlaneTask::Weight { order, grid } => {
+                for sample in samples {
+                    let taylor_weight =
+                        mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
+                    let value = Complex64::new(f64::from(sample.weight * taylor_weight), 0.0);
+                    first_weight_projector.grid_sample_planned_f64(grid, first_weight_plan, value);
+                    second_weight_projector.grid_sample_planned_f64(
+                        grid,
+                        second_weight_plan,
+                        value,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn grid_awproject_mtmfs_planned_samples(
+    storage: &mut MosaicMtmfsStreamGridStorage,
+    samples: &[AwProjectMtmfsPlannedSample],
+    reffreq_hz: f64,
+    first_imaging_projector: &AwProjector<'_>,
+    second_imaging_projector: &AwProjector<'_>,
+    first_psf_projector: &AwProjector<'_>,
+    second_psf_projector: &AwProjector<'_>,
+    first_weight_projector: &AwProjector<'_>,
+    second_weight_projector: &AwProjector<'_>,
+    first_weight_plan: &gridder::AwProjectSamplePlan,
+    second_weight_plan: &gridder::AwProjectSamplePlan,
+    requested_threads: usize,
+) -> Result<(), ImagingError> {
+    let MosaicMtmfsStreamGridStorage::HostF64(grids) = storage else {
+        return Err(ImagingError::Unsupported(
+            "AWProject planned samples require host f64 grid ownership".to_string(),
+        ));
+    };
+    let MosaicMtmfsHostGrids {
+        psf_grids,
+        residual_grids,
+        weight_grids,
+    } = grids;
+    let mut tasks = Vec::<AwProjectMtmfsPlaneTask<'_>>::with_capacity(
+        psf_grids.len() + residual_grids.len() + weight_grids.len(),
+    );
+    tasks.extend(
+        psf_grids
+            .iter_mut()
+            .enumerate()
+            .map(|(order, grid)| AwProjectMtmfsPlaneTask::Psf { order, grid }),
+    );
+    tasks.extend(
+        residual_grids
+            .iter_mut()
+            .enumerate()
+            .map(|(order, grid)| AwProjectMtmfsPlaneTask::Residual { order, grid }),
+    );
+    tasks.extend(
+        weight_grids
+            .iter_mut()
+            .enumerate()
+            .map(|(order, grid)| AwProjectMtmfsPlaneTask::Weight { order, grid }),
+    );
+    let worker_count = requested_threads.max(1).min(tasks.len().max(1));
+    let mut worker_tasks = (0..worker_count)
+        .map(|_| Vec::<AwProjectMtmfsPlaneTask<'_>>::new())
+        .collect::<Vec<_>>();
+    for (index, task) in tasks.into_iter().enumerate() {
+        worker_tasks[index % worker_count].push(task);
+    }
+    let started = Instant::now();
+    if worker_count == 1 {
+        execute_awproject_mtmfs_plane_tasks(
+            worker_tasks.pop().expect("one AWProject plane worker"),
+            samples,
+            reffreq_hz,
+            first_imaging_projector,
+            second_imaging_projector,
+            first_psf_projector,
+            second_psf_projector,
+            first_weight_projector,
+            second_weight_projector,
+            first_weight_plan,
+            second_weight_plan,
+        );
+    } else {
+        thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(worker_count);
+            for tasks in worker_tasks {
+                handles.push(scope.spawn(move || {
+                    execute_awproject_mtmfs_plane_tasks(
+                        tasks,
+                        samples,
+                        reffreq_hz,
+                        first_imaging_projector,
+                        second_imaging_projector,
+                        first_psf_projector,
+                        second_psf_projector,
+                        first_weight_projector,
+                        second_weight_projector,
+                        first_weight_plan,
+                        second_weight_plan,
+                    );
+                }));
+            }
+            for handle in handles {
+                handle.join().map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "AWProject MT-MFS plane worker panicked".to_string(),
+                    )
+                })?;
+            }
+            Ok::<(), ImagingError>(())
+        })?;
+    }
+    if profile::standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "awproject_plane_parallel workers={} planes={} planned_samples={} elapsed_ms={:.3}",
+            worker_count,
+            psf_grids.len() + residual_grids.len() + weight_grids.len(),
+            samples.len(),
+            profile::millis(started.elapsed()),
+        );
+    }
+    Ok(())
+}
+
+fn mtmfs_taylor_weight_for_order(frequency_hz: f64, reffreq_hz: f64, order: usize) -> f32 {
+    let scaled = mtmfs_casa_taylor_x(frequency_hz, reffreq_hz);
+    (0..order).fold(1.0f32, |value, _| value * scaled)
+}
+
+fn awproject_stable_cell_key(key: AwConvolutionFunctionKey) -> AwProjectStableCellKey {
+    (
+        key.frequency_hz.to_bits(),
+        key.w_value_lambda.to_bits(),
+        key.mueller_element,
+        key.parallactic_angle_deg.to_bits(),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn accumulate_awproject_mtmfs_metadata_group(
     request: &MtmfsRequest,
@@ -6791,6 +6961,7 @@ fn accumulate_awproject_mtmfs_metadata_group(
     model_grids: Option<&[Array2<Complex32>]>,
     cache: &AwConvolutionFunctionResidentCache,
     controls: &AwProjectControls,
+    requested_threads: usize,
     accumulation: &mut MosaicMtmfsStreamGridAccumulation,
     taylor_weights: &mut Vec<f32>,
 ) -> Result<(), ImagingError> {
@@ -6810,6 +6981,15 @@ fn accumulate_awproject_mtmfs_metadata_group(
                 "validated AWProject cache has no parallactic-angle bin".to_string(),
             )
         })?;
+    // CASA CF cells are much larger than their convolution support. Visiting
+    // samples in raw MS order can therefore cycle a bounded resident cache
+    // through the same cells thousands of times. Build a compact per-block
+    // locality index (one usize per accepted sample) and process every exact
+    // RR/LL imaging/weight quartet together. This preserves bounded source
+    // streaming and deterministic accumulation while loading each useful CF
+    // quartet once per pointing group.
+    let mut locality_groups =
+        BTreeMap::<AwProjectMtmfsLocalityKey, AwProjectMtmfsLocalityGroup>::new();
     for range in &group.sample_ranges {
         if range.end > batch.len() || range.start > range.end {
             return Err(ImagingError::InvalidRequest(
@@ -6845,8 +7025,6 @@ fn accumulate_awproject_mtmfs_metadata_group(
                 continue;
             }
 
-            let u_lambda = batch.u_lambda[sample_index];
-            let v_lambda = batch.v_lambda[sample_index];
             let w_lambda = batch.w_lambda[sample_index];
             let first_key = cache
                 .cache()
@@ -6878,22 +7056,6 @@ fn accumulate_awproject_mtmfs_metadata_group(
                         "no LL AWProject CF cell for frequency {frequency_hz} Hz, W {w_lambda} lambda"
                     ))
                 })?;
-            // AWVisResampler selects the visibility-vector element from the
-            // physical Mueller element returned by the selected CF cell. For
-            // non-positive W, `select_key_for_sample` uses the conjugate
-            // Mueller row, so the RR/LL data hand must move with the kernel.
-            // Swapping only the kernel silently couples RR data to the LL
-            // aperture illumination (and vice versa).
-            let first_visibility = aw_stokes_i_visibility_for_mueller(
-                first_key.mueller_element,
-                direct_first_visibility,
-                direct_second_visibility,
-            )?;
-            let second_visibility = aw_stokes_i_visibility_for_mueller(
-                second_key.mueller_element,
-                direct_first_visibility,
-                direct_second_visibility,
-            )?;
             let first_zero_w_key = cache
                 .cache()
                 .select_key_for_sample(
@@ -6924,38 +7086,137 @@ fn accumulate_awproject_mtmfs_metadata_group(
                         "no W=0 LL AWProject weight CF cell for frequency {frequency_hz} Hz"
                     ))
                 })?;
-            let first_cell = cache.get(first_key)?;
-            let second_cell = cache.get(second_key)?;
-            let phase_gradient = mosaic_projector_phase_gradient_rad_per_sample(
-                request.geometry,
-                mosaic.phase_center_direction_rad,
-                group.pointing_direction_rad,
-                first_cell.metadata.imaging.sampling,
-            );
-            let first_imaging_projector = AwProjector::new(
-                gridder,
-                &first_cell.metadata.imaging,
-                &first_cell.imaging,
-                phase_gradient,
+            let locality_key = AwProjectMtmfsLocalityKey {
+                first_imaging: awproject_stable_cell_key(first_key),
+                second_imaging: awproject_stable_cell_key(second_key),
+                first_weight: awproject_stable_cell_key(first_zero_w_key),
+                second_weight: awproject_stable_cell_key(second_zero_w_key),
+            };
+            locality_groups
+                .entry(locality_key)
+                .or_insert_with(|| AwProjectMtmfsLocalityGroup {
+                    first_imaging: first_key,
+                    second_imaging: second_key,
+                    first_weight: first_zero_w_key,
+                    second_weight: second_zero_w_key,
+                    sample_indices: Vec::new(),
+                })
+                .sample_indices
+                .push(sample_index);
+        }
+    }
+
+    if profile::standard_mfs_profile_detail_enabled() {
+        let indexed_samples = locality_groups
+            .values()
+            .map(|group| group.sample_indices.len())
+            .sum::<usize>();
+        let largest_group = locality_groups
+            .values()
+            .map(|group| group.sample_indices.len())
+            .max()
+            .unwrap_or(0);
+        eprintln!(
+            "awproject_cf_locality groups={} indexed_samples={} largest_group={} index_bytes={} pointing_ra_rad={:.17e} pointing_dec_rad={:.17e}",
+            locality_groups.len(),
+            indexed_samples,
+            largest_group,
+            indexed_samples.saturating_mul(std::mem::size_of::<usize>()),
+            group.pointing_direction_rad[0],
+            group.pointing_direction_rad[1],
+        );
+    }
+
+    for locality_group in locality_groups.into_values() {
+        let first_key = locality_group.first_imaging;
+        let second_key = locality_group.second_imaging;
+        let first_cell = cache.get(first_key)?;
+        let second_cell = cache.get(second_key)?;
+        let first_zero_w_cell = cache.get(locality_group.first_weight)?;
+        let second_zero_w_cell = cache.get(locality_group.second_weight)?;
+        let phase_gradient = mosaic_projector_phase_gradient_rad_per_sample(
+            request.geometry,
+            mosaic.phase_center_direction_rad,
+            group.pointing_direction_rad,
+            first_cell.metadata.imaging.sampling,
+        );
+        let first_imaging_projector = AwProjector::new(
+            gridder,
+            &first_cell.metadata.imaging,
+            &first_cell.imaging,
+            phase_gradient,
+        )?;
+        let second_imaging_projector = AwProjector::new(
+            gridder,
+            &second_cell.metadata.imaging,
+            &second_cell.imaging,
+            phase_gradient,
+        )?;
+        let first_psf_projector = AwProjector::new(
+            gridder,
+            &first_cell.metadata.weight,
+            &first_cell.weight,
+            phase_gradient,
+        )?;
+        let second_psf_projector = AwProjector::new(
+            gridder,
+            &second_cell.metadata.weight,
+            &second_cell.weight,
+            phase_gradient,
+        )?;
+        let first_weight_projector = AwProjector::new(
+            gridder,
+            &first_zero_w_cell.metadata.weight,
+            &first_zero_w_cell.weight,
+            phase_gradient,
+        )?;
+        let second_weight_projector = AwProjector::new(
+            gridder,
+            &second_zero_w_cell.metadata.weight,
+            &second_zero_w_cell.weight,
+            phase_gradient,
+        )?;
+        let first_weight_plan = first_weight_projector
+            .plan_sample(0.0, 0.0, 0.0)
+            .ok_or_else(|| {
+                ImagingError::Normalization(
+                    "RR AWProject weight CF failed centered placement".to_string(),
+                )
+            })?;
+        let second_weight_plan = second_weight_projector
+            .plan_sample(0.0, 0.0, 0.0)
+            .ok_or_else(|| {
+                ImagingError::Normalization(
+                    "LL AWProject weight CF failed centered placement".to_string(),
+                )
+            })?;
+
+        let mut planned_samples =
+            Vec::<AwProjectMtmfsPlannedSample>::with_capacity(locality_group.sample_indices.len());
+        for sample_index in locality_group.sample_indices {
+            let frequency_hz = sample_frequencies_hz[sample_index];
+            let weight = batch.weight[sample_index];
+            let direct_first_visibility = parallel_hands.first_visibility[sample_index];
+            let direct_second_visibility = parallel_hands.second_visibility[sample_index];
+            // AWVisResampler selects the visibility-vector element from the
+            // physical Mueller element returned by the selected CF cell. For
+            // non-positive W, `select_key_for_sample` uses the conjugate
+            // Mueller row, so the RR/LL data hand must move with the kernel.
+            // Swapping only the kernel silently couples RR data to the LL
+            // aperture illumination (and vice versa).
+            let first_visibility = aw_stokes_i_visibility_for_mueller(
+                first_key.mueller_element,
+                direct_first_visibility,
+                direct_second_visibility,
             )?;
-            let second_imaging_projector = AwProjector::new(
-                gridder,
-                &second_cell.metadata.imaging,
-                &second_cell.imaging,
-                phase_gradient,
+            let second_visibility = aw_stokes_i_visibility_for_mueller(
+                second_key.mueller_element,
+                direct_first_visibility,
+                direct_second_visibility,
             )?;
-            let first_psf_projector = AwProjector::new(
-                gridder,
-                &first_cell.metadata.weight,
-                &first_cell.weight,
-                phase_gradient,
-            )?;
-            let second_psf_projector = AwProjector::new(
-                gridder,
-                &second_cell.metadata.weight,
-                &second_cell.weight,
-                phase_gradient,
-            )?;
+            let u_lambda = batch.u_lambda[sample_index];
+            let v_lambda = batch.v_lambda[sample_index];
+            let w_lambda = batch.w_lambda[sample_index];
             let first_imaging_plan =
                 match first_imaging_projector.plan_sample_detailed(u_lambda, v_lambda, w_lambda) {
                     Ok(plan) => plan,
@@ -6996,39 +7257,6 @@ fn accumulate_awproject_mtmfs_metadata_group(
                         continue;
                     }
                 };
-            // W=0 WTCFs are only needed after the imaging and PSF placements
-            // have succeeded. Avoiding these loads for rejected samples keeps
-            // invalid small-geometry probes bounded and makes the cache
-            // diagnostics accurately reflect useful work.
-            let first_zero_w_cell = cache.get(first_zero_w_key)?;
-            let second_zero_w_cell = cache.get(second_zero_w_key)?;
-            let first_weight_projector = AwProjector::new(
-                gridder,
-                &first_zero_w_cell.metadata.weight,
-                &first_zero_w_cell.weight,
-                phase_gradient,
-            )?;
-            let second_weight_projector = AwProjector::new(
-                gridder,
-                &second_zero_w_cell.metadata.weight,
-                &second_zero_w_cell.weight,
-                phase_gradient,
-            )?;
-            let first_weight_plan = first_weight_projector
-                .plan_sample(0.0, 0.0, 0.0)
-                .ok_or_else(|| {
-                    ImagingError::Normalization(
-                        "RR AWProject weight CF failed centered placement".to_string(),
-                    )
-                })?;
-            let second_weight_plan = second_weight_projector
-                .plan_sample(0.0, 0.0, 0.0)
-                .ok_or_else(|| {
-                    ImagingError::Normalization(
-                        "LL AWProject weight CF failed centered placement".to_string(),
-                    )
-                })?;
-
             fill_mtmfs_taylor_weights(
                 taylor_weights,
                 frequency_hz,
@@ -7054,33 +7282,9 @@ fn accumulate_awproject_mtmfs_metadata_group(
                 .take(2 * request.nterms - 1)
             {
                 let term_weight = weight * taylor_weight;
-                accumulation.storage.grid_aw_psf(
-                    order,
-                    &first_psf_projector,
-                    &first_psf_plan,
-                    Complex32::new(term_weight, 0.0),
-                )?;
-                accumulation.storage.grid_aw_psf(
-                    order,
-                    &second_psf_projector,
-                    &second_psf_plan,
-                    Complex32::new(term_weight, 0.0),
-                )?;
                 accumulation.reported_sumwt_terms[order] +=
                     f64::from(term_weight) * residual_norm_sum;
                 accumulation.aw_psf_sumwt_terms[order] += f64::from(term_weight) * psf_norm_sum;
-                accumulation.storage.grid_aw_weight(
-                    order,
-                    &first_weight_projector,
-                    &first_weight_plan,
-                    term_weight,
-                )?;
-                accumulation.storage.grid_aw_weight(
-                    order,
-                    &second_weight_projector,
-                    &second_weight_plan,
-                    term_weight,
-                )?;
             }
 
             let mut first_prediction = Complex32::new(0.0, 0.0);
@@ -7099,25 +7303,34 @@ fn accumulate_awproject_mtmfs_metadata_group(
             }
             let first_residual = first_visibility - first_prediction;
             let second_residual = second_visibility - second_prediction;
-            for (order, &taylor_weight) in taylor_weights.iter().enumerate().take(request.nterms) {
-                let term_weight = weight * taylor_weight;
-                accumulation.storage.grid_aw_residual(
-                    order,
-                    &first_imaging_projector,
-                    &first_imaging_plan,
-                    first_residual * term_weight,
-                )?;
-                accumulation.storage.grid_aw_residual(
-                    order,
-                    &second_imaging_projector,
-                    &second_imaging_plan,
-                    second_residual * term_weight,
-                )?;
-            }
+            planned_samples.push(AwProjectMtmfsPlannedSample {
+                first_imaging_plan,
+                second_imaging_plan,
+                first_psf_plan,
+                second_psf_plan,
+                frequency_hz,
+                weight,
+                first_residual,
+                second_residual,
+            });
             accumulation.normalization_sumwt += f64::from(weight) * residual_norm_sum;
             accumulation.gridded_samples += 1;
             accumulation.aw_sample_census.accepted_samples += 1;
         }
+        grid_awproject_mtmfs_planned_samples(
+            &mut accumulation.storage,
+            &planned_samples,
+            request.reffreq_hz,
+            &first_imaging_projector,
+            &second_imaging_projector,
+            &first_psf_projector,
+            &second_psf_projector,
+            &first_weight_projector,
+            &second_weight_projector,
+            &first_weight_plan,
+            &second_weight_plan,
+            requested_threads,
+        )?;
     }
     Ok(())
 }

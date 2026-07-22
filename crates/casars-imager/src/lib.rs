@@ -9,6 +9,7 @@ mod single_plane_plan;
 mod spectral_slab;
 mod task_contract;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::env;
 use std::ffi::OsString;
@@ -6664,6 +6665,8 @@ fn run_single_image_from_config_with_gridder_override(
     } else {
         config
     };
+    let awproject_core_config = normalize_awproject_core_projection(config)?;
+    let config = awproject_core_config.as_ref();
     validate_save_model_request(config)?;
     validate_start_model_request(config)?;
     validate_auto_mask_config(config.use_mask, &config.auto_mask)?;
@@ -6806,6 +6809,55 @@ fn run_single_image_from_config_with_gridder_override(
         force_standard_gridder,
         ms_paths.len(),
     ))
+}
+
+fn normalize_awproject_core_projection(config: &CliConfig) -> Result<Cow<'_, CliConfig>, String> {
+    if config.aw_project.is_none() {
+        return Ok(Cow::Borrowed(config));
+    }
+    if config.w_term_mode == WTermMode::Direct {
+        return Err(
+            "gridder='awproject' cannot be combined with the separate direct W-term mode"
+                .to_string(),
+        );
+    }
+    let plane_workers = match config.standard_mfs_acceleration {
+        StandardMfsAccelerationPolicy::Cpu => config
+            .standard_mfs_grid_threads
+            .as_deref()
+            .and_then(parse_standard_mfs_grid_threads)
+            .unwrap_or(1),
+        StandardMfsAccelerationPolicy::Auto
+        | StandardMfsAccelerationPolicy::MultiCpu
+        | StandardMfsAccelerationPolicy::Metal => standard_mfs_grid_worker_count(config),
+    };
+    let locality_prepare_default = plane_workers > 1 && config.imaging_prepare_workers.is_none();
+    let locality_read_ahead_default =
+        plane_workers > 1 && config.imaging_read_ahead_blocks.is_none();
+    if config.w_term_mode == WTermMode::None
+        && !locality_prepare_default
+        && !locality_read_ahead_default
+    {
+        return Ok(Cow::Borrowed(config));
+    }
+    let mut normalized = config.clone();
+    if config.w_term_mode == WTermMode::WProject {
+        // CASA's `gridder='awproject'` already includes the W term. The
+        // legacy performance manifest records `wterm='wproject'` to make
+        // that combined A+W semantic explicit, but the shared stream
+        // dispatcher must not reinterpret it as the separate W-only gridder.
+        normalized.w_term_mode = WTermMode::None;
+    }
+    if locality_prepare_default {
+        // Plane workers own disjoint grids. Parallel source preparation would
+        // fragment the same CF-locality groups once per worker and multiply
+        // large cache loads, while measured preparation is negligible.
+        normalized.imaging_prepare_workers = Some(1);
+    }
+    if locality_read_ahead_default {
+        normalized.imaging_read_ahead_blocks = Some(1);
+    }
+    Ok(Cow::Owned(normalized))
 }
 
 fn default_cube_output_plane_count(
@@ -22203,6 +22255,8 @@ fn plan_standard_mfs_runtime(
             "mosaic_mfs_runtime_plan cpu_strategy={} grid_threads={} gpu_strategy={} initial_dirty_backend={} residual_backend={}",
             if grid_threads.as_deref().unwrap_or("1") == "1" {
                 "serial"
+            } else if config.aw_project.is_some() {
+                "awproject-disjoint-taylor-plane-owners"
             } else if matches!(
                 config.standard_mfs_acceleration,
                 StandardMfsAccelerationPolicy::MultiCpu
@@ -22370,11 +22424,21 @@ fn standard_mfs_auto_grid_threads() -> usize {
 }
 
 fn standard_mfs_grid_worker_count(config: &CliConfig) -> usize {
-    config
+    let explicit_grid_workers = config
         .standard_mfs_grid_threads
         .as_deref()
-        .and_then(parse_standard_mfs_grid_threads)
-        .or(config.imaging_prepare_workers)
+        .and_then(parse_standard_mfs_grid_threads);
+    explicit_grid_workers
+        .or_else(|| {
+            // AWProject plane ownership is independent of source preparation.
+            // Its locality-preserving auto plan intentionally uses one prepare
+            // worker while retaining the host's useful plane-worker capacity.
+            config
+                .aw_project
+                .is_none()
+                .then_some(config.imaging_prepare_workers)
+                .flatten()
+        })
         .unwrap_or_else(imaging_hardware_threads)
         .max(1)
 }
@@ -35281,11 +35345,37 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     let source_bytes_per_row = visibility_shape
         .raw_source_buffer_bytes_for_rows(1, selected_channel_count)
         .max(1);
-    let prepared_bytes_per_row = visibility_shape.live_source_scratch_bytes_for_rows(
-        prepared_residency,
-        1,
-        selected_channel_count,
-    );
+    let aw_cf_locality_index_bytes_per_row = if awproject_mtmfs {
+        checked_imaging_product(
+            [selected_channel_count, std::mem::size_of::<usize>()],
+            "AWProject CF-locality indices per source row",
+        )?
+    } else {
+        0
+    };
+    let aw_parallel_plan_bytes_per_row = if awproject_mtmfs {
+        // The lower-level plan is private implementation detail. Charge a
+        // deliberately rounded-up 256 bytes per selected sample so the app
+        // planner stays conservative without adding a public library API.
+        checked_imaging_product(
+            [selected_channel_count, 256],
+            "AWProject MT-MFS plane-plan bytes per source row",
+        )?
+    } else {
+        0
+    };
+    let prepared_bytes_per_row = checked_imaging_sum(
+        [
+            visibility_shape.live_source_scratch_bytes_for_rows(
+                prepared_residency,
+                1,
+                selected_channel_count,
+            ),
+            aw_cf_locality_index_bytes_per_row,
+            aw_parallel_plan_bytes_per_row,
+        ],
+        "prepared source-row scratch",
+    )?;
     let sample_count = checked_imaging_product(
         [active_row_count, selected_channel_count],
         "standard-MFS sample count",
@@ -35666,6 +35756,20 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             reason: format!(
                 "bounded by {pointing_table_row_count} POINTING rows and {active_row_count} active MAIN rows"
             ),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cf_locality_index_bytes_per_row",
+            value: aw_cf_locality_index_bytes_per_row.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "one bounded sample index per selected channel groups repeated CF quartets"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_parallel_plan_bytes_per_row",
+            value: aw_parallel_plan_bytes_per_row.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "bounded per-sample placement plans feed disjoint Taylor-plane workers without duplicate grids"
+                .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_safety_margin_bytes",
@@ -53751,6 +53855,56 @@ mod tests {
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_fft_residency" && decision.value == "in-place-rustfft-f64"
         }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_cf_locality_index_bytes_per_row"
+                && decision.value == (64 * std::mem::size_of::<usize>()).to_string()
+        }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_parallel_plan_bytes_per_row"
+                && decision.value == (64 * 256).to_string()
+        }));
+    }
+
+    #[test]
+    fn awproject_normalizes_redundant_wproject_without_becoming_w_only() {
+        let mut config = awproject_mtmfs_planner_config(
+            PathBuf::from("/tmp/awproject-normalization-cache"),
+            4096,
+        );
+        config.w_term_mode = WTermMode::WProject;
+
+        let normalized = normalize_awproject_core_projection(&config).unwrap();
+
+        assert!(normalized.aw_project.is_some());
+        assert_eq!(normalized.w_term_mode, WTermMode::None);
+        assert!(can_run_mosaic_mtmfs_from_single_plane_stream(
+            normalized.as_ref(),
+            false,
+            1,
+        ));
+
+        config.w_term_mode = WTermMode::Direct;
+        assert!(
+            normalize_awproject_core_projection(&config)
+                .unwrap_err()
+                .contains("cannot be combined")
+        );
+
+        config.w_term_mode = WTermMode::None;
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::MultiCpu;
+        config.standard_mfs_grid_threads = Some("4".to_string());
+        config.imaging_prepare_workers = None;
+        config.imaging_read_ahead_blocks = None;
+        let normalized = normalize_awproject_core_projection(&config).unwrap();
+        assert_eq!(normalized.imaging_prepare_workers, Some(1));
+        assert_eq!(normalized.imaging_read_ahead_blocks, Some(1));
+        assert_eq!(standard_mfs_grid_worker_count(&normalized), 4);
+
+        config.imaging_prepare_workers = Some(2);
+        config.imaging_read_ahead_blocks = Some(3);
+        let explicit = normalize_awproject_core_projection(&config).unwrap();
+        assert_eq!(explicit.imaging_prepare_workers, Some(2));
+        assert_eq!(explicit.imaging_read_ahead_blocks, Some(3));
     }
 
     #[test]
@@ -64928,7 +65082,7 @@ deconvolver=mtmfs
             "alpha",
             "alpha.error",
         ];
-        for suffix in expected_suffixes {
+        for suffix in &expected_suffixes {
             let path = format!("{}.{}", image_prefix.display(), suffix);
             assert!(
                 Path::new(&path).exists(),
@@ -64941,6 +65095,21 @@ deconvolver=mtmfs
                 &[64, 64, 1, 1]
             };
             assert_eq!(image.shape(), expected_shape, "unexpected shape for {path}");
+        }
+
+        let parallel_prefix = tmp.path().join("tiny_awproject_mtmfs_parallel_image");
+        let mut parallel = config.clone();
+        parallel.imagename = parallel_prefix.clone();
+        parallel.standard_mfs_acceleration = StandardMfsAccelerationPolicy::MultiCpu;
+        parallel.standard_mfs_grid_threads = Some("4".to_string());
+        let parallel_summary = run_from_config(&parallel).unwrap();
+        assert_eq!(parallel_summary.gridded_samples, summary.gridded_samples);
+        for suffix in expected_suffixes {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", parallel_prefix.display(), suffix),
+                1.0e-6,
+            );
         }
     }
 

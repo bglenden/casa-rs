@@ -380,9 +380,11 @@ mod tests {
             plan.primary_beam_requirement,
             SinglePlanePrimaryBeamRequirement::AwProjection
         );
-        assert_eq!(
-            plan.cpu_multi_worker.reason,
-            "awproject-currently-uses-one-grid-owner"
+        assert!(plan.cpu_multi_worker.eligible);
+        assert!(
+            plan.cpu_multi_worker
+                .reason
+                .starts_with("awproject-disjoint-taylor-plane-workers-")
         );
         assert_eq!(
             plan.gpu_metal.reason,

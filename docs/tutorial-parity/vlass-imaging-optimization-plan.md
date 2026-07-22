@@ -1,7 +1,7 @@
 # VLASS Fragment Imaging Correctness And Performance Plan
 
 Truth class: approved execution contract
-Last reality check: 2026-07-21
+Last reality check: 2026-07-22
 Verification: `just docs-check`
 
 WDAD scope:
@@ -69,6 +69,51 @@ The interrupted receipt is
 (`70b33ca592a71139c8f85adf99e8d4249a8852d58d18b9e3adf5550f95eb7d4f`);
 it retains the completed warmup and partial measured-001 request/log, and no
 measured-002/003 call was launched.
+
+### 2026-07-22 Mac Mini Continuation
+
+The 24 GiB M2 mini did not have the archived full VLASS MeasurementSet. A
+deterministic reduced turnaround fixture was therefore staged from CASA's
+`refim_mawproject_twopointings.ms`: 108,864 MAIN rows, two fields, four
+S-band SPWs, three channels per SPW, complete POINTING selection, a CASA-built
+32-plane AWProject cache, and the exact 18 MT-MFS products. The generator and
+manifest are `tools/perf/imager/stage_vlass_turnaround.py` and
+`tools/perf/imager/workloads/vlass-awproject-turnaround.json`. Its receipt was
+written to `/tmp/casa-rs-vlass-turnaround-v1/turnaround-receipt.json`; this is
+development evidence only and cannot satisfy any frozen 12,150-pixel gate.
+
+On the mode-faithful 1,024-pixel dirty row, the preserved serial implementation
+measured 120.34 and 120.49 seconds. A direct nearest-key lookup rewrite measured
+121.26 and 120.14 seconds and was rejected as neutral. Raising bounded CF
+residency from 256 MiB to 4 GiB reduced one run to 84.75 seconds and isolated
+CF paging as the limiter, but retaining that memory-only workaround was less
+effective than fixing locality.
+
+The adopted implementation groups each streamed pointing block by its exact
+RR/LL imaging-and-weight CF quartet, reuses the loaded cells and projectors,
+and charges the compact locality index to the shared execution plan. Serial
+runs then measured 80.68, 78.92, and 78.44 seconds at the original 256 MiB
+budget. CF loads fell from 5,861 to 796. A full 18-product comparison against
+the pre-change output completed with matched metadata; the worst full-array
+RMS ratio was `1.6805736768166808e-08` and the worst peak-normalized absolute
+difference was `1.70413375132326e-07`.
+
+The next adopted path gives deterministic CPU workers disjoint Taylor-plane
+ownership. No worker receives a duplicate image-sized grid. Four plane workers
+with the CF-locality-preserving automatic choice of one preparation/read-ahead
+owner measured 33.91 and 34.38 seconds, a 3.53x median improvement over the
+preserved 120.415-second serial baseline. The threaded and serial 18-product
+arrays were bit-identical and their metadata matched. Explicit preparation and
+read-ahead overrides remain honored. A four-worker experiment that also used
+four preparation owners measured 49.44 to 50.27 seconds and increased CF loads
+to 3,088, so that topology was rejected. These reduced-row speedups are real
+Mac mini development evidence, not the final four-row 10x result.
+
+The production `auto` policy independently resolved eight disjoint plane
+workers plus one locality-preserving preparation/read-ahead owner on this host
+and measured 34.58 seconds. It retained 796 CF loads and the complete product
+contract; explicit grid, preparation, and read-ahead controls still override
+the automatic values.
 
 ## Outcome
 

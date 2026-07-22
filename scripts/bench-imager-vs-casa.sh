@@ -563,7 +563,10 @@ fi
 if [[ -n "$cube_width" ]]; then
   rust_cube_axis_flags+=(--width "$cube_width")
 fi
-if [[ -n "$chanchunks" ]]; then
+# chanchunks is retained in archived MFS recipes as an inactive CASA default.
+# Forward it only for the cube modes where the production Rust contract gives
+# it semantics; passing it to MFS correctly fails production validation.
+if [[ -n "$chanchunks" && "$specmode" != "mfs" ]]; then
   rust_cube_axis_flags+=(--chanchunks "$chanchunks")
 fi
 rust_density_flags=()

@@ -14,6 +14,11 @@ imager.
   - verifies the frozen VLASS archive SHA-256 and gzip stream, extracts only the
     expected MS and recipe, hashes the extracted tree, and atomically promotes
     it inside the issue-owned GLENDENNING evidence root
+- `tools/perf/imager/stage_vlass_turnaround.py`
+  - uses CASA Python to derive a deterministic four-SPW/two-field S-band
+    AWProject fixture from `refim_mawproject_twopointings.ms`, builds a warm CF
+    cache and exact 18-product reference, and atomically publishes a receipt;
+    this reduced fixture is optimization-turnaround evidence only
 - `tools/perf/imager/stage_wave1_datasets.py`
   - validates the ImPerformance Wave 1 simulated-dataset registry, enforces the
     explicit data-root policy, and can materialize deterministic source models,
@@ -173,6 +178,27 @@ corresponding unsuffixed warm manifest to measure reuse. Each cold/warm pair
 derives the same plan-keyed CF identity; the only intentional run differences
 are cache role, repeat count, label, and evidence role.
 
+For a mode-faithful Mac-mini development loop when the frozen VLASS archive is
+not mounted, stage the reduced fixture with CASA 6.7.5.18 and run its canonical
+manifest:
+
+```sh
+export CASA_RS_CASA_PYTHON=/path/to/casa-6.7.5.18/bin/casa-python
+
+$CASA_RS_CASA_PYTHON tools/perf/imager/stage_vlass_turnaround.py \
+  --output-root /absolute/path/to/vlass-turnaround
+export CASA_RS_VLASS_TURNAROUND_ROOT=/absolute/path/to/vlass-turnaround
+tools/perf/imager/run_workload.py vlass-awproject-turnaround
+```
+
+The staged MS has four S-band SPWs, three channels per SPW, two fields, the
+seed's 4,536-row POINTING table, and 108,864 MAIN rows by default. The workload
+uses the production multi-SPW selection, pointing-aware AWProject, joint MT-MFS,
+normalization/restoration, and exact 18-product comparison path. Its 1,024-pixel
+geometry and repeated CASA regression rows are deliberately non-final: neither
+timings nor correctness from this manifest can satisfy the frozen 12,150-pixel
+four-row acceptance matrix or the 10x target.
+
 Recipe-backed manifests are immutable evidence. `--set-imaging` is rejected,
 as is a nonempty `run.env`; create a separately reviewed non-fiducial manifest
 for a parameter experiment. The manifests name one frozen dataset selection:
@@ -182,11 +208,12 @@ for a parameter experiment. The manifests name one frozen dataset selection:
 SPW IDs, channel window, correlations, UV range, intent, and selected row count
 must all match the named selection.
 
-The corresponding Rust target is deliberately `unavailable` until the shared
-production imager has true EVLA A+W CF application, bounded multi-SPW/DDID
-selection, selection-windowed POINTING, joint MT-MFS, CASA normalization and
-restoration, and the complete Taylor/PB/weight/alpha product topology. The
-runner never substitutes W-projection or drops a requested control.
+The Rust target now runs the shared production imager's true EVLA A+W CF path,
+bounded multi-SPW/DDID selection, selection-windowed POINTING, joint MT-MFS,
+CASA normalization/restoration, and complete Taylor/PB/weight/alpha product
+topology. The runner never substitutes W-projection or drops a requested
+control. Frozen full-size correctness and timing evidence remain the acceptance
+boundary; reduced turnaround results do not change the draft/open status.
 
 Recipe-backed VLASS cache keys are bound to the verified staged-MS tree, named
 selection and SPW/DDID frequency facts, archived recipe, stable CASA/runtime/

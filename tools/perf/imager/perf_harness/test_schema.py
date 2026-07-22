@@ -47,6 +47,7 @@ VLASS_WORKLOADS = {
     "vlass-fragment-smoke-cold.json",
     "vlass-fragment-smoke-warm.json",
 }
+VLASS_TURNAROUND_WORKLOAD = "vlass-awproject-turnaround.json"
 
 
 def explicit_aw_workload() -> dict[str, object]:
@@ -148,6 +149,31 @@ def _legacy_casa_tclean_result() -> dict[str, object]:
 
 
 class SchemaTests(unittest.TestCase):
+    def test_vlass_turnaround_is_explicitly_reduced_but_mode_faithful(self) -> None:
+        path = (
+            REPO_ROOT
+            / "tools/perf/imager/workloads"
+            / VLASS_TURNAROUND_WORKLOAD
+        )
+        manifest = load_workload_manifest(path)
+
+        self.assertIn("never final", manifest["description"])
+        self.assertEqual(
+            "CASA_RS_VLASS_TURNAROUND_ROOT", manifest["dataset"]["root_env"]
+        )
+        self.assertEqual("0,1", manifest["imaging"]["field"])
+        self.assertEqual("0~3", manifest["imaging"]["spw"])
+        self.assertEqual(3, manifest["imaging"]["channel_count"])
+        self.assertEqual("awproject", manifest["imaging"]["gridder"])
+        self.assertTrue(manifest["imaging"]["usepointing"])
+        self.assertEqual("mtmfs", manifest["imaging"]["deconvolver"])
+        self.assertEqual(2, manifest["imaging"]["nterms"])
+        self.assertEqual("warm", manifest["run"]["cf_cache_role"])
+        self.assertEqual(
+            "reduced_turnaround_only", manifest["run"]["evidence_role"]
+        )
+        self.assertTrue(manifest["comparison"]["tolerances"]["require_full_array"])
+
     def test_current_product_contract_accepts_bound_source_region_evidence(
         self,
     ) -> None:
