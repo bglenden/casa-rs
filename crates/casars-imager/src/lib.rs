@@ -48524,6 +48524,9 @@ mod tests {
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
     use std::path::{Path, PathBuf};
 
+    use casa_coordinates::{
+        CoordinateSystem, LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType,
+    };
     use casa_images::PagedImage;
     use casa_imaging::{
         primary_beam_correct_image_product, primary_beam_limited_product,
@@ -64134,6 +64137,187 @@ deconvolver=mtmfs
     }
 
     #[test]
+    fn awproject_mtmfs_bounded_stream_writes_complete_persisted_product_topology() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("tiny_awproject_mtmfs.ms");
+        let cf_cache = tmp.path().join("synthetic-cf-cache");
+        let image_prefix = tmp.path().join("tiny_awproject_mtmfs_image");
+        fs::create_dir(&cf_cache).unwrap();
+        let frequencies_hz = [1.39e9, 1.41e9];
+        let w_values_lambda = [0.0, 2.0];
+        write_synthetic_awproject_cf_cache(&cf_cache, &frequencies_hz, &w_values_lambda);
+
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_observation_row(&mut ms);
+        add_field_row(&mut ms);
+        add_pointing_row(&mut ms, 0, [1.0, 0.5], TEST_TIME_MJD_SEC, -1.0);
+        add_pointing_row(&mut ms, 1, [1.00015, 0.4999], TEST_TIME_MJD_SEC, -1.0);
+        add_spectral_window_row(&mut ms, &frequencies_hz);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        for (uvw, visibilities) in [
+            (
+                [30.0, -15.0, -2.0],
+                [
+                    Complex32::new(0.8, 0.10),
+                    Complex32::new(0.7, -0.04),
+                    Complex32::new(1.2, 0.02),
+                    Complex32::new(1.1, -0.03),
+                ],
+            ),
+            (
+                [-25.0, 20.0, 1.5],
+                [
+                    Complex32::new(0.7, -0.05),
+                    Complex32::new(0.9, 0.03),
+                    Complex32::new(1.3, -0.02),
+                    Complex32::new(1.0, 0.06),
+                ],
+            ),
+            (
+                [10.0, 35.0, -0.5],
+                [
+                    Complex32::new(0.9, 0.04),
+                    Complex32::new(0.8, -0.01),
+                    Complex32::new(1.1, -0.03),
+                    Complex32::new(1.2, 0.05),
+                ],
+            ),
+        ] {
+            add_main_row_channels(&mut ms, uvw, &visibilities);
+        }
+        ms.save().unwrap();
+
+        let mut aw_project = AwProjectControls::casa_defaults(cf_cache.clone());
+        aw_project.cf_resident_bytes = 4 * (16 * 16 + 32 * 32) * std::mem::size_of::<Complex32>();
+        aw_project.w_plane_count = Some(w_values_lambda.len());
+        aw_project.use_pointing = true;
+        let config = CliConfig {
+            ms: ms_path,
+            imagename: image_prefix.clone(),
+            imsize: 64,
+            cell_arcsec: 20.0,
+            field_ids: None,
+            uvrange: None,
+            intent: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: None,
+            save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
+            correlation: None,
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            use_pointing: true,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::Common,
+            deconvolver: Deconvolver::Mtmfs,
+            nterms: 2,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 2,
+            nmajor: None,
+            fullsummary: false,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
+            pbcor: false,
+            write_pb: true,
+            minor_cycle_length: 1,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
+            w_project_planes: Some(w_values_lambda.len()),
+            aw_project: Some(aw_project),
+            dirty_only: false,
+            chanchunks: None,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: Some("1".to_string()),
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
+            standard_mfs_metal_grouped_input_cache: None,
+            standard_mfs_memory_target_mb: None,
+            standard_mfs_prepare_buffer_mb: None,
+            imaging_memory_target_mb: None,
+            imaging_prepare_buffer_mb: None,
+            imaging_row_block_rows: Some(1),
+            imaging_prepare_workers: Some(1),
+            imaging_read_ahead_blocks: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::F64,
+            imaging_fft_backend: ImagingFftBackendPolicy::RustFft,
+            write_preview_pngs: false,
+        };
+        let summary = run_from_config(&config).unwrap();
+        assert!(summary.gridded_samples > 0);
+        assert!(summary.minor_iterations > 0);
+        let diagnostics = summary.awproject.expect("AWProject diagnostics");
+        assert_eq!(diagnostics.samples.rejected_not_gridable, 0);
+        assert_eq!(diagnostics.samples.rejected_invalid_input, 0);
+        assert!(diagnostics.samples.accepted_samples > 0);
+        assert!(diagnostics.resident.resident_bytes <= diagnostics.resident_budget_bytes);
+
+        let expected_suffixes = [
+            "psf.tt0",
+            "psf.tt1",
+            "psf.tt2",
+            "residual.tt0",
+            "residual.tt1",
+            "model.tt0",
+            "model.tt1",
+            "image.tt0",
+            "image.tt1",
+            "sumwt.tt0",
+            "sumwt.tt1",
+            "sumwt.tt2",
+            "weight.tt0",
+            "weight.tt1",
+            "weight.tt2",
+            "pb.tt0",
+            "alpha",
+            "alpha.error",
+        ];
+        for suffix in expected_suffixes {
+            let path = format!("{}.{}", image_prefix.display(), suffix);
+            assert!(
+                Path::new(&path).exists(),
+                "missing AWProject product {path}"
+            );
+            let image = PagedImage::<f32>::open(&path).unwrap();
+            let expected_shape: &[usize] = if suffix.starts_with("sumwt") {
+                &[1, 1, 1, 1]
+            } else {
+                &[64, 64, 1, 1]
+            };
+            assert_eq!(image.shape(), expected_shape, "unexpected shape for {path}");
+        }
+    }
+
+    #[test]
     fn clark_smoke_writes_casa_products() {
         let tmp = tempdir().unwrap();
         let ms_path = tmp.path().join("tiny_clark.ms");
@@ -66146,6 +66330,121 @@ deconvolver=mtmfs
             cube_setup.output_channel_frequencies_hz[0]
         );
         panic!("diagnostic complete");
+    }
+
+    fn write_synthetic_awproject_cf_cache(
+        root: &Path,
+        frequencies_hz: &[f64],
+        w_values_lambda: &[f64],
+    ) {
+        for (frequency_index, &frequency_hz) in frequencies_hz.iter().enumerate() {
+            for (w_index, &w_value_lambda) in w_values_lambda.iter().enumerate() {
+                for (mueller_index, mueller_element) in [0, 15].into_iter().enumerate() {
+                    for weight in [false, true] {
+                        let family = if weight { "WTCFS" } else { "CFS" };
+                        let name = format!(
+                            "{family}_0_0_CF_{frequency_index}_{w_index}_{mueller_index}.im"
+                        );
+                        let path = root.join(&name);
+                        let mut coords = CoordinateSystem::new();
+                        let (shape, reference_pixel, increment, support) = if weight {
+                            (vec![32, 32, 1, 1], [16.0, 16.0], [-1.0, 1.0], 4)
+                        } else {
+                            (vec![16, 16, 1, 1], [8.0, 8.0], [-2.0, 2.0], 2)
+                        };
+                        coords.add_coordinate(
+                            LinearCoordinate::new(
+                                2,
+                                vec!["UU".to_string(), "VV".to_string()],
+                                vec!["lambda".to_string(), "lambda".to_string()],
+                            )
+                            .with_reference_value(vec![0.0, 0.0])
+                            .with_reference_pixel(reference_pixel.to_vec())
+                            .with_increment(increment.to_vec()),
+                        );
+                        coords.add_coordinate(StokesCoordinate::new(vec![
+                            if mueller_element == 0 {
+                                StokesType::RR
+                            } else {
+                                StokesType::LL
+                            },
+                        ]));
+                        coords.add_coordinate(SpectralCoordinate::new(
+                            FrequencyRef::LSRK,
+                            frequency_hz,
+                            1.0,
+                            0.0,
+                            frequency_hz,
+                        ));
+                        let mut image =
+                            PagedImage::<Complex32>::create(shape, coords, &path).unwrap();
+                        image
+                            .set(if weight {
+                                Complex32::new(7.0, 2.0)
+                            } else {
+                                Complex32::new(3.0, -1.0)
+                            })
+                            .unwrap();
+                        image
+                            .set_misc_info(RecordValue::new(vec![
+                                RecordField::new(
+                                    "BandName",
+                                    Value::Scalar(ScalarValue::String("EVLA_L".to_string())),
+                                ),
+                                RecordField::new(
+                                    "ConjFreq",
+                                    Value::Scalar(ScalarValue::Float64(frequency_hz)),
+                                ),
+                                RecordField::new(
+                                    "ConjPoln",
+                                    Value::Scalar(ScalarValue::Int32(if mueller_element == 0 {
+                                        StokesType::LL.code()
+                                    } else {
+                                        StokesType::RR.code()
+                                    })),
+                                ),
+                                RecordField::new(
+                                    "Diameter",
+                                    Value::Scalar(ScalarValue::Float64(25.0)),
+                                ),
+                                RecordField::new(
+                                    "MuellerElement",
+                                    Value::Scalar(ScalarValue::Int32(mueller_element)),
+                                ),
+                                RecordField::new("Name", Value::Scalar(ScalarValue::String(name))),
+                                RecordField::new("OpCode", Value::Scalar(ScalarValue::Bool(false))),
+                                RecordField::new(
+                                    "ParallacticAngle",
+                                    Value::Scalar(ScalarValue::Float64(30.0)),
+                                ),
+                                RecordField::new(
+                                    "Sampling",
+                                    Value::Scalar(ScalarValue::Float64(2.0)),
+                                ),
+                                RecordField::new(
+                                    "TelescopeName",
+                                    Value::Scalar(ScalarValue::String("EVLA".to_string())),
+                                ),
+                                RecordField::new("WIncr", Value::Scalar(ScalarValue::Float64(0.5))),
+                                RecordField::new(
+                                    "WValue",
+                                    Value::Scalar(ScalarValue::Float64(w_value_lambda)),
+                                ),
+                                RecordField::new(
+                                    "Xsupport",
+                                    Value::Scalar(ScalarValue::Int32(support)),
+                                ),
+                                RecordField::new(
+                                    "Ysupport",
+                                    Value::Scalar(ScalarValue::Int32(support)),
+                                ),
+                            ]))
+                            .unwrap();
+                        image.save().unwrap();
+                    }
+                }
+            }
+        }
     }
 
     fn add_field_row(ms: &mut MeasurementSet) {
