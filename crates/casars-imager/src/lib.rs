@@ -8558,12 +8558,12 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         .mosaic_weight_image
         .as_ref()
         .map(single_plane_image_product);
-    let run_result = RunProducts::Mtmfs(MtmfsRunProducts {
+    let run_result = RunProducts::Mtmfs(Box::new(MtmfsRunProducts {
         result,
         primary_beam_weight_samples: Vec::new(),
         mosaic_weight,
         spectral_delta_hz: spectral_frequency_edge_range_hz.and_then(spectral_delta_from_range),
-    });
+    }));
     let mut coords = build_image_coordinate_system(
         config.imsize,
         phase_center.angles_rad,
@@ -20051,12 +20051,12 @@ fn run_mtmfs_from_bounded_stream_open_ms(
     maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
 
     let stage_start = Instant::now();
-    let run_result = RunProducts::Mtmfs(MtmfsRunProducts {
+    let run_result = RunProducts::Mtmfs(Box::new(MtmfsRunProducts {
         result,
         primary_beam_weight_samples: Vec::new(),
         mosaic_weight: None,
         spectral_delta_hz: spectral_frequency_edge_range_hz.and_then(spectral_delta_from_range),
-    });
+    }));
     let coords = build_image_coordinate_system(
         config.imsize,
         phase_center.angles_rad,
@@ -26984,7 +26984,7 @@ fn merge_optional_frequency_ranges(
 #[allow(dead_code)]
 enum RunProducts {
     Mfs(casa_imaging::ImagingResult),
-    Mtmfs(MtmfsRunProducts),
+    Mtmfs(Box<MtmfsRunProducts>),
     Cube(CubeRunProducts),
 }
 
@@ -38745,24 +38745,23 @@ fn sin_direction_for_image_pixel(
 fn mosaic_pointing_id_for_row(
     metadata: &mut MfsMosaicMetadataAccumulator,
     cached_pointing_id: &mut Option<usize>,
-    field_id: usize,
-    antenna1_id: i32,
-    antenna1_direction_rad: [f64; 2],
-    antenna2_id: i32,
-    antenna2_direction_rad: [f64; 2],
+    geometry_row: &PreparedGeometryRow,
     baseline_pointing_direction_rad: [f64; 2],
 ) -> usize {
     if let Some(pointing_id) = *cached_pointing_id {
         return pointing_id;
     }
+    let field_id = geometry_row.selected_row.field_id;
+    let antenna1_id = geometry_row.antenna1_id;
+    let antenna2_id = geometry_row.antenna2_id;
     metadata.record_selected_antennas(antenna1_id, antenna2_id);
     let pointing_id = metadata
         .intern_casa_aw_baseline_pointing(
             field_id,
             antenna1_id,
-            antenna1_direction_rad,
+            geometry_row.antenna1_pointing.angles_rad,
             antenna2_id,
-            antenna2_direction_rad,
+            geometry_row.antenna2_pointing.angles_rad,
         )
         .unwrap_or_else(|| metadata.intern_pointing_direction(baseline_pointing_direction_rad));
     *cached_pointing_id = Some(pointing_id);
@@ -40117,11 +40116,7 @@ impl PreparedSelection {
                                 let pointing_id = mosaic_pointing_id_for_row(
                                     metadata,
                                     &mut mosaic_pointing_id,
-                                    selected_row.field_id,
-                                    antenna1_id,
-                                    geometry_row.antenna1_pointing.angles_rad,
-                                    antenna2_id,
-                                    geometry_row.antenna2_pointing.angles_rad,
+                                    geometry_row,
                                     baseline_pointing_direction_rad,
                                 );
                                 metadata.push_sample(
@@ -40170,11 +40165,7 @@ impl PreparedSelection {
                             let pointing_id = mosaic_pointing_id_for_row(
                                 metadata,
                                 &mut mosaic_pointing_id,
-                                selected_row.field_id,
-                                antenna1_id,
-                                geometry_row.antenna1_pointing.angles_rad,
-                                antenna2_id,
-                                geometry_row.antenna2_pointing.angles_rad,
+                                geometry_row,
                                 baseline_pointing_direction_rad,
                             );
                             metadata.push_sample(
@@ -40247,11 +40238,7 @@ impl PreparedSelection {
                                     let pointing_id = mosaic_pointing_id_for_row(
                                         metadata,
                                         &mut mosaic_pointing_id,
-                                        selected_row.field_id,
-                                        antenna1_id,
-                                        geometry_row.antenna1_pointing.angles_rad,
-                                        antenna2_id,
-                                        geometry_row.antenna2_pointing.angles_rad,
+                                        geometry_row,
                                         baseline_pointing_direction_rad,
                                     );
                                     metadata.push_sample(
@@ -40318,11 +40305,7 @@ impl PreparedSelection {
                             let pointing_id = mosaic_pointing_id_for_row(
                                 metadata,
                                 &mut mosaic_pointing_id,
-                                selected_row.field_id,
-                                antenna1_id,
-                                geometry_row.antenna1_pointing.angles_rad,
-                                antenna2_id,
-                                geometry_row.antenna2_pointing.angles_rad,
+                                geometry_row,
                                 baseline_pointing_direction_rad,
                             );
                             metadata.push_sample(
@@ -40926,11 +40909,7 @@ impl PreparedSelection {
                         let pointing_id = mosaic_pointing_id_for_row(
                             metadata,
                             &mut mosaic_pointing_id,
-                            selected_row.field_id,
-                            antenna1_id,
-                            geometry_row.antenna1_pointing.angles_rad,
-                            antenna2_id,
-                            geometry_row.antenna2_pointing.angles_rad,
+                            geometry_row,
                             baseline_pointing_direction_rad,
                         );
                         metadata.push_sample(
@@ -41370,11 +41349,7 @@ impl PreparedSelection {
                                     let pointing_id = mosaic_pointing_id_for_row(
                                         metadata,
                                         &mut mosaic_pointing_id,
-                                        selected_row.field_id,
-                                        antenna1_id,
-                                        geometry_row.antenna1_pointing.angles_rad,
-                                        antenna2_id,
-                                        geometry_row.antenna2_pointing.angles_rad,
+                                        geometry_row,
                                         baseline_pointing_direction_rad,
                                     );
                                     metadata.push_sample(
@@ -41461,11 +41436,7 @@ impl PreparedSelection {
                             let pointing_id = mosaic_pointing_id_for_row(
                                 metadata,
                                 &mut mosaic_pointing_id,
-                                selected_row.field_id,
-                                antenna1_id,
-                                geometry_row.antenna1_pointing.angles_rad,
-                                antenna2_id,
-                                geometry_row.antenna2_pointing.angles_rad,
+                                geometry_row,
                                 baseline_pointing_direction_rad,
                             );
                             metadata.push_sample(
@@ -45587,11 +45558,12 @@ fn cube_gridder_modes_without_trace(
 }
 
 type MosaicBeamFrequencyLookup = HashMap<(usize, u64), f64>;
+type CanonicalPointingIds = (Vec<usize>, BTreeMap<usize, [f64; 2]>);
 
 fn canonicalize_effective_pointing_ids(
     sample_pointing_ids: &[usize],
     pointing_direction_by_id: &BTreeMap<usize, [f64; 2]>,
-) -> Result<(Vec<usize>, BTreeMap<usize, [f64; 2]>), String> {
+) -> Result<CanonicalPointingIds, String> {
     let mut canonical_id_by_direction_bits = BTreeMap::<(u64, u64), usize>::new();
     let mut canonical_direction_by_id = BTreeMap::<usize, [f64; 2]>::new();
     let mut canonical_sample_ids = Vec::with_capacity(sample_pointing_ids.len());
@@ -54537,8 +54509,8 @@ mod tests {
         let antenna_pixels = (0..26)
             .map(|antenna| {
                 [
-                    6075.123_456_789 + antenna as f64 * 0.017_123_45,
-                    6075.987_654_321 - antenna as f64 * 0.011_234_56,
+                    6_075.123_456_789 + antenna as f64 * 0.017_123_45,
+                    6_075.987_654_321 - antenna as f64 * 0.011_234_56,
                 ]
             })
             .collect::<Vec<_>>();
@@ -56994,14 +56966,14 @@ mod tests {
                 image_units: "Jy/beam".to_string(),
             },
         };
-        let run_products = RunProducts::Mtmfs(MtmfsRunProducts {
+        let run_products = RunProducts::Mtmfs(Box::new(MtmfsRunProducts {
             result,
             primary_beam_weight_samples: Vec::new(),
             mosaic_weight: Some(single_plane_image_product(
                 &Array2::from_shape_vec((2, 2), vec![4.0, 1.0, 0.04, 0.0]).unwrap(),
             )),
             spectral_delta_hz: None,
-        });
+        }));
         let coords = build_image_coordinate_system(
             2,
             [1.0, 0.5],

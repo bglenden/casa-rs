@@ -28621,14 +28621,16 @@ fn mtmfs_multiscale_coefficients(
     solve_mtmfs_coefficients(&rhs, inv_hessian)
 }
 
-fn compute_mtmfs_alpha_products(
-    image_terms: &[Array2<f32>],
-    principal_residual_terms: &[Array2<f32>],
-) -> (
+type MtmfsAlphaProducts = (
     Option<Array2<f32>>,
     Option<Array2<f32>>,
     Option<Array2<bool>>,
-) {
+);
+
+fn compute_mtmfs_alpha_products(
+    image_terms: &[Array2<f32>],
+    principal_residual_terms: &[Array2<f32>],
+) -> MtmfsAlphaProducts {
     if image_terms.len() < 2 || principal_residual_terms.len() < 2 {
         return (None, None, None);
     }
