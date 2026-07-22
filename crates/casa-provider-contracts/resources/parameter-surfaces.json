@@ -8221,7 +8221,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -9038,9 +9038,9 @@
           "reviewed_homonym": null
         },
         {
-          "name": "polarization",
+          "name": "stokes",
           "concept": {
-            "id": "parameter.polarization",
+            "id": "image.selection.stokes",
             "semantic_revision": 1
           },
           "order": 15,
@@ -9064,28 +9064,30 @@
             "cli": {
               "positional": null,
               "flags": [
-                "--corr",
-                "--stokes"
+                "--stokes",
+                "--corr"
               ],
               "false_flags": [],
               "metavar": "PLANE"
             },
             "provider": {
-              "field": "polarization",
+              "field": "stokes",
               "adapter": "identity"
             },
             "python": {
-              "name": "polarization",
+              "name": "stokes",
               "type_hint": null
             },
             "presentation": {
-              "label": "Corr / Stokes",
+              "label": "Stokes / Correlation",
               "group": "Context",
               "advanced": true,
               "hidden": false
             }
           },
-          "aliases": [],
+          "aliases": [
+            "polarization"
+          ],
           "reviewed_homonym": null
         },
         {
@@ -11099,7 +11101,7 @@
             },
             "presentation": {
               "label": "Use POINTING",
-              "group": "Stages",
+              "group": "Advanced Wide-Field",
               "advanced": true,
               "hidden": false
             }
@@ -11658,6 +11660,1019 @@
           },
           "aliases": [],
           "reviewed_homonym": null
+        },
+        {
+          "name": "uvrange",
+          "concept": {
+            "id": "ms.selection.uvrange",
+            "semantic_revision": 1
+          },
+          "order": 67,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "The complete CASA UV-range selector reaches the shared MeasurementSet selection engine.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--uvrange"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "uvrange",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "uvrange"
+            },
+            "presentation": {
+              "label": "UV Range",
+              "group": "Context",
+              "advanced": false,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 1
+          },
+          "order": 68,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "The complete CASA intent selector reaches the shared MeasurementSet selection engine.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "intent",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "intent"
+            },
+            "presentation": {
+              "label": "Observing Intent",
+              "group": "Context",
+              "advanced": false,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "cfcache",
+          "concept": {
+            "id": "parameter.cfcache",
+            "semantic_revision": 1
+          },
+          "order": 69,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "auto"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "surface_note": "auto selects the managed plan-keyed cache; an explicit path preserves CASA cache interoperability.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--cfcache"
+              ],
+              "metavar": "AUTO|PATH"
+            },
+            "provider": {
+              "field": "cfcache",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "cfcache"
+            },
+            "presentation": {
+              "label": "CF Cache",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "cf_resident_mb",
+          "concept": {
+            "id": "parameter.cf_resident_mb",
+            "semantic_revision": 1
+          },
+          "order": 70,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 256
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "surface_note": "Bounded shared CF residency in MiB; the runtime rejects zero.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--cf-resident-mb"
+              ],
+              "metavar": "MIB"
+            },
+            "provider": {
+              "field": "cf_resident_mb",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "cf_resident_mb"
+            },
+            "presentation": {
+              "label": "CF Resident Memory (MiB)",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "facets",
+          "concept": {
+            "id": "parameter.facets",
+            "semantic_revision": 1
+          },
+          "order": 71,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "surface_note": "Unsupported facet layouts fail closed with a capability diagnostic.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--facets"
+              ],
+              "metavar": "N"
+            },
+            "provider": {
+              "field": "facets",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "facets"
+            },
+            "presentation": {
+              "label": "Facets",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "psfphasecenter",
+          "concept": {
+            "id": "parameter.psfphasecenter",
+            "semantic_revision": 1
+          },
+          "order": 72,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--psfphasecenter"
+              ],
+              "metavar": "DIRECTION"
+            },
+            "provider": {
+              "field": "psfphasecenter",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "psfphasecenter"
+            },
+            "presentation": {
+              "label": "PSF Phase Center",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "vptable",
+          "concept": {
+            "id": "parameter.vptable",
+            "semantic_revision": 1
+          },
+          "order": 73,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "context_role": "input_dataset",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vptable"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "vptable",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "vptable"
+            },
+            "presentation": {
+              "label": "Voltage Pattern Table",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "aterm",
+          "concept": {
+            "id": "parameter.aterm",
+            "semantic_revision": 1
+          },
+          "order": 74,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--aterm"
+              ],
+              "false_flags": [
+                "--no-aterm"
+              ]
+            },
+            "provider": {
+              "field": "aterm",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "aterm"
+            },
+            "presentation": {
+              "label": "A Term",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "psterm",
+          "concept": {
+            "id": "parameter.psterm",
+            "semantic_revision": 1
+          },
+          "order": 75,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--psterm"
+              ],
+              "false_flags": [
+                "--no-psterm"
+              ]
+            },
+            "provider": {
+              "field": "psterm",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "psterm"
+            },
+            "presentation": {
+              "label": "PS Term",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "wbawp",
+          "concept": {
+            "id": "parameter.wbawp",
+            "semantic_revision": 1
+          },
+          "order": 76,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--wbawp"
+              ],
+              "false_flags": [
+                "--no-wbawp"
+              ]
+            },
+            "provider": {
+              "field": "wbawp",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "wbawp"
+            },
+            "presentation": {
+              "label": "Wideband A-Projection",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "conjbeams",
+          "concept": {
+            "id": "parameter.conjbeams",
+            "semantic_revision": 1
+          },
+          "order": 77,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--conjbeams"
+              ],
+              "false_flags": [
+                "--no-conjbeams"
+              ]
+            },
+            "provider": {
+              "field": "conjbeams",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "conjbeams"
+            },
+            "presentation": {
+              "label": "Conjugate Beams",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "computepastep",
+          "concept": {
+            "id": "parameter.computepastep",
+            "semantic_revision": 1
+          },
+          "order": 78,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 360.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--computepastep"
+              ],
+              "metavar": "DEGREES"
+            },
+            "provider": {
+              "field": "computepastep",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "computepastep"
+            },
+            "presentation": {
+              "label": "Compute PA Step (deg)",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "rotatepastep",
+          "concept": {
+            "id": "parameter.rotatepastep",
+            "semantic_revision": 1
+          },
+          "order": 79,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 360.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--rotatepastep"
+              ],
+              "metavar": "DEGREES"
+            },
+            "provider": {
+              "field": "rotatepastep",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "rotatepastep"
+            },
+            "presentation": {
+              "label": "Rotate PA Step (deg)",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "pointingoffsetsigdev",
+          "concept": {
+            "id": "parameter.pointingoffsetsigdev",
+            "semantic_revision": 1
+          },
+          "order": 80,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "0"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pointingoffsetsigdev"
+              ],
+              "metavar": "CSV"
+            },
+            "provider": {
+              "field": "pointingoffsetsigdev",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "pointingoffsetsigdev"
+            },
+            "presentation": {
+              "label": "Pointing Offset Sigma",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "mosweight",
+          "concept": {
+            "id": "parameter.mosweight",
+            "semantic_revision": 1
+          },
+          "order": 81,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--mosweight"
+              ],
+              "false_flags": [
+                "--no-mosweight"
+              ]
+            },
+            "provider": {
+              "field": "mosweight",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "mosweight"
+            },
+            "presentation": {
+              "label": "Mosaic Weighting",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "normtype",
+          "concept": {
+            "id": "parameter.normtype",
+            "semantic_revision": 1
+          },
+          "order": 82,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "flatnoise"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--normtype"
+              ],
+              "metavar": "MODE"
+            },
+            "provider": {
+              "field": "normtype",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "normtype"
+            },
+            "presentation": {
+              "label": "AW Normalization",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "imaging_memory_target_mb",
+          "concept": {
+            "id": "parameter.imaging_memory_target_mb",
+            "semantic_revision": 1
+          },
+          "order": 83,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "none delegates the bounded memory choice to the immutable execution plan.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--imaging-memory-target-mb"
+              ],
+              "metavar": "MIB"
+            },
+            "provider": {
+              "field": "imaging_memory_target_mb",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "imaging_memory_target_mb"
+            },
+            "presentation": {
+              "label": "Memory Target (MiB)",
+              "group": "Execution Resources",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "imaging_prepare_buffer_mb",
+          "concept": {
+            "id": "parameter.imaging_prepare_buffer_mb",
+            "semantic_revision": 1
+          },
+          "order": 84,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--imaging-prepare-buffer-mb"
+              ],
+              "metavar": "MIB"
+            },
+            "provider": {
+              "field": "imaging_prepare_buffer_mb",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "imaging_prepare_buffer_mb"
+            },
+            "presentation": {
+              "label": "Prepare Buffer (MiB)",
+              "group": "Execution Resources",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "imaging_row_block_rows",
+          "concept": {
+            "id": "parameter.imaging_row_block_rows",
+            "semantic_revision": 1
+          },
+          "order": 85,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--imaging-row-block-rows"
+              ],
+              "metavar": "ROWS"
+            },
+            "provider": {
+              "field": "imaging_row_block_rows",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "imaging_row_block_rows"
+            },
+            "presentation": {
+              "label": "Row Block Rows",
+              "group": "Execution Resources",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "imaging_prepare_workers",
+          "concept": {
+            "id": "parameter.imaging_prepare_workers",
+            "semantic_revision": 1
+          },
+          "order": 86,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--imaging-prepare-workers"
+              ],
+              "metavar": "N"
+            },
+            "provider": {
+              "field": "imaging_prepare_workers",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "imaging_prepare_workers"
+            },
+            "presentation": {
+              "label": "Prepare Workers",
+              "group": "Execution Resources",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "imaging_fft_precision",
+          "concept": {
+            "id": "parameter.imaging_fft_precision",
+            "semantic_revision": 1
+          },
+          "order": 87,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "auto"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "auto selects only a correctness-qualified FFT precision and reports any fallback.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--imaging-fft-precision"
+              ],
+              "metavar": "POLICY"
+            },
+            "provider": {
+              "field": "imaging_fft_precision",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "imaging_fft_precision"
+            },
+            "presentation": {
+              "label": "FFT Precision",
+              "group": "Execution Resources",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
+          "name": "projection",
+          "concept": {
+            "id": "parameter.projection",
+            "semantic_revision": 1
+          },
+          "order": 88,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "SIN"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "Unsupported projections fail before imaging; the value is never silently rewritten to SIN.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--projection"
+              ],
+              "metavar": "CODE"
+            },
+            "provider": {
+              "field": "projection",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "projection"
+            },
+            "presentation": {
+              "label": "Projection",
+              "group": "Stage Parameters",
+              "advanced": true,
+              "hidden": false
+            }
+          }
         }
       ],
       "migrations": [
@@ -11677,6 +12692,18 @@
           "from_contract": 3,
           "to_contract": 4,
           "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
+          "steps": [
+            {
+              "kind": "rename",
+              "from": "polarization",
+              "to": "stokes"
+            }
+          ],
           "changed_defaults": []
         }
       ]

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Public request/result types for the pure imaging core.
 
-use std::{collections::VecDeque, ops::Range, sync::Arc, time::Duration};
+use std::{collections::VecDeque, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 
 use ndarray::{Array2, Array4, Zip};
 use num_complex::{Complex32, Complex64};
 
-use crate::ImagingError;
+use crate::{ImagingError, awprojection::AwProjectRunDiagnostics};
 
 /// Fixed CASA-style axis ordering for persisted products.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,6 +263,218 @@ pub enum GridderMode {
     Standard,
     /// CASA `gridder='mosaic'` for homogeneous primary-beam aware imaging.
     Mosaic(MosaicGridderConfig),
+    /// CASA `gridder='awproject'` with a precomputed EVLA A+W CF cache.
+    AwProject(AwProjectGridderConfig),
+}
+
+/// CASA AWProject image normalization policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AwProjectNormalization {
+    /// CASA `normtype='flatnoise'` sensitivity normalization.
+    FlatNoise,
+    /// CASA `normtype='flatsky'` normalization.
+    FlatSky,
+    /// CASA `normtype='pbsquare'` normalization.
+    PbSquare,
+}
+
+/// Shared controls for CASA `gridder='awproject'` execution.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AwProjectControls {
+    /// Existing standard CASA convolution-function cache directory.
+    pub cf_cache: PathBuf,
+    /// Maximum resident CF pixel bytes retained by the bounded LRU.
+    pub cf_resident_bytes: usize,
+    /// CASA `facets`; only one facet is supported by this execution slice.
+    pub facets: usize,
+    /// Explicit CASA W-plane count; `None` accepts the cache inventory.
+    pub w_plane_count: Option<usize>,
+    /// Optional distinct PSF phase-center direction `[ra, dec]` in radians.
+    pub psf_phase_center_direction_rad: Option<[f64; 2]>,
+    /// Optional CASA voltage-pattern table path.
+    pub vp_table: Option<PathBuf>,
+    /// Enable the aperture A term.
+    pub a_term: bool,
+    /// Enable the prolate-spheroidal term inside the AW convolution function.
+    pub ps_term: bool,
+    /// Enable wideband A-projection conjugate-frequency behavior.
+    pub wb_awp: bool,
+    /// Select conjugate-frequency CF cells during gridding.
+    pub conjugate_beams: bool,
+    /// CASA parallactic-angle CF computation step in degrees.
+    pub compute_pa_step_deg: f64,
+    /// CASA parallactic-angle CF rotation step in degrees.
+    pub rotate_pa_step_deg: f64,
+    /// Requested CASA pointing-offset standard deviations in arcseconds.
+    ///
+    /// CASA retains this request value for task provenance, but when
+    /// `usepointing=true` it replaces every list whose length is not exactly
+    /// two with the effective pair `[600, 600]` before constructing the
+    /// AWProject gridder.
+    pub pointing_offset_sigdev: Vec<f64>,
+    /// Whether selected POINTING-table directions define CASA-compatible
+    /// antenna-group phase gradients.
+    pub use_pointing: bool,
+    /// CASA mosaic weight-density toggle.
+    pub mosaic_weighting: bool,
+    /// AWProject sensitivity normalization policy.
+    pub normalization: AwProjectNormalization,
+}
+
+impl AwProjectControls {
+    /// CASA-compatible defaults for the supported precomputed-cache slice.
+    pub fn casa_defaults(cf_cache: PathBuf) -> Self {
+        Self {
+            cf_cache,
+            cf_resident_bytes: 256 * 1024 * 1024,
+            facets: 1,
+            w_plane_count: None,
+            psf_phase_center_direction_rad: None,
+            vp_table: None,
+            a_term: true,
+            ps_term: false,
+            wb_awp: true,
+            conjugate_beams: true,
+            compute_pa_step_deg: 360.0,
+            rotate_pa_step_deg: 360.0,
+            pointing_offset_sigdev: vec![0.0],
+            use_pointing: false,
+            mosaic_weighting: false,
+            normalization: AwProjectNormalization::FlatNoise,
+        }
+    }
+
+    /// Return CASA's effective AWProject pointing grouping and refresh
+    /// thresholds in arcseconds.
+    ///
+    /// `SynthesisUtilMethods` rewrites a non-two-element request to
+    /// `[600, 600]` when `usepointing=true`. This is observable for the CASA
+    /// default `[0]`: it deliberately reproduces the broad CASA 5.6-style
+    /// antenna grouping instead of requesting zero-width per-antenna bins.
+    pub fn effective_pointing_offset_sigdev_arcsec(&self) -> [f64; 2] {
+        if self.use_pointing && self.pointing_offset_sigdev.len() != 2 {
+            [600.0, 600.0]
+        } else {
+            [
+                self.pointing_offset_sigdev.first().copied().unwrap_or(0.0),
+                self.pointing_offset_sigdev.get(1).copied().unwrap_or(0.0),
+            ]
+        }
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), ImagingError> {
+        if self.cf_cache.as_os_str().is_empty() {
+            return Err(ImagingError::InvalidRequest(
+                "awproject requires a non-empty existing cfcache path".to_string(),
+            ));
+        }
+        if self.cf_resident_bytes == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "awproject CF-residency budget must be positive".to_string(),
+            ));
+        }
+        if self.facets != 1 {
+            return Err(ImagingError::Unsupported(
+                "awproject currently supports facets=1 only".to_string(),
+            ));
+        }
+        if self.w_plane_count == Some(0) {
+            return Err(ImagingError::InvalidRequest(
+                "awproject wprojplanes must be positive".to_string(),
+            ));
+        }
+        if self.psf_phase_center_direction_rad.is_some() {
+            return Err(ImagingError::Unsupported(
+                "awproject does not yet support a distinct psfphasecenter".to_string(),
+            ));
+        }
+        if self.vp_table.is_some() {
+            return Err(ImagingError::Unsupported(
+                "awproject does not yet support a non-empty vptable".to_string(),
+            ));
+        }
+        if !self.a_term || self.ps_term || !self.wb_awp || !self.conjugate_beams {
+            return Err(ImagingError::Unsupported(
+                "the current precomputed-cache AWProject slice requires aterm=true, psterm=false, wbawp=true, and conjbeams=true"
+                    .to_string(),
+            ));
+        }
+        for (label, value) in [
+            ("computepastep", self.compute_pa_step_deg),
+            ("rotatepastep", self.rotate_pa_step_deg),
+        ] {
+            if !(value.is_finite() && value > 0.0) {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "awproject {label} must be finite and positive"
+                )));
+            }
+        }
+        if self.pointing_offset_sigdev.is_empty()
+            || self
+                .pointing_offset_sigdev
+                .iter()
+                .any(|value| !(value.is_finite() && *value >= 0.0))
+        {
+            return Err(ImagingError::InvalidRequest(
+                "awproject pointingoffsetsigdev must contain finite non-negative values"
+                    .to_string(),
+            ));
+        }
+        if self.mosaic_weighting {
+            return Err(ImagingError::Unsupported(
+                "the current AWProject slice requires mosweight=false".to_string(),
+            ));
+        }
+        if self.normalization != AwProjectNormalization::FlatNoise {
+            return Err(ImagingError::Unsupported(
+                "the current AWProject slice requires normtype='flatnoise'".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod aw_project_control_tests {
+    use super::AwProjectControls;
+    use std::path::PathBuf;
+
+    #[test]
+    fn casa_non_pair_pointing_sigdev_request_uses_600_arcsec_effective_pair() {
+        let mut controls = AwProjectControls::casa_defaults(PathBuf::from("unused-cf-cache"));
+        controls.use_pointing = true;
+
+        assert_eq!(controls.pointing_offset_sigdev, vec![0.0]);
+        assert_eq!(
+            controls.effective_pointing_offset_sigdev_arcsec(),
+            [600.0, 600.0]
+        );
+
+        controls.pointing_offset_sigdev = vec![3.5, 7.25];
+        assert_eq!(
+            controls.effective_pointing_offset_sigdev_arcsec(),
+            [3.5, 7.25]
+        );
+    }
+}
+
+/// AWProject execution configuration plus aligned mosaic/pointing metadata.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AwProjectGridderConfig {
+    /// Shared AWProject science and cache controls.
+    pub controls: AwProjectControls,
+    /// Existing grouped pointing/frequency metadata for the selected samples.
+    pub mosaic: MosaicGridderConfig,
+}
+
+impl AwProjectGridderConfig {
+    pub(crate) fn validate(
+        &self,
+        visibility_batches: &[VisibilityBatch],
+    ) -> Result<(), ImagingError> {
+        self.controls.validate()?;
+        self.mosaic.validate(visibility_batches)
+    }
 }
 
 /// One homogeneous primary-beam model usable by the mosaic dirty gridder.
@@ -1171,6 +1383,52 @@ pub struct VisibilityBatch {
     pub visibility: Vec<Complex32>,
 }
 
+/// Parallel-hand visibility values retained for Mueller-aware AW gridding.
+///
+/// Coordinates, weights, gridability, and flags remain authoritative in the
+/// aligned [`VisibilityBatch`]. These two columns exist because an A-term must
+/// be applied to each correlation before the output Stokes plane is formed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AwParallelHandVisibilityBatch {
+    /// First accepted parallel hand, normally RR for EVLA data.
+    pub first_visibility: Vec<Complex32>,
+    /// Second accepted parallel hand, normally LL for EVLA data.
+    pub second_visibility: Vec<Complex32>,
+}
+
+impl AwParallelHandVisibilityBatch {
+    /// Number of aligned logical samples.
+    pub fn len(&self) -> usize {
+        self.first_visibility.len()
+    }
+
+    /// Whether the batch contains no samples.
+    pub fn is_empty(&self) -> bool {
+        self.first_visibility.is_empty()
+    }
+
+    pub(crate) fn validate_len(&self, expected: usize) -> Result<(), ImagingError> {
+        if self.first_visibility.len() != expected || self.second_visibility.len() != expected {
+            return Err(ImagingError::InvalidRequest(format!(
+                "AW parallel-hand length mismatch: visibility={expected}, first={}, second={}",
+                self.first_visibility.len(),
+                self.second_visibility.len()
+            )));
+        }
+        if self
+            .first_visibility
+            .iter()
+            .chain(&self.second_visibility)
+            .any(|visibility| !(visibility.re.is_finite() && visibility.im.is_finite()))
+        {
+            return Err(ImagingError::InvalidRequest(
+                "AW parallel-hand visibility contains a non-finite value".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// One already-selected scalar visibility sample in wavelength coordinates.
 ///
 /// This is the single-sample counterpart to [`VisibilityBatch`]. Streaming
@@ -2032,8 +2290,10 @@ impl ImagingRequest {
     pub(crate) fn validate(&self) -> Result<(), ImagingError> {
         self.geometry.validate()?;
         self.weighting.validate()?;
-        if let GridderMode::Mosaic(config) = &self.gridder_mode {
-            config.validate(&self.visibility_batches)?;
+        match &self.gridder_mode {
+            GridderMode::Mosaic(config) => config.validate(&self.visibility_batches)?,
+            GridderMode::AwProject(config) => config.validate(&self.visibility_batches)?,
+            GridderMode::Standard => {}
         }
         if !(self.reffreq_hz.is_finite() && self.reffreq_hz > 0.0) {
             return Err(ImagingError::InvalidRequest(
@@ -2943,6 +3203,11 @@ impl MtmfsRequest {
     pub(crate) fn validate(&self) -> Result<(), ImagingError> {
         self.geometry.validate()?;
         self.weighting.validate()?;
+        match &self.gridder_mode {
+            GridderMode::Mosaic(config) => config.validate(&self.visibility_batches)?,
+            GridderMode::AwProject(config) => config.validate(&self.visibility_batches)?,
+            GridderMode::Standard => {}
+        }
         if !(self.reffreq_hz.is_finite() && self.reffreq_hz > 0.0) {
             return Err(ImagingError::InvalidRequest(
                 "reffreq_hz must be a finite positive frequency".to_string(),
@@ -3040,10 +3305,18 @@ pub struct MtmfsResult {
     pub image_terms: Vec<Array4<f32>>,
     /// CASA-style `sumwt` products, with `2*nterms - 1` entries.
     pub sumwt_terms: Vec<Array4<f32>>,
+    /// CASA-style gridded sensitivity products, with `2*nterms - 1` entries
+    /// when the selected gridder uses weight images.
+    pub weight_terms: Vec<Array4<f32>>,
     /// Derived spectral-index image, when `nterms > 1`.
     pub alpha: Option<Array4<f32>>,
     /// Derived spectral-index error image, when `nterms > 1`.
     pub alpha_error: Option<Array4<f32>>,
+    /// CASA spectral-product support mask computed from the temporary
+    /// principal-residual threshold used during restoration.
+    pub alpha_mask: Option<Array4<bool>>,
+    /// AWProject cache/plan identity and measured residency, when applicable.
+    pub awproject: Option<AwProjectRunDiagnostics>,
     /// Restoring beam fitted from the zeroth-order PSF, when the fit succeeds.
     pub beam: Option<BeamFit>,
     /// Diagnostics collected while building the products.

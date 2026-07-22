@@ -63,3 +63,4 @@ objc2-metal-performance-shaders-graph = { version = "0.3.2", default-features = 
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
 serial_test = "3"
+tempfile = "3"

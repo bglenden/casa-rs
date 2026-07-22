@@ -302,6 +302,11 @@
       "fingerprint": "fd4a3d2b9c3dbc5584abeb18b1d1fe1097b6790f5773564129053e1d2438a476"
     },
     {
+      "id": "parameter.aterm",
+      "semantic_revision": 1,
+      "fingerprint": "ac1e634e3d79ec1dec507a11c0ee9e22302ec972b4be7aa70231230195f3ea13"
+    },
+    {
       "id": "parameter.autocorr",
       "semantic_revision": 1,
       "fingerprint": "0b12bfcda85e3451c1a128429fa42dd6be02ffda6384c1c4ec9e1bffb4f00355"
@@ -422,6 +427,16 @@
       "fingerprint": "b9762eeb617e64e94ece0b7843bb254453b7b93f6855f438afe28bc220a0c469"
     },
     {
+      "id": "parameter.cf_resident_mb",
+      "semantic_revision": 1,
+      "fingerprint": "3121eb371ca0bf8d5701087cb15d0a7ad6687e2172d2303a3cd70a66d463ee11"
+    },
+    {
+      "id": "parameter.cfcache",
+      "semantic_revision": 1,
+      "fingerprint": "392f55473a583b6493bb92508117a3b02d645680e95982c5915c031d9e85525d"
+    },
+    {
       "id": "parameter.chanbin",
       "semantic_revision": 1,
       "fingerprint": "7e449844d086e9dc59eda85109d039e07be9a21899463b079d5fa03214c6f46b"
@@ -497,6 +512,11 @@
       "fingerprint": "ecdbaae92b5368f72907be80c96715642047362b0fc17967b26ed122cbb5ba3c"
     },
     {
+      "id": "parameter.computepastep",
+      "semantic_revision": 1,
+      "fingerprint": "a9bb41e16029d4cc86cc420cfde666e4d5535ea263fbe977a588e1ec9f434015"
+    },
+    {
       "id": "parameter.compwidth",
       "semantic_revision": 1,
       "fingerprint": "49bbb9c8e93dcae26838a0c375909900527fed0c72760a662f3726dbf71d6fa7"
@@ -505,6 +525,11 @@
       "id": "parameter.concatvis",
       "semantic_revision": 1,
       "fingerprint": "0b8db269f1f883383cbd9c83406da03925e201030094b65c7c9ffbc3ddfe373e"
+    },
+    {
+      "id": "parameter.conjbeams",
+      "semantic_revision": 1,
+      "fingerprint": "2cdc4f860977f4e8d08a223129467a7b87df177a6ccfbeb7aa616e250128ad6e"
     },
     {
       "id": "parameter.contfile",
@@ -620,6 +645,11 @@
       "id": "parameter.extendpols",
       "semantic_revision": 1,
       "fingerprint": "c5d74b90f9b597a24d21874b50a6f4226e67d1129e17e8ae3921121f002bc02e"
+    },
+    {
+      "id": "parameter.facets",
+      "semantic_revision": 1,
+      "fingerprint": "bf7d536e17f347990826491f21b56f321c435e8b06176bb4d4c32811a6757492"
     },
     {
       "id": "parameter.featherimage",
@@ -902,14 +932,39 @@
       "fingerprint": "108c054c653117741335d5f20c11501b503ea3c7af467b95072713f93a0fc052"
     },
     {
+      "id": "parameter.imaging_fft_precision",
+      "semantic_revision": 1,
+      "fingerprint": "7e3218be036ea9626fb76956da6031943d14d86936e4c2da5549c8ff7a8b77c5"
+    },
+    {
+      "id": "parameter.imaging_memory_target_mb",
+      "semantic_revision": 1,
+      "fingerprint": "7c15c98d31f18f0b101db688a16f29a62eb3a6027efd1f27acf2ba23a60a1330"
+    },
+    {
       "id": "parameter.imaging_mode",
       "semantic_revision": 1,
       "fingerprint": "9db92daad38f18d6da2e753095af1266f7afd1f5e27f42cd06f7210eb0a68643"
     },
     {
+      "id": "parameter.imaging_prepare_buffer_mb",
+      "semantic_revision": 1,
+      "fingerprint": "b4e805bab21875a5149de5014fc129918aaa7e9e1b1c459870832b554880c86c"
+    },
+    {
+      "id": "parameter.imaging_prepare_workers",
+      "semantic_revision": 1,
+      "fingerprint": "ca37d034e8009fb8b39d5f3981877433a3ccc3efa999e2b9b143f6169db8e95a"
+    },
+    {
       "id": "parameter.imaging_read_ahead_blocks",
       "semantic_revision": 1,
       "fingerprint": "1cc11bc71f8ef10083305a549c9a0aed7e97941cab39b21ea86bfef34d4d8911"
+    },
+    {
+      "id": "parameter.imaging_row_block_rows",
+      "semantic_revision": 1,
+      "fingerprint": "44ddc60b90dbe7b0674951ac193da834bb9a4015f781fec89c71db95ea2060fe"
     },
     {
       "id": "parameter.imdirection",
@@ -1132,6 +1187,11 @@
       "fingerprint": "21e1f219dde2e3c6683b16d0d6fefd2797eb22cccd63fb8808b079c002f886e4"
     },
     {
+      "id": "parameter.mosweight",
+      "semantic_revision": 1,
+      "fingerprint": "ca1c137b9c11f06a650b28ea3543cdecee34d1c3751a0b24121127b8762061bf"
+    },
+    {
       "id": "parameter.movieaxis",
       "semantic_revision": 1,
       "fingerprint": "f9747c14b2aba65425f74a73e7cbe32421539d652ae14bc18e25781a81dff3c1"
@@ -1175,6 +1235,11 @@
       "id": "parameter.noisethreshold",
       "semantic_revision": 1,
       "fingerprint": "c50c8200fefc3710c6a5c51380c2cde53ef6eb8af9e9a73ec827927e0133f68a"
+    },
+    {
+      "id": "parameter.normtype",
+      "semantic_revision": 1,
+      "fingerprint": "ea4c3eecbbfea431f2b4f2656baaad347c73d2fd6e31970d6fe483bdcf0cfeb8"
     },
     {
       "id": "parameter.nrow",
@@ -1342,6 +1407,11 @@
       "fingerprint": "e0f2aec21b5a48be3cea2fdbc53c6364cd97cf1b19e3db966698a7bb3693901a"
     },
     {
+      "id": "parameter.pointingoffsetsigdev",
+      "semantic_revision": 1,
+      "fingerprint": "9fd73419e8272d390a85bb4493053dc5035517d42475af7e9bb50fc1647a4c2a"
+    },
+    {
       "id": "parameter.polarization",
       "semantic_revision": 1,
       "fingerprint": "c4297624a0ba7b7ac6ef66ea0ab6880742e0e009a1a396d7924e29cbe5d334af"
@@ -1382,9 +1452,24 @@
       "fingerprint": "929b57141de438ddaf78af6cf221d5c14243f643a3c34e77e5657a87d576c02f"
     },
     {
+      "id": "parameter.projection",
+      "semantic_revision": 1,
+      "fingerprint": "91cf4f7b027ec2c58dd1557aa5e095d9d456da41060c8c833f17d47318d83658"
+    },
+    {
       "id": "parameter.psfcutoff",
       "semantic_revision": 1,
       "fingerprint": "4c8b0a35c464a7cf995d90c0869f1fec71ec13825500e3b2478f0f16e01acd76"
+    },
+    {
+      "id": "parameter.psfphasecenter",
+      "semantic_revision": 1,
+      "fingerprint": "2ebb8ef49a7370483d4eecacf56e5a3880c7e0101f76dd3f2b10fdf93f25cd1f"
+    },
+    {
+      "id": "parameter.psterm",
+      "semantic_revision": 1,
+      "fingerprint": "b72bdcb629ec1c007258669440ae7d4ced38e51a3f34ef7b784f70fb312bb6ee"
     },
     {
       "id": "parameter.ptgfile",
@@ -1460,6 +1545,11 @@
       "id": "parameter.robust",
       "semantic_revision": 1,
       "fingerprint": "71598bd350b89ded16af8ecf24a1ecce70c3810981741843f135672a69833882"
+    },
+    {
+      "id": "parameter.rotatepastep",
+      "semantic_revision": 1,
+      "fingerprint": "ab7c994d2e02e519f3c4ea4bcb62b9ff489b9b996e815f9a83fb18c6b62b8530"
     },
     {
       "id": "parameter.row_workers",
@@ -1835,6 +1925,16 @@
       "id": "parameter.visweightscale",
       "semantic_revision": 1,
       "fingerprint": "69cb04c69677c871b510d91086adc89d1387fa52ec48b29b882c4f633bda70b1"
+    },
+    {
+      "id": "parameter.vptable",
+      "semantic_revision": 1,
+      "fingerprint": "56ea9096837b137e17e4180c3c9b60040be54ce609c61bb1b0937f27b9d59552"
+    },
+    {
+      "id": "parameter.wbawp",
+      "semantic_revision": 1,
+      "fingerprint": "0d5fd789a31dbd258b183c69da9bad6a49fbc33f03275b8eb53d71daa4f8d3fb"
     },
     {
       "id": "parameter.weighting",
@@ -2217,6 +2317,11 @@
       "id": "imager",
       "contract_version": 4,
       "fingerprint": "f42e5df67b8bd506836e8229eab9a7b89106775fe7c1af76b1361ecca30caea9"
+    },
+    {
+      "id": "imager",
+      "contract_version": 5,
+      "fingerprint": "9e4f97d2ef4a9dc747b7d2294318d2be03fc5b480f66eeff926e22edb5f685b2"
     },
     {
       "id": "imcollapse",

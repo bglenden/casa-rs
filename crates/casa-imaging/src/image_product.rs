@@ -531,6 +531,14 @@ pub fn mtmfs_image_product_set<'a>(result: &'a MtmfsResult) -> ImageProductSet<'
     ));
     let psf_beam = image_beam_set_from_beam(result.beam);
     let image_beam = image_beam_set_from_beam(result.beam);
+    let restored_mask = result
+        .image_terms
+        .first()
+        .map(|image| Arc::new(image.mapv(|_| true).into_dyn()));
+    let alpha_mask = result
+        .alpha_mask
+        .as_ref()
+        .map(|mask| Arc::new(mask.clone().into_dyn()));
     for (term_index, psf_term) in result.psf_terms.iter().enumerate() {
         set.push_borrowed(
             format!(".psf.tt{term_index}"),
@@ -543,15 +551,12 @@ pub fn mtmfs_image_product_set<'a>(result: &'a MtmfsResult) -> ImageProductSet<'
         );
     }
     for (term_index, residual_term) in result.residual_terms.iter().enumerate() {
-        set.push_borrowed(
-            format!(".residual.tt{term_index}"),
-            residual_term,
-            ImageProductMetadata::new(
-                ImageProductRole::Residual,
-                result.compatibility.residual_units.as_str(),
-                image_beam.clone(),
-            ),
-        );
+        let mut metadata =
+            ImageProductMetadata::new(ImageProductRole::Residual, "", ImageBeamSet::default());
+        if let Some(mask) = restored_mask.as_ref() {
+            metadata = metadata.with_shared_mask(mask.clone());
+        }
+        set.push_borrowed(format!(".residual.tt{term_index}"), residual_term, metadata);
     }
     for (term_index, model_term) in result.model_terms.iter().enumerate() {
         set.push_borrowed(
@@ -565,15 +570,15 @@ pub fn mtmfs_image_product_set<'a>(result: &'a MtmfsResult) -> ImageProductSet<'
         );
     }
     for (term_index, image_term) in result.image_terms.iter().enumerate() {
-        set.push_borrowed(
-            format!(".image.tt{term_index}"),
-            image_term,
-            ImageProductMetadata::new(
-                ImageProductRole::Image,
-                result.compatibility.image_units.as_str(),
-                image_beam.clone(),
-            ),
+        let mut metadata = ImageProductMetadata::new(
+            ImageProductRole::Image,
+            result.compatibility.image_units.as_str(),
+            image_beam.clone(),
         );
+        if let Some(mask) = restored_mask.as_ref() {
+            metadata = metadata.with_shared_mask(mask.clone());
+        }
+        set.push_borrowed(format!(".image.tt{term_index}"), image_term, metadata);
     }
     for (term_index, sumwt_term) in result.sumwt_terms.iter().enumerate() {
         set.push_borrowed(
@@ -582,19 +587,27 @@ pub fn mtmfs_image_product_set<'a>(result: &'a MtmfsResult) -> ImageProductSet<'
             ImageProductMetadata::new(ImageProductRole::Sumwt, "", ImageBeamSet::default()),
         );
     }
-    if let Some(alpha) = result.alpha.as_ref() {
+    for (term_index, weight_term) in result.weight_terms.iter().enumerate() {
         set.push_borrowed(
-            ".alpha",
-            alpha,
-            ImageProductMetadata::new(ImageProductRole::Alpha, "", image_beam.clone()),
+            format!(".weight.tt{term_index}"),
+            weight_term,
+            ImageProductMetadata::new(ImageProductRole::Weight, "", ImageBeamSet::default()),
         );
     }
+    if let Some(alpha) = result.alpha.as_ref() {
+        let mut metadata =
+            ImageProductMetadata::new(ImageProductRole::Alpha, "", image_beam.clone());
+        if let Some(mask) = alpha_mask.as_ref() {
+            metadata = metadata.with_shared_mask(mask.clone());
+        }
+        set.push_borrowed(".alpha", alpha, metadata);
+    }
     if let Some(alpha_error) = result.alpha_error.as_ref() {
-        set.push_borrowed(
-            ".alpha.error",
-            alpha_error,
-            ImageProductMetadata::new(ImageProductRole::AlphaError, "", image_beam),
-        );
+        let mut metadata = ImageProductMetadata::new(ImageProductRole::AlphaError, "", image_beam);
+        if let Some(mask) = alpha_mask {
+            metadata = metadata.with_shared_mask(mask);
+        }
+        set.push_borrowed(".alpha.error", alpha_error, metadata);
     }
     set
 }

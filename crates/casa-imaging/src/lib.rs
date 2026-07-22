@@ -28,6 +28,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 mod apple_fft;
+mod awprojection;
 mod beam;
 mod error;
 mod execution;
@@ -42,6 +43,14 @@ mod trace;
 mod types;
 mod weighting;
 
+pub use awprojection::{
+    AwConvolutionFunctionCache, AwConvolutionFunctionCacheIdentity, AwConvolutionFunctionCell,
+    AwConvolutionFunctionEntryMetadata, AwConvolutionFunctionInventory,
+    AwConvolutionFunctionKernelMetadata, AwConvolutionFunctionKey,
+    AwConvolutionFunctionResidentCache, AwConvolutionFunctionResidentStats,
+    AwConvolutionFunctionUvCoordinateIdentity, AwProjectPlanKey, AwProjectRunDiagnostics,
+    AwProjectSampleStats,
+};
 pub use execution_plan::{
     ImagingCachePlan, ImagingExecutionPolicy, ImagingFftChunkPlan, ImagingIngestPlan,
     ImagingMemoryAllocation, ImagingMetalPlan, ImagingPlanAdmission, ImagingPlanDecision,
@@ -99,13 +108,14 @@ use fft_backend::{
     Fft2Spec, FftBackendChoice, FftBackendSelection, FftDirection, FftPlacement, FftPrecision,
     FftPrecisionChoice, FftTiming, FftUseCase, select_fft_backend,
 };
+use gridder::{
+    AwProjectSamplePlanRejection, AwProjector, PlannedSample, PositiveTapSet,
+    STANDARD_GRIDDER_TAP_COUNT, ScreenProjectSamplePlan, ScreenProjector, StandardGridder,
+    StandardMfsTapCensus, StandardMfsTapSkipReason, WProjectSamplePlan, WProjector,
+    hetarray_screen_conv_size,
+};
 #[cfg(all(target_os = "macos", not(coverage)))]
 use gridder::{CenteredComplex32GridBatch, GridCorrectionDescriptor};
-use gridder::{
-    PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjectSamplePlan,
-    ScreenProjector, StandardGridder, StandardMfsTapCensus, StandardMfsTapSkipReason,
-    WProjectSamplePlan, WProjector, hetarray_screen_conv_size,
-};
 pub use weighting::{
     StandardMfsStreamingWeightingPlan, accumulate_standard_mfs_density_row_from_arrays,
     accumulate_standard_mfs_density_row_from_visibility_block,
@@ -356,27 +366,29 @@ pub use trace::{
 
 pub use error::ImagingError;
 pub use types::{
-    AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMetadata,
-    CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics, CubeImagingResult,
-    CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, DirtyImagingResult,
-    GaussianUvTaper, GeometryRoutePlan, GridderMode, GridderRoutePlan, GroupedVisibilityMetadata,
-    GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry, ImagingDiagnostics,
-    ImagingRequest, ImagingResult, ImagingSourceBlockView, ImagingStageTimings, MinorCycleTrace,
-    ModelRoutePlan, MosaicGridderConfig, MtmfsRequest, MtmfsResult, OutputPlaneContribution,
-    ParallelHandBatch, PlaneStokes, PolarizationRoutePlan, PrimaryBeamModel, PsfBeamFitResult,
-    ReplayCapability, ResidualRefreshDiagnostics, ResidualSampleDiagnostics, RestoringBeamMode,
-    ScalarVisibilitySample, SourceChannelRoute, SpectralRoutePlan, StandardMfsDensitySourcePlan,
-    StandardMfsDensitySourcePlanRequest, StandardMfsPairCollapseTransform,
-    StandardMfsPlannedSampleBlock, StandardMfsRoutedVisibilityAppendCounts,
-    StandardMfsRoutedVisibilityBlock, StandardMfsVisibilityPolarization, StandardMfsVisibilityRow,
-    UvTaperSize, VisibilityBatch, VisibilityBlockStream, VisibilityBlockView,
-    VisibilityComplexSamplesRef, VisibilityFloatSamplesRef, VisibilityMetadataBatch,
-    VisibilitySampleRange, VisibilitySource, VisibilitySourcePartition,
-    VisibilitySourcePartitionId, VisibilitySourceShape, VisibilityStreamBounds,
-    VisibilityStreamTelemetry, WProjectDiagnostics, WProjectKernelDiagnostics,
-    WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
-    WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingRoutePlan,
-    WeightingSampleDiagnostics, plan_standard_mfs_density_source,
+    AwParallelHandVisibilityBatch, AwProjectControls, AwProjectGridderConfig,
+    AwProjectNormalization, AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason,
+    CompatibilityMetadata, CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics,
+    CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
+    DirtyImagingResult, GaussianUvTaper, GeometryRoutePlan, GridderMode, GridderRoutePlan,
+    GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry,
+    ImagingDiagnostics, ImagingRequest, ImagingResult, ImagingSourceBlockView, ImagingStageTimings,
+    MinorCycleTrace, ModelRoutePlan, MosaicGridderConfig, MtmfsRequest, MtmfsResult,
+    OutputPlaneContribution, ParallelHandBatch, PlaneStokes, PolarizationRoutePlan,
+    PrimaryBeamModel, PsfBeamFitResult, ReplayCapability, ResidualRefreshDiagnostics,
+    ResidualSampleDiagnostics, RestoringBeamMode, ScalarVisibilitySample, SourceChannelRoute,
+    SpectralRoutePlan, StandardMfsDensitySourcePlan, StandardMfsDensitySourcePlanRequest,
+    StandardMfsPairCollapseTransform, StandardMfsPlannedSampleBlock,
+    StandardMfsRoutedVisibilityAppendCounts, StandardMfsRoutedVisibilityBlock,
+    StandardMfsVisibilityPolarization, StandardMfsVisibilityRow, UvTaperSize, VisibilityBatch,
+    VisibilityBlockStream, VisibilityBlockView, VisibilityComplexSamplesRef,
+    VisibilityFloatSamplesRef, VisibilityMetadataBatch, VisibilitySampleRange, VisibilitySource,
+    VisibilitySourcePartition, VisibilitySourcePartitionId, VisibilitySourceShape,
+    VisibilityStreamBounds, VisibilityStreamTelemetry, WProjectDiagnostics,
+    WProjectKernelDiagnostics, WProjectSamplePlanDiagnostics, WProjectSkipReason,
+    WProjectSkippedSampleDiagnostics, WTermMode, WeightDensityMode, WeightingDiagnostics,
+    WeightingMode, WeightingRoutePlan, WeightingSampleDiagnostics,
+    plan_standard_mfs_density_source,
 };
 use types::{
     StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
@@ -3652,6 +3664,8 @@ pub struct MosaicVisibilityBlock {
 pub struct MosaicMtmfsVisibilityBlock {
     /// Scalar visibility samples prepared from a bounded MS row block.
     pub visibility: VisibilityBatch,
+    /// Optional aligned parallel hands required by Mueller-aware AWProject.
+    pub aw_parallel_hands: Option<AwParallelHandVisibilityBatch>,
     /// Optional weighting-density coordinates aligned with `visibility`.
     pub density: Option<VisibilityBatch>,
     /// Per-sample world frequencies in Hz aligned with `visibility`.
@@ -3760,6 +3774,7 @@ where
         weighting: request.weighting,
         selected_frequency_range_hz: request.selected_frequency_range_hz,
         weight_density_mode,
+        separate_pointing_density: true,
         _config: &config,
         _gridder: &gridder,
         _conv_sampling: conv_sampling,
@@ -4227,10 +4242,14 @@ where
             "streaming mosaic MT-MFS requires CASA standard MFS compatibility".to_string(),
         ));
     }
-    let GridderMode::Mosaic(config) = request.gridder_mode.clone() else {
-        return Err(ImagingError::Unsupported(
-            "streaming mosaic MT-MFS requires gridder='mosaic'".to_string(),
-        ));
+    let (config, aw_controls) = match request.gridder_mode.clone() {
+        GridderMode::Mosaic(config) => (config, None),
+        GridderMode::AwProject(config) => (config.mosaic, Some(config.controls)),
+        GridderMode::Standard => {
+            return Err(ImagingError::Unsupported(
+                "streaming mosaic MT-MFS requires gridder='mosaic' or 'awproject'".to_string(),
+            ));
+        }
     };
     validate_mosaic_streaming_config(&config)?;
     if request.w_term_mode != WTermMode::None {
@@ -4260,8 +4279,38 @@ where
     }
 
     let gridder = StandardGridder::new_unpadded(request.geometry)?;
+    let (aw_cache, aw_plan_key) = if let Some(controls) = aw_controls.as_ref() {
+        controls.validate()?;
+        let index = AwConvolutionFunctionCache::open(&controls.cf_cache)?;
+        validate_awproject_cache_for_streaming(&index, controls, request.geometry)?;
+        let plan_key = build_awproject_plan_key(&index, controls, &request, &config);
+        (
+            Some(AwConvolutionFunctionResidentCache::new(
+                index,
+                controls.cf_resident_bytes,
+            )),
+            Some(plan_key),
+        )
+    } else {
+        (None, None)
+    };
     let [nx, ny] = request.geometry.image_shape;
-    let conv_sampling = mosaic_projector_sampling(request.geometry);
+    let conv_sampling = match aw_cache.as_ref() {
+        Some(cache) => {
+            let key = cache.cache().keys().first().copied().ok_or_else(|| {
+                ImagingError::ConvolutionFunctionCache(
+                    "validated AWProject cache unexpectedly contains no keys".to_string(),
+                )
+            })?;
+            cache
+                .cache()
+                .metadata(key)
+                .expect("validated AWProject key has metadata")
+                .imaging
+                .sampling
+        }
+        None => mosaic_projector_sampling(request.geometry),
+    };
     let mut stage_timings = ImagingStageTimings::default();
     let weighting_request = mosaic_mtmfs_weighting_request(&request);
 
@@ -4274,6 +4323,9 @@ where
         weighting: request.weighting,
         selected_frequency_range_hz: request.selected_frequency_range_hz,
         weight_density_mode,
+        separate_pointing_density: aw_controls
+            .as_ref()
+            .is_none_or(|controls| controls.mosaic_weighting),
         _config: &config,
         _gridder: &gridder,
         _conv_sampling: conv_sampling,
@@ -4321,8 +4373,10 @@ where
         )),
         dirty_product_fft_policy,
         standard_mfs_grid_threads(&execution_config),
-        true,
+        aw_cache.is_none(),
         direct_metal_scratch_bytes,
+        aw_cache.as_ref(),
+        aw_controls.as_ref(),
     )?;
     stage_timings.psf_grid += dirty_started.elapsed();
 
@@ -4337,11 +4391,18 @@ where
         ));
     }
 
-    let mut weight_image_for_mask = initial.pointing_weights.build_image(
-        request.geometry,
-        &config,
-        standard_mfs_grid_threads(&execution_config),
-    )?;
+    // AWProject derives its normalization/mask weight image from the gridded
+    // WTCF product below.  The analytic pointing/PB accumulator belongs to the
+    // mosaic gridder and may legitimately contain no entries for an AW run.
+    let mut weight_image_for_mask = if aw_cache.is_some() {
+        Array2::<f32>::zeros((nx, ny))
+    } else {
+        initial.pointing_weights.build_image(
+            request.geometry,
+            &config,
+            standard_mfs_grid_threads(&execution_config),
+        )?
+    };
     let normalize_started = Instant::now();
     let accumulated_in_metal = initial.storage.is_metal_shared();
     let mut dirty_images = finish_mosaic_mtmfs_dirty_images(
@@ -4352,6 +4413,9 @@ where
             nterms: request.nterms,
             image_shape: request.geometry.image_shape,
             normalization_sumwt: initial.normalization_sumwt,
+            aw_psf_sumwt_terms: aw_cache
+                .as_ref()
+                .map(|_| initial.aw_psf_sumwt_terms.clone()),
             pb_limit: config.pb_limit,
             dirty_product_fft_policy,
         },
@@ -4393,6 +4457,8 @@ where
             standard_mfs_grid_threads(&execution_config),
             false,
             direct_metal_scratch_bytes,
+            aw_cache.as_ref(),
+            aw_controls.as_ref(),
         )?;
         stage_timings.psf_grid += fallback_started.elapsed();
         if !(initial.normalization_sumwt.is_finite() && initial.normalization_sumwt > 0.0) {
@@ -4405,11 +4471,15 @@ where
                 "streaming mosaic MT-MFS reported sumwt is non-finite or zero".to_string(),
             ));
         }
-        weight_image_for_mask = initial.pointing_weights.build_image(
-            request.geometry,
-            &config,
-            standard_mfs_grid_threads(&execution_config),
-        )?;
+        weight_image_for_mask = if aw_cache.is_some() {
+            Array2::<f32>::zeros((nx, ny))
+        } else {
+            initial.pointing_weights.build_image(
+                request.geometry,
+                &config,
+                standard_mfs_grid_threads(&execution_config),
+            )?
+        };
         dirty_images = finish_mosaic_mtmfs_dirty_images(
             MosaicMtmfsDirtyFinishRequest {
                 gridder: &gridder,
@@ -4418,6 +4488,9 @@ where
                 nterms: request.nterms,
                 image_shape: request.geometry.image_shape,
                 normalization_sumwt: initial.normalization_sumwt,
+                aw_psf_sumwt_terms: aw_cache
+                    .as_ref()
+                    .map(|_| initial.aw_psf_sumwt_terms.clone()),
                 pb_limit: config.pb_limit,
                 dirty_product_fft_policy,
             },
@@ -4429,8 +4502,12 @@ where
         psf_terms,
         mut residual_terms,
         weight_image,
+        weight_terms,
         psf_peak,
     } = dirty_images;
+    if aw_cache.is_some() {
+        weight_image_for_mask = weight_image.clone();
+    }
     stage_timings.psf_normalize += normalize_started.elapsed();
 
     let mosaic_clean_mask = build_mosaic_clean_mask(
@@ -4445,15 +4522,27 @@ where
         .as_ref()
         .map(|mask| mask.iter().filter(|value| **value).count())
         .unwrap_or(nx * ny);
-    let psf_state = MtmfsPsfState {
-        psf_terms,
-        normalization_sumwt: initial.normalization_sumwt as f32,
-        reported_sumwt_terms: initial
+    let reported_sumwt_terms = if aw_cache.is_some() {
+        initial
+            .reported_sumwt_terms
+            .iter()
+            .take(request.nterms)
+            .chain(initial.aw_psf_sumwt_terms.iter().skip(request.nterms))
+            .copied()
+            .map(|value| value as f32)
+            .collect()
+    } else {
+        initial
             .reported_sumwt_terms
             .iter()
             .copied()
             .map(|value| value as f32)
-            .collect(),
+            .collect()
+    };
+    let psf_state = MtmfsPsfState {
+        psf_terms,
+        normalization_sumwt: initial.normalization_sumwt as f32,
+        reported_sumwt_terms,
         psf_peak,
         gridded_samples: initial.gridded_samples,
         skipped_samples: initial.skipped_samples,
@@ -4583,6 +4672,8 @@ where
             dirty_product_fft_policy,
             standard_mfs_grid_threads(&execution_config),
             direct_metal_scratch_bytes,
+            aw_cache.as_ref(),
+            aw_controls.as_ref(),
             execution_config.progress_callback.as_ref(),
             Some(standard_mfs_progress_context(
                 &weighting_request,
@@ -4636,6 +4727,8 @@ where
             dirty_product_fft_policy,
             standard_mfs_grid_threads(&execution_config),
             direct_metal_scratch_bytes,
+            aw_cache.as_ref(),
+            aw_controls.as_ref(),
             execution_config.progress_callback.as_ref(),
             None,
         )?;
@@ -4670,11 +4763,25 @@ where
     stage_timings.restore += restore_started.elapsed();
     stage_timings.total = total_started.elapsed();
 
-    let (alpha, alpha_error) =
+    let (alpha, alpha_error, alpha_mask) =
         compute_mtmfs_alpha_products(&image_terms, &principal_residual_terms);
     let fractional_bandwidth = (clean_request.selected_frequency_range_hz[1]
         - clean_request.selected_frequency_range_hz[0])
         / clean_request.reffreq_hz;
+    let awproject = match (aw_plan_key, aw_cache.as_ref()) {
+        (Some(plan_key), Some(cache)) => Some(AwProjectRunDiagnostics {
+            plan_key,
+            resident_budget_bytes: cache.byte_budget(),
+            resident: cache.stats()?,
+            samples: initial.aw_sample_census.clone(),
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(ImagingError::ConvolutionFunctionCache(
+                "internal AWProject plan/cache diagnostics state is inconsistent".to_string(),
+            ));
+        }
+    };
 
     Ok(MtmfsResult {
         psf_terms: psf_state.psf_terms.iter().map(expand_plane).collect(),
@@ -4687,8 +4794,11 @@ where
             .copied()
             .map(expand_scalar)
             .collect(),
+        weight_terms: weight_terms.iter().map(expand_plane).collect(),
         alpha: alpha.as_ref().map(expand_plane),
         alpha_error: alpha_error.as_ref().map(expand_plane),
+        alpha_mask: alpha_mask.as_ref().map(expand_mask_plane),
+        awproject,
         beam,
         diagnostics: ImagingDiagnostics {
             warnings,
@@ -4738,7 +4848,7 @@ where
 struct MosaicMtmfsHostGrids {
     psf_grids: Vec<Array2<Complex64>>,
     residual_grids: Vec<Array2<Complex64>>,
-    weight_grid: Array2<Complex64>,
+    weight_grids: Vec<Array2<Complex64>>,
 }
 
 enum MosaicMtmfsStreamGridStorage {
@@ -4774,7 +4884,7 @@ impl MosaicMtmfsStreamGridStorage {
                 dirty_product_fft_policy,
                 rows,
                 columns,
-                psf_term_count + residual_term_count + 1,
+                psf_term_count + residual_term_count + psf_term_count,
             )?
             && !mosaic_trace_enabled()
             && !mosaic_weight_trace_enabled()
@@ -4795,13 +4905,15 @@ impl MosaicMtmfsStreamGridStorage {
                     residual_grids: (0..residual_term_count)
                         .map(|_| Array2::<Complex64>::zeros((rows, columns)))
                         .collect(),
-                    weight_grid: Array2::<Complex64>::zeros((rows, columns)),
+                    weight_grids: (0..psf_term_count)
+                        .map(|_| Array2::<Complex64>::zeros((rows, columns)))
+                        .collect(),
                 }));
             };
             match crate::apple_fft::MetalSharedF32DirtyGridBatch::new(
                 rows,
                 columns,
-                psf_term_count + residual_term_count + 1,
+                psf_term_count + residual_term_count + psf_term_count,
             ) {
                 Ok(grid) => {
                     return Ok(Self::MetalSharedF32 {
@@ -4828,7 +4940,9 @@ impl MosaicMtmfsStreamGridStorage {
             residual_grids: (0..residual_term_count)
                 .map(|_| Array2::<Complex64>::zeros((rows, columns)))
                 .collect(),
-            weight_grid: Array2::<Complex64>::zeros((rows, columns)),
+            weight_grids: (0..psf_term_count)
+                .map(|_| Array2::<Complex64>::zeros((rows, columns)))
+                .collect(),
         }))
     }
 
@@ -4902,6 +5016,7 @@ impl MosaicMtmfsStreamGridStorage {
 
     fn grid_weight_support(
         &mut self,
+        order: usize,
         projector: &ScreenProjector,
         weight_plan: &ScreenProjectSamplePlan,
         support_sums: &[MosaicWeightSupportSum],
@@ -4910,7 +5025,7 @@ impl MosaicMtmfsStreamGridStorage {
             Self::HostF64(grids) => add_mosaic_center_weight_grid_from_support_sums(
                 projector,
                 weight_plan,
-                &mut grids.weight_grid,
+                &mut grids.weight_grids[order],
                 support_sums,
             ),
             #[cfg(all(target_os = "macos", not(coverage)))]
@@ -4921,14 +5036,14 @@ impl MosaicMtmfsStreamGridStorage {
                 ..
             } => {
                 let mut writer = grid
-                    .writer(*psf_term_count + *residual_term_count)
+                    .writer(*psf_term_count + *residual_term_count + order)
                     .map_err(|reason| {
                         ImagingError::Unsupported(format!(
                             "direct Metal mosaic MT-MFS weight grid: {reason}"
                         ))
                     })?;
                 for support_sum in support_sums {
-                    if !(support_sum.weight.is_finite() && support_sum.weight > 0.0) {
+                    if !(support_sum.weight.is_finite() && support_sum.weight != 0.0) {
                         continue;
                     }
                     let mut plan = *weight_plan;
@@ -4946,22 +5061,145 @@ impl MosaicMtmfsStreamGridStorage {
         }
         Ok(())
     }
+
+    fn grid_aw_psf(
+        &mut self,
+        order: usize,
+        projector: &AwProjector<'_>,
+        plan: &gridder::AwProjectSamplePlan,
+        value: Complex32,
+    ) -> Result<(), ImagingError> {
+        match self {
+            Self::HostF64(grids) => {
+                projector.grid_sample_planned_f64(
+                    &mut grids.psf_grids[order],
+                    plan,
+                    Complex64::new(f64::from(value.re), f64::from(value.im)),
+                );
+                Ok(())
+            }
+            #[cfg(all(target_os = "macos", not(coverage)))]
+            Self::MetalSharedF32 { .. } => Err(ImagingError::Unsupported(
+                "AWProject direct Metal gridding is not yet an eligible execution plan".to_string(),
+            )),
+        }
+    }
+
+    fn grid_aw_residual(
+        &mut self,
+        order: usize,
+        projector: &AwProjector<'_>,
+        plan: &gridder::AwProjectSamplePlan,
+        value: Complex32,
+    ) -> Result<(), ImagingError> {
+        match self {
+            Self::HostF64(grids) => {
+                projector.grid_sample_planned_f64(
+                    &mut grids.residual_grids[order],
+                    plan,
+                    Complex64::new(f64::from(value.re), f64::from(value.im)),
+                );
+                Ok(())
+            }
+            #[cfg(all(target_os = "macos", not(coverage)))]
+            Self::MetalSharedF32 { .. } => Err(ImagingError::Unsupported(
+                "AWProject direct Metal gridding is not yet an eligible execution plan".to_string(),
+            )),
+        }
+    }
+
+    fn grid_aw_weight(
+        &mut self,
+        order: usize,
+        projector: &AwProjector<'_>,
+        plan: &gridder::AwProjectSamplePlan,
+        value: f32,
+    ) -> Result<(), ImagingError> {
+        match self {
+            Self::HostF64(grids) => {
+                projector.grid_sample_planned_f64(
+                    &mut grids.weight_grids[order],
+                    plan,
+                    Complex64::new(f64::from(value), 0.0),
+                );
+                Ok(())
+            }
+            #[cfg(all(target_os = "macos", not(coverage)))]
+            Self::MetalSharedF32 { .. } => Err(ImagingError::Unsupported(
+                "AWProject direct Metal gridding is not yet an eligible execution plan".to_string(),
+            )),
+        }
+    }
 }
 
 struct MosaicMtmfsStreamGridAccumulation {
     storage: MosaicMtmfsStreamGridStorage,
     pointing_weights: MosaicPointingWeightAccumulator,
     reported_sumwt_terms: Vec<f64>,
+    aw_psf_sumwt_terms: Vec<f64>,
     normalization_sumwt: f64,
     gridded_samples: usize,
     skipped_samples: usize,
     max_abs_w_lambda: f64,
+    aw_sample_census: AwProjectSampleStats,
+}
+
+impl AwProjectSampleStats {
+    fn observe_plan_rejection(&mut self, reason: AwProjectSamplePlanRejection) {
+        match reason {
+            AwProjectSamplePlanRejection::NonFiniteCoordinate => {
+                self.rejected_nonfinite_coordinate += 1;
+            }
+            AwProjectSamplePlanRejection::OutsideGrid => {
+                self.rejected_outside_grid += 1;
+            }
+            AwProjectSamplePlanRejection::KernelIndexOutsideCell => {
+                self.rejected_kernel_index += 1;
+            }
+            AwProjectSamplePlanRejection::InvalidNormalization => {
+                self.rejected_invalid_normalization += 1;
+            }
+        }
+    }
+
+    fn log(
+        &self,
+        pass: SinglePlaneStreamPass,
+        cache: &AwConvolutionFunctionResidentCache,
+    ) -> Result<(), ImagingError> {
+        let stats = cache.stats()?;
+        eprintln!(
+            "awproject_mtmfs_sample_census pass={} attempted_samples={} accepted_samples={} rejected_not_gridable={} rejected_invalid_input={} rejected_rr_imaging_plan={} rejected_ll_imaging_plan={} rejected_rr_psf_plan={} rejected_ll_psf_plan={} rejected_nonfinite_coordinate={} rejected_outside_grid={} rejected_kernel_index={} rejected_invalid_normalization={} normalization_acceptance_fraction={:.9} cf_resident_budget_bytes={} cf_resident_cells={} cf_resident_bytes={} cf_loads={} cf_hits={} cf_evictions={}",
+            pass.label(),
+            self.attempted_samples,
+            self.accepted_samples,
+            self.rejected_not_gridable,
+            self.rejected_invalid_input,
+            self.rejected_rr_imaging_plan,
+            self.rejected_ll_imaging_plan,
+            self.rejected_rr_psf_plan,
+            self.rejected_ll_psf_plan,
+            self.rejected_nonfinite_coordinate,
+            self.rejected_outside_grid,
+            self.rejected_kernel_index,
+            self.rejected_invalid_normalization,
+            self.accepted_samples as f64 / self.attempted_samples.max(1) as f64,
+            cache.byte_budget(),
+            stats.resident_cells,
+            stats.resident_bytes,
+            stats.loads,
+            stats.hits,
+            stats.evictions,
+        );
+        Ok(())
+    }
 }
 
 struct MosaicMtmfsDirtyImages {
     psf_terms: Vec<Array2<f32>>,
     residual_terms: Vec<Array2<f32>>,
     weight_image: Array2<f32>,
+    weight_terms: Vec<Array2<f32>>,
     psf_peak: f32,
 }
 
@@ -4972,6 +5210,7 @@ struct MosaicMtmfsDirtyFinishRequest<'a> {
     nterms: usize,
     image_shape: [usize; 2],
     normalization_sumwt: f64,
+    aw_psf_sumwt_terms: Option<Vec<f64>>,
     pb_limit: f32,
     dirty_product_fft_policy: DirtyProductFftPolicy,
 }
@@ -4987,32 +5226,77 @@ fn finish_mosaic_mtmfs_dirty_images(
         nterms,
         image_shape,
         normalization_sumwt,
+        aw_psf_sumwt_terms,
         pb_limit,
         dirty_product_fft_policy,
     } = request;
     let psf_term_count = 2 * nterms - 1;
-    let fft_sumwt_scale = (image_shape[0] * image_shape[1]) as f32 / normalization_sumwt as f32;
+    let image_pixel_count = (image_shape[0] * image_shape[1]) as f32;
+    // The CASA 6 refim AWProjectWBFT path deliberately leaves its Fourier-
+    // transformed WTCF planes unnormalized by sumCFWeight. SynthesisNormalizer
+    // then dispatches the base-class divideWeightBySumwt spelling, so only
+    // weight.tt0 is divided by the zeroth correlation-grid imaging-weight sum;
+    // the higher Taylor weights remain raw.
+    let awproject_weight_semantics = aw_psf_sumwt_terms.is_some();
+    let weight_fft_scales = if let Some(psf_sumwt_terms) = aw_psf_sumwt_terms.as_ref() {
+        if psf_sumwt_terms.len() != psf_term_count {
+            return Err(ImagingError::Normalization(format!(
+                "AWProject MT-MFS PSF sumwt has {} terms, expected {psf_term_count}",
+                psf_sumwt_terms.len()
+            )));
+        }
+        let weight_zero_sumwt = psf_sumwt_terms[0];
+        if !(weight_zero_sumwt.is_finite() && weight_zero_sumwt > 0.0) {
+            return Err(ImagingError::Normalization(
+                "AWProject MT-MFS zeroth weight sum is non-finite or zero".to_string(),
+            ));
+        }
+        let mut scales = vec![image_pixel_count; psf_term_count];
+        scales[0] = image_pixel_count / weight_zero_sumwt as f32;
+        scales
+    } else {
+        vec![image_pixel_count / normalization_sumwt as f32; psf_term_count]
+    };
+    // The streaming result contract carries CASA's post-FTM sumwt
+    // normalization. AWProject's separate WTCF semantics affect the weight
+    // products above, but not this shared dirty-image scale.
+    let dirty_fft_scale = image_pixel_count / normalization_sumwt as f32;
     match storage {
         MosaicMtmfsStreamGridStorage::HostF64(grids) => {
             let fft_started = Instant::now();
             let mut inputs = grids.psf_grids;
             inputs.extend(grids.residual_grids);
-            inputs.push(grids.weight_grid);
+            inputs.extend(grids.weight_grids);
             let input_refs = inputs.iter().collect::<Vec<_>>();
             let (mut outputs, _) =
                 execute_dirty_product_host_f64_batch(&input_refs, dirty_product_fft_policy)?;
-            let raw_weight = outputs.pop().expect("MT-MFS weight FFT output");
+            let raw_weight_terms = outputs.split_off(psf_term_count + nterms);
             let raw_residual_terms = outputs.split_off(psf_term_count);
             let raw_psf_terms = outputs;
             stage_timings.psf_fft += fft_started.elapsed();
-            let normalization_weight_image = gridder.mosaic_weight_image_from_grid_f64(&raw_weight);
-            let weight_image = normalization_weight_image.mapv(|value| value * fft_sumwt_scale);
+            let weight_terms = raw_weight_terms
+                .iter()
+                .zip(&weight_fft_scales)
+                .map(|(raw, &scale)| {
+                    let image = if awproject_weight_semantics {
+                        gridder.aw_weight_image_from_grid_f64(raw)
+                    } else {
+                        gridder.mosaic_weight_image_from_grid_f64(raw)
+                    };
+                    image.mapv(|value| value * scale)
+                })
+                .collect::<Vec<_>>();
+            let weight_image = weight_terms.first().cloned().ok_or_else(|| {
+                ImagingError::Normalization(
+                    "streaming mosaic MT-MFS produced no weight terms".to_string(),
+                )
+            })?;
             let mut psf_terms = raw_psf_terms
                 .iter()
                 .map(|raw| {
                     let mut image =
                         gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling);
-                    image.mapv_inplace(|value| value * fft_sumwt_scale);
+                    image.mapv_inplace(|value| value * dirty_fft_scale);
                     image
                 })
                 .collect::<Vec<_>>();
@@ -5023,7 +5307,8 @@ fn finish_mosaic_mtmfs_dirty_images(
                     .map(|raw| gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling))
                     .collect::<Vec<_>>(),
                 weight_image,
-                fft_sumwt_scale,
+                weight_terms,
+                dirty_fft_scale,
                 pb_limit,
             )?;
             Ok(psf_peak)
@@ -5052,24 +5337,39 @@ fn finish_mosaic_mtmfs_dirty_images(
                         ))
                     },
                 )?;
-            if raw_terms.len() != psf_term_count + nterms + 1 {
+            if raw_terms.len() != psf_term_count + nterms + psf_term_count {
                 return Err(ImagingError::Normalization(format!(
                     "direct Metal mosaic MT-MFS FFT returned {} terms, expected {}",
                     raw_terms.len(),
-                    psf_term_count + nterms + 1
+                    psf_term_count + nterms + psf_term_count
                 )));
             }
             stage_timings.psf_fft += timing.total;
-            let raw_weight = raw_terms
-                .last()
-                .expect("validated direct mosaic MT-MFS weight term");
-            let normalization_weight_image = gridder.mosaic_weight_image_from_grid(raw_weight);
-            let weight_image = normalization_weight_image.mapv(|value| value * fft_sumwt_scale);
+            if awproject_weight_semantics {
+                return Err(ImagingError::Unsupported(
+                    "AWProject direct Metal weight finalization is not yet an eligible execution plan"
+                        .to_string(),
+                ));
+            }
+            let weight_terms = raw_terms[psf_term_count + nterms..]
+                .iter()
+                .zip(&weight_fft_scales)
+                .map(|(raw, &scale)| {
+                    gridder
+                        .mosaic_weight_image_from_grid(raw)
+                        .mapv(|value| value * scale)
+                })
+                .collect::<Vec<_>>();
+            let weight_image = weight_terms.first().cloned().ok_or_else(|| {
+                ImagingError::Normalization(
+                    "direct Metal mosaic MT-MFS produced no weight terms".to_string(),
+                )
+            })?;
             let mut psf_terms = raw_terms[..psf_term_count]
                 .iter()
                 .map(|raw| {
                     let mut image = gridder.corrected_mosaic_image_from_grid(raw, conv_sampling);
-                    image.mapv_inplace(|value| value * fft_sumwt_scale);
+                    image.mapv_inplace(|value| value * dirty_fft_scale);
                     image
                 })
                 .collect::<Vec<_>>();
@@ -5081,7 +5381,8 @@ fn finish_mosaic_mtmfs_dirty_images(
                 &mut psf_terms,
                 &corrected_residual_terms,
                 weight_image,
-                fft_sumwt_scale,
+                weight_terms,
+                dirty_fft_scale,
                 pb_limit,
             )?;
             if profile::standard_mfs_profile_detail_enabled() {
@@ -5115,6 +5416,7 @@ fn normalize_mosaic_mtmfs_dirty_images(
     psf_terms: &mut [Array2<f32>],
     corrected_residual_terms: &[Array2<f32>],
     weight_image: Array2<f32>,
+    weight_terms: Vec<Array2<f32>>,
     fft_sumwt_scale: f32,
     pb_limit: f32,
 ) -> Result<MosaicMtmfsDirtyImages, ImagingError> {
@@ -5140,6 +5442,7 @@ fn normalize_mosaic_mtmfs_dirty_images(
         psf_terms: psf_terms.to_vec(),
         residual_terms,
         weight_image,
+        weight_terms,
         psf_peak,
     })
 }
@@ -6189,6 +6492,8 @@ fn accumulate_mosaic_mtmfs_stream_grids<F>(
     requested_threads: usize,
     allow_direct_metal: bool,
     direct_metal_scratch_bytes: Option<usize>,
+    aw_cache: Option<&AwConvolutionFunctionResidentCache>,
+    aw_controls: Option<&AwProjectControls>,
 ) -> Result<MosaicMtmfsStreamGridAccumulation, ImagingError>
 where
     F: FnMut(
@@ -6210,10 +6515,12 @@ where
         )?,
         pointing_weights: MosaicPointingWeightAccumulator::default(),
         reported_sumwt_terms: vec![0.0; psf_term_count],
+        aw_psf_sumwt_terms: vec![0.0; psf_term_count],
         normalization_sumwt: 0.0,
         gridded_samples: 0,
         skipped_samples: 0,
         max_abs_w_lambda: 0.0,
+        aw_sample_census: AwProjectSampleStats::default(),
     };
     let mut dirty_projector_cache = MosaicProjectorCache::new();
     let mut taylor_weights = Vec::<f32>::new();
@@ -6222,6 +6529,19 @@ where
         block
             .gridder_metadata
             .validate_len(block.visibility.len())?;
+        if let Some(parallel_hands) = block.aw_parallel_hands.as_ref() {
+            parallel_hands.validate_len(block.visibility.len())?;
+        }
+        if aw_cache.is_some() != aw_controls.is_some() {
+            return Err(ImagingError::InvalidRequest(
+                "internal AWProject cache/control state is inconsistent".to_string(),
+            ));
+        }
+        if aw_cache.is_some() && block.aw_parallel_hands.is_none() {
+            return Err(ImagingError::InvalidRequest(
+                "AWProject Stokes-I streaming requires aligned RR/LL visibility values".to_string(),
+            ));
+        }
         if block.sample_frequencies_hz.len() != block.visibility.len() {
             return Err(ImagingError::InvalidRequest(format!(
                 "streaming mosaic MT-MFS block has {} sample frequencies for {} samples",
@@ -6240,6 +6560,7 @@ where
             block.density.as_ref(),
             &block.gridder_metadata,
             weighting_plans,
+            aw_controls.is_none_or(|controls| controls.mosaic_weighting),
         )?;
         let groups = build_mosaic_pointing_groups_from_grouped(
             std::slice::from_ref(&weighted),
@@ -6312,24 +6633,405 @@ where
             }
         }
         for group in &block.gridder_metadata.groups {
-            accumulate_mosaic_mtmfs_metadata_group(
-                request,
-                config,
-                gridder,
-                &weighted,
-                &block.sample_frequencies_hz,
-                group,
-                conv_sampling,
-                model_grids,
-                &mut dirty_projector_cache,
-                &mut accumulation,
-                &mut taylor_weights,
-                &mut predicted_terms,
-            )?;
+            match (aw_cache, aw_controls, block.aw_parallel_hands.as_ref()) {
+                (Some(cache), Some(controls), Some(parallel_hands)) => {
+                    accumulate_awproject_mtmfs_metadata_group(
+                        request,
+                        config,
+                        gridder,
+                        &weighted,
+                        parallel_hands,
+                        &block.sample_frequencies_hz,
+                        group,
+                        model_grids,
+                        cache,
+                        controls,
+                        &mut accumulation,
+                        &mut taylor_weights,
+                    )?;
+                }
+                (None, None, _) => {
+                    accumulate_mosaic_mtmfs_metadata_group(
+                        request,
+                        config,
+                        gridder,
+                        &weighted,
+                        &block.sample_frequencies_hz,
+                        group,
+                        conv_sampling,
+                        model_grids,
+                        &mut dirty_projector_cache,
+                        &mut accumulation,
+                        &mut taylor_weights,
+                        &mut predicted_terms,
+                    )?;
+                }
+                _ => unreachable!("AWProject state consistency was validated above"),
+            }
         }
         Ok(())
     })?;
+    if let Some(cache) = aw_cache {
+        accumulation.aw_sample_census.log(pass, cache)?;
+    }
     Ok(accumulation)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_awproject_mtmfs_metadata_group(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    group: &GroupedVisibilityMetadata,
+    model_grids: Option<&[Array2<Complex32>]>,
+    cache: &AwConvolutionFunctionResidentCache,
+    controls: &AwProjectControls,
+    accumulation: &mut MosaicMtmfsStreamGridAccumulation,
+    taylor_weights: &mut Vec<f32>,
+) -> Result<(), ImagingError> {
+    if request.plane_stokes != PlaneStokes::I {
+        return Err(ImagingError::Unsupported(
+            "the EVLA AWProject Mueller path currently supports Stokes I only".to_string(),
+        ));
+    }
+    let pa_deg = cache
+        .cache()
+        .inventory()
+        .parallactic_angles_deg
+        .first()
+        .copied()
+        .ok_or_else(|| {
+            ImagingError::ConvolutionFunctionCache(
+                "validated AWProject cache has no parallactic-angle bin".to_string(),
+            )
+        })?;
+    for range in &group.sample_ranges {
+        if range.end > batch.len() || range.start > range.end {
+            return Err(ImagingError::InvalidRequest(
+                "grouped AWProject MT-MFS metadata range exceeds visibility batch".to_string(),
+            ));
+        }
+        for (sample_index, &frequency_hz) in sample_frequencies_hz
+            .iter()
+            .enumerate()
+            .take(range.end)
+            .skip(range.start)
+        {
+            accumulation.aw_sample_census.attempted_samples += 1;
+            if !batch.gridable[sample_index] {
+                accumulation.skipped_samples += 1;
+                accumulation.aw_sample_census.rejected_not_gridable += 1;
+                continue;
+            }
+            let weight = batch.weight[sample_index];
+            let direct_first_visibility = parallel_hands.first_visibility[sample_index];
+            let direct_second_visibility = parallel_hands.second_visibility[sample_index];
+            if !(frequency_hz.is_finite()
+                && frequency_hz > 0.0
+                && weight.is_finite()
+                && weight > 0.0
+                && direct_first_visibility.re.is_finite()
+                && direct_first_visibility.im.is_finite()
+                && direct_second_visibility.re.is_finite()
+                && direct_second_visibility.im.is_finite())
+            {
+                accumulation.skipped_samples += 1;
+                accumulation.aw_sample_census.rejected_invalid_input += 1;
+                continue;
+            }
+
+            let u_lambda = batch.u_lambda[sample_index];
+            let v_lambda = batch.v_lambda[sample_index];
+            let w_lambda = batch.w_lambda[sample_index];
+            let first_key = cache
+                .cache()
+                .select_key_for_sample(
+                    frequency_hz,
+                    request.reffreq_hz,
+                    w_lambda,
+                    0,
+                    pa_deg,
+                    controls.conjugate_beams,
+                )
+                .ok_or_else(|| {
+                    ImagingError::ConvolutionFunctionCache(format!(
+                        "no RR AWProject CF cell for frequency {frequency_hz} Hz, W {w_lambda} lambda"
+                    ))
+                })?;
+            let second_key = cache
+                .cache()
+                .select_key_for_sample(
+                    frequency_hz,
+                    request.reffreq_hz,
+                    w_lambda,
+                    15,
+                    pa_deg,
+                    controls.conjugate_beams,
+                )
+                .ok_or_else(|| {
+                    ImagingError::ConvolutionFunctionCache(format!(
+                        "no LL AWProject CF cell for frequency {frequency_hz} Hz, W {w_lambda} lambda"
+                    ))
+                })?;
+            // AWVisResampler selects the visibility-vector element from the
+            // physical Mueller element returned by the selected CF cell. For
+            // non-positive W, `select_key_for_sample` uses the conjugate
+            // Mueller row, so the RR/LL data hand must move with the kernel.
+            // Swapping only the kernel silently couples RR data to the LL
+            // aperture illumination (and vice versa).
+            let first_visibility = aw_stokes_i_visibility_for_mueller(
+                first_key.mueller_element,
+                direct_first_visibility,
+                direct_second_visibility,
+            )?;
+            let second_visibility = aw_stokes_i_visibility_for_mueller(
+                second_key.mueller_element,
+                direct_first_visibility,
+                direct_second_visibility,
+            )?;
+            let first_zero_w_key = cache
+                .cache()
+                .select_key_for_sample(
+                    frequency_hz,
+                    request.reffreq_hz,
+                    0.0,
+                    0,
+                    pa_deg,
+                    controls.conjugate_beams,
+                )
+                .ok_or_else(|| {
+                    ImagingError::ConvolutionFunctionCache(format!(
+                        "no W=0 RR AWProject weight CF cell for frequency {frequency_hz} Hz"
+                    ))
+                })?;
+            let second_zero_w_key = cache
+                .cache()
+                .select_key_for_sample(
+                    frequency_hz,
+                    request.reffreq_hz,
+                    0.0,
+                    15,
+                    pa_deg,
+                    controls.conjugate_beams,
+                )
+                .ok_or_else(|| {
+                    ImagingError::ConvolutionFunctionCache(format!(
+                        "no W=0 LL AWProject weight CF cell for frequency {frequency_hz} Hz"
+                    ))
+                })?;
+            let first_cell = cache.get(first_key)?;
+            let second_cell = cache.get(second_key)?;
+            let phase_gradient = mosaic_projector_phase_gradient_rad_per_sample(
+                request.geometry,
+                mosaic.phase_center_direction_rad,
+                group.pointing_direction_rad,
+                first_cell.metadata.imaging.sampling,
+            );
+            let first_imaging_projector = AwProjector::new(
+                gridder,
+                &first_cell.metadata.imaging,
+                &first_cell.imaging,
+                phase_gradient,
+            )?;
+            let second_imaging_projector = AwProjector::new(
+                gridder,
+                &second_cell.metadata.imaging,
+                &second_cell.imaging,
+                phase_gradient,
+            )?;
+            let first_psf_projector = AwProjector::new(
+                gridder,
+                &first_cell.metadata.weight,
+                &first_cell.weight,
+                phase_gradient,
+            )?;
+            let second_psf_projector = AwProjector::new(
+                gridder,
+                &second_cell.metadata.weight,
+                &second_cell.weight,
+                phase_gradient,
+            )?;
+            let first_imaging_plan =
+                match first_imaging_projector.plan_sample_detailed(u_lambda, v_lambda, w_lambda) {
+                    Ok(plan) => plan,
+                    Err(reason) => {
+                        accumulation.skipped_samples += 1;
+                        accumulation.aw_sample_census.rejected_rr_imaging_plan += 1;
+                        accumulation.aw_sample_census.observe_plan_rejection(reason);
+                        continue;
+                    }
+                };
+            let second_imaging_plan =
+                match second_imaging_projector.plan_sample_detailed(u_lambda, v_lambda, w_lambda) {
+                    Ok(plan) => plan,
+                    Err(reason) => {
+                        accumulation.skipped_samples += 1;
+                        accumulation.aw_sample_census.rejected_ll_imaging_plan += 1;
+                        accumulation.aw_sample_census.observe_plan_rejection(reason);
+                        continue;
+                    }
+                };
+            let first_psf_plan =
+                match first_psf_projector.plan_sample_detailed(u_lambda, v_lambda, w_lambda) {
+                    Ok(plan) => plan,
+                    Err(reason) => {
+                        accumulation.skipped_samples += 1;
+                        accumulation.aw_sample_census.rejected_rr_psf_plan += 1;
+                        accumulation.aw_sample_census.observe_plan_rejection(reason);
+                        continue;
+                    }
+                };
+            let second_psf_plan =
+                match second_psf_projector.plan_sample_detailed(u_lambda, v_lambda, w_lambda) {
+                    Ok(plan) => plan,
+                    Err(reason) => {
+                        accumulation.skipped_samples += 1;
+                        accumulation.aw_sample_census.rejected_ll_psf_plan += 1;
+                        accumulation.aw_sample_census.observe_plan_rejection(reason);
+                        continue;
+                    }
+                };
+            // W=0 WTCFs are only needed after the imaging and PSF placements
+            // have succeeded. Avoiding these loads for rejected samples keeps
+            // invalid small-geometry probes bounded and makes the cache
+            // diagnostics accurately reflect useful work.
+            let first_zero_w_cell = cache.get(first_zero_w_key)?;
+            let second_zero_w_cell = cache.get(second_zero_w_key)?;
+            let first_weight_projector = AwProjector::new(
+                gridder,
+                &first_zero_w_cell.metadata.weight,
+                &first_zero_w_cell.weight,
+                phase_gradient,
+            )?;
+            let second_weight_projector = AwProjector::new(
+                gridder,
+                &second_zero_w_cell.metadata.weight,
+                &second_zero_w_cell.weight,
+                phase_gradient,
+            )?;
+            let first_weight_plan = first_weight_projector
+                .plan_sample(0.0, 0.0, 0.0)
+                .ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "RR AWProject weight CF failed centered placement".to_string(),
+                    )
+                })?;
+            let second_weight_plan = second_weight_projector
+                .plan_sample(0.0, 0.0, 0.0)
+                .ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "LL AWProject weight CF failed centered placement".to_string(),
+                    )
+                })?;
+
+            fill_mtmfs_taylor_weights(
+                taylor_weights,
+                frequency_hz,
+                request.reffreq_hz,
+                2 * request.nterms - 1,
+            );
+            let residual_norm_sum = f64::from(first_imaging_plan.normalization.norm())
+                + f64::from(second_imaging_plan.normalization.norm());
+            let psf_norm_sum = f64::from(first_psf_plan.normalization.norm())
+                + f64::from(second_psf_plan.normalization.norm());
+            if !(residual_norm_sum.is_finite()
+                && residual_norm_sum > 0.0
+                && psf_norm_sum.is_finite()
+                && psf_norm_sum > 0.0)
+            {
+                accumulation.skipped_samples += 1;
+                accumulation.aw_sample_census.rejected_invalid_input += 1;
+                continue;
+            }
+            for (order, &taylor_weight) in taylor_weights
+                .iter()
+                .enumerate()
+                .take(2 * request.nterms - 1)
+            {
+                let term_weight = weight * taylor_weight;
+                accumulation.storage.grid_aw_psf(
+                    order,
+                    &first_psf_projector,
+                    &first_psf_plan,
+                    Complex32::new(term_weight, 0.0),
+                )?;
+                accumulation.storage.grid_aw_psf(
+                    order,
+                    &second_psf_projector,
+                    &second_psf_plan,
+                    Complex32::new(term_weight, 0.0),
+                )?;
+                accumulation.reported_sumwt_terms[order] +=
+                    f64::from(term_weight) * residual_norm_sum;
+                accumulation.aw_psf_sumwt_terms[order] += f64::from(term_weight) * psf_norm_sum;
+                accumulation.storage.grid_aw_weight(
+                    order,
+                    &first_weight_projector,
+                    &first_weight_plan,
+                    term_weight,
+                )?;
+                accumulation.storage.grid_aw_weight(
+                    order,
+                    &second_weight_projector,
+                    &second_weight_plan,
+                    term_weight,
+                )?;
+            }
+
+            let mut first_prediction = Complex32::new(0.0, 0.0);
+            let mut second_prediction = Complex32::new(0.0, 0.0);
+            if let Some(model_grids) = model_grids {
+                for (model_order, model_grid) in model_grids.iter().enumerate().take(request.nterms)
+                {
+                    let taylor_weight = taylor_weights[model_order];
+                    first_prediction += first_imaging_projector
+                        .degrid_sample_planned(model_grid, &first_imaging_plan)
+                        * taylor_weight;
+                    second_prediction += second_imaging_projector
+                        .degrid_sample_planned(model_grid, &second_imaging_plan)
+                        * taylor_weight;
+                }
+            }
+            let first_residual = first_visibility - first_prediction;
+            let second_residual = second_visibility - second_prediction;
+            for (order, &taylor_weight) in taylor_weights.iter().enumerate().take(request.nterms) {
+                let term_weight = weight * taylor_weight;
+                accumulation.storage.grid_aw_residual(
+                    order,
+                    &first_imaging_projector,
+                    &first_imaging_plan,
+                    first_residual * term_weight,
+                )?;
+                accumulation.storage.grid_aw_residual(
+                    order,
+                    &second_imaging_projector,
+                    &second_imaging_plan,
+                    second_residual * term_weight,
+                )?;
+            }
+            accumulation.normalization_sumwt += f64::from(weight) * residual_norm_sum;
+            accumulation.gridded_samples += 1;
+            accumulation.aw_sample_census.accepted_samples += 1;
+        }
+    }
+    Ok(())
+}
+
+fn aw_stokes_i_visibility_for_mueller(
+    mueller_element: i32,
+    rr_visibility: Complex32,
+    ll_visibility: Complex32,
+) -> Result<Complex32, ImagingError> {
+    match mueller_element {
+        0 => Ok(rr_visibility),
+        15 => Ok(ll_visibility),
+        other => Err(ImagingError::ConvolutionFunctionCache(format!(
+            "Stokes-I EVLA AWProject selected unsupported Mueller element {other}; expected 0 (RR) or 15 (LL)"
+        ))),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6389,7 +7091,9 @@ fn accumulate_mosaic_mtmfs_metadata_group(
                 "mosaic MT-MFS weight projector failed to plan the centered kernel".to_string(),
             )
         })?;
-    let mut weight_support_sums = MosaicWeightGridAccumulator::new(&weight_projector);
+    let mut weight_support_sums = (0..2 * request.nterms - 1)
+        .map(|_| MosaicWeightGridAccumulator::new(&weight_projector))
+        .collect::<Vec<_>>();
     for range in &group.sample_ranges {
         if range.end > batch.len() || range.start > range.end {
             return Err(ImagingError::InvalidRequest(
@@ -6479,23 +7183,33 @@ fn accumulate_mosaic_mtmfs_metadata_group(
                     weighted_residual,
                 )?;
             }
-            add_mosaic_weight_support_sample(
-                &mut weight_support_sums,
-                &weight_projector,
-                batch.u_lambda[sample_index],
-                batch.v_lambda[sample_index],
-                grid_weight64,
-            );
+            for (order, &taylor_weight) in taylor_weights
+                .iter()
+                .enumerate()
+                .take(2 * request.nterms - 1)
+            {
+                add_mosaic_weight_support_sample(
+                    &mut weight_support_sums[order],
+                    &weight_projector,
+                    batch.u_lambda[sample_index],
+                    batch.v_lambda[sample_index],
+                    grid_weight64 * f64::from(taylor_weight),
+                );
+            }
             if plan.center_in_bounds {
                 accumulation.normalization_sumwt += grid_weight64;
             }
             accumulation.gridded_samples += 1;
         }
     }
-    let support_sums = weight_support_sums.support_sums();
-    accumulation
-        .storage
-        .grid_weight_support(&weight_projector, &weight_plan, &support_sums)?;
+    for (order, accumulator) in weight_support_sums.iter().enumerate() {
+        accumulation.storage.grid_weight_support(
+            order,
+            &weight_projector,
+            &weight_plan,
+            &accumulator.support_sums(),
+        )?;
+    }
     Ok(())
 }
 
@@ -6515,6 +7229,8 @@ fn compute_mosaic_mtmfs_residual_terms_streaming<F>(
     dirty_product_fft_policy: DirtyProductFftPolicy,
     requested_threads: usize,
     direct_metal_scratch_bytes: Option<usize>,
+    aw_cache: Option<&AwConvolutionFunctionResidentCache>,
+    aw_controls: Option<&AwProjectControls>,
     progress_callback: Option<&StandardMfsProgressCallback>,
     progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Vec<Array2<f32>>, ImagingError>
@@ -6578,8 +7294,10 @@ where
         progress_context,
         dirty_product_fft_policy,
         requested_threads,
-        true,
+        aw_cache.is_none(),
         direct_metal_scratch_bytes,
+        aw_cache,
+        aw_controls,
     )?;
     timings.degrid_grid += degrid_started.elapsed();
     emit_standard_mfs_context_progress(
@@ -6635,6 +7353,8 @@ where
             requested_threads,
             false,
             direct_metal_scratch_bytes,
+            aw_cache,
+            aw_controls,
         )?;
         timings.degrid_grid += fallback_started.elapsed();
         residual_terms = finish_mosaic_mtmfs_residual_images(gridder, accumulation.storage, finish);
@@ -6694,11 +7414,179 @@ fn validate_mosaic_streaming_config(config: &MosaicGridderConfig) -> Result<(), 
     Ok(())
 }
 
+fn validate_awproject_cache_for_streaming(
+    cache: &AwConvolutionFunctionCache,
+    controls: &AwProjectControls,
+    geometry: ImageGeometry,
+) -> Result<(), ImagingError> {
+    let inventory = cache.inventory();
+    if let Some(expected) = controls.w_plane_count
+        && inventory.w_values_lambda.len() != expected
+    {
+        return Err(ImagingError::ConvolutionFunctionCache(format!(
+            "{}: requested wprojplanes={expected}, but the cache contains {} W planes",
+            cache.root().display(),
+            inventory.w_values_lambda.len()
+        )));
+    }
+    if inventory.mueller_elements != [0, 15] {
+        return Err(ImagingError::ConvolutionFunctionCache(format!(
+            "{}: Stokes-I EVLA AWProject requires exactly Mueller elements [0, 15], found {:?}",
+            cache.root().display(),
+            inventory.mueller_elements
+        )));
+    }
+    if inventory.parallactic_angles_deg.len() != 1 {
+        return Err(ImagingError::Unsupported(format!(
+            "AWProject streaming currently requires one pre-rotated PA bin because row PA is not yet carried in grouped metadata; cache {} has {} bins",
+            cache.root().display(),
+            inventory.parallactic_angles_deg.len()
+        )));
+    }
+    let mut sampling = None::<usize>;
+    let mut minimum_required_x_support = usize::MAX;
+    let mut minimum_required_y_support = usize::MAX;
+    for key in cache.keys() {
+        let metadata = cache
+            .metadata(key)
+            .expect("validated AWProject cache key has metadata");
+        if metadata.imaging.telescope_name != "EVLA" {
+            return Err(ImagingError::ConvolutionFunctionCache(format!(
+                "{}: expected TelescopeName=EVLA, found {:?}",
+                metadata.imaging.path.display(),
+                metadata.imaging.telescope_name
+            )));
+        }
+        // CASA's AWConvFunc cache coordinate is not an authoritative Mueller
+        // label.  In the diagonal Stokes-I construction, AWConvFunc resets
+        // `npol` for each outer polarization row and can consequently write RR
+        // on both Mueller 0 and Mueller 15 images.  CFBuffer selects the cell
+        // with the `MuellerElement` misc-info key instead.  Preserve that
+        // semantics here while still rejecting a cross-hand cache coordinate.
+        if !matches!(
+            metadata.imaging.polarization,
+            StokesType::RR | StokesType::LL
+        ) {
+            return Err(ImagingError::ConvolutionFunctionCache(format!(
+                "{}: Mueller element {} requires a parallel-hand correlation coordinate, found {:?}",
+                metadata.imaging.path.display(),
+                key.mueller_element,
+                metadata.imaging.polarization
+            )));
+        }
+        match sampling {
+            Some(expected) if expected != metadata.imaging.sampling => {
+                return Err(ImagingError::ConvolutionFunctionCache(format!(
+                    "{}: CF sampling {} differs from cache sampling {expected}",
+                    metadata.imaging.path.display(),
+                    metadata.imaging.sampling
+                )));
+            }
+            None => sampling = Some(metadata.imaging.sampling),
+            _ => {}
+        }
+        minimum_required_x_support = minimum_required_x_support
+            .min(metadata.imaging.x_support.max(metadata.weight.x_support));
+        minimum_required_y_support = minimum_required_y_support
+            .min(metadata.imaging.y_support.max(metadata.weight.y_support));
+    }
+    let minimum_shape = [
+        minimum_required_x_support
+            .saturating_mul(2)
+            .saturating_add(1),
+        minimum_required_y_support
+            .saturating_mul(2)
+            .saturating_add(1),
+    ];
+    if geometry.image_shape[0] < minimum_shape[0] || geometry.image_shape[1] < minimum_shape[1] {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject image shape {:?} cannot place even the cache's smallest paired support {}x{}; each axis must be at least {:?}",
+            geometry.image_shape,
+            minimum_required_x_support,
+            minimum_required_y_support,
+            minimum_shape
+        )));
+    }
+    Ok(())
+}
+
+fn build_awproject_plan_key(
+    cache: &AwConvolutionFunctionCache,
+    controls: &AwProjectControls,
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+) -> AwProjectPlanKey {
+    let primary_beam_model = match mosaic.primary_beam_model {
+        PrimaryBeamModel::Airy {
+            dish_diameter_m,
+            blockage_diameter_m,
+        } => format!(
+            "airy:diameter_bits={:016x}:blockage_bits={:016x}",
+            dish_diameter_m.to_bits(),
+            blockage_diameter_m.to_bits()
+        ),
+        PrimaryBeamModel::EvlaLBandCommon => "evla-lband-common".to_string(),
+    };
+    let normalization = match controls.normalization {
+        AwProjectNormalization::FlatNoise => "flatnoise",
+        AwProjectNormalization::FlatSky => "flatsky",
+        AwProjectNormalization::PbSquare => "pbsquare",
+    };
+    AwProjectPlanKey {
+        implementation: concat!("casa-imaging-awproject-v1@", env!("CARGO_PKG_VERSION")),
+        cache: cache.identity().clone(),
+        image_shape: request.geometry.image_shape,
+        cell_size_rad_bits: request.geometry.cell_size_rad.map(f64::to_bits),
+        projection: "SIN",
+        phase_center_direction_rad_bits: mosaic.phase_center_direction_rad.map(f64::to_bits),
+        plane_stokes: request.plane_stokes.as_str(),
+        selected_frequency_range_hz_bits: request.selected_frequency_range_hz.map(f64::to_bits),
+        reference_frequency_hz_bits: request.reffreq_hz.to_bits(),
+        primary_beam_model,
+        pb_limit_bits: mosaic.pb_limit.to_bits(),
+        w_plane_count: cache.inventory().w_values_lambda.len(),
+        facets: controls.facets,
+        psf_phase_center_direction_rad_bits: controls
+            .psf_phase_center_direction_rad
+            .map(|direction| direction.map(f64::to_bits)),
+        vp_table: controls
+            .vp_table
+            .as_ref()
+            .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone())),
+        a_term: controls.a_term,
+        ps_term: controls.ps_term,
+        wb_awp: controls.wb_awp,
+        conjugate_beams: controls.conjugate_beams,
+        compute_pa_step_deg_bits: controls.compute_pa_step_deg.to_bits(),
+        rotate_pa_step_deg_bits: controls.rotate_pa_step_deg.to_bits(),
+        pointing_offset_sigdev_bits: controls
+            .pointing_offset_sigdev
+            .iter()
+            .map(|value| value.to_bits())
+            .collect(),
+        use_pointing: controls.use_pointing,
+        mosaic_weighting: controls.mosaic_weighting,
+        normalization,
+        precision: "cf-complex32-accumulate-complex64-product-f32",
+    }
+}
+
 fn mosaic_pointing_key(pointing_direction_rad: [f64; 2]) -> (u64, u64) {
     (
         pointing_direction_rad[0].to_bits(),
         pointing_direction_rad[1].to_bits(),
     )
+}
+
+fn mosaic_weighting_key(
+    pointing_direction_rad: [f64; 2],
+    separate_pointing_density: bool,
+) -> (u64, u64) {
+    if separate_pointing_density {
+        mosaic_pointing_key(pointing_direction_rad)
+    } else {
+        (0, 0)
+    }
 }
 
 fn mosaic_reported_sumwt_from_grid_weight(grid_weight: f32, _sumwt_factor: f32) -> f64 {
@@ -6710,6 +7598,7 @@ struct MosaicStreamingDensityContext<'a> {
     weighting: WeightingMode,
     selected_frequency_range_hz: [f64; 2],
     weight_density_mode: WeightDensityMode,
+    separate_pointing_density: bool,
     _config: &'a MosaicGridderConfig,
     _gridder: &'a StandardGridder,
     _conv_sampling: usize,
@@ -6794,7 +7683,10 @@ fn accumulate_mosaic_streaming_density_serial(
     weighting_plans: &mut BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
 ) -> Result<(), ImagingError> {
     for group in groups {
-        let key = mosaic_pointing_key(group.pointing_direction_rad);
+        let key = mosaic_weighting_key(
+            group.pointing_direction_rad,
+            context.separate_pointing_density,
+        );
         let plan = match weighting_plans.get_mut(&key) {
             Some(plan) => plan,
             None => {
@@ -6823,6 +7715,7 @@ fn weight_mosaic_streaming_batch(
     density_batch: Option<&VisibilityBatch>,
     metadata: &GroupedVisibilityMetadataBatch,
     weighting_plans: &BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
+    separate_pointing_density: bool,
 ) -> Result<VisibilityBatch, ImagingError> {
     metadata.validate_len(batch.len())?;
     if request.weighting == WeightingMode::Natural {
@@ -6839,7 +7732,7 @@ fn weight_mosaic_streaming_batch(
     }
     let mut weighted = batch;
     for group in &metadata.groups {
-        let key = mosaic_pointing_key(group.pointing_direction_rad);
+        let key = mosaic_weighting_key(group.pointing_direction_rad, separate_pointing_density);
         let plan = weighting_plans.get(&key).ok_or_else(|| {
             ImagingError::InvalidRequest(
                 "streaming mosaic weighting plan missing pointing density".to_string(),
@@ -6906,6 +7799,7 @@ where
                 block.density.as_ref(),
                 &block.gridder_metadata,
                 weighting_plans,
+                true,
             )?;
             build_mosaic_pointing_groups_from_grouped(
                 &[weighted],
@@ -11604,7 +12498,7 @@ pub fn run_mtmfs(
     warnings.extend(beam_warnings);
     stage_timings.total = total_started.elapsed();
 
-    let (alpha, alpha_error) =
+    let (alpha, alpha_error, alpha_mask) =
         compute_mtmfs_alpha_products(&image_terms, &principal_residual_terms);
 
     Ok(MtmfsResult {
@@ -11618,8 +12512,11 @@ pub fn run_mtmfs(
             .copied()
             .map(expand_scalar)
             .collect(),
+        weight_terms: Vec::new(),
         alpha: alpha.as_ref().map(expand_plane),
         alpha_error: alpha_error.as_ref().map(expand_plane),
+        alpha_mask: alpha_mask.as_ref().map(expand_mask_plane),
+        awproject: None,
         beam,
         diagnostics: ImagingDiagnostics {
             warnings,
@@ -12071,7 +12968,7 @@ impl MosaicWeightGridAccumulator {
     }
 
     fn add_plan(&mut self, plan: &ScreenProjectSamplePlan, weight: f64) {
-        if !(weight.is_finite() && weight > 0.0) {
+        if !(weight.is_finite() && weight != 0.0) {
             return;
         }
         let key = MosaicWeightSupportKey {
@@ -12099,9 +12996,9 @@ impl MosaicWeightGridAccumulator {
 
     fn support_sums(&self) -> Vec<MosaicWeightSupportSum> {
         let mut sums = Vec::with_capacity(
-            usize::from(self.full_weight_sum > 0.0) + self.cropped_weight_sums.len(),
+            usize::from(self.full_weight_sum != 0.0) + self.cropped_weight_sums.len(),
         );
-        if self.full_weight_sum > 0.0 {
+        if self.full_weight_sum != 0.0 {
             sums.push(MosaicWeightSupportSum {
                 key: self.full_support,
                 weight: self.full_weight_sum,
@@ -12110,7 +13007,7 @@ impl MosaicWeightGridAccumulator {
         sums.extend(
             self.cropped_weight_sums
                 .iter()
-                .filter(|(_, weight)| **weight > 0.0)
+                .filter(|(_, weight)| weight.is_finite() && **weight != 0.0)
                 .map(|(&key, &weight)| MosaicWeightSupportSum { key, weight }),
         );
         sums
@@ -12136,7 +13033,7 @@ fn add_mosaic_center_weight_grid_from_support_sums(
     support_sums: &[MosaicWeightSupportSum],
 ) {
     for support_sum in support_sums {
-        if !(support_sum.weight.is_finite() && support_sum.weight > 0.0) {
+        if !(support_sum.weight.is_finite() && support_sum.weight != 0.0) {
             continue;
         }
         let mut plan = *center_weight_plan;
@@ -27726,25 +28623,35 @@ fn mtmfs_multiscale_coefficients(
 
 fn compute_mtmfs_alpha_products(
     image_terms: &[Array2<f32>],
-    residual_terms: &[Array2<f32>],
-) -> (Option<Array2<f32>>, Option<Array2<f32>>) {
-    if image_terms.len() < 2 || residual_terms.len() < 2 {
-        return (None, None);
+    principal_residual_terms: &[Array2<f32>],
+) -> (
+    Option<Array2<f32>>,
+    Option<Array2<f32>>,
+    Option<Array2<bool>>,
+) {
+    if image_terms.len() < 2 || principal_residual_terms.len() < 2 {
+        return (None, None, None);
     }
     let tt0 = &image_terms[0];
     let tt1 = &image_terms[1];
-    let residual0 = &residual_terms[0];
-    let residual1 = &residual_terms[1];
-    let specthreshold = peak_abs_value(residual0) / 10.0;
+    let residual0 = &principal_residual_terms[0];
+    let residual1 = &principal_residual_terms[1];
+    // SDAlgorithmMSMFS temporarily overwrites the residual images with the
+    // Hessian principal solution before restore/calculateAlphaBeta, then puts
+    // the original Taylor residual products back. The threshold is the
+    // positive maximum of that temporary term zero, not its absolute maximum.
+    let specthreshold = residual0.iter().copied().fold(f32::NEG_INFINITY, f32::max) / 10.0;
     let (nx, ny) = tt0.dim();
     let mut alpha = Array2::<f32>::zeros((nx, ny));
     let mut alpha_error = Array2::<f32>::zeros((nx, ny));
+    let mut alpha_mask = Array2::<bool>::from_elem((nx, ny), false);
     for x in 0..nx {
         for y in 0..ny {
             let image0 = tt0[(x, y)];
             if image0 <= specthreshold {
                 continue;
             }
+            alpha_mask[(x, y)] = true;
             let image1 = tt1[(x, y)];
             if image0 == 0.0 || image1 == 0.0 {
                 continue;
@@ -27756,7 +28663,26 @@ fn compute_mtmfs_alpha_products(
             alpha_error[(x, y)] = alpha_value.abs() * (term0 * term0 + term1 * term1).sqrt();
         }
     }
-    (Some(alpha), Some(alpha_error))
+    if profile::standard_mfs_profile_detail_enabled()
+        && let Some(((x, y), alpha_value)) = alpha
+            .indexed_iter()
+            .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
+    {
+        eprintln!(
+            "mtmfs_alpha_probe x={} y={} threshold={} image_tt0={} image_tt1={} temporary_residual_tt0={} temporary_residual_tt1={} alpha={} alpha_error={} mask={}",
+            x,
+            y,
+            specthreshold,
+            tt0[(x, y)],
+            tt1[(x, y)],
+            residual0[(x, y)],
+            residual1[(x, y)],
+            alpha_value,
+            alpha_error[(x, y)],
+            alpha_mask[(x, y)],
+        );
+    }
+    (Some(alpha), Some(alpha_error), Some(alpha_mask))
 }
 
 fn compute_psf(
@@ -34615,6 +35541,13 @@ fn expand_plane(plane: &Array2<f32>) -> Array4<f32> {
     expanded
 }
 
+fn expand_mask_plane(plane: &Array2<bool>) -> Array4<bool> {
+    let (nx, ny) = plane.dim();
+    let mut expanded = Array4::<bool>::from_elem((nx, ny, 1, 1).f(), false);
+    expanded.slice_mut(s![.., .., 0, 0]).assign(plane);
+    expanded
+}
+
 fn expand_scalar(value: f32) -> Array4<f32> {
     let mut expanded = Array4::<f32>::zeros((1, 1, 1, 1));
     expanded[(0, 0, 0, 0)] = value;
@@ -34658,7 +35591,8 @@ mod tests {
         VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange, WProjectMetalSample,
         WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
         add_shifted_kernel_with_support, apply_chauvenet_clipping, apply_weighting,
-        build_direct_components, build_direct_pixel_coordinates, build_image_coordinate_system,
+        aw_stokes_i_visibility_for_mueller, build_direct_components,
+        build_direct_pixel_coordinates, build_image_coordinate_system,
         build_image_spectral_coordinate, build_multiscale_scale_masks,
         casa_multiscale_divergence_stop_reason, clean_cycle_threshold, clean_mask_image_product,
         clean_mask_pixel_count, collapse_primary_beam_weight_samples,
@@ -37191,6 +38125,17 @@ mod tests {
     }
 
     #[test]
+    fn aw_stokes_i_mueller_selection_keeps_visibility_hand_bound_to_kernel() {
+        let rr = Complex32::new(1.0, 2.0);
+        let ll = Complex32::new(3.0, 4.0);
+
+        assert_eq!(aw_stokes_i_visibility_for_mueller(0, rr, ll).unwrap(), rr);
+        assert_eq!(aw_stokes_i_visibility_for_mueller(15, rr, ll).unwrap(), ll);
+        let error = aw_stokes_i_visibility_for_mueller(7, rr, ll).unwrap_err();
+        assert!(error.to_string().contains("unsupported Mueller element 7"));
+    }
+
+    #[test]
     fn prepared_clean_skip_publishes_dirty_plane_without_minor_cycle_backend() {
         let geometry = ImageGeometry {
             image_shape: [32, 32],
@@ -38575,6 +39520,7 @@ mod tests {
             |_, consumer| {
                 consumer(MosaicMtmfsVisibilityBlock {
                     visibility: batch.clone(),
+                    aw_parallel_hands: None,
                     density: None,
                     sample_frequencies_hz: sample_frequencies_hz.clone(),
                     gridder_metadata: grouped_metadata.clone(),
@@ -38691,6 +39637,7 @@ mod tests {
             |_, consumer| {
                 consumer(MosaicMtmfsVisibilityBlock {
                     visibility: batch.clone(),
+                    aw_parallel_hands: None,
                     density: None,
                     sample_frequencies_hz: sample_frequencies_hz.clone(),
                     gridder_metadata: metadata_for_len(batch.len()),
@@ -38705,12 +39652,14 @@ mod tests {
             |_, consumer| {
                 consumer(MosaicMtmfsVisibilityBlock {
                     visibility: slice_batch(0, 3),
+                    aw_parallel_hands: None,
                     density: None,
                     sample_frequencies_hz: sample_frequencies_hz[0..3].to_vec(),
                     gridder_metadata: metadata_for_len(3),
                 })?;
                 consumer(MosaicMtmfsVisibilityBlock {
                     visibility: slice_batch(3, 6),
+                    aw_parallel_hands: None,
                     density: None,
                     sample_frequencies_hz: sample_frequencies_hz[3..6].to_vec(),
                     gridder_metadata: metadata_for_len(3),
@@ -38930,6 +39879,7 @@ mod tests {
                 |_, consumer| {
                     consumer(MosaicMtmfsVisibilityBlock {
                         visibility: batch.clone(),
+                        aw_parallel_hands: None,
                         density: None,
                         sample_frequencies_hz: sample_frequencies_hz.clone(),
                         gridder_metadata: grouped_metadata.clone(),
@@ -39091,6 +40041,7 @@ mod tests {
                 |_, consumer| {
                     consumer(MosaicMtmfsVisibilityBlock {
                         visibility: batch.clone(),
+                        aw_parallel_hands: None,
                         density: None,
                         sample_frequencies_hz: sample_frequencies_hz.clone(),
                         gridder_metadata: grouped_metadata.clone(),
@@ -39272,6 +40223,7 @@ mod tests {
             |_, consumer| {
                 consumer(MosaicMtmfsVisibilityBlock {
                     visibility: batch.clone(),
+                    aw_parallel_hands: None,
                     density: Some(density_batch.clone()),
                     sample_frequencies_hz: sample_frequencies_hz.clone(),
                     gridder_metadata: metadata_for_len(batch.len()),
@@ -39286,12 +40238,14 @@ mod tests {
             |_, consumer| {
                 consumer(MosaicMtmfsVisibilityBlock {
                     visibility: slice_batch(&batch, 0, 3),
+                    aw_parallel_hands: None,
                     density: Some(slice_batch(&density_batch, 0, 3)),
                     sample_frequencies_hz: sample_frequencies_hz[0..3].to_vec(),
                     gridder_metadata: metadata_for_len(3),
                 })?;
                 consumer(MosaicMtmfsVisibilityBlock {
                     visibility: slice_batch(&batch, 3, 6),
+                    aw_parallel_hands: None,
                     density: Some(slice_batch(&density_batch, 3, 6)),
                     sample_frequencies_hz: sample_frequencies_hz[3..6].to_vec(),
                     gridder_metadata: metadata_for_len(3),
@@ -40830,6 +41784,31 @@ mod tests {
         for (a, b) in full.image.iter().zip(streamed.image.iter()) {
             assert!((a - b).abs() < 1.0e-5);
         }
+    }
+
+    #[test]
+    fn mtmfs_alpha_uses_temporary_principal_residuals_for_threshold_and_error() {
+        let image_terms = vec![
+            Array2::from_shape_vec((1, 2), vec![0.6, 0.4]).unwrap(),
+            Array2::from_shape_vec((1, 2), vec![1.2, 0.8]).unwrap(),
+        ];
+        let principal_residual_terms = vec![
+            Array2::from_shape_vec((1, 2), vec![0.3, 5.0]).unwrap(),
+            Array2::from_shape_vec((1, 2), vec![0.6, 0.2]).unwrap(),
+        ];
+
+        let (alpha, alpha_error, alpha_mask) =
+            super::compute_mtmfs_alpha_products(&image_terms, &principal_residual_terms);
+        let alpha = alpha.unwrap();
+        let alpha_error = alpha_error.unwrap();
+        let alpha_mask = alpha_mask.unwrap();
+
+        assert!((alpha[(0, 0)] - 2.0).abs() < 1.0e-6);
+        assert_eq!(alpha[(0, 1)], 0.0);
+        assert!((alpha_error[(0, 0)] - std::f32::consts::SQRT_2).abs() < 1.0e-6);
+        assert_eq!(alpha_error[(0, 1)], 0.0);
+        assert!(alpha_mask[(0, 0)]);
+        assert!(!alpha_mask[(0, 1)]);
     }
 
     #[test]

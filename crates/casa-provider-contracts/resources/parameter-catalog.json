@@ -3961,8 +3961,8 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "CASA tclean gridder. casa-rs supports standard, wproject, and mosaic; widefield/AW-family modes are visible but not implemented yet.",
-        "details": null,
+        "summary": "CASA tclean gridder family",
+        "details": "Unsupported family or control combinations fail with a capability diagnostic; they are never silently rewritten to a simpler gridder.",
         "examples": [
           "standard"
         ]
@@ -8901,6 +8901,537 @@
         "details": null,
         "examples": [
           "-1.0"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.aterm",
+      "semantic_revision": 1,
+      "casa_name": "aterm",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Enable the aperture-illumination A term for AWProject",
+        "details": "An explicit false value disables the aperture term; it is never silently rewritten to another gridder.",
+        "examples": [
+          "true"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.cfcache",
+      "semantic_revision": 1,
+      "casa_name": "cfcache",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "path",
+          "resource_kind": "directory"
+        },
+        "states": [
+          "auto"
+        ]
+      },
+      "normalization": {
+        "kind": "path"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "AWProject convolution-function cache selection",
+        "details": "auto selects the managed plan-keyed cache; an explicit directory imports or reuses a CASA-compatible cache without changing its scientific identity.",
+        "examples": [
+          "auto",
+          "/data/cf-cache"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.cf_resident_mb",
+      "semantic_revision": 1,
+      "casa_name": "cf_resident_mb",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": "data_size",
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Maximum resident AW convolution-function pixels in MiB",
+        "details": "This bounds the shared CF LRU and does not copy a full cache per worker.",
+        "examples": [
+          "256"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.computepastep",
+      "semantic_revision": 1,
+      "casa_name": "computepastep",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": "angle",
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "AW convolution-function parallactic-angle computation step in degrees",
+        "details": null,
+        "examples": [
+          "360.0"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.conjbeams",
+      "semantic_revision": 1,
+      "casa_name": "conjbeams",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Enable conjugate-beam frequency mapping for wideband AWProject",
+        "details": null,
+        "examples": [
+          "true"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.facets",
+      "semantic_revision": 1,
+      "casa_name": "facets",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Number of wide-field image facets",
+        "details": "Unsupported facet layouts fail with a capability diagnostic instead of being reduced to one facet.",
+        "examples": [
+          "1"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.imaging_fft_precision",
+      "semantic_revision": 1,
+      "casa_name": "imaging_fft_precision",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "auto",
+          "f32",
+          "f64"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Imaging-wide FFT precision policy",
+        "details": "auto selects only a correctness-qualified precision and records eligibility or fallback reasons.",
+        "examples": [
+          "auto"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.imaging_memory_target_mb",
+      "semantic_revision": 1,
+      "casa_name": "imaging_memory_target_mb",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "integer"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": "data_size",
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Optional shared imaging memory target in MiB",
+        "details": "none delegates the bounded choice to the immutable execution planner. An explicit target is honored as the operator-selected process budget even when it exceeds the kernel's immediately available pages, permitting deliberate swap-backed runs with resource telemetry.",
+        "examples": [
+          "none",
+          "16384"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.imaging_prepare_buffer_mb",
+      "semantic_revision": 1,
+      "casa_name": "imaging_prepare_buffer_mb",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "integer"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": "data_size",
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Optional source-stream preparation buffer in MiB",
+        "details": "none lets the shared planner derive the buffer from the memory target.",
+        "examples": [
+          "none"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.imaging_prepare_workers",
+      "semantic_revision": 1,
+      "casa_name": "imaging_prepare_workers",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "integer"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Optional source-stream preparation worker count",
+        "details": "none delegates worker selection to the memory-aware execution planner.",
+        "examples": [
+          "none"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.imaging_row_block_rows",
+      "semantic_revision": 1,
+      "casa_name": "imaging_row_block_rows",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "integer"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Optional bounded source-stream row-block override",
+        "details": "This is an advanced reproducibility control; none uses the plan-derived row block.",
+        "examples": [
+          "none"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.mosweight",
+      "semantic_revision": 1,
+      "casa_name": "mosweight",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Use per-pointing mosaic weight-density handling",
+        "details": null,
+        "examples": [
+          "false"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.normtype",
+      "semantic_revision": 1,
+      "casa_name": "normtype",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "flatnoise",
+          "flatsky",
+          "pbsquare"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "AWProject sensitivity normalization policy",
+        "details": null,
+        "examples": [
+          "flatnoise"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.pointingoffsetsigdev",
+      "semantic_revision": 1,
+      "casa_name": "pointingoffsetsigdev",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "trim"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600",
+        "details": "The backend requires finite non-negative values and preserves the requested list. With usepointing=true, CASA uses the two values as the antenna-grouping and group-refresh thresholds in arcseconds; any request whose length is not exactly two, including the default 0, has the effective CASA value 600,600.",
+        "examples": [
+          "0"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.psfphasecenter",
+      "semantic_revision": 1,
+      "casa_name": "psfphasecenter",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "string"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "trim"
+      },
+      "base_constraints": [],
+      "unit_dimension": "angle",
+      "semantic_role": "geometry",
+      "documentation": {
+        "summary": "Optional distinct AWProject PSF phase center",
+        "details": "none reuses the image phase center; unsupported distinct centers fail explicitly.",
+        "examples": [
+          "none"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.projection",
+      "semantic_revision": 1,
+      "casa_name": "projection",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "SIN"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "geometry",
+      "documentation": {
+        "summary": "Sky projection used for the image direction coordinate",
+        "details": "The current production imager supports SIN; other projections fail explicitly rather than being treated as SIN.",
+        "examples": [
+          "SIN"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.psterm",
+      "semantic_revision": 1,
+      "casa_name": "psterm",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Enable the prolate-spheroidal term inside AW convolution functions",
+        "details": null,
+        "examples": [
+          "false"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.rotatepastep",
+      "semantic_revision": 1,
+      "casa_name": "rotatepastep",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": "angle",
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "AW convolution-function parallactic-angle rotation step in degrees",
+        "details": null,
+        "examples": [
+          "360.0"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.vptable",
+      "semantic_revision": 1,
+      "casa_name": "vptable",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "path",
+          "resource_kind": "table"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "path"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "Optional CASA voltage-pattern table for AWProject",
+        "details": null,
+        "examples": [
+          "none"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.wbawp",
+      "semantic_revision": 1,
+      "casa_name": "wbawp",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Enable wideband A-projection frequency behavior",
+        "details": null,
+        "examples": [
+          "true"
         ]
       },
       "persistence_class": "profile"

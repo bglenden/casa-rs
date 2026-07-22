@@ -40,6 +40,8 @@ pub enum SinglePlaneProjectionPlan {
     WProjection,
     /// Mosaic/screen-projection handling.
     Mosaic,
+    /// Combined A+W projection backed by a validated convolution-function cache.
+    AwProject,
 }
 
 impl SinglePlaneProjectionPlan {
@@ -50,6 +52,7 @@ impl SinglePlaneProjectionPlan {
             Self::StandardOrMosaicInferred => "standard-or-mosaic-inferred",
             Self::WProjection => "wproject",
             Self::Mosaic => "mosaic",
+            Self::AwProject => "awproject",
         }
     }
 }
@@ -65,6 +68,8 @@ pub enum SinglePlanePrimaryBeamRequirement {
     WProjectionProducts,
     /// Mosaic projection requires primary-beam handling.
     MosaicProjection,
+    /// AWProject requires convolution-function weight/PB handling.
+    AwProjection,
 }
 
 impl SinglePlanePrimaryBeamRequirement {
@@ -75,6 +80,7 @@ impl SinglePlanePrimaryBeamRequirement {
             Self::SingleFieldProducts => "single-field-products",
             Self::WProjectionProducts => "wprojection-products",
             Self::MosaicProjection => "mosaic-projection",
+            Self::AwProjection => "awprojection",
         }
     }
 }
@@ -362,7 +368,9 @@ fn primary_beam_requirement(
     primary_beam_products: bool,
     use_pointing: bool,
 ) -> SinglePlanePrimaryBeamRequirement {
-    if matches!(projection, SinglePlaneProjectionPlan::Mosaic) {
+    if matches!(projection, SinglePlaneProjectionPlan::AwProject) {
+        SinglePlanePrimaryBeamRequirement::AwProjection
+    } else if matches!(projection, SinglePlaneProjectionPlan::Mosaic) {
         SinglePlanePrimaryBeamRequirement::MosaicProjection
     } else if primary_beam_products && matches!(projection, SinglePlaneProjectionPlan::WProjection)
     {
@@ -387,23 +395,36 @@ fn output_products(
             products.push(format!(".image.tt{term}"));
             products.push(format!(".residual.tt{term}"));
             products.push(format!(".model.tt{term}"));
+        }
+        for term in 0..(2 * nterms - 1) {
             products.push(format!(".psf.tt{term}"));
             products.push(format!(".sumwt.tt{term}"));
+            if matches!(
+                primary_beam_requirement,
+                SinglePlanePrimaryBeamRequirement::MosaicProjection
+                    | SinglePlanePrimaryBeamRequirement::AwProjection
+            ) {
+                products.push(format!(".weight.tt{term}"));
+            }
         }
         if nterms > 1 {
             products.push(".alpha".to_string());
             products.push(".alpha.error".to_string());
         }
         if input.write_pb || input.pbcor || input.mosaic_pb_limit_negative {
-            for term in 0..nterms {
-                products.push(format!(".pb.tt{term}"));
-            }
+            products.push(".pb.tt0".to_string());
         }
         if input.pbcor {
             for term in 0..nterms {
                 products.push(format!(".image.tt{term}.pbcor"));
             }
-            if nterms > 1 {
+            if nterms > 1
+                && !matches!(
+                    primary_beam_requirement,
+                    SinglePlanePrimaryBeamRequirement::MosaicProjection
+                        | SinglePlanePrimaryBeamRequirement::AwProjection
+                )
+            {
                 products.push(".alpha.pbcor".to_string());
             }
         }
@@ -416,6 +437,7 @@ fn output_products(
     if matches!(
         primary_beam_requirement,
         SinglePlanePrimaryBeamRequirement::MosaicProjection
+            | SinglePlanePrimaryBeamRequirement::AwProjection
     ) {
         products.push(".weight".to_string());
     }
@@ -443,6 +465,9 @@ fn cpu_multi_worker_eligibility(
 ) -> BackendEligibility {
     if !one_output_channel {
         return BackendEligibility::ineligible("not-one-output-channel");
+    }
+    if input.projection == SinglePlaneProjectionPlan::AwProject {
+        return BackendEligibility::ineligible("awproject-currently-uses-one-grid-owner");
     }
     if input.standard_mfs_eligible || input.mosaic_mfs_eligible {
         let workers = match input.acceleration {
@@ -497,6 +522,9 @@ fn gpu_metal_eligibility(
 ) -> BackendEligibility {
     if !one_output_channel {
         return BackendEligibility::ineligible("not-one-output-channel");
+    }
+    if input.projection == SinglePlaneProjectionPlan::AwProject {
+        return BackendEligibility::ineligible("awproject-metal-kernel-not-implemented");
     }
     if !(input.standard_mfs_eligible || input.mosaic_mfs_eligible) {
         return BackendEligibility::ineligible(shared_strategy_gap_reason(input));
@@ -611,20 +639,59 @@ mod tests {
                 ".image.tt0",
                 ".residual.tt0",
                 ".model.tt0",
-                ".psf.tt0",
-                ".sumwt.tt0",
                 ".image.tt1",
                 ".residual.tt1",
                 ".model.tt1",
+                ".psf.tt0",
+                ".sumwt.tt0",
                 ".psf.tt1",
                 ".sumwt.tt1",
+                ".psf.tt2",
+                ".sumwt.tt2",
                 ".alpha",
                 ".alpha.error",
                 ".pb.tt0",
-                ".pb.tt1",
                 ".image.tt0.pbcor",
                 ".image.tt1.pbcor",
                 ".alpha.pbcor",
+            ]
+        );
+    }
+
+    #[test]
+    fn mosaic_mtmfs_plan_reports_complete_casa_taylor_topology() {
+        let mut input = base_input();
+        input.projection = SinglePlaneProjectionPlan::Mosaic;
+        input.deconvolver = SinglePlaneDeconvolverPlan::Mtmfs;
+        input.nterms = 2;
+        input.write_pb = true;
+        input.pbcor = true;
+
+        let plan = build_single_plane_execution_plan(input);
+
+        assert_eq!(
+            plan.output_products,
+            vec![
+                ".image.tt0",
+                ".residual.tt0",
+                ".model.tt0",
+                ".image.tt1",
+                ".residual.tt1",
+                ".model.tt1",
+                ".psf.tt0",
+                ".sumwt.tt0",
+                ".weight.tt0",
+                ".psf.tt1",
+                ".sumwt.tt1",
+                ".weight.tt1",
+                ".psf.tt2",
+                ".sumwt.tt2",
+                ".weight.tt2",
+                ".alpha",
+                ".alpha.error",
+                ".pb.tt0",
+                ".image.tt0.pbcor",
+                ".image.tt1.pbcor",
             ]
         );
     }

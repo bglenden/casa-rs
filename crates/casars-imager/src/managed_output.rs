@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Structured run report emitted for launcher-managed imaging runs.
 
+#[cfg(test)]
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 use crate::task_contract::{
-    ImagerArtifactKind, ImagerDeconvolver, ImagerHogbomIterationMode, ImagerRestoringBeamMode,
-    ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
+    ImagerArtifactKind, ImagerAwProjectRunReport, ImagerDeconvolver, ImagerHogbomIterationMode,
+    ImagerRestoringBeamMode, ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode,
+    ImagerWTermMode, ImagerWeighting, awproject_run_report, build_artifacts,
 };
 use crate::{
-    ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SpectralMode,
-    canonical_deconvolver_name, canonical_hogbom_iteration_mode_name,
-    canonical_restoring_beam_mode_name, canonical_spectral_mode_name, canonical_w_term_mode_name,
-    canonical_weighting_name,
+    ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, canonical_deconvolver_name,
+    canonical_hogbom_iteration_mode_name, canonical_restoring_beam_mode_name,
+    canonical_spectral_mode_name, canonical_w_term_mode_name, canonical_weighting_name,
 };
 
 /// Structured imaging run report consumed by the `casars` workflow shell.
@@ -40,6 +41,8 @@ pub struct ManagedImagingRequest {
     pub weighting: String,
     /// Requested minor-cycle deconvolver.
     pub deconvolver: String,
+    /// Effective visibility-gridder family.
+    pub gridder: String,
     /// Hogbom minor-cycle iteration accounting policy.
     pub hogbom_iteration_mode: String,
     /// Requested `w`-term handling mode.
@@ -52,6 +55,8 @@ pub struct ManagedImagingRequest {
     pub imsize: usize,
     /// Cell size in arcseconds.
     pub cell_arcsec: f64,
+    /// Image direction-coordinate projection.
+    pub projection: String,
     /// Whether the run skipped CLEAN.
     pub dirty_only: bool,
     /// Whether preview PNG sidecars were requested.
@@ -89,6 +94,9 @@ pub struct ManagedImagingRun {
     pub frontend_timings: ManagedImagingStageTimings,
     /// Channel-level diagnostics for cube-like runs.
     pub channels: Vec<ManagedImagingChannelRun>,
+    /// Resolved AWProject plan, source-cache identity, and residency counters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub awproject: Option<ImagerAwProjectRunReport>,
 }
 
 /// Simple duration bundle serialized as nanoseconds.
@@ -146,11 +154,16 @@ impl ManagedImagingOutput {
                 spectral_mode: canonical_spectral_mode_name(config.spectral_mode).to_string(),
                 weighting: canonical_weighting_name(config.weighting),
                 deconvolver: canonical_deconvolver_name(config.deconvolver).to_string(),
+                gridder: managed_gridder_from_config(config).to_string(),
                 hogbom_iteration_mode: canonical_hogbom_iteration_mode_name(
                     config.hogbom_iteration_mode,
                 )
                 .to_string(),
-                w_term_mode: canonical_w_term_mode_name(config.w_term_mode).to_string(),
+                w_term_mode: if config.aw_project.is_some() {
+                    "awproject".to_string()
+                } else {
+                    canonical_w_term_mode_name(config.w_term_mode).to_string()
+                },
                 data_column: config.datacolumn.clone(),
                 save_model: match config.save_model {
                     crate::SaveModelMode::None => "none",
@@ -159,6 +172,7 @@ impl ManagedImagingOutput {
                 .to_string(),
                 imsize: config.imsize,
                 cell_arcsec: config.cell_arcsec,
+                projection: "SIN".to_string(),
                 dirty_only: config.dirty_only,
                 write_preview_pngs: config.write_preview_pngs,
                 write_pb: config.write_pb,
@@ -184,6 +198,7 @@ impl ManagedImagingOutput {
                     .iter()
                     .map(channel_run_from_summary)
                     .collect(),
+                awproject: summary.awproject.as_ref().map(awproject_run_report),
             },
             artifacts: imaging_artifacts(config),
         }
@@ -215,14 +230,19 @@ impl ManagedImagingOutput {
                     ImagerDeconvolver::Clark => "clark".to_string(),
                     ImagerDeconvolver::Multiscale => "multiscale".to_string(),
                 },
+                gridder: managed_gridder_from_request(request).to_string(),
                 hogbom_iteration_mode: match request.hogbom_iteration_mode {
                     ImagerHogbomIterationMode::Strict => "strict".to_string(),
                     ImagerHogbomIterationMode::CasaInclusive => "casa".to_string(),
                 },
-                w_term_mode: match request.w_term_mode {
-                    ImagerWTermMode::None => "none".to_string(),
-                    ImagerWTermMode::Direct => "direct".to_string(),
-                    ImagerWTermMode::Wproject => "wproject".to_string(),
+                w_term_mode: if request.aw_project.is_some() {
+                    "awproject".to_string()
+                } else {
+                    match request.w_term_mode {
+                        ImagerWTermMode::None => "none".to_string(),
+                        ImagerWTermMode::Direct => "direct".to_string(),
+                        ImagerWTermMode::Wproject => "wproject".to_string(),
+                    }
                 },
                 data_column: request.data_column.clone(),
                 save_model: match request.save_model {
@@ -232,6 +252,7 @@ impl ManagedImagingOutput {
                 .to_string(),
                 imsize: request.image_size,
                 cell_arcsec: request.cell_arcsec,
+                projection: request.projection.as_cli_text().to_string(),
                 dirty_only: request.dirty_only,
                 write_preview_pngs: request.write_preview_pngs,
                 write_pb: request.write_pb,
@@ -383,6 +404,7 @@ impl ManagedImagingOutput {
                         beam_fit_available: summary.beam_fit_available,
                     })
                     .collect(),
+                awproject: result.run.awproject.clone(),
             },
             artifacts: result
                 .artifacts
@@ -395,9 +417,11 @@ impl ManagedImagingOutput {
                         ImagerArtifactKind::Image => "image".to_string(),
                         ImagerArtifactKind::Mask => "mask".to_string(),
                         ImagerArtifactKind::Weight => "weight".to_string(),
+                        ImagerArtifactKind::Sumwt => "sumwt".to_string(),
                         ImagerArtifactKind::PrimaryBeam => "pb".to_string(),
                         ImagerArtifactKind::ImagePbcor => "image.pbcor".to_string(),
                         ImagerArtifactKind::Alpha => "alpha".to_string(),
+                        ImagerArtifactKind::AlphaError => "alpha.error".to_string(),
                     },
                     label: artifact.label.clone(),
                     path: artifact.path.clone(),
@@ -561,6 +585,51 @@ fn managed_request_per_channel_weight_density(
         .unwrap_or(matches!(request.spectral_mode, ImagerSpectralMode::Cube))
 }
 
+fn managed_gridder_from_config(config: &CliConfig) -> &'static str {
+    if config.aw_project.is_some() {
+        "awproject"
+    } else if config.force_standard_gridder {
+        "standard"
+    } else if matches!(
+        config.w_term_mode,
+        crate::WTermMode::WProject | crate::WTermMode::Direct
+    ) {
+        if matches!(config.w_term_mode, crate::WTermMode::Direct) {
+            "widefield"
+        } else {
+            "wproject"
+        }
+    } else if config.use_pointing
+        || config
+            .field_ids
+            .as_ref()
+            .is_some_and(|field_ids| field_ids.len() > 1)
+    {
+        "mosaic"
+    } else {
+        "standard"
+    }
+}
+
+fn managed_gridder_from_request(
+    request: &crate::task_contract::ImagerRunTaskRequest,
+) -> &'static str {
+    if request.aw_project.is_some() {
+        "awproject"
+    } else if matches!(request.w_term_mode, ImagerWTermMode::Wproject) {
+        "wproject"
+    } else if request.use_pointing
+        || request
+            .field_ids
+            .as_ref()
+            .is_some_and(|field_ids| field_ids.len() > 1)
+    {
+        "mosaic"
+    } else {
+        "standard"
+    }
+}
+
 fn channel_run_from_summary(summary: &ChannelRunSummary) -> ManagedImagingChannelRun {
     ManagedImagingChannelRun {
         channel_index: summary.channel_index,
@@ -577,78 +646,26 @@ fn channel_run_from_summary(summary: &ChannelRunSummary) -> ManagedImagingChanne
 }
 
 fn imaging_artifacts(config: &CliConfig) -> Vec<ManagedImagingArtifact> {
-    let base = config.imagename.to_string_lossy().to_string();
-    let mut artifacts = Vec::new();
-    match config.spectral_mode {
-        SpectralMode::Mfs
-            if canonical_deconvolver_name(config.deconvolver) == "mtmfs" && config.nterms > 1 =>
-        {
-            for term in 0..config.nterms {
-                for (kind, label) in [
-                    ("psf", "PSF"),
-                    ("residual", "Residual"),
-                    ("model", "Model"),
-                    ("image", "Restored Image"),
-                ] {
-                    let suffix = format!("{kind}.tt{term}");
-                    let path = PathBuf::from(format!("{base}.{suffix}"));
-                    let preview = (term == 0 && config.write_preview_pngs)
-                        .then(|| PathBuf::from(format!("{base}.{suffix}.png")));
-                    artifacts.push(artifact(label_for_term(label, term), kind, path, preview));
-                }
-            }
-            let alpha = PathBuf::from(format!("{base}.alpha"));
-            let alpha_preview = config
-                .write_preview_pngs
-                .then(|| PathBuf::from(format!("{base}.alpha.png")));
-            artifacts.push(artifact(
-                "Spectral Index".to_string(),
-                "alpha",
-                alpha,
-                alpha_preview,
-            ));
-        }
-        _ => {
-            for (kind, label) in [
-                ("psf", "PSF"),
-                ("residual", "Residual"),
-                ("model", "Model"),
-                ("image", "Restored Image"),
-            ] {
-                let path = PathBuf::from(format!("{base}.{kind}"));
-                let preview = config
-                    .write_preview_pngs
-                    .then(|| PathBuf::from(format!("{base}.{kind}.png")));
-                artifacts.push(artifact(label.to_string(), kind, path, preview));
-            }
-            if config.write_pb || config.pbcor {
-                let path = PathBuf::from(format!("{base}.pb"));
-                let preview = config
-                    .write_preview_pngs
-                    .then(|| PathBuf::from(format!("{base}.pb.png")));
-                artifacts.push(artifact("Primary Beam".to_string(), "pb", path, preview));
-            }
-            if config.pbcor {
-                let path = PathBuf::from(format!("{base}.image.pbcor"));
-                let preview = config
-                    .write_preview_pngs
-                    .then(|| PathBuf::from(format!("{base}.image.pbcor.png")));
-                artifacts.push(artifact(
-                    "PB-corrected Image".to_string(),
-                    "image.pbcor",
-                    path,
-                    preview,
-                ));
-            }
-        }
-    }
-    artifacts
+    let request = crate::task_contract::ImagerRunTaskRequest::from_cli_config(config);
+    build_artifacts(&request)
+        .into_iter()
+        .map(|artifact| ManagedImagingArtifact {
+            kind: artifact.kind.as_suffix().to_string(),
+            label: artifact.label,
+            path: artifact.path,
+            exists: artifact.exists,
+            preview_png_path: artifact.preview_png_path,
+            preview_png_exists: artifact.preview_png_exists,
+        })
+        .collect()
 }
 
+#[cfg(test)]
 fn label_for_term(base: &str, term: usize) -> String {
     format!("{base} TT{term}")
 }
 
+#[cfg(test)]
 fn artifact(
     label: String,
     kind: &str,
@@ -669,10 +686,11 @@ fn artifact(
 mod tests {
     use super::{ManagedImagingOutput, artifact, imaging_artifacts, label_for_term};
     use crate::task_contract::{
-        ImagerArtifact, ImagerArtifactKind, ImagerAutoMultiThresholdConfig, ImagerCleanMaskMode,
-        ImagerCleanStopReason, ImagerDeconvolver, ImagerHogbomIterationMode, ImagerPlaneSelection,
-        ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult,
-        ImagerSaveModel, ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
+        ImagerArtifact, ImagerArtifactKind, ImagerAutoMultiThresholdConfig,
+        ImagerAwProjectRunReport, ImagerCleanMaskMode, ImagerCleanStopReason, ImagerDeconvolver,
+        ImagerHogbomIterationMode, ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunReport,
+        ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode,
+        ImagerWTermMode, ImagerWeighting,
     };
     use crate::{
         AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, CubeAxisConfig,
@@ -680,8 +698,8 @@ mod tests {
         SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
     };
     use casa_imaging::{
-        CleanStopReason, Deconvolver, HogbomIterationMode, ImagingStageTimings, RestoringBeamMode,
-        WTermMode, WeightingMode,
+        AwProjectControls, AwProjectNormalization, CleanStopReason, Deconvolver,
+        HogbomIterationMode, ImagingStageTimings, RestoringBeamMode, WTermMode, WeightingMode,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -695,6 +713,8 @@ mod tests {
             imsize: 256,
             cell_arcsec: 1.5,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -740,6 +760,7 @@ mod tests {
             w_term_mode: WTermMode::Direct,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: false,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -826,6 +847,7 @@ mod tests {
                 minor_cycle_traces: Vec::new(),
                 beam_fit_debug: None,
             }],
+            awproject: None,
             stage_timings,
             frontend_timings: FrontendStageTimings {
                 open_measurement_set: Duration::from_nanos(31),
@@ -856,6 +878,7 @@ mod tests {
         assert_eq!(output.request.spectral_mode, "mfs");
         assert_eq!(output.request.weighting, "natural");
         assert_eq!(output.request.deconvolver, "mtmfs");
+        assert_eq!(output.request.gridder, "widefield");
         assert_eq!(output.request.w_term_mode, "direct");
         assert_eq!(output.request.restoring_beam_mode, "common");
         assert_eq!(output.request.output_channels, 1);
@@ -896,24 +919,84 @@ mod tests {
         );
         assert!(!output.run.channels[0].beam_fit_available);
 
-        assert_eq!(output.artifacts.len(), 9);
-        assert_eq!(output.artifacts[0].label, "PSF TT0");
-        assert_eq!(output.artifacts[0].kind, "psf");
-        assert!(output.artifacts[0].exists);
-        assert!(output.artifacts[0].preview_png_exists);
+        assert_eq!(output.artifacts.len(), 14);
+        let psf_tt0 = output
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.path.ends_with(".psf.tt0"))
+            .unwrap();
+        assert_eq!(psf_tt0.label, "PSF tt0");
+        assert_eq!(psf_tt0.kind, "psf");
+        assert!(psf_tt0.exists);
+        assert!(psf_tt0.preview_png_exists);
         assert!(
-            output.artifacts[0]
+            psf_tt0
                 .preview_png_path
                 .as_deref()
                 .unwrap()
                 .ends_with(".psf.tt0.png")
         );
-        assert_eq!(output.artifacts[4].label, "PSF TT1");
-        assert_eq!(output.artifacts[4].preview_png_path, None);
-        assert_eq!(output.artifacts[8].label, "Spectral Index");
-        assert_eq!(output.artifacts[8].kind, "alpha");
-        assert!(output.artifacts[8].exists);
-        assert!(output.artifacts[8].preview_png_exists);
+        let alpha = output
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == "alpha")
+            .unwrap();
+        assert_eq!(alpha.label, "Spectral Index");
+        assert!(alpha.exists);
+        assert!(alpha.preview_png_exists);
+        assert_eq!(
+            output
+                .artifacts
+                .iter()
+                .filter(|artifact| artifact.kind == "sumwt")
+                .count(),
+            3
+        );
+        assert!(
+            output
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.kind == "alpha.error")
+        );
+    }
+
+    #[test]
+    fn from_run_reports_awproject_as_the_effective_gridder_and_w_term() {
+        let tempdir = tempdir().unwrap();
+        let mut config = sample_cli_config(tempdir.path().join("awproject-output"));
+        config.aw_project = Some(AwProjectControls {
+            cf_cache: PathBuf::from("/tmp/vlass-cf-cache"),
+            cf_resident_bytes: 512 * 1024 * 1024,
+            facets: 1,
+            w_plane_count: Some(32),
+            psf_phase_center_direction_rad: None,
+            vp_table: None,
+            a_term: true,
+            ps_term: false,
+            wb_awp: true,
+            conjugate_beams: true,
+            compute_pa_step_deg: 360.0,
+            rotate_pa_step_deg: 360.0,
+            pointing_offset_sigdev: vec![0.0],
+            use_pointing: true,
+            mosaic_weighting: false,
+            normalization: AwProjectNormalization::FlatNoise,
+        });
+        config.use_pointing = true;
+        config.write_pb = true;
+        config.w_term_mode = WTermMode::None;
+
+        let output = ManagedImagingOutput::from_run(&config, &sample_run_summary());
+
+        assert_eq!(output.request.gridder, "awproject");
+        assert_eq!(output.request.w_term_mode, "awproject");
+        assert_eq!(output.artifacts.len(), 18);
+        assert!(
+            output
+                .artifacts
+                .iter()
+                .all(|artifact| !artifact.path.ends_with(".pb.tt1"))
+        );
     }
 
     #[test]
@@ -924,7 +1007,10 @@ mod tests {
                 image_name: PathBuf::from("/tmp/from-task"),
                 image_size: 512,
                 cell_arcsec: 2.5,
+                projection: crate::ImagerProjection::Sin,
                 field_ids: Some(vec![3]),
+                uvrange: None,
+                intent: None,
                 phasecenter_field: None,
                 phasecenter: Some("J2000 00:00:00.0 +00.00.00.0".to_string()),
                 ddid: Some(1),
@@ -969,6 +1055,7 @@ mod tests {
                 w_term_mode: ImagerWTermMode::Wproject,
                 force_standard_gridder: true,
                 w_project_planes: Some(32),
+                aw_project: None,
                 dirty_only: true,
                 parallel: None,
                 chanchunks: None,
@@ -1045,6 +1132,37 @@ mod tests {
                     final_cycle_threshold_jy_per_beam: 0.4,
                     beam_fit_available: true,
                 }],
+                awproject: Some(ImagerAwProjectRunReport {
+                    plan_key: "awproject_plan implementation=test-aw-v1".to_string(),
+                    implementation: "test-aw-v1".to_string(),
+                    cache_format: "casa-cf-cache-pagedimage-v1".to_string(),
+                    cache_source: PathBuf::from("/tmp/test-cf-cache"),
+                    cache_metadata_key: "0123456789abcdef".to_string(),
+                    paired_cells: 1024,
+                    frequency_bins: 16,
+                    w_planes: 32,
+                    mueller_elements: vec![0, 15],
+                    parallactic_angle_bins: 1,
+                    uv_coordinate_definitions: 17,
+                    resident_budget_bytes: 384 * 1024 * 1024,
+                    resident_cells: 7,
+                    resident_bytes: 128 * 1024 * 1024,
+                    loads: 11,
+                    hits: 13,
+                    evictions: 3,
+                    attempted_samples: 101,
+                    accepted_samples: 89,
+                    rejected_not_gridable: 0,
+                    rejected_invalid_input: 0,
+                    rejected_rr_imaging_plan: 12,
+                    rejected_ll_imaging_plan: 0,
+                    rejected_rr_psf_plan: 0,
+                    rejected_ll_psf_plan: 0,
+                    rejected_nonfinite_coordinate: 0,
+                    rejected_outside_grid: 12,
+                    rejected_kernel_index: 0,
+                    rejected_invalid_normalization: 0,
+                }),
             },
             artifacts: vec![ImagerArtifact {
                 kind: ImagerArtifactKind::Alpha,
@@ -1061,6 +1179,7 @@ mod tests {
         assert_eq!(output.request.spectral_mode, "cube");
         assert_eq!(output.request.weighting, "briggs:-0.25");
         assert_eq!(output.request.deconvolver, "clark");
+        assert_eq!(output.request.gridder, "wproject");
         assert_eq!(output.request.w_term_mode, "wproject");
         assert_eq!(output.request.save_model, "modelcolumn");
         assert_eq!(output.request.restoring_beam_mode, "per_plane");
@@ -1068,6 +1187,14 @@ mod tests {
         assert_eq!(output.request.correlation.as_deref(), Some("XX"));
         assert!(output.request.dirty_only);
         assert!(!output.request.write_preview_pngs);
+        assert_eq!(output.request.projection, "SIN");
+        let awproject = output.run.awproject.as_ref().unwrap();
+        assert_eq!(awproject.cache_metadata_key, "0123456789abcdef");
+        assert_eq!(awproject.resident_budget_bytes, 384 * 1024 * 1024);
+        assert_eq!(awproject.evictions, 3);
+        assert_eq!(awproject.attempted_samples, 101);
+        assert_eq!(awproject.accepted_samples, 89);
+        assert_eq!(awproject.rejected_outside_grid, 12);
 
         assert_eq!(
             output.run.clean_stop_reason.as_deref(),
@@ -1127,28 +1254,28 @@ mod tests {
         config.write_preview_pngs = true;
 
         let artifacts = imaging_artifacts(&config);
-        assert_eq!(artifacts.len(), 4);
+        assert_eq!(artifacts.len(), 5);
         assert_eq!(
             artifacts
                 .iter()
                 .map(|artifact| artifact.kind.as_str())
                 .collect::<Vec<_>>(),
-            vec!["psf", "residual", "model", "image"]
+            vec!["image", "residual", "model", "psf", "sumwt"]
         );
-        assert_eq!(artifacts[0].label, "PSF");
-        assert!(!artifacts[0].exists);
+        assert_eq!(artifacts[0].label, "Restored Image");
+        assert!(artifacts[0].exists);
         assert_eq!(
             artifacts[0].preview_png_path.as_deref(),
             Some(
                 imagename
-                    .with_extension("psf.png")
+                    .with_extension("image.png")
                     .to_string_lossy()
                     .as_ref()
             )
         );
-        assert_eq!(artifacts[3].label, "Restored Image");
-        assert!(artifacts[3].exists);
-        assert!(artifacts[3].preview_png_exists);
+        assert!(artifacts[0].preview_png_exists);
+        assert_eq!(artifacts[4].label, "Sum of Weights");
+        assert!(!artifacts[4].exists);
 
         let manual = artifact(
             label_for_term("Residual", 2),

@@ -8,7 +8,7 @@ use std::ffi::c_void;
 use std::{collections::HashMap, time::Instant};
 
 use crate::{
-    ImageGeometry, ImagingError,
+    AwConvolutionFunctionKernelMetadata, ImageGeometry, ImagingError,
     fft::{centered_fft2_f64, fft2},
 };
 
@@ -1753,6 +1753,23 @@ impl StandardGridder {
         image
     }
 
+    pub(crate) fn aw_weight_image_from_grid_f64(&self, raw: &Array2<Complex64>) -> Array2<f32> {
+        // refim::AWProjectWBFT averages the complex parallel-hand WTCF
+        // transforms and persists their magnitude as the sensitivity/weight
+        // plane. The caller grids each hand with a factor of one half before
+        // this shared FFT, which is algebraically the same polarization
+        // average without retaining two full image-sized grids.
+        let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
+        for x in 0..self.geometry.nx() {
+            for y in 0..self.geometry.ny() {
+                let grid_x = self.image_blc[0] + x;
+                let grid_y = self.image_blc[1] + y;
+                image[(x, y)] = raw[(grid_x, grid_y)].norm() as f32;
+            }
+        }
+        image
+    }
+
     #[cfg(all(target_os = "macos", not(coverage)))]
     pub(crate) fn mosaic_weight_image_from_grid(&self, raw: &Array2<Complex32>) -> Array2<f32> {
         let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
@@ -2021,6 +2038,248 @@ pub(crate) struct ScreenProjectSamplePlan {
     pub(crate) max_iy: isize,
     pub(crate) center_in_bounds: bool,
     pub(crate) normalization: f32,
+}
+
+/// One CASA AWProject sample placement against a selected CF cell.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AwProjectSamplePlan {
+    pub(crate) loc_x: isize,
+    pub(crate) loc_y: isize,
+    pub(crate) off_x: isize,
+    pub(crate) off_y: isize,
+    pub(crate) conjugate_for_grid: bool,
+    pub(crate) normalization: Complex32,
+}
+
+/// Exact reason an AWProject convolution-function sample could not be placed.
+///
+/// Keeping these cases distinct is important for large streaming runs: an
+/// image/cache geometry mismatch must not look like an empty or corrupt MS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AwProjectSamplePlanRejection {
+    NonFiniteCoordinate,
+    OutsideGrid,
+    KernelIndexOutsideCell,
+    InvalidNormalization,
+}
+
+/// Borrowed CASA AWProject convolution-function cell resampler.
+pub(crate) struct AwProjector<'a> {
+    grid_shape: [usize; 2],
+    du_lambda: f64,
+    dv_lambda: f64,
+    sampling: usize,
+    x_support: usize,
+    y_support: usize,
+    kernel_center: [usize; 2],
+    kernel: &'a Array2<Complex32>,
+    phase_gradient_rad_per_sample: [f64; 2],
+}
+
+impl<'a> AwProjector<'a> {
+    pub(crate) fn new(
+        gridder: &StandardGridder,
+        metadata: &AwConvolutionFunctionKernelMetadata,
+        kernel: &'a Array2<Complex32>,
+        phase_gradient_rad_per_sample: [f64; 2],
+    ) -> Result<Self, ImagingError> {
+        if kernel.dim() != (metadata.shape[0], metadata.shape[1]) {
+            return Err(ImagingError::ConvolutionFunctionCache(format!(
+                "{}: loaded kernel shape {:?} does not match indexed shape {:?}",
+                metadata.path.display(),
+                kernel.dim(),
+                metadata.shape
+            )));
+        }
+        let kernel_center = [
+            aw_kernel_origin(metadata.shape[0]),
+            aw_kernel_origin(metadata.shape[1]),
+        ];
+        let required_x = metadata.x_support.saturating_mul(metadata.sampling);
+        let required_y = metadata.y_support.saturating_mul(metadata.sampling);
+        if kernel_center[0] < required_x
+            || kernel_center[1] < required_y
+            || kernel_center[0].saturating_add(required_x) >= metadata.shape[0]
+            || kernel_center[1].saturating_add(required_y) >= metadata.shape[1]
+        {
+            return Err(ImagingError::ConvolutionFunctionCache(format!(
+                "{}: support {}x{} at sampling {} is outside kernel shape {:?} around CASA origin {:?}",
+                metadata.path.display(),
+                metadata.x_support,
+                metadata.y_support,
+                metadata.sampling,
+                metadata.shape,
+                kernel_center
+            )));
+        }
+        let [du_lambda, dv_lambda] = gridder.grid_spacing_lambda();
+        Ok(Self {
+            grid_shape: gridder.grid_shape(),
+            du_lambda,
+            dv_lambda,
+            sampling: metadata.sampling,
+            x_support: metadata.x_support,
+            y_support: metadata.y_support,
+            kernel_center,
+            kernel,
+            phase_gradient_rad_per_sample,
+        })
+    }
+
+    pub(crate) fn plan_sample(
+        &self,
+        u_lambda: f64,
+        v_lambda: f64,
+        w_lambda: f64,
+    ) -> Option<AwProjectSamplePlan> {
+        self.plan_sample_detailed(u_lambda, v_lambda, w_lambda).ok()
+    }
+
+    pub(crate) fn plan_sample_detailed(
+        &self,
+        u_lambda: f64,
+        v_lambda: f64,
+        w_lambda: f64,
+    ) -> Result<AwProjectSamplePlan, AwProjectSamplePlanRejection> {
+        let pos_x = u_lambda / self.du_lambda + self.grid_shape[0] as f64 / 2.0;
+        let pos_y = -v_lambda / self.dv_lambda + self.grid_shape[1] as f64 / 2.0;
+        if !(pos_x.is_finite() && pos_y.is_finite() && w_lambda.is_finite()) {
+            return Err(AwProjectSamplePlanRejection::NonFiniteCoordinate);
+        }
+        let loc_x = pos_x.round() as isize;
+        let loc_y = pos_y.round() as isize;
+        let off_x = ((loc_x as f64 - pos_x) * self.sampling as f64).round() as isize;
+        let off_y = ((loc_y as f64 - pos_y) * self.sampling as f64).round() as isize;
+        let x_support = self.x_support as isize;
+        let y_support = self.y_support as isize;
+        if loc_x - x_support < 0
+            || loc_y - y_support < 0
+            || loc_x + x_support >= self.grid_shape[0] as isize
+            || loc_y + y_support >= self.grid_shape[1] as isize
+        {
+            return Err(AwProjectSamplePlanRejection::OutsideGrid);
+        }
+        let conjugate_for_grid = w_lambda > 0.0;
+        let mut normalization = Complex32::new(0.0, 0.0);
+        for iy in -y_support..=y_support {
+            let kernel_y = usize::try_from(
+                self.kernel_center[1] as isize + iy * self.sampling as isize + off_y,
+            )
+            .map_err(|_| AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
+            for ix in -x_support..=x_support {
+                let kernel_x = usize::try_from(
+                    self.kernel_center[0] as isize + ix * self.sampling as isize + off_x,
+                )
+                .map_err(|_| AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
+                let mut tap = *self
+                    .kernel
+                    .get((kernel_x, kernel_y))
+                    .ok_or(AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
+                if conjugate_for_grid {
+                    tap = tap.conj();
+                }
+                normalization += tap;
+            }
+        }
+        if !(normalization.re.is_finite()
+            && normalization.im.is_finite()
+            && normalization.norm() > 0.0)
+        {
+            return Err(AwProjectSamplePlanRejection::InvalidNormalization);
+        }
+        Ok(AwProjectSamplePlan {
+            loc_x,
+            loc_y,
+            off_x,
+            off_y,
+            conjugate_for_grid,
+            normalization,
+        })
+    }
+
+    pub(crate) fn grid_sample_planned_f64(
+        &self,
+        grid: &mut Array2<Complex64>,
+        plan: &AwProjectSamplePlan,
+        value: Complex64,
+    ) {
+        debug_assert_eq!(grid.shape(), self.grid_shape.as_slice());
+        let grid_stride = self.grid_shape[1];
+        if let Some(storage) = grid.as_slice_memory_order_mut() {
+            self.for_each_grid_tap(plan, |grid_x, grid_y, tap| {
+                let contribution = value * Complex64::new(f64::from(tap.re), f64::from(tap.im));
+                storage[grid_x * grid_stride + grid_y] += contribution;
+            });
+        } else {
+            self.for_each_grid_tap(plan, |grid_x, grid_y, tap| {
+                let contribution = value * Complex64::new(f64::from(tap.re), f64::from(tap.im));
+                grid[(grid_x, grid_y)] += contribution;
+            });
+        }
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn grid_sample_planned(
+        &self,
+        grid: &mut Array2<Complex32>,
+        plan: &AwProjectSamplePlan,
+        value: Complex32,
+    ) {
+        debug_assert_eq!(grid.shape(), self.grid_shape.as_slice());
+        self.for_each_grid_tap(plan, |grid_x, grid_y, tap| {
+            grid[(grid_x, grid_y)] += value * tap;
+        });
+    }
+
+    pub(crate) fn degrid_sample_planned(
+        &self,
+        grid: &Array2<Complex32>,
+        plan: &AwProjectSamplePlan,
+    ) -> Complex32 {
+        debug_assert_eq!(grid.shape(), self.grid_shape.as_slice());
+        let mut value = Complex32::new(0.0, 0.0);
+        self.for_each_grid_tap(plan, |grid_x, grid_y, tap| {
+            value += tap.conj() * grid[(grid_x, grid_y)];
+        });
+        value / plan.normalization.conj()
+    }
+
+    fn for_each_grid_tap(
+        &self,
+        plan: &AwProjectSamplePlan,
+        mut operation: impl FnMut(usize, usize, Complex32),
+    ) {
+        let x_support = self.x_support as isize;
+        let y_support = self.y_support as isize;
+        for iy in -y_support..=y_support {
+            let kernel_y = (self.kernel_center[1] as isize
+                + iy * self.sampling as isize
+                + plan.off_y) as usize;
+            for ix in -x_support..=x_support {
+                let kernel_x = (self.kernel_center[0] as isize
+                    + ix * self.sampling as isize
+                    + plan.off_x) as usize;
+                let mut tap = self.kernel[(kernel_x, kernel_y)];
+                if plan.conjugate_for_grid {
+                    tap = tap.conj();
+                }
+                let phase = (ix * self.sampling as isize + plan.off_x) as f64
+                    * self.phase_gradient_rad_per_sample[0]
+                    + (iy * self.sampling as isize + plan.off_y) as f64
+                        * self.phase_gradient_rad_per_sample[1];
+                tap *= Complex32::new(phase.cos() as f32, phase.sin() as f32);
+                operation((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize, tap);
+            }
+        }
+    }
+}
+
+fn aw_kernel_origin(length: usize) -> usize {
+    if length % 2 == 0 {
+        length / 2
+    } else {
+        length / 2 + 1
+    }
 }
 
 #[derive(Clone)]
@@ -3453,19 +3712,51 @@ fn grdsf(nu: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use casa_coordinates::StokesType;
     use casa_test_support::gridder_interop::GridderOracle;
     use ndarray::Array2;
     use num_complex::{Complex32, Complex64};
     use serial_test::serial;
 
     use super::{
-        CASA_WPROJECT_MAX_W_SAFETY_FACTOR, DensityCellConvention, GRIDDER_TAP_COUNT,
-        ScreenProjector, StandardGridder, WProjector, choose_w_project_plane_count,
+        AwProjectSamplePlanRejection, AwProjector, CASA_WPROJECT_MAX_W_SAFETY_FACTOR,
+        DensityCellConvention, GRIDDER_TAP_COUNT, ScreenProjector, StandardGridder, WProjector,
+        choose_w_project_plane_count,
     };
     use crate::{
+        AwConvolutionFunctionKernelMetadata, AwConvolutionFunctionUvCoordinateIdentity,
         ImageGeometry,
         fft::{centered_fft2, centered_ifft2},
     };
+
+    fn aw_test_metadata(shape: [usize; 2]) -> AwConvolutionFunctionKernelMetadata {
+        AwConvolutionFunctionKernelMetadata {
+            path: PathBuf::from("synthetic-aw-cell.im"),
+            shape,
+            sampling: 2,
+            x_support: 2,
+            y_support: 2,
+            uv_coordinate: AwConvolutionFunctionUvCoordinateIdentity {
+                reference_value_bits: [0.0f64.to_bits(); 2],
+                reference_pixel_bits: [0.0f64.to_bits(); 2],
+                increment_bits: [1.0f64.to_bits(); 2],
+                pc_matrix_bits: [
+                    [1.0f64.to_bits(), 0.0f64.to_bits()],
+                    [0.0f64.to_bits(), 1.0f64.to_bits()],
+                ],
+            },
+            telescope_name: "EVLA".to_string(),
+            band_name: "EVLA_L".to_string(),
+            diameter_m: 25.0,
+            conjugate_frequency_hz: 1.4e9,
+            conjugate_polarization: StokesType::LL.code(),
+            polarization: StokesType::RR,
+            w_increment: 0.5,
+            rotationally_symmetric: false,
+        }
+    }
 
     fn peak_location(image: &Array2<f32>) -> (usize, usize) {
         let mut best = (0usize, 0usize);
@@ -3489,6 +3780,111 @@ mod tests {
                 && (peak.1 as isize - expected.1 as isize).abs() <= tolerance,
             "peak {peak:?} not within {tolerance} px of expected {expected:?}"
         );
+    }
+
+    #[test]
+    fn aw_projector_matches_casa_offsets_conjugation_and_pointing_phase() {
+        let geometry = ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let gridder = StandardGridder::new_unpadded(geometry).unwrap();
+        let metadata = aw_test_metadata([12, 12]);
+        let kernel = Array2::from_shape_fn((12, 12), |(x, y)| {
+            Complex32::new(0.01 * x as f32 + 0.2, -0.02 * y as f32 + 0.1)
+        });
+        let phase_gradient = [0.07, -0.11];
+        let projector = AwProjector::new(&gridder, &metadata, &kernel, phase_gradient).unwrap();
+        let [du, dv] = gridder.grid_spacing_lambda();
+        let plan = projector.plan_sample(0.3 * du, -0.3 * dv, 12.0).unwrap();
+        assert_eq!((plan.loc_x, plan.loc_y), (16, 16));
+        assert_eq!((plan.off_x, plan.off_y), (-1, -1));
+        assert!(plan.conjugate_for_grid);
+
+        let mut expected_norm = Complex32::new(0.0, 0.0);
+        for iy in -2isize..=2 {
+            for ix in -2isize..=2 {
+                expected_norm += kernel[(
+                    (6isize + 2 * ix - 1) as usize,
+                    (6isize + 2 * iy - 1) as usize,
+                )]
+                    .conj();
+            }
+        }
+        assert!((plan.normalization - expected_norm).norm() < 1.0e-5);
+
+        let value = Complex32::new(1.25, -0.5);
+        let mut grid = Array2::<Complex32>::zeros(gridder.grid_shape());
+        projector.grid_sample_planned(&mut grid, &plan, value);
+        let ix = -1isize;
+        let iy = 2isize;
+        let raw = kernel[(
+            (6isize + 2 * ix - 1) as usize,
+            (6isize + 2 * iy - 1) as usize,
+        )]
+            .conj();
+        let phase =
+            (2 * ix - 1) as f64 * phase_gradient[0] + (2 * iy - 1) as f64 * phase_gradient[1];
+        let expected_tap = raw * Complex32::new(phase.cos() as f32, phase.sin() as f32);
+        assert!(
+            (grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] - value * expected_tap)
+                .norm()
+                < 1.0e-5
+        );
+
+        let negative = projector.plan_sample(0.3 * du, -0.3 * dv, -12.0).unwrap();
+        assert!(!negative.conjugate_for_grid);
+        assert!((negative.normalization - expected_norm.conj()).norm() < 1.0e-5);
+    }
+
+    #[test]
+    fn aw_projector_degrid_is_the_normalized_adjoint() {
+        let geometry = ImageGeometry {
+            image_shape: [24, 24],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let gridder = StandardGridder::new_unpadded(geometry).unwrap();
+        let metadata = aw_test_metadata([13, 13]);
+        let kernel = Array2::from_shape_fn((13, 13), |(x, y)| {
+            Complex32::new(0.03 * x as f32 + 0.1, 0.01 * y as f32 - 0.08)
+        });
+        let projector = AwProjector::new(&gridder, &metadata, &kernel, [0.04, -0.02]).unwrap();
+        let plan = projector.plan_sample(0.0, 0.0, 5.0).unwrap();
+        let x = Complex32::new(0.75, -0.4);
+        let mut gridded_x = Array2::<Complex32>::zeros(gridder.grid_shape());
+        projector.grid_sample_planned(&mut gridded_x, &plan, x);
+        let y = Array2::from_shape_fn(gridder.grid_shape(), |(gx, gy)| {
+            Complex32::new(0.001 * gx as f32, -0.002 * gy as f32)
+        });
+        let lhs = gridded_x
+            .iter()
+            .zip(&y)
+            .fold(Complex32::new(0.0, 0.0), |sum, (&gx, &gy)| {
+                sum + gx.conj() * gy
+            });
+        let normalized_prediction = projector.degrid_sample_planned(&y, &plan);
+        let raw_adjoint = normalized_prediction * plan.normalization.conj();
+        let rhs = x.conj() * raw_adjoint;
+        assert!((lhs - rhs).norm() < 2.0e-5, "lhs={lhs:?} rhs={rhs:?}");
+    }
+
+    #[test]
+    fn aw_projector_reports_cache_support_that_cannot_fit_the_grid() {
+        let geometry = ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let gridder = StandardGridder::new_unpadded(geometry).unwrap();
+        let mut metadata = aw_test_metadata([68, 68]);
+        metadata.x_support = 16;
+        metadata.y_support = 16;
+        let kernel = Array2::from_elem((68, 68), Complex32::new(1.0, 0.0));
+        let projector = AwProjector::new(&gridder, &metadata, &kernel, [0.0, 0.0]).unwrap();
+
+        assert!(matches!(
+            projector.plan_sample_detailed(0.0, 0.0, 0.0),
+            Err(AwProjectSamplePlanRejection::OutsideGrid)
+        ));
     }
 
     #[test]
