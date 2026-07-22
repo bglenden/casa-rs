@@ -48,6 +48,13 @@ fi
 
 export CARGO_INCREMENTAL=0
 
+# Browser-session tests must launch the real tablebrowser process. Build it in
+# an isolated target so the instrumented workspace test process never starts a
+# nested Cargo command while cargo-llvm-cov owns the coverage target lock.
+coverage_launcher_target="$(mktemp -d -t casa-rs-coverage-launchers.XXXXXX)"
+CARGO_TARGET_DIR="$coverage_launcher_target" cargo build -q -p casars --bin tablebrowser
+export CASARS_TEST_TABLEBROWSER_BIN="$coverage_launcher_target/debug/tablebrowser"
+
 run_llvm_cov() {
   # Keep the coverage gate focused on shipped code plus functional tests.
   # Large perf/profile harnesses are useful for benchmarking, but they make
@@ -65,21 +72,20 @@ run_llvm_cov() {
   local ignored_files
   ignored_files='(^|/)src/bin/|(^|/)src/main\.rs$|(^|/)examples/|(^|/)tests/.*perf.*\.rs$|(^|/)crates/casars-imager/src/lib\.rs$|(^|/)crates/casars/src/lib\.rs$|(^|/)crates/casa-test-support/src/|(^|/)crates/casars-python/src/'
 
-  local feature_args=()
+  local coverage_args=(--workspace)
   if cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
     --tier slow-parity \
     --require measurementset/vla/ngc5921.ms \
     --require unittest/tclean/refim_twochan.ms \
     --require unittest/tclean/refim_point.ms; then
     echo "==> Including slow parity suites in coverage"
-    feature_args=(--features casa-ms/slow-tests,casars-imager/slow-tests)
+    coverage_args+=(--features casa-ms/slow-tests,casars-imager/slow-tests)
   else
     echo "coverage warning: slow parity datasets unavailable; coverage omits slow parity suites" >&2
   fi
 
   cargo llvm-cov \
-    --workspace \
-    "${feature_args[@]}" \
+    "${coverage_args[@]}" \
     --exclude casars-python \
     --exclude casa-test-support \
     --ignore-filename-regex "$ignored_files" \
@@ -92,6 +98,7 @@ run_llvm_cov() {
 coverage_log="$(mktemp -t casa-rs-llvm-cov.XXXXXX.log)"
 cleanup() {
   rm -f "$coverage_log"
+  rm -rf "$coverage_launcher_target"
 }
 trap cleanup EXIT
 

@@ -242,7 +242,7 @@ fn tiled_column_3d_array_fixture() -> TableFixture {
         table_keywords: RecordValue::default(),
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::TiledColumn3DArray),
-        tile_shape: Some(vec![2, 3, 2]),
+        tile_shape: Some(vec![2, 3, 2, 2]),
     }
 }
 

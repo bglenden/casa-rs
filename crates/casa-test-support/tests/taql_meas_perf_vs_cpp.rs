@@ -12,7 +12,8 @@ use casa_tables::taql::ast::IndexStyle;
 use casa_tables::taql::eval::{EvalContext, ExprValue};
 use casa_tables::taql::functions::call_function;
 use casa_test_support::measures_interop::MeasuresOracle;
-use casa_types::RecordValue;
+use casa_types::{RecordValue, measures::MeasuresProvider};
+use std::sync::{Arc, OnceLock};
 
 fn skip_unless_release() -> bool {
     cfg!(debug_assertions)
@@ -25,12 +26,23 @@ fn fl(val: f64) -> ExprValue {
     ExprValue::Float(val)
 }
 
+fn measures_provider() -> &'static Arc<dyn MeasuresProvider> {
+    static PROVIDER: OnceLock<Arc<dyn MeasuresProvider>> = OnceLock::new();
+    PROVIDER.get_or_init(|| {
+        Arc::new(
+            casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+                .expect("open explicit measures runtime for TaQL performance comparison"),
+        )
+    })
+}
+
 fn eval_meas(name: &str, args: &[ExprValue]) -> ExprValue {
     let dummy_row = RecordValue::new(vec![]);
     let ctx = EvalContext {
         row: &dummy_row,
         row_index: 0,
         style: IndexStyle::default(),
+        measures: Some(measures_provider()),
     };
     call_function(name, args, &ctx).unwrap()
 }

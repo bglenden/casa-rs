@@ -13,8 +13,9 @@ use casa_tables::taql::ast::IndexStyle;
 use casa_tables::taql::eval::{EvalContext, ExprValue};
 use casa_tables::taql::functions::call_function;
 use casa_test_support::measures_interop::MeasuresOracle;
-use casa_types::RecordValue;
 use casa_types::quanta::Quantity;
+use casa_types::{RecordValue, measures::MeasuresProvider};
+use std::sync::{Arc, OnceLock};
 
 const J2000_MJD: f64 = 51544.5;
 const SECONDS_PER_DAY: f64 = 86_400.0;
@@ -38,12 +39,23 @@ fn q(val: f64, unit: &str) -> ExprValue {
     ExprValue::Quantity(Quantity::new(val, unit).unwrap())
 }
 
+fn measures_provider() -> &'static Arc<dyn MeasuresProvider> {
+    static PROVIDER: OnceLock<Arc<dyn MeasuresProvider>> = OnceLock::new();
+    PROVIDER.get_or_init(|| {
+        Arc::new(
+            casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+                .expect("open explicit measures runtime for TaQL interop"),
+        )
+    })
+}
+
 fn eval_meas(name: &str, args: &[ExprValue]) -> ExprValue {
     let dummy_row = RecordValue::new(vec![]);
     let ctx = EvalContext {
         row: &dummy_row,
         row_index: 0,
         style: IndexStyle::default(),
+        measures: Some(measures_provider()),
     };
     call_function(name, args, &ctx).unwrap()
 }

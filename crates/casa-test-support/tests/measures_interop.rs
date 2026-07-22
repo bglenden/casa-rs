@@ -12,6 +12,7 @@ use casa_types::measures::{
     EpochRef, IauModel, MEpoch, MPosition, MeasFrame, MeasuresProvider, PositionRef,
     epoch_to_record, position_to_record,
 };
+use std::sync::{Arc, OnceLock};
 
 const J2000_MJD: f64 = 51544.5;
 const SECONDS_PER_DAY: f64 = 86_400.0;
@@ -24,10 +25,17 @@ const VLA_LON: f64 = -1.878_283_2; // -107.618°
 const VLA_LAT: f64 = 0.595_370_3; // 34.079°
 const VLA_H: f64 = 2124.0;
 
-fn measures_runtime() -> std::sync::Arc<MeasuresRuntime> {
-    std::sync::Arc::new(
-        MeasuresRuntime::open_discovered(Default::default()).expect("test measures runtime"),
-    )
+fn measures_runtime() -> Arc<MeasuresRuntime> {
+    static RUNTIME: OnceLock<Arc<MeasuresRuntime>> = OnceLock::new();
+    Arc::clone(RUNTIME.get_or_init(|| {
+        Arc::new(
+            MeasuresRuntime::open_discovered(Default::default()).expect("test measures runtime"),
+        )
+    }))
+}
+
+fn measures_frame() -> MeasFrame {
+    MeasFrame::new().with_measures(measures_runtime())
 }
 
 fn close(a: f64, b: f64, tol: f64) -> bool {
@@ -80,7 +88,7 @@ const VLA_Z: f64 = 3554875.9;
 #[test]
 fn rc_epoch_utc_to_tai() {
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_tai = utc.convert_to(EpochRef::TAI, &frame).unwrap();
 
     let cpp_tai_mjd = MeasuresOracle::epoch_convert(J2000_MJD, "UTC", "TAI").unwrap();
@@ -92,7 +100,7 @@ fn rc_epoch_utc_to_tai() {
 #[test]
 fn rc_epoch_tai_to_utc() {
     let tai = MEpoch::from_mjd(J2000_MJD, EpochRef::TAI);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_utc = tai.convert_to(EpochRef::UTC, &frame).unwrap();
 
     let cpp_utc_mjd = MeasuresOracle::epoch_convert(J2000_MJD, "TAI", "UTC").unwrap();
@@ -104,7 +112,7 @@ fn rc_epoch_tai_to_utc() {
 #[test]
 fn rc_epoch_utc_to_tt() {
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_tt = utc.convert_to(EpochRef::TT, &frame).unwrap();
 
     let cpp_tt_mjd = MeasuresOracle::epoch_convert(J2000_MJD, "UTC", "TT").unwrap();
@@ -116,7 +124,7 @@ fn rc_epoch_utc_to_tt() {
 #[test]
 fn rc_epoch_tt_to_tdb() {
     let tt = MEpoch::from_mjd(J2000_MJD, EpochRef::TT);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_tdb = tt.convert_to(EpochRef::TDB, &frame).unwrap();
 
     let cpp_tdb_mjd = MeasuresOracle::epoch_convert(J2000_MJD, "TT", "TDB").unwrap();
@@ -219,7 +227,7 @@ fn rc_position_record_format() {
 #[test]
 fn rc_doppler_radio_to_z() {
     let d = MDoppler::new(0.3, DopplerRef::RADIO);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_z = d.convert_to(DopplerRef::Z, &frame).unwrap();
     let cpp_z = MeasuresOracle::doppler_convert(0.3, "RADIO", "Z").unwrap();
     assert!(
@@ -233,7 +241,7 @@ fn rc_doppler_radio_to_z() {
 #[test]
 fn rc_doppler_z_to_ratio() {
     let d = MDoppler::new(0.5, DopplerRef::Z);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_ratio = d.convert_to(DopplerRef::RATIO, &frame).unwrap();
     let cpp_ratio = MeasuresOracle::doppler_convert(0.5, "Z", "RATIO").unwrap();
     assert!(
@@ -247,7 +255,7 @@ fn rc_doppler_z_to_ratio() {
 #[test]
 fn rc_doppler_beta_to_radio() {
     let d = MDoppler::new(0.6, DopplerRef::BETA);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_radio = d.convert_to(DopplerRef::RADIO, &frame).unwrap();
     let cpp_radio = MeasuresOracle::doppler_convert(0.6, "BETA", "RADIO").unwrap();
     assert!(
@@ -274,7 +282,7 @@ fn rc_catalog_line_hi_matches_cpp() {
 #[test]
 fn rc_direction_j2000_to_galactic() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_gal = d.convert_to(DirectionRef::GALACTIC, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_gal.as_angles();
     let (cpp_lon, cpp_lat) =
@@ -297,7 +305,7 @@ fn rc_direction_j2000_to_galactic() {
 #[test]
 fn rc_direction_j2000_to_ecliptic() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new().with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC));
+    let frame = measures_frame().with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC));
     let rust_ecl = d.convert_to(DirectionRef::ECLIPTIC, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_ecl.as_angles();
     let (cpp_lon, cpp_lat) =
@@ -320,7 +328,7 @@ fn rc_direction_j2000_to_ecliptic() {
 #[test]
 fn rc_direction_galactic_to_supergal() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::GALACTIC);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_sg = d.convert_to(DirectionRef::SUPERGAL, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_sg.as_angles();
     let (cpp_lon, cpp_lat) =
@@ -345,7 +353,7 @@ fn rc_frequency_lsrk_to_bary() {
     let f = MFrequency::new(1.42e9, FrequencyRef::LSRK);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_direction(dir).with_epoch(epoch);
+    let frame = measures_frame().with_direction(dir).with_epoch(epoch);
     let rust_bary = f.convert_to(FrequencyRef::BARY, &frame).unwrap();
     let cpp_bary = MeasuresOracle::frequency_convert(
         1.42e9, "LSRK", "BARY", M31_LON, M31_LAT, "J2000", J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
@@ -364,7 +372,7 @@ fn rc_frequency_bary_to_lgroup() {
     let f = MFrequency::new(1.42e9, FrequencyRef::BARY);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_direction(dir).with_epoch(epoch);
+    let frame = measures_frame().with_direction(dir).with_epoch(epoch);
     let rust_lg = f.convert_to(FrequencyRef::LGROUP, &frame).unwrap();
     let cpp_lg = MeasuresOracle::frequency_convert(
         1.42e9, "BARY", "LGROUP", M31_LON, M31_LAT, "J2000", J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
@@ -383,7 +391,7 @@ fn rc_frequency_bary_to_cmb() {
     let f = MFrequency::new(1.42e9, FrequencyRef::BARY);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_direction(dir).with_epoch(epoch);
+    let frame = measures_frame().with_direction(dir).with_epoch(epoch);
     let rust_cmb = f.convert_to(FrequencyRef::CMB, &frame).unwrap();
     let cpp_cmb = MeasuresOracle::frequency_convert(
         1.42e9, "BARY", "CMB", M31_LON, M31_LAT, "J2000", J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
@@ -406,7 +414,7 @@ fn cr_epoch_utc_to_tai() {
     let cpp_tai_mjd = MeasuresOracle::epoch_convert(J2000_MJD, "UTC", "TAI").unwrap();
 
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_tai = utc.convert_to(EpochRef::TAI, &frame).unwrap();
 
     let diff_s = (rust_tai.value().as_mjd() - cpp_tai_mjd).abs() * SECONDS_PER_DAY;
@@ -418,7 +426,7 @@ fn cr_epoch_tai_to_utc() {
     let cpp_utc_mjd = MeasuresOracle::epoch_convert(J2000_MJD, "TAI", "UTC").unwrap();
 
     let tai = MEpoch::from_mjd(J2000_MJD, EpochRef::TAI);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_utc = tai.convert_to(EpochRef::UTC, &frame).unwrap();
 
     let diff_s = (rust_utc.value().as_mjd() - cpp_utc_mjd).abs() * SECONDS_PER_DAY;
@@ -430,7 +438,7 @@ fn cr_epoch_utc_to_tt() {
     let cpp_tt_mjd = MeasuresOracle::epoch_convert(J2000_MJD, "UTC", "TT").unwrap();
 
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_tt = utc.convert_to(EpochRef::TT, &frame).unwrap();
 
     let diff_s = (rust_tt.value().as_mjd() - cpp_tt_mjd).abs() * SECONDS_PER_DAY;
@@ -442,7 +450,7 @@ fn cr_epoch_tt_to_tdb() {
     let cpp_tdb_mjd = MeasuresOracle::epoch_convert(J2000_MJD, "TT", "TDB").unwrap();
 
     let tt = MEpoch::from_mjd(J2000_MJD, EpochRef::TT);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_tdb = tt.convert_to(EpochRef::TDB, &frame).unwrap();
 
     let diff_s = (rust_tdb.value().as_mjd() - cpp_tdb_mjd).abs() * SECONDS_PER_DAY;
@@ -543,7 +551,7 @@ fn cr_position_record_format() {
 fn cr_doppler_radio_to_z() {
     let cpp_z = MeasuresOracle::doppler_convert(0.3, "RADIO", "Z").unwrap();
     let d = MDoppler::new(0.3, DopplerRef::RADIO);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_z = d.convert_to(DopplerRef::Z, &frame).unwrap();
     assert!(
         close(rust_z.value(), cpp_z, 1e-10),
@@ -557,7 +565,7 @@ fn cr_doppler_radio_to_z() {
 fn cr_doppler_z_to_ratio() {
     let cpp_ratio = MeasuresOracle::doppler_convert(0.5, "Z", "RATIO").unwrap();
     let d = MDoppler::new(0.5, DopplerRef::Z);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_ratio = d.convert_to(DopplerRef::RATIO, &frame).unwrap();
     assert!(
         close(rust_ratio.value(), cpp_ratio, 1e-10),
@@ -571,7 +579,7 @@ fn cr_doppler_z_to_ratio() {
 fn cr_doppler_beta_to_radio() {
     let cpp_radio = MeasuresOracle::doppler_convert(0.6, "BETA", "RADIO").unwrap();
     let d = MDoppler::new(0.6, DopplerRef::BETA);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_radio = d.convert_to(DopplerRef::RADIO, &frame).unwrap();
     assert!(
         close(rust_radio.value(), cpp_radio, 1e-10),
@@ -587,7 +595,7 @@ fn cr_direction_j2000_to_galactic() {
         MeasuresOracle::direction_convert(1.0, 0.5, "J2000", "GALACTIC", 0.0, 0.0, 0.0, 0.0)
             .unwrap();
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_gal = d.convert_to(DirectionRef::GALACTIC, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_gal.as_angles();
     assert!(
@@ -610,7 +618,7 @@ fn cr_direction_j2000_to_ecliptic() {
         MeasuresOracle::direction_convert(1.0, 0.5, "J2000", "ECLIPTIC", J2000_MJD, 0.0, 0.0, 0.0)
             .unwrap();
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new().with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC));
+    let frame = measures_frame().with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC));
     let rust_ecl = d.convert_to(DirectionRef::ECLIPTIC, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_ecl.as_angles();
     assert!(
@@ -633,7 +641,7 @@ fn cr_direction_galactic_to_supergal() {
         MeasuresOracle::direction_convert(1.0, 0.5, "GALACTIC", "SUPERGAL", 0.0, 0.0, 0.0, 0.0)
             .unwrap();
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::GALACTIC);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_sg = d.convert_to(DirectionRef::SUPERGAL, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_sg.as_angles();
     assert!(
@@ -659,7 +667,7 @@ fn cr_frequency_lsrk_to_bary() {
     let f = MFrequency::new(1.42e9, FrequencyRef::LSRK);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_direction(dir).with_epoch(epoch);
+    let frame = measures_frame().with_direction(dir).with_epoch(epoch);
     let rust_bary = f.convert_to(FrequencyRef::BARY, &frame).unwrap();
     assert!(
         close(rust_bary.hz(), cpp_bary, 100.0),
@@ -678,7 +686,7 @@ fn cr_frequency_bary_to_lgroup() {
     let f = MFrequency::new(1.42e9, FrequencyRef::BARY);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_direction(dir).with_epoch(epoch);
+    let frame = measures_frame().with_direction(dir).with_epoch(epoch);
     let rust_lg = f.convert_to(FrequencyRef::LGROUP, &frame).unwrap();
     assert!(
         close(rust_lg.hz(), cpp_lg, 1000.0),
@@ -697,7 +705,7 @@ fn cr_frequency_bary_to_cmb() {
     let f = MFrequency::new(1.42e9, FrequencyRef::BARY);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_direction(dir).with_epoch(epoch);
+    let frame = measures_frame().with_direction(dir).with_epoch(epoch);
     let rust_cmb = f.convert_to(FrequencyRef::CMB, &frame).unwrap();
     assert!(
         close(rust_cmb.hz(), cpp_cmb, 1000.0),
@@ -714,7 +722,7 @@ fn cr_frequency_bary_to_cmb() {
 #[test]
 fn rc_doppler_gamma_to_ratio() {
     let d = MDoppler::new(2.0, DopplerRef::GAMMA);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_ratio = d.convert_to(DopplerRef::RATIO, &frame).unwrap();
     let cpp_ratio = MeasuresOracle::doppler_convert(2.0, "GAMMA", "RATIO").unwrap();
     assert!(
@@ -729,7 +737,7 @@ fn rc_doppler_gamma_to_ratio() {
 fn rc_doppler_beta_to_gamma() {
     // Same conversion tested in perf benchmark
     let d = MDoppler::new(0.5, DopplerRef::BETA);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_gamma = d.convert_to(DopplerRef::GAMMA, &frame).unwrap();
     let cpp_gamma = MeasuresOracle::doppler_convert(0.5, "BETA", "GAMMA").unwrap();
     assert!(
@@ -743,7 +751,7 @@ fn rc_doppler_beta_to_gamma() {
 #[test]
 fn rc_doppler_multiple_values() {
     // Prove output varies with input (not cached/short-circuited)
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let mut prev = f64::NAN;
     for v in [0.1, 0.3, 0.5, 0.7, 0.9] {
         let d = MDoppler::new(v, DopplerRef::RADIO);
@@ -766,7 +774,7 @@ fn rc_doppler_multiple_values() {
 #[test]
 fn rc_direction_j2000_to_icrs() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_icrs = d.convert_to(DirectionRef::ICRS, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_icrs.as_angles();
     let (cpp_lon, cpp_lat) =
@@ -789,7 +797,7 @@ fn rc_direction_j2000_to_icrs() {
 fn rc_direction_j2000_to_jmean() {
     // Same conversion tested in perf benchmark — epoch-dependent precession
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new().with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC));
+    let frame = measures_frame().with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC));
     let rust_jm = d.convert_to(DirectionRef::JMEAN, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_jm.as_angles();
     let (cpp_lon, cpp_lat) =
@@ -812,7 +820,7 @@ fn rc_direction_j2000_to_jmean() {
 #[test]
 fn rc_direction_multiple_values() {
     // Prove direction output varies with input
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let mut prev_lon = f64::NAN;
     for lon_in in [0.5, 1.0, 2.0, 3.0, 5.0] {
         let d = MDirection::from_angles(lon_in, 0.5, DirectionRef::J2000);
@@ -847,7 +855,7 @@ fn rc_frequency_lsrd_to_bary() {
     let f = MFrequency::new(1.42e9, FrequencyRef::LSRD);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_direction(dir).with_epoch(epoch);
+    let frame = measures_frame().with_direction(dir).with_epoch(epoch);
     let rust_bary = f.convert_to(FrequencyRef::BARY, &frame).unwrap();
     let cpp_bary = MeasuresOracle::frequency_convert(
         1.42e9, "LSRD", "BARY", M31_LON, M31_LAT, "J2000", J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
@@ -867,7 +875,7 @@ fn rc_frequency_lsrk_to_lgroup_multihop() {
     let f = MFrequency::new(1.42e9, FrequencyRef::LSRK);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_direction(dir).with_epoch(epoch);
+    let frame = measures_frame().with_direction(dir).with_epoch(epoch);
     let rust_lg = f.convert_to(FrequencyRef::LGROUP, &frame).unwrap();
     let cpp_lg = MeasuresOracle::frequency_convert(
         1.42e9, "LSRK", "LGROUP", M31_LON, M31_LAT, "J2000", J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
@@ -886,7 +894,7 @@ fn rc_frequency_multiple_values() {
     // Prove frequency output varies with input
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_direction(dir).with_epoch(epoch);
+    let frame = measures_frame().with_direction(dir).with_epoch(epoch);
     let mut prev = f64::NAN;
     for hz_in in [1.0e9, 1.2e9, 1.42e9, 2.0e9, 5.0e9] {
         let f = MFrequency::new(hz_in, FrequencyRef::LSRK);
@@ -916,7 +924,7 @@ fn rc_frequency_direction_sensitivity() {
 
     // Direction toward galactic center
     let dir1 = MDirection::from_angles(0.0, 0.0, DirectionRef::GALACTIC);
-    let frame1 = MeasFrame::new()
+    let frame1 = measures_frame()
         .with_direction(dir1.clone())
         .with_epoch(epoch.clone());
     let j1 = dir1.convert_to(DirectionRef::J2000, &frame1).unwrap();
@@ -924,7 +932,7 @@ fn rc_frequency_direction_sensitivity() {
 
     // Direction opposite (galactic anticenter)
     let dir2 = MDirection::from_angles(std::f64::consts::PI, 0.0, DirectionRef::GALACTIC);
-    let frame2 = MeasFrame::new()
+    let frame2 = measures_frame()
         .with_direction(dir2.clone())
         .with_epoch(epoch);
     let j2 = dir2.convert_to(DirectionRef::J2000, &frame2).unwrap();
@@ -987,7 +995,7 @@ fn rc_frequency_bary_to_geo() {
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let obs = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_direction(dir)
         .with_epoch(epoch)
         .with_position(obs);
@@ -1014,7 +1022,7 @@ fn cr_frequency_bary_to_geo() {
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let obs = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_direction(dir)
         .with_epoch(epoch)
         .with_position(obs);
@@ -1036,7 +1044,7 @@ fn rc_frequency_geo_to_topo() {
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let obs = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_direction(dir)
         .with_epoch(epoch)
         .with_position(obs)
@@ -1064,7 +1072,7 @@ fn cr_frequency_geo_to_topo() {
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let obs = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_direction(dir)
         .with_epoch(epoch)
         .with_position(obs)
@@ -1087,7 +1095,7 @@ fn rc_frequency_lsrk_to_topo() {
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let obs = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_direction(dir)
         .with_epoch(epoch)
         .with_position(obs)
@@ -1249,7 +1257,7 @@ fn rc_radvel_lsrk_to_bary() {
     let rv = MRadialVelocity::new(50_000.0, RadialVelocityRef::LSRK);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_direction(dir).with_epoch(epoch);
+    let frame = measures_frame().with_direction(dir).with_epoch(epoch);
     let rust_bary = rv.convert_to(RadialVelocityRef::BARY, &frame).unwrap();
     let cpp_bary = MeasuresOracle::radvel_convert(
         50_000.0, "LSRK", "BARY", M31_LON, M31_LAT, "J2000", J2000_MJD, VLA_LON, VLA_LAT, VLA_H,
@@ -1269,7 +1277,7 @@ fn rc_radvel_bary_to_geo() {
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let obs = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_direction(dir)
         .with_epoch(epoch)
         .with_position(obs);
@@ -1290,7 +1298,7 @@ fn rc_radvel_bary_to_geo() {
 fn rc_radvel_bary_to_lgroup() {
     let rv = MRadialVelocity::new(50_000.0, RadialVelocityRef::BARY);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
-    let frame = MeasFrame::new().with_direction(dir);
+    let frame = measures_frame().with_direction(dir);
     let rust_lg = rv.convert_to(RadialVelocityRef::LGROUP, &frame).unwrap();
     let cpp_lg = MeasuresOracle::radvel_convert(
         50_000.0, "BARY", "LGROUP", M31_LON, M31_LAT, "J2000", 0.0, 0.0, 0.0, 0.0,
@@ -1308,7 +1316,7 @@ fn rc_radvel_bary_to_lgroup() {
 fn rc_radvel_bary_to_cmb() {
     let rv = MRadialVelocity::new(50_000.0, RadialVelocityRef::BARY);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
-    let frame = MeasFrame::new().with_direction(dir);
+    let frame = measures_frame().with_direction(dir);
     let rust_cmb = rv.convert_to(RadialVelocityRef::CMB, &frame).unwrap();
     let cpp_cmb = MeasuresOracle::radvel_convert(
         50_000.0, "BARY", "CMB", M31_LON, M31_LAT, "J2000", 0.0, 0.0, 0.0, 0.0,
@@ -1326,7 +1334,7 @@ fn rc_radvel_bary_to_cmb() {
 fn rc_radvel_multiple_values() {
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_direction(dir).with_epoch(epoch);
+    let frame = measures_frame().with_direction(dir).with_epoch(epoch);
     let mut prev = f64::NAN;
     for ms_in in [10_000.0, 30_000.0, 50_000.0, 100_000.0, 200_000.0] {
         let rv = MRadialVelocity::new(ms_in, RadialVelocityRef::LSRK);
@@ -1358,7 +1366,7 @@ fn cr_radvel_lsrk_to_bary() {
     let rv = MRadialVelocity::new(50_000.0, RadialVelocityRef::LSRK);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
-    let frame = MeasFrame::new().with_direction(dir).with_epoch(epoch);
+    let frame = measures_frame().with_direction(dir).with_epoch(epoch);
     let rust_bary = rv.convert_to(RadialVelocityRef::BARY, &frame).unwrap();
     assert!(
         close(rust_bary.ms(), cpp_bary, 1.0),
@@ -1378,7 +1386,7 @@ fn cr_radvel_bary_to_geo() {
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let obs = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_direction(dir)
         .with_epoch(epoch)
         .with_position(obs);
@@ -1399,7 +1407,7 @@ fn cr_radvel_bary_to_lgroup() {
     .unwrap();
     let rv = MRadialVelocity::new(50_000.0, RadialVelocityRef::BARY);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
-    let frame = MeasFrame::new().with_direction(dir);
+    let frame = measures_frame().with_direction(dir);
     let rust_lg = rv.convert_to(RadialVelocityRef::LGROUP, &frame).unwrap();
     assert!(
         close(rust_lg.ms(), cpp_lg, 1.0),
@@ -1434,7 +1442,7 @@ fn rc_freq_rest_to_lsrk() {
     let f = MFrequency::new(1.42e9, FrequencyRef::REST);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let rv = MRadialVelocity::new(50_000.0, RadialVelocityRef::LSRK);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_direction(dir)
         .with_radial_velocity(rv);
     let rust_lsrk = f.convert_to(FrequencyRef::LSRK, &frame).unwrap();
@@ -1455,7 +1463,7 @@ fn rc_freq_lsrk_to_rest() {
     let f = MFrequency::new(1.42e9, FrequencyRef::LSRK);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let rv = MRadialVelocity::new(50_000.0, RadialVelocityRef::LSRK);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_direction(dir)
         .with_radial_velocity(rv);
     let rust_rest = f.convert_to(FrequencyRef::REST, &frame).unwrap();
@@ -1480,7 +1488,7 @@ fn cr_freq_rest_to_lsrk() {
     let f = MFrequency::new(1.42e9, FrequencyRef::REST);
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let rv = MRadialVelocity::new(50_000.0, RadialVelocityRef::LSRK);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_direction(dir)
         .with_radial_velocity(rv);
     let rust_lsrk = f.convert_to(FrequencyRef::LSRK, &frame).unwrap();
@@ -1515,7 +1523,7 @@ fn cc_freq_rest_lsrk_roundtrip() {
 #[test]
 fn rc_dir_j2000_to_b1950() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_b = d.convert_to(DirectionRef::B1950, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_b.as_angles();
     let (cpp_lon, cpp_lat) =
@@ -1537,7 +1545,7 @@ fn rc_dir_j2000_to_b1950() {
 #[test]
 fn rc_dir_b1950_to_j2000() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::B1950);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_j = d.convert_to(DirectionRef::J2000, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_j.as_angles();
     let (cpp_lon, cpp_lat) =
@@ -1561,7 +1569,7 @@ fn cr_dir_j2000_to_b1950() {
     let (cpp_lon, cpp_lat) =
         MeasuresOracle::direction_convert(1.0, 0.5, "J2000", "B1950", 0.0, 0.0, 0.0, 0.0).unwrap();
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new();
+    let frame = measures_frame();
     let rust_b = d.convert_to(DirectionRef::B1950, &frame).unwrap();
     let (rust_lon, rust_lat) = rust_b.as_angles();
     assert!(
@@ -1601,7 +1609,7 @@ fn cc_dir_b1950_roundtrip() {
 #[test]
 fn rc_dir_j2000_to_itrf() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_dut1(0.3);
@@ -1633,7 +1641,7 @@ fn rc_dir_itrf_to_j2000() {
     )
     .unwrap();
     let d = MDirection::from_angles(itrf_lon, itrf_lat, DirectionRef::ITRF);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_dut1(0.3);
@@ -1664,7 +1672,7 @@ fn cr_dir_j2000_to_itrf() {
     )
     .unwrap();
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_dut1(0.3);
@@ -1695,7 +1703,7 @@ fn cr_dir_j2000_to_itrf() {
 #[test]
 fn rc_dir_hadec_topo_roundtrip() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::HADEC);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_dut1(0.3);
@@ -1722,7 +1730,7 @@ fn rc_epoch_ut1_to_gast() {
     let ut1_mjd = J2000_MJD + 0.3 / SECONDS_PER_DAY; // approximate UT1
     let ut1 = MEpoch::from_mjd(ut1_mjd, EpochRef::UT1);
     let vla = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new().with_position(vla).with_dut1(0.3);
+    let frame = measures_frame().with_position(vla).with_dut1(0.3);
     let rust_gast = ut1.convert_to(EpochRef::GAST, &frame).unwrap();
     let cpp_gast = MeasuresOracle::epoch_convert_with_frame(
         ut1_mjd, "UT1", "GAST", VLA_LON, VLA_LAT, VLA_H, 0.3,
@@ -1748,7 +1756,7 @@ fn rc_epoch_gast_to_last() {
     .unwrap();
     let gast = MEpoch::from_mjd(cpp_gast, EpochRef::GAST);
     let vla = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new().with_position(vla).with_dut1(0.3);
+    let frame = measures_frame().with_position(vla).with_dut1(0.3);
     let rust_last = gast.convert_to(EpochRef::LAST, &frame).unwrap();
     let cpp_last = MeasuresOracle::epoch_convert_with_frame(
         cpp_gast, "GAST", "LAST", VLA_LON, VLA_LAT, VLA_H, 0.3,
@@ -1767,7 +1775,7 @@ fn rc_epoch_gmst1_to_ut1() {
     let ut1_mjd = J2000_MJD + 0.3 / SECONDS_PER_DAY;
     let ut1 = MEpoch::from_mjd(ut1_mjd, EpochRef::UT1);
     let vla = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new().with_position(vla).with_dut1(0.3);
+    let frame = measures_frame().with_position(vla).with_dut1(0.3);
     let gmst = ut1.convert_to(EpochRef::GMST1, &frame).unwrap();
     // Now convert back
     let back_ut1 = gmst.convert_to(EpochRef::UT1, &frame).unwrap();
@@ -1784,7 +1792,7 @@ fn cr_epoch_ut1_to_gast() {
     .unwrap();
     let ut1 = MEpoch::from_mjd(ut1_mjd, EpochRef::UT1);
     let vla = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new().with_position(vla).with_dut1(0.3);
+    let frame = measures_frame().with_position(vla).with_dut1(0.3);
     let rust_gast = ut1.convert_to(EpochRef::GAST, &frame).unwrap();
     // Compare fractional sidereal time (integer-day conventions differ)
     let rust_frac = rust_gast.value().frac();
@@ -1806,7 +1814,7 @@ fn cr_epoch_gast_to_last() {
     .unwrap();
     let gast = MEpoch::from_mjd(cpp_gast, EpochRef::GAST);
     let vla = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new().with_position(vla).with_dut1(0.3);
+    let frame = measures_frame().with_position(vla).with_dut1(0.3);
     let rust_last = gast.convert_to(EpochRef::LAST, &frame).unwrap();
     // Compare fractional sidereal time (integer-day conventions differ)
     let rust_frac = rust_last.value().frac();
@@ -1933,7 +1941,7 @@ fn eop_epoch_conversion_with_runtime_data() {
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
 
     // Use explicit runtime EOP for dUT1 instead of hardcoded value
-    let frame = MeasFrame::new().with_measures(eop);
+    let frame = measures_frame().with_measures(eop);
 
     let rust_ut1 = utc.convert_to(EpochRef::UT1, &frame).unwrap();
 
@@ -1980,7 +1988,7 @@ const MJD_2020: f64 = 58849.0; // 2020-01-01
 #[test]
 fn eop_dir_j2000_to_itrf() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_measures(measures_runtime());
@@ -2004,7 +2012,7 @@ fn eop_dir_j2000_to_itrf() {
 #[test]
 fn eop_dir_j2000_to_itrf_2010() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(MJD_2010, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_measures(measures_runtime());
@@ -2024,7 +2032,7 @@ fn eop_dir_j2000_to_itrf_2010() {
 #[test]
 fn eop_dir_j2000_to_itrf_2020() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(MJD_2020, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_measures(measures_runtime());
@@ -2048,7 +2056,7 @@ fn eop_epoch_utc_to_gast() {
     // Full pipeline: UTC → UT1 (via explicit runtime EOP) → GAST
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let vla = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_position(vla)
         .with_measures(measures_runtime());
     let rust_ut1 = utc.convert_to(EpochRef::UT1, &frame).unwrap();
@@ -2081,7 +2089,7 @@ fn eop_epoch_utc_to_last() {
     // Full pipeline: UTC → UT1 (via explicit runtime EOP) → GAST → LAST
     let utc = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let vla = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_position(vla)
         .with_measures(measures_runtime());
     let rust_ut1 = utc.convert_to(EpochRef::UT1, &frame).unwrap();
@@ -2119,7 +2127,7 @@ fn eop_epoch_utc_to_last() {
 #[test]
 fn eop_dir_j2000_to_hadec() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_measures(measures_runtime());
@@ -2145,7 +2153,7 @@ fn eop_dir_j2000_to_azel() {
     // Use (1.0, 0.5) source at J2000 epoch, same as other tests.
     // This source may be near/below horizon but AZEL should still be compared.
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_measures(measures_runtime());
@@ -2173,7 +2181,7 @@ fn eop_freq_bary_to_topo() {
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let obs = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_direction(dir)
         .with_epoch(epoch)
         .with_position(obs)
@@ -2198,7 +2206,7 @@ fn eop_rv_bary_to_topo() {
     let dir = MDirection::from_angles(M31_LON, M31_LAT, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let obs = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_direction(dir)
         .with_epoch(epoch)
         .with_position(obs)
@@ -2237,7 +2245,7 @@ fn accepted_direction_divergence_routes_are_bounded() {
     let routes = ["APP", "HADEC", "AZEL", "ITRF"];
 
     for (model_name, model, max_sep_arcsec) in cases {
-        let frame = MeasFrame::new()
+        let frame = measures_frame()
             .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
             .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
             .with_measures(measures_runtime())
@@ -2282,7 +2290,7 @@ fn eop_full_pipeline_radio_astronomy() {
     let src = MDirection::from_angles(6.0, 0.0, DirectionRef::J2000);
     let epoch = MEpoch::from_mjd(epoch_mjd, EpochRef::UTC);
     let obs = MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(epoch)
         .with_position(obs)
         .with_direction(src.clone())
@@ -2339,7 +2347,7 @@ fn diag_direction_chain_steps() {
 
     // Rust conversions at each step
     let d = MDirection::from_angles(lon, lat, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_measures(measures_runtime());
@@ -2391,7 +2399,7 @@ fn diag_direction_chain_steps() {
 #[test]
 fn iau2000a_dir_j2000_to_hadec() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_measures(measures_runtime())
@@ -2414,7 +2422,7 @@ fn iau2000a_dir_j2000_to_hadec() {
 #[test]
 fn iau2000a_dir_j2000_to_azel() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_measures(measures_runtime())
@@ -2437,7 +2445,7 @@ fn iau2000a_dir_j2000_to_azel() {
 #[test]
 fn iau2000a_dir_j2000_to_itrf() {
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_measures(measures_runtime())
@@ -2465,7 +2473,7 @@ fn diag_iau2000a_chain_steps() {
     let epoch_mjd = J2000_MJD;
 
     let d = MDirection::from_angles(lon, lat, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(epoch_mjd, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_measures(measures_runtime())
@@ -2520,7 +2528,7 @@ fn diag_iau2000_precession_matrix() {
 
     // Rust JMEAN via conversion
     let d = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_measures(measures_runtime())
@@ -2556,7 +2564,7 @@ fn diag_aberration_rotation_invariance() {
         ("IAU1976", IauModel::Iau1976_1980),
         ("IAU2000A", IauModel::Iau2006_2000A),
     ] {
-        let f = MeasFrame::new()
+        let f = measures_frame()
             .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
             .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
             .with_measures(measures_runtime())
@@ -2575,7 +2583,7 @@ fn diag_aberration_rotation_invariance() {
         );
     }
 
-    let frame = MeasFrame::new()
+    let frame = measures_frame()
         .with_epoch(MEpoch::from_mjd(J2000_MJD, EpochRef::UTC))
         .with_position(MPosition::new_wgs84(VLA_LON, VLA_LAT, VLA_H))
         .with_measures(measures_runtime())

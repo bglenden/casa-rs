@@ -13,18 +13,31 @@
 
 use tempfile::TempDir;
 
+use casa_measures_data::MeasuresRuntime;
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_test_support::table_measures_interop::TableMeasuresOracle;
 use casa_test_support::taql_interop::{
     CppTaqlQueryResult, TaqlOracle, TaqlQueryResult, rust_taql_query,
 };
+use casa_types::measures::MeasuresProvider;
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, Value};
+use std::sync::{Arc, OnceLock};
 
 const RUST_EPOCH_QUERY: &str = "SELECT meas.epoch('TAI', TIME[1], 'UTC') AS tai";
 const CPP_EPOCH_QUERY: &str = "using style python select meas.epoch('TAI', TIME)d as tai from $1";
 const RUST_DIRECTION_QUERY: &str = "SELECT meas.galactic(DIR[1], DIR[2], 'J2000') AS gal";
 const CPP_DIRECTION_QUERY: &str = "using style python select meas.galactic(DIR) as gal from $1";
+
+fn measures_provider() -> Arc<dyn MeasuresProvider> {
+    static PROVIDER: OnceLock<Arc<dyn MeasuresProvider>> = OnceLock::new();
+    Arc::clone(PROVIDER.get_or_init(|| {
+        Arc::new(
+            MeasuresRuntime::open_discovered(Default::default())
+                .expect("open explicit measures runtime for TaQL column interop"),
+        )
+    }))
+}
 
 fn build_epoch_measure_fixture() -> Table {
     let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
@@ -35,6 +48,7 @@ fn build_epoch_measure_fixture() -> Table {
     .unwrap();
 
     let mut table = Table::with_schema(schema);
+    table.set_measures_provider(measures_provider());
     TableMeasDesc::new_fixed("TIME", MeasureType::Epoch, "UTC")
         .write(&mut table)
         .unwrap();
@@ -60,6 +74,7 @@ fn build_direction_measure_fixture() -> Table {
     .unwrap();
 
     let mut table = Table::with_schema(schema);
+    table.set_measures_provider(measures_provider());
     TableMeasDesc::new_fixed("DIR", MeasureType::Direction, "J2000")
         .write(&mut table)
         .unwrap();
@@ -174,6 +189,7 @@ fn cr_epoch_meas_column_matches_cpp_taql() {
 
     let cpp_result = TaqlOracle::query(&path, CPP_EPOCH_QUERY).unwrap();
     let mut rust_table = Table::open(TableOptions::new(&path)).unwrap();
+    rust_table.set_measures_provider(measures_provider());
     let rust_result = rust_taql_query(&mut rust_table, RUST_EPOCH_QUERY).unwrap();
 
     assert_single_float_column_matches(&rust_result, &cpp_result, 1.0e-9);
@@ -200,6 +216,7 @@ fn cr_direction_meas_column_matches_cpp_taql() {
 
     let cpp_result = TaqlOracle::query(&path, CPP_DIRECTION_QUERY).unwrap();
     let mut rust_table = Table::open(TableOptions::new(&path)).unwrap();
+    rust_table.set_measures_provider(measures_provider());
     let rust_result = rust_taql_query(&mut rust_table, RUST_DIRECTION_QUERY).unwrap();
 
     assert_single_array_column_matches(&rust_result, &cpp_result, 5.0e-6);
