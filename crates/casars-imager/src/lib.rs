@@ -14471,65 +14471,63 @@ fn collect_cube_slab_run_metadata(
     let nplanes = config
         .channel_count
         .ok_or_else(|| "cube slab metadata requires explicit channel_count".to_string())?;
-    let mut phase_center = None::<PhaseCenter>;
-    let mut freq_ref = None::<FrequencyRef>;
-    let mut channel_frequencies_hz = vec![0.0; nplanes];
-    let mut output_channel_widths_hz = Vec::<f64>::with_capacity(nplanes);
-    let mut rest_frequency_hz = None::<f64>;
+    let mut expected_plane_start = 0usize;
+    for (expected_slab_id, slab) in slab_manifest.iter().enumerate() {
+        if slab.slab_id != expected_slab_id
+            || slab.plane_start != expected_plane_start
+            || slab.plane_end <= slab.plane_start
+            || slab.plane_end > nplanes
+        {
+            return Err(format!(
+                "cube slab metadata manifest entry {} does not continuously cover {} planes: slab_id={} planes={}..{} expected_start={expected_plane_start}",
+                expected_slab_id, nplanes, slab.slab_id, slab.plane_start, slab.plane_end,
+            ));
+        }
+        expected_plane_start = slab.plane_end;
+    }
+    if expected_plane_start != nplanes {
+        return Err(format!(
+            "cube slab metadata manifest covers {expected_plane_start} of {nplanes} planes"
+        ));
+    }
+
+    // Coordinate metadata belongs to the requested cube, not its runtime slab
+    // partition.  Reconstructing it independently for each slab makes frame
+    // conversion roundoff (and therefore the persisted spectral increment)
+    // depend on worker count and channel-chunk planning.
+    let full_config = slab_config_for_cube_planes(config, channel_start, 0, nplanes)?;
+    let mut cube_axis = full_config.cube_axis.clone();
+    cube_axis.specmode = full_config.spectral_mode.cube_specmode();
     let cube_context = cube_setup_context_for_selection(selection, Some(derived_engine))?;
     let plane_stokes = cube_slab_metadata_plane_stokes(config, &table_values.corr_types)?;
-
-    for slab in slab_manifest {
-        let slab_config =
-            slab_config_for_cube_planes(config, channel_start, slab.plane_start, slab.plane_end)?;
-        let mut cube_axis = slab_config.cube_axis.clone();
-        cube_axis.specmode = slab_config.spectral_mode.cube_specmode();
-        let (cube_setup, support_selection) = CubeSpectralSetup::for_casa_cube_axis(
-            table_values.freq_ref,
-            &table_values.spw_freqs_hz,
-            &table_values.spw_widths_hz,
-            slab_config
-                .channel_count
-                .unwrap_or(table_values.spw_freqs_hz.len()),
-            &cube_axis,
-            cube_context.reference_row_time_mjd_sec,
-            cube_context.spectral_frame_field_id,
-            cube_context.phase_center_direction.clone(),
-            cube_context.time_bounds_mjd_sec,
-            cube_context.derived_engine,
-        )
-        .map_err(|error| error.to_string())?;
-        phase_center.get_or_insert_with(|| selection.phase_center.clone());
-        freq_ref.get_or_insert(cube_setup.output_freq_ref);
-        rest_frequency_hz = rest_frequency_hz.or_else(|| {
-            support_selection
-                .frequencies_hz
-                .first()
-                .zip(support_selection.frequencies_hz.last())
-                .map(|(first, last)| 0.5 * (*first + *last))
-        });
-        output_channel_widths_hz.extend(cube_setup.output_channel_widths_hz.iter().copied());
-        for (offset, frequency_hz) in cube_setup.output_channel_frequencies_hz.iter().enumerate() {
-            let output_index = slab.plane_start + offset;
-            if output_index >= channel_frequencies_hz.len() {
-                return Err(format!(
-                    "cube slab metadata output index {output_index} exceeds {nplanes} planes"
-                ));
-            }
-            channel_frequencies_hz[output_index] = *frequency_hz;
-        }
-    }
-    let spectral_delta_hz = output_channel_widths_hz
+    let (cube_setup, support_selection) = CubeSpectralSetup::for_casa_cube_axis(
+        table_values.freq_ref,
+        &table_values.spw_freqs_hz,
+        &table_values.spw_widths_hz,
+        nplanes,
+        &cube_axis,
+        cube_context.reference_row_time_mjd_sec,
+        cube_context.spectral_frame_field_id,
+        cube_context.phase_center_direction,
+        cube_context.time_bounds_mjd_sec,
+        cube_context.derived_engine,
+    )
+    .map_err(|error| error.to_string())?;
+    let spectral_delta_hz = cube_setup
+        .output_channel_widths_hz
         .iter()
         .copied()
         .find(|value| value.is_finite() && *value != 0.0);
+    let rest_frequency_hz = support_selection
+        .frequencies_hz
+        .first()
+        .zip(support_selection.frequencies_hz.last())
+        .map(|(first, last)| 0.5 * (*first + *last));
     Ok(CubeSlabRunMetadata {
-        phase_center: phase_center
-            .ok_or_else(|| "cube slab metadata prepared no phase center".to_string())?,
-        freq_ref: freq_ref
-            .ok_or_else(|| "cube slab metadata prepared no frequency frame".to_string())?,
+        phase_center: selection.phase_center.clone(),
+        freq_ref: cube_setup.output_freq_ref,
         plane_stokes,
-        channel_frequencies_hz,
+        channel_frequencies_hz: cube_setup.output_channel_frequencies_hz,
         spectral_delta_hz,
         rest_frequency_hz,
     })
