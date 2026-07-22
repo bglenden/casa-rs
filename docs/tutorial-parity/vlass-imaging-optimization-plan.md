@@ -157,6 +157,23 @@ Metal-vs-CPU parity and acceleration are therefore green development evidence;
 CASA correctness, the frozen 12,150-pixel four-row benchmark, and the 10x
 closeout remain explicitly incomplete.
 
+A subsequent field-0 diagnostic traced the residual gap to the AW gridding
+arithmetic boundary. CASA multiplies each Complex32 visibility/weight value by
+its Complex32 convolution-function tap before accumulating the contribution in
+the DComplex grid; casa-rs had promoted both operands before multiplication.
+Preserving CASA's Complex32 product and attaching the existing primary-beam
+support mask to every MT-MFS residual and restored Taylor product brought all
+18 numerical products inside the frozen RMS and peak tolerances. The strict
+reduced-row comparison is
+`/private/tmp/casa-rs-vlass-f32-mask-receipts/20260722T231306Z-vlass-awproject-turnaround-98ed91ee.json`.
+Residual TT0 now has RMS ratio `0.000238543` and peak-normalized absolute
+difference `0.000255450`; residual TT1 has `0.000229239` and `0.000253040`.
+This diagnostic still reports exact coordinate-metadata differences and one
+primary-beam cutoff pixel (plus eight derived-alpha mask pixels). Those remain
+correctness owners before the full-size benchmark. This reduced single-field
+receipt is turnaround evidence only and does not satisfy a frozen 12,150-pixel
+gate.
+
 ## Outcome
 
 Make two imaging workloads derived from the archived VLASS test MeasurementSet

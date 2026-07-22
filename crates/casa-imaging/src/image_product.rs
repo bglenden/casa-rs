@@ -307,21 +307,22 @@ impl<'a> ImageProductSet<'a> {
             .find(|product| product.metadata.role == role)
     }
 
-    /// Attach a shared mask to the first product with a role.
-    pub fn set_first_role_shared_mask(
+    /// Attach a shared mask to every product with a role.
+    pub fn set_role_shared_mask(
         &mut self,
         role: ImageProductRole,
         mask: Arc<ArrayD<bool>>,
-    ) -> bool {
-        let Some(product) = self
+    ) -> usize {
+        let mut updated = 0usize;
+        for product in self
             .products
             .iter_mut()
-            .find(|product| product.metadata.role == role)
-        else {
-            return false;
-        };
-        product.metadata_mut().set_shared_mask(mask);
-        true
+            .filter(|product| product.metadata.role == role)
+        {
+            product.metadata_mut().set_shared_mask(mask.clone());
+            updated += 1;
+        }
+        updated
     }
 
     /// Add a CASA-style clean-mask product.

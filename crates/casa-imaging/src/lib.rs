@@ -5323,11 +5323,13 @@ fn finish_mosaic_mtmfs_dirty_images(
                 .weight_grids
                 .into_iter()
                 .zip(&weight_fft_scales)
-                .map(|(grid, &scale)| {
+                .enumerate()
+                .map(|(order, (grid, &scale))| {
                     let raw = execute_dirty_product_host_f64_owned_single(
                         grid,
                         dirty_product_fft_policy,
                     )?;
+                    dump_mosaic_complex_grid(&format!("aw_weight_tt{order}_postfft"), 0.0, &raw);
                     let image = if awproject_weight_semantics {
                         gridder.aw_weight_image_from_grid_f64(&raw)
                     } else {
@@ -7118,7 +7120,7 @@ fn execute_awproject_mtmfs_plane_tasks(
                 for sample in samples {
                     let taylor_weight =
                         mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
-                    let value = Complex64::new(f64::from(sample.weight * taylor_weight), 0.0);
+                    let value = Complex32::new(sample.weight * taylor_weight, 0.0);
                     first_psf_projector.grid_sample_planned_f64(
                         grid,
                         &sample.first_psf_plan,
@@ -7141,12 +7143,12 @@ fn execute_awproject_mtmfs_plane_tasks(
                     first_imaging_projector.grid_sample_planned_f64(
                         grid,
                         &sample.first_imaging_plan,
-                        Complex64::new(f64::from(first_value.re), f64::from(first_value.im)),
+                        first_value,
                     );
                     second_imaging_projector.grid_sample_planned_f64(
                         grid,
                         &sample.second_imaging_plan,
-                        Complex64::new(f64::from(second_value.re), f64::from(second_value.im)),
+                        second_value,
                     );
                 }
             }
@@ -7154,7 +7156,7 @@ fn execute_awproject_mtmfs_plane_tasks(
                 for sample in samples {
                     let taylor_weight =
                         mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
-                    let value = Complex64::new(f64::from(sample.weight * taylor_weight), 0.0);
+                    let value = Complex32::new(sample.weight * taylor_weight, 0.0);
                     first_weight_projector.grid_sample_planned_f64(grid, first_weight_plan, value);
                     second_weight_projector.grid_sample_planned_f64(
                         grid,

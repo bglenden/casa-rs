@@ -44553,7 +44553,7 @@ fn append_single_plane_primary_beam_products(
     };
     let support_mask = Arc::new(support_mask);
     for role in [ImageProductRole::Residual, ImageProductRole::Image] {
-        product_set.set_first_role_shared_mask(role, support_mask.clone());
+        product_set.set_role_shared_mask(role, support_mask.clone());
     }
     if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
         product_set.push_owned(
@@ -44659,6 +44659,9 @@ fn append_mtmfs_primary_beam_products<'a>(
         config.pbcor,
     );
     let tt0_support_mask = Arc::new(tt0_pb_outputs.1);
+    for role in [ImageProductRole::Residual, ImageProductRole::Image] {
+        product_set.set_role_shared_mask(role, tt0_support_mask.clone());
+    }
     if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
         product_set.push_owned(
             ".pb.tt0",
@@ -57818,6 +57821,21 @@ mod tests {
         assert!(suffixes.contains(&".image.tt0.pbcor".to_string()));
         assert!(suffixes.contains(&".image.tt1.pbcor".to_string()));
         assert!(!suffixes.contains(&".alpha.pbcor".to_string()));
+        for product in product_set.products().iter().filter(|product| {
+            product.suffix().starts_with(".residual.tt")
+                || product.suffix().starts_with(".image.tt")
+        }) {
+            let mask = product
+                .metadata()
+                .mask_array()
+                .expect("MT-MFS restored products carry the PB support mask");
+            assert_eq!(
+                mask.iter().copied().collect::<Vec<_>>(),
+                vec![true, true, false, false],
+                "{} mask",
+                product.suffix()
+            );
+        }
         let pbcor_tt1 = product_set
             .products()
             .iter()

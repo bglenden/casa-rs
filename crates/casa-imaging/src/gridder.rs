@@ -2221,19 +2221,25 @@ impl<'a> AwProjector<'a> {
         &self,
         grid: &mut Array2<Complex64>,
         plan: &AwProjectSamplePlan,
-        value: Complex64,
+        value: Complex32,
     ) {
         debug_assert_eq!(grid.shape(), self.grid_shape.as_slice());
         let grid_stride = self.grid_shape[1];
         if let Some(storage) = grid.as_slice_memory_order_mut() {
             self.for_each_grid_tap(plan, |grid_x, grid_y, tap| {
-                let contribution = value * Complex64::new(f64::from(tap.re), f64::from(tap.im));
-                storage[grid_x * grid_stride + grid_y] += contribution;
+                // CASA's AWVisResampler computes `nvalue * wt` as Complex
+                // before adding that contribution to an Array<DComplex>.
+                // Preserve that arithmetic boundary: promoting the operands
+                // before multiplication changes low-PB flat-noise pixels.
+                let contribution = value * tap;
+                storage[grid_x * grid_stride + grid_y] +=
+                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
             });
         } else {
             self.for_each_grid_tap(plan, |grid_x, grid_y, tap| {
-                let contribution = value * Complex64::new(f64::from(tap.re), f64::from(tap.im));
-                grid[(grid_x, grid_y)] += contribution;
+                let contribution = value * tap;
+                grid[(grid_x, grid_y)] +=
+                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
             });
         }
     }
@@ -3867,6 +3873,42 @@ mod tests {
         let negative = projector.plan_sample(0.3 * du, -0.3 * dv, -12.0).unwrap();
         assert!(!negative.conjugate_for_grid);
         assert!((negative.normalization - expected_norm.conj()).norm() < 1.0e-5);
+    }
+
+    #[test]
+    fn aw_projector_f64_grid_preserves_casa_complex_contribution_precision() {
+        let geometry = ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let gridder = StandardGridder::new_unpadded(geometry).unwrap();
+        let metadata = aw_test_metadata([12, 12]);
+        let kernel = Array2::from_shape_fn((12, 12), |(x, y)| {
+            Complex32::new(0.013 * x as f32 + 0.21, -0.017 * y as f32 + 0.09)
+        });
+        let projector = AwProjector::new(&gridder, &metadata, &kernel, [0.07, -0.11]).unwrap();
+        let plan = projector.plan_sample(0.0, 0.0, 12.0).unwrap();
+        let value = Complex32::new(12_345.678, -9_876.543);
+        let mut grid = Array2::<Complex64>::zeros(gridder.grid_shape());
+
+        projector.grid_sample_planned_f64(&mut grid, &plan, value);
+
+        let ix = -1isize;
+        let iy = 2isize;
+        let grid_value = grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)];
+        let mut tap = kernel[((6isize + 2 * ix) as usize, (6isize + 2 * iy) as usize)].conj();
+        let phase = (2 * ix) as f64 * 0.07 + (2 * iy) as f64 * -0.11;
+        tap *= Complex32::new(phase.cos() as f32, phase.sin() as f32);
+        let casa_contribution = value * tap;
+        let expected = Complex64::new(
+            f64::from(casa_contribution.re),
+            f64::from(casa_contribution.im),
+        );
+        let promoted_operand_product = Complex64::new(f64::from(value.re), f64::from(value.im))
+            * Complex64::new(f64::from(tap.re), f64::from(tap.im));
+
+        assert_eq!(grid_value, expected);
+        assert_ne!(grid_value, promoted_operand_product);
     }
 
     #[test]
