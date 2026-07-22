@@ -2288,6 +2288,31 @@ fn execute_dirty_product_host_f64_batch(
     Ok((outputs, aggregate))
 }
 
+fn execute_dirty_product_host_f64_owned_single(
+    input: Array2<Complex64>,
+    policy: DirtyProductFftPolicy,
+) -> Result<Array2<Complex64>, ImagingError> {
+    let rows = input.shape()[0];
+    let columns = input.shape()[1];
+    let plan = plan_dirty_product_fft(policy, rows, columns, 1)?;
+    if plan.precision == FftPrecision::F64
+        && plan.selection.selected_backend == FftBackendChoice::RustFft
+        && rows & 1 == 0
+        && columns & 1 == 0
+    {
+        return Ok(centered_ifft2_dirty_f64_owned(
+            input,
+            false,
+            FftBackendChoice::RustFft,
+        ));
+    }
+
+    let (mut outputs, _) = execute_dirty_product_host_f64_batch(&[&input], policy)?;
+    outputs.pop().ok_or_else(|| {
+        ImagingError::Normalization("single-plane dirty-product FFT returned no output".to_string())
+    })
+}
+
 fn execute_dirty_product_host_f32_batch(
     inputs: &[Array2<Complex32>],
     policy: DirtyProductFftPolicy,
@@ -5264,48 +5289,103 @@ fn finish_mosaic_mtmfs_dirty_images(
     match storage {
         MosaicMtmfsStreamGridStorage::HostF64(grids) => {
             let fft_started = Instant::now();
-            let mut inputs = grids.psf_grids;
-            inputs.extend(grids.residual_grids);
-            inputs.extend(grids.weight_grids);
-            let input_refs = inputs.iter().collect::<Vec<_>>();
-            let (mut outputs, _) =
-                execute_dirty_product_host_f64_batch(&input_refs, dirty_product_fft_policy)?;
-            let raw_weight_terms = outputs.split_off(psf_term_count + nterms);
-            let raw_residual_terms = outputs.split_off(psf_term_count);
-            let raw_psf_terms = outputs;
-            stage_timings.psf_fft += fft_started.elapsed();
-            let weight_terms = raw_weight_terms
-                .iter()
-                .zip(&weight_fft_scales)
-                .map(|(raw, &scale)| {
-                    let image = if awproject_weight_semantics {
-                        gridder.aw_weight_image_from_grid_f64(raw)
-                    } else {
-                        gridder.mosaic_weight_image_from_grid_f64(raw)
-                    };
-                    image.mapv(|value| value * scale)
+            if !awproject_weight_semantics {
+                let mut inputs = grids.psf_grids;
+                inputs.extend(grids.residual_grids);
+                inputs.extend(grids.weight_grids);
+                let input_refs = inputs.iter().collect::<Vec<_>>();
+                let (mut outputs, _) =
+                    execute_dirty_product_host_f64_batch(&input_refs, dirty_product_fft_policy)?;
+                let raw_weight_terms = outputs.split_off(psf_term_count + nterms);
+                let raw_residual_terms = outputs.split_off(psf_term_count);
+                let raw_psf_terms = outputs;
+                stage_timings.psf_fft += fft_started.elapsed();
+                let weight_terms = raw_weight_terms
+                    .iter()
+                    .zip(&weight_fft_scales)
+                    .map(|(raw, &scale)| {
+                        gridder
+                            .mosaic_weight_image_from_grid_f64(raw)
+                            .mapv(|value| value * scale)
+                    })
+                    .collect::<Vec<_>>();
+                let weight_image = weight_terms.first().cloned().ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "streaming mosaic MT-MFS produced no weight terms".to_string(),
+                    )
+                })?;
+                let mut psf_terms = raw_psf_terms
+                    .iter()
+                    .map(|raw| {
+                        let mut image =
+                            gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling);
+                        image.mapv_inplace(|value| value * dirty_fft_scale);
+                        image
+                    })
+                    .collect::<Vec<_>>();
+                return normalize_mosaic_mtmfs_dirty_images(
+                    &mut psf_terms,
+                    &raw_residual_terms
+                        .iter()
+                        .map(|raw| gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling))
+                        .collect::<Vec<_>>(),
+                    weight_image,
+                    weight_terms,
+                    dirty_fft_scale,
+                    pb_limit,
+                );
+            }
+            let mut psf_terms = grids
+                .psf_grids
+                .into_iter()
+                .map(|grid| {
+                    let raw = execute_dirty_product_host_f64_owned_single(
+                        grid,
+                        dirty_product_fft_policy,
+                    )?;
+                    let mut image =
+                        gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling);
+                    image.mapv_inplace(|value| value * dirty_fft_scale);
+                    Ok(image)
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, ImagingError>>()?;
+            let corrected_residual_terms = grids
+                .residual_grids
+                .into_iter()
+                .map(|grid| {
+                    let raw = execute_dirty_product_host_f64_owned_single(
+                        grid,
+                        dirty_product_fft_policy,
+                    )?;
+                    Ok(gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling))
+                })
+                .collect::<Result<Vec<_>, ImagingError>>()?;
+            let weight_terms = grids
+                .weight_grids
+                .into_iter()
+                .zip(&weight_fft_scales)
+                .map(|(grid, &scale)| {
+                    let raw = execute_dirty_product_host_f64_owned_single(
+                        grid,
+                        dirty_product_fft_policy,
+                    )?;
+                    let image = if awproject_weight_semantics {
+                        gridder.aw_weight_image_from_grid_f64(&raw)
+                    } else {
+                        gridder.mosaic_weight_image_from_grid_f64(&raw)
+                    };
+                    Ok(image.mapv(|value| value * scale))
+                })
+                .collect::<Result<Vec<_>, ImagingError>>()?;
+            stage_timings.psf_fft += fft_started.elapsed();
             let weight_image = weight_terms.first().cloned().ok_or_else(|| {
                 ImagingError::Normalization(
                     "streaming mosaic MT-MFS produced no weight terms".to_string(),
                 )
             })?;
-            let mut psf_terms = raw_psf_terms
-                .iter()
-                .map(|raw| {
-                    let mut image =
-                        gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling);
-                    image.mapv_inplace(|value| value * dirty_fft_scale);
-                    image
-                })
-                .collect::<Vec<_>>();
             let psf_peak = normalize_mosaic_mtmfs_dirty_images(
                 &mut psf_terms,
-                &raw_residual_terms
-                    .iter()
-                    .map(|raw| gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling))
-                    .collect::<Vec<_>>(),
+                &corrected_residual_terms,
                 weight_image,
                 weight_terms,
                 dirty_fft_scale,
@@ -5455,6 +5535,7 @@ struct MosaicMtmfsResidualFinish<'a> {
     weight_image: &'a Array2<f32>,
     pb_limit: f32,
     dirty_product_fft_policy: DirtyProductFftPolicy,
+    bounded_sequential_host_fft: bool,
 }
 
 fn finish_mosaic_mtmfs_residual_images(
@@ -5469,18 +5550,39 @@ fn finish_mosaic_mtmfs_residual_images(
         weight_image,
         pb_limit,
         dirty_product_fft_policy,
+        bounded_sequential_host_fft,
     } = finish;
     #[cfg(any(not(target_os = "macos"), coverage))]
     let _ = nterms;
     let corrected = match storage {
         MosaicMtmfsStreamGridStorage::HostF64(grids) => {
-            let input_refs = grids.residual_grids.iter().collect::<Vec<_>>();
-            let (raw_grids, _) =
-                execute_dirty_product_host_f64_batch(&input_refs, dirty_product_fft_policy)?;
-            raw_grids
-                .iter()
-                .map(|raw| gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling))
-                .collect::<Vec<_>>()
+            if !bounded_sequential_host_fft {
+                let input_refs = grids.residual_grids.iter().collect::<Vec<_>>();
+                let (raw_grids, _) =
+                    execute_dirty_product_host_f64_batch(&input_refs, dirty_product_fft_policy)?;
+                raw_grids
+                    .iter()
+                    .map(|raw| gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling))
+                    .collect::<Vec<_>>()
+            } else {
+                let MosaicMtmfsHostGrids {
+                    psf_grids,
+                    residual_grids,
+                    weight_grids,
+                } = grids;
+                drop(psf_grids);
+                drop(weight_grids);
+                residual_grids
+                    .into_iter()
+                    .map(|grid| {
+                        let raw = execute_dirty_product_host_f64_owned_single(
+                            grid,
+                            dirty_product_fft_policy,
+                        )?;
+                        Ok(gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling))
+                    })
+                    .collect::<Result<Vec<_>, ImagingError>>()?
+            }
         }
         #[cfg(all(target_os = "macos", not(coverage)))]
         MosaicMtmfsStreamGridStorage::MetalSharedF32 {
@@ -7322,6 +7424,7 @@ where
         weight_image,
         pb_limit: config.pb_limit,
         dirty_product_fft_policy,
+        bounded_sequential_host_fft: aw_cache.is_some(),
     };
     let mut residual_terms =
         finish_mosaic_mtmfs_residual_images(gridder, accumulation.storage, finish);

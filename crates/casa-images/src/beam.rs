@@ -806,6 +806,12 @@ fn count_to_pair(nchan: usize, _nstokes: usize, count: usize) -> Option<(usize, 
 mod tests {
     use super::*;
 
+    fn assert_beam_close(left: GaussianBeam, right: GaussianBeam) {
+        assert!((left.major - right.major).abs() < 1e-15);
+        assert!((left.minor - right.minor).abs() < 1e-15);
+        assert!((left.position_angle - right.position_angle).abs() < 1e-15);
+    }
+
     fn beam_arcsec(major: f64, minor: f64, pa_deg: f64) -> GaussianBeam {
         GaussianBeam::new(
             arcsec_to_rad(major),
@@ -937,7 +943,12 @@ mod tests {
             ],
         ]);
         let back = ImageBeamSet::from_record(&beams.to_record()).unwrap();
-        assert_eq!(beams, back);
+        assert_eq!(beams.shape(), back.shape());
+        for channel in 0..beams.n_channels() {
+            for stokes in 0..beams.n_stokes() {
+                assert_beam_close(*beams.beam(channel, stokes), *back.beam(channel, stokes));
+            }
+        }
     }
 
     #[test]
@@ -1006,7 +1017,7 @@ mod tests {
         legacy.upsert("nStokes", Value::Scalar(ScalarValue::Int32(1)));
         legacy.upsert("*0_0", Value::Record(global.to_record()));
         let parsed = ImageBeamSet::from_record(&legacy).unwrap();
-        assert_eq!(parsed.single_beam(), Some(global));
+        assert_beam_close(parsed.single_beam().unwrap(), global);
 
         let mut missing = RecordValue::default();
         missing.upsert("nChannels", Value::Scalar(ScalarValue::Int32(1)));

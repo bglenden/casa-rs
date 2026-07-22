@@ -29,10 +29,10 @@ use casa_coordinates::{
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
 use casa_imaging::fft_backend::{FftBackendChoice, FftPrecisionChoice};
 use casa_imaging::{
-    AwParallelHandVisibilityBatch, AwProjectControls, AwProjectGridderConfig,
-    AwProjectNormalization, AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig,
-    CleanMaskProductRequest, CleanStopReason, CompatibilityMetadata, CompatibilityMode,
-    CubeAutoMultiThresholdConfig, CubeImagingDiagnostics, CubeImagingResult,
+    AwConvolutionFunctionEntryMetadata, AwParallelHandVisibilityBatch, AwProjectControls,
+    AwProjectGridderConfig, AwProjectNormalization, AxisKind, BeamFit, BeamFitDebugSummary,
+    CleanConfig, CleanMaskProductRequest, CleanStopReason, CompatibilityMetadata,
+    CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics, CubeImagingResult,
     CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, DirtyImagingResult,
     DirtyProductFftPolicy, GaussianUvTaper, GridderMode, GroupedVisibilityMetadata,
     GroupedVisibilityMetadataBatch, HogbomIterationMode, HogbomPlaneMinorCycleControl,
@@ -34935,12 +34935,20 @@ fn standard_mfs_memory_plan_with_cache_channels_for_ms(
         selected_channel_count,
         corr_count,
     )?;
-    standard_mfs_memory_plan_with_visibility_shape(
+    let pointing_table_row_count = if config.use_pointing {
+        ms.pointing()
+            .map(|pointing| pointing.row_count())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
         config,
         selected_channel_count,
         cache_selected_channel_count,
         active_row_count,
         visibility_shape,
+        pointing_table_row_count,
     )
 }
 
@@ -34964,6 +34972,192 @@ fn checked_imaging_sum(
         .ok_or_else(|| format!("imaging workload size overflowed while computing {component}"))
 }
 
+fn mosaic_mtmfs_grid_plane_count(nterms: usize) -> Result<usize, String> {
+    nterms
+        .checked_mul(5)
+        .and_then(|value| value.checked_sub(2))
+        .ok_or_else(|| "mosaic MT-MFS grid plane count overflowed".to_string())
+}
+
+const AWPROJECT_CF_INDEX_HEAP_AND_TREE_ALLOWANCE_BYTES_PER_PAIR: usize = 4096;
+
+fn awproject_cf_index_estimate_bytes(controls: &AwProjectControls) -> Result<usize, String> {
+    let directory = fs::read_dir(&controls.cf_cache).map_err(|error| {
+        format!(
+            "read AWProject CF cache {} for memory planning: {error}",
+            controls.cf_cache.display()
+        )
+    })?;
+    let mut paired_entry_count = 0usize;
+    for entry in directory {
+        let entry = entry.map_err(|error| {
+            format!(
+                "enumerate AWProject CF cache {} for memory planning: {error}",
+                controls.cf_cache.display()
+            )
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "inspect AWProject CF cache entry {} for memory planning: {error}",
+                entry.path().display()
+            )
+        })?;
+        if !file_type.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("CFS_") && name.ends_with(".im") {
+            paired_entry_count = paired_entry_count.checked_add(1).ok_or_else(|| {
+                "AWProject CF index entry count overflowed during memory planning".to_string()
+            })?;
+        }
+    }
+    if paired_entry_count == 0 {
+        return Err(format!(
+            "AWProject CF cache {} contains no CFS_*.im directories for memory planning",
+            controls.cf_cache.display()
+        ));
+    }
+
+    // The index owns two paths, coordinate/misc-info strings, a scientific
+    // key, and BTree nodes for every paired entry. `size_of` covers inline
+    // metadata; the fixed heap allowance deliberately bounds the owned path
+    // and string allocations without reading any CF pixels.
+    checked_imaging_product(
+        [
+            paired_entry_count,
+            std::mem::size_of::<AwConvolutionFunctionEntryMetadata>()
+                .checked_add(AWPROJECT_CF_INDEX_HEAP_AND_TREE_ALLOWANCE_BYTES_PER_PAIR)
+                .ok_or_else(|| "AWProject CF index entry size overflowed".to_string())?,
+        ],
+        "AWProject CF metadata index",
+    )
+}
+
+fn awproject_pointing_index_estimate_bytes(
+    active_row_count: usize,
+    pointing_table_row_count: usize,
+) -> Result<usize, String> {
+    // Every retained POINTING row is copied into both the antenna-sorted and
+    // row-id indexes. The full table count is a conservative production bound
+    // before the selected time window is materialized. Non-J2000 conversion
+    // caching can additionally retain two antenna lookups per active MAIN row.
+    let retained_row_bytes = checked_imaging_product(
+        [
+            pointing_table_row_count,
+            std::mem::size_of::<PointingDirectionRow>()
+                .checked_mul(2)
+                .and_then(|bytes| bytes.checked_add(8 * std::mem::size_of::<usize>()))
+                .ok_or_else(|| "POINTING retained-row index size overflowed".to_string())?,
+        ],
+        "POINTING retained-row indexes",
+    )?;
+    let conversion_cache_bytes = checked_imaging_product(
+        [active_row_count, 2, 8 * std::mem::size_of::<usize>()],
+        "POINTING direction conversion cache",
+    )?;
+    checked_imaging_sum(
+        [retained_row_bytes, conversion_cache_bytes],
+        "POINTING index",
+    )
+}
+
+fn awproject_mtmfs_run_state_bytes(nterms: usize, image_pixels: usize) -> Result<usize, String> {
+    // During a residual refresh the immutable PSF/weight products, current
+    // residual/model terms, mosaic weight, clean mask, and nterms Complex32
+    // prediction grids coexist with the one topology-owned grid set.
+    let resident_f32_planes = nterms
+        .checked_mul(6)
+        .and_then(|value| value.checked_sub(1))
+        .ok_or_else(|| "AWProject MT-MFS resident plane count overflowed".to_string())?;
+    let bytes_per_pixel = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [resident_f32_planes, std::mem::size_of::<f32>()],
+                "AWProject MT-MFS resident image planes",
+            )?,
+            checked_imaging_product(
+                [nterms, std::mem::size_of::<Complex32>()],
+                "AWProject MT-MFS model prediction grids",
+            )?,
+            std::mem::size_of::<bool>(),
+        ],
+        "AWProject MT-MFS run-state bytes per pixel",
+    )?;
+    checked_imaging_product(
+        [image_pixels, bytes_per_pixel],
+        "AWProject MT-MFS run state",
+    )
+}
+
+fn awproject_mtmfs_finish_state_bytes(nterms: usize, image_pixels: usize) -> Result<usize, String> {
+    // `MtmfsResult` expands 2D products into 4D CASA products. Until the
+    // return expression completes, the original products, principal residual
+    // terms, and expanded result coexist.
+    let f32_planes = nterms
+        .checked_mul(15)
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| "AWProject MT-MFS finish plane count overflowed".to_string())?;
+    let bytes_per_pixel = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [f32_planes, std::mem::size_of::<f32>()],
+                "AWProject MT-MFS finish image planes",
+            )?,
+            2 * std::mem::size_of::<bool>(),
+        ],
+        "AWProject MT-MFS finish bytes per pixel",
+    )?;
+    checked_imaging_product(
+        [image_pixels, bytes_per_pixel],
+        "AWProject MT-MFS finish state",
+    )
+}
+
+fn awproject_mtmfs_product_state_bytes(
+    nterms: usize,
+    image_pixels: usize,
+) -> Result<usize, String> {
+    // Returned products plus the mosaic/PB products and shared masks built by
+    // `run_products_to_image_product_set`. Writer scratch is charged
+    // separately because it is reused one product at a time.
+    let f32_planes = nterms
+        .checked_mul(7)
+        .and_then(|value| value.checked_add(4))
+        .ok_or_else(|| "AWProject MT-MFS product plane count overflowed".to_string())?;
+    let bytes_per_pixel = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [f32_planes, std::mem::size_of::<f32>()],
+                "AWProject MT-MFS product image planes",
+            )?,
+            4 * std::mem::size_of::<bool>(),
+        ],
+        "AWProject MT-MFS product bytes per pixel",
+    )?;
+    checked_imaging_product(
+        [image_pixels, bytes_per_pixel],
+        "AWProject MT-MFS product state",
+    )
+}
+
+fn awproject_product_writer_scratch_bytes(image_pixels: usize) -> Result<usize, String> {
+    checked_imaging_product(
+        [
+            image_pixels,
+            std::mem::size_of::<f32>() + std::mem::size_of::<bool>(),
+        ],
+        "AWProject product writer scratch",
+    )
+}
+
+fn awproject_mtmfs_in_place_fft_eligible(config: &CliConfig) -> bool {
+    config.imsize & 1 == 0
+        && config.imaging_fft_precision == ImagingFftPrecisionPolicy::F64
+        && config.imaging_fft_backend == ImagingFftBackendPolicy::RustFft
+}
+
 fn standard_mfs_plane_state_requirements(
     config: &CliConfig,
 ) -> spectral_slab::PlaneStateRequirements {
@@ -34985,12 +35179,13 @@ fn plan_standard_mfs_execution_shape(
     active_row_count: usize,
     visibility_shape: &spectral_slab::VisibilitySourceShape,
 ) -> Result<ImagingResolvedPlan, String> {
-    plan_standard_mfs_execution_shape_with_memory_ledger(
+    plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         config,
         selected_channel_count,
         cache_selected_channel_count,
         active_row_count,
         visibility_shape,
+        active_row_count,
         imaging_process_memory_ledger(config),
     )
 }
@@ -35003,6 +35198,26 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
     visibility_shape: &spectral_slab::VisibilitySourceShape,
     memory_target: ImagingProcessMemoryLedger,
 ) -> Result<ImagingResolvedPlan, String> {
+    plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
+        config,
+        selected_channel_count,
+        cache_selected_channel_count,
+        active_row_count,
+        visibility_shape,
+        active_row_count,
+        memory_target,
+    )
+}
+
+fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
+    config: &CliConfig,
+    selected_channel_count: usize,
+    cache_selected_channel_count: usize,
+    active_row_count: usize,
+    visibility_shape: &spectral_slab::VisibilitySourceShape,
+    pointing_table_row_count: usize,
+    memory_target: ImagingProcessMemoryLedger,
+) -> Result<ImagingResolvedPlan, String> {
     let selected_channel_count = selected_channel_count.max(1);
     let cache_selected_channel_count = cache_selected_channel_count.max(1);
     if memory_target.target_bytes == 0 {
@@ -35012,13 +35227,24 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
         );
     }
 
+    let mosaic_full_grid = can_plan_mosaic_mfs_acceleration(config, 1);
+    let awproject_mtmfs =
+        mosaic_full_grid && config.deconvolver == Deconvolver::Mtmfs && config.aw_project.is_some();
     let image_pixels =
         checked_imaging_product([config.imsize, config.imsize], "standard-MFS image pixels")?;
-    let grid_side = casa_composite_padded_len_estimate(config.imsize, 1.2);
-    let grid_cells =
-        checked_imaging_product([grid_side, grid_side], "standard-MFS padded grid cells")?;
-    let image_working_set_bytes =
-        standard_mfs_plane_state_requirements(config).estimated_bytes_per_plane(image_pixels);
+    // The streaming mosaic/AWProject gridder deliberately uses image-sized,
+    // unpadded grids. Standard-gridder paths retain CASA composite padding.
+    let grid_side = if mosaic_full_grid {
+        config.imsize
+    } else {
+        casa_composite_padded_len_estimate(config.imsize, 1.2)
+    };
+    let grid_cells = checked_imaging_product([grid_side, grid_side], "standard-MFS grid cells")?;
+    let image_working_set_bytes = if awproject_mtmfs {
+        awproject_mtmfs_run_state_bytes(config.nterms, image_pixels)?
+    } else {
+        standard_mfs_plane_state_requirements(config).estimated_bytes_per_plane(image_pixels)
+    };
     let weighting_density_bytes = if matches!(
         config.weighting,
         WeightingMode::Uniform | WeightingMode::Briggs { .. } | WeightingMode::BriggsBwTaper { .. }
@@ -35030,7 +35256,9 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
     } else {
         0
     };
-    let grid_planes = if config.deconvolver == Deconvolver::Mtmfs {
+    let grid_planes = if config.deconvolver == Deconvolver::Mtmfs && mosaic_full_grid {
+        mosaic_mtmfs_grid_plane_count(config.nterms)?
+    } else if config.deconvolver == Deconvolver::Mtmfs {
         config
             .nterms
             .checked_mul(3)
@@ -35102,7 +35330,6 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
     } else {
         0
     };
-    let mosaic_full_grid = can_plan_mosaic_mfs_acceleration(config, 1);
     let direct_metal_scratch_candidate_bytes = if mosaic_full_grid {
         checked_imaging_sum(
             [
@@ -35129,9 +35356,18 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
         .field_ids
         .as_ref()
         .map_or(1, |field_ids| field_ids.len().max(1));
+    let mosaic_density_facets = if config
+        .aw_project
+        .as_ref()
+        .is_some_and(|controls| !controls.mosaic_weighting)
+    {
+        1
+    } else {
+        mosaic_facets
+    };
     let mosaic_density_bytes = if mosaic_full_grid {
         checked_imaging_product(
-            [weighting_density_bytes, mosaic_facets],
+            [weighting_density_bytes, mosaic_density_facets],
             "mosaic weighting density maps",
         )?
     } else {
@@ -35186,7 +35422,91 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
         _ => ImagingTileAnchor::CenterBoundary,
     };
 
-    plan_imaging_execution(
+    let aw_cf_index_bytes = if awproject_mtmfs {
+        config
+            .aw_project
+            .as_ref()
+            .map(awproject_cf_index_estimate_bytes)
+            .transpose()?
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let aw_cf_resident_bytes = if awproject_mtmfs {
+        config
+            .aw_project
+            .as_ref()
+            .map_or(0, |controls| controls.cf_resident_bytes)
+    } else {
+        0
+    };
+    let pointing_index_bytes = if awproject_mtmfs && config.use_pointing {
+        awproject_pointing_index_estimate_bytes(active_row_count, pointing_table_row_count)?
+    } else {
+        0
+    };
+    let aw_safety_margin_bytes = if awproject_mtmfs {
+        memory_target.target_bytes / 20
+    } else {
+        0
+    };
+    let mut fixed_allocations = vec![
+        ImagingMemoryAllocation {
+            component: if awproject_mtmfs {
+                "AWProject MT-MFS run state"
+            } else {
+                "image working set"
+            },
+            stage: "run",
+            bytes: image_working_set_bytes,
+        },
+        ImagingMemoryAllocation {
+            component: if mosaic_full_grid {
+                "mosaic weighting density maps"
+            } else {
+                "weighting density"
+            },
+            stage: "weighting",
+            bytes: mosaic_density_bytes,
+        },
+    ];
+    if awproject_mtmfs {
+        fixed_allocations.extend([
+            ImagingMemoryAllocation {
+                component: "AWProject CF pixels",
+                stage: "run",
+                bytes: aw_cf_resident_bytes,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject CF index",
+                stage: "run",
+                bytes: aw_cf_index_bytes,
+            },
+            ImagingMemoryAllocation {
+                component: "POINTING index",
+                stage: "run",
+                bytes: pointing_index_bytes,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject safety margin",
+                stage: "run",
+                bytes: aw_safety_margin_bytes,
+            },
+        ]);
+    }
+    let fft_bytes_per_plane = if awproject_mtmfs && awproject_mtmfs_in_place_fft_eligible(config) {
+        checked_imaging_product(
+            [image_pixels, std::mem::size_of::<f32>()],
+            "in-place AWProject MT-MFS FFT product plane",
+        )?
+    } else {
+        checked_imaging_product(
+            [grid_cells, std::mem::size_of::<Complex64>(), 2],
+            "dirty-product FFT plane scratch",
+        )?
+    };
+
+    let mut plan = plan_imaging_execution(
         &ImagingWorkloadShape {
             selected_rows: active_row_count,
             correlations: visibility_shape.corr_count,
@@ -35206,29 +35526,11 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
             worker_scratch_bytes,
             image_element_bytes: 0,
             grid_element_bytes: std::mem::size_of::<Complex64>(),
-            fft_bytes_per_plane: checked_imaging_product(
-                [grid_cells, std::mem::size_of::<Complex64>(), 2],
-                "dirty-product FFT plane scratch",
-            )?,
+            fft_bytes_per_plane,
             spectral_state_bytes_per_plane: image_working_set_bytes,
             sample_count,
             metal_bytes_per_sample: metal_lane_bytes,
-            fixed_allocations: vec![
-                ImagingMemoryAllocation {
-                    component: "image working set",
-                    stage: "run",
-                    bytes: image_working_set_bytes,
-                },
-                ImagingMemoryAllocation {
-                    component: if mosaic_full_grid {
-                        "mosaic weighting density maps"
-                    } else {
-                        "weighting density"
-                    },
-                    stage: "weighting",
-                    bytes: mosaic_density_bytes,
-                },
-            ],
+            fixed_allocations,
             routed_replay_cache_candidate_bytes,
             metal_grouped_input_cache_candidate_bytes,
             materialized_sample_plan_candidate_bytes,
@@ -35267,6 +35569,153 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
             direct_metal_scratch_limit_bytes: None,
         },
     )
+    .map_err(|error| error.to_string())?;
+
+    plan.decisions.extend([
+        casa_imaging::ImagingPlanDecision {
+            name: "grid_planes",
+            value: grid_planes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: if awproject_mtmfs {
+                format!(
+                    "one owner for {} PSF, {} residual, and {} weight grids",
+                    2 * config.nterms - 1,
+                    config.nterms,
+                    2 * config.nterms - 1
+                )
+            } else {
+                "derived from the selected deconvolver and grid topology".to_string()
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "grid_side",
+            value: grid_side.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: if mosaic_full_grid {
+                "streaming mosaic/AWProject uses the core's unpadded image-sized grid".to_string()
+            } else {
+                "standard gridder uses CASA composite padding".to_string()
+            },
+        },
+    ]);
+
+    if !awproject_mtmfs {
+        return Ok(plan);
+    }
+
+    let finish_state_bytes = awproject_mtmfs_finish_state_bytes(config.nterms, image_pixels)?;
+    let product_state_bytes = awproject_mtmfs_product_state_bytes(config.nterms, image_pixels)?;
+    let product_writer_scratch_bytes = awproject_product_writer_scratch_bytes(image_pixels)?;
+    plan.memory_allocations.extend([
+        ImagingMemoryAllocation {
+            component: "AWProject MT-MFS finish state",
+            stage: "finish",
+            bytes: finish_state_bytes,
+        },
+        ImagingMemoryAllocation {
+            component: "AWProject MT-MFS product state",
+            stage: "products",
+            bytes: product_state_bytes,
+        },
+        ImagingMemoryAllocation {
+            component: "product writer scratch",
+            stage: "products",
+            bytes: product_writer_scratch_bytes,
+        },
+    ]);
+    let finish_peak_bytes = checked_imaging_sum(
+        [
+            aw_cf_resident_bytes,
+            aw_cf_index_bytes,
+            pointing_index_bytes,
+            finish_state_bytes,
+            aw_safety_margin_bytes,
+        ],
+        "AWProject MT-MFS finish peak",
+    )?;
+    let product_peak_bytes = checked_imaging_sum(
+        [
+            pointing_index_bytes,
+            product_state_bytes,
+            product_writer_scratch_bytes,
+            aw_safety_margin_bytes,
+        ],
+        "AWProject MT-MFS product-write peak",
+    )?;
+    plan.maximum_planned_resident_bytes = plan
+        .maximum_planned_resident_bytes
+        .max(finish_peak_bytes)
+        .max(product_peak_bytes);
+    plan.decisions.extend([
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cf_resident_bytes",
+            value: aw_cf_resident_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::UserPolicy,
+            reason: "bounded LRU pixel residency from the AWProject controls".to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cf_index_bytes",
+            value: aw_cf_index_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "metadata-only paired-CF index with owned path/string allowance".to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "pointing_index_bytes",
+            value: pointing_index_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: format!(
+                "bounded by {pointing_table_row_count} POINTING rows and {active_row_count} active MAIN rows"
+            ),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_safety_margin_bytes",
+            value: aw_safety_margin_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "five percent of the assigned process budget is reserved for allocator and unmodeled metadata overhead"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_fft_residency",
+            value: if awproject_mtmfs_in_place_fft_eligible(config) {
+                "in-place-rustfft-f64"
+            } else {
+                "bounded-copy"
+            }
+            .to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "selected FFT precision/backend and even unpadded grid geometry".to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_finish_peak_bytes",
+            value: finish_peak_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "CF residency, POINTING state, and 2D-to-4D result expansion coexist"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_product_peak_bytes",
+            value: product_peak_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "returned products, derived PB/masks, and one reusable writer buffer"
+                .to_string(),
+        },
+    ]);
+
+    admit_imaging_execution(ImagingPlanAdmission {
+        workload: plan.workload,
+        usable_memory_bytes: plan.usable_memory_bytes,
+        workers: plan.workers,
+        worker_partition_rows: plan.worker_partition_rows,
+        ingest: plan.ingest,
+        fft: plan.fft,
+        tile: plan.tile,
+        spectral: plan.spectral,
+        metal: plan.metal,
+        caches: plan.caches,
+        memory_allocations: plan.memory_allocations,
+        maximum_planned_resident_bytes: plan.maximum_planned_resident_bytes,
+        decisions: plan.decisions,
+    })
     .map_err(|error| error.to_string())
 }
 
@@ -35283,6 +35732,25 @@ fn standard_mfs_memory_plan_with_visibility_shape(
         cache_selected_channel_count,
         active_row_count,
         &visibility_shape,
+    )
+}
+
+fn standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
+    config: &CliConfig,
+    selected_channel_count: usize,
+    cache_selected_channel_count: usize,
+    active_row_count: usize,
+    visibility_shape: spectral_slab::VisibilitySourceShape,
+    pointing_table_row_count: usize,
+) -> Result<ImagingResolvedPlan, String> {
+    plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
+        config,
+        selected_channel_count,
+        cache_selected_channel_count,
+        active_row_count,
+        &visibility_shape,
+        pointing_table_row_count,
+        imaging_process_memory_ledger(config),
     )
 }
 
@@ -53214,6 +53682,165 @@ mod tests {
 
         assert_eq!(target.target_bytes, 789 * 1024 * 1024);
         assert_eq!(target.source, "cli-imaging");
+    }
+
+    fn make_awproject_planner_cache(root: &Path, paired_cells: usize) {
+        fs::create_dir(root).unwrap();
+        for index in 0..paired_cells {
+            fs::create_dir(root.join(format!("CFS_0_0_CF_{index}_0_0.im"))).unwrap();
+            fs::create_dir(root.join(format!("WTCFS_0_0_CF_{index}_0_0.im"))).unwrap();
+        }
+    }
+
+    fn awproject_mtmfs_planner_config(cf_cache: PathBuf, memory_target_mb: usize) -> CliConfig {
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imsize = 128;
+        config.cell_arcsec = 0.6;
+        config.field_ids = Some(vec![0, 1]);
+        config.phasecenter_field = Some(0);
+        config.use_pointing = true;
+        config.deconvolver = Deconvolver::Mtmfs;
+        config.nterms = 2;
+        config.niter = 2;
+        config.weighting = WeightingMode::Briggs { robust: 0.0 };
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Cpu;
+        config.standard_mfs_grid_threads = Some("1".to_string());
+        config.imaging_memory_target_mb = Some(memory_target_mb);
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
+        config.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
+        config.write_preview_pngs = false;
+        let mut controls = AwProjectControls::casa_defaults(cf_cache);
+        controls.use_pointing = true;
+        config.aw_project = Some(controls);
+        config
+    }
+
+    #[test]
+    fn awproject_mtmfs_memory_plan_accounts_for_exact_grid_and_external_indexes() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("planner-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let config = awproject_mtmfs_planner_config(cf_cache, 4096);
+
+        let plan = standard_mfs_memory_plan(&config, 64, 1024);
+
+        assert_eq!(plan.workload.grid_width, config.imsize);
+        assert_eq!(plan.workload.grid_height, config.imsize);
+        assert_eq!(plan.workload.grid_planes, 8);
+        assert_eq!(plan.workload.worker_scratch_bytes, 0);
+        assert_eq!(
+            plan.allocation_bytes("AWProject CF pixels"),
+            config.aw_project.as_ref().unwrap().cf_resident_bytes
+        );
+        assert!(plan.allocation_bytes("AWProject CF index") > 0);
+        assert!(plan.allocation_bytes("POINTING index") > 0);
+        assert_eq!(
+            plan.allocation_bytes("AWProject safety margin"),
+            plan.usable_memory_bytes / 20
+        );
+        assert!(plan.allocation_bytes("AWProject MT-MFS run state") > 0);
+        assert!(plan.allocation_bytes("AWProject MT-MFS finish state") > 0);
+        assert!(plan.allocation_bytes("AWProject MT-MFS product state") > 0);
+        assert!(plan.allocation_bytes("product writer scratch") > 0);
+        assert_eq!(
+            plan.allocation_bytes("FFT chunks"),
+            config.imsize * config.imsize * std::mem::size_of::<f32>()
+        );
+        assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_fft_residency" && decision.value == "in-place-rustfft-f64"
+        }));
+    }
+
+    #[test]
+    fn vlass_awproject_full_geometry_admits_32_gib_and_rejects_24_gib() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("planner-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 1024);
+        let active_rows = 3_086_232;
+        let pointing_table_rows = active_rows;
+
+        let mut full = awproject_mtmfs_planner_config(cf_cache.clone(), 32 * 1024);
+        full.imsize = 12_150;
+        let visibility_shape =
+            prepared_single_plane_visibility_source_shape(&full, active_rows, 64);
+        let plan = standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
+            &full,
+            64,
+            64,
+            active_rows,
+            visibility_shape.clone(),
+            pointing_table_rows,
+        )
+        .expect("32 GiB must admit the serial full-geometry AWProject plan");
+
+        assert_eq!(plan.workload.grid_width, 12_150);
+        assert_eq!(plan.workload.grid_planes, 8);
+        assert_eq!(plan.workers, 1);
+        assert_eq!(plan.workload.worker_scratch_bytes, 0);
+        assert!(plan.ingest.source_row_block_rows > 0);
+        assert!(plan.maximum_planned_resident_bytes <= 32 * 1024 * 1024 * 1024);
+        assert_eq!(
+            plan.allocation_bytes("AWProject CF index"),
+            1024 * (std::mem::size_of::<AwConvolutionFunctionEntryMetadata>()
+                + AWPROJECT_CF_INDEX_HEAP_AND_TREE_ALLOWANCE_BYTES_PER_PAIR)
+        );
+        eprintln!(
+            "vlass_awproject_memory_fixture target_gib=32 decision=admit grid_side={} grid_planes={} grid_bytes={} fft_scratch_bytes={} run_state_bytes={} cf_pixel_bytes={} cf_index_bytes={} pointing_index_bytes={} safety_margin_bytes={} source_row_block_rows={} planned_peak_bytes={}",
+            plan.workload.grid_width,
+            plan.workload.grid_planes,
+            plan.allocation_bytes("grids"),
+            plan.allocation_bytes("FFT chunks"),
+            plan.allocation_bytes("AWProject MT-MFS run state"),
+            plan.allocation_bytes("AWProject CF pixels"),
+            plan.allocation_bytes("AWProject CF index"),
+            plan.allocation_bytes("POINTING index"),
+            plan.allocation_bytes("AWProject safety margin"),
+            plan.ingest.source_row_block_rows,
+            plan.maximum_planned_resident_bytes,
+        );
+
+        full.imaging_memory_target_mb = Some(24 * 1024);
+        let error = standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
+            &full,
+            64,
+            64,
+            active_rows,
+            visibility_shape,
+            pointing_table_rows,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("needs") && error.contains("bytes") && error.contains("assigned"),
+            "{error}"
+        );
+        eprintln!("vlass_awproject_memory_fixture target_gib=24 decision=reject reason={error}");
+
+        let mut turnaround = full;
+        turnaround.imsize = 4096;
+        let turnaround_rows = 250_000;
+        let turnaround_shape =
+            prepared_single_plane_visibility_source_shape(&turnaround, turnaround_rows, 64);
+        let turnaround_plan = standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
+            &turnaround,
+            64,
+            64,
+            turnaround_rows,
+            turnaround_shape,
+            turnaround_rows,
+        )
+        .expect("24 GiB must retain a mode-faithful AWProject turnaround plan");
+        assert_eq!(turnaround_plan.workload.grid_planes, 8);
+        assert_eq!(turnaround_plan.workers, 1);
+        assert!(turnaround_plan.maximum_planned_resident_bytes <= 24 * 1024 * 1024 * 1024);
+        eprintln!(
+            "vlass_awproject_memory_fixture target_gib=24 decision=admit_turnaround grid_side={} active_rows={} source_row_block_rows={} planned_peak_bytes={}",
+            turnaround_plan.workload.grid_width,
+            turnaround_rows,
+            turnaround_plan.ingest.source_row_block_rows,
+            turnaround_plan.maximum_planned_resident_bytes,
+        );
     }
 
     #[test]
