@@ -756,6 +756,119 @@ real 1.145408
         self.assertEqual("96", explicit["IMAGER_BENCH_WPROJPLANES"])
         self.assertEqual("96", explicit["IMAGER_BENCH_CASA_WPROJPLANES"])
 
+    def test_true_awproject_contract_flows_to_legacy_runner_environment(self) -> None:
+        manifest = {
+            "id": "awproject-turnaround",
+            "mode_id": "awproject-mtmfs-dirty",
+            "dataset": {"key": "turnaround.ms", "path": "/tmp/turnaround.ms"},
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "awproject",
+                "casa_gridder": "awproject",
+                "wterm": "wproject",
+                "wprojplanes": 32,
+                "field": "1107~1127,1512~1532",
+                "phasecenter_field": 1525,
+                "spw": "2~17",
+                "channel_start": 0,
+                "channel_count": 64,
+                "datacolumn": "data",
+                "stokes": "I",
+                "projection": "SIN",
+                "uvrange": "<12km",
+                "intent": "OBSERVE_TARGET#UNSPECIFIED",
+                "cfcache": "turnaround.cf",
+                "cf_resident_mb": 384,
+                "facets": 1,
+                "psfphasecenter": "",
+                "vptable": "",
+                "aterm": True,
+                "psterm": False,
+                "wbawp": True,
+                "conjbeams": True,
+                "computepastep": 360.0,
+                "rotatepastep": 360.0,
+                "pointingoffsetsigdev": 0.0,
+                "mosweight": False,
+                "normtype": "flatnoise",
+                "usepointing": True,
+                "deconvolver": "mtmfs",
+                "nterms": 2,
+                "scales": [0, 5, 12],
+                "smallscalebias": 0.0,
+                "restoration": True,
+                "restoringbeam": "common",
+                "interactive": False,
+                "usemask": "user",
+                "restart": False,
+                "savemodel": "none",
+                "calcres": True,
+                "calcpsf": True,
+            },
+            "run": {
+                "cf_cache_role": "warm",
+                "warmups": 1,
+                "skip_casa": "1",
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        env = plan["command"]["env"]
+        self.assertEqual(
+            str(Path("/tmp/turnaround.cf").resolve()),
+            env["IMAGER_BENCH_CFCACHE"],
+        )
+        self.assertEqual("384", env["IMAGER_BENCH_CF_RESIDENT_MB"])
+        self.assertEqual("2~17", env["IMAGER_BENCH_SPW"])
+        self.assertEqual("<12km", env["IMAGER_BENCH_UVRANGE"])
+        self.assertEqual(
+            "OBSERVE_TARGET#UNSPECIFIED", env["IMAGER_BENCH_INTENT"]
+        )
+        self.assertEqual("1", env["IMAGER_BENCH_ATERM"])
+        self.assertEqual("0", env["IMAGER_BENCH_PSTERM"])
+        self.assertEqual("1", env["IMAGER_BENCH_WBAWP"])
+        self.assertEqual("1", env["IMAGER_BENCH_CONJBEAMS"])
+        self.assertEqual("1", env["IMAGER_BENCH_USEPOINTING"])
+        self.assertEqual("common", env["IMAGER_BENCH_RESTORINGBEAM"])
+        self.assertEqual("1", env["IMAGER_BENCH_CALCPSF"])
+        self.assertEqual("1", env["IMAGER_BENCH_CALCRES"])
+        self.assertEqual("1", env["IMAGER_BENCH_WARMUPS"])
+        self.assertEqual("1", env["IMAGER_BENCH_PROFILE_WARMUPS"])
+
+    def test_true_awproject_legacy_runner_requires_explicit_cf_cache(self) -> None:
+        manifest = {
+            "id": "awproject-missing-cache",
+            "mode_id": "awproject-mtmfs-dirty",
+            "dataset": {"key": "turnaround.ms", "path": "/tmp/turnaround.ms"},
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "awproject",
+            },
+            "run": {"skip_casa": "1"},
+        }
+
+        with self.assertRaisesRegex(
+            run_workload.HarnessError, "requires an explicit imaging.cfcache"
+        ):
+            run_workload.build_plan(
+                manifest_path=Path("manifest.json"),
+                manifest=manifest,
+                repeats_override=1,
+                run_label_override=None,
+                storage_label_override=None,
+                dry_run=True,
+            )
+
     def test_ms_staging_defaults_to_direct(self) -> None:
         manifest = {
             "id": "medium-direct",

@@ -545,6 +545,32 @@ def build_plan(
         )
 
     dataset_path = resolve_dataset_path(dataset, dry_run=dry_run)
+    rust_requested = not boolean_flag(skip_rust)
+    resolved_cfcache = ""
+    if imaging.get("cfcache") is not None:
+        resolved_cfcache = str(
+            resolve_imaging_path(
+                str_value(imaging, "cfcache", ""),
+                dataset_path=dataset_path,
+                field="imaging.cfcache",
+                require_directory=not dry_run and rust_requested,
+            )
+        )
+    if not casa and rust_requested and gridder in {
+        "awproject",
+        "awp2",
+        "awphpg",
+        "widefield",
+    }:
+        if gridder != "awproject":
+            raise HarnessError(
+                f"gridder={gridder!r} is not a Rust AWProject alias; use "
+                "gridder='awproject' with an explicit imaging.cfcache"
+            )
+        if not resolved_cfcache:
+            raise HarnessError(
+                "Rust gridder='awproject' requires an explicit imaging.cfcache"
+            )
     casa_python = os.environ.get("CASA_RS_CASA_PYTHON")
     if not dry_run and not casa_python:
         raise HarnessError("CASA_RS_CASA_PYTHON is required for a benchmark run")
@@ -559,6 +585,7 @@ def build_plan(
 
     env = {
         "BENCH_REPEATS": str(repeats),
+        "IMAGER_BENCH_WARMUPS": str(warmups),
         "IMAGER_BENCH_MODE": bench_mode,
         "IMAGER_BENCH_SPECMODE": specmode,
         "IMAGER_BENCH_GRIDDER": gridder,
@@ -598,6 +625,42 @@ def build_plan(
         "IMAGER_BENCH_WTERM": wterm,
         "IMAGER_BENCH_WPROJPLANES": wprojplanes,
         "IMAGER_BENCH_CASA_WPROJPLANES": casa_wprojplanes,
+        "IMAGER_BENCH_DATACOLUMN": str_value(imaging, "datacolumn", "DATA"),
+        "IMAGER_BENCH_STOKES": str_value(imaging, "stokes", "I"),
+        "IMAGER_BENCH_PROJECTION": str_value(imaging, "projection", "SIN"),
+        "IMAGER_BENCH_UVRANGE": str_value(imaging, "uvrange", ""),
+        "IMAGER_BENCH_INTENT": str_value(imaging, "intent", ""),
+        "IMAGER_BENCH_CFCACHE": resolved_cfcache,
+        "IMAGER_BENCH_CF_RESIDENT_MB": str(
+            int_value(imaging, "cf_resident_mb", 256)
+        ),
+        "IMAGER_BENCH_FACETS": str(int_value(imaging, "facets", 1)),
+        "IMAGER_BENCH_PSFPHASECENTER": str_value(
+            imaging, "psfphasecenter", ""
+        ),
+        "IMAGER_BENCH_VPTABLE": str_value(imaging, "vptable", ""),
+        "IMAGER_BENCH_ATERM": boolean_env_value(imaging, "aterm", True),
+        "IMAGER_BENCH_PSTERM": boolean_env_value(imaging, "psterm", False),
+        "IMAGER_BENCH_WBAWP": boolean_env_value(imaging, "wbawp", True),
+        "IMAGER_BENCH_CONJBEAMS": boolean_env_value(
+            imaging, "conjbeams", True
+        ),
+        "IMAGER_BENCH_COMPUTEPASTEP": str(
+            float_value(imaging, "computepastep", 360.0)
+        ),
+        "IMAGER_BENCH_ROTATEPASTEP": str(
+            float_value(imaging, "rotatepastep", 360.0)
+        ),
+        "IMAGER_BENCH_POINTINGOFFSETSIGDEV": str(
+            float_value(imaging, "pointingoffsetsigdev", 0.0)
+        ),
+        "IMAGER_BENCH_MOSWEIGHT": boolean_env_value(
+            imaging, "mosweight", False
+        ),
+        "IMAGER_BENCH_NORMTYPE": str_value(imaging, "normtype", "flatnoise"),
+        "IMAGER_BENCH_USEPOINTING": boolean_env_value(
+            imaging, "usepointing", False
+        ),
         "IMAGER_BENCH_NITER": str(int_value(imaging, "niter", 4)),
         "IMAGER_BENCH_GAIN": str(float_value(imaging, "gain", 0.1)),
         "IMAGER_BENCH_THRESHOLD_JY": str(float_value(imaging, "threshold_jy", 0.0)),
@@ -606,6 +669,24 @@ def build_plan(
         "IMAGER_BENCH_PBLIMIT": str(float_value(imaging, "pblimit", 0.2)),
         "IMAGER_BENCH_WRITE_PB": boolean_env_value(imaging, "write_pb", False),
         "IMAGER_BENCH_PBCOR": boolean_env_value(imaging, "pbcor", False),
+        "IMAGER_BENCH_SMALLSCALEBIAS": str(
+            float_value(imaging, "smallscalebias", 0.0)
+        ),
+        "IMAGER_BENCH_RESTORATION": boolean_env_value(
+            imaging, "restoration", True
+        ),
+        "IMAGER_BENCH_RESTORINGBEAM": str_value(
+            imaging, "restoringbeam", ""
+        ),
+        "IMAGER_BENCH_INTERACTIVE": boolean_env_value(
+            imaging, "interactive", False
+        ),
+        "IMAGER_BENCH_USEMASK": str_value(imaging, "usemask", "user"),
+        "IMAGER_BENCH_MASK_IMAGE": str_value(imaging, "mask_image", ""),
+        "IMAGER_BENCH_RESTART": boolean_env_value(imaging, "restart", False),
+        "IMAGER_BENCH_SAVEMODEL": str_value(imaging, "savemodel", "none"),
+        "IMAGER_BENCH_CALCRES": boolean_env_value(imaging, "calcres", True),
+        "IMAGER_BENCH_CALCPSF": boolean_env_value(imaging, "calcpsf", True),
         "IMAGER_BENCH_MINOR_CYCLE_LENGTH": str(
             int_value(imaging, "minor_cycle_length", 2)
         ),
@@ -622,6 +703,7 @@ def build_plan(
         "IMAGER_BENCH_SKIP_RUST": skip_rust,
         "IMAGER_BENCH_SKIP_PROFILE": skip_profile,
         "IMAGER_BENCH_PROFILE_REPEATS": profile_repeats,
+        "IMAGER_BENCH_PROFILE_WARMUPS": str(warmups),
     }
     if reuse_rust_prefix:
         env["IMAGER_BENCH_REUSE_RUST_PREFIX"] = reuse_rust_prefix
@@ -3145,6 +3227,22 @@ def resolve_dataset_path(dataset: dict[str, Any], *, dry_run: bool) -> pathlib.P
         path = (REPO_ROOT / path).resolve()
     if not dry_run and not path.is_dir():
         raise HarnessError(f"dataset path does not exist: {path}")
+    return path
+
+
+def resolve_imaging_path(
+    value: str,
+    *,
+    dataset_path: pathlib.Path,
+    field: str,
+    require_directory: bool,
+) -> pathlib.Path:
+    path = pathlib.Path(os.path.expanduser(value))
+    if not path.is_absolute():
+        path = dataset_path.parent / path
+    path = path.resolve()
+    if require_directory and not path.is_dir():
+        raise HarnessError(f"{field} directory does not exist: {path}")
     return path
 
 

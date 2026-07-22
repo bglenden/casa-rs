@@ -78,6 +78,8 @@ IMAGING_FIELDS = {
     "calcres",
     "casa_gridder",
     "cell_arcsec",
+    "cfcache",
+    "cf_resident_mb",
     "chanchunks",
     "channel_count",
     "channel_start",
@@ -3987,6 +3989,7 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
         "chanchunks",
         "channel_count",
         "channel_start",
+        "cf_resident_mb",
         "facets",
         "imaging_memory_target_mb",
         "imaging_prepare_buffer_mb",
@@ -4040,6 +4043,8 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
     }
     for key in integers & set(imaging):
         _integer(imaging, key, f"{source}: imaging")
+    if "cf_resident_mb" in imaging and imaging["cf_resident_mb"] < 1:
+        raise ContractError(f"{source}: imaging.cf_resident_mb must be >= 1")
     for key in numbers & set(imaging):
         finite_number(imaging[key], field=f"{source}: imaging.{key}", optional=False)
     for key in booleans & set(imaging):
@@ -4129,6 +4134,14 @@ def _validate_cross_fields(
 
     aw_control_fields = {"aterm", "psterm", "wbawp", "conjbeams"}
     aw_surface_requested = bool(aw_control_fields & set(imaging))
+    if "cfcache" in imaging and imaging.get("gridder") != "awproject":
+        raise ContractError(
+            f"{source}: imaging.cfcache requires imaging.gridder=awproject"
+        )
+    if "cf_resident_mb" in imaging and "cfcache" not in imaging:
+        raise ContractError(
+            f"{source}: imaging.cf_resident_mb requires imaging.cfcache"
+        )
     if aw_surface_requested:
         missing = sorted(aw_control_fields - set(imaging))
         if missing:

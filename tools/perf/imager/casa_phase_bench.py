@@ -200,19 +200,51 @@ def drain_probe_stages(imager: object, per_stage: Dict[str, float]) -> None:
 def main() -> None:
     vis = env_str("CASA_RS_BENCH_MS_PATH")
     repeats = env_int("CASA_RS_BENCH_REPEATS")
+    warmups = env_int("CASA_RS_BENCH_WARMUPS")
     field = env_str("CASA_RS_BENCH_FIELD")
+    phasecenter_field = env_str("CASA_RS_BENCH_PHASECENTER_FIELD")
     spw = env_str("CASA_RS_BENCH_SPW")
     chan_start = env_int("CASA_RS_BENCH_CHANNEL_START")
     chan_count = env_int("CASA_RS_BENCH_CHANNEL_COUNT")
     specmode = env_str("CASA_RS_BENCH_SPECMODE")
     gridder = os.environ.get("CASA_RS_BENCH_CASA_GRIDDER") or env_str("CASA_RS_BENCH_GRIDDER")
     wprojplanes_env = os.environ.get("CASA_RS_BENCH_WPROJPLANES", "")
+    datacolumn = env_str("CASA_RS_BENCH_DATACOLUMN")
+    stokes = env_str("CASA_RS_BENCH_STOKES")
+    projection = env_str("CASA_RS_BENCH_PROJECTION")
+    uvrange = env_str("CASA_RS_BENCH_UVRANGE")
+    intent = env_str("CASA_RS_BENCH_INTENT")
+    cfcache = env_str("CASA_RS_BENCH_CFCACHE")
+    facets = env_int("CASA_RS_BENCH_FACETS")
+    psfphasecenter = env_str("CASA_RS_BENCH_PSFPHASECENTER")
+    vptable = env_str("CASA_RS_BENCH_VPTABLE")
+    aterm = env_str("CASA_RS_BENCH_ATERM") == "1"
+    psterm = env_str("CASA_RS_BENCH_PSTERM") == "1"
+    wbawp = env_str("CASA_RS_BENCH_WBAWP") == "1"
+    conjbeams = env_str("CASA_RS_BENCH_CONJBEAMS") == "1"
+    computepastep = env_float("CASA_RS_BENCH_COMPUTEPASTEP")
+    rotatepastep = env_float("CASA_RS_BENCH_ROTATEPASTEP")
+    pointing_sigdev_values = [
+        float(value)
+        for value in env_str("CASA_RS_BENCH_POINTINGOFFSETSIGDEV").split(",")
+    ]
+    pointingoffsetsigdev = (
+        pointing_sigdev_values[0]
+        if len(pointing_sigdev_values) == 1
+        else pointing_sigdev_values
+    )
+    mosweight = env_str("CASA_RS_BENCH_MOSWEIGHT") == "1"
+    normtype = env_str("CASA_RS_BENCH_NORMTYPE")
+    usepointing = env_str("CASA_RS_BENCH_USEPOINTING") == "1"
     imsize = env_int("CASA_RS_BENCH_IMSIZE")
     cell_arcsec = env_str("CASA_RS_BENCH_CELL_ARCSEC")
     weighting = env_str("CASA_RS_BENCH_WEIGHTING")
     robust = env_float("CASA_RS_BENCH_ROBUST")
+    perchanweightdensity = env_str("CASA_RS_BENCH_PERCHANWEIGHTDENSITY") == "1"
     deconvolver = env_str("CASA_RS_BENCH_DECONVOLVER")
+    nterms = env_int("CASA_RS_BENCH_NTERMS")
     scales_env = env_str("CASA_RS_BENCH_SCALES")
+    smallscalebias = env_float("CASA_RS_BENCH_SMALLSCALEBIAS")
     niter = env_int("CASA_RS_BENCH_NITER")
     gain = env_float("CASA_RS_BENCH_GAIN")
     threshold_jy = env_str("CASA_RS_BENCH_THRESHOLD_JY")
@@ -225,6 +257,15 @@ def main() -> None:
     minpsffraction = env_float("CASA_RS_BENCH_MIN_PSFFRACTION")
     maxpsffraction = env_float("CASA_RS_BENCH_MAX_PSFFRACTION")
     interpolation = env_str("CASA_RS_BENCH_INTERPOLATION")
+    restoringbeam = env_str("CASA_RS_BENCH_RESTORINGBEAM")
+    restoration = env_str("CASA_RS_BENCH_RESTORATION") == "1"
+    interactive = env_str("CASA_RS_BENCH_INTERACTIVE") == "1"
+    usemask = env_str("CASA_RS_BENCH_USEMASK")
+    mask_image = env_str("CASA_RS_BENCH_MASK_IMAGE")
+    restart = env_str("CASA_RS_BENCH_RESTART") == "1"
+    savemodel = env_str("CASA_RS_BENCH_SAVEMODEL")
+    calcres = env_str("CASA_RS_BENCH_CALCRES") == "1"
+    calcpsf = env_str("CASA_RS_BENCH_CALCPSF") == "1"
 
     scales = [] if scales_env == "" else [int(float(value)) for value in scales_env.split(",")]
     spw_selector = (
@@ -235,8 +276,6 @@ def main() -> None:
     threshold = f"{threshold_jy}Jy"
     cell = [f"{cell_arcsec}arcsec", f"{cell_arcsec}arcsec"]
     imsize_vec = [imsize, imsize]
-    restoration = True
-
     stage_names = [
         "parameter_setup",
         "construct_imager",
@@ -268,10 +307,13 @@ def main() -> None:
     clean_control_records: List[Dict[str, object]] = []
 
     with tempfile.TemporaryDirectory() as tempdir:
-        for run_index in range(repeats):
+        for iteration in range(warmups + repeats):
+            is_warmup = iteration < warmups
+            run_index = iteration - warmups
             per_stage = {name: 0.0 for name in stage_names}
             clean_major_cycles = 0
             minor_cycles = 0
+            run_clean_control_records: List[Dict[str, object]] = []
             total_started = time.perf_counter()
             imager = None
             try:
@@ -280,17 +322,20 @@ def main() -> None:
                     imagename=os.path.join(tempdir, f"run-{run_index}"),
                     field=field,
                     spw=spw_selector if specmode == "mfs" else spw,
-                    datacolumn="data",
+                    datacolumn=datacolumn,
+                    uvrange=uvrange,
+                    intent=intent,
                     imsize=imsize_vec,
                     cell=cell,
-                    stokes="I",
-                    projection="SIN",
+                    stokes=stokes,
+                    projection=projection,
                     specmode=specmode,
-                    interpolation="nearest",
+                    interpolation=interpolation,
                     gridder=gridder,
-                    restart=True,
+                    restart=restart,
                     weighting=weighting,
                     robust=robust,
+                    perchanweightdensity=perchanweightdensity,
                     niter=niter,
                     cycleniter=cycleniter,
                     loopgain=gain,
@@ -300,17 +345,41 @@ def main() -> None:
                     minpsffraction=minpsffraction,
                     maxpsffraction=maxpsffraction,
                     deconvolver=deconvolver,
+                    nterms=nterms,
                     scales=scales,
-                    usemask="user",
-                    mask="",
-                    calcres=True,
-                    calcpsf=True,
-                    savemodel="none",
+                    smallscalebias=smallscalebias,
+                    usemask=usemask,
+                    mask=mask_image,
+                    calcres=calcres,
+                    calcpsf=calcpsf,
+                    savemodel=savemodel,
+                    interactive=interactive,
                     parallel=False,
                     psfcutoff=psfcutoff,
                     pblimit=pblimit,
                     dopbcorr=pbcor,
                 )
+                if restoringbeam:
+                    parameter_kwargs["restoringbeam"] = restoringbeam
+                if phasecenter_field:
+                    parameter_kwargs["phasecenter"] = int(phasecenter_field)
+                if gridder == "awproject":
+                    parameter_kwargs.update(
+                        cfcache=cfcache,
+                        facets=facets,
+                        psfphasecenter=psfphasecenter,
+                        vptable=vptable,
+                        aterm=aterm,
+                        psterm=psterm,
+                        wbawp=wbawp,
+                        conjbeams=conjbeams,
+                        computepastep=computepastep,
+                        rotatepastep=rotatepastep,
+                        pointingoffsetsigdev=pointingoffsetsigdev,
+                        mosweight=mosweight,
+                        normtype=normtype,
+                        usepointing=usepointing,
+                    )
                 if wprojplanes_env:
                     parameter_kwargs["wprojplanes"] = int(wprojplanes_env)
                 if specmode == "cube":
@@ -369,7 +438,7 @@ def main() -> None:
                         if hasattr(imager, "IBtool"):
                             try:
                                 summary = imager.IBtool.getiterationsummary()
-                                clean_control_records.append(
+                                run_clean_control_records.append(
                                     {
                                         "minor_cycle": minor_cycles,
                                         "done_minor": bool(done_minor),
@@ -388,7 +457,7 @@ def main() -> None:
                                     }
                                 )
                             except Exception as error:  # pragma: no cover - diagnostic only
-                                clean_control_records.append(
+                                run_clean_control_records.append(
                                     {"minor_cycle": minor_cycles, "error": str(error)}
                                 )
 
@@ -412,10 +481,19 @@ def main() -> None:
                     per_stage["delete_tools"] += elapsed
 
             per_stage["total"] = time.perf_counter() - total_started
+            if is_warmup:
+                print(
+                    "warmup={} total_ms={:.3f}".format(
+                        iteration + 1,
+                        millis(per_stage["total"]),
+                    )
+                )
+                continue
             for name in stage_names:
                 stage_values[name].append(per_stage[name])
             clean_major_counts.append(clean_major_cycles)
             minor_cycle_counts.append(minor_cycles)
+            clean_control_records.extend(run_clean_control_records)
             print(
                 "run={} total_ms={:.3f} param_setup_ms={:.3f} construct_imager_ms={:.3f} init_imagers_ms={:.3f} init_normalizers_ms={:.3f} set_weighting_ms={:.3f} init_deconvolvers_ms={:.3f} estimate_memory_ms={:.3f} init_iteration_ms={:.3f} make_psf_ms={:.3f} make_pb_ms={:.3f} calcres_major_ms={:.3f} update_mask_ms={:.3f} has_converged_ms={:.3f} minor_cycle_ms={:.3f} clean_major_cycle_ms={:.3f} restore_ms={:.3f} delete_tools_ms={:.3f}".format(
                     run_index + 1,

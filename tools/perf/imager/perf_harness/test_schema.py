@@ -855,6 +855,27 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "must be none, cold, or warm"):
             validate_workload_manifest(invalid_role)
 
+    def test_rust_cf_cache_controls_are_typed_and_awproject_only(self) -> None:
+        workload = explicit_aw_workload()
+        workload["imaging"]["cfcache"] = "turnaround.cf"
+        workload["imaging"]["cf_resident_mb"] = 384
+        validate_workload_manifest(workload)
+
+        zero_residency = copy.deepcopy(workload)
+        zero_residency["imaging"]["cf_resident_mb"] = 0
+        with self.assertRaisesRegex(ContractError, "cf_resident_mb must be >= 1"):
+            validate_workload_manifest(zero_residency)
+
+        missing_cache = copy.deepcopy(workload)
+        del missing_cache["imaging"]["cfcache"]
+        with self.assertRaisesRegex(ContractError, "requires imaging.cfcache"):
+            validate_workload_manifest(missing_cache)
+
+        wrong_gridder = copy.deepcopy(workload)
+        wrong_gridder["imaging"]["gridder"] = "wproject"
+        with self.assertRaisesRegex(ContractError, "requires imaging.gridder=awproject"):
+            validate_workload_manifest(wrong_gridder)
+
     def test_deterministic_user_mask_requires_path_and_digest(self) -> None:
         workload = {
             "schema_version": 1,
