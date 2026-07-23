@@ -213,7 +213,12 @@ These paths are semantic oracles, not Rust API templates.
 6. A 32-pixel real-cache probe must reject before execution because the minimum
    paired CF support requires a grid of at least 33 pixels. The real 64-pixel
    field-1525 ladder must then pass for one, two, and all 16 SPWs through true
-   AWProject, followed by the full 12,150-pixel serial run.
+   AWProject, followed by the full 12,150-pixel serial run. Run the exact
+   32/64-pixel ladder through
+   `tests::vlass_field_1525_real_cache_rejects_32_then_passes_64_for_1_2_16_spws`
+   with `CASA_RS_VLASS_DATA_ROOT` and
+   `CASA_RS_VLASS_SINGLE_FIELD_CF_CACHE` bound to the frozen staged
+   MeasurementSet and single-field CASA 6.7.5.9 cache.
 
 Only after the full serial result passes the frozen comparison contract do
 memory, threading, and Metal/GPU iterations begin. Oracle review is triggered

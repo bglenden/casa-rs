@@ -238,6 +238,35 @@ was available. No evidence was sent to an unauthenticated session. The review
 must be retried in a fresh signed-in conversation; this does not convert its
 acceptance check into a deferral.
 
+The preserved reduced CASA cache on the Mac mini also completed a non-final
+real-cache execution ladder at `e4fc0af75`. That cache contains 256 paired
+imaging/weight cells for four turnaround SPWs. Its 32-pixel one-SPW probe
+rejected before gridding because the smallest paired support requires at least
+43 pixels on each axis. The corresponding 64-pixel one-, two-, and four-SPW
+rows completed in 3.813, 6.250, and 12.329 seconds and each wrote the exact 18
+dirty MT-MFS products. The four-SPW row accepted 163,104 of 163,296 attempted
+samples; the other 192 were explicit PSF-placement/outside-grid rejections,
+not invalid input, kernel-index, or normalization failures. This is reduced
+turnaround execution evidence only. It does not satisfy the required frozen
+field-1525 one-, two-, and 16-SPW real-cache ladder.
+
+The exact frozen ladder is now an ignored integration gate over the production
+`CliConfig` and `run_from_config` path. It first requires the 32-pixel support
+rejection, then runs the 64-pixel serial-CPU field-1525 rows for SPWs 2,
+2 through 3, and 2 through 17. Every passing row must bind the 1,024-pair,
+16-frequency, 32-W-plane CASA cache, accept real samples, retain bounded CF
+residency, avoid invalid-input/kernel-index/normalization failures, and write
+all 18 products:
+
+```sh
+export CASA_RS_VLASS_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-vlass/issue-446/data/b80d5e87487ab8ab01faa064c4cd48db6d93446fd0add208c051dd574e0d353a
+export CASA_RS_VLASS_SINGLE_FIELD_CF_CACHE=/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/8e5679681214158629c7eb6113bc3b062d6105fbae64471905aa73de50080a69
+
+CARGO_INCREMENTAL=0 cargo test -p casars-imager \
+  tests::vlass_field_1525_real_cache_rejects_32_then_passes_64_for_1_2_16_spws \
+  -- --ignored --exact --nocapture
+```
+
 On the 32 GiB laptop, run the serial dirty rows first and inspect full-array
 correctness before starting `auto`:
 

@@ -54313,6 +54313,321 @@ mod tests {
         assert_eq!(target.source, "cli-imaging");
     }
 
+    const VLASS_FROZEN_MS_NAME: &str =
+        "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms";
+    const VLASS_REAL_CACHE_LADDER_PRODUCTS: [&str; 18] = [
+        ".alpha",
+        ".alpha.error",
+        ".image.tt0",
+        ".image.tt1",
+        ".model.tt0",
+        ".model.tt1",
+        ".pb.tt0",
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+        ".weight.tt0",
+        ".weight.tt1",
+        ".weight.tt2",
+    ];
+
+    fn vlass_field_1525_real_cache_config(
+        ms: &Path,
+        cf_cache: &Path,
+        imagename: &Path,
+        imsize: usize,
+        spw: &str,
+    ) -> CliConfig {
+        CliConfig::parse([
+            OsString::from("--ms"),
+            ms.as_os_str().to_owned(),
+            OsString::from("--imagename"),
+            imagename.as_os_str().to_owned(),
+            OsString::from("--imsize"),
+            OsString::from(imsize.to_string()),
+            OsString::from("--cell-arcsec"),
+            OsString::from("0.6"),
+            OsString::from("--field"),
+            OsString::from("1525"),
+            OsString::from("--phasecenter-field"),
+            OsString::from("1525"),
+            OsString::from("--spw"),
+            OsString::from(spw),
+            OsString::from("--channel-start"),
+            OsString::from("0"),
+            OsString::from("--channel-count"),
+            OsString::from("64"),
+            OsString::from("--specmode"),
+            OsString::from("mfs"),
+            OsString::from("--gridder"),
+            OsString::from("awproject"),
+            OsString::from("--projection"),
+            OsString::from("SIN"),
+            OsString::from("--datacolumn"),
+            OsString::from("data"),
+            OsString::from("--stokes"),
+            OsString::from("I"),
+            OsString::from("--uvrange"),
+            OsString::from("<12km"),
+            OsString::from("--intent"),
+            OsString::from("OBSERVE_TARGET#UNSPECIFIED"),
+            OsString::from("--usepointing"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--robust"),
+            OsString::from("1.0"),
+            OsString::from("--perchanweightdensity"),
+            OsString::from("--deconvolver"),
+            OsString::from("mtmfs"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("cpu"),
+            OsString::from("--standard-mfs-grid-threads"),
+            OsString::from("1"),
+            OsString::from("--no-parallel"),
+            OsString::from("--imaging-fft-precision"),
+            OsString::from("f64"),
+            OsString::from("--imaging-fft-backend"),
+            OsString::from("rustfft"),
+            OsString::from("--hogbom-iteration-mode"),
+            OsString::from("strict"),
+            OsString::from("--nterms"),
+            OsString::from("2"),
+            OsString::from("--scales"),
+            OsString::from("0,5,12"),
+            OsString::from("--smallscalebias"),
+            OsString::from("0.0"),
+            OsString::from("--niter"),
+            OsString::from("0"),
+            OsString::from("--gain"),
+            OsString::from("0.1"),
+            OsString::from("--threshold-jy"),
+            OsString::from("0.0"),
+            OsString::from("--nsigma"),
+            OsString::from("5.0"),
+            OsString::from("--psfcutoff"),
+            OsString::from("0.35"),
+            OsString::from("--pblimit"),
+            OsString::from("0.0001"),
+            OsString::from("--write-pb"),
+            OsString::from("--minor-cycle-length"),
+            OsString::from("2000"),
+            OsString::from("--cyclefactor"),
+            OsString::from("3.0"),
+            OsString::from("--minpsffraction"),
+            OsString::from("0.05"),
+            OsString::from("--maxpsffraction"),
+            OsString::from("0.8"),
+            OsString::from("--wterm"),
+            OsString::from("wproject"),
+            OsString::from("--wprojplanes"),
+            OsString::from("32"),
+            OsString::from("--cfcache"),
+            cf_cache.as_os_str().to_owned(),
+            OsString::from("--cf-resident-mb"),
+            OsString::from("256"),
+            OsString::from("--facets"),
+            OsString::from("1"),
+            OsString::from("--aterm"),
+            OsString::from("--no-psterm"),
+            OsString::from("--wbawp"),
+            OsString::from("--conjbeams"),
+            OsString::from("--computepastep"),
+            OsString::from("360.0"),
+            OsString::from("--rotatepastep"),
+            OsString::from("360.0"),
+            OsString::from("--pointingoffsetsigdev"),
+            OsString::from("0.0"),
+            OsString::from("--no-mosweight"),
+            OsString::from("--normtype"),
+            OsString::from("flatnoise"),
+            OsString::from("--restoringbeam"),
+            OsString::from("common"),
+            OsString::from("--usemask"),
+            OsString::from("user"),
+            OsString::from("--savemodel"),
+            OsString::from("none"),
+            OsString::from("--dirty-only"),
+            OsString::from("--no-preview-pngs"),
+        ])
+        .expect("parse frozen VLASS real-cache ladder configuration")
+    }
+
+    #[test]
+    fn vlass_real_cache_ladder_configs_preserve_the_frozen_recipe_surface() {
+        let ms = Path::new("/vlass/data").join(VLASS_FROZEN_MS_NAME);
+        let cf_cache = Path::new("/vlass/cache/single-field");
+        let imagename = Path::new("/vlass/output/rust");
+
+        for (spw, expected_spw_count) in [("2", 1), ("2~3", 2), ("2~17", 16)] {
+            let config = vlass_field_1525_real_cache_config(&ms, cf_cache, imagename, 64, spw);
+            let awproject = config.aw_project.as_ref().expect("AWProject controls");
+
+            assert_eq!(config.ms, ms);
+            assert_eq!(config.imagename, imagename);
+            assert_eq!(config.imsize, 64);
+            assert_eq!(config.cell_arcsec, 0.6);
+            assert_eq!(config.field_ids, Some(vec![1525]));
+            assert_eq!(config.phasecenter_field, Some(1525));
+            assert_eq!(selected_spw_ids(&config).unwrap().len(), expected_spw_count);
+            assert_eq!(config.channel_start, Some(0));
+            assert_eq!(config.channel_count, Some(64));
+            assert_eq!(config.datacolumn.as_deref(), Some("data"));
+            assert_eq!(config.correlation.as_deref(), Some("I"));
+            assert_eq!(config.spectral_mode, SpectralMode::Mfs);
+            assert_eq!(config.uvrange.as_deref(), Some("<12km"));
+            assert_eq!(config.intent.as_deref(), Some("OBSERVE_TARGET#UNSPECIFIED"));
+            assert_eq!(config.weighting, WeightingMode::Briggs { robust: 1.0 });
+            assert!(config.per_channel_weight_density);
+            assert_eq!(config.deconvolver, Deconvolver::Mtmfs);
+            assert_eq!(config.nterms, 2);
+            assert_eq!(config.multiscale_scales, vec![0.0, 5.0, 12.0]);
+            assert_eq!(config.small_scale_bias, 0.0);
+            assert_eq!(config.niter, 0);
+            assert!(config.dirty_only);
+            assert_eq!(config.gain, 0.1);
+            assert_eq!(config.threshold_jy, 0.0);
+            assert_eq!(config.nsigma, 5.0);
+            assert_eq!(config.psf_cutoff, 0.35);
+            assert_eq!(config.mosaic_pb_limit, 0.0001);
+            assert!(!config.pbcor);
+            assert!(config.write_pb);
+            assert_eq!(config.minor_cycle_length, 2000);
+            assert_eq!(config.cyclefactor, 3.0);
+            assert_eq!(config.min_psf_fraction, 0.05);
+            assert_eq!(config.max_psf_fraction, 0.8);
+            assert_eq!(config.hogbom_iteration_mode, HogbomIterationMode::Strict);
+            assert_eq!(config.use_mask, CleanMaskMode::User);
+            assert_eq!(config.save_model, SaveModelMode::None);
+            assert_eq!(config.restoring_beam_mode, RestoringBeamMode::Common);
+            assert!(config.use_pointing);
+            assert_eq!(config.w_term_mode, WTermMode::WProject);
+            assert_eq!(config.w_project_planes, Some(32));
+            assert_eq!(
+                config.standard_mfs_acceleration,
+                StandardMfsAccelerationPolicy::Cpu
+            );
+            assert_eq!(config.standard_mfs_grid_threads.as_deref(), Some("1"));
+            assert_eq!(config.imaging_prepare_workers, Some(1));
+            assert_eq!(config.imaging_read_ahead_blocks, Some(1));
+            assert_eq!(config.imaging_fft_precision, ImagingFftPrecisionPolicy::F64);
+            assert_eq!(config.imaging_fft_backend, ImagingFftBackendPolicy::RustFft);
+            assert_eq!(config.standard_mfs_metal_grouped_input_cache, Some(false));
+            assert!(!config.write_preview_pngs);
+            assert_eq!(awproject.cf_cache, cf_cache);
+            assert_eq!(awproject.cf_resident_bytes, 256 * 1024 * 1024);
+            assert_eq!(awproject.facets, 1);
+            assert_eq!(awproject.w_plane_count, Some(32));
+            assert_eq!(awproject.psf_phase_center_direction_rad, None);
+            assert_eq!(awproject.vp_table, None);
+            assert!(awproject.a_term);
+            assert!(!awproject.ps_term);
+            assert!(awproject.wb_awp);
+            assert!(awproject.conjugate_beams);
+            assert_eq!(awproject.compute_pa_step_deg, 360.0);
+            assert_eq!(awproject.rotate_pa_step_deg, 360.0);
+            assert_eq!(awproject.pointing_offset_sigdev, vec![0.0]);
+            assert!(awproject.use_pointing);
+            assert!(!awproject.mosaic_weighting);
+            assert_eq!(awproject.normalization, AwProjectNormalization::FlatNoise);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the staged frozen VLASS MeasurementSet and 23 GiB CASA single-field CF cache"]
+    fn vlass_field_1525_real_cache_rejects_32_then_passes_64_for_1_2_16_spws() {
+        let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_VLASS_DATA_ROOT to the staged frozen VLASS data root");
+        let cf_cache = env::var_os("CASA_RS_VLASS_SINGLE_FIELD_CF_CACHE")
+            .map(PathBuf::from)
+            .expect(
+                "set CASA_RS_VLASS_SINGLE_FIELD_CF_CACHE to the frozen CASA 6.7.5.9 single-field cache",
+            );
+        let ms = data_root.join(VLASS_FROZEN_MS_NAME);
+        assert!(
+            ms.is_dir(),
+            "frozen VLASS MeasurementSet missing: {}",
+            ms.display()
+        );
+        assert!(
+            cf_cache.is_dir(),
+            "frozen single-field CF cache missing: {}",
+            cf_cache.display()
+        );
+        let temp = tempdir().expect("VLASS real-cache ladder output");
+
+        let grid32 = vlass_field_1525_real_cache_config(
+            &ms,
+            &cf_cache,
+            &temp.path().join("grid32-spw2"),
+            32,
+            "2",
+        );
+        let grid32_error =
+            run_from_config(&grid32).expect_err("32-pixel real-cache probe must reject");
+        assert!(
+            grid32_error.contains("cannot place even the cache's smallest paired support"),
+            "unexpected 32-pixel rejection: {grid32_error}"
+        );
+
+        for (label, spw, expected_frequency_count) in [
+            ("grid64-spw2", "2", 16),
+            ("grid64-spw2-3", "2~3", 16),
+            ("grid64-spw2-17", "2~17", 16),
+        ] {
+            let imagename = temp.path().join(label);
+            let config = vlass_field_1525_real_cache_config(&ms, &cf_cache, &imagename, 64, spw);
+            let summary = run_from_config(&config)
+                .unwrap_or_else(|error| panic!("{label} real-cache execution failed: {error}"));
+            let diagnostics = summary
+                .awproject
+                .as_ref()
+                .unwrap_or_else(|| panic!("{label} omitted AWProject diagnostics"));
+
+            assert_eq!(diagnostics.plan_key.image_shape, [64, 64]);
+            assert_eq!(diagnostics.plan_key.w_plane_count, 32);
+            assert_eq!(diagnostics.plan_key.cache.paired_cells, 1024);
+            assert_eq!(
+                diagnostics.plan_key.cache.frequency_hz_bits.len(),
+                expected_frequency_count
+            );
+            assert_eq!(diagnostics.plan_key.cache.mueller_elements, vec![0, 15]);
+            assert!(diagnostics.samples.attempted_samples > 0);
+            assert!(diagnostics.samples.accepted_samples > 0);
+            assert_eq!(diagnostics.samples.rejected_invalid_input, 0);
+            assert_eq!(diagnostics.samples.rejected_kernel_index, 0);
+            assert_eq!(diagnostics.samples.rejected_invalid_normalization, 0);
+            assert!(diagnostics.resident.resident_bytes <= diagnostics.resident_budget_bytes);
+            let mut actual_products = fs::read_dir(temp.path())
+                .expect("read VLASS ladder output directory")
+                .map(|entry| entry.expect("read VLASS ladder output entry"))
+                .filter(|entry| entry.path().is_dir())
+                .filter_map(|entry| {
+                    entry
+                        .file_name()
+                        .to_str()
+                        .and_then(|name| name.strip_prefix(label))
+                        .map(str::to_owned)
+                })
+                .collect::<Vec<_>>();
+            actual_products.sort();
+            let mut expected_products = VLASS_REAL_CACHE_LADDER_PRODUCTS
+                .iter()
+                .map(|suffix| (*suffix).to_owned())
+                .collect::<Vec<_>>();
+            expected_products.sort();
+            assert_eq!(
+                actual_products, expected_products,
+                "{label} product inventory differs from the frozen 18-product contract"
+            );
+        }
+    }
+
     fn make_awproject_planner_cache(root: &Path, paired_cells: usize) {
         fs::create_dir(root).unwrap();
         for index in 0..paired_cells {
