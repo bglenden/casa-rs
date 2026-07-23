@@ -6705,6 +6705,29 @@ fn run_single_image_from_config_with_gridder_override(
         open_measurement_set,
         total_start.elapsed(),
     );
+    let weight_spectrum_runtime_config;
+    let config = if config.standard_mfs_acceleration == StandardMfsAccelerationPolicy::Auto
+        && config.deconvolver != Deconvolver::Mtmfs
+        && matches!(config.spectral_mode, SpectralMode::Mfs)
+        && matches!(config.w_term_mode, WTermMode::None)
+        && config.outlier_file.is_none()
+        && ms
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"))
+        && (config.standard_mfs_initial_dirty_backend.as_deref() == Some("metal-row-run-grouped")
+            || config.standard_mfs_residual_backend.as_deref() == Some("metal-row-run-grouped"))
+    {
+        weight_spectrum_runtime_config = {
+            let mut cloned = config.clone();
+            cloned.standard_mfs_initial_dirty_backend = Some("cpu".to_string());
+            cloned.standard_mfs_residual_backend = Some("cpu".to_string());
+            cloned
+        };
+        &weight_spectrum_runtime_config
+    } else {
+        config
+    };
     let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
     let inferred_cube_config;
     let config = if config.spectral_mode.is_cube_like() && config.channel_count.is_none() {
@@ -12678,7 +12701,11 @@ fn run_standard_spectral_cube_slab_from_open_ms(
     let derived_engine =
         MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?;
     let normalized_cube_config;
-    let config = if cube_axis_is_channel_mode(config) {
+    let descending_channel_axis = matches!(
+        config.cube_axis.width,
+        Some(CubeAxisValue::Channel(width)) if width < 0
+    );
+    let config = if cube_axis_is_channel_mode(config) && !descending_channel_axis {
         config
     } else {
         normalized_cube_config = normalize_cube_axis_for_bounded_slabs(
@@ -13201,38 +13228,51 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                     "sampling_uv_coverage",
                 );
             }
-            let (slab_planes, _, slab_prepare_elapsed) = with_imager_progress_spectral_stage(
-                config,
-                spectral_slab::SpectralEventStage::RowBlockPreparation,
-                Some(slab.slab_id),
-                slab.plane_start,
-                slab.plane_end,
-                execution_plan.workers,
-                progress_compute_backend,
-                None,
-                true,
-                || {
-                    prepare_independent_shared_cube_slab_resident_clean_planes(
-                        config,
-                        geometry,
-                        clean,
-                        slab.plane_start,
-                        slab.plane_end,
-                        channel_start,
-                        slab_channel_frequencies_hz,
-                        channel_read_range.map_or(0, |range| range.start),
-                        Arc::clone(&direct_spectral_plan),
-                        &table_values.corr_types,
-                        plane_execution_config.clone(),
-                        execution_plan.workers,
-                        progress_selected_backend,
-                        Arc::clone(&shared_source),
-                    )
-                },
-            )?;
+            let (slab_planes, blank_planes, _, slab_prepare_elapsed) =
+                with_imager_progress_spectral_stage(
+                    config,
+                    spectral_slab::SpectralEventStage::RowBlockPreparation,
+                    Some(slab.slab_id),
+                    slab.plane_start,
+                    slab.plane_end,
+                    execution_plan.workers,
+                    progress_compute_backend,
+                    None,
+                    true,
+                    || {
+                        prepare_independent_shared_cube_slab_resident_clean_planes(
+                            config,
+                            geometry,
+                            clean,
+                            slab.plane_start,
+                            slab.plane_end,
+                            channel_start,
+                            slab_channel_frequencies_hz,
+                            channel_read_range.map_or(0, |range| range.start),
+                            Arc::clone(&direct_spectral_plan),
+                            &table_values.corr_types,
+                            plane_execution_config.clone(),
+                            execution_plan.workers,
+                            progress_selected_backend,
+                            Arc::clone(&shared_source),
+                        )
+                    },
+                )?;
             prepare_elapsed += slab_prepare_elapsed;
             let clean_control_started_at = Instant::now();
-            prepared_planes = prepared_planes.saturating_add(slab_planes.len());
+            prepared_planes = prepared_planes
+                .saturating_add(slab_planes.len())
+                .saturating_add(blank_planes.len());
+            skipped_minor_cycle_planes =
+                skipped_minor_cycle_planes.saturating_add(blank_planes.len());
+            for (plane_index, result) in blank_planes {
+                product_publisher.accept(
+                    plane_index,
+                    result,
+                    &mut product_writers,
+                    &mut aggregate,
+                )?;
+            }
             pending_candidate_planes.extend(slab_planes);
             for state in &pending_candidate_planes {
                 let stats = state.prepared.clean_control_stats();
@@ -15081,7 +15121,7 @@ fn merge_cube_product_group(
             .saturating_add(result.diagnostics.skipped_samples);
         diagnostics.major_cycles = diagnostics
             .major_cycles
-            .saturating_add(result.diagnostics.major_cycles);
+            .max(result.diagnostics.major_cycles);
         diagnostics.minor_iterations = diagnostics
             .minor_iterations
             .saturating_add(result.diagnostics.minor_iterations);
@@ -15237,7 +15277,7 @@ fn merge_dirty_cube_product_group(
             .saturating_add(result.diagnostics.skipped_samples);
         diagnostics.major_cycles = diagnostics
             .major_cycles
-            .saturating_add(result.diagnostics.major_cycles);
+            .max(result.diagnostics.major_cycles);
         diagnostics.minor_iterations = diagnostics
             .minor_iterations
             .saturating_add(result.diagnostics.minor_iterations);
@@ -15296,9 +15336,7 @@ impl CubeSlabAggregateDiagnostics {
         self.skipped_samples = self
             .skipped_samples
             .saturating_add(result.diagnostics.skipped_samples);
-        self.major_cycles = self
-            .major_cycles
-            .saturating_add(result.diagnostics.major_cycles);
+        self.major_cycles = self.major_cycles.max(result.diagnostics.major_cycles);
         self.minor_iterations = self
             .minor_iterations
             .saturating_add(result.diagnostics.minor_iterations);
@@ -15345,9 +15383,7 @@ impl CubeSlabAggregateDiagnostics {
         self.skipped_samples = self
             .skipped_samples
             .saturating_add(result.diagnostics.skipped_samples);
-        self.major_cycles = self
-            .major_cycles
-            .saturating_add(result.diagnostics.major_cycles);
+        self.major_cycles = self.major_cycles.max(result.diagnostics.major_cycles);
         self.minor_iterations = self
             .minor_iterations
             .saturating_add(result.diagnostics.minor_iterations);
@@ -16027,6 +16063,32 @@ fn direct_cube_plane_weighted_sample_from_shared_source(
     ))
 }
 
+fn direct_cube_plane_has_usable_sample(
+    shared_source: &SharedColumnarCubeSlabSource,
+    output_channel: usize,
+    spectral_plan: &CubeRowSpectralReusablePlan,
+    polarization: DirectCubePlanePolarization,
+) -> Result<bool, String> {
+    for block in &shared_source.blocks {
+        for row_slot in 0..block.visibility.row_count() {
+            if matches!(
+                direct_cube_plane_weighted_sample_from_shared_source(
+                    block,
+                    row_slot,
+                    output_channel,
+                    spectral_plan,
+                    polarization,
+                    None,
+                )?,
+                DirectCubePlaneSampleBuild::Accepted(_)
+            ) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 fn direct_dirty_cube_shared_source_eligible(
     config: &CliConfig,
     clean: CleanConfig,
@@ -16697,6 +16759,21 @@ struct ResidentCleanCubePlaneState {
     visibility_batches: usize,
 }
 
+enum ResidentCleanCubePlaneCandidate {
+    Prepared(Box<ResidentCleanCubePlaneState>),
+    Blank {
+        plane_index: usize,
+        result: Box<CubeImagingResult>,
+    },
+}
+
+type ResidentCleanCubeSlabPreparation = (
+    Vec<ResidentCleanCubePlaneState>,
+    Vec<(usize, CubeImagingResult)>,
+    ImagingStageTimings,
+    Duration,
+);
+
 struct ResidentCleanCubePlaneFinishResult {
     cube_result: CubeImagingResult,
     skipped_minor_cycle: bool,
@@ -16952,14 +17029,7 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
     worker_count: usize,
     selected_backend: Option<PerPlaneExecutionBackend>,
     shared_source: Arc<SharedColumnarCubeSlabSource>,
-) -> Result<
-    (
-        Vec<ResidentCleanCubePlaneState>,
-        ImagingStageTimings,
-        Duration,
-    ),
-    String,
-> {
+) -> Result<ResidentCleanCubeSlabPreparation, String> {
     let mut slab_config =
         slab_config_for_cube_planes(config, base_channel_start, slab_plane_start, slab_plane_end)?;
     if slab_config.imaging_prepare_workers.is_none() && worker_count > 1 {
@@ -16978,6 +17048,7 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
         .map(parse_plane_stokes)
         .transpose()?
         .unwrap_or(PlaneStokes::I);
+    let polarization = direct_cube_plane_polarization(plane_stokes, corr_types)?;
     let tasks = slab_channel_frequencies_hz
         .iter()
         .copied()
@@ -17006,6 +17077,25 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
     }
     let run_plane = |payload: DirectCleanCubePlaneTaskPayload| {
         let worker_started = Instant::now();
+        if !direct_cube_plane_has_usable_sample(
+            &shared_source,
+            payload.output_channel,
+            &direct_spectral_plan,
+            polarization,
+        )? {
+            return Ok((
+                ResidentCleanCubePlaneCandidate::Blank {
+                    plane_index: payload.plane_index,
+                    result: Box::new(blank_clean_cube_plane_result(
+                        geometry,
+                        clean,
+                        plane_stokes,
+                        payload.channel_frequency_hz,
+                    )),
+                },
+                ImagingStageTimings::default(),
+            ));
+        }
         let (prepared, direct_replay_timings) = prepare_direct_clean_cube_plane_from_shared_source(
             geometry,
             clean,
@@ -17057,9 +17147,13 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
             prepare_elapsed: worker_started.elapsed(),
             visibility_batches: shared_source.blocks.len(),
         };
-        Ok((state, ImagingStageTimings::default()))
+        Ok((
+            ResidentCleanCubePlaneCandidate::Prepared(Box::new(state)),
+            ImagingStageTimings::default(),
+        ))
     };
     let mut prepared = Vec::<ResidentCleanCubePlaneState>::with_capacity(tasks.len());
+    let mut blank = Vec::<(usize, CubeImagingResult)>::new();
     let mut stage_timings = ImagingStageTimings::default();
     let plane_execution_stats = run_owned_independent_imaging_planes_with_consumer(
         tasks,
@@ -17067,11 +17161,18 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
         run_plane,
         |plane_result| {
             add_imaging_stage_timings(&mut stage_timings, plane_result.stage_timings);
-            prepared.push(plane_result.result);
+            match plane_result.result {
+                ResidentCleanCubePlaneCandidate::Prepared(state) => prepared.push(*state),
+                ResidentCleanCubePlaneCandidate::Blank {
+                    plane_index,
+                    result,
+                } => blank.push((plane_index, *result)),
+            }
             Ok(())
         },
     )?;
     prepared.sort_by_key(|state| state.plane_index);
+    blank.sort_by_key(|(plane_index, _)| *plane_index);
     let prepared_peak = prepared
         .iter()
         .map(|state| {
@@ -17108,7 +17209,12 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
             duration_ms(plane_execution_stats.worker_elapsed_max),
         );
     }
-    Ok((prepared, stage_timings, plane_execution_stats.elapsed))
+    Ok((
+        prepared,
+        blank,
+        stage_timings,
+        plane_execution_stats.elapsed,
+    ))
 }
 
 fn single_plane_imaging_result_to_cube_result(
@@ -17278,6 +17384,28 @@ fn blank_dirty_cube_plane_result(
     }
 }
 
+fn blank_clean_cube_plane_result(
+    geometry: ImageGeometry,
+    clean: CleanConfig,
+    plane_stokes: PlaneStokes,
+    channel_frequency_hz: f64,
+) -> CubeImagingResult {
+    let dirty = blank_dirty_cube_plane_result(geometry, clean, plane_stokes, channel_frequency_hz);
+    let model = Array4::<f32>::zeros(dirty.residual.raw_dim().f());
+    CubeImagingResult {
+        psf: dirty.psf,
+        residual: dirty.residual,
+        image: model.clone(),
+        model,
+        sumwt: dirty.sumwt,
+        clean_mask: None,
+        beams: dirty.beams,
+        restored_beams: dirty.restored_beams,
+        diagnostics: dirty.diagnostics,
+        compatibility: dirty.compatibility,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_independent_shared_cube_slab_planes(
     config: &CliConfig,
@@ -17377,7 +17505,13 @@ fn run_independent_shared_cube_slab_planes(
                 .map(parse_plane_stokes)
                 .transpose()?
                 .unwrap_or(PlaneStokes::I);
-            if !spectral_plan.output_channel_has_support(payload.output_channel) {
+            let polarization = direct_cube_plane_polarization(plane_stokes, corr_types)?;
+            if !direct_cube_plane_has_usable_sample(
+                &shared_source,
+                payload.output_channel,
+                spectral_plan,
+                polarization,
+            )? {
                 return Ok((
                     SharedDirtyCubePlaneGridRunResult {
                         grid_result: None,
@@ -18075,7 +18209,75 @@ impl CubeSlabProductWriters {
         Ok(())
     }
 
+    fn rewrite_common_restored_images(&mut self, config: &CliConfig) -> Result<(), String> {
+        let Some(model) = self.model.as_ref() else {
+            return Ok(());
+        };
+        let common_beam_set = beam_set_from_channel_beams(&self.beams, RestoringBeamMode::Common)?;
+        let common_beam = common_beam_set
+            .single_beam()
+            .ok_or_else(|| "common restoring beam did not resolve to a single beam".to_string())?;
+        let common_beam = gaussian_to_beamfit(common_beam);
+        let image_shape = [config.imsize, config.imsize, 1, 1];
+        let cell_size_rad = [
+            config.cell_arcsec * arcsec_to_rad(),
+            config.cell_arcsec * arcsec_to_rad(),
+        ];
+        for plane_index in 0..self.beams.len() {
+            let start = [0, 0, 0, plane_index];
+            let model_plane = model
+                .get_slice(&start, &image_shape)
+                .map_err(|error| format!("read common-beam model plane {plane_index}: {error}"))?;
+            let residual_plane =
+                self.residual
+                    .get_slice(&start, &image_shape)
+                    .map_err(|error| {
+                        format!("read common-beam residual plane {plane_index}: {error}")
+                    })?;
+            let mut model_2d = Array2::<f32>::zeros((config.imsize, config.imsize));
+            let mut residual_2d = Array2::<f32>::zeros((config.imsize, config.imsize));
+            for x in 0..config.imsize {
+                for y in 0..config.imsize {
+                    model_2d[(x, y)] = model_plane[[x, y, 0, 0]];
+                    residual_2d[(x, y)] = residual_plane[[x, y, 0, 0]];
+                }
+            }
+            let restored_model = casa_imaging::restore_standard_mfs_model(
+                &model_2d,
+                cell_size_rad,
+                Some(common_beam),
+            );
+            let restored_residual = if let Some(fitted_beam) = self.beams[plane_index] {
+                rescale_frontend_residual_to_beam(
+                    &residual_2d,
+                    cell_size_rad,
+                    common_beam,
+                    fitted_beam,
+                )?
+            } else {
+                residual_2d
+            };
+            let mut restored_image = Array4::<f32>::zeros((config.imsize, config.imsize, 1, 1));
+            for x in 0..config.imsize {
+                for y in 0..config.imsize {
+                    restored_image[(x, y, 0, 0)] =
+                        restored_model[(x, y)] + restored_residual[(x, y)];
+                }
+            }
+            self.image
+                .put_slice_view(restored_image.view().into_dyn(), &start)
+                .map_err(|error| {
+                    format!("write common-beam restored image plane {plane_index}: {error}")
+                })?;
+        }
+        self.restored_beams.fill(Some(common_beam));
+        Ok(())
+    }
+
     fn finish(mut self, config: &CliConfig) -> Result<(), String> {
+        if config.restoring_beam_mode == RestoringBeamMode::Common && !self.dirty_image_alias {
+            self.rewrite_common_restored_images(config)?;
+        }
         let psf_beams = beam_set_from_channel_beams(&self.beams, RestoringBeamMode::PerPlane)?;
         let image_beams =
             beam_set_from_channel_beams(&self.restored_beams, config.restoring_beam_mode)?;
@@ -19300,6 +19502,18 @@ fn cube_axis_is_channel_mode(config: &CliConfig) -> bool {
         config.cube_axis.width,
         None | Some(CubeAxisValue::Channel(_))
     )
+}
+
+fn resolve_casa_cube_channel_selector_selection(
+    all_frequencies_hz: &[f64],
+    selector: &casa_ms::ChannelSelection,
+) -> Result<casa_ms::ResolvedChannelSelection, String> {
+    let mut channel_mode_selector = selector.clone();
+    for segment in &mut channel_mode_selector.segments {
+        segment.stride = 1;
+    }
+    resolve_channel_selector_selection(all_frequencies_hz, &channel_mode_selector)
+        .map_err(|error| error.to_string())
 }
 
 fn normalize_cube_axis_for_bounded_slabs(
@@ -36925,28 +37139,6 @@ struct CubeRowSpectralReusablePlan {
 const MISSING_CUBE_GRID_ASSIGNMENT: usize = usize::MAX;
 
 impl CubeRowSpectralReusablePlan {
-    fn output_channel_has_support(&self, output_channel: usize) -> bool {
-        let has_support = |contributions: &CubeRowSpectralContributions| {
-            if self.use_visibility_grid_assignments {
-                contributions.grid_channel_contributions.iter().any(|grid| {
-                    grid.output_channel == output_channel && !grid.contributions.is_empty()
-                })
-            } else {
-                contributions
-                    .output_channel_contributions
-                    .get(output_channel)
-                    .is_some_and(|contributions| !contributions.is_empty())
-            }
-        };
-        self.shared_spectral_binding
-            .as_ref()
-            .is_some_and(|binding| has_support(binding.contributions.as_ref()))
-            || self
-                .spectral
-                .values()
-                .any(|contributions| has_support(contributions.as_ref()))
-    }
-
     fn spectral(&self, cache_key: &(u64, usize)) -> Option<Arc<CubeRowSpectralContributions>> {
         self.spectral.get(cache_key).map(Arc::clone)
     }
@@ -38121,6 +38313,11 @@ impl PreparedSelection {
                 selected_spw_channel_selector(config, spw_id).map_err(|error| error.to_string())?;
             let mut source_channel_selection =
                 match (&config.spectral_mode, explicit_channel_selector.as_ref()) {
+                    (SpectralMode::Cube | SpectralMode::Cubedata, Some(selector))
+                        if cube_axis_is_channel_mode(config) =>
+                    {
+                        resolve_casa_cube_channel_selector_selection(&spw_freqs, selector)?
+                    }
                     (_, Some(selector)) => resolve_channel_selector_selection(&spw_freqs, selector)
                         .map_err(|error| error.to_string())?,
                     (SpectralMode::Mfs, None) => resolve_contiguous_channel_selection(
@@ -43560,7 +43757,6 @@ fn beam_to_gaussian(beam: BeamFit) -> GaussianBeam {
     )
 }
 
-#[cfg(test)]
 fn gaussian_to_beamfit(beam: GaussianBeam) -> BeamFit {
     BeamFit {
         major_fwhm_rad: beam.major,
@@ -43635,7 +43831,6 @@ fn restore_frontend_model(
     apply_frontend_kernel(model, &kernel)
 }
 
-#[cfg(test)]
 fn rescale_frontend_residual_to_beam(
     residual: &Array2<f32>,
     cell_size_rad: [f64; 2],
@@ -43665,7 +43860,6 @@ fn rescale_frontend_residual_to_beam(
     Ok(rescaled)
 }
 
-#[cfg(test)]
 fn frontend_gaussian_kernel(
     beam: BeamFit,
     cell_size_rad: [f64; 2],
@@ -43707,7 +43901,6 @@ fn frontend_gaussian_kernel(
     Some(kernel)
 }
 
-#[cfg(test)]
 fn make_frontend_casa_gaussian_psf_image(
     nx: usize,
     ny: usize,
@@ -43754,7 +43947,6 @@ fn make_frontend_casa_gaussian_psf_image(
     image
 }
 
-#[cfg(test)]
 fn apply_frontend_kernel(model: &Array2<f32>, kernel: &[(isize, isize, f32)]) -> Array2<f32> {
     let mut restored = Array2::<f32>::zeros(model.raw_dim());
     for ((center_x, center_y), flux) in model.indexed_iter() {
@@ -47058,6 +47250,33 @@ mod tests {
 
     static IMAGER_PROGRESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
     static SPECTRAL_SLAB_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    #[test]
+    fn casa_cube_channel_selector_ignores_stride_but_preserves_gaps() {
+        let selector = casa_ms::ChannelSelection {
+            segments: vec![
+                casa_ms::ChannelSelectionSegment {
+                    start: 0,
+                    end: 4,
+                    stride: 2,
+                },
+                casa_ms::ChannelSelectionSegment {
+                    start: 7,
+                    end: 8,
+                    stride: 1,
+                },
+            ],
+        };
+        assert_eq!(
+            resolve_casa_cube_channel_selector_selection(
+                &[10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0],
+                &selector,
+            )
+            .unwrap()
+            .indices,
+            vec![0, 1, 2, 3, 4, 7, 8]
+        );
+    }
 
     #[test]
     fn bounded_uv_coverage_accumulator_keeps_measured_limit() {
