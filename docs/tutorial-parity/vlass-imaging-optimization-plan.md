@@ -1,7 +1,7 @@
 # VLASS Fragment Imaging Correctness And Performance Plan
 
 Truth class: approved execution contract
-Last reality check: 2026-07-22
+Last reality check: 2026-07-23
 Verification: `just docs-check`
 
 WDAD scope:
@@ -193,6 +193,76 @@ image, and residual products and at eight pixels for each derived-alpha
 product; seven products retain the small restoring-beam-fit metadata mismatch.
 These are explicit correctness owners before the final laptop benchmark, and
 this single-field reduced receipt remains turnaround evidence only.
+
+The following topology pass aligned the CASA MT-MFS beam contract: only
+`.psf.tt0` carries the fitted PSF beam, while `.psf.tt1` and `.psf.tt2` do not.
+The comparator now retains the first 16 deterministic mask-mismatch coordinates
+in its version-4 result without invalidating older version-4 receipts. The
+fresh strict comparison is
+`/private/tmp/casa-rs-vlass-beam-topology-receipts/20260723T021000Z-vlass-awproject-turnaround-acec364a.json`.
+All 18 numerical tolerances pass. The remaining exact differences are one PB
+boundary pixel at `[453,234,0,0]`, eight derived-alpha mask pixels, spectral
+`crval`/`cdelt` deltas of about 2.86/6.20 microhertz, and five small fitted-beam
+value differences. This remains 1,024-pixel turnaround evidence, not a frozen
+12,150-pixel acceptance result.
+
+### 2026-07-23 Mac Mini Handoff Checkpoint
+
+The full-size dirty manifests now execute the shared Rust benchmark path while
+retaining their frozen recipe, dataset-selection, CF-plan, 18-product, and
+tolerance contracts. `vlass-fragment-single-field` and
+`vlass-fragment-all-fields` are explicit serial-CPU correctness baselines that
+reuse the already frozen CASA 6.7.5.9 products. Separate
+`vlass-fragment-single-field-auto` and `vlass-fragment-all-fields-auto`
+manifests exercise the public `auto` policy with the same scientific contract,
+one unmeasured warmup, three measured runs, and one profile run. All four plans
+fail closed when their explicit CF cache or frozen CASA product prefix is
+missing; none reruns CASA. Each Rust row writes products, comparator protocol
+artifacts, panels, and the benchmark log below `<run-id>.partial`, revalidates
+their hashes, exact 18-product inventories, tolerance result, and panel
+inventory, and only then atomically publishes `<run-id>`. Failed or interrupted
+runs retain a typed partial receipt and cannot masquerade as final evidence.
+
+The 24 GiB/32 GiB resource fixtures keep the full-size ownership decision
+explicit: the serial 12,150-pixel, eight-grid-plane AWProject plan is admitted
+under the 32 GiB operator budget with no per-worker full-grid copy and rejected
+under the 24 GiB budget, while a 4,096-pixel turnaround remains admissible on
+the mini. The public automatic policy now selects the measured compensated
+Metal AW grid path for dirty MT-MFS when a Metal device is present, selects CPU
+when it is absent, and logs a stable `auto_metal_reason` for both choices.
+Explicit overrides remain authoritative.
+
+The named Oracle review remains incomplete. The Oracle skill is not installed,
+the in-app ChatGPT session was signed out, and no signed-in Chrome connection
+was available. No evidence was sent to an unauthenticated session. The review
+must be retried in a fresh signed-in conversation; this does not convert its
+acceptance check into a deferral.
+
+On the 32 GiB laptop, run the serial dirty rows first and inspect full-array
+correctness before starting `auto`:
+
+```sh
+export CASA_RS_VLASS_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-vlass/issue-446/data/b80d5e87487ab8ab01faa064c4cd48db6d93446fd0add208c051dd574e0d353a
+export CASA_RS_CASA_PYTHON=/absolute/path/to/casa-6.7.5.9/bin/python
+
+python3 tools/perf/imager/run_workload.py vlass-fragment-single-field \
+  --output-dir /Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs \
+  --artifact-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts \
+  --cf-cache-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache
+python3 tools/perf/imager/run_workload.py vlass-fragment-all-fields \
+  --output-dir /Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs \
+  --artifact-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts \
+  --cf-cache-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache
+```
+
+Only after both serial receipts are correctness-green, run the corresponding
+`-auto` workloads with the same three path arguments. Record the exact commit,
+host, resolved allocation ledger, worker/backend plan, Metal placement/fallback
+reason, total/stage times, RSS/swap/I/O, profiles, comparison receipt, and human
+panel review. The deterministic clean mask, two clean manifests/fiducials, four
+final correctness-green rows, four independent 10x timing gates, signed-in
+Oracle review, and complete review/verification gates remain required owners;
+the dirty launch manifests do not close or defer them.
 
 ## Outcome
 

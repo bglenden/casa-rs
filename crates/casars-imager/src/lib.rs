@@ -21982,14 +21982,18 @@ fn standard_mfs_minor_cycle_backend_for_config(config: &CliConfig) -> StandardMf
         mosaic_mfs_eligible && mosaic_cube_one_channel_can_use_single_plane_stream(config);
     let eligible = standard_mfs_eligible || mosaic_mfs_eligible;
     let metal_requested = match config.standard_mfs_acceleration {
-        StandardMfsAccelerationPolicy::Auto => standard_mfs_auto_metal_enabled(
-            config,
-            eligible,
-            mosaic_mfs_eligible,
-            mosaic_cube_one_channel_eligible,
-            matches!(config.w_term_mode, WTermMode::WProject),
-            casa_imaging::standard_mfs_metal_device_available(),
-        ),
+        StandardMfsAccelerationPolicy::Auto => {
+            standard_mfs_auto_metal_decision(
+                config,
+                eligible,
+                mosaic_mfs_eligible,
+                mosaic_cube_one_channel_eligible,
+                matches!(config.w_term_mode, WTermMode::WProject),
+                cfg!(target_os = "macos"),
+                casa_imaging::standard_mfs_metal_device_available(),
+            )
+            .0
+        }
         StandardMfsAccelerationPolicy::Metal => true,
         StandardMfsAccelerationPolicy::Cpu | StandardMfsAccelerationPolicy::MultiCpu => false,
     };
@@ -22040,6 +22044,24 @@ fn plan_standard_mfs_runtime(
     ms_count: usize,
     backend_command_target_ms: Option<u64>,
 ) -> StandardMfsRuntimePlan {
+    plan_standard_mfs_runtime_with_metal_device(
+        config,
+        force_standard_gridder,
+        ms_count,
+        backend_command_target_ms,
+        cfg!(target_os = "macos"),
+        casa_imaging::standard_mfs_metal_device_available(),
+    )
+}
+
+fn plan_standard_mfs_runtime_with_metal_device(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+    backend_command_target_ms: Option<u64>,
+    metal_runtime_supported: bool,
+    metal_device_available: bool,
+) -> StandardMfsRuntimePlan {
     let standard_mfs_eligible =
         can_plan_standard_mfs_acceleration(config, force_standard_gridder, ms_count);
     let mosaic_mfs_eligible = can_plan_mosaic_mfs_acceleration(config, ms_count);
@@ -22048,15 +22070,15 @@ fn plan_standard_mfs_runtime(
     let eligible = standard_mfs_eligible || mosaic_mfs_eligible;
     let standard_cube_like_one_channel =
         standard_cube_like_one_channel_can_use_mfs_single_plane_path(config);
-    let metal_device_available = casa_imaging::standard_mfs_metal_device_available();
     let wproject_acceleration = matches!(config.w_term_mode, WTermMode::WProject);
     let auto_threads = standard_mfs_grid_worker_count(config);
-    let auto_metal = standard_mfs_auto_metal_enabled(
+    let (auto_metal, auto_metal_reason) = standard_mfs_auto_metal_decision(
         config,
         eligible,
         mosaic_mfs_eligible,
         mosaic_cube_one_channel_eligible,
         wproject_acceleration,
+        metal_runtime_supported,
         metal_device_available,
     );
     let auto_multi_cpu = eligible && auto_threads > 1;
@@ -22232,13 +22254,18 @@ fn plan_standard_mfs_runtime(
         };
 
     eprintln!(
-        "standard_mfs_runtime_plan policy={} imaging_fft_precision={} imaging_fft_backend={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} assigned_cpu_capacity={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} metal_minor_cycle_chunk={} metal_minor_cycle_chunk_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
+        "standard_mfs_runtime_plan policy={} imaging_fft_precision={} imaging_fft_backend={} eligible={} auto_multi_cpu={} auto_metal={} auto_metal_reason={} metal_device_available={} assigned_cpu_capacity={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} metal_minor_cycle_chunk={} metal_minor_cycle_chunk_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
         standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
         imaging_fft_precision_policy_label(config.imaging_fft_precision),
         imaging_fft_backend_policy_label(config.imaging_fft_backend),
         eligible,
         auto_multi_cpu,
         policy_metal_requested,
+        if config.standard_mfs_acceleration == StandardMfsAccelerationPolicy::Auto {
+            auto_metal_reason
+        } else {
+            "not_applicable_explicit_policy"
+        },
         metal_device_available,
         auto_threads,
         backend.as_deref().unwrap_or("cpu"),
@@ -22304,36 +22331,63 @@ fn plan_standard_mfs_runtime(
     }
 }
 
-fn standard_mfs_auto_metal_enabled(
+fn standard_mfs_auto_metal_decision(
     config: &CliConfig,
     eligible: bool,
     mosaic_mfs_eligible: bool,
     mosaic_cube_one_channel_eligible: bool,
     wproject_acceleration: bool,
+    metal_runtime_supported: bool,
     metal_device_available: bool,
-) -> bool {
-    if !(eligible && cfg!(target_os = "macos") && metal_device_available) {
-        return false;
+) -> (bool, &'static str) {
+    if !eligible {
+        return (false, "ineligible_imaging_contract");
+    }
+    if !metal_runtime_supported {
+        return (false, "requires_macos");
+    }
+    if !metal_device_available {
+        return (false, "metal_device_unavailable");
+    }
+    if config.aw_project.is_some() {
+        // The AWProject Metal path grids the complete PSF/residual/weight
+        // Taylor set with compensated f64 readback and is valid for dirty as
+        // well as clean MT-MFS.  It is the measured Mac-mini winner, so the
+        // public automatic policy must not retain the older clean-only mosaic
+        // eligibility rule after true AW gridding has been selected.
+        return (true, "selected_awproject");
     }
     if wproject_acceleration {
-        return true;
+        return (true, "selected_wprojection");
     }
     if mosaic_cube_one_channel_eligible {
-        return !config.dirty_only && config.niter > 0;
+        return if !config.dirty_only && config.niter > 0 {
+            (true, "selected_mosaic_cube_clean")
+        } else {
+            (false, "mosaic_cube_dirty_not_measured")
+        };
     }
     if config.deconvolver == Deconvolver::Mtmfs {
-        return !config.dirty_only && config.niter > 0;
+        return if !config.dirty_only && config.niter > 0 {
+            (true, "selected_mtmfs_clean")
+        } else {
+            (false, "mtmfs_dirty_not_measured")
+        };
     }
     if matches!(
         config.deconvolver,
         Deconvolver::Hogbom | Deconvolver::Multiscale
     ) {
-        return !config.dirty_only && config.niter > 0;
+        return if !config.dirty_only && config.niter > 0 {
+            (true, "selected_clean_minor_cycle")
+        } else {
+            (false, "dirty_minor_cycle_not_measured")
+        };
     }
     if mosaic_mfs_eligible {
-        return false;
+        return (false, "mosaic_contract_not_measured");
     }
-    false
+    (false, "deconvolver_not_supported")
 }
 
 fn can_plan_standard_mfs_acceleration(
@@ -52854,6 +52908,49 @@ mod tests {
         let metal = plan_standard_mfs_runtime(&config, false, 1, None);
         assert_eq!(metal.metal_minor_cycle_chunk.as_deref(), Some("auto"));
         assert_eq!(metal.metal_grouped_input_cache, None);
+    }
+
+    #[test]
+    fn awproject_dirty_auto_selects_the_measured_metal_grid_path_when_available() {
+        let mut config = awproject_mtmfs_planner_config(
+            PathBuf::from("/tmp/awproject-auto-policy-cache"),
+            32 * 1024,
+        );
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Auto;
+        config.standard_mfs_grid_threads = None;
+        config.dirty_only = true;
+        config.niter = 0;
+
+        let eligible = can_plan_mosaic_mfs_acceleration(&config, 1);
+        assert!(eligible);
+        assert_eq!(
+            standard_mfs_auto_metal_decision(&config, eligible, true, false, false, true, true),
+            (true, "selected_awproject")
+        );
+
+        let runtime =
+            plan_standard_mfs_runtime_with_metal_device(&config, false, 1, None, true, true);
+        assert_eq!(
+            runtime.initial_dirty_backend.as_deref(),
+            Some("metal-row-run-grouped")
+        );
+        assert_eq!(
+            runtime.residual_backend.as_deref(),
+            Some("metal-row-run-grouped")
+        );
+
+        let unavailable =
+            plan_standard_mfs_runtime_with_metal_device(&config, false, 1, None, true, false);
+        assert_eq!(unavailable.initial_dirty_backend, None);
+        assert_eq!(unavailable.residual_backend, None);
+        assert_eq!(
+            standard_mfs_auto_metal_decision(&config, eligible, true, false, false, true, false),
+            (false, "metal_device_unavailable")
+        );
+        assert_eq!(
+            standard_mfs_auto_metal_decision(&config, eligible, true, false, false, false, true),
+            (false, "requires_macos")
+        );
     }
 
     #[test]

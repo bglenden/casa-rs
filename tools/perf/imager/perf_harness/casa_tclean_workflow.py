@@ -22,6 +22,7 @@ from .artifacts import (
 )
 from .bundle_integrity import (
     BundleIntegrityError,
+    validate_recipe_bound_benchmark_bundle,
     validate_recipe_evidence_bundle,
 )
 from .casa_tclean import (
@@ -110,36 +111,54 @@ def recipe_run_support(
     imaging: dict[str, Any],
     skip_casa: bool,
     skip_rust: bool,
+    reuse_casa: bool = False,
 ) -> dict[str, Any]:
     missing = rust_missing_capabilities(imaging)
     casa_target = {
-        "status": "unavailable" if skip_casa else "runnable",
-        "reason": "run.skip_casa is enabled" if skip_casa else None,
+        "status": (
+            "runnable" if not skip_casa else ("reused" if reuse_casa else "unavailable")
+        ),
+        "reason": (
+            None
+            if not skip_casa
+            else (
+                "frozen CASA products are reused"
+                if reuse_casa
+                else "run.skip_casa is enabled"
+            )
+        ),
         "runner": str(CASA_TCLEAN_PROTOCOL),
     }
     rust_target = {
-        "status": "unavailable" if missing else "runnable",
-        "reason": "; ".join(missing) if missing else None,
+        "status": "unavailable" if skip_rust or missing else "runnable",
+        "reason": (
+            "; ".join(missing)
+            if missing
+            else ("run.skip_rust is enabled" if skip_rust else None)
+        ),
         "missing_capabilities": missing,
     }
-    if skip_casa:
-        status = "dry_run_only"
-        reason = f"{workload_id}: CASA oracle is disabled for a recipe-backed run"
-    elif missing and not skip_rust:
+    if missing and not skip_rust:
         status = "dry_run_only"
         reason = (
             f"{workload_id}: casa-rs cannot execute the frozen semantics: "
             + "; ".join(missing)
         )
-    elif missing:
-        status = "casa_only"
+    elif not skip_rust and skip_casa and not reuse_casa:
+        status = "dry_run_only"
         reason = (
-            "CASA oracle is runnable; casa-rs is explicitly unavailable until "
-            + "; ".join(missing)
+            f"{workload_id}: recipe-bound Rust comparison requires frozen CASA "
+            "products through run.reuse_casa_prefix"
         )
-    else:
+    elif not skip_rust:
         status = "runnable"
         reason = None
+    elif not skip_casa:
+        status = "casa_only"
+        reason = "CASA oracle is runnable; casa-rs is explicitly skipped"
+    else:
+        status = "dry_run_only"
+        reason = f"{workload_id}: both recipe targets are disabled"
     return {
         "status": status,
         "reason": reason,
@@ -149,22 +168,28 @@ def recipe_run_support(
 
 
 def rust_missing_capabilities(imaging: dict[str, Any]) -> list[str]:
+    """Report actual unsupported recipe semantics at the production boundary.
+
+    The original Wave 1 implementation deliberately listed the whole VLASS
+    request as unavailable.  Keep this check fail-closed, but key it to the
+    remaining unsupported combinations now that the shared AWProject,
+    multi-SPW, POINTING, and MT-MFS paths exist.
+    """
+
     missing: list[str] = []
-    if imaging.get("gridder") in {"awproject", "awp2", "awphpg"} and any(
-        imaging.get(name) for name in ("aterm", "wbawp", "conjbeams")
-    ):
-        missing.append("true EVLA A-term/wideband/conjugate-beam CF application")
-    spw = str(imaging.get("spw", ""))
-    if "~" in spw or "," in spw:
-        missing.append("bounded multi-SPW/multi-DDID MFS selection")
-    if imaging.get("usepointing"):
-        missing.append("selection-windowed POINTING-aware joint MT-MFS")
-    if imaging.get("uvrange") or imaging.get("intent"):
-        missing.append("shared uvrange and intent selection")
-    if imaging.get("deconvolver") == "mtmfs" and int(imaging.get("nterms", 1)) > 1:
-        missing.append("complete CASA MT-MFS Taylor/PB/weight/alpha product topology")
-    if imaging.get("normtype") or imaging.get("restoringbeam"):
-        missing.append("CASA normalization and common-beam restoration semantics")
+    gridder = str(imaging.get("gridder", ""))
+    if gridder in {"awp2", "awphpg", "widefield"}:
+        missing.append(
+            f"gridder={gridder!r} is not a Rust AWProject alias; use gridder='awproject'"
+        )
+    if gridder == "awproject":
+        cfcache = imaging.get("cfcache")
+        if not isinstance(cfcache, str) or not cfcache:
+            missing.append("an explicit existing CASA AWProject CF cache path")
+        if imaging.get("specmode") != "mfs" or imaging.get("deconvolver") != "mtmfs":
+            missing.append(
+                "AWProject currently requires MFS with the MT-MFS deconvolver"
+            )
     return list(dict.fromkeys(missing))
 
 
@@ -716,6 +741,79 @@ def attach_output_paths(
         scratch_root.mkdir(parents=True, exist_ok=True)
 
 
+def attach_recipe_bound_benchmark_paths(
+    plan: dict[str, Any],
+    *,
+    output_dir: pathlib.Path,
+    artifact_root: pathlib.Path,
+    dry_run: bool,
+) -> None:
+    """Attach an atomic bundle to a Rust run bound to a frozen CASA recipe."""
+
+    evidence_role = str(plan["run"]["evidence_role"])
+    final_root = artifact_root / plan["workload"]["id"] / evidence_role / plan["run_id"]
+    partial_root = final_root.with_name(f"{final_root.name}.partial")
+    products_root = partial_root / "products"
+    comparison_root = partial_root / "comparisons"
+    execution_rust_prefix = products_root / "rust" / "rust"
+    retained_rust_prefix = final_root / "products" / "rust" / "rust"
+    requirement = plan.get("command", {}).get("evidence_storage")
+    required_root = (
+        requirement.get("required_root") if isinstance(requirement, dict) else None
+    )
+    scratch_base = (
+        pathlib.Path(required_root)
+        if isinstance(required_root, str) and required_root
+        else artifact_root.parent
+    )
+    scratch_root = scratch_base / "scratch" / plan["run_id"]
+    validate_requirement_paths(requirement, paths=[scratch_root])
+    casa_prefix = plan.get("command", {}).get("env", {}).get(
+        "IMAGER_BENCH_REUSE_CASA_PREFIX"
+    )
+    if not isinstance(casa_prefix, str) or not casa_prefix:
+        raise HarnessError(
+            "recipe-bound Rust benchmark requires a frozen CASA reuse prefix"
+        )
+
+    plan["products"] = {
+        "root": None if dry_run else str(final_root / "products"),
+        "rust_prefix": None if dry_run else str(retained_rust_prefix),
+        "casa_prefix": casa_prefix,
+        "execution_root": str(products_root),
+        "execution_rust_prefix": str(execution_rust_prefix),
+    }
+    plan["artifacts"] = {
+        "root": str(artifact_root),
+        "result_dir": str(output_dir),
+        "products_root": str(products_root),
+        "comparison_root": str(comparison_root),
+        "protocol_root": None,
+        "tmp_root": None if dry_run else str(scratch_root),
+        "bundle": {
+            "state": "planned" if dry_run else "partial",
+            "partial_root": str(partial_root),
+            "final_root": str(final_root),
+            "retained_root": None if dry_run else str(partial_root),
+            "execution_to_retained": {
+                "from": str(partial_root),
+                "to": None if dry_run else str(partial_root),
+            },
+        },
+    }
+    if not dry_run:
+        try:
+            prepare_atomic_directory_bundle(final_root)
+        except ArtifactError as error:
+            raise HarnessError(str(error)) from error
+        comparison_root.mkdir(parents=True, exist_ok=True)
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        plan["command"]["env"]["IMAGER_BENCH_KEEP_OUTPUT_ROOT"] = str(
+            products_root
+        )
+        plan["command"]["env"]["IMAGER_BENCH_TMP_ROOT"] = str(scratch_root)
+
+
 def bundle_benchmark_log_path(
     plan: dict[str, Any], fallback: pathlib.Path
 ) -> pathlib.Path:
@@ -791,6 +889,38 @@ def failed_recipe_run_result(
     }
 
 
+def failed_recipe_bound_benchmark_result(
+    plan: dict[str, Any],
+    *,
+    log_path: pathlib.Path,
+    reason: str,
+    services: ExecutionServices,
+    failure_kind: str = "harness",
+    exit_code: int = 2,
+) -> dict[str, Any]:
+    """Build a typed partial receipt for a bundled Rust benchmark failure."""
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(
+        f"status=failed_execution kind={failure_kind} reason={reason}\n",
+        encoding="utf-8",
+    )
+    results = services.empty_results(casa_status="blocked", reason=reason)
+    results["failure"] = {"kind": failure_kind, "reason": reason}
+    return {
+        "schema_version": RUN_RESULT_SCHEMA_VERSION,
+        "kind": "workload_run",
+        "status": "failed_execution",
+        **plan,
+        "started_at": plan["created_at"],
+        "completed_at": services.utc_now(),
+        "exit_code": exit_code,
+        "logs": benchmark_log_evidence(log_path),
+        "results": results,
+        "human_review": services.human_review_gate(plan, None),
+    }
+
+
 def _partial_call_records(plan: dict[str, Any]) -> list[dict[str, Any]]:
     protocol_root = pathlib.Path(plan.get("artifacts", {}).get("protocol_root", ""))
     if not protocol_root.is_dir():
@@ -824,7 +954,12 @@ def finalize_bundle_result(result: dict[str, Any]) -> dict[str, Any]:
     verified_result = result
     if eligible:
         try:
-            integrity = validate_recipe_evidence_bundle(result)
+            integrity = (
+                validate_recipe_bound_benchmark_bundle(result)
+                if result.get("command", {}).get("kind")
+                == "recipe_bound_benchmark"
+                else validate_recipe_evidence_bundle(result)
+            )
         except (BundleIntegrityError, OSError, ProtocolError) as error:
             return _failed_bundle_integrity_result(
                 result, partial_root=partial_root, reason=str(error)
@@ -904,6 +1039,15 @@ def _failed_bundle_integrity_result(
 def _bundle_promotion_eligible(result: dict[str, Any]) -> bool:
     if result.get("status") != "completed":
         return False
+    if result.get("command", {}).get("kind") == "recipe_bound_benchmark":
+        comparison = result.get("results", {}).get("product_comparison")
+        if not isinstance(comparison, dict) or comparison.get("status") != "completed":
+            return False
+        products = comparison.get("products")
+        return bool(products) and all(
+            isinstance(product, dict) and product.get("status") == "compared"
+            for product in products.values()
+        )
     repeatability = result.get("results", {}).get("casa_repeatability_comparison")
     if (
         not isinstance(repeatability, dict)
@@ -945,15 +1089,22 @@ def _bundle_publication_view(
 
     products = published.get("products")
     if isinstance(products, dict):
-        execution_prefix = products.get("execution_casa_prefix") or products.get(
-            "casa_prefix"
+        execution_products_root = products.get("execution_root") or products.get(
+            "root"
         )
-        products["execution_root"] = str(execution_root)
-        products["execution_casa_prefix"] = execution_prefix
-        products["root"] = str(retained_root)
-        products["casa_prefix"] = _retained_path(
-            execution_prefix, execution_root, retained_root
+        products["execution_root"] = execution_products_root
+        products["root"] = _retained_path(
+            execution_products_root, execution_root, retained_root
         )
+        for implementation in ("rust", "casa"):
+            prefix_key = f"{implementation}_prefix"
+            execution_key = f"execution_{prefix_key}"
+            execution_prefix = products.get(execution_key) or products.get(prefix_key)
+            if execution_prefix is not None:
+                products[execution_key] = execution_prefix
+                products[prefix_key] = _retained_path(
+                    execution_prefix, execution_root, retained_root
+                )
 
     logs = published.get("logs")
     if isinstance(logs, dict):
@@ -967,13 +1118,25 @@ def _bundle_publication_view(
     if isinstance(results, dict):
         product_paths = results.get("product_paths")
         if isinstance(product_paths, dict):
-            execution_prefix = product_paths.get(
-                "execution_casa_prefix"
-            ) or product_paths.get("casa_prefix")
-            product_paths["execution_casa_prefix"] = execution_prefix
-            product_paths["casa_prefix"] = _retained_path(
-                execution_prefix, execution_root, retained_root
+            product_root = product_paths.get("execution_product_root") or product_paths.get(
+                "product_root"
             )
+            if product_root is not None:
+                product_paths["execution_product_root"] = product_root
+                product_paths["product_root"] = _retained_path(
+                    product_root, execution_root, retained_root
+                )
+            for implementation in ("rust", "casa"):
+                prefix_key = f"{implementation}_prefix"
+                execution_key = f"execution_{prefix_key}"
+                execution_prefix = product_paths.get(execution_key) or product_paths.get(
+                    prefix_key
+                )
+                if execution_prefix is not None:
+                    product_paths[execution_key] = execution_prefix
+                    product_paths[prefix_key] = _retained_path(
+                        execution_prefix, execution_root, retained_root
+                    )
         calls = results.get("casa_tclean_calls")
         if isinstance(calls, dict):
             for records in calls.values():
@@ -992,6 +1155,14 @@ def _bundle_publication_view(
                     _attach_retained_comparison_paths(
                         comparison, execution_root, retained_root
                     )
+        comparison = results.get("product_comparison")
+        if isinstance(comparison, dict) and any(
+            comparison.get(key) is not None
+            for key in ("input", "output", "log", "panel_dir")
+        ):
+            _attach_retained_comparison_paths(
+                comparison, execution_root, retained_root
+            )
     return published
 
 
@@ -1209,7 +1380,10 @@ def validate_storage_preconditions(
     artifact_root: pathlib.Path,
     cf_cache_root: pathlib.Path,
 ) -> None:
-    if plan.get("command", {}).get("kind") != "casa_tclean_protocol":
+    if plan.get("command", {}).get("kind") not in {
+        "casa_tclean_protocol",
+        "recipe_bound_benchmark",
+    }:
         return
     dataset_path = pathlib.Path(plan["dataset"]["path"])
     if not dataset_path.is_absolute():

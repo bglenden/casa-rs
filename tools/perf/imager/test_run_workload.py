@@ -1064,6 +1064,40 @@ real 1.145408
             str(run_workload.perf_paths.DEFAULT_EXTERNAL_ARTIFACT_ROOT),
         )
 
+    def test_reused_product_prefix_requires_an_exact_safe_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            prefix = Path(temporary) / "casa"
+            for suffix in (".image", ".psf"):
+                Path(f"{prefix}{suffix}").mkdir()
+
+            run_workload.validate_reused_product_prefix(
+                str(prefix),
+                expected_suffixes=[".image", ".psf"],
+                require_existing=True,
+                label="frozen CASA",
+            )
+            Path(f"{prefix}.unexpected").mkdir()
+            with self.assertRaisesRegex(
+                run_workload.HarnessError, "product inventory mismatch"
+            ):
+                run_workload.validate_reused_product_prefix(
+                    str(prefix),
+                    expected_suffixes=[".image", ".psf"],
+                    require_existing=True,
+                    label="frozen CASA",
+                )
+
+    def test_reused_product_prefix_is_absolute_even_for_dry_runs(self) -> None:
+        with self.assertRaisesRegex(
+            run_workload.HarnessError, "product prefix must be absolute"
+        ):
+            run_workload.validate_reused_product_prefix(
+                "relative/casa",
+                expected_suffixes=[".image"],
+                require_existing=False,
+                label="frozen CASA",
+            )
+
     def test_generic_comparison_uses_a_bound_absolute_structure_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -1146,7 +1180,7 @@ real 1.145408
                 result,
             )
 
-    def test_vlass_recipe_plan_preserves_real_aw_and_reports_rust_unavailable(
+    def test_vlass_smoke_recipe_plan_requires_an_explicit_rust_cf_cache(
         self,
     ) -> None:
         manifest_path = run_workload.WORKLOAD_DIR / "vlass-fragment-smoke-cold.json"
@@ -1180,7 +1214,7 @@ real 1.145408
             "unavailable", plan["run_support"]["targets"]["rust"]["status"]
         )
         self.assertIn(
-            "true EVLA A-term",
+            "explicit existing CASA AWProject CF cache",
             plan["run_support"]["targets"]["rust"]["reason"],
         )
         effective = plan["command"]["casa"]["effective_plan"]["effective_kwargs"]
@@ -1210,6 +1244,105 @@ real 1.145408
         self.assertNotIn("source_path", cache_geometry)
         self.assertNotIn("status", cache_geometry["dataset"])
         self.assertNotIn("path", plan["command"]["casa"]["cache_plan"]["dataset"])
+
+    def test_vlass_full_dirty_manifests_are_recipe_bound_rust_comparisons(
+        self,
+    ) -> None:
+        for stem, expected_field in (
+            ("single-field", "1525"),
+            ("all-fields", "1107~1127,1512~1532,1542~1562"),
+        ):
+            manifest_path = (
+                run_workload.WORKLOAD_DIR / f"vlass-fragment-{stem}.json"
+            )
+            manifest = run_workload.load_manifest(manifest_path)
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "CASA_RS_VLASS_DATA_ROOT": "/Volumes/GLENDENNING/test-data",
+                    "CASA_RS_CASA_PYTHON": sys.executable,
+                },
+                clear=False,
+            ):
+                plan = run_workload.build_plan(
+                    manifest_path=manifest_path,
+                    manifest=manifest,
+                    repeats_override=None,
+                    run_label_override=None,
+                    storage_label_override=None,
+                    dry_run=True,
+                )
+
+            self.assertEqual("runnable", plan["run_support"]["status"], stem)
+            self.assertEqual(
+                "reused", plan["run_support"]["targets"]["casa"]["status"], stem
+            )
+            self.assertEqual(
+                "recipe_bound_benchmark", plan["command"]["kind"], stem
+            )
+            self.assertEqual("runnable", plan["command"]["rust"]["status"], stem)
+            self.assertEqual([], plan["command"]["rust"]["missing_capabilities"])
+            self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_SKIP_CASA"])
+            self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_SKIP_RUST"])
+            self.assertTrue(
+                plan["command"]["env"]["IMAGER_BENCH_REUSE_CASA_PREFIX"].startswith(
+                    "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/"
+                )
+            )
+            self.assertTrue(
+                plan["command"]["env"]["IMAGER_BENCH_CFCACHE"].startswith(
+                    "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/"
+                )
+            )
+            self.assertEqual(
+                expected_field,
+                plan["command"]["rust"]["intended_parameters"]["field"],
+            )
+            self.assertEqual(
+                "serial_cpu_parity", plan["review"]["evidence_role"], stem
+            )
+            run_workload.attach_output_paths(
+                plan,
+                Path("/tmp/vlass-results"),
+                Path("/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts"),
+                dry_run=True,
+            )
+            bundle = plan["artifacts"]["bundle"]
+            self.assertEqual("planned", bundle["state"], stem)
+            self.assertTrue(bundle["partial_root"].endswith(".partial"), stem)
+            self.assertIn(
+                "/products/rust/rust",
+                plan["products"]["execution_rust_prefix"],
+                stem,
+            )
+            self.assertEqual(
+                plan["command"]["env"]["IMAGER_BENCH_REUSE_CASA_PREFIX"],
+                plan["products"]["casa_prefix"],
+                stem,
+            )
+            self.assertNotIn(
+                "IMAGER_BENCH_KEEP_OUTPUT_ROOT", plan["command"]["env"], stem
+            )
+
+    def test_recipe_support_fails_closed_when_both_targets_are_disabled(self) -> None:
+        support = run_workload.casa_tclean_workflow.recipe_run_support(
+            workload_id="disabled-recipe",
+            imaging={
+                "gridder": "awproject",
+                "specmode": "mfs",
+                "deconvolver": "mtmfs",
+                "cfcache": "/tmp/frozen-cf-cache",
+            },
+            skip_casa=True,
+            skip_rust=True,
+        )
+
+        self.assertEqual("dry_run_only", support["status"])
+        self.assertEqual("unavailable", support["targets"]["casa"]["status"])
+        self.assertEqual("unavailable", support["targets"]["rust"]["status"])
+        self.assertEqual(
+            "run.skip_rust is enabled", support["targets"]["rust"]["reason"]
+        )
 
     def test_vlass_cold_and_warm_smokes_share_one_complete_cf_plan(self) -> None:
         plan_hashes = []

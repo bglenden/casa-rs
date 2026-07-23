@@ -211,7 +211,10 @@ def main() -> None:
             else casa_tclean_workflow.default_cf_cache_root(plan, artifact_root)
         )
         output_dir.mkdir(parents=True, exist_ok=True)
-        if not args.dry_run and plan["command"].get("kind") != "casa_tclean_protocol":
+        if not args.dry_run and plan["command"].get("kind") not in {
+            "casa_tclean_protocol",
+            "recipe_bound_benchmark",
+        }:
             perf_paths.mark_safe_to_delete(artifact_root)
         if not args.dry_run:
             casa_tclean_workflow.validate_storage_preconditions(
@@ -249,7 +252,10 @@ def main() -> None:
 
         result = run_plan(plan, log_path)
         result["logs"] = casa_tclean_workflow.benchmark_log_evidence(log_path)
-        if plan["command"].get("kind") == "casa_tclean_protocol":
+        if plan["command"].get("kind") in {
+            "casa_tclean_protocol",
+            "recipe_bound_benchmark",
+        }:
             result = casa_tclean_workflow.finalize_bundle_result(result)
         exit_code = normalize_cli_exit_code(result)
         validate_run_result(result, source=str(result_path))
@@ -259,13 +265,17 @@ def main() -> None:
             raise SystemExit(exit_code)
     except KeyboardInterrupt:
         if plan is not None and result_path is not None and log_path is not None:
-            result = casa_tclean_workflow.interrupted_run_result(
+            result = failed_bundled_run_result(
                 plan,
                 log_path=log_path,
                 reason="workload interrupted by operator before completion",
-                services=recipe_execution_services(),
+                failure_kind="operator_interrupt",
+                exit_code=130,
             )
-            if plan["command"].get("kind") == "casa_tclean_protocol":
+            if plan["command"].get("kind") in {
+                "casa_tclean_protocol",
+                "recipe_bound_benchmark",
+            }:
                 result = casa_tclean_workflow.finalize_bundle_result(result)
             validate_run_result(result, source=str(result_path))
             atomic_write_json(result_path, result)
@@ -276,16 +286,16 @@ def main() -> None:
             plan is not None
             and result_path is not None
             and log_path is not None
-            and plan.get("command", {}).get("kind") == "casa_tclean_protocol"
+            and plan.get("command", {}).get("kind")
+            in {"casa_tclean_protocol", "recipe_bound_benchmark"}
             and pathlib.Path(
                 plan.get("artifacts", {}).get("bundle", {}).get("partial_root", "")
             ).is_dir()
         ):
-            result = casa_tclean_workflow.failed_recipe_run_result(
+            result = failed_bundled_run_result(
                 plan,
                 log_path=log_path,
                 reason=str(error),
-                services=recipe_execution_services(),
             )
             result = casa_tclean_workflow.finalize_bundle_result(result)
             validate_run_result(result, source=str(result_path))
@@ -298,17 +308,17 @@ def main() -> None:
             plan is not None
             and result_path is not None
             and log_path is not None
-            and plan.get("command", {}).get("kind") == "casa_tclean_protocol"
+            and plan.get("command", {}).get("kind")
+            in {"casa_tclean_protocol", "recipe_bound_benchmark"}
             and pathlib.Path(
                 plan.get("artifacts", {}).get("bundle", {}).get("partial_root", "")
             ).is_dir()
         ):
             try:
-                result = casa_tclean_workflow.failed_recipe_run_result(
+                result = failed_bundled_run_result(
                     plan,
                     log_path=log_path,
                     reason=f"{type(error).__name__}: {error}",
-                    services=recipe_execution_services(),
                     failure_kind="harness_internal",
                     exit_code=1,
                 )
@@ -529,6 +539,7 @@ def build_plan(
             imaging=imaging,
             skip_casa=boolean_flag(skip_casa),
             skip_rust=boolean_flag(skip_rust),
+            reuse_casa=bool(reuse_casa_prefix),
         )
     if not dry_run and run_support["status"] not in {"runnable", "casa_only"}:
         raise HarnessError(f"{workload_id}: {run_support['reason']}")
@@ -546,6 +557,14 @@ def build_plan(
 
     dataset_path = resolve_dataset_path(dataset, dry_run=dry_run)
     rust_requested = not boolean_flag(skip_rust)
+    comparison_products = product_suffixes_value(comparison)
+    if reuse_casa_prefix and rust_requested:
+        validate_reused_product_prefix(
+            reuse_casa_prefix,
+            expected_suffixes=comparison_products,
+            require_existing=not dry_run,
+            label="frozen CASA",
+        )
     resolved_cfcache = ""
     if imaging.get("cfcache") is not None:
         resolved_cfcache = str(
@@ -750,6 +769,14 @@ def build_plan(
         command_plan["evidence_storage"] = casa_tclean_workflow.storage_requirement(
             run, dataset
         )
+        if rust_requested:
+            command_plan.update(
+                {
+                    "kind": "recipe_bound_benchmark",
+                    "argv": command,
+                    "env": env,
+                }
+            )
     else:
         command_plan = {"kind": "legacy_benchmark_script", "argv": command, "env": env}
     plan = {
@@ -843,7 +870,7 @@ def build_plan(
         "review": review_contract_value(manifest, run),
         "comparison": {
             "mode": str_value(comparison, "mode", "sampled"),
-            "products": product_suffixes_value(comparison),
+            "products": comparison_products,
             "max_elements_per_product": int_value(
                 comparison, "max_elements_per_product", 1_000_000
             ),
@@ -894,6 +921,14 @@ def attach_output_paths(
             dry_run=dry_run,
         )
         return
+    if plan["command"].get("kind") == "recipe_bound_benchmark":
+        casa_tclean_workflow.attach_recipe_bound_benchmark_paths(
+            plan,
+            output_dir=output_dir,
+            artifact_root=artifact_root,
+            dry_run=dry_run,
+        )
+        return
     product_root = artifact_root / "products" / plan["run_id"]
     comparison_root = artifact_root / "comparisons" / plan["run_id"]
     tmp_root = artifact_root / "tmp"
@@ -913,6 +948,48 @@ def attach_output_paths(
         tmp_root.mkdir(parents=True, exist_ok=True)
         plan["command"]["env"]["IMAGER_BENCH_KEEP_OUTPUT_ROOT"] = str(product_root)
         plan["command"]["env"]["IMAGER_BENCH_TMP_ROOT"] = str(tmp_root)
+
+
+def validate_reused_product_prefix(
+    value: str,
+    *,
+    expected_suffixes: list[str],
+    require_existing: bool,
+    label: str,
+) -> None:
+    """Fail before an expensive run when a reused product family is incomplete."""
+
+    prefix = pathlib.Path(os.path.expanduser(value))
+    if not prefix.is_absolute():
+        raise HarnessError(f"{label} product prefix must be absolute: {prefix}")
+    if not require_existing:
+        return
+    parent = prefix.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise HarnessError(f"{label} product parent is missing or unsafe: {parent}")
+    stem = prefix.name
+    observed = sorted(
+        path.name[len(stem) :]
+        for path in parent.iterdir()
+        if path.name.startswith(stem)
+        and path.name != stem
+        and path.name[len(stem) :].startswith(".")
+    )
+    expected = sorted(expected_suffixes)
+    if observed != expected:
+        raise HarnessError(
+            f"{label} product inventory mismatch: expected {expected}, got {observed}"
+        )
+    unsafe = [
+        pathlib.Path(f"{prefix}{suffix}")
+        for suffix in expected
+        if not pathlib.Path(f"{prefix}{suffix}").is_dir()
+        or pathlib.Path(f"{prefix}{suffix}").is_symlink()
+    ]
+    if unsafe:
+        raise HarnessError(
+            f"{label} product inventory contains missing or unsafe trees: {unsafe}"
+        )
 
 
 def benchmark_run_support(
@@ -1109,6 +1186,36 @@ def recipe_execution_services() -> casa_tclean_workflow.ExecutionServices:
         comparison_evidence_status=comparison_evidence_status,
         human_review_gate=human_review_gate,
         compare_image_products=compare_image_products,
+    )
+
+
+def failed_bundled_run_result(
+    plan: dict[str, Any],
+    *,
+    log_path: pathlib.Path,
+    reason: str,
+    failure_kind: str = "harness",
+    exit_code: int = 2,
+) -> dict[str, Any]:
+    """Build the command-kind-specific typed failure receipt."""
+
+    services = recipe_execution_services()
+    if plan.get("command", {}).get("kind") == "recipe_bound_benchmark":
+        return casa_tclean_workflow.failed_recipe_bound_benchmark_result(
+            plan,
+            log_path=log_path,
+            reason=reason,
+            services=services,
+            failure_kind=failure_kind,
+            exit_code=exit_code,
+        )
+    return casa_tclean_workflow.failed_recipe_run_result(
+        plan,
+        log_path=log_path,
+        reason=reason,
+        services=services,
+        failure_kind=failure_kind,
+        exit_code=exit_code,
     )
 
 
@@ -1618,6 +1725,8 @@ def summarize_backend_plan_logs(
             "gpu_metal": single_plane.get("gpu_metal_reason"),
         },
         "resolved_backend": runtime.get("backend"),
+        "resolved_auto_metal": runtime.get("auto_metal"),
+        "resolved_auto_metal_reason": runtime.get("auto_metal_reason"),
         "resolved_grid_threads": runtime.get("grid_threads"),
         "resolved_tile_anchor": runtime.get("tile_anchor"),
         "resolved_residual_backend": runtime.get("residual_backend"),

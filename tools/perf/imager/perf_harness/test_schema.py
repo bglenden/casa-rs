@@ -41,12 +41,21 @@ ALTERNATING_RESULT = (
 )
 VLASS_WORKLOADS = {
     "vlass-fragment-single-field.json",
+    "vlass-fragment-single-field-auto.json",
     "vlass-fragment-single-field-cold.json",
     "vlass-fragment-all-fields.json",
+    "vlass-fragment-all-fields-auto.json",
     "vlass-fragment-all-fields-cold.json",
     "vlass-fragment-smoke-cold.json",
     "vlass-fragment-smoke-warm.json",
 }
+VLASS_CASA_ONLY_WORKLOADS = {
+    "vlass-fragment-single-field-cold.json",
+    "vlass-fragment-all-fields-cold.json",
+    "vlass-fragment-smoke-cold.json",
+    "vlass-fragment-smoke-warm.json",
+}
+VLASS_RUST_FINAL_WORKLOADS = VLASS_WORKLOADS - VLASS_CASA_ONLY_WORKLOADS
 VLASS_TURNAROUND_WORKLOAD = "vlass-awproject-turnaround.json"
 VLASS_TURNAROUND_METAL_WORKLOAD = "vlass-awproject-turnaround-metal.json"
 
@@ -730,14 +739,21 @@ class SchemaTests(unittest.TestCase):
             VLASS_RUNTIME_SHA256,
             hashlib.sha256(VLASS_RUNTIME.read_bytes()).hexdigest(),
         )
-        for manifest in loaded.values():
+        for name, manifest in loaded.items():
             self.assertEqual(1, manifest["schema_version"])
             self.assertEqual("CASA_RS_VLASS_DATA_ROOT", manifest["dataset"]["root_env"])
             self.assertEqual(
                 "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms",
                 manifest["dataset"]["relative_path"],
             )
-            self.assertEqual("1", manifest["run"]["skip_rust"])
+            if name in VLASS_CASA_ONLY_WORKLOADS:
+                self.assertEqual("1", manifest["run"]["skip_rust"])
+            else:
+                self.assertEqual("1", manifest["run"]["skip_casa"])
+                self.assertNotIn("skip_rust", manifest["run"])
+                self.assertIn("reuse_casa_prefix", manifest["run"])
+                self.assertIn("cfcache", manifest["imaging"])
+                self.assertEqual(256, manifest["imaging"]["cf_resident_mb"])
             self.assertEqual(
                 "tools/perf/imager/recipes/vlass-fragment-tclean.last",
                 manifest["casa"]["recipe_path"],
@@ -813,35 +829,45 @@ class SchemaTests(unittest.TestCase):
         )
         for stem in ("single-field", "all-fields"):
             cold = loaded[f"vlass-fragment-{stem}-cold.json"]
-            warm = loaded[f"vlass-fragment-{stem}.json"]
+            serial = loaded[f"vlass-fragment-{stem}.json"]
+            auto = loaded[f"vlass-fragment-{stem}-auto.json"]
             self.assertEqual(
                 ("cold", 0), (cold["run"]["cf_cache_role"], cold["run"]["warmups"])
             )
             self.assertEqual(
-                ("warm", 1), (warm["run"]["cf_cache_role"], warm["run"]["warmups"])
+                ("warm", 1),
+                (serial["run"]["cf_cache_role"], serial["run"]["warmups"]),
             )
-            for manifest in (cold, warm):
+            self.assertEqual(
+                ("warm", 1),
+                (auto["run"]["cf_cache_role"], auto["run"]["warmups"]),
+            )
+            for manifest in (cold, serial, auto):
                 self.assertIn(
                     manifest["run"]["evidence_role"],
                     manifest["review"]["required_evidence_roles"],
                 )
-            cold_common = copy.deepcopy(cold)
-            warm_common = copy.deepcopy(warm)
-            for manifest in (cold_common, warm_common):
+            serial_common = copy.deepcopy(serial)
+            auto_common = copy.deepcopy(auto)
+            for manifest in (serial_common, auto_common):
                 manifest.pop("id")
+                manifest.pop("mode_id")
                 manifest.pop("description")
                 for field in (
-                    "cf_cache_role",
                     "evidence_role",
-                    "repeats",
                     "run_label",
-                    "warmups",
                 ):
                     manifest["run"].pop(field)
+                manifest["review"]["required_evidence_roles"] = []
+            serial_common["imaging"].pop("parallel")
+            auto_common["imaging"].pop("parallel")
+            serial_common["imaging"].pop("standard_mfs_acceleration")
+            auto_common["imaging"].pop("standard_mfs_acceleration")
+            auto_common["imaging"].pop("imaging_memory_target_mb")
             self.assertEqual(
-                cold_common,
-                warm_common,
-                f"VLASS {stem} cold/warm manifests drifted outside run-role fields",
+                serial_common,
+                auto_common,
+                f"VLASS {stem} serial/auto manifests drifted outside execution policy",
             )
         for name in (
             "vlass-fragment-smoke-cold.json",

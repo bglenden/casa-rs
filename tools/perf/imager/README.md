@@ -171,12 +171,44 @@ tools/perf/imager/run_workload.py --dry-run vlass-fragment-single-field \
   --cf-cache-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache
 ```
 
-The full workloads have explicit cold and warm evidence manifests. Run
-`vlass-fragment-single-field-cold` or `vlass-fragment-all-fields-cold` once to
-measure CF construction and publish a schema-v2 cache receipt, then run the
-corresponding unsuffixed warm manifest to measure reuse. Each cold/warm pair
-derives the same plan-keyed CF identity; the only intentional run differences
-are cache role, repeat count, label, and evidence role.
+The full workloads have explicit CASA-fiducial and Rust-final manifests. The
+checked-in `-cold` rows created the frozen CASA products and schema-v2 CF cache
+receipts. The unsuffixed `vlass-fragment-single-field` and
+`vlass-fragment-all-fields` rows now run serial Rust correctness/performance
+baselines against those exact products; the corresponding `-auto` rows exercise
+the public machine-adaptive policy. The four Rust rows reuse CASA and never
+launch another CASA timing. Every row retains the same plan-keyed CF identity,
+frozen recipe, selection, product inventory, and tolerances.
+
+The four Rust rows use the same fail-closed publication protocol as recipe
+evidence: execution stays below `<run-id>.partial`; the harness revalidates the
+bound comparator files, exact product inventories, passed tolerances, review
+panels, and benchmark-log digest; and only a complete bundle is atomically
+renamed to `<run-id>`. A failed or interrupted run keeps its typed partial
+receipt for diagnosis.
+
+On the 32 GiB final laptop, run the serial dirty rows first:
+
+```sh
+export CASA_RS_VLASS_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-vlass/issue-446/data/\
+b80d5e87487ab8ab01faa064c4cd48db6d93446fd0add208c051dd574e0d353a
+export CASA_RS_CASA_PYTHON=/absolute/path/to/casa-6.7.5.9/bin/python
+
+python3 tools/perf/imager/run_workload.py vlass-fragment-single-field \
+  --output-dir /Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs \
+  --artifact-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts \
+  --cf-cache-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache
+python3 tools/perf/imager/run_workload.py vlass-fragment-all-fields \
+  --output-dir /Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs \
+  --artifact-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts \
+  --cf-cache-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache
+```
+
+Require both full-array comparisons to pass before replacing the workload name
+with `vlass-fragment-single-field-auto` and
+`vlass-fragment-all-fields-auto`. The deterministic mask and clean manifests
+remain separate required work; do not infer clean acceptance from these dirty
+rows.
 
 For a mode-faithful Mac-mini development loop when the frozen VLASS archive is
 not mounted, stage the reduced fixture with CASA 6.7.5.18 and run its canonical
@@ -347,9 +379,11 @@ parameters/data/geometry/products change, or casa-rs is close enough to the
 10x boundary that CASA variance could change pass/fail. Full geometry is
 feasible and the 8,192-pixel fallback is not active.
 
-Wave #446 stays open and its implementation PR stays draft while the frozen
-CASA products are integrated into serial casa-rs correctness evidence; no
-additional CASA timing repetition is required for current development.
+Wave #446 stays open and its implementation PR stays draft. The frozen dirty
+CASA products are now bound directly into runnable serial and public-auto Rust
+comparison manifests; the full laptop receipts have not run. The deterministic
+mask plus both frozen clean CASA/Rust rows also remain required. No additional
+dirty CASA timing repetition is required for current development.
 
 ### Production parameter and UI contract
 

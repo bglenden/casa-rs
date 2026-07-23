@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "id": "vlass-fragment-single-field",
-  "mode_id": "vlass-awproject-mtmfs-single-field",
-  "description": "Full-geometry field-1525 VLASS fragment serial-CPU dirty comparison against the frozen CASA 6.7.5.9 products, retaining the exact recipe, dataset, CF-plan, and 18-product contract.",
+  "id": "vlass-fragment-all-fields-auto",
+  "mode_id": "vlass-awproject-mtmfs-raster-patch-auto",
+  "description": "Full-geometry connected-63-field VLASS fragment public-auto dirty comparison against the frozen CASA 6.7.5.9 products, retaining the exact recipe, dataset, CF-plan, and 18-product contract.",
   "casa": {
     "dataset_geometry_path": "tools/perf/imager/recipes/vlass-fragment-dataset-geometry.json",
-    "dataset_selection": "single_field",
+    "dataset_selection": "all_fields",
     "dataset_geometry_sha256": "28b1350f2754e4439a0ac94480eb4efb054ecf03f221c805e98cf34c6b5f77f1",
     "recipe_path": "tools/perf/imager/recipes/vlass-fragment-tclean.last",
     "recipe_sha256": "a64e6213d66436fee6d602eb5bbda3ac8667b8df2491ea7310557748bbbf15b5",
@@ -24,7 +24,7 @@
     "casa_gridder": "awproject",
     "wterm": "wproject",
     "wprojplanes": 32,
-    "field": "1525",
+    "field": "1107~1127,1512~1532,1542~1562",
     "phasecenter_field": 1525,
     "spw": "2~17",
     "channel_start": 0,
@@ -77,9 +77,10 @@
     "savemodel": "none",
     "calcres": true,
     "calcpsf": true,
-    "parallel": false,
-    "standard_mfs_acceleration": "cpu",
-    "cfcache": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/8e5679681214158629c7eb6113bc3b062d6105fbae64471905aa73de50080a69",
+    "parallel": true,
+    "standard_mfs_acceleration": "auto",
+    "imaging_memory_target_mb": 32768,
+    "cfcache": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/f6f947c5104f8da579f9411dd7087dd331c9e59034073a9fd68b5d6132cd281d",
     "cf_resident_mb": 256
   },
   "run": {
@@ -87,13 +88,13 @@
     "warmups": 1,
     "profile_repeats": 1,
     "stream_log": true,
-    "run_label": "vlass-single-field-rust-serial-dirty-final",
+    "run_label": "vlass-all-fields-rust-auto-dirty-final",
     "storage_label": "GLENDENNING-vlass-archive",
     "ms_staging": "direct",
     "skip_casa": "1",
-    "reuse_casa_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/vlass-fragment-single-field-cold/casa_cold_dirty_fiducial/20260721T051546Z-vlass-fragment-single-field-cold-164bd8e1/casa/measured-001/casa",
+    "reuse_casa_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/vlass-fragment-all-fields-cold/casa_cold_dirty_fiducial/20260721T071009Z-vlass-fragment-all-fields-cold-3d3179ae/casa/measured-001/casa",
     "cf_cache_role": "warm",
-    "evidence_role": "serial_cpu_parity"
+    "evidence_role": "auto_final_dirty"
   },
   "review": {
     "required_reviewer": "Brian",
@@ -101,8 +102,8 @@
     "required_evidence_roles": [
       "casa_product_inventory_discovery",
       "casa_cold_dirty_fiducial",
-      "casa_warm_dirty_fiducial",
-      "serial_cpu_parity"
+      "serial_cpu_parity",
+      "auto_final_dirty"
     ]
   },
   "comparison": {

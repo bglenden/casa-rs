@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "id": "vlass-fragment-single-field",
-  "mode_id": "vlass-awproject-mtmfs-single-field",
-  "description": "Full-geometry field-1525 VLASS fragment serial-CPU dirty comparison against the frozen CASA 6.7.5.9 products, retaining the exact recipe, dataset, CF-plan, and 18-product contract.",
+  "id": "vlass-fragment-single-field-auto",
+  "mode_id": "vlass-awproject-mtmfs-single-field-auto",
+  "description": "Full-geometry field-1525 VLASS fragment public-auto dirty comparison against the frozen CASA 6.7.5.9 products, retaining the exact recipe, dataset, CF-plan, and 18-product contract.",
   "casa": {
     "dataset_geometry_path": "tools/perf/imager/recipes/vlass-fragment-dataset-geometry.json",
     "dataset_selection": "single_field",
@@ -77,8 +77,9 @@
     "savemodel": "none",
     "calcres": true,
     "calcpsf": true,
-    "parallel": false,
-    "standard_mfs_acceleration": "cpu",
+    "parallel": true,
+    "standard_mfs_acceleration": "auto",
+    "imaging_memory_target_mb": 32768,
     "cfcache": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/8e5679681214158629c7eb6113bc3b062d6105fbae64471905aa73de50080a69",
     "cf_resident_mb": 256
   },
@@ -87,13 +88,13 @@
     "warmups": 1,
     "profile_repeats": 1,
     "stream_log": true,
-    "run_label": "vlass-single-field-rust-serial-dirty-final",
+    "run_label": "vlass-single-field-rust-auto-dirty-final",
     "storage_label": "GLENDENNING-vlass-archive",
     "ms_staging": "direct",
     "skip_casa": "1",
     "reuse_casa_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/vlass-fragment-single-field-cold/casa_cold_dirty_fiducial/20260721T051546Z-vlass-fragment-single-field-cold-164bd8e1/casa/measured-001/casa",
     "cf_cache_role": "warm",
-    "evidence_role": "serial_cpu_parity"
+    "evidence_role": "auto_final_dirty"
   },
   "review": {
     "required_reviewer": "Brian",
@@ -101,8 +102,8 @@
     "required_evidence_roles": [
       "casa_product_inventory_discovery",
       "casa_cold_dirty_fiducial",
-      "casa_warm_dirty_fiducial",
-      "serial_cpu_parity"
+      "serial_cpu_parity",
+      "auto_final_dirty"
     ]
   },
   "comparison": {

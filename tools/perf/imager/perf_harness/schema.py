@@ -371,6 +371,7 @@ PRODUCT_PATH_FIELDS = {
     "casa_prefix",
     "execution_root",
     "execution_casa_prefix",
+    "execution_rust_prefix",
 }
 LOG_FIELDS = {
     "benchmark_log",
@@ -1547,7 +1548,7 @@ def _validate_result_command(value: Any, *, source: str) -> None:
         _string_list_allow_empty(command.get("argv"), f"{source}: argv")
         _validate_string_map(command.get("env"), f"{source}: env")
         return
-    if kind != "casa_tclean_protocol":
+    if kind not in {"casa_tclean_protocol", "recipe_bound_benchmark"}:
         raise ContractError(f"{source}: unsupported command kind {kind!r}")
     _allowed_fields(
         command,
@@ -1796,7 +1797,14 @@ def _validate_results(
         paths = _require_dict(value["product_paths"], f"{source}: product_paths")
         _allowed_fields(
             paths,
-            {"product_root", "rust_prefix", "casa_prefix", "execution_casa_prefix"},
+            {
+                "product_root",
+                "rust_prefix",
+                "casa_prefix",
+                "execution_product_root",
+                "execution_rust_prefix",
+                "execution_casa_prefix",
+            },
             f"{source}: product_paths",
         )
         for key, item in paths.items():

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "vlass-fragment-all-fields",
   "mode_id": "vlass-awproject-mtmfs-raster-patch",
-  "description": "Full-geometry joint dirty image of all 63 connected VLASS fragment fields with the exact product inventory discovered by the accepted cold/warm smoke. Rust is skipped until true AW plus multi-SPW POINTING-aware MT-MFS is implemented.",
+  "description": "Full-geometry connected-63-field VLASS fragment serial-CPU dirty comparison against the frozen CASA 6.7.5.9 products, retaining the exact recipe, dataset, CF-plan, and 18-product contract.",
   "casa": {
     "dataset_geometry_path": "tools/perf/imager/recipes/vlass-fragment-dataset-geometry.json",
     "dataset_selection": "all_fields",
@@ -78,18 +78,22 @@
     "calcres": true,
     "calcpsf": true,
     "parallel": false,
-    "standard_mfs_acceleration": "cpu"
+    "standard_mfs_acceleration": "cpu",
+    "cfcache": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/f6f947c5104f8da579f9411dd7087dd331c9e59034073a9fd68b5d6132cd281d",
+    "cf_resident_mb": 256
   },
   "run": {
     "repeats": 3,
     "warmups": 1,
-    "run_label": "vlass-all-fields-casa-warm-dirty-fiducial",
+    "profile_repeats": 1,
+    "stream_log": true,
+    "run_label": "vlass-all-fields-rust-serial-dirty-final",
     "storage_label": "GLENDENNING-vlass-archive",
     "ms_staging": "direct",
-    "skip_rust": "1",
-    "skip_profile": "1",
+    "skip_casa": "1",
+    "reuse_casa_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/vlass-fragment-all-fields-cold/casa_cold_dirty_fiducial/20260721T071009Z-vlass-fragment-all-fields-cold-3d3179ae/casa/measured-001/casa",
     "cf_cache_role": "warm",
-    "evidence_role": "casa_warm_dirty_fiducial"
+    "evidence_role": "serial_cpu_parity"
   },
   "review": {
     "required_reviewer": "Brian",

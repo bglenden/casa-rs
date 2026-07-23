@@ -419,6 +419,36 @@ class RecipeBundleLifecycleTests(unittest.TestCase):
                 self.assertFalse(final.exists())
                 self.assertTrue((bundle.partial_path / "receipt.json").is_file())
 
+    def test_recipe_bound_benchmark_uses_its_validator_before_promotion(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            final = pathlib.Path(temporary) / "run"
+            bundle = prepare_atomic_directory_bundle(final)
+            result = _bundle_result(bundle, comparison_status="completed")
+            result["command"] = {"kind": "recipe_bound_benchmark"}
+            result["results"]["product_comparison"] = {
+                "status": "completed",
+                "products": _comparison_products(bundle.partial_path),
+            }
+
+            with (
+                mock.patch.object(
+                    casa_tclean_workflow,
+                    "validate_recipe_bound_benchmark_bundle",
+                    return_value=_bundle_integrity_receipt(),
+                ) as validate_benchmark,
+                mock.patch.object(
+                    casa_tclean_workflow, "validate_recipe_evidence_bundle"
+                ) as validate_casa,
+                mock.patch.object(casa_tclean_workflow, "validate_run_result"),
+            ):
+                published = casa_tclean_workflow.finalize_bundle_result(result)
+
+            validate_benchmark.assert_called_once_with(result)
+            validate_casa.assert_not_called()
+            self.assertEqual("complete", published["artifacts"]["bundle"]["state"])
+            self.assertTrue(final.is_dir())
+            self.assertFalse(bundle.partial_path.exists())
+
     def test_promotion_failure_is_typed_and_preserves_partial(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             final = pathlib.Path(temporary) / "run"

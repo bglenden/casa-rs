@@ -101,6 +101,195 @@ def validate_recipe_evidence_bundle(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def validate_recipe_bound_benchmark_bundle(result: dict[str, Any]) -> dict[str, Any]:
+    """Revalidate a Rust benchmark bundle that compares against frozen CASA data."""
+
+    if result.get("status") != "completed":
+        raise BundleIntegrityError("bundle integrity requires completed run status")
+    command = _object(result, "command", "run result")
+    if command.get("kind") != "recipe_bound_benchmark":
+        raise BundleIntegrityError(
+            "Rust benchmark bundle requires recipe_bound_benchmark command kind"
+        )
+    artifacts = _object(result, "artifacts", "run result")
+    bundle = _object(artifacts, "bundle", "run result artifacts")
+    partial_root = _absolute_path(
+        bundle.get("partial_root"), label="artifact bundle partial_root"
+    )
+    if not partial_root.is_dir() or partial_root.is_symlink():
+        raise BundleIntegrityError(
+            f"artifact bundle partial_root is unavailable or unsafe: {partial_root}"
+        )
+
+    expected_suffixes = _expected_product_suffixes(result)
+    results = _object(result, "results", "run result")
+    comparison = _object(results, "product_comparison", "run results")
+    if comparison.get("status") != "completed":
+        raise BundleIntegrityError("Rust/CASA product comparison is not completed")
+
+    input_path = _bundle_file(
+        comparison.get("input"),
+        partial_root=partial_root,
+        label="Rust/CASA comparison input",
+    )
+    output_path = _bundle_file(
+        comparison.get("output"),
+        partial_root=partial_root,
+        label="Rust/CASA comparison output",
+    )
+    comparison_log = _bundle_file(
+        comparison.get("log"),
+        partial_root=partial_root,
+        label="Rust/CASA comparison log",
+    )
+    for path, digest, label in (
+        (input_path, comparison.get("input_sha256"), "Rust/CASA comparison input"),
+        (
+            output_path,
+            comparison.get("output_sha256"),
+            "Rust/CASA comparison output",
+        ),
+        (
+            comparison_log,
+            comparison.get("log_sha256"),
+            "Rust/CASA comparison log",
+        ),
+    ):
+        _validate_file_digest(path, digest, label=label)
+    request = _load_json_object(input_path, label="Rust/CASA comparison input")
+    raw_output = _load_json_object(output_path, label="Rust/CASA comparison output")
+    try:
+        validate_comparison_output(raw_output, request)
+    except ValueError as error:
+        raise BundleIntegrityError(
+            f"Rust/CASA comparison output/input binding failed: {error}"
+        ) from error
+    expected_comparison = apply_tolerance_contract(copy.deepcopy(raw_output), request)
+    expected_comparison.update(
+        {
+            "input": str(input_path),
+            "input_sha256": comparison.get("input_sha256"),
+            "output": str(output_path),
+            "output_sha256": comparison.get("output_sha256"),
+            "log": str(comparison_log),
+            "log_sha256": comparison.get("log_sha256"),
+        }
+    )
+    if comparison != expected_comparison:
+        raise BundleIntegrityError(
+            "Rust/CASA receipt fields differ from the bound comparator output"
+        )
+    if comparison.get("tolerances") is not None:
+        _validate_passed_tolerance(
+            comparison.get("tolerance_evaluation"), label="Rust/CASA comparison"
+        )
+    if comparison.get("require_exact_product_inventory") is True:
+        _validate_exact_comparison_inventory(
+            comparison.get("product_inventory"),
+            expected_suffixes=expected_suffixes,
+            label="Rust/CASA comparison",
+        )
+
+    product_paths = _object(results, "product_paths", "run results")
+    products_plan = _object(result, "products", "run result")
+    rust_prefix = _absolute_path(
+        product_paths.get("rust_prefix")
+        or products_plan.get("execution_rust_prefix")
+        or products_plan.get("rust_prefix"),
+        label="Rust product prefix",
+    )
+    casa_prefix = _absolute_path(
+        product_paths.get("casa_prefix") or products_plan.get("casa_prefix"),
+        label="frozen CASA product prefix",
+    )
+    _require_within(rust_prefix, partial_root, label="Rust product prefix")
+    if (
+        request.get("left_prefix") != str(rust_prefix)
+        or request.get("right_prefix") != str(casa_prefix)
+        or comparison.get("left_prefix") != str(rust_prefix)
+        or comparison.get("right_prefix") != str(casa_prefix)
+    ):
+        raise BundleIntegrityError(
+            "Rust/CASA comparison prefixes do not match the executed product paths"
+        )
+
+    validated_product_count = 0
+    for side, prefix in (("Rust", rust_prefix), ("CASA", casa_prefix)):
+        observed = inventory_product_siblings(prefix)
+        if [product["suffix"] for product in observed] != expected_suffixes:
+            raise BundleIntegrityError(
+                f"{side} on-disk product inventory is not exact"
+            )
+        for product in observed:
+            path = pathlib.Path(product["path"])
+            if side == "Rust":
+                _require_within(path, partial_root, label=f"Rust {product['suffix']}")
+            inventory = product["inventory"]
+            _validate_tree_inventory(
+                inventory,
+                inventory,
+                expected_root=path,
+                label=f"{side} product {product['suffix']}",
+            )
+            validated_product_count += 1
+
+    compared_products = _object(comparison, "products", "Rust/CASA comparison")
+    if list(compared_products) != expected_suffixes:
+        raise BundleIntegrityError(
+            "Rust/CASA comparison product result inventory is not exact"
+        )
+    for suffix, product in compared_products.items():
+        if not isinstance(product, dict) or product.get("status") != "compared":
+            raise BundleIntegrityError(
+                f"Rust/CASA comparison product {suffix} was not compared"
+            )
+        expected_rust = str(pathlib.Path(f"{rust_prefix}{suffix}"))
+        expected_casa = str(pathlib.Path(f"{casa_prefix}{suffix}"))
+        if product.get("left_path") != expected_rust or product.get(
+            "right_path"
+        ) != expected_casa:
+            raise BundleIntegrityError(
+                f"Rust/CASA comparison product {suffix} path binding failed"
+            )
+        if product.get("rust_path") not in {None, expected_rust} or product.get(
+            "casa_path"
+        ) not in {None, expected_casa}:
+            raise BundleIntegrityError(
+                f"Rust/CASA comparison product {suffix} alias binding failed"
+            )
+
+    workspace = _absolute_path(
+        request.get("structure_workspace_dir"),
+        label="Rust/CASA comparison structure_workspace_dir",
+    )
+    _require_within(
+        workspace,
+        partial_root,
+        label="Rust/CASA comparison structure_workspace_dir",
+    )
+    if workspace.exists() or workspace.is_symlink():
+        raise BundleIntegrityError(
+            "Rust/CASA comparison structure workspace remains after completion"
+        )
+    panel_count = _validate_comparison_panels(
+        comparison,
+        products=compared_products,
+        partial_root=partial_root,
+        label="Rust/CASA comparison",
+    )
+    _validate_benchmark_log(result, partial_root=partial_root)
+    return {
+        "status": "passed",
+        "validator_version": 1,
+        "volatile_tree_exclusions": sorted(VOLATILE_TREE_FILE_NAMES),
+        "call_count": 0,
+        "product_tree_count": validated_product_count,
+        "comparison_count": 1,
+        "written_panel_count": panel_count,
+        "cache_tree_count": 0,
+    }
+
+
 def _validate_calls(
     result: dict[str, Any],
     *,
