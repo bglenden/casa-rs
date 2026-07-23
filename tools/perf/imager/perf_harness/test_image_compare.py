@@ -531,6 +531,18 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         for visits in factory.visits.values():
             np.testing.assert_array_equal(np.ones(shape, dtype=np.int64), visits)
         self.assertEqual(1, result["topology"]["mask_mismatch_count"])
+        self.assertEqual(
+            [
+                {
+                    "location": [1, 1, 1],
+                    "left_mask": False,
+                    "right_mask": True,
+                    "left_value": 17.0,
+                    "right_value": 16.0,
+                }
+            ],
+            result["topology"]["mask_mismatch_samples"],
+        )
         self.assertEqual(1, result["topology"]["finite_topology_mismatch_count"])
         self.assertEqual(1.0, result["diff_rms"])
         self.assertEqual(1.0, result["diff_abs_max"])
@@ -539,6 +551,36 @@ class ImageComparisonProtocolTests(unittest.TestCase):
             result["difference"]["integrated_value"],
         )
         self.assertAlmostEqual(1.0, result["correlation"], places=12)
+
+    def test_full_reducer_bounds_mask_mismatch_samples(self) -> None:
+        shape = (5, 4, 3)
+        left = np.ones(shape, dtype=np.float64)
+        right = np.zeros(shape, dtype=np.float64)
+        factory = FakeImageFactory(
+            {"left": left, "right": right},
+            {
+                "left": np.zeros(shape, dtype=bool),
+                "right": np.ones(shape, dtype=bool),
+            },
+        )
+
+        result = comparator.full_array_statistics(
+            "left", "right", max_elements=7, image_factory=factory
+        )
+
+        topology = result["topology"]
+        self.assertEqual(int(np.prod(shape)), topology["mask_mismatch_count"])
+        self.assertEqual(16, len(topology["mask_mismatch_samples"]))
+        self.assertEqual([0, 0, 0], topology["mask_mismatch_samples"][0]["location"])
+        self.assertEqual(
+            16,
+            len(
+                {
+                    tuple(sample["location"])
+                    for sample in topology["mask_mismatch_samples"]
+                }
+            ),
+        )
 
     def test_full_comparison_finds_sparse_overlap_missed_by_sample_stride(self) -> None:
         shape = (5, 5)
@@ -1141,6 +1183,7 @@ def comparison_output(request):
             "topology": {
                 "mask_equal": True,
                 "mask_mismatch_count": 0,
+                "mask_mismatch_samples": [],
                 "left_masked_count": 0,
                 "right_masked_count": 0,
                 "finite_equal": True,

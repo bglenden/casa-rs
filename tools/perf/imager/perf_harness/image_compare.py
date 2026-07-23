@@ -126,6 +126,7 @@ FULL_ARRAY_TOPOLOGY_FIELDS = {
     "left_nonfinite",
     "right_nonfinite",
 }
+FULL_ARRAY_TOPOLOGY_OPTIONAL_FIELDS = {"mask_mismatch_samples"}
 FULL_ARRAY_NONFINITE_FIELDS = {
     "nan",
     "positive_infinity",
@@ -744,7 +745,11 @@ def _validate_full_array_evidence(
         raise ValueError(f"{label} full_array comparison count is invalid")
 
     topology_parity = _validate_full_array_topology(
-        full.get("topology"), total_elements=total_elements, count=count, label=label
+        full.get("topology"),
+        shape=shape,
+        total_elements=total_elements,
+        count=count,
+        label=label,
     )
     left = _validate_full_array_operand(
         full.get("left"), shape=shape, count=count, label=f"{label} left"
@@ -773,9 +778,20 @@ def _validate_full_array_evidence(
 
 
 def _validate_full_array_topology(
-    value: Any, *, total_elements: int, count: int, label: str
+    value: Any,
+    *,
+    shape: list[int],
+    total_elements: int,
+    count: int,
+    label: str,
 ) -> bool:
-    if not isinstance(value, dict) or set(value) != FULL_ARRAY_TOPOLOGY_FIELDS:
+    if (
+        not isinstance(value, dict)
+        or not FULL_ARRAY_TOPOLOGY_FIELDS.issubset(value)
+        or not set(value).issubset(
+            FULL_ARRAY_TOPOLOGY_FIELDS | FULL_ARRAY_TOPOLOGY_OPTIONAL_FIELDS
+        )
+    ):
         raise ValueError(f"{label} full_array topology fields do not match protocol")
     count_fields = (
         "mask_mismatch_count",
@@ -792,6 +808,55 @@ def _validate_full_array_topology(
     }
     if any(number > total_elements for number in counts.values()):
         raise ValueError(f"{label} full_array topology count exceeds total elements")
+
+    mismatch_samples = value.get("mask_mismatch_samples", [])
+    if not isinstance(mismatch_samples, list) or (
+        "mask_mismatch_samples" in value
+        and len(mismatch_samples) != min(counts["mask_mismatch_count"], 16)
+    ):
+        raise ValueError(f"{label} full_array mask mismatch samples are invalid")
+    sample_locations: set[tuple[int, ...]] = set()
+    for index, sample in enumerate(mismatch_samples):
+        sample_label = f"{label} mask_mismatch_samples[{index}]"
+        if not isinstance(sample, dict) or set(sample) != {
+            "location",
+            "left_mask",
+            "right_mask",
+            "left_value",
+            "right_value",
+        }:
+            raise ValueError(f"{sample_label} fields do not match protocol")
+        location = sample["location"]
+        if (
+            not isinstance(location, list)
+            or len(location) != len(shape)
+            or any(
+                not isinstance(coordinate, int)
+                or isinstance(coordinate, bool)
+                or coordinate < 0
+                or coordinate >= axis_length
+                for coordinate, axis_length in zip(location, shape)
+            )
+        ):
+            raise ValueError(f"{sample_label} location is outside the product")
+        location_key = tuple(location)
+        if location_key in sample_locations:
+            raise ValueError(f"{label} full_array mask mismatch samples repeat a location")
+        sample_locations.add(location_key)
+        if (
+            not isinstance(sample["left_mask"], bool)
+            or not isinstance(sample["right_mask"], bool)
+            or sample["left_mask"] is sample["right_mask"]
+        ):
+            raise ValueError(f"{sample_label} does not describe a mask mismatch")
+        for operand in ("left_value", "right_value"):
+            operand_value = sample[operand]
+            if operand_value is not None and (
+                not isinstance(operand_value, (int, float))
+                or isinstance(operand_value, bool)
+                or not math.isfinite(float(operand_value))
+            ):
+                raise ValueError(f"{sample_label} {operand} is invalid")
 
     flags_and_mismatches = (
         ("mask_equal", "mask_mismatch_count"),

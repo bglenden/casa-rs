@@ -24,6 +24,13 @@ class FullArrayOutputValidationTests(unittest.TestCase):
 
         validate_comparison_output(comparison_output(request), request)
 
+    def test_v4_output_without_optional_mask_mismatch_samples_is_accepted(self) -> None:
+        request = normalized_request()
+        candidate = comparison_output(request)
+        topology(candidate).pop("mask_mismatch_samples")
+
+        validate_comparison_output(candidate, request)
+
     def test_coverage_chunk_topology_and_algebra_mutations_fail_closed(self) -> None:
         request = normalized_request()
         mutations = {
@@ -284,6 +291,7 @@ def comparison_output(request: dict[str, object]) -> dict[str, object]:
         "topology": {
             "mask_equal": True,
             "mask_mismatch_count": 0,
+            "mask_mismatch_samples": [],
             "left_masked_count": 0,
             "right_masked_count": 0,
             "finite_equal": True,
