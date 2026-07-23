@@ -174,6 +174,26 @@ correctness owners before the full-size benchmark. This reduced single-field
 receipt is turnaround evidence only and does not satisfy a frozen 12,150-pixel
 gate.
 
+The next source-level metadata pass preserved the raw J2000 `FIELD.PHASE_DIR`
+angles for observation metadata, selected the first matching
+`SOURCE.REST_FREQUENCY` through the FIELD/SOURCE/SPW/DOPPLER relationship, and
+matched casacore's standard `IERSeop97`/`IERSpredict` dUT1 path while retaining
+the IAU-2000 dX/dY correction columns. It also ports casacore's standard
+106-term equation-of-equinoxes series and legacy AU light-time constant. On
+the same reduced field-0 row, pointing center and the 2.05 GHz rest frequency
+now match CASA exactly. The remaining spectral-coordinate difference is
+2.86102294921875 microhertz in `crval` and 6.198883056640625 microhertz in
+`cdelt`; eliminating it requires casacore's analytic cached-aberration
+derivative rather than further finite-difference tuning. The strict typed
+receipt is
+`/private/tmp/casa-rs-vlass-coordinate3-receipts/20260723T005411Z-vlass-awproject-turnaround-4a6fc44d.json`.
+All 18 numerical product comparisons remain inside the frozen RMS and peak
+tolerances. Exact topology still differs at one PB-cutoff pixel for the PB,
+image, and residual products and at eight pixels for each derived-alpha
+product; seven products retain the small restoring-beam-fit metadata mismatch.
+These are explicit correctness owners before the final laptop benchmark, and
+this single-field reduced receipt remains turnaround evidence only.
+
 ## Outcome
 
 Make two imaging workloads derived from the archived VLASS test MeasurementSet

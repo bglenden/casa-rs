@@ -39,6 +39,8 @@ const PACKAGED_SNAPSHOT_PROVENANCE_JSON: &str =
     include_str!("../data/casa-measures-runtime.provenance.json");
 /// One shared manifest for validation and packaged-snapshot installation.
 pub const REQUIRED_RELATIVE_PATHS: &[&str] = &[
+    "geodetic/IERSeop97/table.dat",
+    "geodetic/IERSpredict/table.dat",
     "geodetic/IERSeop2000/table.dat",
     "geodetic/IERSpredict2000/table.dat",
     "geodetic/TAI_UTC/table.dat",
@@ -798,16 +800,18 @@ pub fn install_packaged_snapshot(root: &Path) -> Result<SnapshotProvenance, Meas
 }
 
 fn load_eop_from(root: &Path) -> Result<EopTable, MeasuresDataError> {
-    let measured = RuntimeTable::open(&root.join("geodetic/IERSeop2000"))?;
-    let predicted = RuntimeTable::open(&root.join("geodetic/IERSpredict2000"))?;
+    let measured = RuntimeTable::open(&root.join("geodetic/IERSeop97"))?;
+    let predicted = RuntimeTable::open(&root.join("geodetic/IERSpredict"))?;
+    let measured_corrections = RuntimeTable::open(&root.join("geodetic/IERSeop2000"))?;
+    let predicted_corrections = RuntimeTable::open(&root.join("geodetic/IERSpredict2000"))?;
 
-    let measured_rows = eop_entries_from_table(&measured, false)?;
+    let measured_rows = eop_entries_from_table(&measured, &measured_corrections, false)?;
     let mut combined = measured_rows;
     let last_measured = combined
         .last()
         .map(|entry| entry.mjd)
         .unwrap_or(f64::NEG_INFINITY);
-    for entry in eop_entries_from_table(&predicted, true)? {
+    for entry in eop_entries_from_table(&predicted, &predicted_corrections, true)? {
         if entry.mjd > last_measured {
             combined.push(entry);
         }
@@ -818,6 +822,7 @@ fn load_eop_from(root: &Path) -> Result<EopTable, MeasuresDataError> {
 
 fn eop_entries_from_table(
     table: &RuntimeTable,
+    correction_table: &RuntimeTable,
     is_predicted: bool,
 ) -> Result<Vec<EopEntry>, MeasuresDataError> {
     let mjd = table.scalar_f64("MJD")?;
@@ -825,8 +830,14 @@ fn eop_entries_from_table(
     let y = table.scalar_f64("y")?;
     let dut1 = table.scalar_f64("dUT1")?;
     let lod = table.scalar_f64("LOD")?;
-    let dx = table.scalar_f64("dX")?;
-    let dy = table.scalar_f64("dY")?;
+    let correction_mjd = correction_table.scalar_f64("MJD")?;
+    let dx = correction_table.scalar_f64("dX")?;
+    let dy = correction_table.scalar_f64("dY")?;
+    if correction_mjd != mjd {
+        return Err(MeasuresDataError::TableRead(
+            "legacy and IAU-2000 EOP tables have different MJD rows".to_string(),
+        ));
+    }
     let mut entries = Vec::with_capacity(table.row_count());
     for row in 0..table.row_count() {
         entries.push(EopEntry {

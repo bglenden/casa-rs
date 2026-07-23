@@ -51,6 +51,7 @@
 //! ```
 
 mod casacore_aberration;
+mod casacore_nutation;
 
 pub mod direction;
 pub mod doppler;

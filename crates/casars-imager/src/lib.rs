@@ -92,7 +92,7 @@ use casa_ms::spectral_selection::{CubeGridChannelContributions, CubeRowSpectralC
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
     CubeSpectralSetup, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow, SourcePartition,
-    VisibilityBuffer, VisibilityBufferFillReport, VisibilityBufferRequest,
+    SubTable, VisibilityBuffer, VisibilityBufferFillReport, VisibilityBufferRequest,
     VisibilityChannelReadRange, VisibilityComplexSamples, VisibilityFloatSamples,
     VisibilityReadBlockPlan, convert_frequency_to_frame, parse_numeric_id_selector,
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
@@ -120,7 +120,7 @@ fn release_allocator_pressure() {
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use image::{ImageBuffer, Rgb};
@@ -8394,6 +8394,16 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
     let first_plan = ddid_plans
         .first()
         .ok_or_else(|| "selection resolved to no active MFS DDID plan".to_string())?;
+    let first_selected_field_id = first_plan
+        .active_selected_rows
+        .first()
+        .map(|row| row.field_id)
+        .ok_or_else(|| "selection resolved to no active MFS row".to_string())?;
+    let source_rest_frequency_hz = casa_mfs_source_rest_frequency_hz(
+        ms,
+        first_selected_field_id,
+        first_plan.table_values.spw_id,
+    )?;
     let first_rows_len = row_block_rows.min(first_plan.active_selected_rows.len());
     let mut first_plane = prepare_mfs_mosaic_source_row_block_plane(
         ms,
@@ -8628,13 +8638,15 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         config
             .cube_axis
             .rest_frequency_hz
+            .or(source_rest_frequency_hz)
             .or_else(|| run_result.rest_frequency_hz()),
     );
+    let obsinfo_phase_center_direction_rad = phase_center_obsinfo_direction_rad(ms, &phase_center)?;
     populate_image_observation_info(
         &mut coords,
         ms,
         first_selected_time_mjd_seconds,
-        phase_center.angles_rad,
+        obsinfo_phase_center_direction_rad,
         derived_engine.as_ref(),
     )?;
     let build_coordinate_system = stage_start.elapsed();
@@ -26264,35 +26276,181 @@ fn casa_mfs_frequency_edge_range_for_selected_rows(
         "internal error: missing derived engine for MFS frequency-frame conversion".to_string()
     })?;
     let mut edge_range_hz = None::<[f64; 2]>;
-    for row_slot in casa_mfs_representative_selected_row_indices(selected_rows)? {
+    let representative_row_slots = casa_mfs_representative_selected_row_indices(selected_rows)?;
+    let mut conversion_state = CasaMfsFrequencyConversionState::default();
+    let mut low_extremum = None::<(f64, usize)>;
+    let mut high_extremum = None::<(f64, usize)>;
+    for &row_slot in &representative_row_slots {
         let selected_row = &selected_rows[row_slot];
         let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
             "internal error: missing row time for MFS frequency-frame conversion".to_string()
         })?;
-        let low_hz = convert_frequency_to_frame(
+        let low_hz = casa_mfs_convert_frequency_to_frame(
             source_freq_ref,
-            FrequencyRef::LSRK,
             source_edge_range_hz[0],
             row_time_mjd_sec,
             selected_row.field_id,
             derived_engine,
-        )
-        .map_err(|error| error.to_string())?;
-        let high_hz = convert_frequency_to_frame(
+            &mut conversion_state,
+        )?;
+        let high_hz = casa_mfs_convert_frequency_to_frame(
             source_freq_ref,
-            FrequencyRef::LSRK,
             source_edge_range_hz[1],
             row_time_mjd_sec,
             selected_row.field_id,
             derived_engine,
-        )
-        .map_err(|error| error.to_string())?;
-        extend_frequency_range_hz(
-            &mut edge_range_hz,
-            [low_hz.min(high_hz), low_hz.max(high_hz)],
+            &mut conversion_state,
+        )?;
+        let row_low_hz = low_hz.min(high_hz);
+        let row_high_hz = low_hz.max(high_hz);
+        if low_extremum.is_none_or(|(value, _)| row_low_hz < value) {
+            low_extremum = Some((row_low_hz, row_slot));
+        }
+        if high_extremum.is_none_or(|(value, _)| row_high_hz > value) {
+            high_extremum = Some((row_high_hz, row_slot));
+        }
+        extend_frequency_range_hz(&mut edge_range_hz, [row_low_hz, row_high_hz]);
+    }
+    if standard_mfs_profile_detail_enabled()
+        && let (Some((low_hz, low_slot)), Some((high_hz, high_slot))) =
+            (low_extremum, high_extremum)
+    {
+        let low_row = &selected_rows[low_slot];
+        let high_row = &selected_rows[high_slot];
+        eprintln!(
+            "casa_mfs_frequency_edge_range source_ref={} target_ref=LSRK source_low_hz={:.17e} source_high_hz={:.17e} representatives={} low_hz={:.17e} low_row={} low_time_mjd_seconds={:.17e} low_field={} low_ddid={} high_hz={:.17e} high_row={} high_time_mjd_seconds={:.17e} high_field={} high_ddid={}",
+            source_freq_ref,
+            source_edge_range_hz[0],
+            source_edge_range_hz[1],
+            representative_row_slots.len(),
+            low_hz,
+            low_row.row_index,
+            low_row.time_mjd_seconds.unwrap_or_default(),
+            low_row.field_id,
+            low_row.ddid,
+            high_hz,
+            high_row.row_index,
+            high_row.time_mjd_seconds.unwrap_or_default(),
+            high_row.field_id,
+            high_row.ddid,
         );
     }
     edge_range_hz.ok_or_else(|| "MFS row metadata resolved to no spectral edges".to_string())
+}
+
+const CASA_ABERRATION_LINEAR_INTERVAL_DAYS: f64 = 0.04;
+const CASA_ABERRATION_DERIVATIVE_STEP_DAYS: f64 = 1.0e-1;
+
+#[derive(Clone, Copy, Debug)]
+struct CasaMfsOrbitalProjection {
+    beta_at_anchor: f64,
+    beta_derivative_per_day: f64,
+}
+
+#[derive(Debug, Default)]
+struct CasaMfsFrequencyConversionState {
+    anchor_tdb_mjd: Option<f64>,
+    orbital_projection_by_field: HashMap<usize, CasaMfsOrbitalProjection>,
+}
+
+fn casa_mfs_convert_frequency_to_frame(
+    source_ref: FrequencyRef,
+    source_hz: f64,
+    time_mjd_sec: f64,
+    field_id: usize,
+    derived_engine: &MsCalEngine,
+    state: &mut CasaMfsFrequencyConversionState,
+) -> Result<f64, String> {
+    if !matches!(source_ref, FrequencyRef::TOPO | FrequencyRef::GEO) {
+        return convert_frequency_to_frame(
+            source_ref,
+            FrequencyRef::LSRK,
+            source_hz,
+            time_mjd_sec,
+            field_id,
+            derived_engine,
+        )
+        .map_err(|error| error.to_string());
+    }
+
+    let frame = derived_engine
+        .spectral_frame_observatory(time_mjd_sec, field_id)
+        .map_err(|error| error.to_string())?;
+    let tdb_mjd = frame
+        .epoch()
+        .ok_or_else(|| "CASA MFS frequency conversion frame has no epoch".to_string())?
+        .convert_to(EpochRef::TDB, &frame)
+        .map_err(|error| error.to_string())?
+        .value()
+        .as_mjd();
+    let refresh_anchor = state
+        .anchor_tdb_mjd
+        .is_none_or(|anchor| (tdb_mjd - anchor).abs() > CASA_ABERRATION_LINEAR_INTERVAL_DAYS);
+    if refresh_anchor {
+        state.anchor_tdb_mjd = Some(tdb_mjd);
+        state.orbital_projection_by_field.clear();
+    }
+    let anchor_tdb_mjd = state
+        .anchor_tdb_mjd
+        .expect("CASA aberration anchor is initialized above");
+    let projection = if let Some(projection) = state.orbital_projection_by_field.get(&field_id) {
+        *projection
+    } else {
+        let projection = casa_mfs_orbital_projection(&frame, anchor_tdb_mjd)?;
+        state
+            .orbital_projection_by_field
+            .insert(field_id, projection);
+        projection
+    };
+    let approximate_orbital_beta =
+        projection.beta_at_anchor + (tdb_mjd - anchor_tdb_mjd) * projection.beta_derivative_per_day;
+
+    let geo_hz = if source_ref == FrequencyRef::GEO {
+        source_hz
+    } else {
+        MFrequency::new(source_hz, source_ref)
+            .convert_to(FrequencyRef::GEO, &frame)
+            .map_err(|error| error.to_string())?
+            .hz()
+    };
+    let bary_hz = geo_hz * casa_geo_to_bary_doppler_factor(approximate_orbital_beta);
+    MFrequency::new(bary_hz, FrequencyRef::BARY)
+        .convert_to(FrequencyRef::LSRK, &frame)
+        .map(|frequency| frequency.hz())
+        .map_err(|error| error.to_string())
+}
+
+fn casa_mfs_orbital_projection(
+    frame: &casa_types::measures::frame::MeasFrame,
+    anchor_tdb_mjd: f64,
+) -> Result<CasaMfsOrbitalProjection, String> {
+    let h = CASA_ABERRATION_DERIVATIVE_STEP_DAYS;
+    let beta_at_anchor = casa_earth_orbital_beta(frame, anchor_tdb_mjd)?;
+    let beta_m2 = casa_earth_orbital_beta(frame, anchor_tdb_mjd - 2.0 * h)?;
+    let beta_m1 = casa_earth_orbital_beta(frame, anchor_tdb_mjd - h)?;
+    let beta_p1 = casa_earth_orbital_beta(frame, anchor_tdb_mjd + h)?;
+    let beta_p2 = casa_earth_orbital_beta(frame, anchor_tdb_mjd + 2.0 * h)?;
+    Ok(CasaMfsOrbitalProjection {
+        beta_at_anchor,
+        beta_derivative_per_day: (beta_m2 - 8.0 * beta_m1 + 8.0 * beta_p1 - beta_p2) / (12.0 * h),
+    })
+}
+
+fn casa_earth_orbital_beta(
+    frame: &casa_types::measures::frame::MeasFrame,
+    tdb_mjd: f64,
+) -> Result<f64, String> {
+    let epoch = MEpoch::from_mjd(tdb_mjd, EpochRef::TDB);
+    let ratio = MFrequency::new(1.0, FrequencyRef::GEO)
+        .convert_to(FrequencyRef::BARY, &frame.clone().with_epoch(epoch))
+        .map_err(|error| error.to_string())?
+        .hz();
+    let ratio_squared = ratio * ratio;
+    Ok((1.0 - ratio_squared) / (1.0 + ratio_squared))
+}
+
+fn casa_geo_to_bary_doppler_factor(orbital_beta: f64) -> f64 {
+    ((1.0 - orbital_beta) / (1.0 + orbital_beta)).sqrt()
 }
 
 fn mfs_output_frequency_metadata_for_config_selection(
@@ -29586,11 +29744,13 @@ struct PointingDirectionRow {
     raw_angles_rad: [f64; 2],
 }
 
-fn resolve_pointing_direction_reference(
+fn resolve_table_direction_reference(
     table: &casa_tables::Table,
+    table_name: &str,
+    column_name: &str,
     row_index: usize,
 ) -> Result<DirectionRef, String> {
-    let Some(descriptor) = TableMeasDesc::reconstruct(table, "DIRECTION") else {
+    let Some(descriptor) = TableMeasDesc::reconstruct(table, column_name) else {
         return Ok(DirectionRef::J2000);
     };
     let reference = match descriptor.ref_desc() {
@@ -29605,23 +29765,23 @@ fn resolve_pointing_direction_reference(
                 .and_then(|cell| cell.scalar())
                 .map_err(|error| {
                     format!(
-                        "read POINTING.{ref_column} row {row_index} for DIRECTION reference: {error}"
+                        "read {table_name}.{ref_column} row {row_index} for {column_name} reference: {error}"
                     )
                 })? {
                 &ScalarValue::Int32(value) => value,
                 &ScalarValue::Int64(value) => i32::try_from(value).map_err(|_| {
                     format!(
-                        "POINTING.{ref_column} row {row_index} reference code {value} exceeds Int32"
+                        "{table_name}.{ref_column} row {row_index} reference code {value} exceeds Int32"
                     )
                 })?,
                 &ScalarValue::UInt32(value) => i32::try_from(value).map_err(|_| {
                     format!(
-                        "POINTING.{ref_column} row {row_index} reference code {value} exceeds Int32"
+                        "{table_name}.{ref_column} row {row_index} reference code {value} exceeds Int32"
                     )
                 })?,
                 other => {
                     return Err(format!(
-                        "POINTING.{ref_column} row {row_index} must contain an integer direction reference, found {:?}",
+                        "{table_name}.{ref_column} row {row_index} must contain an integer direction reference, found {:?}",
                         other.primitive_type()
                     ));
                 }
@@ -29631,12 +29791,12 @@ fn resolve_pointing_direction_reference(
                 .position(|candidate| *candidate == code)
                 .ok_or_else(|| {
                     format!(
-                        "POINTING.{ref_column} row {row_index} has unknown direction reference code {code}"
+                        "{table_name}.{ref_column} row {row_index} has unknown direction reference code {code}"
                     )
                 })?;
             tab_ref_types.get(index).cloned().ok_or_else(|| {
                 format!(
-                    "POINTING.DIRECTION reference type is missing for code {code} at index {index}"
+                    "{table_name}.{column_name} reference type is missing for code {code} at index {index}"
                 )
             })?
         }
@@ -29645,13 +29805,13 @@ fn resolve_pointing_direction_reference(
             .and_then(|cell| cell.scalar())
             .map_err(|error| {
                 format!(
-                    "read POINTING.{ref_column} row {row_index} for DIRECTION reference: {error}"
+                    "read {table_name}.{ref_column} row {row_index} for {column_name} reference: {error}"
                 )
             })? {
             ScalarValue::String(value) => value.clone(),
             other => {
                 return Err(format!(
-                    "POINTING.{ref_column} row {row_index} must contain a string direction reference, found {:?}",
+                    "{table_name}.{ref_column} row {row_index} must contain a string direction reference, found {:?}",
                     other.primitive_type()
                 ));
             }
@@ -29659,7 +29819,7 @@ fn resolve_pointing_direction_reference(
     };
     reference.parse::<DirectionRef>().map_err(|_| {
         format!(
-            "POINTING.DIRECTION row {row_index} uses unsupported direction reference {reference}"
+            "{table_name}.{column_name} row {row_index} uses unsupported direction reference {reference}"
         )
     })
 }
@@ -29870,7 +30030,8 @@ impl PointingDirectionResolver {
                     "POINTING.DIRECTION row {row_index} contains a non-finite angle"
                 ));
             }
-            let source_ref = resolve_pointing_direction_reference(table, row_index)?;
+            let source_ref =
+                resolve_table_direction_reference(table, "POINTING", "DIRECTION", row_index)?;
             if source_ref != DirectionRef::J2000 && derived_engine.is_none() {
                 return Err(format!(
                     "POINTING.DIRECTION row {row_index} uses {source_ref}, but no measures engine was prepared"
@@ -38056,6 +38217,160 @@ fn extract_phase_center(ms: &MeasurementSet, field_id: usize) -> Result<PhaseCen
         angles_rad: [ra, dec],
         reference: DirectionRef::J2000,
     })
+}
+
+fn phase_center_obsinfo_direction_rad(
+    ms: &MeasurementSet,
+    phase_center: &PhaseCenter,
+) -> Result<[f64; 2], String> {
+    let Some(field_id) = phase_center.field_id else {
+        return Ok(phase_center.angles_rad);
+    };
+    let field = ms.field().map_err(|error| format!("open FIELD: {error}"))?;
+    let source_ref =
+        resolve_table_direction_reference(field.table(), "FIELD", "PHASE_DIR", field_id)?;
+    if source_ref != DirectionRef::J2000 {
+        return Ok(phase_center.angles_rad);
+    }
+    extract_constant_direction_angles(
+        field
+            .phase_dir(field_id)
+            .map_err(|error| format!("read FIELD.PHASE_DIR[{field_id}]: {error}"))?,
+        "FIELD.PHASE_DIR",
+        field_id,
+    )
+}
+
+fn source_rest_frequency_values(
+    source: &casa_ms::subtables::source::MsSource<'_>,
+    row: usize,
+) -> Result<Vec<f64>, String> {
+    let Some(value) = source
+        .optional_array(row, "REST_FREQUENCY")
+        .map_err(|error| format!("read SOURCE.REST_FREQUENCY row {row}: {error}"))?
+    else {
+        return Ok(Vec::new());
+    };
+    match value {
+        ArrayValue::Float64(values) if values.ndim() == 1 => Ok(values.iter().copied().collect()),
+        ArrayValue::Float64(values) => Err(format!(
+            "SOURCE.REST_FREQUENCY row {row} must be one-dimensional, found shape {:?}",
+            values.shape()
+        )),
+        other => Err(format!(
+            "SOURCE.REST_FREQUENCY row {row} must be Float64, found {:?}",
+            other.primitive_type()
+        )),
+    }
+}
+
+fn source_row_matches(source_id: i32, spw_id: i32, wanted_source: i32, wanted_spw: i32) -> bool {
+    (source_id == -1 || source_id == wanted_source) && (spw_id == -1 || spw_id == wanted_spw)
+}
+
+fn casa_mfs_source_rest_frequency_hz(
+    ms: &MeasurementSet,
+    field_id: usize,
+    spw_id: usize,
+) -> Result<Option<f64>, String> {
+    let field = ms.field().map_err(|error| format!("open FIELD: {error}"))?;
+    let source_id = field
+        .source_id(field_id)
+        .map_err(|error| format!("read FIELD.SOURCE_ID[{field_id}]: {error}"))?;
+    if source_id < 0 {
+        return Ok(None);
+    }
+    let Ok(source) = ms.source() else {
+        return Ok(None);
+    };
+    let wanted_spw =
+        i32::try_from(spw_id).map_err(|_| format!("selected SPW {spw_id} exceeds Int32"))?;
+
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+    let doppler_id = if spectral_window
+        .table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column("DOPPLER_ID"))
+    {
+        match spectral_window
+            .table()
+            .cell_accessor(spw_id, "DOPPLER_ID")
+            .and_then(|cell| cell.scalar())
+            .map_err(|error| format!("read SPECTRAL_WINDOW.DOPPLER_ID[{spw_id}]: {error}"))?
+        {
+            &ScalarValue::Int32(id) if id >= 0 => Some(id),
+            &ScalarValue::Int32(_) => None,
+            other => {
+                return Err(format!(
+                    "SPECTRAL_WINDOW.DOPPLER_ID[{spw_id}] must be Int32, found {:?}",
+                    other.primitive_type()
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(doppler_id) = doppler_id
+        && let Ok(doppler) = ms.doppler()
+    {
+        for doppler_row in 0..doppler.row_count() {
+            if doppler
+                .i32(doppler_row, "DOPPLER_ID")
+                .map_err(|error| format!("read DOPPLER.DOPPLER_ID row {doppler_row}: {error}"))?
+                != doppler_id
+                || doppler
+                    .i32(doppler_row, "SOURCE_ID")
+                    .map_err(|error| format!("read DOPPLER.SOURCE_ID row {doppler_row}: {error}"))?
+                    != source_id
+            {
+                continue;
+            }
+            let transition_id = doppler.i32(doppler_row, "TRANSITION_ID").map_err(|error| {
+                format!("read DOPPLER.TRANSITION_ID row {doppler_row}: {error}")
+            })?;
+            let transition_id = usize::try_from(transition_id)
+                .map_err(|_| format!("DOPPLER.TRANSITION_ID row {doppler_row} is negative"))?;
+            for source_row in 0..source.row_count() {
+                let row_source_id = source
+                    .i32(source_row, "SOURCE_ID")
+                    .map_err(|error| format!("read SOURCE.SOURCE_ID row {source_row}: {error}"))?;
+                let row_spw_id = source
+                    .i32(source_row, "SPECTRAL_WINDOW_ID")
+                    .map_err(|error| {
+                        format!("read SOURCE.SPECTRAL_WINDOW_ID row {source_row}: {error}")
+                    })?;
+                if !source_row_matches(row_source_id, row_spw_id, source_id, wanted_spw) {
+                    continue;
+                }
+                let values = source_rest_frequency_values(&source, source_row)?;
+                if let Some(&rest_frequency_hz) = values.get(transition_id) {
+                    return Ok(Some(rest_frequency_hz));
+                }
+            }
+        }
+        return Ok(None);
+    }
+
+    for source_row in 0..source.row_count() {
+        let row_source_id = source
+            .i32(source_row, "SOURCE_ID")
+            .map_err(|error| format!("read SOURCE.SOURCE_ID row {source_row}: {error}"))?;
+        let row_spw_id = source
+            .i32(source_row, "SPECTRAL_WINDOW_ID")
+            .map_err(|error| format!("read SOURCE.SPECTRAL_WINDOW_ID row {source_row}: {error}"))?;
+        if !source_row_matches(row_source_id, row_spw_id, source_id, wanted_spw) {
+            continue;
+        }
+        if let Some(rest_frequency_hz) = source_rest_frequency_values(&source, source_row)?
+            .into_iter()
+            .next()
+        {
+            return Ok(Some(rest_frequency_hz));
+        }
+    }
+    Ok(None)
 }
 
 fn resolve_phase_center(
@@ -49158,6 +49473,94 @@ mod tests {
     }
 
     #[test]
+    fn field_backed_obsinfo_direction_preserves_raw_j2000_angles() {
+        let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+        let raw_direction = [-1.049_488_295_839_840_2, 0.708_029_172_097_583_1];
+        add_field_row_with_raw_direction(&mut ms, raw_direction, -1, TEST_TIME_MJD_SEC);
+        let phase_center = PhaseCenter {
+            field_id: Some(0),
+            angles_rad: [raw_direction[0] + std::f64::consts::TAU, raw_direction[1]],
+            reference: DirectionRef::J2000,
+        };
+
+        assert_eq!(
+            phase_center_obsinfo_direction_rad(&ms, &phase_center).unwrap(),
+            raw_direction
+        );
+    }
+
+    #[test]
+    fn casa_mfs_rest_frequency_uses_matching_source_and_first_selected_spw() {
+        let mut ms = MeasurementSet::create_memory(
+            MeasurementSetBuilder::new().with_optional_subtable(SubtableId::Source),
+        )
+        .unwrap();
+        add_field_row_with_raw_direction(&mut ms, [1.0, 0.5], 7, TEST_TIME_MJD_SEC);
+        add_spectral_window_row(&mut ms, &[2.0e9]);
+        add_spectral_window_row(&mut ms, &[3.0e9]);
+        ms.subtable_mut(SubtableId::Source)
+            .unwrap()
+            .add_column(
+                ColumnSchema::array_variable("REST_FREQUENCY", PrimitiveType::Float64, Some(1)),
+                None,
+            )
+            .unwrap();
+        for (source_id, spw_id, rest_frequency_hz) in
+            [(8, 0, 8.05e9), (7, 1, 7.15e9), (7, 0, 2.05e9)]
+        {
+            ms.subtable_mut(SubtableId::Source)
+                .unwrap()
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("CALIBRATION_GROUP", Value::Scalar(ScalarValue::Int32(0))),
+                    RecordField::new("CODE", Value::Scalar(ScalarValue::String(String::new()))),
+                    RecordField::new(
+                        "DIRECTION",
+                        Value::Array(ArrayValue::Float64(
+                            ArrayD::from_shape_vec(vec![2], vec![1.0, 0.5]).unwrap(),
+                        )),
+                    ),
+                    RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(1.0))),
+                    RecordField::new(
+                        "NAME",
+                        Value::Scalar(ScalarValue::String("source".to_string())),
+                    ),
+                    RecordField::new("NUM_LINES", Value::Scalar(ScalarValue::Int32(1))),
+                    RecordField::new(
+                        "PROPER_MOTION",
+                        Value::Array(ArrayValue::Float64(
+                            ArrayD::from_shape_vec(vec![2], vec![0.0, 0.0]).unwrap(),
+                        )),
+                    ),
+                    RecordField::new(
+                        "REST_FREQUENCY",
+                        Value::Array(ArrayValue::Float64(
+                            ArrayD::from_shape_vec(vec![1], vec![rest_frequency_hz]).unwrap(),
+                        )),
+                    ),
+                    RecordField::new("SOURCE_ID", Value::Scalar(ScalarValue::Int32(source_id))),
+                    RecordField::new(
+                        "SPECTRAL_WINDOW_ID",
+                        Value::Scalar(ScalarValue::Int32(spw_id)),
+                    ),
+                    RecordField::new(
+                        "TIME",
+                        Value::Scalar(ScalarValue::Float64(TEST_TIME_MJD_SEC)),
+                    ),
+                ]))
+                .unwrap();
+        }
+
+        assert_eq!(
+            casa_mfs_source_rest_frequency_hz(&ms, 0, 0).unwrap(),
+            Some(2.05e9)
+        );
+        assert_eq!(
+            casa_mfs_source_rest_frequency_hz(&ms, 0, 1).unwrap(),
+            Some(7.15e9)
+        );
+    }
+
+    #[test]
     fn bounded_uv_coverage_accumulator_keeps_measured_limit() {
         let mut accumulator = BoundedUvCoverageAccumulator::new(2);
         accumulator.observe_point(1000.0, -2000.0, 0.5);
@@ -58096,6 +58499,7 @@ mod tests {
         let reference_frequency_hz = source_frequencies_hz[0];
         let mut expected_range_hz = None::<[f64; 2]>;
         let mut expected_edge_range_hz = None::<[f64; 2]>;
+        let mut conversion_state = CasaMfsFrequencyConversionState::default();
         for row in &rows {
             let scale = mfs_imaging_frequency_scale(
                 FrequencyRef::TOPO,
@@ -58111,22 +58515,22 @@ mod tests {
             extend_frequency_range_hz(
                 &mut expected_edge_range_hz,
                 [
-                    convert_frequency_to_frame(
+                    casa_mfs_convert_frequency_to_frame(
                         FrequencyRef::TOPO,
-                        FrequencyRef::LSRK,
                         source_edge_range_hz[0],
                         row.time_mjd_seconds.unwrap(),
                         row.field_id,
                         &engine,
+                        &mut conversion_state,
                     )
                     .unwrap(),
-                    convert_frequency_to_frame(
+                    casa_mfs_convert_frequency_to_frame(
                         FrequencyRef::TOPO,
-                        FrequencyRef::LSRK,
                         source_edge_range_hz[1],
                         row.time_mjd_seconds.unwrap(),
                         row.field_id,
                         &engine,
+                        &mut conversion_state,
                     )
                     .unwrap(),
                 ],
@@ -60090,6 +60494,9 @@ deconvolver=mtmfs
         assert_eq!(phase_center.reference, DirectionRef::J2000);
         assert!((phase_center.angles_rad[0] - 1.0).abs() < 1e-9);
         assert!((phase_center.angles_rad[1] - 0.5).abs() < 1e-9);
+        let obsinfo_direction = phase_center_obsinfo_direction_rad(&ms, &phase_center).unwrap();
+        assert!((obsinfo_direction[0] - 1.0).abs() < 1e-9);
+        assert!((obsinfo_direction[1] - 0.5).abs() < 1e-9);
     }
 
     #[test]
@@ -67451,10 +67858,20 @@ deconvolver=mtmfs
         direction: MDirection,
         time_mjd_sec: f64,
     ) {
-        let table = ms.subtable_mut(SubtableId::Field).unwrap();
         let (lon, lat) = direction.as_angles();
-        let direction =
-            ArrayValue::Float64(ArrayD::from_shape_vec(vec![2, 1], vec![lon, lat]).unwrap());
+        add_field_row_with_raw_direction(ms, [lon, lat], -1, time_mjd_sec);
+    }
+
+    fn add_field_row_with_raw_direction(
+        ms: &mut MeasurementSet,
+        direction_rad: [f64; 2],
+        source_id: i32,
+        time_mjd_sec: f64,
+    ) {
+        let table = ms.subtable_mut(SubtableId::Field).unwrap();
+        let direction = ArrayValue::Float64(
+            ArrayD::from_shape_vec(vec![2, 1], direction_rad.to_vec()).unwrap(),
+        );
         table
             .add_row(RecordValue::new(vec![
                 RecordField::new("CODE", Value::Scalar(ScalarValue::String(String::new()))),
@@ -67467,7 +67884,7 @@ deconvolver=mtmfs
                 RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
                 RecordField::new("PHASE_DIR", Value::Array(direction.clone())),
                 RecordField::new("REFERENCE_DIR", Value::Array(direction)),
-                RecordField::new("SOURCE_ID", Value::Scalar(ScalarValue::Int32(-1))),
+                RecordField::new("SOURCE_ID", Value::Scalar(ScalarValue::Int32(source_id))),
                 RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time_mjd_sec))),
             ]))
             .unwrap();

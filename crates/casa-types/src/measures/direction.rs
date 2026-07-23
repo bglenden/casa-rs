@@ -84,7 +84,7 @@ use crate::quanta::MvAngle;
 use crate::quanta::{Quantity, Unit};
 
 use super::casacore_aberration::earth_barycentric_velocity_ms;
-use super::epoch::{EpochRef, MEpoch};
+use super::epoch::{EpochRef, MEpoch, casacore_gast_rad};
 use super::error::MeasureError;
 use super::frame::{IauModel, MeasFrame};
 
@@ -1149,26 +1149,11 @@ fn get_gast(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
 /// Compute GAST (uncached, used by ConvCtx).
 fn compute_gast(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
     let (ut_a, ut_b) = ctx.get_ut1_jd(frame)?;
-
-    Ok(match frame.iau_model() {
-        IauModel::Iau1976_1980 => {
-            // Casacore's `MCEpoch::UT1_GAST` uses its IAU-1980 nutation
-            // longitude times the cosine of the *true* obliquity. SOFA's
-            // `gst94` additionally applies the 1994 complementary terms,
-            // shifting VLASS-era apparent right ascension by about 2.5 mas.
-            let gmst = sofars::erst::gmst82(ut_a, ut_b);
-            let (tt_a, tt_b) = ctx.get_tt_jd(frame)?;
-            let (dpsi, deps) = sofars::pnp::nut80(tt_a, tt_b);
-            let true_obliquity = sofars::pnp::obl80(tt_a, tt_b) + deps;
-            sofars::vm::anp(gmst + dpsi * true_obliquity.cos())
-        }
-        IauModel::Iau2006_2000A => {
-            let (tt_a, tt_b) = ctx.get_tt_jd(frame)?;
-            let gmst = sofars::erst::gmst82(ut_a, ut_b);
-            let ee = sofars::erst::ee00a(tt_a, tt_b);
-            sofars::vm::anp(gmst + ee)
-        }
-    })
+    let tt_jd = match frame.iau_model() {
+        IauModel::Iau1976_1980 => (ut_a, ut_b),
+        IauModel::Iau2006_2000A => ctx.get_tt_jd(frame)?,
+    };
+    Ok(casacore_gast_rad((ut_a, ut_b), tt_jd, frame.iau_model()))
 }
 
 /// Get the observer geodetic latitude from the frame position.
