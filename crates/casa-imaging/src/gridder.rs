@@ -1715,7 +1715,6 @@ impl StandardGridder {
         image
     }
 
-    #[cfg(all(target_os = "macos", not(coverage)))]
     pub(crate) fn corrected_mosaic_image_from_grid(
         &self,
         raw: &Array2<Complex32>,
@@ -1785,7 +1784,6 @@ impl StandardGridder {
         image
     }
 
-    #[cfg(all(target_os = "macos", not(coverage)))]
     pub(crate) fn mosaic_weight_image_from_grid(&self, raw: &Array2<Complex32>) -> Array2<f32> {
         let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
         for x in 0..self.geometry.nx() {
@@ -1798,7 +1796,6 @@ impl StandardGridder {
         image
     }
 
-    #[cfg(all(target_os = "macos", not(coverage)))]
     pub(crate) fn aw_weight_image_from_grid(
         &self,
         raw: &Array2<Complex32>,
@@ -2705,7 +2702,6 @@ impl ScreenProjector {
         })
     }
 
-    #[cfg(any(test, all(target_os = "macos", not(coverage))))]
     pub(crate) fn grid_sample_planned<G: CenteredComplex32Grid>(
         &self,
         grid: &mut G,
