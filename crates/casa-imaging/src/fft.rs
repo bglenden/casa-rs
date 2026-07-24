@@ -43,6 +43,30 @@ pub(crate) fn centered_ifft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     centered_ifft2_timed(input, FftUseCase::Restoration).0
 }
 
+pub(crate) fn centered_fft2_owned(mut input: Array2<Complex32>) -> Array2<Complex32> {
+    if !shift2_in_place_even_f32(&mut input) {
+        return centered_fft2(&input);
+    }
+    transform_axis(&mut input, Axis(0), false);
+    transform_axis(&mut input, Axis(1), false);
+    let shifted = shift2_in_place_even_f32(&mut input);
+    debug_assert!(shifted);
+    input
+}
+
+pub(crate) fn centered_ifft2_owned(mut input: Array2<Complex32>) -> Array2<Complex32> {
+    if !shift2_in_place_even_f32(&mut input) {
+        return centered_ifft2(&input);
+    }
+    transform_axis(&mut input, Axis(0), true);
+    transform_axis(&mut input, Axis(1), true);
+    let scale = 1.0 / (input.shape()[0] * input.shape()[1]) as f32;
+    input.mapv_inplace(|value| value * scale);
+    let shifted = shift2_in_place_even_f32(&mut input);
+    debug_assert!(shifted);
+    input
+}
+
 pub(crate) fn centered_ifft2_f64(input: &Array2<Complex64>) -> Array2<Complex64> {
     centered_ifft2_f64_timed(input, FftUseCase::DirtyPsfResidual).0
 }
@@ -898,6 +922,37 @@ fn ifftshift2_f64(input: &Array2<Complex64>) -> Array2<Complex64> {
     shift2_f64(input, true)
 }
 
+fn shift2_in_place_even_f32(input: &mut Array2<Complex32>) -> bool {
+    if !is_even_contiguous_f32(input) {
+        return false;
+    }
+    let nx = input.shape()[0];
+    let ny = input.shape()[1];
+    let storage = input
+        .as_slice_memory_order_mut()
+        .expect("even contiguous f32 grid should have memory-order slice");
+    let hx = nx / 2;
+    let hy = ny / 2;
+    for x in 0..hx {
+        for y in 0..hy {
+            let q00 = x * ny + y;
+            let q11 = (x + hx) * ny + y + hy;
+            storage.swap(q00, q11);
+
+            let q10 = (x + hx) * ny + y;
+            let q01 = x * ny + y + hy;
+            storage.swap(q10, q01);
+        }
+    }
+    true
+}
+
+fn is_even_contiguous_f32(input: &Array2<Complex32>) -> bool {
+    let nx = input.shape()[0];
+    let ny = input.shape()[1];
+    nx % 2 == 0 && ny % 2 == 0 && input.as_slice_memory_order().is_some()
+}
+
 fn shift2_in_place_even_f64(input: &mut Array2<Complex64>) -> bool {
     if !is_even_contiguous_f64(input) {
         return false;
@@ -974,12 +1029,13 @@ mod tests {
 
     use super::{
         centered_fft2, centered_fft2_batch_f32_timed_with_backend,
-        centered_fft2_f64_timed_with_backend_and_policy, centered_fft2_timed_with_backend,
-        centered_ifft2, centered_ifft2_batch_f32_timed_with_backend,
+        centered_fft2_f64_timed_with_backend_and_policy, centered_fft2_owned,
+        centered_fft2_timed_with_backend, centered_ifft2,
+        centered_ifft2_batch_f32_timed_with_backend,
         centered_ifft2_batch_f64_to_f32_timed_with_backend, centered_ifft2_f64,
         centered_ifft2_f64_owned, centered_ifft2_f64_owned_unshifted_even,
-        centered_ifft2_f64_timed_with_backend_and_policy, centered_ifft2_timed_with_backend,
-        rustfft_centered_transform_f64_via_f32,
+        centered_ifft2_f64_timed_with_backend_and_policy, centered_ifft2_owned,
+        centered_ifft2_timed_with_backend, rustfft_centered_transform_f64_via_f32,
     };
 
     #[test]
@@ -994,6 +1050,28 @@ mod tests {
         for (expected, actual) in image.iter().zip(restored.iter()) {
             assert!((expected.re - actual.re).abs() < 1.0e-5);
             assert!((expected.im - actual.im).abs() < 1.0e-5);
+        }
+    }
+
+    #[test]
+    fn owned_centered_f32_transforms_match_borrowed_transforms() {
+        let image = Array2::from_shape_fn((8, 10), |(x, y)| {
+            Complex32::new(
+                (x * 10 + y) as f32 * 0.25 - 3.0,
+                (x as f32 - y as f32) * 0.1,
+            )
+        });
+
+        let borrowed_forward = centered_fft2(&image);
+        let owned_forward = centered_fft2_owned(image.clone());
+        for (borrowed, owned) in borrowed_forward.iter().zip(owned_forward.iter()) {
+            assert!((*borrowed - *owned).norm() < 2.0e-4);
+        }
+
+        let borrowed_inverse = centered_ifft2(&borrowed_forward);
+        let owned_inverse = centered_ifft2_owned(owned_forward);
+        for (borrowed, owned) in borrowed_inverse.iter().zip(owned_inverse.iter()) {
+            assert!((*borrowed - *owned).norm() < 2.0e-5);
         }
     }
 

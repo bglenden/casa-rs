@@ -602,6 +602,7 @@ dependencies = [
  "casa-test-support",
  "casa-types",
  "libm",
+ "nalgebra",
  "ndarray",
  "num-complex",
  "objc2",

@@ -35274,6 +35274,38 @@ fn awproject_mtmfs_run_state_bytes(nterms: usize, image_pixels: usize) -> Result
     )
 }
 
+fn awproject_mtmfs_multiscale_minor_cycle_scratch_bytes(
+    nterms: usize,
+    scale_count: usize,
+    image_pixels: usize,
+) -> Result<usize, String> {
+    // The bounded MT-MFS scale search retains at most one scale's nterms RHS
+    // images. Its compact scale kernel is expanded into one Complex32 FFT
+    // spectrum and one in-place Complex32 work plane, while scale-specific
+    // clean masks remain resident across iterations.
+    let bytes_per_pixel = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [nterms, std::mem::size_of::<f32>()],
+                "MT-MFS scale RHS planes",
+            )?,
+            checked_imaging_product(
+                [2, std::mem::size_of::<Complex32>()],
+                "MT-MFS compact convolution FFT planes",
+            )?,
+            checked_imaging_product(
+                [scale_count.max(1), std::mem::size_of::<bool>()],
+                "MT-MFS scale masks",
+            )?,
+        ],
+        "AWProject MT-MFS multiscale minor-cycle scratch bytes per pixel",
+    )?;
+    checked_imaging_product(
+        [image_pixels, bytes_per_pixel],
+        "AWProject MT-MFS multiscale minor-cycle scratch",
+    )
+}
+
 fn awproject_mtmfs_finish_state_bytes(nterms: usize, image_pixels: usize) -> Result<usize, String> {
     // `MtmfsResult` expands 2D products into 4D CASA products. Until the
     // return expression completes, the original products, principal residual
@@ -35336,17 +35368,23 @@ fn awproject_product_writer_scratch_bytes(image_pixels: usize) -> Result<usize, 
 }
 
 fn awproject_mtmfs_in_place_fft_eligible(config: &CliConfig) -> bool {
-    // Dirty-product FFT precision `auto` resolves to f64 for host placement
-    // unless the Metal backend is explicitly requested. Serial runtime control
-    // forces RustFFT while deliberately leaving the precision policy on auto,
-    // so that spelling is the same in-place transform executed by the core as
-    // an explicit f64 + RustFFT request.
     config.imsize & 1 == 0
         && matches!(
             config.imaging_fft_precision,
-            ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64
+            ImagingFftPrecisionPolicy::Auto
+                | ImagingFftPrecisionPolicy::F32
+                | ImagingFftPrecisionPolicy::F64
         )
         && config.imaging_fft_backend == ImagingFftBackendPolicy::RustFft
+}
+
+fn awproject_mtmfs_grid_element_bytes(config: &CliConfig) -> usize {
+    match config.imaging_fft_precision {
+        ImagingFftPrecisionPolicy::F32 => std::mem::size_of::<Complex32>(),
+        ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64 => {
+            std::mem::size_of::<Complex64>()
+        }
+    }
 }
 
 fn standard_mfs_plane_state_requirements(
@@ -35458,8 +35496,13 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     } else {
         2
     };
+    let grid_element_bytes = if awproject_mtmfs {
+        awproject_mtmfs_grid_element_bytes(config)
+    } else {
+        std::mem::size_of::<Complex64>()
+    };
     let grid_bytes = checked_imaging_product(
-        [grid_cells, grid_planes, std::mem::size_of::<Complex64>()],
+        [grid_cells, grid_planes, grid_element_bytes],
         "standard-MFS resident grids",
     )?;
 
@@ -35557,7 +35600,7 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             checked_imaging_sum(
                 [
                     checked_imaging_product(
-                        [grid_bytes, 2],
+                        [grid_cells, grid_planes, std::mem::size_of::<Complex64>(), 2],
                         "AWProject Metal compensated and fixed grids",
                     )?,
                     config
@@ -35764,7 +35807,7 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             prepared_bytes_per_row,
             worker_scratch_bytes,
             image_element_bytes: 0,
-            grid_element_bytes: std::mem::size_of::<Complex64>(),
+            grid_element_bytes,
             fft_bytes_per_plane,
             spectral_state_bytes_per_plane: image_working_set_bytes,
             sample_count,
@@ -35842,9 +35885,25 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         return Ok(plan);
     }
 
+    let multiscale_minor_cycle_scratch_bytes = if clean_is_dirty(config) {
+        0
+    } else {
+        awproject_mtmfs_multiscale_minor_cycle_scratch_bytes(
+            config.nterms,
+            config.multiscale_scales.len().max(1),
+            image_pixels,
+        )?
+    };
     let finish_state_bytes = awproject_mtmfs_finish_state_bytes(config.nterms, image_pixels)?;
     let product_state_bytes = awproject_mtmfs_product_state_bytes(config.nterms, image_pixels)?;
     let product_writer_scratch_bytes = awproject_product_writer_scratch_bytes(image_pixels)?;
+    if multiscale_minor_cycle_scratch_bytes > 0 {
+        plan.memory_allocations.push(ImagingMemoryAllocation {
+            component: "AWProject MT-MFS bounded multiscale scratch",
+            stage: "minor-cycle",
+            bytes: multiscale_minor_cycle_scratch_bytes,
+        });
+    }
     plan.memory_allocations.extend([
         ImagingMemoryAllocation {
             component: "AWProject MT-MFS finish state",
@@ -35862,6 +35921,17 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             bytes: product_writer_scratch_bytes,
         },
     ]);
+    let minor_cycle_peak_bytes = checked_imaging_sum(
+        [
+            aw_cf_resident_bytes,
+            aw_cf_index_bytes,
+            pointing_index_bytes,
+            image_working_set_bytes,
+            multiscale_minor_cycle_scratch_bytes,
+            aw_safety_margin_bytes,
+        ],
+        "AWProject MT-MFS multiscale minor-cycle peak",
+    )?;
     let finish_peak_bytes = checked_imaging_sum(
         [
             aw_cf_resident_bytes,
@@ -35883,6 +35953,7 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     )?;
     plan.maximum_planned_resident_bytes = plan
         .maximum_planned_resident_bytes
+        .max(minor_cycle_peak_bytes)
         .max(finish_peak_bytes)
         .max(product_peak_bytes);
     plan.decisions.extend([
@@ -35930,13 +36001,30 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         casa_imaging::ImagingPlanDecision {
             name: "awproject_fft_residency",
             value: if awproject_mtmfs_in_place_fft_eligible(config) {
-                "in-place-rustfft-f64"
+                match config.imaging_fft_precision {
+                    ImagingFftPrecisionPolicy::F32 => "in-place-rustfft-f32",
+                    ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64 => {
+                        "in-place-rustfft-f64"
+                    }
+                }
             } else {
                 "bounded-copy"
             }
             .to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
             reason: "selected FFT precision/backend and even unpadded grid geometry".to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_multiscale_minor_cycle_peak_bytes",
+            value: minor_cycle_peak_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: if multiscale_minor_cycle_scratch_bytes == 0 {
+                "dirty-only execution does not allocate MT-MFS minor-cycle scale scratch"
+                    .to_string()
+            } else {
+                "one scale RHS stack, compact-kernel FFT work, and scale masks coexist with the run state"
+                    .to_string()
+            },
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_finish_peak_bytes",
@@ -36622,8 +36710,9 @@ fn standard_single_plane_result_to_run_products(
 }
 
 fn standard_mfs_streaming_weight_density_mode(config: &CliConfig) -> WeightDensityMode {
-    // CASA documents perchanweightdensity as cube-only and routes MFS through
-    // ordinary VisImagingWeight even when the task parameter is true.
+    // task_tclean.py explicitly resets perchanweightdensity to false for MFS
+    // before constructing ImagerParameters, even when the public task call
+    // records true.
     if config.spectral_mode.is_cube_like() && effective_per_channel_weight_density(config) {
         WeightDensityMode::PerPlane
     } else {
@@ -54627,8 +54716,8 @@ mod tests {
         assert_eq!(trace.rows.len(), 10_400);
         assert_eq!(
             pointing_row_by_antenna
-                .into_iter()
-                .map(|(_, row)| row.expect("concrete POINTING row"))
+                .into_values()
+                .map(|row| row.expect("concrete POINTING row"))
                 .collect::<Vec<_>>(),
             expected_pointing_rows,
         );
@@ -54785,7 +54874,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("planner-cf-cache");
         make_awproject_planner_cache(&cf_cache, 8);
-        let config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
 
         let plan = standard_mfs_memory_plan(&config, 64, 1024);
 
@@ -54816,6 +54905,7 @@ mod tests {
             plan.usable_memory_bytes / 20
         );
         assert!(plan.allocation_bytes("AWProject MT-MFS run state") > 0);
+        assert!(plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch") > 0);
         assert!(plan.allocation_bytes("AWProject MT-MFS finish state") > 0);
         assert!(plan.allocation_bytes("AWProject MT-MFS product state") > 0);
         assert!(plan.allocation_bytes("product writer scratch") > 0);
@@ -54834,6 +54924,18 @@ mod tests {
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_parallel_plan_bytes_per_row"
                 && decision.value == (64 * 256).to_string()
+        }));
+
+        config.niter = 0;
+        config.dirty_only = true;
+        let dirty_plan = standard_mfs_memory_plan(&config, 64, 1024);
+        assert_eq!(
+            dirty_plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch"),
+            0
+        );
+        assert!(dirty_plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_multiscale_minor_cycle_peak_bytes"
+                && decision.reason.contains("dirty-only")
         }));
     }
 
@@ -54889,11 +54991,11 @@ mod tests {
         config.imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
         assert!(
             awproject_mtmfs_in_place_fft_eligible(&config),
-            "host auto precision with RustFFT resolves to the core's f64 in-place path"
+            "host auto precision with RustFFT uses the bounded in-place path"
         );
 
         config.imaging_fft_precision = ImagingFftPrecisionPolicy::F32;
-        assert!(!awproject_mtmfs_in_place_fft_eligible(&config));
+        assert!(awproject_mtmfs_in_place_fft_eligible(&config));
 
         config.imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
         config.imaging_fft_backend = ImagingFftBackendPolicy::MetalMpsGraph;
@@ -54906,7 +55008,7 @@ mod tests {
     }
 
     #[test]
-    fn vlass_awproject_full_geometry_admits_32_gib_and_rejects_24_gib() {
+    fn vlass_awproject_full_geometry_admits_32_gib_and_rejects_24_and_16_gib() {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("planner-cf-cache");
         make_awproject_planner_cache(&cf_cache, 1024);
@@ -54940,12 +55042,13 @@ mod tests {
                 + AWPROJECT_CF_INDEX_HEAP_AND_TREE_ALLOWANCE_BYTES_PER_PAIR)
         );
         eprintln!(
-            "vlass_awproject_memory_fixture target_gib=32 decision=admit grid_side={} grid_planes={} grid_bytes={} fft_scratch_bytes={} run_state_bytes={} cf_pixel_bytes={} cf_index_bytes={} pointing_index_bytes={} safety_margin_bytes={} source_row_block_rows={} planned_peak_bytes={}",
+            "vlass_awproject_memory_fixture target_gib=32 decision=admit grid_side={} grid_planes={} grid_bytes={} fft_scratch_bytes={} run_state_bytes={} multiscale_scratch_bytes={} cf_pixel_bytes={} cf_index_bytes={} pointing_index_bytes={} safety_margin_bytes={} source_row_block_rows={} planned_peak_bytes={}",
             plan.workload.grid_width,
             plan.workload.grid_planes,
             plan.allocation_bytes("grids"),
             plan.allocation_bytes("FFT chunks"),
             plan.allocation_bytes("AWProject MT-MFS run state"),
+            plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch"),
             plan.allocation_bytes("AWProject CF pixels"),
             plan.allocation_bytes("AWProject CF index"),
             plan.allocation_bytes("POINTING index"),
@@ -54955,6 +55058,24 @@ mod tests {
         );
 
         full.imaging_memory_target_mb = Some(24 * 1024);
+        let error_24 = standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
+            &full,
+            64,
+            64,
+            active_rows,
+            visibility_shape.clone(),
+            pointing_table_rows,
+        )
+        .unwrap_err();
+        assert!(
+            error_24.contains("needs")
+                && error_24.contains("bytes")
+                && error_24.contains("assigned"),
+            "{error_24}"
+        );
+        eprintln!("vlass_awproject_memory_fixture target_gib=24 decision=reject reason={error_24}");
+
+        full.imaging_memory_target_mb = Some(16 * 1024);
         let error = standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
             &full,
             64,
@@ -54968,7 +55089,7 @@ mod tests {
             error.contains("needs") && error.contains("bytes") && error.contains("assigned"),
             "{error}"
         );
-        eprintln!("vlass_awproject_memory_fixture target_gib=24 decision=reject reason={error}");
+        eprintln!("vlass_awproject_memory_fixture target_gib=16 decision=reject reason={error}");
 
         let mut turnaround = full;
         turnaround.imsize = 4096;
@@ -54983,12 +55104,12 @@ mod tests {
             turnaround_shape,
             turnaround_rows,
         )
-        .expect("24 GiB must retain a mode-faithful AWProject turnaround plan");
+        .expect("16 GiB must retain a mode-faithful AWProject turnaround plan");
         assert_eq!(turnaround_plan.workload.grid_planes, 8);
         assert_eq!(turnaround_plan.workers, 1);
-        assert!(turnaround_plan.maximum_planned_resident_bytes <= 24 * 1024 * 1024 * 1024);
+        assert!(turnaround_plan.maximum_planned_resident_bytes <= 16 * 1024 * 1024 * 1024);
         eprintln!(
-            "vlass_awproject_memory_fixture target_gib=24 decision=admit_turnaround grid_side={} active_rows={} source_row_block_rows={} planned_peak_bytes={}",
+            "vlass_awproject_memory_fixture target_gib=16 decision=admit_turnaround grid_side={} active_rows={} source_row_block_rows={} planned_peak_bytes={}",
             turnaround_plan.workload.grid_width,
             turnaround_rows,
             turnaround_plan.ingest.source_row_block_rows,
@@ -59610,7 +59731,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_uses_casa_cube_per_channel_density_default_with_explicit_override() {
+    fn cli_matches_casa_cube_density_defaults_and_mfs_task_override() {
         let cube = CliConfig::parse([
             OsString::from("--ms"),
             OsString::from("demo.ms"),
@@ -59659,6 +59780,48 @@ mod tests {
         .unwrap();
         assert!(!cubedata.per_channel_weight_density);
         assert!(!effective_per_channel_weight_density(&cubedata));
+
+        let mfs = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/mfs"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.5"),
+            OsString::from("--specmode"),
+            OsString::from("mfs"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--perchanweightdensity"),
+        ])
+        .unwrap();
+        assert!(mfs.per_channel_weight_density);
+        assert_eq!(
+            standard_mfs_streaming_weight_density_mode(&mfs),
+            WeightDensityMode::Combined
+        );
+
+        let mfs_default = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/mfs-default"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.5"),
+            OsString::from("--specmode"),
+            OsString::from("mfs"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+        ])
+        .unwrap();
+        assert_eq!(
+            standard_mfs_streaming_weight_density_mode(&mfs_default),
+            WeightDensityMode::Combined
+        );
     }
 
     #[test]

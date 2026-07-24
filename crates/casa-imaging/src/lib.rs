@@ -83,6 +83,7 @@ use casa_lattices::array_madfm;
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use libm::{erfc, j1};
+use nalgebra::DMatrix;
 use ndarray::{Array2, Array4, ArrayD, ShapeBuilder, Zip, s};
 use num_complex::{Complex32, Complex64};
 
@@ -101,10 +102,11 @@ use execution::{
     StandardMfsVisibilityPlan, finite_visibility,
 };
 use fft::{
-    centered_fft2, centered_ifft2, centered_ifft2_batch_f32_timed_with_backend,
+    centered_fft2, centered_fft2_owned, centered_ifft2,
+    centered_ifft2_batch_f32_timed_with_backend,
     centered_ifft2_batch_f64_to_f32_timed_with_backend, centered_ifft2_dirty_f64_owned,
     centered_ifft2_dirty_f64_owned_unshifted_even, centered_ifft2_dirty_f64_pair_to_f32,
-    centered_ifft2_f64_timed_with_backend, dirty_f32_fft_batch_chunk_size,
+    centered_ifft2_f64_timed_with_backend, centered_ifft2_owned, dirty_f32_fft_batch_chunk_size,
     maybe_emit_dirty_f32_batch_fft_timing,
 };
 use fft_backend::{
@@ -2223,6 +2225,10 @@ fn dirty_product_fft_uses_f32(
         .map(|plan| plan.precision == FftPrecision::F32)
 }
 
+fn policy_requests_awproject_f32_host_grid(policy: DirtyProductFftPolicy) -> bool {
+    policy.precision == FftPrecisionChoice::F32 && policy.backend != FftBackendChoice::MetalMpsGraph
+}
+
 fn execute_dirty_product_host_f64_batch(
     inputs: &[&Array2<Complex64>],
     policy: DirtyProductFftPolicy,
@@ -2347,6 +2353,29 @@ fn execute_dirty_product_host_f32_batch(
             .map(|output| output.mapv(|value| Complex32::new(value.re as f32, value.im as f32)))
             .collect()
     })
+}
+
+fn execute_dirty_product_host_f32_owned_single(
+    input: Array2<Complex32>,
+    policy: DirtyProductFftPolicy,
+) -> Result<Array2<Complex32>, ImagingError> {
+    let rows = input.shape()[0];
+    let columns = input.shape()[1];
+    let plan = plan_dirty_product_fft(policy, rows, columns, 1)?;
+    if plan.precision == FftPrecision::F32
+        && plan.selection.selected_backend == FftBackendChoice::RustFft
+        && rows & 1 == 0
+        && columns & 1 == 0
+    {
+        return Ok(centered_ifft2_owned(input));
+    }
+    execute_dirty_product_host_f32_batch(&[input], policy)?
+        .pop()
+        .ok_or_else(|| {
+            ImagingError::Normalization(
+                "single-plane f32 dirty-product FFT returned no output".to_string(),
+            )
+        })
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -4575,8 +4604,16 @@ where
         gridded_samples: initial.gridded_samples,
         skipped_samples: initial.skipped_samples,
     };
-    let hessian = mtmfs_hessian(&psf_state.psf_terms, clean_request.nterms)?;
-    let inv_hessian = invert_small_matrix(&hessian)?;
+    let mut warnings = Vec::new();
+    let scale_sizes = effective_mtmfs_multiscale_scales(&clean_request);
+    let scale_hessians = mtmfs_scale_hessians_for_clean(
+        &psf_state.psf_terms,
+        clean_request.nterms,
+        &scale_sizes,
+        clean_request.clean.niter,
+        &mut warnings,
+    )?;
+    let principal_hessian = &scale_hessians[0];
     let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
         &psf_state.psf_terms[0],
         clean_request.geometry.cell_size_rad,
@@ -4584,7 +4621,6 @@ where
     );
     let initial_peak = peak_abs_value_masked(&residual_terms[0], clean_request.clean_mask.as_ref());
     let mut model_terms = vec![Array2::<f32>::zeros((nx, ny)); clean_request.nterms];
-    let mut warnings = Vec::new();
 
     let controller_started = Instant::now();
     let mut reported_minor_iterations = 0usize;
@@ -4633,8 +4669,7 @@ where
         let (outcome, probe) = run_mtmfs_minor_cycle(
             &clean_request,
             &psf_state.psf_terms,
-            &hessian,
-            &inv_hessian,
+            &scale_hessians,
             &mut model_terms,
             &mut residual_terms,
             cycle_reported_niter,
@@ -4782,7 +4817,8 @@ where
     stage_timings.beam_fit += beam_fit_started.elapsed();
     warnings.extend(beam_warnings);
     let restore_started = Instant::now();
-    let principal_residual_terms = principal_solution_terms(&residual_terms, &inv_hessian);
+    let principal_residual_terms =
+        principal_solution_terms(&residual_terms, &principal_hessian.inverse);
     let mut image_terms = Vec::with_capacity(clean_request.nterms);
     for (model_term, residual_term) in model_terms.iter().zip(principal_residual_terms.iter()) {
         let restored_model = restore_model(model_term, clean_request.geometry.cell_size_rad, beam);
@@ -4879,7 +4915,14 @@ struct MosaicMtmfsHostGrids {
     weight_grids: Vec<Array2<Complex64>>,
 }
 
+struct MosaicMtmfsHostF32Grids {
+    psf_grids: Vec<Array2<Complex32>>,
+    residual_grids: Vec<Array2<Complex32>>,
+    weight_grids: Vec<Array2<Complex32>>,
+}
+
 enum MosaicMtmfsStreamGridStorage {
+    HostF32(MosaicMtmfsHostF32Grids),
     HostF64(MosaicMtmfsHostGrids),
     #[cfg(all(target_os = "macos", not(coverage)))]
     MetalSharedF32 {
@@ -4898,20 +4941,34 @@ enum MosaicDirectMetalMode {
     AwProject,
 }
 
+struct MosaicMtmfsStreamGridConfig {
+    rows: usize,
+    columns: usize,
+    psf_term_count: usize,
+    residual_term_count: usize,
+    dirty_product_fft_policy: DirtyProductFftPolicy,
+    direct_metal_mode: MosaicDirectMetalMode,
+    awproject_grid: bool,
+    direct_metal_scratch_bytes: Option<usize>,
+}
+
 impl MosaicMtmfsStreamGridStorage {
-    fn new(
-        rows: usize,
-        columns: usize,
-        psf_term_count: usize,
-        residual_term_count: usize,
-        dirty_product_fft_policy: DirtyProductFftPolicy,
-        direct_metal_mode: MosaicDirectMetalMode,
-        direct_metal_scratch_bytes: Option<usize>,
-    ) -> Result<Self, ImagingError> {
+    fn new(config: MosaicMtmfsStreamGridConfig) -> Result<Self, ImagingError> {
+        let MosaicMtmfsStreamGridConfig {
+            rows,
+            columns,
+            psf_term_count,
+            residual_term_count,
+            dirty_product_fft_policy,
+            direct_metal_mode,
+            awproject_grid,
+            direct_metal_scratch_bytes,
+        } = config;
         #[cfg(any(not(target_os = "macos"), coverage))]
         let _ = (
             dirty_product_fft_policy,
             direct_metal_mode,
+            awproject_grid,
             direct_metal_scratch_bytes,
         );
         #[cfg(all(target_os = "macos", not(coverage)))]
@@ -4985,6 +5042,19 @@ impl MosaicMtmfsStreamGridStorage {
                 Err(reason) => emit_dirty_product_gpu_resident_fallback(reason),
             }
         }
+        if awproject_grid && policy_requests_awproject_f32_host_grid(dirty_product_fft_policy) {
+            return Ok(Self::HostF32(MosaicMtmfsHostF32Grids {
+                psf_grids: (0..psf_term_count)
+                    .map(|_| Array2::<Complex32>::zeros((rows, columns)))
+                    .collect(),
+                residual_grids: (0..residual_term_count)
+                    .map(|_| Array2::<Complex32>::zeros((rows, columns)))
+                    .collect(),
+                weight_grids: (0..psf_term_count)
+                    .map(|_| Array2::<Complex32>::zeros((rows, columns)))
+                    .collect(),
+            }));
+        }
         Ok(Self::HostF64(MosaicMtmfsHostGrids {
             psf_grids: (0..psf_term_count)
                 .map(|_| Array2::<Complex64>::zeros((rows, columns)))
@@ -5000,7 +5070,7 @@ impl MosaicMtmfsStreamGridStorage {
 
     fn is_metal_shared(&self) -> bool {
         match self {
-            Self::HostF64(_) => false,
+            Self::HostF32(_) | Self::HostF64(_) => false,
             #[cfg(all(target_os = "macos", not(coverage)))]
             Self::MetalSharedF32 { .. } => true,
         }
@@ -5014,12 +5084,11 @@ impl MosaicMtmfsStreamGridStorage {
         value: Complex32,
     ) -> Result<(), ImagingError> {
         match self {
+            Self::HostF32(grids) => {
+                projector.grid_sample_planned(&mut grids.psf_grids[order], plan, value);
+            }
             Self::HostF64(grids) => {
-                projector.grid_sample_planned_f64(
-                    &mut grids.psf_grids[order],
-                    plan,
-                    Complex64::new(f64::from(value.re), f64::from(value.im)),
-                );
+                projector.grid_sample_planned_f64(&mut grids.psf_grids[order], plan, value);
             }
             #[cfg(all(target_os = "macos", not(coverage)))]
             Self::MetalSharedF32 { grid, .. } => {
@@ -5042,12 +5111,11 @@ impl MosaicMtmfsStreamGridStorage {
         value: Complex32,
     ) -> Result<(), ImagingError> {
         match self {
+            Self::HostF32(grids) => {
+                projector.grid_sample_planned(&mut grids.residual_grids[order], plan, value);
+            }
             Self::HostF64(grids) => {
-                projector.grid_sample_planned_f64(
-                    &mut grids.residual_grids[order],
-                    plan,
-                    Complex64::new(f64::from(value.re), f64::from(value.im)),
-                );
+                projector.grid_sample_planned_f64(&mut grids.residual_grids[order], plan, value);
             }
             #[cfg(all(target_os = "macos", not(coverage)))]
             Self::MetalSharedF32 {
@@ -5074,6 +5142,23 @@ impl MosaicMtmfsStreamGridStorage {
         support_sums: &[MosaicWeightSupportSum],
     ) -> Result<(), ImagingError> {
         match self {
+            Self::HostF32(grids) => {
+                for support_sum in support_sums {
+                    if !(support_sum.weight.is_finite() && support_sum.weight != 0.0) {
+                        continue;
+                    }
+                    let mut plan = *weight_plan;
+                    plan.min_ix = support_sum.key.min_ix as isize;
+                    plan.max_ix = support_sum.key.max_ix as isize;
+                    plan.min_iy = support_sum.key.min_iy as isize;
+                    plan.max_iy = support_sum.key.max_iy as isize;
+                    projector.grid_sample_planned(
+                        &mut grids.weight_grids[order],
+                        &plan,
+                        Complex32::new(support_sum.weight as f32, 0.0),
+                    );
+                }
+            }
             Self::HostF64(grids) => add_mosaic_center_weight_grid_from_support_sums(
                 projector,
                 weight_plan,
@@ -5246,6 +5331,100 @@ fn finish_mosaic_mtmfs_dirty_images(
     // products above, but not this shared dirty-image scale.
     let dirty_fft_scale = image_pixel_count / normalization_sumwt as f32;
     match storage {
+        MosaicMtmfsStreamGridStorage::HostF32(grids) => {
+            let fft_started = Instant::now();
+            let fft_policy = dirty_product_fft_policy;
+            if !awproject_weight_semantics {
+                let mut inputs = grids.psf_grids;
+                inputs.extend(grids.residual_grids);
+                inputs.extend(grids.weight_grids);
+                let mut outputs = execute_dirty_product_host_f32_batch(&inputs, fft_policy)?;
+                let raw_weight_terms = outputs.split_off(psf_term_count + nterms);
+                let raw_residual_terms = outputs.split_off(psf_term_count);
+                let raw_psf_terms = outputs;
+                stage_timings.psf_fft += fft_started.elapsed();
+                let weight_terms = raw_weight_terms
+                    .iter()
+                    .zip(&weight_fft_scales)
+                    .map(|(raw, &scale)| {
+                        gridder
+                            .mosaic_weight_image_from_grid(raw)
+                            .mapv(|value| value * scale)
+                    })
+                    .collect::<Vec<_>>();
+                let weight_image = weight_terms.first().cloned().ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "streaming mosaic MT-MFS produced no weight terms".to_string(),
+                    )
+                })?;
+                let mut psf_terms = raw_psf_terms
+                    .iter()
+                    .map(|raw| {
+                        let mut image =
+                            gridder.corrected_mosaic_image_from_grid(raw, conv_sampling);
+                        image.mapv_inplace(|value| value * dirty_fft_scale);
+                        image
+                    })
+                    .collect::<Vec<_>>();
+                return normalize_mosaic_mtmfs_dirty_images(
+                    &mut psf_terms,
+                    &raw_residual_terms
+                        .iter()
+                        .map(|raw| gridder.corrected_mosaic_image_from_grid(raw, conv_sampling))
+                        .collect::<Vec<_>>(),
+                    weight_image,
+                    weight_terms,
+                    dirty_fft_scale,
+                    pb_limit,
+                );
+            }
+            let mut psf_terms = grids
+                .psf_grids
+                .into_iter()
+                .map(|grid| {
+                    let raw = execute_dirty_product_host_f32_owned_single(grid, fft_policy)?;
+                    let mut image = gridder.corrected_mosaic_image_from_grid(&raw, conv_sampling);
+                    image.mapv_inplace(|value| value * dirty_fft_scale);
+                    Ok(image)
+                })
+                .collect::<Result<Vec<_>, ImagingError>>()?;
+            let corrected_residual_terms = grids
+                .residual_grids
+                .into_iter()
+                .map(|grid| {
+                    let raw = execute_dirty_product_host_f32_owned_single(grid, fft_policy)?;
+                    Ok(gridder.corrected_mosaic_image_from_grid(&raw, conv_sampling))
+                })
+                .collect::<Result<Vec<_>, ImagingError>>()?;
+            let weight_terms = grids
+                .weight_grids
+                .into_iter()
+                .zip(&weight_fft_scales)
+                .map(|(grid, &scale)| {
+                    let raw = execute_dirty_product_host_f32_owned_single(grid, fft_policy)?;
+                    let image = if awproject_weight_semantics {
+                        gridder.aw_weight_image_from_grid(&raw, conv_sampling)
+                    } else {
+                        gridder.mosaic_weight_image_from_grid(&raw)
+                    };
+                    Ok(image.mapv(|value| value * scale))
+                })
+                .collect::<Result<Vec<_>, ImagingError>>()?;
+            stage_timings.psf_fft += fft_started.elapsed();
+            let weight_image = weight_terms.first().cloned().ok_or_else(|| {
+                ImagingError::Normalization(
+                    "streaming mosaic MT-MFS produced no weight terms".to_string(),
+                )
+            })?;
+            normalize_mosaic_mtmfs_dirty_images(
+                &mut psf_terms,
+                &corrected_residual_terms,
+                weight_image,
+                weight_terms,
+                dirty_fft_scale,
+                pb_limit,
+            )
+        }
         MosaicMtmfsStreamGridStorage::HostF64(grids) => {
             let fft_started = Instant::now();
             if !awproject_weight_semantics {
@@ -5331,7 +5510,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                     )?;
                     dump_mosaic_complex_grid(&format!("aw_weight_tt{order}_postfft"), 0.0, &raw);
                     let image = if awproject_weight_semantics {
-                        gridder.aw_weight_image_from_grid_f64(&raw)
+                        gridder.aw_weight_image_from_grid_f64(&raw, conv_sampling)
                     } else {
                         gridder.mosaic_weight_image_from_grid_f64(&raw)
                     };
@@ -5435,7 +5614,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                 .zip(&weight_fft_scales)
                 .map(|(raw, &scale)| {
                     let image = if awproject_weight_semantics {
-                        gridder.aw_weight_image_from_grid(raw)
+                        gridder.aw_weight_image_from_grid(raw, conv_sampling)
                     } else {
                         gridder.mosaic_weight_image_from_grid(raw)
                     };
@@ -5557,6 +5736,30 @@ fn finish_mosaic_mtmfs_residual_images(
     #[cfg(any(not(target_os = "macos"), coverage))]
     let _ = nterms;
     let corrected = match storage {
+        MosaicMtmfsStreamGridStorage::HostF32(grids) => {
+            let fft_policy = dirty_product_fft_policy;
+            if !bounded_sequential_host_fft {
+                execute_dirty_product_host_f32_batch(&grids.residual_grids, fft_policy)?
+                    .iter()
+                    .map(|raw| gridder.corrected_mosaic_image_from_grid(raw, conv_sampling))
+                    .collect::<Vec<_>>()
+            } else {
+                let MosaicMtmfsHostF32Grids {
+                    psf_grids,
+                    residual_grids,
+                    weight_grids,
+                } = grids;
+                drop(psf_grids);
+                drop(weight_grids);
+                residual_grids
+                    .into_iter()
+                    .map(|grid| {
+                        let raw = execute_dirty_product_host_f32_owned_single(grid, fft_policy)?;
+                        Ok(gridder.corrected_mosaic_image_from_grid(&raw, conv_sampling))
+                    })
+                    .collect::<Result<Vec<_>, ImagingError>>()?
+            }
+        }
         MosaicMtmfsStreamGridStorage::HostF64(grids) => {
             if !bounded_sequential_host_fft {
                 let input_refs = grids.residual_grids.iter().collect::<Vec<_>>();
@@ -6643,15 +6846,16 @@ where
         MosaicDirectMetalMode::Mosaic
     };
     let mut accumulation = MosaicMtmfsStreamGridAccumulation {
-        storage: MosaicMtmfsStreamGridStorage::new(
-            grid_nx,
-            grid_ny,
+        storage: MosaicMtmfsStreamGridStorage::new(MosaicMtmfsStreamGridConfig {
+            rows: grid_nx,
+            columns: grid_ny,
             psf_term_count,
-            request.nterms,
+            residual_term_count: request.nterms,
             dirty_product_fft_policy,
             direct_metal_mode,
+            awproject_grid: aw_cache.is_some(),
             direct_metal_scratch_bytes,
-        )?,
+        })?,
         pointing_weights: MosaicPointingWeightAccumulator::default(),
         reported_sumwt_terms: vec![0.0; psf_term_count],
         aw_psf_sumwt_terms: vec![0.0; psf_term_count],
@@ -7265,6 +7469,181 @@ fn grid_awproject_mtmfs_planned_samples_host(
     if profile::standard_mfs_profile_detail_enabled() {
         eprintln!(
             "awproject_plane_parallel workers={} planes={} planned_samples={} elapsed_ms={:.3}",
+            worker_count,
+            psf_grids.len() + residual_grids.len() + weight_grids.len(),
+            samples.len(),
+            profile::millis(started.elapsed()),
+        );
+    }
+    Ok(())
+}
+
+enum AwProjectMtmfsF32PlaneTask<'a> {
+    Psf {
+        order: usize,
+        grid: &'a mut Array2<Complex32>,
+    },
+    Residual {
+        order: usize,
+        grid: &'a mut Array2<Complex32>,
+    },
+    Weight {
+        order: usize,
+        grid: &'a mut Array2<Complex32>,
+    },
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_awproject_mtmfs_f32_plane_tasks(
+    tasks: Vec<AwProjectMtmfsF32PlaneTask<'_>>,
+    samples: &[AwProjectMtmfsPlannedSample],
+    reffreq_hz: f64,
+    first_imaging_projector: &AwProjector<'_>,
+    second_imaging_projector: &AwProjector<'_>,
+    first_psf_projector: &AwProjector<'_>,
+    second_psf_projector: &AwProjector<'_>,
+    first_weight_projector: &AwProjector<'_>,
+    second_weight_projector: &AwProjector<'_>,
+    first_weight_plan: &gridder::AwProjectSamplePlan,
+    second_weight_plan: &gridder::AwProjectSamplePlan,
+) {
+    for task in tasks {
+        match task {
+            AwProjectMtmfsF32PlaneTask::Psf { order, grid } => {
+                for sample in samples {
+                    let taylor_weight =
+                        mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
+                    let value = Complex32::new(sample.weight * taylor_weight, 0.0);
+                    first_psf_projector.grid_sample_planned(grid, &sample.first_psf_plan, value);
+                    second_psf_projector.grid_sample_planned(grid, &sample.second_psf_plan, value);
+                }
+            }
+            AwProjectMtmfsF32PlaneTask::Residual { order, grid } => {
+                for sample in samples {
+                    let taylor_weight =
+                        mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
+                    let term_weight = sample.weight * taylor_weight;
+                    first_imaging_projector.grid_sample_planned(
+                        grid,
+                        &sample.first_imaging_plan,
+                        sample.first_residual * term_weight,
+                    );
+                    second_imaging_projector.grid_sample_planned(
+                        grid,
+                        &sample.second_imaging_plan,
+                        sample.second_residual * term_weight,
+                    );
+                }
+            }
+            AwProjectMtmfsF32PlaneTask::Weight { order, grid } => {
+                for sample in samples {
+                    let taylor_weight =
+                        mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
+                    let value = Complex32::new(sample.weight * taylor_weight, 0.0);
+                    first_weight_projector.grid_sample_planned(grid, first_weight_plan, value);
+                    second_weight_projector.grid_sample_planned(grid, second_weight_plan, value);
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn grid_awproject_mtmfs_planned_samples_host_f32(
+    grids: &mut MosaicMtmfsHostF32Grids,
+    samples: &[AwProjectMtmfsPlannedSample],
+    reffreq_hz: f64,
+    first_imaging_projector: &AwProjector<'_>,
+    second_imaging_projector: &AwProjector<'_>,
+    first_psf_projector: &AwProjector<'_>,
+    second_psf_projector: &AwProjector<'_>,
+    first_weight_projector: &AwProjector<'_>,
+    second_weight_projector: &AwProjector<'_>,
+    first_weight_plan: &gridder::AwProjectSamplePlan,
+    second_weight_plan: &gridder::AwProjectSamplePlan,
+    requested_threads: usize,
+) -> Result<(), ImagingError> {
+    let MosaicMtmfsHostF32Grids {
+        psf_grids,
+        residual_grids,
+        weight_grids,
+    } = grids;
+    let mut tasks = Vec::<AwProjectMtmfsF32PlaneTask<'_>>::with_capacity(
+        psf_grids.len() + residual_grids.len() + weight_grids.len(),
+    );
+    tasks.extend(
+        psf_grids
+            .iter_mut()
+            .enumerate()
+            .map(|(order, grid)| AwProjectMtmfsF32PlaneTask::Psf { order, grid }),
+    );
+    tasks.extend(
+        residual_grids
+            .iter_mut()
+            .enumerate()
+            .map(|(order, grid)| AwProjectMtmfsF32PlaneTask::Residual { order, grid }),
+    );
+    tasks.extend(
+        weight_grids
+            .iter_mut()
+            .enumerate()
+            .map(|(order, grid)| AwProjectMtmfsF32PlaneTask::Weight { order, grid }),
+    );
+    let worker_count = requested_threads.max(1).min(tasks.len().max(1));
+    let mut worker_tasks = (0..worker_count)
+        .map(|_| Vec::<AwProjectMtmfsF32PlaneTask<'_>>::new())
+        .collect::<Vec<_>>();
+    for (index, task) in tasks.into_iter().enumerate() {
+        worker_tasks[index % worker_count].push(task);
+    }
+    let started = Instant::now();
+    if worker_count == 1 {
+        execute_awproject_mtmfs_f32_plane_tasks(
+            worker_tasks.pop().expect("one AWProject f32 plane worker"),
+            samples,
+            reffreq_hz,
+            first_imaging_projector,
+            second_imaging_projector,
+            first_psf_projector,
+            second_psf_projector,
+            first_weight_projector,
+            second_weight_projector,
+            first_weight_plan,
+            second_weight_plan,
+        );
+    } else {
+        thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(worker_count);
+            for tasks in worker_tasks {
+                handles.push(scope.spawn(move || {
+                    execute_awproject_mtmfs_f32_plane_tasks(
+                        tasks,
+                        samples,
+                        reffreq_hz,
+                        first_imaging_projector,
+                        second_imaging_projector,
+                        first_psf_projector,
+                        second_psf_projector,
+                        first_weight_projector,
+                        second_weight_projector,
+                        first_weight_plan,
+                        second_weight_plan,
+                    );
+                }));
+            }
+            for handle in handles {
+                handle.join().map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "AWProject MT-MFS f32 plane worker panicked".to_string(),
+                    )
+                })?;
+            }
+            Ok::<(), ImagingError>(())
+        })?;
+    }
+    if profile::standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "awproject_plane_parallel workers={} planes={} planned_samples={} accumulation_precision=f32 elapsed_ms={:.3}",
             worker_count,
             psf_grids.len() + residual_grids.len() + weight_grids.len(),
             samples.len(),
@@ -8226,18 +8605,16 @@ static inline long2 aw_complex_product_fixed64(float2 value, float2 tap, float s
     const float ad = value.x * tap.y;
     const float bc = value.y * tap.x;
 
-    const float real_high = ac - bd;
-    const float real_low = fma(value.x, tap.x, -ac)
-        - fma(value.y, tap.y, -bd)
-        + aw_two_sum_error(ac, -bd, real_high);
-    const float imag_high = ad + bc;
-    const float imag_low = fma(value.x, tap.y, -ad)
-        + fma(value.y, tap.x, -bc)
-        + aw_two_sum_error(ad, bc, imag_high);
-
+    // CASA's AWVisResampler first evaluates each Complex contribution in
+    // float32, then promotes that rounded contribution into its DComplex
+    // accumulation grid. Preserve the same boundary here: the fixed-point
+    // accumulator must make the sum deterministic, not recover product bits
+    // that CASA and the host path have already rounded away.
+    const float real_value = ac - bd;
+    const float imag_value = ad + bc;
     return long2(
-        long(rint(real_high * scale)) + long(rint(real_low * scale)),
-        long(rint(imag_high * scale)) + long(rint(imag_low * scale))
+        long(rint(real_value * scale)),
+        long(rint(imag_value * scale))
     );
 }
 
@@ -8746,6 +9123,22 @@ fn accumulate_awproject_mtmfs_metadata_group(
             accumulation.aw_sample_census.accepted_samples += 1;
         }
         match &mut accumulation.storage {
+            MosaicMtmfsStreamGridStorage::HostF32(grids) => {
+                grid_awproject_mtmfs_planned_samples_host_f32(
+                    grids,
+                    &planned_samples,
+                    request.reffreq_hz,
+                    &first_imaging_projector,
+                    &second_imaging_projector,
+                    &first_psf_projector,
+                    &second_psf_projector,
+                    &first_weight_projector,
+                    &second_weight_projector,
+                    &first_weight_plan,
+                    &second_weight_plan,
+                    requested_threads,
+                )?;
+            }
             MosaicMtmfsStreamGridStorage::HostF64(grids) => {
                 grid_awproject_mtmfs_planned_samples_host(
                     grids,
@@ -14096,8 +14489,15 @@ pub fn run_mtmfs(
     let initial_peak = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref());
     let mut warnings = Vec::new();
 
-    let hessian = mtmfs_hessian(&psf_state.psf_terms, request.nterms)?;
-    let inv_hessian = invert_small_matrix(&hessian)?;
+    let scale_sizes = effective_mtmfs_multiscale_scales(request);
+    let scale_hessians = mtmfs_scale_hessians_for_clean(
+        &psf_state.psf_terms,
+        request.nterms,
+        &scale_sizes,
+        request.clean.niter,
+        &mut warnings,
+    )?;
+    let principal_hessian = &scale_hessians[0];
 
     let controller_started = Instant::now();
     let mut reported_minor_iterations = 0usize;
@@ -14146,8 +14546,7 @@ pub fn run_mtmfs(
         let (outcome, probe) = run_mtmfs_minor_cycle(
             request,
             &psf_state.psf_terms,
-            &hessian,
-            &inv_hessian,
+            &scale_hessians,
             &mut model_terms,
             &mut residual_terms,
             cycle_reported_niter,
@@ -14273,7 +14672,8 @@ pub fn run_mtmfs(
     );
     stage_timings.beam_fit += beam_fit_started.elapsed();
     let restore_started = Instant::now();
-    let principal_residual_terms = principal_solution_terms(&residual_terms, &inv_hessian);
+    let principal_residual_terms =
+        principal_solution_terms(&residual_terms, &principal_hessian.inverse);
     let mut image_terms = Vec::with_capacity(request.nterms);
     for (model_term, residual_term) in model_terms.iter().zip(principal_residual_terms.iter()) {
         let restored_model = restore_model(model_term, request.geometry.cell_size_rad, beam);
@@ -14837,7 +15237,7 @@ fn add_mosaic_center_weight_grid_from_support_sums(
         weight_projector.grid_sample_planned_f64(
             weight_grid,
             &plan,
-            Complex64::new(support_sum.weight, 0.0),
+            Complex32::new(support_sum.weight as f32, 0.0),
         );
     }
 }
@@ -15698,12 +16098,12 @@ fn run_mosaic_dirty_imaging(
                 projector.grid_sample_planned_f64(
                     &mut psf_grid,
                     &plan,
-                    Complex64::new(grid_weight64, 0.0),
+                    Complex32::new(grid_weight, 0.0),
                 );
                 projector.grid_sample_planned_f64(
                     &mut group_residual_grid,
                     &plan,
-                    Complex64::new(visibility.re as f64, visibility.im as f64) * grid_weight64,
+                    visibility * grid_weight,
                 );
                 add_mosaic_weight_support_sample(
                     &mut weight_support_sums,
@@ -17395,12 +17795,8 @@ fn compute_mosaic_dirty_group_contribution_scalar(
             continue;
         };
         let grid_weight64 = f64::from(grid_weight);
-        projector.grid_sample_planned_f64(&mut psf_grid, &plan, Complex64::new(grid_weight64, 0.0));
-        projector.grid_sample_planned_f64(
-            &mut residual_grid,
-            &plan,
-            Complex64::new(visibility.re as f64, visibility.im as f64) * grid_weight64,
-        );
+        projector.grid_sample_planned_f64(&mut psf_grid, &plan, Complex32::new(grid_weight, 0.0));
+        projector.grid_sample_planned_f64(&mut residual_grid, &plan, visibility * grid_weight);
         add_mosaic_weight_support_sample(
             &mut weight_support_sums,
             weight_projector,
@@ -17470,12 +17866,11 @@ fn accumulate_mosaic_grouped_dirty_cpu(
 ) {
     for sample in samples {
         let plan = mosaic_grouped_sample_plan(*sample);
-        let weight = f64::from(sample.weight);
-        projector.grid_sample_planned_f64(psf_grid, &plan, Complex64::new(weight, 0.0));
+        projector.grid_sample_planned_f64(psf_grid, &plan, Complex32::new(sample.weight, 0.0));
         projector.grid_sample_planned_f64(
             residual_grid,
             &plan,
-            Complex64::new(sample.visibility_re as f64, sample.visibility_im as f64) * weight,
+            Complex32::new(sample.visibility_re, sample.visibility_im) * sample.weight,
         );
     }
 }
@@ -17493,11 +17888,10 @@ fn accumulate_mosaic_grouped_residual_cpu(
             .unwrap_or_else(|| Complex32::new(0.0, 0.0));
         let residual_visibility =
             Complex32::new(sample.visibility_re, sample.visibility_im) - predicted;
-        let weight = f64::from(sample.weight);
         projector.grid_sample_planned_f64(
             residual_grid,
             &plan,
-            Complex64::new(residual_visibility.re as f64, residual_visibility.im as f64) * weight,
+            residual_visibility * sample.weight,
         );
     }
 }
@@ -18260,12 +18654,12 @@ fn compute_mosaic_dirty_group_contribution_sample_ranges(
                     projector.grid_sample_planned_f64(
                         &mut psf_grid,
                         &plan,
-                        Complex64::new(grid_weight64, 0.0),
+                        Complex32::new(grid_weight, 0.0),
                     );
                     projector.grid_sample_planned_f64(
                         &mut residual_grid,
                         &plan,
-                        Complex64::new(visibility.re as f64, visibility.im as f64) * grid_weight64,
+                        visibility * grid_weight,
                     );
                     add_mosaic_weight_support_sample(
                         &mut weight_support_sums,
@@ -19641,8 +20035,7 @@ fn compute_mosaic_residual_group_contribution(
         projector.grid_sample_planned_f64(
             &mut residual_grid,
             &plan,
-            Complex64::new(residual_visibility.re as f64, residual_visibility.im as f64)
-                * f64::from(grid_weight),
+            residual_visibility * grid_weight,
         );
     }
     Ok(MosaicResidualGroupContribution {
@@ -19783,10 +20176,7 @@ fn compute_mosaic_residual_group_grid_sample_ranges(
                     projector.grid_sample_planned_f64(
                         &mut residual_grid,
                         &plan,
-                        Complex64::new(
-                            residual_visibility.re as f64,
-                            residual_visibility.im as f64,
-                        ) * f64::from(grid_weight),
+                        residual_visibility * grid_weight,
                     );
                 }
                 MosaicResidualRangeContribution {
@@ -28580,22 +28970,24 @@ fn subtract_multiscale_component(
 fn make_multiscale_kernel(shape: (usize, usize), scale_size: f32) -> Array2<f32> {
     let (nx, ny) = shape;
     let mut kernel = Array2::<f32>::zeros((nx, ny));
-    let refi = nx as f32 / 2.0;
-    let refj = ny as f32 / 2.0;
+    // MatrixCleaner assigns the result of integer nx/2 and ny/2 to Double.
+    let refi = (nx / 2) as f64;
+    let refj = (ny / 2) as f64;
     if scale_size == 0.0 {
         kernel[(refi as usize, refj as usize)] = 1.0;
         return kernel;
     }
 
-    let mini = ((refi - scale_size).floor() as isize).max(0) as usize;
-    let maxi = ((refi + scale_size).ceil() as usize).min(nx - 1);
-    let minj = ((refj - scale_size).floor() as isize).max(0) as usize;
-    let maxj = ((refj + scale_size).ceil() as usize).min(ny - 1);
+    let scale_size_f64 = f64::from(scale_size);
+    let mini = ((refi - scale_size_f64) as isize).max(0) as usize;
+    let maxi = ((refi + scale_size_f64) as usize).min(nx - 1);
+    let minj = ((refj - scale_size_f64) as isize).max(0) as usize;
+    let maxj = ((refj + scale_size_f64) as usize).min(ny - 1);
     let mut volume = 0.0f32;
     for j in minj..=maxj {
-        let ypart = ((refj - j as f32) / scale_size).powi(2);
+        let ypart = (((refj - j as f64) / scale_size_f64).powi(2)) as f32;
         for i in mini..=maxi {
-            let rad2 = ypart + ((refi - i as f32) / scale_size).powi(2);
+            let rad2 = (f64::from(ypart) + ((refi - i as f64) / scale_size_f64).powi(2)) as f32;
             if rad2 < 1.0 {
                 let rad = if rad2 <= 0.0 { 0.0 } else { rad2.sqrt() };
                 let value = (1.0 - rad2) * multiscale_spheroidal(rad);
@@ -28643,15 +29035,15 @@ fn multiscale_spheroidal(nu: f32) -> f32 {
             1.0f32,
         )
     };
-    let delnusq = nu * nu - nuend * nuend;
-    let numerator = p
-        .iter()
-        .rev()
-        .fold(0.0f32, |acc, coefficient| acc * delnusq + coefficient);
-    let denominator = q
-        .iter()
-        .rev()
-        .fold(0.0f32, |acc, coefficient| acc * delnusq + coefficient);
+    let delnusq = nu.powf(2.0) - nuend.powf(2.0);
+    let mut numerator = p[0];
+    for (power, coefficient) in p.iter().enumerate().skip(1) {
+        numerator += coefficient * delnusq.powf(power as f32);
+    }
+    let mut denominator = q[0];
+    for (power, coefficient) in q.iter().enumerate().skip(1) {
+        denominator += coefficient * delnusq.powf(power as f32);
+    }
     if denominator == 0.0 {
         0.0
     } else {
@@ -29942,7 +30334,18 @@ fn mtmfs_sample_frequency(
     Ok(frequency_hz)
 }
 
-fn mtmfs_hessian(psf_terms: &[Array2<f32>], nterms: usize) -> Result<Vec<Vec<f32>>, ImagingError> {
+#[derive(Debug, Clone)]
+struct MtmfsScaleHessian {
+    scale_size: f32,
+    hessian: Vec<Vec<f32>>,
+    inverse: Vec<Vec<f32>>,
+}
+
+fn mtmfs_scale_hessians(
+    psf_terms: &[Array2<f32>],
+    nterms: usize,
+    scale_sizes: &[f32],
+) -> Result<Vec<MtmfsScaleHessian>, ImagingError> {
     if psf_terms.len() < 2 * nterms - 1 {
         return Err(ImagingError::InvalidRequest(format!(
             "MTMFS PSF stack length {} is smaller than required {}",
@@ -29950,70 +30353,198 @@ fn mtmfs_hessian(psf_terms: &[Array2<f32>], nterms: usize) -> Result<Vec<Vec<f32
             2 * nterms - 1
         )));
     }
-    let center = (psf_terms[0].dim().0 / 2, psf_terms[0].dim().1 / 2);
-    Ok((0..nterms)
-        .map(|row| {
-            (0..nterms)
-                .map(|col| psf_terms[row + col][center])
-                .collect::<Vec<_>>()
+    if scale_sizes.is_empty() {
+        return Err(ImagingError::InvalidRequest(
+            "MTMFS requires at least one effective deconvolution scale".to_string(),
+        ));
+    }
+    let expected_shape = psf_terms[0].dim();
+    if psf_terms.iter().any(|term| term.dim() != expected_shape) {
+        return Err(ImagingError::InvalidRequest(
+            "MTMFS PSF Taylor terms must share one image shape".to_string(),
+        ));
+    }
+    let psf_peak_position = casa_mtmfs_psf_peak_position(
+        &psf_terms[0],
+        scale_sizes.iter().copied().fold(0.0, f32::max),
+    );
+
+    scale_sizes
+        .iter()
+        .copied()
+        .map(|scale_size| {
+            let hessian = (0..nterms)
+                .map(|row| {
+                    (0..nterms)
+                        .map(|col| {
+                            mtmfs_scale_hessian_peak(
+                                &psf_terms[row + col],
+                                scale_size,
+                                psf_peak_position,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let inverse = invert_symmetric_definite(&hessian)?;
+            Ok(MtmfsScaleHessian {
+                scale_size,
+                hessian,
+                inverse,
+            })
         })
-        .collect())
+        .collect()
 }
 
-#[allow(clippy::needless_range_loop)]
-fn invert_small_matrix(matrix: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, ImagingError> {
+fn mtmfs_scale_hessians_for_clean(
+    psf_terms: &[Array2<f32>],
+    nterms: usize,
+    scale_sizes: &[f32],
+    niter: usize,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<MtmfsScaleHessian>, ImagingError> {
+    match mtmfs_scale_hessians(psf_terms, nterms, scale_sizes) {
+        Ok(hessians) => Ok(hessians),
+        Err(ImagingError::Unsupported(reason)) if niter == 0 => {
+            // CASA's `computeprincipalsolution()` also tries to construct the
+            // Hessian for niter=0. When that solve reports a singular matrix,
+            // `mtrestore()` ignores the false return and restores the raw
+            // residual Taylor terms. An identity principal transform
+            // reproduces that behavior while retaining the dirty products.
+            warnings.push(format!(
+                "CASA MT-MFS niter=0 principal solution was skipped: {reason}"
+            ));
+            let identity = (0..nterms)
+                .map(|row| {
+                    (0..nterms)
+                        .map(|col| if row == col { 1.0 } else { 0.0 })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            Ok(scale_sizes
+                .iter()
+                .copied()
+                .map(|scale_size| MtmfsScaleHessian {
+                    scale_size,
+                    hessian: identity.clone(),
+                    inverse: identity.clone(),
+                })
+                .collect())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn casa_mtmfs_psf_peak_position(psf: &Array2<f32>, max_scale_size: f32) -> (usize, usize) {
+    let (nx, ny) = psf.dim();
+    let mut support = ((4.0f32 * 4.0 + max_scale_size * max_scale_size).sqrt() * 20.0) as usize;
+    support = support.max(80).min(nx).min(ny);
+    if support % 2 != 0 {
+        support -= 1;
+    }
+    let x0 = if nx > support {
+        nx / 2 - support / 2
+    } else {
+        0
+    };
+    let y0 = if ny > support {
+        ny / 2 - support / 2
+    } else {
+        0
+    };
+    let x1 = if nx > support {
+        nx / 2 + support / 2
+    } else {
+        nx - 1
+    };
+    let y1 = if ny > support {
+        ny / 2 + support / 2
+    } else {
+        ny - 1
+    };
+    let mut peak_position = (0, 0);
+    let mut peak_abs = 0.0f32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let value_abs = psf[(x, y)].abs();
+            if value_abs > peak_abs {
+                peak_abs = value_abs;
+                peak_position = (x, y);
+            }
+        }
+    }
+    peak_position
+}
+
+fn mtmfs_scale_hessian_peak(
+    psf: &Array2<f32>,
+    scale_size: f32,
+    psf_peak_position: (usize, usize),
+) -> f32 {
+    let (nx, ny) = psf.dim();
+    if scale_size == 0.0 {
+        return psf[psf_peak_position];
+    }
+
+    // MultiTermMatrixCleaner forms PSF_t * scale_s * scale_s and samples its
+    // central peak. The scale has compact support, so evaluating that one
+    // circular-convolution sample directly avoids materializing CASA's
+    // full-image scale FFTs while retaining the same Hessian semantics.
+    let radius = scale_size.ceil() as usize;
+    let kernel = make_multiscale_kernel((2 * radius + 1, 2 * radius + 1), scale_size);
+    let kernel_center = (radius as isize, radius as isize);
+    let mut peak = 0.0f32;
+    for ((left_x, left_y), left) in kernel.indexed_iter() {
+        if *left == 0.0 {
+            continue;
+        }
+        let left_dx = left_x as isize - kernel_center.0;
+        let left_dy = left_y as isize - kernel_center.1;
+        for ((right_x, right_y), right) in kernel.indexed_iter() {
+            if *right == 0.0 {
+                continue;
+            }
+            let offset_x = left_dx + right_x as isize - kernel_center.0;
+            let offset_y = left_dy + right_y as isize - kernel_center.1;
+            let psf_x = (psf_peak_position.0 as isize - offset_x).rem_euclid(nx as isize) as usize;
+            let psf_y = (psf_peak_position.1 as isize - offset_y).rem_euclid(ny as isize) as usize;
+            peak += psf[(psf_x, psf_y)] * *left * *right;
+        }
+    }
+    peak
+}
+
+fn invert_symmetric_definite(matrix: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, ImagingError> {
     let n = matrix.len();
     if n == 0 || matrix.iter().any(|row| row.len() != n) {
         return Err(ImagingError::InvalidRequest(
             "MTMFS Hessian must be a non-empty square matrix".to_string(),
         ));
     }
-    let mut augmented = vec![vec![0.0f64; 2 * n]; n];
-    for row in 0..n {
-        for col in 0..n {
-            augmented[row][col] = matrix[row][col] as f64;
-        }
-        augmented[row][n + row] = 1.0;
-    }
-    for pivot in 0..n {
-        let mut best_row = pivot;
-        let mut best_value = augmented[pivot][pivot].abs();
-        for row in (pivot + 1)..n {
-            let value = augmented[row][pivot].abs();
-            if value > best_value {
-                best_value = value;
-                best_row = row;
-            }
-        }
-        if !(best_value.is_finite() && best_value > 0.0) {
-            return Err(ImagingError::Unsupported(
-                "MTMFS Hessian is singular at the image center".to_string(),
-            ));
-        }
-        if best_row != pivot {
-            augmented.swap(best_row, pivot);
-        }
-        let pivot_value = augmented[pivot][pivot];
-        for col in 0..(2 * n) {
-            augmented[pivot][col] /= pivot_value;
-        }
-        for row in 0..n {
-            if row == pivot {
-                continue;
-            }
-            let factor = augmented[row][pivot];
-            if factor == 0.0 {
-                continue;
-            }
-            for col in 0..(2 * n) {
-                augmented[row][col] -= factor * augmented[pivot][col];
-            }
-        }
-    }
+    let values = matrix
+        .iter()
+        .flat_map(|row| row.iter().map(|value| f64::from(*value)))
+        .collect::<Vec<_>>();
+    // Production PSFs have a positive main lobe. Tiny cache-validation images
+    // can place that lobe outside the image and leave a negative alias peak.
+    // The normal equations are then negative definite but remain invertible;
+    // orient them for Cholesky and restore the inverse sign afterward.
+    let orientation = if values[0] < 0.0 { -1.0 } else { 1.0 };
+    let oriented_values = values
+        .iter()
+        .map(|value| orientation * value)
+        .collect::<Vec<_>>();
+    let matrix = DMatrix::from_row_slice(n, n, &oriented_values);
+    let inverse = matrix.cholesky().ok_or_else(|| {
+        ImagingError::Unsupported(format!(
+            "MTMFS Hessian is not symmetric definite at the CASA PSF peak: {values:?}"
+        ))
+    })?;
+    let inverse = inverse.inverse();
     Ok((0..n)
         .map(|row| {
             (0..n)
-                .map(|col| augmented[row][n + col] as f32)
+                .map(|col| (orientation * inverse[(row, col)]) as f32)
                 .collect::<Vec<_>>()
         })
         .collect())
@@ -30141,8 +30672,7 @@ fn find_mtmfs_component_range(
 fn run_mtmfs_minor_cycle(
     request: &MtmfsRequest,
     psf_terms: &[Array2<f32>],
-    hessian: &[Vec<f32>],
-    inv_hessian: &[Vec<f32>],
+    scale_hessians: &[MtmfsScaleHessian],
     model_terms: &mut [Array2<f32>],
     residual_terms: &mut [Array2<f32>],
     cycle_reported_niter: usize,
@@ -30155,8 +30685,7 @@ fn run_mtmfs_minor_cycle(
         return run_mtmfs_multiscale_minor_cycle(
             request,
             psf_terms,
-            hessian,
-            inv_hessian,
+            scale_hessians,
             model_terms,
             residual_terms,
             cycle_reported_niter,
@@ -30165,6 +30694,7 @@ fn run_mtmfs_minor_cycle(
             stage_timings,
         );
     }
+    let principal_hessian = &scale_hessians[0];
     let cycle_component_budget = hogbom_component_budget(cycle_reported_niter, request.clean);
     let mut cycle_component_updates = 0usize;
     let mut updated_model = false;
@@ -30184,8 +30714,8 @@ fn run_mtmfs_minor_cycle(
         }
         let Some(((peak_x, peak_y), coeffs, candidate_strength)) = find_mtmfs_component(
             residual_terms,
-            hessian,
-            inv_hessian,
+            &principal_hessian.hessian,
+            &principal_hessian.inverse,
             request.clean_mask.as_ref(),
             requested_threads,
         ) else {
@@ -30237,8 +30767,7 @@ fn run_mtmfs_minor_cycle(
 fn run_mtmfs_multiscale_minor_cycle(
     request: &MtmfsRequest,
     psf_terms: &[Array2<f32>],
-    _hessian: &[Vec<f32>],
-    inv_hessian: &[Vec<f32>],
+    scale_hessians: &[MtmfsScaleHessian],
     model_terms: &mut [Array2<f32>],
     residual_terms: &mut [Array2<f32>],
     cycle_reported_niter: usize,
@@ -30246,19 +30775,39 @@ fn run_mtmfs_multiscale_minor_cycle(
     nsigma_threshold_jy_per_beam: f32,
     stage_timings: &mut ImagingStageTimings,
 ) -> (HogbomMinorCycleOutcome, MinorCycleProbe) {
-    let scales = effective_mtmfs_multiscale_scales(request);
-    let mut principal_terms = principal_solution_terms(residual_terms, inv_hessian);
-    let mut multiscale_state = build_multiscale_state(
-        &principal_terms[0],
-        &psf_terms[0],
-        &scales,
-        request.small_scale_bias,
-        request.clean_mask.as_ref(),
+    let scale_sizes = effective_mtmfs_multiscale_scales(request);
+    debug_assert_eq!(scale_sizes.len(), scale_hessians.len());
+    debug_assert!(
+        scale_sizes
+            .iter()
+            .zip(scale_hessians)
+            .all(|(size, hessian)| *size == hessian.scale_size)
     );
-    let full_window = ImageWindow::full(principal_terms[0].dim());
-    let Some(first_candidate) =
-        select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref(), full_window)
-    else {
+    let compact_scale_kernels = scale_sizes
+        .iter()
+        .map(|scale| make_compact_multiscale_kernel(*scale))
+        .collect::<Vec<_>>();
+    let scale_masks = request
+        .clean_mask
+        .as_ref()
+        .map(|mask| build_mtmfs_scale_masks(mask, &compact_scale_kernels, &scale_sizes));
+    let max_scale = scale_sizes.iter().copied().fold(0.0f32, f32::max);
+    let scale_bias = if max_scale > 0.0 && scale_sizes.len() > 1 {
+        scale_sizes
+            .iter()
+            .map(|scale| 1.0 - request.small_scale_bias * (*scale / max_scale))
+            .collect::<Vec<_>>()
+    } else {
+        vec![1.0; scale_sizes.len()]
+    };
+    let Some(first_candidate) = find_mtmfs_multiscale_component(
+        residual_terms,
+        &compact_scale_kernels,
+        scale_hessians,
+        &scale_bias,
+        scale_masks.as_deref(),
+        request.clean_mask.as_ref(),
+    ) else {
         return (
             HogbomMinorCycleOutcome {
                 updated_model: false,
@@ -30272,14 +30821,17 @@ fn run_mtmfs_multiscale_minor_cycle(
         );
     };
     let probe = MinorCycleProbe {
-        initial_scale_pixels: Some(scales[first_candidate.scale_index]),
-        initial_candidate_strength_jy_per_beam: Some(first_candidate.strength.abs()),
+        initial_scale_pixels: Some(scale_sizes[first_candidate.scale_index]),
+        initial_candidate_strength_jy_per_beam: first_candidate
+            .coefficients
+            .first()
+            .copied()
+            .map(f32::abs),
         initial_candidate_position: Some([first_candidate.position.0, first_candidate.position.1]),
     };
-    let initial_cycle_peak = peak_abs_value_masked(
-        &multiscale_state.dirty_conv_scales[0],
-        request.clean_mask.as_ref(),
-    );
+    let principal_hessian_peak = scale_hessians[0].hessian[0][0];
+    let initial_cycle_peak = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref())
+        / principal_hessian_peak;
     if let Some(reason) = minor_cycle_stop_reason(
         initial_cycle_peak,
         request.clean.threshold_jy_per_beam,
@@ -30300,24 +30852,24 @@ fn run_mtmfs_multiscale_minor_cycle(
     }
 
     let cycle_component_budget = hogbom_component_budget(cycle_reported_niter, request.clean);
-    let psf_scale_terms = build_mtmfs_psf_scale_terms(psf_terms, &multiscale_state.scales);
     let mut cycle_component_updates = 0usize;
     let mut updated_model = false;
     let mut stop_reason = None;
     let minor_started = Instant::now();
     while cycle_component_updates < cycle_component_budget {
-        let Some(candidate) = select_multiscale_candidate(
-            &multiscale_state,
+        let Some(candidate) = find_mtmfs_multiscale_component(
+            residual_terms,
+            &compact_scale_kernels,
+            scale_hessians,
+            &scale_bias,
+            scale_masks.as_deref(),
             request.clean_mask.as_ref(),
-            full_window,
         ) else {
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
-        let peak_abs = peak_abs_value_masked(
-            &multiscale_state.dirty_conv_scales[0],
-            request.clean_mask.as_ref(),
-        );
+        let peak_abs = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref())
+            / principal_hessian_peak;
         if let Some(reason) = minor_cycle_stop_reason(
             peak_abs,
             request.clean.threshold_jy_per_beam,
@@ -30332,37 +30884,26 @@ fn run_mtmfs_multiscale_minor_cycle(
             break;
         }
 
-        let coeffs = mtmfs_multiscale_coefficients(
-            residual_terms,
-            &multiscale_state.scales[candidate.scale_index],
-            candidate.position,
-            inv_hessian,
-        );
+        let coeffs = candidate.coefficients;
         for (term_index, coefficient) in coeffs.iter().enumerate().take(request.nterms) {
             let component = request.clean.gain * *coefficient;
-            add_shifted_kernel_with_support(
+            add_shifted_kernel(
                 &mut model_terms[term_index],
-                &multiscale_state.scales[candidate.scale_index],
-                multiscale_state.scale_supports[candidate.scale_index],
+                &compact_scale_kernels[candidate.scale_index],
                 candidate.position,
                 component,
             );
         }
-        for residual_order in 0..request.nterms {
-            for model_order in 0..request.nterms {
-                let component = request.clean.gain * coeffs[model_order];
-                subtract_shifted_kernel(
-                    &mut residual_terms[residual_order],
-                    &psf_scale_terms[residual_order + model_order][candidate.scale_index],
-                    candidate.position,
-                    component,
-                );
-            }
-        }
+        subtract_mtmfs_multiscale_component(
+            residual_terms,
+            psf_terms,
+            &compact_scale_kernels[candidate.scale_index],
+            candidate.position,
+            request.clean.gain,
+            &coeffs,
+        );
         cycle_component_updates += 1;
         updated_model = true;
-        principal_terms = principal_solution_terms(residual_terms, inv_hessian);
-        refresh_multiscale_dirty_conv_scales(&mut multiscale_state, &principal_terms[0]);
     }
     let minor_elapsed = minor_started.elapsed();
     stage_timings.minor_cycle += minor_elapsed;
@@ -30386,40 +30927,188 @@ fn run_mtmfs_multiscale_minor_cycle(
     )
 }
 
+struct MtmfsMultiscaleCandidate {
+    scale_index: usize,
+    position: (usize, usize),
+    coefficients: Vec<f32>,
+}
+
+fn make_compact_multiscale_kernel(scale_size: f32) -> Array2<f32> {
+    let radius = scale_size.ceil().max(0.0) as usize;
+    make_multiscale_kernel((2 * radius + 1, 2 * radius + 1), scale_size)
+}
+
+fn materialize_centered_compact_kernel(
+    image_shape: (usize, usize),
+    compact_kernel: &Array2<f32>,
+) -> Array2<Complex32> {
+    let mut image = Array2::<Complex32>::zeros(image_shape);
+    let image_center = (image_shape.0 / 2, image_shape.1 / 2);
+    let kernel_center = (compact_kernel.dim().0 / 2, compact_kernel.dim().1 / 2);
+    for ((kernel_x, kernel_y), value) in compact_kernel.indexed_iter() {
+        let image_x = image_center.0 as isize + kernel_x as isize - kernel_center.0 as isize;
+        let image_y = image_center.1 as isize + kernel_y as isize - kernel_center.1 as isize;
+        if image_x >= 0
+            && image_y >= 0
+            && image_x < image_shape.0 as isize
+            && image_y < image_shape.1 as isize
+        {
+            image[(image_x as usize, image_y as usize)] = Complex32::new(*value, 0.0);
+        }
+    }
+    image
+}
+
+fn compact_kernel_is_unit_impulse(compact_kernel: &Array2<f32>) -> bool {
+    compact_kernel.dim() == (1, 1) && compact_kernel[(0, 0)] == 1.0
+}
+
+fn convolve_mtmfs_terms_for_scale(
+    terms: &[Array2<f32>],
+    compact_kernel: &Array2<f32>,
+) -> Vec<Array2<f32>> {
+    if compact_kernel_is_unit_impulse(compact_kernel) {
+        return terms.to_vec();
+    }
+    let shape = terms[0].dim();
+    let kernel_spectrum =
+        centered_fft2_owned(materialize_centered_compact_kernel(shape, compact_kernel));
+    terms
+        .iter()
+        .map(|term| {
+            let mut work = centered_fft2_owned(term.mapv(|value| Complex32::new(value, 0.0)));
+            Zip::from(&mut work)
+                .and(&kernel_spectrum)
+                .for_each(|value, kernel| *value *= *kernel);
+            centered_ifft2_owned(work).mapv(|value| value.re)
+        })
+        .collect()
+}
+
+fn fft_convolve_real_compact(image: &Array2<f32>, compact_kernel: &Array2<f32>) -> Array2<f32> {
+    convolve_mtmfs_terms_for_scale(std::slice::from_ref(image), compact_kernel)
+        .pop()
+        .expect("one compact convolution input should produce one output")
+}
+
+fn build_mtmfs_scale_masks(
+    mask: &Array2<bool>,
+    compact_kernels: &[Array2<f32>],
+    scale_sizes: &[f32],
+) -> Vec<Array2<bool>> {
+    let mask_values = mask.mapv(|cleanable| if cleanable { 1.0 } else { 0.0 });
+    compact_kernels
+        .iter()
+        .zip(scale_sizes.iter().copied())
+        .map(|(compact_kernel, scale_size)| {
+            let convolved = fft_convolve_real_compact(&mask_values, compact_kernel);
+            let mut scale_mask = convolved.mapv(|value| value > 0.9);
+            apply_casa_multiscale_edge_mask(&mut scale_mask, scale_size);
+            scale_mask
+        })
+        .collect()
+}
+
+fn find_mtmfs_multiscale_component(
+    residual_terms: &[Array2<f32>],
+    compact_scale_kernels: &[Array2<f32>],
+    scale_hessians: &[MtmfsScaleHessian],
+    scale_bias: &[f32],
+    scale_masks: Option<&[Array2<bool>]>,
+    clean_mask: Option<&Array2<bool>>,
+) -> Option<MtmfsMultiscaleCandidate> {
+    let mut best = None::<(MtmfsMultiscaleCandidate, f32)>;
+    for (scale_index, (compact_kernel, scale_hessian)) in
+        compact_scale_kernels.iter().zip(scale_hessians).enumerate()
+    {
+        let rhs_terms = convolve_mtmfs_terms_for_scale(residual_terms, compact_kernel);
+        let (nx, ny) = rhs_terms.first()?.dim();
+        let search_mask = scale_masks.map(|masks| &masks[scale_index]).or(clean_mask);
+        for x in 0..nx {
+            for y in 0..ny {
+                if search_mask.is_some_and(|mask| !mask[(x, y)]) {
+                    continue;
+                }
+                let rhs = rhs_terms
+                    .iter()
+                    .map(|term| term[(x, y)])
+                    .collect::<Vec<_>>();
+                let coefficients = solve_mtmfs_coefficients(&rhs, &scale_hessian.inverse);
+                let score = coefficients
+                    .iter()
+                    .zip(rhs.iter())
+                    .map(|(coefficient, value)| coefficient * value)
+                    .sum::<f32>();
+                let biased_score = score.abs() * scale_bias[scale_index];
+                if best
+                    .as_ref()
+                    .is_none_or(|(_, best_score)| biased_score > *best_score)
+                {
+                    best = Some((
+                        MtmfsMultiscaleCandidate {
+                            scale_index,
+                            position: (x, y),
+                            coefficients,
+                        },
+                        biased_score,
+                    ));
+                }
+            }
+        }
+    }
+    best.map(|(candidate, _)| candidate)
+}
+
+fn subtract_mtmfs_multiscale_component(
+    residual_terms: &mut [Array2<f32>],
+    psf_terms: &[Array2<f32>],
+    compact_scale_kernel: &Array2<f32>,
+    position: (usize, usize),
+    gain: f32,
+    coefficients: &[f32],
+) {
+    let nterms = residual_terms.len();
+    for (psf_order, psf_term) in psf_terms.iter().enumerate() {
+        if compact_kernel_is_unit_impulse(compact_scale_kernel) {
+            for (residual_order, residual_term) in residual_terms.iter_mut().enumerate() {
+                let Some(model_order) = psf_order.checked_sub(residual_order) else {
+                    continue;
+                };
+                if model_order < nterms {
+                    subtract_shifted_kernel(
+                        residual_term,
+                        psf_term,
+                        position,
+                        gain * coefficients[model_order],
+                    );
+                }
+            }
+            continue;
+        }
+
+        let convolved_psf = fft_convolve_real_compact(psf_term, compact_scale_kernel);
+        for (residual_order, residual_term) in residual_terms.iter_mut().enumerate() {
+            let Some(model_order) = psf_order.checked_sub(residual_order) else {
+                continue;
+            };
+            if model_order < nterms {
+                subtract_shifted_kernel(
+                    residual_term,
+                    &convolved_psf,
+                    position,
+                    gain * coefficients[model_order],
+                );
+            }
+        }
+    }
+}
+
 fn effective_mtmfs_multiscale_scales(request: &MtmfsRequest) -> Vec<f32> {
     if request.multiscale_scales.is_empty() {
         vec![0.0]
     } else {
         request.multiscale_scales.clone()
     }
-}
-
-fn build_mtmfs_psf_scale_terms(
-    psf_terms: &[Array2<f32>],
-    scale_kernels: &[Array2<f32>],
-) -> Vec<Vec<Array2<f32>>> {
-    psf_terms
-        .iter()
-        .map(|psf| {
-            scale_kernels
-                .iter()
-                .map(|scale| fft_convolve_real(psf, scale))
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-fn mtmfs_multiscale_coefficients(
-    residual_terms: &[Array2<f32>],
-    scale_kernel: &Array2<f32>,
-    position: (usize, usize),
-    inv_hessian: &[Vec<f32>],
-) -> Vec<f32> {
-    let rhs = residual_terms
-        .iter()
-        .map(|term| fft_convolve_real(term, scale_kernel)[position])
-        .collect::<Vec<_>>();
-    solve_mtmfs_coefficients(&rhs, inv_hessian)
 }
 
 type MtmfsAlphaProducts = (
@@ -37198,7 +37887,6 @@ fn subtract_shifted_kernel_in_window(
     }
 }
 
-#[cfg(test)]
 fn add_shifted_kernel(
     image: &mut Array2<f32>,
     kernel: &Array2<f32>,
@@ -38483,21 +39171,88 @@ mod tests {
     #[test]
     #[cfg(all(target_os = "macos", not(coverage)))]
     fn awproject_metal_rejects_f32_dirty_product_fft() {
-        let error = super::MosaicMtmfsStreamGridStorage::new(
-            16,
-            16,
-            3,
-            2,
-            DirtyProductFftPolicy::new(FftPrecisionChoice::F32, FftBackendChoice::RustFft),
-            super::MosaicDirectMetalMode::AwProject,
-            Some(1),
-        )
+        let error = super::MosaicMtmfsStreamGridStorage::new(super::MosaicMtmfsStreamGridConfig {
+            rows: 16,
+            columns: 16,
+            psf_term_count: 3,
+            residual_term_count: 2,
+            dirty_product_fft_policy: DirtyProductFftPolicy::new(
+                FftPrecisionChoice::F32,
+                FftBackendChoice::RustFft,
+            ),
+            direct_metal_mode: super::MosaicDirectMetalMode::AwProject,
+            awproject_grid: true,
+            direct_metal_scratch_bytes: Some(1),
+        })
         .err()
         .expect("AWProject Metal must reject an f32 dirty-product FFT");
         assert_eq!(
             error.to_string(),
             "unsupported mode: AWProject Metal gridding requires an f64 dirty-product FFT to preserve compensated-grid parity"
         );
+    }
+
+    #[test]
+    fn awproject_cpu_storage_uses_f32_only_when_explicitly_requested() {
+        let storage =
+            super::MosaicMtmfsStreamGridStorage::new(super::MosaicMtmfsStreamGridConfig {
+                rows: 16,
+                columns: 16,
+                psf_term_count: 3,
+                residual_term_count: 2,
+                dirty_product_fft_policy: DirtyProductFftPolicy::new(
+                    FftPrecisionChoice::Auto,
+                    FftBackendChoice::RustFft,
+                ),
+                direct_metal_mode: super::MosaicDirectMetalMode::Disabled,
+                awproject_grid: true,
+                direct_metal_scratch_bytes: None,
+            })
+            .expect("auto AWProject CPU storage");
+        assert!(matches!(
+            storage,
+            super::MosaicMtmfsStreamGridStorage::HostF64(_)
+        ));
+
+        let storage =
+            super::MosaicMtmfsStreamGridStorage::new(super::MosaicMtmfsStreamGridConfig {
+                rows: 16,
+                columns: 16,
+                psf_term_count: 3,
+                residual_term_count: 2,
+                dirty_product_fft_policy: DirtyProductFftPolicy::new(
+                    FftPrecisionChoice::F32,
+                    FftBackendChoice::RustFft,
+                ),
+                direct_metal_mode: super::MosaicDirectMetalMode::Disabled,
+                awproject_grid: true,
+                direct_metal_scratch_bytes: None,
+            })
+            .expect("explicit-f32 AWProject CPU storage");
+        assert!(matches!(
+            storage,
+            super::MosaicMtmfsStreamGridStorage::HostF32(_)
+        ));
+
+        let storage =
+            super::MosaicMtmfsStreamGridStorage::new(super::MosaicMtmfsStreamGridConfig {
+                rows: 16,
+                columns: 16,
+                psf_term_count: 3,
+                residual_term_count: 2,
+                dirty_product_fft_policy: DirtyProductFftPolicy::new(
+                    FftPrecisionChoice::F64,
+                    FftBackendChoice::RustFft,
+                ),
+                direct_metal_mode: super::MosaicDirectMetalMode::Disabled,
+                awproject_grid: true,
+                direct_metal_scratch_bytes: None,
+            })
+            .expect("explicit-f64 AWProject CPU storage");
+        assert!(matches!(
+            storage,
+            super::MosaicMtmfsStreamGridStorage::HostF64(_)
+        ));
     }
 
     #[test]
@@ -38973,11 +39728,9 @@ mod tests {
                 let values = &prepared.plane_values
                     [record_index * plane_count..(record_index + 1) * plane_count];
                 for (grid, &value) in compact_grids.iter_mut().zip(values) {
-                    projectors.projector.grid_sample_planned_f64(
-                        grid,
-                        &plan,
-                        Complex64::new(f64::from(value.re), f64::from(value.im)),
-                    );
+                    projectors
+                        .projector
+                        .grid_sample_planned_f64(grid, &plan, value);
                 }
             }
 
@@ -39000,11 +39753,9 @@ mod tests {
                     let values = &prepared_chunk.plane_values
                         [record_index * plane_count..(record_index + 1) * plane_count];
                     for (grid, &value) in chunked_grids.iter_mut().zip(values) {
-                        projectors.projector.grid_sample_planned_f64(
-                            grid,
-                            &plan,
-                            Complex64::new(f64::from(value.re), f64::from(value.im)),
-                        );
+                        projectors
+                            .projector
+                            .grid_sample_planned_f64(grid, &plan, value);
                     }
                 }
             }
@@ -39042,7 +39793,7 @@ mod tests {
                     projectors.projector.grid_sample_planned_f64(
                         &mut raw_grids[order],
                         &plan,
-                        Complex64::new(f64::from(grid_weight * taylor_weights[order]), 0.0),
+                        Complex32::new(grid_weight * taylor_weights[order], 0.0),
                     );
                 }
                 let predicted = model_grids.iter().zip(&taylor_weights).fold(
@@ -39057,7 +39808,7 @@ mod tests {
                     projectors.projector.grid_sample_planned_f64(
                         &mut raw_grids[psf_term_count + order],
                         &plan,
-                        Complex64::new(f64::from(value.re), f64::from(value.im)),
+                        value,
                     );
                 }
             }
@@ -39358,9 +40109,8 @@ mod tests {
         let mut raw_psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
         let mut raw_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
         for sample_index in 0..group.batch.len() {
-            let grid_weight = f64::from(
-                group.batch.weight[sample_index] * group.batch.sumwt_factor[sample_index],
-            );
+            let grid_weight =
+                group.batch.weight[sample_index] * group.batch.sumwt_factor[sample_index];
             let plan = projector
                 .plan_sample_for_grid(
                     group.batch.u_lambda[sample_index],
@@ -39370,13 +40120,13 @@ mod tests {
             projector.grid_sample_planned_f64(
                 &mut raw_psf_grid,
                 &plan,
-                Complex64::new(grid_weight, 0.0),
+                Complex32::new(grid_weight, 0.0),
             );
             let visibility = group.batch.visibility[sample_index];
             projector.grid_sample_planned_f64(
                 &mut raw_residual_grid,
                 &plan,
-                Complex64::new(visibility.re as f64, visibility.im as f64) * grid_weight,
+                visibility * grid_weight,
             );
         }
 
@@ -39468,9 +40218,8 @@ mod tests {
 
         let mut raw_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
         for sample_index in 0..group.batch.len() {
-            let grid_weight = f64::from(
-                group.batch.weight[sample_index] * group.batch.sumwt_factor[sample_index],
-            );
+            let grid_weight =
+                group.batch.weight[sample_index] * group.batch.sumwt_factor[sample_index];
             let plan = projector
                 .plan_sample_for_grid(
                     group.batch.u_lambda[sample_index],
@@ -39482,7 +40231,7 @@ mod tests {
             projector.grid_sample_planned_f64(
                 &mut raw_residual_grid,
                 &plan,
-                Complex64::new(visibility.re as f64, visibility.im as f64) * grid_weight,
+                visibility * grid_weight,
             );
         }
 
@@ -39679,10 +40428,9 @@ mod tests {
         let mut full_kernel_weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
         let mut total_weight = 0.0f64;
         for sample_index in 0..group.batch.len() {
-            let grid_weight = f64::from(
-                group.batch.weight[sample_index] * group.batch.sumwt_factor[sample_index],
-            );
-            total_weight += grid_weight;
+            let grid_weight =
+                group.batch.weight[sample_index] * group.batch.sumwt_factor[sample_index];
+            total_weight += f64::from(grid_weight);
             let mut plan = center_weight_plan;
             let sample_plan = weight_projector
                 .plan_sample_for_grid(
@@ -39697,13 +40445,13 @@ mod tests {
             weight_projector.grid_sample_planned_f64(
                 &mut raw_weight_grid,
                 &plan,
-                Complex64::new(grid_weight, 0.0),
+                Complex32::new(grid_weight, 0.0),
             );
         }
         weight_projector.grid_sample_planned_f64(
             &mut full_kernel_weight_grid,
             &center_weight_plan,
-            Complex64::new(total_weight, 0.0),
+            Complex32::new(total_weight as f32, 0.0),
         );
 
         let mut grouped_weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
@@ -43751,6 +44499,197 @@ mod tests {
         assert_eq!(alpha_error[(0, 1)], 0.0);
         assert!(alpha_mask[(0, 0)]);
         assert!(!alpha_mask[(0, 1)]);
+    }
+
+    #[test]
+    fn mtmfs_hessian_uses_casa_scale_convolutions() {
+        let shape = (32, 32);
+        let center = (shape.0 / 2, shape.1 / 2);
+        let mut psf0 = Array2::<f32>::zeros(shape);
+        let mut psf1 = Array2::<f32>::zeros(shape);
+        let mut psf2 = Array2::<f32>::zeros(shape);
+        for x in 8..24 {
+            for y in 8..24 {
+                let radius2 =
+                    (x as f32 - center.0 as f32).powi(2) + (y as f32 - center.1 as f32).powi(2);
+                psf0[(x, y)] = (-radius2 / 18.0).exp();
+                psf1[(x, y)] = 0.04 * psf0[(x, y)] + 0.001 * (x as f32 - center.0 as f32);
+                psf2[(x, y)] = 0.03 * psf0[(x, y)] + 0.0005 * radius2;
+            }
+        }
+        let psf_terms = vec![psf0.clone(), psf1, psf2];
+        let hessians =
+            super::mtmfs_scale_hessians(&psf_terms, 2, &[0.0, 3.0]).expect("build Hessians");
+
+        assert_eq!(hessians.len(), 2);
+        assert_eq!(hessians[0].hessian[0][0], psf0[center]);
+        assert_ne!(hessians[1].hessian[0][0], hessians[0].hessian[0][0]);
+        let scale = super::make_multiscale_kernel(shape, 3.0);
+        let fft_peak =
+            super::fft_convolve_real(&super::fft_convolve_real(&psf0, &scale), &scale)[center];
+        assert!(
+            (hessians[1].hessian[0][0] - fft_peak).abs() < 2.0e-6,
+            "compact peak {} did not match full convolution {fft_peak}",
+            hessians[1].hessian[0][0]
+        );
+    }
+
+    #[test]
+    fn mtmfs_hessian_samples_the_casa_psf_peak_instead_of_image_center() {
+        let shape = (128, 128);
+        let peak = (60, 64);
+        let mut psf0 = Array2::<f32>::zeros(shape);
+        let mut psf1 = Array2::<f32>::zeros(shape);
+        let mut psf2 = Array2::<f32>::zeros(shape);
+        psf0[peak] = 1.0;
+        psf1[peak] = 0.1;
+        psf2[peak] = 0.2;
+        assert_eq!(super::casa_mtmfs_psf_peak_position(&psf0, 0.0), peak);
+
+        let hessians = super::mtmfs_scale_hessians(&[psf0, psf1, psf2], 2, &[0.0])
+            .expect("build off-center Hessian");
+
+        assert_eq!(hessians[0].hessian, vec![vec![1.0, 0.1], vec![0.1, 0.2]]);
+    }
+
+    #[test]
+    fn mtmfs_niter_zero_matches_casa_singular_hessian_fallback() {
+        let shape = (16, 16);
+        let peak = (shape.0 / 2, shape.1 / 2);
+        let mut psf0 = Array2::<f32>::zeros(shape);
+        let mut psf1 = Array2::<f32>::zeros(shape);
+        let mut psf2 = Array2::<f32>::zeros(shape);
+        psf0[peak] = 1.0;
+        psf1[peak] = 0.1;
+        psf2[peak] = 0.01;
+        let psf_terms = [psf0, psf1, psf2];
+
+        let mut warnings = Vec::new();
+        let hessians =
+            super::mtmfs_scale_hessians_for_clean(&psf_terms, 2, &[0.0], 0, &mut warnings)
+                .expect("CASA niter=0 must retain dirty products");
+        assert_eq!(hessians[0].inverse, vec![vec![1.0, 0.0], vec![0.0, 1.0]]);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("niter=0 principal solution was skipped"));
+
+        assert!(
+            super::mtmfs_scale_hessians_for_clean(&psf_terms, 2, &[0.0], 1, &mut Vec::new(),)
+                .is_err(),
+            "a real clean must still reject the singular Hessian"
+        );
+    }
+
+    #[test]
+    fn mtmfs_hessian_inverse_accepts_negative_alias_peak_orientation() {
+        let inverse =
+            super::invert_symmetric_definite(&[vec![-2.0, 0.0], vec![0.0, -4.0]]).unwrap();
+        assert_eq!(inverse, vec![vec![-0.5, 0.0], vec![0.0, -0.25]]);
+    }
+
+    #[test]
+    fn mtmfs_multiscale_component_uses_its_scale_inverse() {
+        let mut residual = Array2::<f32>::zeros((16, 16));
+        residual[(8, 8)] = 1.0;
+        let compact_kernels = vec![
+            super::make_compact_multiscale_kernel(0.0),
+            super::make_compact_multiscale_kernel(3.0),
+        ];
+        let scale_rhs = super::fft_convolve_real_compact(&residual, &compact_kernels[1])[(8, 8)];
+        let hessians = vec![
+            super::MtmfsScaleHessian {
+                scale_size: 0.0,
+                hessian: vec![vec![1.0]],
+                inverse: vec![vec![1.0]],
+            },
+            super::MtmfsScaleHessian {
+                scale_size: 3.0,
+                hessian: vec![vec![4.0]],
+                inverse: vec![vec![100.0]],
+            },
+        ];
+        let candidate = super::find_mtmfs_multiscale_component(
+            &[residual],
+            &compact_kernels,
+            &hessians,
+            &[1.0, 1.0],
+            None,
+            None,
+        )
+        .expect("select component");
+
+        assert_eq!(candidate.scale_index, 1);
+        assert_eq!(candidate.position, (8, 8));
+        assert!((candidate.coefficients[0] - 100.0 * scale_rhs).abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn mtmfs_compact_scale_convolution_matches_full_image_kernel() {
+        let shape = (32, 28);
+        let image = Array2::from_shape_fn(shape, |(x, y)| {
+            ((x * 11 + y * 7) as f32 * 0.03125).sin()
+                + 0.2 * ((x as f32 - 13.0).powi(2) + (y as f32 - 9.0).powi(2)).sqrt()
+        });
+        let compact = super::make_compact_multiscale_kernel(5.0);
+        let full = super::make_multiscale_kernel(shape, 5.0);
+
+        let actual = super::fft_convolve_real_compact(&image, &compact);
+        let expected = super::fft_convolve_real(&image, &full);
+
+        for (actual, expected) in actual.iter().zip(expected.iter()) {
+            assert!((actual - expected).abs() < 3.0e-5);
+        }
+    }
+
+    #[test]
+    fn mtmfs_bounded_scale_subtraction_matches_precomputed_psf_scales() {
+        let shape = (32, 32);
+        let center = (shape.0 / 2, shape.1 / 2);
+        let psf_terms = (0..3)
+            .map(|order| {
+                Array2::from_shape_fn(shape, |(x, y)| {
+                    let radius2 =
+                        (x as f32 - center.0 as f32).powi(2) + (y as f32 - center.1 as f32).powi(2);
+                    (1.0 + order as f32 * 0.1) * (-radius2 / 20.0).exp()
+                })
+            })
+            .collect::<Vec<_>>();
+        let compact = super::make_compact_multiscale_kernel(3.0);
+        let full = super::make_multiscale_kernel(shape, 3.0);
+        let position = (13, 19);
+        let coefficients = [0.8, -0.35];
+        let gain = 0.1;
+        let mut actual = vec![
+            Array2::from_shape_fn(shape, |(x, y)| (x * 3 + y * 5) as f32 * 0.002),
+            Array2::from_shape_fn(shape, |(x, y)| (x * 7 + y * 2) as f32 * -0.001),
+        ];
+        let mut expected = actual.clone();
+
+        super::subtract_mtmfs_multiscale_component(
+            &mut actual,
+            &psf_terms,
+            &compact,
+            position,
+            gain,
+            &coefficients,
+        );
+        for residual_order in 0..2 {
+            for model_order in 0..2 {
+                let scaled_psf =
+                    super::fft_convolve_real(&psf_terms[residual_order + model_order], &full);
+                super::subtract_shifted_kernel(
+                    &mut expected[residual_order],
+                    &scaled_psf,
+                    position,
+                    gain * coefficients[model_order],
+                );
+            }
+        }
+
+        for (actual_term, expected_term) in actual.iter().zip(expected.iter()) {
+            for (actual, expected) in actual_term.iter().zip(expected_term.iter()) {
+                assert!((actual - expected).abs() < 3.0e-5);
+            }
+        }
     }
 
     #[test]

@@ -1753,18 +1753,33 @@ impl StandardGridder {
         image
     }
 
-    pub(crate) fn aw_weight_image_from_grid_f64(&self, raw: &Array2<Complex64>) -> Array2<f32> {
+    pub(crate) fn aw_weight_image_from_grid_f64(
+        &self,
+        raw: &Array2<Complex64>,
+        conv_sampling: usize,
+    ) -> Array2<f32> {
         // refim::AWProjectWBFT averages the complex parallel-hand WTCF
         // transforms and persists their magnitude as the sensitivity/weight
         // plane. The caller grids each hand with a factor of one half before
         // this shared FFT, which is algebraically the same polarization
         // average without retaining two full image-sized grids.
+        //
+        // AWProjectFT::getWeightImage then applies the same oversampling sinc
+        // grid correction used by getImage before persisting the weight
+        // product. This correction is scientifically material because
+        // flat-noise normalization divides residuals by sqrt(weight).
+        let sinc = build_sinc_axis(self.grid_shape[0].max(self.grid_shape[1]), conv_sampling);
         let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
         for x in 0..self.geometry.nx() {
             for y in 0..self.geometry.ny() {
                 let grid_x = self.image_blc[0] + x;
                 let grid_y = self.image_blc[1] + y;
-                image[(x, y)] = raw[(grid_x, grid_y)].norm() as f32;
+                let sinc_factor = sinc[grid_x] * sinc[grid_y];
+                image[(x, y)] = if sinc_factor.abs() > 1.0e-6 {
+                    raw[(grid_x, grid_y)].norm() as f32 / sinc_factor
+                } else {
+                    0.0
+                };
             }
         }
         image
@@ -1784,13 +1799,23 @@ impl StandardGridder {
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
-    pub(crate) fn aw_weight_image_from_grid(&self, raw: &Array2<Complex32>) -> Array2<f32> {
+    pub(crate) fn aw_weight_image_from_grid(
+        &self,
+        raw: &Array2<Complex32>,
+        conv_sampling: usize,
+    ) -> Array2<f32> {
+        let sinc = build_sinc_axis(self.grid_shape[0].max(self.grid_shape[1]), conv_sampling);
         let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
         for x in 0..self.geometry.nx() {
             for y in 0..self.geometry.ny() {
                 let grid_x = self.image_blc[0] + x;
                 let grid_y = self.image_blc[1] + y;
-                image[(x, y)] = raw[(grid_x, grid_y)].norm();
+                let sinc_factor = sinc[grid_x] * sinc[grid_y];
+                image[(x, y)] = if sinc_factor.abs() > 1.0e-6 {
+                    raw[(grid_x, grid_y)].norm() / sinc_factor
+                } else {
+                    0.0
+                };
             }
         }
         image
@@ -2733,7 +2758,7 @@ impl ScreenProjector {
         &self,
         grid: &mut Array2<Complex64>,
         plan: &ScreenProjectSamplePlan,
-        value: Complex64,
+        value: Complex32,
     ) {
         if let Some(storage) = grid.as_slice_memory_order_mut() {
             let grid_stride = self.grid_shape[1];
@@ -2746,9 +2771,14 @@ impl ScreenProjector {
                     let signed_x = ix * self.sampling as isize + plan.off_x;
                     let kernel_x = (self.kernel_center as isize + signed_x) as usize;
                     let kernel = self.phased_kernel_weights[(kernel_x, kernel_y)];
-                    let cwt = Complex64::new(kernel.re as f64, kernel.im as f64);
+                    // AWVisResampler evaluates `nvalue * wt` as
+                    // casacore::Complex before adding it to Array<DComplex>.
+                    // Preserve that contribution boundary here as the older
+                    // AwProjector path does.
+                    let contribution = value * kernel;
                     let grid_x = (plan.loc_x + ix) as usize;
-                    storage[grid_x * grid_stride + grid_y] += value * cwt;
+                    storage[grid_x * grid_stride + grid_y] +=
+                        Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
                 }
             }
             return;
@@ -2760,8 +2790,9 @@ impl ScreenProjector {
                 let signed_x = ix * self.sampling as isize + plan.off_x;
                 let kernel_x = (self.kernel_center as isize + signed_x) as usize;
                 let kernel = self.phased_kernel_weights[(kernel_x, kernel_y)];
-                let cwt = Complex64::new(kernel.re as f64, kernel.im as f64);
-                grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] += value * cwt;
+                let contribution = value * kernel;
+                grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] +=
+                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
             }
         }
     }
@@ -3772,8 +3803,8 @@ mod tests {
 
     use super::{
         AwProjectSamplePlanRejection, AwProjector, CASA_WPROJECT_MAX_W_SAFETY_FACTOR,
-        DensityCellConvention, GRIDDER_TAP_COUNT, ScreenProjector, StandardGridder, WProjector,
-        choose_w_project_plane_count,
+        DensityCellConvention, GRIDDER_TAP_COUNT, ScreenProjectSamplePlan, ScreenProjector,
+        StandardGridder, WProjector, choose_w_project_plane_count,
     };
     use crate::{
         AwConvolutionFunctionKernelMetadata, AwConvolutionFunctionUvCoordinateIdentity,
@@ -4301,6 +4332,76 @@ mod tests {
         assert_eq!(gridding.center_in_bounds, traced.center_in_bounds);
         assert!(traced.normalization > 0.0);
         assert_eq!(gridding.normalization, 0.0);
+    }
+
+    #[test]
+    fn screen_projector_f64_grid_preserves_casa_complex_contribution_precision() {
+        let kernel = Array2::from_shape_fn((3, 3), |(x, y)| {
+            Complex32::new(0.13 * x as f32 + 0.21, -0.17 * y as f32 + 0.09)
+        });
+        let projector = ScreenProjector {
+            grid_shape: [8, 8],
+            du_lambda: 1.0,
+            dv_lambda: 1.0,
+            sampling: 1,
+            support: 1,
+            kernel_center: 1,
+            kernel_weights: kernel.clone(),
+            phased_kernel_weights: kernel.clone(),
+            normalization_sum: Complex32::new(1.0, 0.0),
+            phase_gradient_rad_per_sample: [0.0, 0.0],
+        };
+        let plan = ScreenProjectSamplePlan {
+            loc_x: 4,
+            loc_y: 4,
+            off_x: 0,
+            off_y: 0,
+            min_ix: -1,
+            max_ix: 1,
+            min_iy: -1,
+            max_iy: 1,
+            center_in_bounds: true,
+            normalization: 0.0,
+        };
+        let value = Complex32::new(12_345.678, -9_876.543);
+        let mut grid = Array2::<Complex64>::zeros((8, 8));
+
+        projector.grid_sample_planned_f64(&mut grid, &plan, value);
+
+        let tap = kernel[(0, 2)];
+        let casa_contribution = value * tap;
+        let expected = Complex64::new(
+            f64::from(casa_contribution.re),
+            f64::from(casa_contribution.im),
+        );
+        let promoted_operand_product = Complex64::new(f64::from(value.re), f64::from(value.im))
+            * Complex64::new(f64::from(tap.re), f64::from(tap.im));
+        let grid_value = grid[(3, 5)];
+
+        assert_eq!(grid_value, expected);
+        assert_ne!(grid_value, promoted_operand_product);
+    }
+
+    #[test]
+    fn aw_weight_image_applies_casa_sampling_sinc_correction() {
+        let geometry = ImageGeometry {
+            image_shape: [8, 8],
+            cell_size_rad: [
+                (1.0f64 / 3600.0).to_radians(),
+                (1.0f64 / 3600.0).to_radians(),
+            ],
+        };
+        let gridder = StandardGridder::new_unpadded(geometry).expect("gridder");
+        let raw = Array2::<Complex64>::from_elem((8, 8), Complex64::new(3.0, 4.0));
+        let conv_sampling = 2;
+
+        let weight = gridder.aw_weight_image_from_grid_f64(&raw, conv_sampling);
+        let sinc = super::build_sinc_axis(8, conv_sampling);
+
+        assert_eq!(weight[(4, 4)], 5.0);
+        let expected_corner = 5.0 / (sinc[0] * sinc[0]);
+        assert!((weight[(0, 0)] - expected_corner).abs() < 1.0e-6);
+        assert!(weight[(0, 0)] > weight[(4, 4)]);
     }
 
     #[test]
