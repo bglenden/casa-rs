@@ -611,6 +611,18 @@ fn casa_params_to_beam(params: CasaBeamFitParams) -> Option<BeamFit> {
         beam.position_angle_rad =
             casa_wrap_beam_position_angle(beam.position_angle_rad + std::f64::consts::FRAC_PI_2);
     }
+    // StokesImageUtil::FitGaussianPSF solves in Double, then assigns the
+    // fitted arcsec/arcsec/degree values to Vector<Float> before constructing
+    // GaussianBeam. Preserve that rounding in the reusable beam result so
+    // metadata and clean restoration both consume CASA's actual beam.
+    let radians_to_degrees = 180.0 / std::f64::consts::PI;
+    let radians_to_arcseconds = 3_600.0 * radians_to_degrees;
+    beam.major_fwhm_rad =
+        f64::from((beam.major_fwhm_rad * radians_to_arcseconds) as f32) / radians_to_arcseconds;
+    beam.minor_fwhm_rad =
+        f64::from((beam.minor_fwhm_rad * radians_to_arcseconds) as f32) / radians_to_arcseconds;
+    beam.position_angle_rad =
+        f64::from((beam.position_angle_rad * radians_to_degrees) as f32) / radians_to_degrees;
     Some(beam)
 }
 
@@ -895,6 +907,30 @@ mod tests {
         assert!((beam.major_fwhm_rad - expected.major_fwhm_rad).abs() < 7.5e-5);
         assert!((beam.minor_fwhm_rad - expected.minor_fwhm_rad).abs() < 7.5e-5);
         assert!((beam.position_angle_rad - expected.position_angle_rad).abs() < 0.15);
+    }
+
+    #[test]
+    fn fitted_beam_preserves_casa_float_output_quantization() {
+        let expected = BeamFit {
+            major_fwhm_rad: 5.0e-4,
+            minor_fwhm_rad: 3.0e-4,
+            position_angle_rad: 0.35,
+        };
+        let psf = synthetic_gaussian_psf((64, 64), [1.0e-4, 1.0e-4], expected);
+        let beam = fit_beam_from_psf(&psf, [1.0e-4, 1.0e-4], 0.35)
+            .beam
+            .expect("fit beam");
+        let radians_to_degrees = 180.0 / std::f64::consts::PI;
+        let radians_to_arcseconds = 3_600.0 * radians_to_degrees;
+
+        for (value_rad, unit_scale) in [
+            (beam.major_fwhm_rad, radians_to_arcseconds),
+            (beam.minor_fwhm_rad, radians_to_arcseconds),
+            (beam.position_angle_rad, radians_to_degrees),
+        ] {
+            let requantized = f64::from((value_rad * unit_scale) as f32) / unit_scale;
+            assert_eq!(value_rad.to_bits(), requantized.to_bits());
+        }
     }
 
     #[test]

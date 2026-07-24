@@ -38271,9 +38271,26 @@ fn extract_phase_center(ms: &MeasurementSet, field_id: usize) -> Result<PhaseCen
             "moving or tracked phase centers (NUM_POLY != 0) are not supported".to_string(),
         );
     }
-    let phase_dir = resolve_field_phase_direction_j2000(ms, field_id)
-        .map_err(|error| format!("resolve FIELD.PHASE_DIR[{field_id}] to J2000: {error}"))?;
-    let (ra, dec) = phase_dir.as_angles();
+    let source_ref =
+        resolve_table_direction_reference(field.table(), "FIELD", "PHASE_DIR", field_id)?;
+    let [ra, dec] = if source_ref == DirectionRef::J2000 {
+        // CASA carries an already-J2000 FIELD phase center directly into the
+        // output coordinate. Avoid the angle -> direction-cosine -> angle
+        // round trip here: it can move an input angle by a few ULPs and also
+        // perturb the LSRK frequency conversion that uses this direction.
+        extract_constant_direction_angles(
+            field
+                .phase_dir(field_id)
+                .map_err(|error| format!("read FIELD.PHASE_DIR[{field_id}]: {error}"))?,
+            "FIELD.PHASE_DIR",
+            field_id,
+        )?
+    } else {
+        let phase_dir = resolve_field_phase_direction_j2000(ms, field_id)
+            .map_err(|error| format!("resolve FIELD.PHASE_DIR[{field_id}] to J2000: {error}"))?;
+        let (ra, dec) = phase_dir.as_angles();
+        [ra, dec]
+    };
     Ok(PhaseCenter {
         field_id: Some(field_id),
         angles_rad: [ra, dec],
@@ -49548,6 +49565,21 @@ mod tests {
         assert_eq!(
             phase_center_obsinfo_direction_rad(&ms, &phase_center).unwrap(),
             raw_direction
+        );
+    }
+
+    #[test]
+    fn field_backed_phase_center_preserves_raw_j2000_angle_bits() {
+        let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+        let raw_direction = [3.563_967_168_628_84, 0.275_496_026_491_076_2];
+        add_field_row_with_raw_direction(&mut ms, raw_direction, -1, TEST_TIME_MJD_SEC);
+
+        let phase_center = extract_phase_center(&ms, 0).unwrap();
+
+        assert_eq!(phase_center.reference, DirectionRef::J2000);
+        assert_eq!(
+            phase_center.angles_rad.map(f64::to_bits),
+            raw_direction.map(f64::to_bits)
         );
     }
 
