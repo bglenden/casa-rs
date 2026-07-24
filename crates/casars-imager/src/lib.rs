@@ -52826,6 +52826,15 @@ mod tests {
     }
 
     fn assert_f32_images_close(lhs_path: impl AsRef<Path>, rhs_path: impl AsRef<Path>, tol: f32) {
+        assert_f32_images_close_scaled(lhs_path, rhs_path, tol, 0.0);
+    }
+
+    fn assert_f32_images_close_scaled(
+        lhs_path: impl AsRef<Path>,
+        rhs_path: impl AsRef<Path>,
+        absolute_tolerance: f32,
+        relative_tolerance: f32,
+    ) {
         let lhs_image = PagedImage::<f32>::open(lhs_path.as_ref()).unwrap();
         let rhs_image = PagedImage::<f32>::open(rhs_path.as_ref()).unwrap();
         assert_eq!(lhs_image.shape(), rhs_image.shape());
@@ -52854,13 +52863,31 @@ mod tests {
         let rhs = rhs_image
             .get_slice(&vec![0; rhs_image.shape().len()], rhs_image.shape())
             .unwrap();
-        let mut max_abs_diff = 0.0f32;
-        for (lhs, rhs) in lhs.iter().zip(rhs.iter()) {
-            max_abs_diff = max_abs_diff.max((*lhs - *rhs).abs());
+        let mut largest_violation_ratio = 0.0f32;
+        let mut largest_violation_index = 0usize;
+        let mut largest_abs_diff = 0.0f32;
+        let mut largest_limit = absolute_tolerance;
+        for (index, (lhs, rhs)) in lhs.iter().zip(rhs.iter()).enumerate() {
+            let abs_diff = (*lhs - *rhs).abs();
+            let scale = lhs.abs().max(rhs.abs());
+            let limit = absolute_tolerance.max(relative_tolerance * scale);
+            let violation_ratio = if limit == 0.0 {
+                if abs_diff == 0.0 { 0.0 } else { f32::INFINITY }
+            } else {
+                abs_diff / limit
+            };
+            if violation_ratio > largest_violation_ratio {
+                largest_violation_ratio = violation_ratio;
+                largest_violation_index = index;
+                largest_abs_diff = abs_diff;
+                largest_limit = limit;
+            }
         }
         assert!(
-            max_abs_diff <= tol,
-            "image products differ: max_abs_diff={max_abs_diff} tol={tol} lhs={} rhs={}",
+            largest_violation_ratio <= 1.0,
+            "image products differ: abs_diff={largest_abs_diff} index={largest_violation_index} lhs_value={} rhs_value={} limit={largest_limit} abs_tol={absolute_tolerance} rel_tol={relative_tolerance} lhs={} rhs={}",
+            lhs.iter().nth(largest_violation_index).unwrap(),
+            rhs.iter().nth(largest_violation_index).unwrap(),
             lhs_path.as_ref().display(),
             rhs_path.as_ref().display()
         );
@@ -65996,10 +66023,18 @@ deconvolver=mtmfs
             assert_eq!(metal_summary.gridded_samples, summary.gridded_samples);
             assert_eq!(metal_summary.minor_iterations, summary.minor_iterations);
             for suffix in &expected_suffixes {
-                assert_f32_images_close(
+                // Alpha products are ratios of already-compared Taylor terms,
+                // so preserve the absolute bound and also bound ratio amplification.
+                let relative_tolerance = if matches!(*suffix, "alpha" | "alpha.error") {
+                    1.0e-5
+                } else {
+                    0.0
+                };
+                assert_f32_images_close_scaled(
                     format!("{}.{}", image_prefix.display(), suffix),
                     format!("{}.{}", metal_prefix.display(), suffix),
                     1.0e-5,
+                    relative_tolerance,
                 );
             }
         }
