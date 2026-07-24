@@ -35432,8 +35432,16 @@ fn awproject_product_writer_scratch_bytes(image_pixels: usize) -> Result<usize, 
 }
 
 fn awproject_mtmfs_in_place_fft_eligible(config: &CliConfig) -> bool {
+    // Dirty-product FFT precision `auto` resolves to f64 for host placement
+    // unless the Metal backend is explicitly requested. Serial runtime control
+    // forces RustFFT while deliberately leaving the precision policy on auto,
+    // so that spelling is the same in-place transform executed by the core as
+    // an explicit f64 + RustFFT request.
     config.imsize & 1 == 0
-        && config.imaging_fft_precision == ImagingFftPrecisionPolicy::F64
+        && matches!(
+            config.imaging_fft_precision,
+            ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64
+        )
         && config.imaging_fft_backend == ImagingFftBackendPolicy::RustFft
 }
 
@@ -54787,6 +54795,32 @@ mod tests {
     }
 
     #[test]
+    fn awproject_in_place_fft_admission_matches_host_dirty_fft_resolution() {
+        let mut config =
+            awproject_mtmfs_planner_config(PathBuf::from("/tmp/awproject-fft-cache"), 4096);
+
+        assert!(awproject_mtmfs_in_place_fft_eligible(&config));
+
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
+        assert!(
+            awproject_mtmfs_in_place_fft_eligible(&config),
+            "host auto precision with RustFFT resolves to the core's f64 in-place path"
+        );
+
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::F32;
+        assert!(!awproject_mtmfs_in_place_fft_eligible(&config));
+
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
+        config.imaging_fft_backend = ImagingFftBackendPolicy::MetalMpsGraph;
+        assert!(!awproject_mtmfs_in_place_fft_eligible(&config));
+
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
+        config.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
+        config.imsize += 1;
+        assert!(!awproject_mtmfs_in_place_fft_eligible(&config));
+    }
+
+    #[test]
     fn vlass_awproject_full_geometry_admits_32_gib_and_rejects_24_gib() {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("planner-cf-cache");
@@ -54796,6 +54830,7 @@ mod tests {
 
         let mut full = awproject_mtmfs_planner_config(cf_cache.clone(), 32 * 1024);
         full.imsize = 12_150;
+        full.imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
         let visibility_shape =
             prepared_single_plane_visibility_source_shape(&full, active_rows, 64);
         let plan = standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
