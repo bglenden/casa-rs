@@ -5307,25 +5307,27 @@ fn finish_mosaic_mtmfs_dirty_images(
     // weight.tt0 is divided by the zeroth correlation-grid imaging-weight sum;
     // the higher Taylor weights remain raw.
     let awproject_weight_semantics = aw_psf_sumwt_terms.is_some();
-    let weight_fft_scales = if let Some(psf_sumwt_terms) = aw_psf_sumwt_terms.as_ref() {
-        if psf_sumwt_terms.len() != psf_term_count {
-            return Err(ImagingError::Normalization(format!(
-                "AWProject MT-MFS PSF sumwt has {} terms, expected {psf_term_count}",
-                psf_sumwt_terms.len()
-            )));
-        }
-        let weight_zero_sumwt = psf_sumwt_terms[0];
-        if !(weight_zero_sumwt.is_finite() && weight_zero_sumwt > 0.0) {
-            return Err(ImagingError::Normalization(
-                "AWProject MT-MFS zeroth weight sum is non-finite or zero".to_string(),
-            ));
-        }
-        let mut scales = vec![image_pixel_count; psf_term_count];
-        scales[0] = image_pixel_count / weight_zero_sumwt as f32;
-        scales
-    } else {
-        vec![image_pixel_count / normalization_sumwt as f32; psf_term_count]
-    };
+    let (weight_fft_scales, aw_weight_zero_sumwt) =
+        if let Some(psf_sumwt_terms) = aw_psf_sumwt_terms.as_ref() {
+            if psf_sumwt_terms.len() != psf_term_count {
+                return Err(ImagingError::Normalization(format!(
+                    "AWProject MT-MFS PSF sumwt has {} terms, expected {psf_term_count}",
+                    psf_sumwt_terms.len()
+                )));
+            }
+            let weight_zero_sumwt = psf_sumwt_terms[0];
+            if !(weight_zero_sumwt.is_finite() && weight_zero_sumwt > 0.0) {
+                return Err(ImagingError::Normalization(
+                    "AWProject MT-MFS zeroth weight sum is non-finite or zero".to_string(),
+                ));
+            }
+            (vec![1.0; psf_term_count], Some(weight_zero_sumwt as f32))
+        } else {
+            (
+                vec![image_pixel_count / normalization_sumwt as f32; psf_term_count],
+                None,
+            )
+        };
     // The streaming result contract carries CASA's post-FTM sumwt
     // normalization. AWProject's separate WTCF semantics affect the weight
     // products above, but not this shared dirty-image scale.
@@ -5400,14 +5402,22 @@ fn finish_mosaic_mtmfs_dirty_images(
                 .weight_grids
                 .into_iter()
                 .zip(&weight_fft_scales)
-                .map(|(grid, &scale)| {
+                .enumerate()
+                .map(|(order, (grid, &scale))| {
                     let raw = execute_dirty_product_host_f32_owned_single(grid, fft_policy)?;
-                    let image = if awproject_weight_semantics {
+                    let mut image = if awproject_weight_semantics {
                         gridder.aw_weight_image_from_grid(&raw, conv_sampling)
                     } else {
                         gridder.mosaic_weight_image_from_grid(&raw)
                     };
-                    Ok(image.mapv(|value| value * scale))
+                    if awproject_weight_semantics && order == 0 {
+                        let sumwt = aw_weight_zero_sumwt
+                            .expect("AWProject weight semantics validated zeroth sumwt");
+                        image.mapv_inplace(|value| value / sumwt);
+                    } else {
+                        image.mapv_inplace(|value| value * scale);
+                    }
+                    Ok(image)
                 })
                 .collect::<Result<Vec<_>, ImagingError>>()?;
             stage_timings.psf_fft += fft_started.elapsed();
@@ -5514,7 +5524,15 @@ fn finish_mosaic_mtmfs_dirty_images(
                     } else {
                         gridder.mosaic_weight_image_from_grid_f64(&raw)
                     };
-                    Ok(image.mapv(|value| value * scale))
+                    let mut image = image;
+                    if awproject_weight_semantics && order == 0 {
+                        let sumwt = aw_weight_zero_sumwt
+                            .expect("AWProject weight semantics validated zeroth sumwt");
+                        image.mapv_inplace(|value| value / sumwt);
+                    } else {
+                        image.mapv_inplace(|value| value * scale);
+                    }
+                    Ok(image)
                 })
                 .collect::<Result<Vec<_>, ImagingError>>()?;
             stage_timings.psf_fft += fft_started.elapsed();
@@ -5612,13 +5630,21 @@ fn finish_mosaic_mtmfs_dirty_images(
             let weight_terms = raw_terms[psf_term_count + nterms..]
                 .iter()
                 .zip(&weight_fft_scales)
-                .map(|(raw, &scale)| {
-                    let image = if awproject_weight_semantics {
+                .enumerate()
+                .map(|(order, (raw, &scale))| {
+                    let mut image = if awproject_weight_semantics {
                         gridder.aw_weight_image_from_grid(raw, conv_sampling)
                     } else {
                         gridder.mosaic_weight_image_from_grid(raw)
                     };
-                    image.mapv(|value| value * scale)
+                    if awproject_weight_semantics && order == 0 {
+                        let sumwt = aw_weight_zero_sumwt
+                            .expect("AWProject weight semantics validated zeroth sumwt");
+                        image.mapv_inplace(|value| value / sumwt);
+                    } else {
+                        image.mapv_inplace(|value| value * scale);
+                    }
+                    image
                 })
                 .collect::<Vec<_>>();
             let weight_image = weight_terms.first().cloned().ok_or_else(|| {
@@ -38777,9 +38803,14 @@ mod tests {
             coords.coordinate(0).reference_value(),
             vec![3.545_602_179_904_208, 0.293_215_314_333_100_33]
         );
-        assert_eq!(
-            coords.coordinate(0).to_world(&[0.0, 0.0]).unwrap(),
-            vec![3.563_967_168_628_84, 0.275_496_026_491_076_2]
+        let world = coords.coordinate(0).to_world(&[0.0, 0.0]).unwrap();
+        assert_eq!(world[0], 3.563_967_168_628_84);
+        let expected_dec = 0.275_496_026_491_076_2;
+        assert!(
+            (world[1] - expected_dec).abs() <= f64::EPSILON * expected_dec.abs(),
+            "VLASS reference-pixel declination {actual:.17e} differs from the CASA oracle \
+             {expected_dec:.17e} by more than one relative f64 epsilon",
+            actual = world[1],
         );
     }
 

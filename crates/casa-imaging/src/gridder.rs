@@ -1704,12 +1704,14 @@ impl StandardGridder {
             for y in 0..self.geometry.ny() {
                 let grid_x = self.image_blc[0] + x;
                 let grid_y = self.image_blc[1] + y;
-                let sinc_factor = f64::from(sinc[grid_x] * sinc[grid_y]);
-                image[(x, y)] = if sinc_factor.abs() > 1.0e-6 {
-                    (raw[(grid_x, grid_y)] / sinc_factor).re as f32
-                } else {
-                    0.0
-                };
+                // refim::AWProjectFT converts its post-FFT DComplex lattice
+                // to Complex before applying the Float sinc correction.
+                // Narrowing after the correction changes low-weight edge
+                // pixels enough to alter the discontinuous MT-MFS alpha mask.
+                let value = raw[(grid_x, grid_y)];
+                let value = Complex32::new(value.re as f32, value.im as f32);
+                let correction = 1.0 / (sinc[grid_x] * sinc[grid_y]);
+                image[(x, y)] = (value * correction).re;
             }
         }
         image
@@ -1726,12 +1728,8 @@ impl StandardGridder {
             for y in 0..self.geometry.ny() {
                 let grid_x = self.image_blc[0] + x;
                 let grid_y = self.image_blc[1] + y;
-                let sinc_factor = sinc[grid_x] * sinc[grid_y];
-                image[(x, y)] = if sinc_factor.abs() > 1.0e-6 {
-                    (raw[(grid_x, grid_y)] / sinc_factor).re
-                } else {
-                    0.0
-                };
+                let correction = 1.0 / (sinc[grid_x] * sinc[grid_y]);
+                image[(x, y)] = (raw[(grid_x, grid_y)] * correction).re;
             }
         }
         image
@@ -1763,22 +1761,25 @@ impl StandardGridder {
         // this shared FFT, which is algebraically the same polarization
         // average without retaining two full image-sized grids.
         //
-        // AWProjectFT::getWeightImage then applies the same oversampling sinc
-        // grid correction used by getImage before persisting the weight
-        // product. This correction is scientifically material because
-        // flat-noise normalization divides residuals by sqrt(weight).
+        // AWProjectWBFT::ftWeightImage multiplies the DComplex FFT output by
+        // each Float image axis before `abs()` narrows the sensitivity image
+        // to Float. AWProjectFT::getWeightImage then multiplies that Float by
+        // the reciprocal sinc correction. Preserve those precision and
+        // operation-order boundaries: low weights are subsequently square
+        // rooted for flat-noise residual normalization.
         let sinc = build_sinc_axis(self.grid_shape[0].max(self.grid_shape[1]), conv_sampling);
+        let fft_scale_x = self.grid_shape[0] as f32;
+        let fft_scale_y = self.grid_shape[1] as f32;
         let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
         for x in 0..self.geometry.nx() {
             for y in 0..self.geometry.ny() {
                 let grid_x = self.image_blc[0] + x;
                 let grid_y = self.image_blc[1] + y;
-                let sinc_factor = sinc[grid_x] * sinc[grid_y];
-                image[(x, y)] = if sinc_factor.abs() > 1.0e-6 {
-                    raw[(grid_x, grid_y)].norm() as f32 / sinc_factor
-                } else {
-                    0.0
-                };
+                let scaled =
+                    raw[(grid_x, grid_y)] * f64::from(fft_scale_x) * f64::from(fft_scale_y);
+                let sensitivity = scaled.norm() as f32;
+                let correction = 1.0 / (sinc[grid_x] * sinc[grid_y]);
+                image[(x, y)] = sensitivity * correction;
             }
         }
         image
@@ -1802,17 +1803,16 @@ impl StandardGridder {
         conv_sampling: usize,
     ) -> Array2<f32> {
         let sinc = build_sinc_axis(self.grid_shape[0].max(self.grid_shape[1]), conv_sampling);
+        let fft_scale_x = self.grid_shape[0] as f32;
+        let fft_scale_y = self.grid_shape[1] as f32;
         let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
         for x in 0..self.geometry.nx() {
             for y in 0..self.geometry.ny() {
                 let grid_x = self.image_blc[0] + x;
                 let grid_y = self.image_blc[1] + y;
-                let sinc_factor = sinc[grid_x] * sinc[grid_y];
-                image[(x, y)] = if sinc_factor.abs() > 1.0e-6 {
-                    raw[(grid_x, grid_y)].norm() / sinc_factor
-                } else {
-                    0.0
-                };
+                let scaled = raw[(grid_x, grid_y)] * fft_scale_x * fft_scale_y;
+                let correction = 1.0 / (sinc[grid_x] * sinc[grid_y]);
+                image[(x, y)] = scaled.norm() * correction;
             }
         }
         image
@@ -3736,12 +3736,17 @@ fn spheroidal_kernel(distance: f64, support: f64) -> f32 {
 fn build_sinc_axis(size: usize, conv_sampling: usize) -> Vec<f32> {
     (0..size)
         .map(|index| {
-            let argument = std::f64::consts::PI * (index as f64 - size as f64 / 2.0)
-                / (size as f64 * conv_sampling as f64);
-            if index == size / 2 || argument.abs() <= f64::EPSILON {
+            // Match refim::AWProjectFT: the integer offset and denominator are
+            // converted to Float, M_PI is evaluated into a Float `x`, and
+            // sin(x)/x remains Float arithmetic.
+            let offset = (index as isize - size as isize / 2) as f32;
+            let denominator = size as f32 * conv_sampling as f32;
+            let argument =
+                (std::f64::consts::PI * f64::from(offset) / f64::from(denominator)) as f32;
+            if index == size / 2 {
                 1.0
             } else {
-                (argument.sin() / argument) as f32
+                argument.sin() / argument
             }
         })
         .collect()
@@ -4394,10 +4399,23 @@ mod tests {
         let weight = gridder.aw_weight_image_from_grid_f64(&raw, conv_sampling);
         let sinc = super::build_sinc_axis(8, conv_sampling);
 
-        assert_eq!(weight[(4, 4)], 5.0);
-        let expected_corner = 5.0 / (sinc[0] * sinc[0]);
-        assert!((weight[(0, 0)] - expected_corner).abs() < 1.0e-6);
+        assert_eq!(weight[(4, 4)], 5.0 * 8.0 * 8.0);
+        let expected_corner = 5.0 * 8.0 * 8.0 * (1.0 / (sinc[0] * sinc[0]));
+        assert_eq!(weight[(0, 0)], expected_corner);
         assert!(weight[(0, 0)] > weight[(4, 4)]);
+    }
+
+    #[test]
+    fn aw_sinc_axis_matches_casa_float_arithmetic() {
+        let sinc = super::build_sinc_axis(12_150, 10);
+
+        // Captured from the refim::AWProjectFT expression
+        // `Float x=M_PI*Float(ix-nx/2)/(Float(nx)*Float(convSampling))`
+        // followed by `sin(x)/x` on the VLASS geometry.
+        assert_eq!(sinc[0].to_bits(), 0x3f7e_f2d4);
+        assert_eq!(sinc[6_867].to_bits(), 0x3f7f_fb6c);
+        assert_eq!(sinc[9_898].to_bits(), 0x3f7f_9553);
+        assert_eq!(sinc[12_068].to_bits(), 0x3f7e_fa09);
     }
 
     #[test]
