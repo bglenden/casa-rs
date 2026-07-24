@@ -21040,11 +21040,19 @@ pub fn build_image_coordinate_system(
     requested_rest_frequency_hz: Option<f64>,
 ) -> CoordinateSystem {
     let cell_rad = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
+    // CASA's SynthesisParamsImage normalizes the right ascension only when it
+    // constructs the image DirectionCoordinate. Keep the observation-info
+    // pointing center in the original measure representation, but serialize
+    // the image reference longitude in casacore's canonical [0, 2π) range.
+    let image_phase_center = [
+        phase_center[0].rem_euclid(std::f64::consts::TAU),
+        phase_center[1],
+    ];
     let mut coords = CoordinateSystem::new();
     coords.add_coordinate(DirectionCoordinate::new(
         direction_ref,
         Projection::new(ProjectionType::SIN),
-        phase_center,
+        image_phase_center,
         [-cell_rad, cell_rad],
         [imsize as f64 / 2.0, imsize as f64 / 2.0],
     ));
@@ -38061,6 +38069,30 @@ mod tests {
         assert!(record.get("direction0").is_some());
         assert!(record.get("stokes1").is_some());
         assert!(record.get("spectral2").is_some());
+    }
+
+    #[test]
+    fn image_coordinate_system_normalizes_vlass_ra_like_casa() {
+        let coords = build_image_coordinate_system(
+            12_150,
+            [-2.737_583_127_275_378, 0.293_215_314_333_100_33],
+            0.6,
+            FrequencyRef::LSRK,
+            DirectionRef::J2000,
+            PlaneStokes::I,
+            &[2_987_890_056.546_800_6],
+            Some(2_047_924_643.945_432_2),
+            None,
+        );
+
+        assert_eq!(
+            coords.coordinate(0).reference_value(),
+            vec![3.545_602_179_904_208, 0.293_215_314_333_100_33]
+        );
+        assert_eq!(
+            coords.coordinate(0).to_world(&[0.0, 0.0]).unwrap(),
+            vec![3.563_967_168_628_84, 0.275_496_026_491_076_2]
+        );
     }
 
     #[test]

@@ -120,7 +120,7 @@ fn release_allocator_pressure() {
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use image::{ImageBuffer, Rgb};
@@ -26331,7 +26331,6 @@ fn casa_mfs_frequency_edge_range_for_selected_rows(
     })?;
     let mut edge_range_hz = None::<[f64; 2]>;
     let representative_row_slots = casa_mfs_representative_selected_row_indices(selected_rows)?;
-    let mut conversion_state = CasaMfsFrequencyConversionState::default();
     let mut low_extremum = None::<(f64, usize)>;
     let mut high_extremum = None::<(f64, usize)>;
     for &row_slot in &representative_row_slots {
@@ -26345,7 +26344,6 @@ fn casa_mfs_frequency_edge_range_for_selected_rows(
             row_time_mjd_sec,
             selected_row.field_id,
             derived_engine,
-            &mut conversion_state,
         )?;
         let high_hz = casa_mfs_convert_frequency_to_frame(
             source_freq_ref,
@@ -26353,7 +26351,6 @@ fn casa_mfs_frequency_edge_range_for_selected_rows(
             row_time_mjd_sec,
             selected_row.field_id,
             derived_engine,
-            &mut conversion_state,
         )?;
         let row_low_hz = low_hz.min(high_hz);
         let row_high_hz = low_hz.max(high_hz);
@@ -26392,119 +26389,26 @@ fn casa_mfs_frequency_edge_range_for_selected_rows(
     edge_range_hz.ok_or_else(|| "MFS row metadata resolved to no spectral edges".to_string())
 }
 
-const CASA_ABERRATION_LINEAR_INTERVAL_DAYS: f64 = 0.04;
-const CASA_ABERRATION_DERIVATIVE_STEP_DAYS: f64 = 1.0e-1;
-
-#[derive(Clone, Copy, Debug)]
-struct CasaMfsOrbitalProjection {
-    beta_at_anchor: f64,
-    beta_derivative_per_day: f64,
-}
-
-#[derive(Debug, Default)]
-struct CasaMfsFrequencyConversionState {
-    anchor_tdb_mjd: Option<f64>,
-    orbital_projection_by_field: HashMap<usize, CasaMfsOrbitalProjection>,
-}
-
 fn casa_mfs_convert_frequency_to_frame(
     source_ref: FrequencyRef,
     source_hz: f64,
     time_mjd_sec: f64,
     field_id: usize,
     derived_engine: &MsCalEngine,
-    state: &mut CasaMfsFrequencyConversionState,
 ) -> Result<f64, String> {
-    if !matches!(source_ref, FrequencyRef::TOPO | FrequencyRef::GEO) {
-        return convert_frequency_to_frame(
-            source_ref,
-            FrequencyRef::LSRK,
-            source_hz,
-            time_mjd_sec,
-            field_id,
-            derived_engine,
-        )
-        .map_err(|error| error.to_string());
-    }
-
-    let frame = derived_engine
-        .spectral_frame_observatory(time_mjd_sec, field_id)
-        .map_err(|error| error.to_string())?;
-    let tdb_mjd = frame
-        .epoch()
-        .ok_or_else(|| "CASA MFS frequency conversion frame has no epoch".to_string())?
-        .convert_to(EpochRef::TDB, &frame)
-        .map_err(|error| error.to_string())?
-        .value()
-        .as_mjd();
-    let refresh_anchor = state
-        .anchor_tdb_mjd
-        .is_none_or(|anchor| (tdb_mjd - anchor).abs() > CASA_ABERRATION_LINEAR_INTERVAL_DAYS);
-    if refresh_anchor {
-        state.anchor_tdb_mjd = Some(tdb_mjd);
-        state.orbital_projection_by_field.clear();
-    }
-    let anchor_tdb_mjd = state
-        .anchor_tdb_mjd
-        .expect("CASA aberration anchor is initialized above");
-    let projection = if let Some(projection) = state.orbital_projection_by_field.get(&field_id) {
-        *projection
-    } else {
-        let projection = casa_mfs_orbital_projection(&frame, anchor_tdb_mjd)?;
-        state
-            .orbital_projection_by_field
-            .insert(field_id, projection);
-        projection
-    };
-    let approximate_orbital_beta =
-        projection.beta_at_anchor + (tdb_mjd - anchor_tdb_mjd) * projection.beta_derivative_per_day;
-
-    let geo_hz = if source_ref == FrequencyRef::GEO {
-        source_hz
-    } else {
-        MFrequency::new(source_hz, source_ref)
-            .convert_to(FrequencyRef::GEO, &frame)
-            .map_err(|error| error.to_string())?
-            .hz()
-    };
-    let bary_hz = geo_hz * casa_geo_to_bary_doppler_factor(approximate_orbital_beta);
-    MFrequency::new(bary_hz, FrequencyRef::BARY)
-        .convert_to(FrequencyRef::LSRK, &frame)
-        .map(|frequency| frequency.hz())
-        .map_err(|error| error.to_string())
-}
-
-fn casa_mfs_orbital_projection(
-    frame: &casa_types::measures::frame::MeasFrame,
-    anchor_tdb_mjd: f64,
-) -> Result<CasaMfsOrbitalProjection, String> {
-    let h = CASA_ABERRATION_DERIVATIVE_STEP_DAYS;
-    let beta_at_anchor = casa_earth_orbital_beta(frame, anchor_tdb_mjd)?;
-    let beta_m2 = casa_earth_orbital_beta(frame, anchor_tdb_mjd - 2.0 * h)?;
-    let beta_m1 = casa_earth_orbital_beta(frame, anchor_tdb_mjd - h)?;
-    let beta_p1 = casa_earth_orbital_beta(frame, anchor_tdb_mjd + h)?;
-    let beta_p2 = casa_earth_orbital_beta(frame, anchor_tdb_mjd + 2.0 * h)?;
-    Ok(CasaMfsOrbitalProjection {
-        beta_at_anchor,
-        beta_derivative_per_day: (beta_m2 - 8.0 * beta_m1 + 8.0 * beta_p1 - beta_p2) / (12.0 * h),
-    })
-}
-
-fn casa_earth_orbital_beta(
-    frame: &casa_types::measures::frame::MeasFrame,
-    tdb_mjd: f64,
-) -> Result<f64, String> {
-    let epoch = MEpoch::from_mjd(tdb_mjd, EpochRef::TDB);
-    let ratio = MFrequency::new(1.0, FrequencyRef::GEO)
-        .convert_to(FrequencyRef::BARY, &frame.clone().with_epoch(epoch))
-        .map_err(|error| error.to_string())?
-        .hz();
-    let ratio_squared = ratio * ratio;
-    Ok((1.0 - ratio_squared) / (1.0 + ratio_squared))
-}
-
-fn casa_geo_to_bary_doppler_factor(orbital_beta: f64) -> f64 {
-    ((1.0 - orbital_beta) / (1.0 + orbital_beta)).sqrt()
+    // Evaluate the shared measures conversion at each representative row.
+    // The previous local finite-difference interpolation shifted a frozen
+    // VLASS spectral edge by one ULP; the exact series reproduces CASA's
+    // endpoint and avoids maintaining a second aberration implementation.
+    convert_frequency_to_frame(
+        source_ref,
+        FrequencyRef::LSRK,
+        source_hz,
+        time_mjd_sec,
+        field_id,
+        derived_engine,
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn mfs_output_frequency_metadata_for_config_selection(
@@ -54605,6 +54509,52 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the staged frozen VLASS MeasurementSet"]
+    fn vlass_single_field_mfs_coordinate_metadata_matches_frozen_casa() {
+        let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_VLASS_DATA_ROOT to the staged frozen VLASS data root");
+        let ms_path = data_root.join(VLASS_FROZEN_MS_NAME);
+        let config = vlass_field_1525_real_cache_config(
+            &ms_path,
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            12_150,
+            "2~17",
+        );
+        let ms = MeasurementSet::open(&ms_path).expect("open frozen VLASS MeasurementSet");
+        let data_description = ms.data_description().expect("open frozen DATA_DESCRIPTION");
+        let ddid_info = data_description_index(&data_description).expect("index frozen DDIDs");
+        let spectral_window = ms.spectral_window().expect("open frozen SPECTRAL_WINDOW");
+        let polarization = ms.polarization().expect("open frozen POLARIZATION");
+        let selection =
+            select_main_rows(&ms, &config, &ddid_info).expect("select frozen VLASS field 1525");
+        let engine = MsCalEngine::new(&ms).expect("build frozen measures engine");
+        let plans = prepare_mfs_ddid_plans(
+            &config,
+            &selection,
+            selection.selected_rows.clone(),
+            &ddid_info,
+            &spectral_window,
+            &polarization,
+            Some(&engine),
+        )
+        .expect("derive frozen per-DDID metadata");
+        let merged = merge_mfs_output_frequency_metadata(
+            plans.iter().map(|plan| &plan.output_frequency_metadata),
+        )
+        .expect("merge frozen SPW metadata");
+
+        assert_eq!(merged.reffreq_hz, 2_987_890_056.546_800_6);
+        assert_eq!(
+            merged
+                .spectral_frequency_edge_range_hz
+                .map(spectral_delta_from_range),
+            Some(Some(2_047_924_643.945_432_2))
+        );
+    }
+
+    #[test]
     #[ignore = "requires the staged frozen VLASS MeasurementSet and 23 GiB CASA single-field CF cache"]
     fn vlass_field_1525_real_cache_rejects_32_then_passes_64_for_1_2_16_spws() {
         let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
@@ -59005,7 +58955,6 @@ mod tests {
         let reference_frequency_hz = source_frequencies_hz[0];
         let mut expected_range_hz = None::<[f64; 2]>;
         let mut expected_edge_range_hz = None::<[f64; 2]>;
-        let mut conversion_state = CasaMfsFrequencyConversionState::default();
         for row in &rows {
             let scale = mfs_imaging_frequency_scale(
                 FrequencyRef::TOPO,
@@ -59027,7 +58976,6 @@ mod tests {
                         row.time_mjd_seconds.unwrap(),
                         row.field_id,
                         &engine,
-                        &mut conversion_state,
                     )
                     .unwrap(),
                     casa_mfs_convert_frequency_to_frame(
@@ -59036,7 +58984,6 @@ mod tests {
                         row.time_mjd_seconds.unwrap(),
                         row.field_id,
                         &engine,
-                        &mut conversion_state,
                     )
                     .unwrap(),
                 ],
