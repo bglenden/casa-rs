@@ -842,6 +842,8 @@ class SchemaTests(unittest.TestCase):
                 ("warm", 1),
                 (auto["run"]["cf_cache_role"], auto["run"]["warmups"]),
             )
+            self.assertEqual(32768, serial["imaging"]["imaging_memory_target_mb"])
+            self.assertEqual(32768, auto["imaging"]["imaging_memory_target_mb"])
             for manifest in (cold, serial, auto):
                 self.assertIn(
                     manifest["run"]["evidence_role"],
@@ -863,7 +865,6 @@ class SchemaTests(unittest.TestCase):
             auto_common["imaging"].pop("parallel")
             serial_common["imaging"].pop("standard_mfs_acceleration")
             auto_common["imaging"].pop("standard_mfs_acceleration")
-            auto_common["imaging"].pop("imaging_memory_target_mb")
             self.assertEqual(
                 serial_common,
                 auto_common,
