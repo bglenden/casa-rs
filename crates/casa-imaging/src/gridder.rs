@@ -2301,15 +2301,27 @@ impl<'a> AwProjector<'a> {
                 if plan.conjugate_for_grid {
                     tap = tap.conj();
                 }
-                let phase = (ix * self.sampling as isize + plan.off_x) as f64
-                    * self.phase_gradient_rad_per_sample[0]
-                    + (iy * self.sampling as isize + plan.off_y) as f64
-                        * self.phase_gradient_rad_per_sample[1];
-                tap *= Complex32::new(phase.cos() as f32, phase.sin() as f32);
+                let phase_x = (ix * self.sampling as isize + plan.off_x) as f64
+                    * self.phase_gradient_rad_per_sample[0];
+                let phase_y = (iy * self.sampling as isize + plan.off_y) as f64
+                    * self.phase_gradient_rad_per_sample[1];
+                tap *= casa_aw_phase_gradient(phase_x, phase_y);
                 operation((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize, tap);
             }
         }
     }
+}
+
+fn casa_aw_phase_gradient(phase_x: f64, phase_y: f64) -> Complex32 {
+    // refim::PhaseGrad computes each axis phasor in double precision, passes
+    // it through casacore::Complex, multiplies the promoted axis values as
+    // DComplex, and finally stores the product as Complex. Preserve those
+    // rounding boundaries instead of evaluating exp(i * (x + y)) directly.
+    let x = Complex32::new(phase_x.cos() as f32, phase_x.sin() as f32);
+    let y = Complex32::new(phase_y.cos() as f32, phase_y.sin() as f32);
+    let product = Complex64::new(f64::from(x.re), f64::from(x.im))
+        * Complex64::new(f64::from(y.re), f64::from(y.im));
+    Complex32::new(product.re as f32, product.im as f32)
 }
 
 fn aw_kernel_origin(length: usize) -> usize {

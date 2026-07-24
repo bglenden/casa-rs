@@ -54555,6 +54555,109 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the staged frozen VLASS MeasurementSet"]
+    fn vlass_single_field_pointing_group_matches_frozen_casa() {
+        let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_VLASS_DATA_ROOT to the staged frozen VLASS data root");
+        let ms_path = data_root.join(VLASS_FROZEN_MS_NAME);
+        let config = vlass_field_1525_real_cache_config(
+            &ms_path,
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            12_150,
+            "2~17",
+        );
+        let trace =
+            build_prepare_geometry_trace_from_config(&config).expect("prepare frozen geometry");
+        let casa_phase_center: [f64; 2] = [-2.737_583_127_275_378_6, 0.293_215_314_333_100_33];
+        assert!(
+            (trace.phase_center.angles_rad[0].rem_euclid(std::f64::consts::TAU)
+                - casa_phase_center[0].rem_euclid(std::f64::consts::TAU))
+            .abs()
+                < 1.0e-12
+                && (trace.phase_center.angles_rad[1] - casa_phase_center[1]).abs() < 1.0e-12,
+            "phase center was {:?}, expected CASA {casa_phase_center:?}",
+            trace.phase_center.angles_rad
+        );
+        let expected_pointing_rows = [
+            353_626, 353_646, 353_629, 353_645, 353_627, 353_640, 353_641, 353_631, 353_633,
+            353_635, 353_628, 353_651, 353_630, 353_632, 353_638, 353_624, 353_637, 353_644,
+            353_643, 353_636, 353_639, 353_642, 353_647, 353_648, 353_634, 353_649,
+        ];
+        let mut pointing_row_by_antenna = BTreeMap::new();
+        let mut pointing_direction_by_antenna = BTreeMap::new();
+        let grouping = CasaAwPointingGroupConfig {
+            geometry: ImageGeometry {
+                image_shape: [12_150, 12_150],
+                cell_size_rad: [0.6_f64.to_radians() / 3600.0, 0.6_f64.to_radians() / 3600.0],
+            },
+            phase_center_direction_rad: trace.phase_center.angles_rad,
+            grouping_sigdev_arcsec: 600.0,
+            refresh_sigdev_arcsec: 600.0,
+        };
+        let mut metadata =
+            MfsMosaicMetadataAccumulator::with_casa_aw_pointing_groups(trace.rows.len(), grouping);
+        let mut first_pointing_id = None;
+        for row in &trace.rows {
+            pointing_row_by_antenna
+                .entry(row.antenna1_id)
+                .or_insert(row.antenna1_pointing_row);
+            pointing_row_by_antenna
+                .entry(row.antenna2_id)
+                .or_insert(row.antenna2_pointing_row);
+            pointing_direction_by_antenna
+                .entry(row.antenna1_id)
+                .or_insert(row.antenna1_pointing_direction_rad);
+            pointing_direction_by_antenna
+                .entry(row.antenna2_id)
+                .or_insert(row.antenna2_pointing_direction_rad);
+            let pointing_id = metadata
+                .intern_casa_aw_baseline_pointing(
+                    row.input_field_id,
+                    row.antenna1_id,
+                    row.antenna1_pointing_direction_rad,
+                    row.antenna2_id,
+                    row.antenna2_pointing_direction_rad,
+                )
+                .expect("intern frozen baseline pointing");
+            first_pointing_id.get_or_insert(pointing_id);
+        }
+
+        assert_eq!(trace.rows.len(), 10_400);
+        assert_eq!(
+            pointing_row_by_antenna
+                .into_iter()
+                .map(|(_, row)| row.expect("concrete POINTING row"))
+                .collect::<Vec<_>>(),
+            expected_pointing_rows,
+        );
+        let casa_antenna0_direction: [f64; 2] = [-2.737_271_799_597_558, 0.293_214_430_441_607_2];
+        let antenna0_direction = pointing_direction_by_antenna[&0];
+        assert!(
+            (antenna0_direction[0].rem_euclid(std::f64::consts::TAU)
+                - casa_antenna0_direction[0].rem_euclid(std::f64::consts::TAU))
+            .abs()
+                < 5.0e-11
+                && (antenna0_direction[1] - casa_antenna0_direction[1]).abs() < 5.0e-11,
+            "antenna 0 J2000 direction was {antenna0_direction:?}, expected CASA {casa_antenna0_direction:?}"
+        );
+        let effective = metadata
+            .effective_pointing_direction_by_id()
+            .expect("derive CASA pointing group");
+        let effective_direction = effective[&first_pointing_id.expect("first pointing id")];
+        let casa_effective_direction: [f64; 2] = [-2.737_313_475_002_641, 0.293_214_991_795_931_7];
+        assert!(
+            (effective_direction[0].rem_euclid(std::f64::consts::TAU)
+                - casa_effective_direction[0].rem_euclid(std::f64::consts::TAU))
+            .abs()
+                < 1.0e-12
+                && (effective_direction[1] - casa_effective_direction[1]).abs() < 1.0e-12,
+            "effective J2000 direction was {effective_direction:?}, expected CASA {casa_effective_direction:?}"
+        );
+    }
+
+    #[test]
     #[ignore = "requires the staged frozen VLASS MeasurementSet and 23 GiB CASA single-field CF cache"]
     fn vlass_field_1525_real_cache_rejects_32_then_passes_64_for_1_2_16_spws() {
         let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
