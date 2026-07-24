@@ -373,6 +373,9 @@ pub(crate) fn optional_array<'a>(
     if !has_column(table, col) {
         return Ok(None);
     }
+    if !table.is_cell_defined(row, col)? {
+        return Ok(None);
+    }
     Ok(Some(get_array(table, row, col)?))
 }
 
